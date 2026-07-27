@@ -157,7 +157,7 @@ export async function sendChatMessage(
 interface MessageActionDeps {
   mlsService: IMlsService;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   conversation: Conversation;
   /** Display name of the current user - used as actor in reaction notifications. */
   currentUserDisplayName?: string;

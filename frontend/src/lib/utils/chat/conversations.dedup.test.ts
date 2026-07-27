@@ -61,8 +61,8 @@ describe('mergeDirectConversationDuplicates', () => {
     expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(PRED_ID);
   });
 
-  it('supprime bien deleteGroupOnServer pour un vrai doublon sans relation de succession', async () => {
-    // Deux groupes indépendants pour le même pair (deux devices ont ouvert la conv en même temps).
+  it('actually calls deleteGroupOnServer for a true duplicate with no succession relationship', async () => {
+    // Two independent groups for the same peer (two devices opened the conv at the same time).
     const storage = makeStorage();
     const mls = makeMlsService(() => null); // aucune relation successeur
 
@@ -78,11 +78,11 @@ describe('mergeDirectConversationDuplicates', () => {
       mls
     );
 
-    // Le plus récent est conservé
+    // The most recent is kept
     expect(result.map((c) => c.id)).toContain(IND_B);
     expect(result.map((c) => c.id)).not.toContain(IND_A);
     expect(storage.deleteConversation).toHaveBeenCalledWith(IND_A);
-    // deleteGroupOnServer DOIT être appelé pour éviter une résurrection via discoverMissingGroups
+    // deleteGroupOnServer MUST be called to prevent resurrection via discoverMissingGroups
     expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
     expect((mls.deleteGroupOnServer as ReturnType<typeof vi.fn>).mock.calls[0][0]).toBe(IND_A);
   });

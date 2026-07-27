@@ -43,9 +43,8 @@ let isDark = $state(false);
 let osListenerAttached = false;
 
 /**
- * Attache (une seule fois) un écouteur sur la media query OS qui ne met à jour le
- * thème que lorsque la préférence est `system`. Permet de suivre en direct un
- * changement de thème système app ouverte.
+ * Attaches (once) a listener on the OS media query that only updates the theme when the
+ * preference is `system`. Lets the app follow a live system theme change while open.
  */
 function attachOsListener(): void {
   if (

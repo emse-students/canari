@@ -68,7 +68,7 @@ export interface MessagingContext {
   /** Reactive map of all open conversations (DMs + channels). */
   conversations: SvelteMap<string, Conversation>;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   authToken: string;
   setAuthToken: (v: string) => void;
   selectedContact: string | null;
@@ -105,8 +105,8 @@ export function useMessaging() {
     Array<{ senderId: string; content: string } & AddMessageToChatOptions>
   >();
 
-  /** Buffer de messages orphelins arrivés avant que leur conversation ne soit dans la map.
-   *  Taille maximale par conversation pour éviter les fuites mémoire. */
+  /** Buffer of orphan messages that arrived before their conversation was in the map.
+   *  Capped per conversation to avoid memory leaks. */
   const MAX_ORPHAN_MESSAGES_PER_CONVERSATION = 50;
   const orphanBuffer = new SvelteMap<
     string,
@@ -294,7 +294,7 @@ export function useMessaging() {
                 serverTimestamp: upgraded.serverTimestamp,
                 isFcmPreview: false,
               },
-              ctx.pin
+              ctx.deviceKeyB64
             );
           } catch (e) {
             console.error('[DB] Failed to upgrade message:', e);
@@ -377,7 +377,7 @@ export function useMessaging() {
             ...(options.isFcmPreview ? { isFcmPreview: true } : {}),
             ...(options.isSystem ? { readBy: [] } : {}),
           },
-          ctx.pin
+          ctx.deviceKeyB64
         );
         await ctx.saveConversation(normalized);
       } catch (e) {
@@ -501,7 +501,7 @@ export function useMessaging() {
     // Single batch DB write (community channels are server-authoritative)
     if (ctx.storage && toStore.length > 0 && !isChannelConversationId(normalized)) {
       try {
-        await ctx.storage.saveMessages(toStore, ctx.pin);
+        await ctx.storage.saveMessages(toStore, ctx.deviceKeyB64);
         await ctx.saveConversation(normalized);
       } catch (e) {
         console.error('[DB] batchAddMessages failed:', e);
@@ -803,7 +803,7 @@ export function useMessaging() {
               isDeleted: target.isDeleted,
               isEdited: target.isEdited,
             },
-            ctx.pin
+            ctx.deviceKeyB64
           );
         } catch (e) {
           console.warn('[DB] Failed to persist reaction locally:', e);
@@ -814,7 +814,7 @@ export function useMessaging() {
     const reactionDeps = {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
-      pin: ctx.pin,
+      deviceKeyB64: ctx.deviceKeyB64,
       conversation: convo,
       currentUserDisplayName: getUserDisplayNameSync(ctx.userId),
     };
@@ -838,7 +838,7 @@ export function useMessaging() {
     await deleteMessage(messageId, {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
-      pin: ctx.pin,
+      deviceKeyB64: ctx.deviceKeyB64,
       conversation: convo,
     });
     const msgs = [...convo.messages];
@@ -862,7 +862,7 @@ export function useMessaging() {
     await editMessage(messageId, text, {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
-      pin: ctx.pin,
+      deviceKeyB64: ctx.deviceKeyB64,
       conversation: convo,
     });
     const msgs = [...convo.messages];
@@ -892,7 +892,7 @@ export function useMessaging() {
     await setMessagePinned(messageId, next, {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
-      pin: ctx.pin,
+      deviceKeyB64: ctx.deviceKeyB64,
       conversation: convo,
     });
   }
@@ -1015,9 +1015,9 @@ export function useMessaging() {
     /** Resets overlay + bulk buffer (e.g. after a desynced catch-up on mobile). */
     resetMessageCatchupState,
     /**
-     * Rejoue les messages orphelins bufferisés pour une conversation qui vient
-     * d'être ajoutée à la map (ex: après traitement d'un Welcome MLS).
-     * Appelé via MessageHandlerDeps.drainOrphanMessages.
+     * Replays the buffered orphan messages for a conversation that has just been added to the
+     * map (e.g. after processing an MLS Welcome).
+     * Called via MessageHandlerDeps.drainOrphanMessages.
      */
     drainOrphanMessages: (convoKey: string, ctx: MessagingContext) => {
       const normalized = convoKey.toLowerCase();

@@ -239,8 +239,8 @@
     depositSaving = true;
     depositError = '';
     try {
-      // Admin global : poste directement sur l'asso cible (auto-valide cote serveur).
-      // Validateur BDE : poste via son asso BDE avec targetAssocId vers l'asso cible.
+      // Global admin: posts directly on the target association (auto-validated server-side).
+      // BDE validator: posts through their BDE association with targetAssocId toward the target.
       const urlAssocId = isGlobalAdmin() ? depositTargetAssocId : depositAuthorityAssoId;
       await createAssociationCalendarEvent(urlAssocId, {
         title: depositTitle.trim(),

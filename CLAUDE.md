@@ -91,9 +91,10 @@ Shipped:
 Todo:
 - \[x\] **WP-Calls-UX call UI overhaul** (P1-P9 implemented; svelte-check 0/0, oxlint 0/0, tests 8/8).
 
-#### POST-v0.11.0 REMEDIATION (audit v0.10.4 -> v0.11.0)
+#### POST-v0.11.0 REMEDIATION (audit v0.10.4 -> v0.11.0) - COMPLETE
 
-Audit found 15 gaps (T1-T15). Remediation lots, in order:
+All 15 audit gaps (T1-T15) + T16 + B1 (i18n parity) closed and gate-verified. Only the two
+`[device]` checks below remain. Agent delegation log + verification verdicts: `AGENTS.md`.
 
 - \[x\] **Lot 1 - mobile background push (BLOCKER)** - commit `6e6a7e1e`
   - T1/T2/T10a done: the three broken paths now go through `MlsManager::load_with_key` via the new `load_manager_with_key_b64` / `load_manager_for_push` helpers in `mobile/background.rs`; scratch comments removed; `pin`->`device_key_b64` in `ios_ffi.rs` + both iOS C headers; French rustdoc/logs translated; `AddMembersBulkResult`/`AddMemberResult` made `pub`. clippy 0 warnings on src-tauri/mls-core/mls-wasm, svelte-check 0/0.
@@ -113,23 +114,20 @@ Audit found 15 gaps (T1-T15). Remediation lots, in order:
   - `007_mls_commit_log.sql` -> `012_` (duplicate number with `007_drop_orphan_columns.sql`); French headers in it and in `030` translated. Numbering gaps (023, 026-029) left alone: harmless, documented.
   - Migration contract documented in `docs/wiki/infrastructure/databases.md` (+ real prod table names, the old list was wrong) and `infrastructure/MIGRATION.md`.
   - Files are a PATCH SET, not a schema: migration 001 opens with `ALTER TABLE users`. A fresh prod DB comes from a backup restore, never from replaying migrations.
-- \[~\] **Lot 4 - hygiene** (T10b/T12 already closed by Lot 2) - IN PROGRESS, resume here
-  - **The audit undercounted T11 by an order of magnitude**: not ~10 lines but **426 matches across 74 files** (369 frontend / 57 apps). Do NOT trust the old per-line list.
-  - Detection recipe (ripgrep, `-i` flag, NEVER inline `(?i)` - it fails to parse): `//.*\b(le|la|les|une|des|dans|pour|avec|sur|est|sont|pas|que|qui|cette|cle|clé|chiffr|dechiffr|déchiffr|utilise|permet|renvoie|retourne|evite|évite|verifie|vérifie|charge|stocke|recupere|récupère|supprime|ajoute|lors|ainsi|afin|depuis|aucun|chaque|meme|même)\b` - expect false positives ("Carte de la Vie Asso", "charge-saved-method").
-  - T11 DONE (commit `a5968634`, all Rust): `commands/push.rs`, `concurrency.rs`, `state.rs`, `commands/{storage,bootstrap,mls}.rs`, `mobile/{mod,proto_fields}.rs`, `mls-wasm/src/lib.rs`, `mls-core/src/{lib,state,members}.rs`, and ALL SIX `mls-core/tests/*.rs` (`epoch_race.rs` was French end to end, rewritten whole). Migrations `012` + `030` done in Lot 3.
-  - T11 DONE (uncommitted, TS/Svelte): `biometric.ts`, `encryption.ts`, `db/{sqlite,indexeddb}.ts`, `mlsDeliveryApi.ts`, `setupMessageHandler.ts`, `ChatBackgroundService.svelte`, `{Tauri,Web}MlsService.ts`, `hooks.client.ts`, `useConversations`/`useChannelWorkspaces`/`useChatSession.svelte.ts`, `sessionTypes.ts`, `sessionWatchdogs.ts`, `locks.controller.ts`.
-  - T11 REMAINING (~40 sites): frontend test files (`actions.discovery.test.ts` 11, `androidFcmManifest.test.ts` 6, `initializeConnection*.test.ts` 6, `PushNotificationService.test.ts` 4, `conversations.dedup.test.ts` 3, misc 1-2 each), `groupLifecycle.ts` 6, `groupMutationQueue.ts` 3, `BaseMlsService.ts`, `initializeConnection.ts`, `keyPackages.ts` header, `places.ts`, `PushNotificationService.ts`, `systemMessageHandler*.ts`, `calendar/+page.svelte`, `ChannelSettingsModal.svelte`, `SidebarNewChatModal.svelte`; then **all of `apps/`** (57: `messaging.service.ts` 21, `handlers.rs` 11, `push.controller.ts` 5, `channel.service.ts` 3, rest 1-2).
-  - T13 DONE: `encryption.ts:7-8` really was still on "Argon2id" (Lot 2 made it PBKDF2-SHA256) - fixed; `biometric.ts` x3 `derive_and_store_device_key` -> `store_push_context` (the command that actually stores the key today); `mls.rs` Argon2id rustdoc; `same_epoch_ratchet.rs` "Argon2 a repetition"; `mlsDeliveryApi.ts` + `locks.controller.ts` "persist Argon2 (~5-8 s)".
-  - i18n gap found while translating: `biometric.ts` passed **hardcoded French** to `authenticate()` (the OS biometric prompt, user-visible) - now `m.auth_biometric_prompt_enable()` / `m.auth_biometric_prompt_disable()`, keys added to BOTH `fr.json` and `en.json`.
-  - T14: DONE - legacy `encrypt_with_pin`/`decrypt_with_pin` confirmed reachable only from `backup.ts:174` (v1 branch); header comment now says so.
-  - `messages/fr.json` vs `en.json`: was 2157 vs 2147; +2 each here. Still ~10 FR-only keys, pre-existing, unreconciled.
-- \[ \] **T16 (NEW, found in Lot 4) - `pin` is a lying parameter name across the MLS client**
-  - Every call site passes `ctx.getDeviceKey()` into a field/param named `pin` (`sessionAuth.ts` x10, `MessageHandlerDeps.pin`, `ConnectionDeps.pin`, `MlsStatePersisterConfig.pin`, `encryptMlsStateOffThread(plain, pin)`, `replenishKeyPackages(svc, pin)`, `storage.saveMessages(msgs, pin)`, ...). The VALUE is correct - this is not a live bug - but it is exactly the naming lie that produced the Lot 2 `store_push_context` defect.
-  - NOT a blind rename: 318 occurrences / 68 files, and many are legitimately the PIN (`PinModal`, `computePinVerifier`, `pinChange.ts`, `canari_pin_persist`). Needs per-site judgment. Deliberately left out of Lot 4 as scope-widening; raise with the user before doing it.
-- \[ \] **Lot 5 - docs & state**
-  - T7: CHANGELOG `[Unreleased]` still holds all v0.11.0 content; no v0.10.10-v0.10.15 sections; the PIN->deviceKey block is in French.
-  - T9: `plans/` and `docs/strategy/` are TEMPORARY working trees (user-confirmed) - DELETE once T1-T15 are closed. `docs/TESTS-DEVICE-PENDING.md` was deleted with open items in it.
-  - T15: ~12 non-descriptive commits (`fix`, `cd`, `doc`, `communautes`).
+- \[x\] **Lot 4 - hygiene** (T10b/T12 closed by Lot 2)
+  - **The audit undercounted T11 twice over.** First by an order of magnitude (426 line-comment matches / 74 files, not ~10). Then the sweep itself was incomplete: it only searched `//` comments, leaving ~250 French lines in JSDoc/rustdoc **block** comments across 67 files - whole files (`epochGapRegistry.ts`, `mlsDecryptError.ts`, `groupLifecycle.ts`) were French end to end. Both halves are now done; recipes live in `AGENTS.md`.
+  - T13 DONE: `encryption.ts` still said "Argon2id" (Lot 2 made it PBKDF2-SHA256); `biometric.ts` x3 `derive_and_store_device_key` -> `store_push_context`; `mls.rs`, `same_epoch_ratchet.rs`, `mlsDeliveryApi.ts` + `locks.controller.ts` ("persist Argon2 (~5-8 s)" -> "state persist").
+  - i18n gap found while translating: `biometric.ts` passed **hardcoded French** to `authenticate()` (the OS biometric prompt, user-visible) - now `m.auth_biometric_prompt_enable()` / `m.auth_biometric_prompt_disable()`.
+  - T14 DONE: legacy `encrypt_with_pin`/`decrypt_with_pin` reachable only from `backup.ts:174` (v1 branch); header says so.
+  - B1 DONE: `fr.json` / `en.json` both 2165 keys, zero orphans in either direction.
+- \[x\] **T16 - `pin` renamed to `deviceKeyB64` across the MLS client** (130 occurrences / 37 files)
+  - Legitimate PIN uses deliberately preserved: `PinModal`, `computePinVerifier`, `pinChange.ts`, `canari_pin_persist`, `isValidPin`, WASM `encrypt_with_pin`/`decrypt_with_pin`, `ctx.getPin()` in `sessionAuth.ts` (verifier path).
+  - **Real bugs it exposed:** `sessionConnection.ts` x2 and `sessionDevTools.ts` passed `ctx.getPin()` where the device key was required. Plus **5 test fixtures** left on `pin:` fed `undefined` into production code - `setupMessageHandler.test.ts` was RED. Test fixtures use `as unknown as X` casts, so svelte-check cannot catch this: **after any dep-shape rename, run `bun run test`, not just `check`.**
+- \[x\] **Lot 5 - docs & state**
+  - T7: `[Unreleased]` translated AND cut into v0.10.10 - v0.11.0 sections, attributed from tag ranges. `SECURITY.md` (shipped v0.1.0, 2026-03-08) moved out of `[Unreleased]` into the v0.10.9 catch-all.
+  - T9: `plans/` and `docs/strategy/` deleted.
+  - T15: ~15 non-descriptive commits - NOT rebasable (on `main`, tagged, pushed). Forward fix only: strengthen the commit-msg hook.
+- Fixed in passing: `apps/social-service` had 19 files failing `oxfmt --check` on HEAD (pre-existing, double-quoted strings). Formatted; 124/124 tests still pass.
 
 #### MULTI-TIER COTISATIONS (Cercle) - COMPLETE
 

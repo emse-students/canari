@@ -4,10 +4,10 @@ import type { ConversationLifecycle } from '$lib/types';
 export type { ConversationLifecycle };
 
 /**
- * Normalise une valeur de cycle de vie chargee depuis le stockage. Tolere les anciennes lignes
- * (avant ce champ) qui ne portaient qu'un booleen `isReady` : `true -> active`, sinon `pending`
- * (l'ancien modele ne persistait jamais l'etat `removed`). Toute valeur inconnue retombe sur
- * `pending` (le plus sur : declenche une recovery, jamais une purge ni un envoi).
+ * Normalizes a lifecycle value loaded from storage. Tolerates legacy rows (predating this field)
+ * that only carried an `isReady` boolean: `true -> active`, otherwise `pending` (the old model
+ * never persisted the `removed` state). Any unknown value falls back to `pending` (the safest:
+ * it triggers a recovery, never a purge nor a send).
  */
 export function normalizeConversationLifecycle(
   raw: unknown,
@@ -18,24 +18,24 @@ export function normalizeConversationLifecycle(
 }
 
 /**
- * Cycle de vie d'un groupe : SOURCE DE VERITE UNIQUE et logique de decision centralisee.
+ * Group lifecycle: SINGLE SOURCE OF TRUTH and centralized decision logic.
  *
- * Contexte (cf. audit) : la question "ce groupe local est-il encore reel, et que dois-je en
- * faire ?" etait re-implementee dans 3-4 reconciliateurs (discovery, sync-on-connect, requestReAdd)
- * avec des gardes divergentes -> chaque divergence = un bug (fantome indeletable, "statut
- * incertain" sur un groupe pourtant supprime, etc.). Ce module factorise :
- *   1. `classifyServerStatus` : transforme la reponse ambigue du serveur en un etat explicite.
- *   2. `decideAbsentGroupFate` : reducteur PUR qui mappe (etat serveur + signaux locaux) -> action.
- * Tous les reconciliateurs consomment ces deux fonctions, donc une seule logique a maintenir.
+ * Context (see audit): the question "is this local group still real, and what should I do with
+ * it?" used to be re-implemented in 3-4 reconcilers (discovery, sync-on-connect, requestReAdd)
+ * with diverging guards -> every divergence was a bug (undeletable ghost, "uncertain status" on
+ * an already-deleted group, etc.). This module factors out:
+ *   1. `classifyServerStatus`: turns the server's ambiguous response into an explicit state.
+ *   2. `decideAbsentGroupFate`: PURE reducer mapping (server state + local signals) -> action.
+ * All reconcilers consume these two functions, so there is a single logic to maintain.
  *
- * Rappel des 3 etats serveur d'un groupe (table `dm_groups`) :
- *  - `active`    : ligne presente, `deletedAt` null -> le groupe vit.
- *  - `tombstone` : ligne presente, `deletedAt` non-null -> supprime par un pair (dure 90j, cron).
- *  - `absent`    : plus aucune ligne -> jamais cree, hard-purge apres 90j, ou base videe.
- * Plus un 4e etat cote client : `unknown` (echec reseau) -> on ne purge JAMAIS sur un doute.
+ * Reminder of a group's 3 server states (table `dm_groups`):
+ *  - `active`    : row present, `deletedAt` null -> the group is alive.
+ *  - `tombstone` : row present, `deletedAt` non-null -> deleted by a peer (kept 90d, cron).
+ *  - `absent`    : no row at all -> never created, hard-purged after 90d, or database wiped.
+ * Plus a 4th client-side state: `unknown` (network failure) -> NEVER purge on a doubt.
  */
 
-/** Etat serveur explicite d'un groupe (leve l'ambiguite `null` de `getGroupMeta`/`getGroupServerStatus`). */
+/** Explicit server state of a group (resolves the `null` ambiguity of `getGroupMeta`/`getGroupServerStatus`). */
 export type GroupServerStatus =
   | { kind: 'active'; meta: GroupMeta }
   | { kind: 'tombstone'; meta: GroupMeta }
@@ -43,8 +43,8 @@ export type GroupServerStatus =
   | { kind: 'unknown' };
 
 /**
- * Convertit la valeur brute de `IMlsService.getGroupServerStatus` (`'absent' | 'error' | GroupMeta`)
- * en {@link GroupServerStatus}. Un `GroupMeta` avec `deletedAt` non-null est un tombstone.
+ * Converts the raw value of `IMlsService.getGroupServerStatus` (`'absent' | 'error' | GroupMeta`)
+ * into a {@link GroupServerStatus}. A `GroupMeta` with a non-null `deletedAt` is a tombstone.
  */
 export function classifyServerStatus(raw: 'absent' | 'error' | GroupMeta): GroupServerStatus {
   if (raw === 'absent') return { kind: 'absent' };
@@ -53,70 +53,70 @@ export function classifyServerStatus(raw: 'absent' | 'error' | GroupMeta): Group
 }
 
 /**
- * Action a appliquer a une conversation locale apres reconciliation.
- *  - `keep`        : ne rien faire (groupe encore valide, ou doute -> on conserve).
- *  - `purge`       : retirer la conversation (et l'etat MLS) -> le groupe n'existe plus DU TOUT.
- *  - `markRemoved` : passer la conversation en `removed` (banniere "supprime/exclu", suppression manuelle).
+ * Action to apply to a local conversation after reconciliation.
+ *  - `keep`        : do nothing (group still valid, or doubt -> keep it).
+ *  - `purge`       : remove the conversation (and the MLS state) -> the group no longer exists AT ALL.
+ *  - `markRemoved` : move the conversation to `removed` ("deleted/excluded" banner, manual deletion).
  */
 export type ConversationFate = {
   action: 'keep' | 'purge' | 'markRemoved';
-  /** Motif lisible (pour les logs de diagnostic). */
+  /** Human-readable reason (for diagnostic logs). */
   reason: string;
 };
 
-/** Signaux d'entree pour {@link decideAbsentGroupFate}. */
+/** Input signals for {@link decideAbsentGroupFate}. */
 export interface AbsentGroupFateInput {
-  /** Etat de cycle de vie actuel de la conversation locale. */
+  /** Current lifecycle state of the local conversation. */
   lifecycle: ConversationLifecycle;
-  /** Etat serveur resolu (cf. `classifyServerStatus`). */
+  /** Resolved server state (see `classifyServerStatus`). */
   serverStatus: GroupServerStatus;
   /**
-   * Re-validation anti-race de NOTRE membership user-level (`dm_group_members`), utilisee
-   * uniquement quand le groupe est `active` mais absent de notre snapshot `getUserGroups` :
-   *  - `true`  : on est toujours membre -> snapshot perime, on garde la conv active.
-   *  - `false` : on n'est plus membre -> exclusion reelle -> banniere.
-   *  - `null`  : impossible a determiner (reseau) -> on conserve dans le doute.
-   * Non pertinent (et ignore) pour les autres etats serveur.
+   * Anti-race re-validation of OUR user-level membership (`dm_group_members`), used only when
+   * the group is `active` but missing from our `getUserGroups` snapshot:
+   *  - `true`  : we are still a member -> stale snapshot, keep the conversation active.
+   *  - `false` : we are no longer a member -> real exclusion -> banner.
+   *  - `null`  : impossible to determine (network) -> keep it, benefit of the doubt.
+   * Not relevant (and ignored) for the other server states.
    */
   isStillUserMember: boolean | null;
 }
 
 /**
- * Reducteur PUR : decide du sort d'une conversation locale ABSENTE de notre membership active
- * (`getUserGroups`). C'est l'ancien bloc `if (!serverGroupIds.has(…))` de `discoverMissingGroups`,
- * extrait tel quel pour etre teste exhaustivement et partage.
+ * PURE reducer: decides the fate of a local conversation ABSENT from our active membership
+ * (`getUserGroups`). This is the former `if (!serverGroupIds.has(…))` block from
+ * `discoverMissingGroups`, extracted as-is for exhaustive testing and sharing.
  *
- * Principe directeur : la source de verite est le SERVEUR pour l'existence, SAUF les survivants
- * purement locaux (supprime-par-un-pair / exclusion -> banniere ; dismiss manuel -> purge ailleurs)
- * qui restent jusqu'a suppression manuelle. On ne purge JAMAIS sur un doute reseau.
+ * Guiding principle: the SERVER is the source of truth for existence, EXCEPT for purely local
+ * survivors (deleted-by-peer / exclusion -> banner; manual dismiss -> purge elsewhere)
+ * that remain until manual deletion. We NEVER purge on network doubt.
  */
 export function decideAbsentGroupFate(input: AbsentGroupFateInput): ConversationFate {
-  // Deja `removed` : reste jusqu'a SUPPRESSION MANUELLE locale (regles 2 & 4), quoi qu'il advienne
-  // cote serveur (meme apres hard-purge du tombstone). Jamais re-interroge ni re-purge.
+  // Already `removed`: stays until local MANUAL DELETION (rules 2 & 4), regardless of
+  // server-side state (even after hard-purge of the tombstone). Never re-queried or re-purged.
   if (input.lifecycle === 'removed') {
     return { action: 'keep', reason: 'deja removed (suppression manuelle)' };
   }
 
   switch (input.serverStatus.kind) {
     case 'absent':
-      // Plus aucune ligne dm_groups : le groupe n'existe plus du tout (regle 1) -> purge.
-      return { action: 'purge', reason: 'absent de dm_groups (confirme)' };
+      // No dm_groups row left: the group no longer exists at all (rule 1) -> purge.
+      return { action: 'purge', reason: 'absent from dm_groups (confirmed)' };
 
     case 'unknown':
-      // Echec reseau : indiscernable d'un groupe supprime -> on ne purge jamais sur un doute.
-      return { action: 'keep', reason: 'statut serveur incertain (reseau)' };
+      // Network failure: indistinguishable from a deleted group -> never purge on doubt.
+      return { action: 'keep', reason: 'server status uncertain (network)' };
 
     case 'tombstone':
-      // Supprime par un pair (regle 2). Un simple placeholder (pending) est conserve tel quel.
+      // Deleted by a peer (rule 2). A plain placeholder (pending) is kept as-is.
       return input.lifecycle === 'active'
-        ? { action: 'markRemoved', reason: 'supprime (tombstone) cote serveur' }
+        ? { action: 'markRemoved', reason: 'deleted (tombstone) server-side' }
         : { action: 'keep', reason: 'placeholder tombstone (pending)' };
 
     case 'active':
-      // Vivant cote serveur mais absent de notre snapshot getUserGroups, qui peut etre perime sur
-      // un groupe qu'on vient de creer/rejoindre. On revalide la membership reelle avant de marquer.
+      // Alive server-side but absent from our getUserGroups snapshot, which may be stale for
+      // a group we just created/joined. Revalidate real membership before marking.
       if (input.isStillUserMember === null) {
-        return { action: 'keep', reason: 'membres indisponibles (doute)' };
+        return { action: 'keep', reason: 'members unavailable (doubt)' };
       }
       if (input.isStillUserMember) {
         return { action: 'keep', reason: 'vivant et toujours membre (snapshot perime)' };

@@ -13,7 +13,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     mlsService: { forgetGroup: vi.fn() },
     storage: null,
     userId: 'me',
-    pin: 'pin',
+    deviceKeyB64: 'device-key',
     conversations,
     messageReactions: new Map(),
     addMessageToChat: vi.fn().mockResolvedValue(undefined),
@@ -35,14 +35,14 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
 describe('handleSystemEvent - memberRemoved (self-exclusion)', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('exclusion de MOI -> banniere + lifecycle removed, PAS de purge silencieuse', async () => {
+  it('exclusion of SELF -> banner + lifecycle removed, NO silent purge', async () => {
     const ctx = makeCtx({ senderNorm: 'admin', userId: 'me' });
     await handleSystemEvent('memberRemoved', { targetUser: 'me' }, ctx as any);
 
-    // WASM oublie (on ne peut plus dechiffrer les epochs futurs) + persistance.
+    // WASM forget (can no longer decrypt future epochs) + persistence.
     expect(ctx.mlsService.forgetGroup).toHaveBeenCalledWith('g1');
     expect(ctx.persistMlsStateNow).toHaveBeenCalled();
-    // Banniere systeme affichee, conversation passee en `removed` et sauvegardee.
+    // System banner displayed, conversation marked `removed` and saved.
     expect(ctx.addMessageToChat).toHaveBeenCalledWith(
       'system',
       expect.any(String),
@@ -51,7 +51,7 @@ describe('handleSystemEvent - memberRemoved (self-exclusion)', () => {
     );
     expect((ctx.conversations.get('g1') as any).lifecycle).toBe('removed');
     expect(ctx.saveConversation).toHaveBeenCalledWith('g1');
-    // Surtout : PAS de suppression silencieuse (la conv reste lisible jusqu'a suppression manuelle).
+    // Above all: NO silent deletion (the conv stays readable until manual deletion).
     expect(ctx.deleteConversation).not.toHaveBeenCalled();
     expect(ctx.conversations.has('g1')).toBe(true);
     expect(ctx.setSelectedContact).not.toHaveBeenCalled();

@@ -19,7 +19,7 @@ export interface CreateRoleDto {
 export interface CreateChannelDto {
   workspaceId: string;
   name: string;
-  visibility?: "public" | "private";
+  visibility?: 'public' | 'private';
   actorUserId: string;
 }
 
@@ -33,13 +33,13 @@ export interface RenameChannelDto {
  * - `admins_moderators`: only roles carrying channel.moderate or workspace.manage.
  * - `admins`: only roles carrying workspace.manage.
  */
-export type ChannelWritePolicy = "everyone" | "admins_moderators" | "admins";
+export type ChannelWritePolicy = 'everyone' | 'admins_moderators' | 'admins';
 
 /** The three valid write policies, for runtime validation. */
 export const CHANNEL_WRITE_POLICIES: ChannelWritePolicy[] = [
-  "everyone",
-  "admins_moderators",
-  "admins",
+  'everyone',
+  'admins_moderators',
+  'admins',
 ];
 
 /** Body of the update-channel-access endpoint (the actor is taken from the auth header). */
@@ -71,7 +71,7 @@ export interface ChannelInviteDto {
 }
 
 export interface ChannelKeyDistributionPayloadDto {
-  type: "channel_key_distribution";
+  type: 'channel_key_distribution';
   channelId: string;
   channelName?: string;
   keyVersion: number;
@@ -148,10 +148,10 @@ export interface ChannelPollMeta {
  * - `mentions`: notify only when the member is in a message's `mentionedUserIds`.
  * - `none`: never notify.
  */
-export type ChannelNotificationLevel = "all" | "mentions" | "none";
+export type ChannelNotificationLevel = 'all' | 'mentions' | 'none';
 
 /** The three valid notification levels, for runtime validation. */
-export const CHANNEL_NOTIFICATION_LEVELS: ChannelNotificationLevel[] = ["all", "mentions", "none"];
+export const CHANNEL_NOTIFICATION_LEVELS: ChannelNotificationLevel[] = ['all', 'mentions', 'none'];
 
 /** Body of the set-notification-level endpoint (the user is taken from the auth header). */
 export interface SetChannelNotificationLevelDto {

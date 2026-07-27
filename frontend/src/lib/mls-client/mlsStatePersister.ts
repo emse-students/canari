@@ -6,7 +6,7 @@ import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 /** Configuration for coalesced MLS state persistence. */
 export interface MlsStatePersisterConfig {
   mlsService: IMlsService;
-  pin: string;
+  deviceKeyB64: string;
   userId: string;
   log?: (msg: string) => void;
 }
@@ -36,7 +36,7 @@ export interface MlsStatePersister {
  * flush() write an encrypted checkpoint (Argon2) to IndexedDB.
  */
 export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsStatePersister {
-  const { mlsService, pin, userId, log } = config;
+  const { mlsService, deviceKeyB64, userId, log } = config;
 
   let dirtyEncrypted = false;
   let immediateFlushQueued = false;
@@ -47,7 +47,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
   async function runSaveEncrypted(): Promise<void> {
     await yieldToMainThread();
     const saveStarted = typeof performance !== 'undefined' ? performance.now() : null;
-    const bytes = await mlsService.saveState(pin);
+    const bytes = await mlsService.saveState(deviceKeyB64);
     if (saveStarted !== null) {
       recordMlsSaveStateMs(performance.now() - saveStarted);
     }

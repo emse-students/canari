@@ -15,9 +15,9 @@
     url: string;
     /** Données de preview récupérées via l'API MiGallery (og-preview / link-preview). */
     preview: ExternalPreviewPayload | null;
-    /** Indique si les données sont en cours de chargement. */
+    /** Whether the data is currently loading. */
     isLoading: boolean;
-    /** Quand true, supprime la marge haute (carte seule dans la bulle). */
+    /** When true, removes the top margin (card alone in the bubble). */
     standalone?: boolean;
   }
 

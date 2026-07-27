@@ -40,7 +40,7 @@
       | 'shield';
   }
 
-  /** Items accessible depuis la nav desktop mais absents de la nav mobile. */
+  /** Items reachable from the desktop nav but absent from the mobile nav. */
   const exploreItems = $derived<Section[]>([
     {
       label: m.nav_calendar_label(),

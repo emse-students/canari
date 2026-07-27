@@ -11,11 +11,7 @@ import { Repository } from 'typeorm';
 import { SubmitMinesweeperDto } from './dto/submit-minesweeper.dto';
 import { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
 import { MinesweeperScore } from './entities/minesweeper-score.entity';
-import {
-  CHALLENGE as BOARD_CONFIG,
-  verifySolve,
-  type MinesweeperMove,
-} from './engine/game';
+import { CHALLENGE as BOARD_CONFIG, verifySolve, type MinesweeperMove } from './engine/game';
 
 /** Challenge board must be cleared in at least this long (blocks 0ms cheats). */
 const MIN_DURATION_MS = 8_000;
@@ -58,7 +54,6 @@ function resolveScoredDurationMs(
   }
   return serverDurationMs;
 }
-
 
 /** Ranked Minesweeper: issue seeds, verify solves by replay, store best times. */
 @Injectable()
@@ -202,8 +197,7 @@ export class MinesweeperService {
       : durationMs;
     const isPersonalBest = !previousBest || durationMs < previousBest.durationMs;
     const rank = await this.rankForDurationMs(personalBestMs);
-    const ranksGained =
-      previousRank != null && rank < previousRank ? previousRank - rank : 0;
+    const ranksGained = previousRank != null && rank < previousRank ? previousRank - rank : 0;
 
     return {
       accepted: true,

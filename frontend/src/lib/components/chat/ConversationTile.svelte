@@ -22,9 +22,9 @@
     /** Whether the MLS session for this conversation is fully established. */
     isReady: boolean;
     /**
-     * Whether the conversation is removed (supprimee par un pair / exclusion / suppression locale
-     * en attente). Un groupe `removed` n'est PAS en cours de synchro : on ne montre pas le badge
-     * "Sync" (trompeur - le groupe est mort, pas en transit). Defaut `false`.
+     * Whether the conversation is removed (deleted by a peer / exclusion / pending local
+     * deletion). A `removed` group is NOT syncing: the "Sync" badge is not shown (misleading -
+     * the group is dead, not in transit). Defaults to `false`.
      */
     isRemoved?: boolean;
     /** Whether this tile is the currently active conversation. */

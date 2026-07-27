@@ -4,18 +4,18 @@ import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
 /**
- * Garde-fou DI infra-free : toute entite injectee via `@InjectRepository(Entity)` DOIT etre
- * enregistree dans un `TypeOrmModule.forFeature([…])`, sinon le provider `<Entity>Repository`
- * n'existe pas et le bootstrap NestJS jette `UnknownDependenciesException` AU DEMARRAGE (erreur
- * runtime invisible a `tsc` et aux specs unitaires qui ne compilent pas `AppModule`).
+ * Infra-free DI guardrail: every entity injected via `@InjectRepository(Entity)` MUST be
+ * registered in a `TypeOrmModule.forFeature([...])`, otherwise the `<Entity>Repository` provider
+ * does not exist and the NestJS bootstrap throws `UnknownDependenciesException` AT STARTUP (a
+ * runtime error invisible to `tsc` and to unit specs that do not compile `AppModule`).
  *
- * Ce test relit les sources (pas de DB/Redis) : il aurait attrape l'oubli de `UserDismissedGroup`
- * dans `forFeature` qui a mis le service en crash-loop et casse la CD.
+ * This test re-reads the sources (no DB/Redis): it would have caught the missing
+ * `UserDismissedGroup` in `forFeature` that put the service in a crash-loop and broke CD.
  */
 
 const SRC_ROOT = __dirname;
 
-/** Liste recursivement les fichiers `.ts` de src (hors specs, declarations et node_modules). */
+/** Recursively lists the `.ts` files under src (excluding specs, declarations and node_modules). */
 function listSourceFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules') continue;
@@ -29,14 +29,14 @@ function listSourceFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-/** Identifiant TS valide (filtre les commentaires/jetons parasites dans un array). */
+/** Valid TS identifier (filters out comments/stray tokens inside an array). */
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-describe('AppModule - enregistrement DI des repositories TypeORM', () => {
+describe('AppModule - TypeORM repository DI registration', () => {
   const files = listSourceFiles(SRC_ROOT);
 
-  it('chaque @InjectRepository(Entity) est present dans un TypeOrmModule.forFeature([…])', () => {
-    // 1. Toutes les entites injectees via @InjectRepository(X), avec le fichier de la 1ere occurrence.
+  it('every @InjectRepository(Entity) is present in a TypeOrmModule.forFeature([…])', () => {
+    // 1. All entities injected via @InjectRepository(X), with the file of the first occurrence.
     const injectedAt = new Map<string, string>();
     const injectRe = /@InjectRepository\(\s*([A-Za-z0-9_]+)\s*\)/g;
     for (const file of files) {
@@ -47,7 +47,7 @@ describe('AppModule - enregistrement DI des repositories TypeORM', () => {
       }
     }
 
-    // 2. Toutes les entites enregistrees dans un forFeature([…]) (n'importe quel module).
+    // 2. All entities registered in a forFeature([…]) (any module).
     const registered = new Set<string>();
     const forFeatureRe = /forFeature\(\s*\[([\s\S]*?)\]/g;
     for (const file of files) {
@@ -60,17 +60,17 @@ describe('AppModule - enregistrement DI des repositories TypeORM', () => {
       }
     }
 
-    // 3. Toute entite injectee mais non enregistree casserait le bootstrap.
+    // 3. Any entity injected but not registered would break bootstrap.
     const missing = [...injectedAt.keys()].filter((e) => !registered.has(e));
     if (missing.length > 0) {
-      const detail = missing.map((e) => `  - ${e} (injecte dans ${injectedAt.get(e)})`).join('\n');
+      const detail = missing.map((e) => `  - ${e} (injected in ${injectedAt.get(e)})`).join('\n');
       throw new Error(
-        `Entite(s) injectee(s) via @InjectRepository absente(s) de TypeOrmModule.forFeature ` +
-          `(bootstrap NestJS KO au demarrage):\n${detail}`
+        `Entity/entities injected via @InjectRepository missing from TypeOrmModule.forFeature ` +
+          `(NestJS bootstrap would fail at startup):\n${detail}`
       );
     }
 
-    // Sanity : on a bien detecte des injections (sinon le scan est casse et ne protege rien).
+    // Sanity: injections were actually detected (otherwise the scan is broken and guards nothing).
     expect(injectedAt.size).toBeGreaterThan(0);
   });
 });

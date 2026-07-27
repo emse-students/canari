@@ -1,37 +1,37 @@
 /**
- * Classification centralisee des erreurs de DECHIFFREMENT d'un message MLS entrant.
+ * Centralized classification of DECRYPTION errors for an incoming MLS message.
  *
- * Le meme string-matching d'erreurs OpenMLS etait duplique entre le pipeline temps-reel
- * (`handleKnownGroup` dans `setupMessageHandler.ts`) et le replay d'historique (`history.ts`).
- * Toute divergence de sous-chaine = un bug silencieux : un message recuperable marque "vu" pour
- * toujours, ou un doublon benin traite comme un hors-sync (recovery destructrice parasite). Ce
- * module est la SOURCE UNIQUE de la classification ; chaque consommateur garde ensuite sa propre
- * POLITIQUE (ACK, escalade gap, retry, mark-seen), qui differe legitimement selon le contexte.
+ * The same OpenMLS error string-matching used to be duplicated between the real-time pipeline
+ * (`handleKnownGroup` in `setupMessageHandler.ts`) and the history replay (`history.ts`).
+ * Any substring divergence is a silent bug: a recoverable message marked "seen" forever, or a
+ * benign duplicate treated as an out-of-sync (spurious destructive recovery). This module is the
+ * SINGLE SOURCE of the classification; each consumer then keeps its own POLICY (ACK, gap
+ * escalation, retry, mark-seen), which legitimately differs by context.
  *
- * Note : la couche native Rust (`frontend/src-tauri/src/lib.rs`) classe les cas same-epoch benins
- * a la source (Passe 1) et reste hors de ce module - process distinct, pas de partage de code TS.
+ * Note: the native Rust layer (`frontend/src-tauri/src/lib.rs`) classifies benign same-epoch cases
+ * at the source (Pass 1) and stays outside this module - separate process, no shared TS code.
  */
 
-/** Nature d'une erreur remontee par le dechiffrement d'un message applicatif MLS entrant. */
+/** Nature of an error raised while decrypting an incoming MLS application message. */
 export type MlsDecryptErrorKind =
-  /** `CannotDecryptOwnMessage` : frame chiffree par/pour un autre device -> benin (ACK/skip). */
+  /** `CannotDecryptOwnMessage`: frame encrypted by/for another device -> benign (ACK/skip). */
   | 'own-message'
-  /** `SecretReuseError` : cle de generation deja consommee (doublon) -> benin, jamais recuperable. */
+  /** `SecretReuseError`: generation key already consumed (duplicate) -> benign, never recoverable. */
   | 'secret-reuse'
-  /** `GAP_QUEUED` (Tauri/SQLite) ou `epoch gap` (web) : commit manquant -> recuperable a l'arrivee des commits. */
+  /** `GAP_QUEUED` (Tauri/SQLite) or `epoch gap` (web): missing commit -> recoverable once commits arrive. */
   | 'epoch-gap'
-  /** `WrongEpoch` : frame d'une epoch pas encore atteinte par CE flux -> recuperable a un load ulterieur. */
+  /** `WrongEpoch`: frame from an epoch not yet reached by THIS stream -> recoverable on a later load. */
   | 'wrong-epoch'
-  /** `out of memory` / `unreachable` : panique WASM -> fatal. */
+  /** `out of memory` / `unreachable`: WASM panic -> fatal. */
   | 'oom'
-  /** Tout le reste -> hors-sync probable ; la politique (re-add, log) est a la charge de l'appelant. */
+  /** Everything else -> likely out-of-sync; the policy (re-add, log) is up to the caller. */
   | 'unknown';
 
 /**
- * Classe l'erreur de dechiffrement d'un message entrant en {@link MlsDecryptErrorKind}.
+ * Classifies an incoming message's decryption error into a {@link MlsDecryptErrorKind}.
  *
- * Les sous-chaines reconnues sont mutuellement exclusives en pratique (une erreur OpenMLS ne porte
- * qu'un seul de ces marqueurs) ; l'ordre ci-dessous ne sert qu'a un determinisme stable.
+ * The recognized substrings are mutually exclusive in practice (an OpenMLS error carries only one
+ * of these markers); the order below only exists for stable determinism.
  */
 export function classifyIncomingDecryptError(error: unknown): MlsDecryptErrorKind {
   const s = String(error);

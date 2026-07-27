@@ -80,13 +80,13 @@ function withAuthHeaders(extra: Record<string, string> = {}): Record<string, str
  */
 export async function buildLocalSyncManifest(
   storage: IStorage,
-  pin: string
+  deviceKeyB64: string
 ): Promise<SyncManifestPayload> {
   const conversations = await storage.getConversations();
   const items = await Promise.all(
     conversations.map(async (conv) => {
       const normalizedId = normalizeConversationId(conv.id);
-      const messages = await storage.getMessages(normalizedId, pin);
+      const messages = await storage.getMessages(normalizedId, deviceKeyB64);
       messages.sort(byTimestampThenId);
       return {
         conversationId: encodeConversationTransportId(normalizedId),
@@ -582,7 +582,7 @@ async function waitForDiffReady(
 export async function executeBidirectionalSyncRound(params: {
   historyBaseUrl: string;
   storage: IStorage;
-  pin: string;
+  deviceKeyB64: string;
   userId: string;
   myDeviceId: string;
   peerDeviceId: string;
@@ -592,9 +592,10 @@ export async function executeBidirectionalSyncRound(params: {
   importedMessageCount: number;
   diff: SyncDiffResponse;
 }> {
-  const { historyBaseUrl, storage, pin, userId, myDeviceId, peerDeviceId, sessionId } = params;
+  const { historyBaseUrl, storage, deviceKeyB64, userId, myDeviceId, peerDeviceId, sessionId } =
+    params;
 
-  const localManifest = await buildLocalSyncManifest(storage, pin);
+  const localManifest = await buildLocalSyncManifest(storage, deviceKeyB64);
   await uploadSyncManifest(historyBaseUrl, {
     sessionId,
     userId,

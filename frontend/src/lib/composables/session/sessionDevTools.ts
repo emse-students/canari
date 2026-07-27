@@ -2,7 +2,7 @@
  * Fonctions dev-tools extraites de useChatSession :
  * addDevMemberImpl, generateDevKeyPackageImpl, processDevWelcomeImpl.
  *
- * Ces fonctions ne sont utilisées qu'en développement (panneau de debug).
+ * These functions are only used in development (debug panel).
  */
 import { addDevMember, generateDevKeyPackage, processDevWelcome } from '$lib/utils/chat/actions';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
@@ -41,7 +41,10 @@ export async function generateDevKeyPackageImpl(
   cb: ChatSessionCallbacks
 ): Promise<void> {
   try {
-    const kp = await generateDevKeyPackage({ mlsService: ctx.ensureMls(), pin: ctx.getPin() });
+    const kp = await generateDevKeyPackage({
+      mlsService: ctx.ensureMls(),
+      deviceKeyB64: ctx.getDeviceKey(),
+    });
     ctx.setLastKeyPackage(kp);
   } catch (_e: unknown) {
     cb.log(`Err GenKeyPackage: ${_e instanceof Error ? _e.message : String(_e)}`);

@@ -348,7 +348,7 @@ export function resolveConversationListPresentation(
 export async function mergeDirectConversationDuplicates(
   convMetas: ConversationMeta[],
   userId: string,
-  pin: string,
+  deviceKeyB64: string,
   storage: IStorage,
   log: (msg: string) => void,
   mlsService?: IMlsService
@@ -411,15 +411,15 @@ export async function mergeDirectConversationDuplicates(
   for (const { canonical, duplicate } of duplicatesToMerge) {
     if (canonical.id === duplicate.id) continue;
     try {
-      const canonicalMessages = await storage.getMessages(canonical.id, pin);
-      const duplicateMessages = await storage.getMessages(duplicate.id, pin);
+      const canonicalMessages = await storage.getMessages(canonical.id, deviceKeyB64);
+      const duplicateMessages = await storage.getMessages(duplicate.id, deviceKeyB64);
       const byId = new Map<string, StoredMessage>();
       for (const m of canonicalMessages) byId.set(m.id, { ...m, conversationId: canonical.id });
       for (const m of duplicateMessages) {
         if (!byId.has(m.id)) byId.set(m.id, { ...m, conversationId: canonical.id });
       }
       const merged = Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
-      if (merged.length > 0) await storage.saveMessages(merged, pin);
+      if (merged.length > 0) await storage.saveMessages(merged, deviceKeyB64);
       await storage.deleteConversation(duplicate.id);
       // Delete the orphan group server-side so it does not reappear at the next login
       // via discoverMissingGroups.
@@ -487,7 +487,7 @@ export async function mergeDirectConversationDuplicates(
 /** All dependencies required by `loadExistingConversations`. */
 export interface LoadConversationsContext {
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   storage: IStorage;
   mlsService: IMlsService;
   /** Reactive map populated by this function - cleared and rebuilt on each call. */
@@ -515,13 +515,13 @@ export interface LoadConversationsContext {
  * conversations, prunes stale archived IDs, and reclassifies DMs via `getUserGroups`.
  */
 export async function loadExistingConversations(ctx: LoadConversationsContext) {
-  await migrateFromLocalStorage(ctx.userId, ctx.pin, ctx.storage, ctx.log);
+  await migrateFromLocalStorage(ctx.userId, ctx.deviceKeyB64, ctx.storage, ctx.log);
 
   const convMetas = await ctx.storage.getConversations();
   const mergedConvMetas = await mergeDirectConversationDuplicates(
     convMetas,
     ctx.userId,
-    ctx.pin,
+    ctx.deviceKeyB64,
     ctx.storage,
     ctx.log,
     ctx.mlsService
@@ -673,14 +673,14 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
 
         const storedMessages = await ctx.storage.getMessagesPage(
           meta.id,
-          ctx.pin,
+          ctx.deviceKeyB64,
           INITIAL_MESSAGES_PAGE
         );
         const msgs = await retroactivelyResolveHexIds(
           mapStoredMessagesToChatMessages(storedMessages, ctx.userId),
           ctx.storage,
           meta.id,
-          ctx.pin
+          ctx.deviceKeyB64
         );
         const preReplayMsgIds = new Set(msgs.map((m) => m.id));
         const existing = ctx.conversations.get(meta.id);
@@ -700,7 +700,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           id: meta.id,
           contactName: meta.id,
           userId: ctx.userId,
-          pin: ctx.pin,
+          deviceKeyB64: ctx.deviceKeyB64,
           storage: ctx.storage,
           getConversation: (name) => ctx.conversations.get(name),
           setConversation: (name, next) => ctx.conversations.set(name, next),
@@ -712,14 +712,14 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         // Reload from DB after network sync so display reflects new messages
         const refreshed = await ctx.storage.getMessagesPage(
           meta.id,
-          ctx.pin,
+          ctx.deviceKeyB64,
           INITIAL_MESSAGES_PAGE
         );
         const refreshedMsgs = await retroactivelyResolveHexIds(
           mapStoredMessagesToChatMessages(refreshed, ctx.userId),
           ctx.storage,
           meta.id,
-          ctx.pin
+          ctx.deviceKeyB64
         );
         const current = ctx.conversations.get(meta.id);
         if (current) {

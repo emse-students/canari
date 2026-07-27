@@ -104,7 +104,7 @@ export async function startPushService(
 ): Promise<void> {
   if (!isTauriRuntime()) {
     console.info('[Push] startPushService noop (non-Tauri environment)');
-    return; // web : pas de push
+    return; // web: no push
   }
 
   // FCM covers Android (native FCM) and iOS (FCM relays to APNs). The Rust

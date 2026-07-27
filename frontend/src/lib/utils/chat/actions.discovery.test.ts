@@ -89,7 +89,7 @@ describe('purgeOrphanGroup', () => {
       conversations,
       mlsService,
       userId: 'user-a',
-      pin: '1234',
+      deviceKeyB64: '1234',
       contactKey: 'g1',
       groupId: 'g1',
     });
@@ -102,11 +102,11 @@ describe('purgeOrphanGroup', () => {
 
 describe('discoverMissingGroups orphan cleanup', () => {
   it('marks an established conversation deletedRemotely (not purged) when it is a server tombstone', async () => {
-    // A ready conversation absente de notre membership MAIS encore presente cote serveur avec
-    // deletedAt (supprimee par un pair / nous sur un autre appareil). On retombe sur une
-    // tombstone deletedRemotely au lieu d'une purge silencieuse : l'utilisateur garde la ligne,
-    // voit la banniere et la supprime localement. (Une purge silencieuse laissait taper dans un
-    // groupe mort.) On ne purge QUE si getGroupServerStatus confirme l'absence totale ('absent').
+    // A ready conversation absent from our membership BUT still present server-side with
+    // deletedAt (deleted by a peer / us on another device). We land on a deletedRemotely
+    // tombstone instead of a silent purge: the user keeps the row, sees the banner and
+    // deletes it locally. (A silent purge would let them type into a dead group.) We only
+    // purge if getGroupServerStatus confirms total absence ('absent').
     const conversations = new Map<string, Conversation>([
       [
         'orphan-id',
@@ -125,7 +125,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
     const mlsService = makeMls({
       getUserGroups: vi.fn().mockResolvedValue([]),
       getLocalGroups: vi.fn().mockReturnValue([]),
-      // Tombstone : la ligne dm_groups existe encore avec deletedAt -> garder + banniere.
+      // Tombstone: the dm_groups row still exists with deletedAt -> keep + banner.
       getGroupServerStatus: vi
         .fn()
         .mockResolvedValue({ groupId: 'orphan-id', deletedAt: '2026-01-01T00:00:00Z' }),
@@ -134,7 +134,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
     await discoverMissingGroups({
       mlsService,
       userId: 'user-a',
-      pin: '1234',
+      deviceKeyB64: '1234',
       conversations,
       deleteConversation,
       saveConversation,
@@ -179,7 +179,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
     await discoverMissingGroups({
       mlsService,
       userId: 'user-a',
-      pin: '1234',
+      deviceKeyB64: '1234',
       conversations,
       deleteConversation: vi.fn().mockResolvedValue(undefined),
       saveConversation,
@@ -200,7 +200,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
           contactName: 'dismissed-id',
           name: 'Dismissée',
           messages: [],
-          lifecycle: 'removed', // meme marquee, un dismiss explicite la purge sur tous les appareils
+          lifecycle: 'removed', // even marked, an explicit dismiss purges it on all devices
           mlsStateHex: null,
         },
       ],
@@ -210,14 +210,14 @@ describe('discoverMissingGroups orphan cleanup', () => {
       getUserGroups: vi.fn().mockResolvedValue([]),
       getLocalGroups: vi.fn().mockReturnValue([]),
       getDismissedGroups: vi.fn().mockResolvedValue(['dismissed-id']),
-      // Meme si le groupe existe encore cote serveur, le dismiss prime -> purge.
+      // Even if the group still exists server-side, dismiss takes priority -> purge.
       getGroupServerStatus: vi.fn().mockResolvedValue({ groupId: 'dismissed-id', deletedAt: null }),
     });
 
     await discoverMissingGroups({
       mlsService,
       userId: 'user-a',
-      pin: '1234',
+      deviceKeyB64: '1234',
       conversations,
       deleteConversation,
       log: vi.fn(),
@@ -244,17 +244,17 @@ describe('discoverMissingGroups orphan cleanup', () => {
     const deleteConversation = vi.fn().mockResolvedValue(undefined);
     const saveConversation = vi.fn().mockResolvedValue(undefined);
     const mlsService = makeMls({
-      getUserGroups: vi.fn().mockResolvedValue([]), // snapshot perime : ne liste pas fresh-id
+      getUserGroups: vi.fn().mockResolvedValue([]), // stale snapshot: does not list fresh-id
       getLocalGroups: vi.fn().mockReturnValue([]),
       getGroupServerStatus: vi.fn().mockResolvedValue({ groupId: 'fresh-id', deletedAt: null }),
-      // dm_group_members frais : on est toujours membre -> garder actif, NE PAS marquer.
+      // Fresh dm_group_members: we are still a member -> keep active, DO NOT mark.
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'user-a' }]),
     });
 
     await discoverMissingGroups({
       mlsService,
       userId: 'user-a',
-      pin: '1234',
+      deviceKeyB64: '1234',
       conversations,
       deleteConversation,
       saveConversation,
@@ -286,14 +286,14 @@ describe('discoverMissingGroups orphan cleanup', () => {
       getUserGroups: vi.fn().mockResolvedValue([]),
       getLocalGroups: vi.fn().mockReturnValue([]),
       getGroupServerStatus: vi.fn().mockResolvedValue({ groupId: 'excluded-id', deletedAt: null }),
-      // Groupe vivant mais on n'est PAS dans les membres -> exclusion -> banniere.
+      // Group alive but we are NOT in the members -> exclusion -> banner.
       getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'someone-else' }]),
     });
 
     await discoverMissingGroups({
       mlsService,
       userId: 'user-a',
-      pin: '1234',
+      deviceKeyB64: '1234',
       conversations,
       deleteConversation,
       saveConversation,
@@ -328,7 +328,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
     await discoverMissingGroups({
       mlsService,
       userId: 'user-a',
-      pin: '1234',
+      deviceKeyB64: '1234',
       conversations,
       deleteConversation,
       log: vi.fn(),
@@ -348,7 +348,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
     await discoverMissingGroups({
       mlsService,
       userId: 'user-a',
-      pin: '1234',
+      deviceKeyB64: '1234',
       conversations,
       log: vi.fn(),
     });
@@ -380,7 +380,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
     await discoverMissingGroups({
       mlsService,
       userId: 'user-a',
-      pin: '1234',
+      deviceKeyB64: '1234',
       conversations,
       deleteConversation,
       log: vi.fn(),

@@ -40,7 +40,7 @@ export interface RecoveryDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   conversations: SvelteMap<string, Conversation>;
   getSelectedContact: () => string | null;
   setSelectedContact: (id: string | null) => void;
@@ -120,7 +120,12 @@ export async function requestReAdd(
       cancelReAdd(groupId, timers);
       clearGroupNotReady(deps.userId, groupId);
       if (await purgePhantomConversation(groupId, deps))
-        await persistMlsStateAfterMutation(deps.mlsService, deps.userId, deps.pin, deps.log);
+        await persistMlsStateAfterMutation(
+          deps.mlsService,
+          deps.userId,
+          deps.deviceKeyB64,
+          deps.log
+        );
       return;
     }
     // Transient network error: skip this round, the watchdog retries on its cadence.

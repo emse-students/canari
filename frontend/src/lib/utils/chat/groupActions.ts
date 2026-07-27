@@ -95,10 +95,10 @@ export async function deleteGroupAndBroadcast(params: {
   mlsService: IMlsService;
   groupId: string;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   log?: (msg: string) => void;
 }): Promise<void> {
-  const { mlsService, groupId, userId, pin, log } = params;
+  const { mlsService, groupId, userId, deviceKeyB64, log } = params;
 
   // 1. Notify peers via MLS BEFORE server deletion.
   // Encryption requires WASM state (group must be local),
@@ -135,7 +135,7 @@ export async function deleteGroupAndBroadcast(params: {
   }
 
   // 4. Persist MLS state (forgetGroup modified the WASM tree)
-  await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 }
 
 /** Renames the group on the server, then broadcasts a "groupRenamed" system message to all members so their UIs update. */
@@ -144,9 +144,9 @@ export async function renameGroupAndBroadcast(params: {
   groupId: string;
   newName: string;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
 }) {
-  const { mlsService, groupId, newName, userId, pin } = params;
+  const { mlsService, groupId, newName, userId, deviceKeyB64 } = params;
   await mlsService.renameGroup(groupId, newName);
 
   // Broadcast the rename notification - best-effort: the local rename is
@@ -158,7 +158,7 @@ export async function renameGroupAndBroadcast(params: {
   } catch {
     // Non-blocking: rename already applied server-side
   }
-  await persistMlsStateAfterMutation(mlsService, userId, pin);
+  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
 }
 
 /** Sets the group avatar on the server, then broadcasts a "groupImageChanged" system message to all members so their UIs update. Pass mediaId=null to remove the photo. */
@@ -167,9 +167,9 @@ export async function setGroupImageAndBroadcast(params: {
   groupId: string;
   mediaId: string | null;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
 }) {
-  const { mlsService, groupId, mediaId, userId, pin } = params;
+  const { mlsService, groupId, mediaId, userId, deviceKeyB64 } = params;
   await mlsService.setGroupImage(groupId, mediaId);
 
   // Broadcast the photo change - best-effort: the change is already committed to
@@ -183,7 +183,7 @@ export async function setGroupImageAndBroadcast(params: {
   } catch {
     // Non-blocking: image already applied server-side
   }
-  await persistMlsStateAfterMutation(mlsService, userId, pin);
+  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
 }
 
 /**
@@ -219,9 +219,9 @@ export async function removeMemberAndBroadcast(params: {
   groupId: string;
   memberId: string;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
 }) {
-  const { mlsService, groupId, memberId, userId, pin } = params;
+  const { mlsService, groupId, memberId, userId, deviceKeyB64 } = params;
 
   // 1. MLS remove commit: removes the member's leaf for all remaining members.
   await mlsService.removeMember(groupId, [memberId]);
@@ -236,7 +236,7 @@ export async function removeMemberAndBroadcast(params: {
     /* non-blocking */
   }
 
-  await persistMlsStateAfterMutation(mlsService, userId, pin);
+  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
 }
 
 /**
@@ -255,9 +255,9 @@ export async function leaveGroupAndBroadcast(params: {
   mlsService: IMlsService;
   groupId: string;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
 }): Promise<void> {
-  const { mlsService, groupId, userId, pin } = params;
+  const { mlsService, groupId, userId, deviceKeyB64 } = params;
 
   // 1. Notify BEFORE server deletion (WASM must be intact to encrypt).
   await notifyMembershipChange(mlsService, groupId, 'memberLeft', { userId });
@@ -276,7 +276,7 @@ export async function leaveGroupAndBroadcast(params: {
     /* non-blocking */
   }
 
-  await persistMlsStateAfterMutation(mlsService, userId, pin);
+  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
 }
 
 /**
@@ -286,11 +286,11 @@ export async function leaveGroupAndBroadcast(params: {
 export async function persistMlsStateAfterMutation(
   mlsService: IMlsService,
   userId: string,
-  pin: string,
+  deviceKeyB64: string,
   log?: (msg: string) => void
 ): Promise<void> {
   try {
-    await persistMlsStructuralCheckpoint({ mlsService, pin, userId });
+    await persistMlsStructuralCheckpoint({ mlsService, deviceKeyB64, userId });
   } catch (e) {
     log?.(`[MLS] saveState failed after mutation: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -345,16 +345,16 @@ export async function purgeOrphanGroup(params: {
   conversations: Map<string, Conversation>;
   mlsService: IMlsService;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   contactKey: string;
   groupId: string;
   deleteConversation?: (key: string) => Promise<void>;
   log?: (msg: string) => void;
 }): Promise<void> {
-  const { mlsService, userId, pin, groupId, log, ...uiParams } = params;
+  const { mlsService, userId, deviceKeyB64, groupId, log, ...uiParams } = params;
   const mlsChanged = forgetMlsGroupIfPresent(mlsService, groupId, log);
   if (mlsChanged) {
-    await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
   }
   await purgeLocalConversationRecord({ ...uiParams, groupId, log });
 }
@@ -389,14 +389,14 @@ export async function handleDuplicateLeafError(params: {
   targetUserId: string;
   targetDeviceId: string;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   log: (msg: string) => void;
 }): Promise<void> {
-  const { mlsService, groupId, targetUserId, targetDeviceId, userId, pin, log } = params;
+  const { mlsService, groupId, targetUserId, targetDeviceId, userId, deviceKeyB64, log } = params;
 
   log(`[MLS] DuplicateSignature: kicking stale leaf for ${targetDeviceId.slice(0, 12)}...`);
   await kickStaleLeaf(groupId, targetUserId, targetDeviceId, mlsService, log);
-  await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 }
 
 /**
@@ -461,18 +461,18 @@ export async function sendFullHistoryBundle(
   groupId: string,
   deps: {
     storage: IStorage | null;
-    pin: string;
+    deviceKeyB64: string;
     mlsService: IMlsService;
     log: (msg: string) => void;
   },
   chunkSize = 200
 ): Promise<void> {
-  const { storage, pin, mlsService, log } = deps;
+  const { storage, deviceKeyB64, mlsService, log } = deps;
   if (!storage) return;
 
   let messages: StoredMessage[];
   try {
-    messages = await storage.getMessages(groupId, pin);
+    messages = await storage.getMessages(groupId, deviceKeyB64);
   } catch {
     return;
   }

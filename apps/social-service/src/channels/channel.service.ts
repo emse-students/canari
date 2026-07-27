@@ -4,28 +4,28 @@ import {
   ForbiddenException,
   Logger,
   BadRequestException,
-} from "@nestjs/common";
-import { InjectRepository } from "@nestjs/typeorm";
-import { Repository, In, LessThan } from "typeorm";
-import * as crypto from "crypto";
-import { Workspace } from "./entities/workspace.entity";
-import { Channel } from "./entities/channel.entity";
-import { ChannelRole } from "./entities/channel-role.entity";
-import { ChannelMember } from "./entities/channel-member.entity";
-import { ChannelMessage } from "./entities/channel-message.entity";
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, In, LessThan } from 'typeorm';
+import * as crypto from 'crypto';
+import { Workspace } from './entities/workspace.entity';
+import { Channel } from './entities/channel.entity';
+import { ChannelRole } from './entities/channel-role.entity';
+import { ChannelMember } from './entities/channel-member.entity';
+import { ChannelMessage } from './entities/channel-message.entity';
 import {
   ChannelKeyDistribution,
   type ChannelKeyDistributionStatus,
-} from "./entities/channel-key-distribution.entity";
-import { WorkspaceInvite } from "./entities/workspace-invite.entity";
-import { RedisService } from "../common/redis";
+} from './entities/channel-key-distribution.entity';
+import { WorkspaceInvite } from './entities/workspace-invite.entity';
+import { RedisService } from '../common/redis';
 
 import {
   CHANNEL_PERMISSIONS,
   DEFAULT_ADMIN_PERMISSIONS,
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
-} from "./permissions";
+} from './permissions';
 
 import {
   CreateChannelDto,
@@ -43,57 +43,57 @@ import {
   type ChannelNotificationLevel,
   type ChannelPollMeta,
   type ChannelWritePolicy,
-} from "./dto/channel.dto";
+} from './dto/channel.dto';
 
 /** Manages workspaces, channels, roles, members, key distribution, and encrypted messages. */
 @Injectable()
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
   private readonly deliveryUrl =
-    process.env.DELIVERY_INTERNAL_URL ?? "http://chat-delivery-service:3010";
-  private readonly internalSecret = process.env.INTERNAL_SECRET ?? "";
+    process.env.DELIVERY_INTERNAL_URL ?? 'http://chat-delivery-service:3010';
+  private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
 
   /** Normalises a French or English role label to one of three canonical values: admin, moderator, or member. */
-  private normalizeRoleLabelToCanonical(name?: string | null): "admin" | "moderator" | "member" {
-    const normalized = String(name || "")
+  private normalizeRoleLabelToCanonical(name?: string | null): 'admin' | 'moderator' | 'member' {
+    const normalized = String(name || '')
       .trim()
       .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "");
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
 
     if (
-      normalized === "administrateur" ||
-      normalized === "administrator" ||
-      normalized === "admin"
+      normalized === 'administrateur' ||
+      normalized === 'administrator' ||
+      normalized === 'admin'
     ) {
-      return "admin";
+      return 'admin';
     }
-    if (normalized === "moderateur" || normalized === "moderator") {
-      return "moderator";
+    if (normalized === 'moderateur' || normalized === 'moderator') {
+      return 'moderator';
     }
-    return "member";
+    return 'member';
   }
 
   /** Maps any role name input to the canonical display name stored in the workspace roles table. */
   private mapRoleInputToWorkspaceRoleName(name?: string | null): string {
-    const normalized = String(name || "")
+    const normalized = String(name || '')
       .trim()
       .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "");
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
 
-    if (!normalized || normalized === "member" || normalized === "membre") return "Membre";
+    if (!normalized || normalized === 'member' || normalized === 'membre') return 'Membre';
     if (
-      normalized === "admin" ||
-      normalized === "administrateur" ||
-      normalized === "administrator"
+      normalized === 'admin' ||
+      normalized === 'administrateur' ||
+      normalized === 'administrator'
     ) {
-      return "Administrateur";
+      return 'Administrateur';
     }
-    if (normalized === "moderator" || normalized === "moderateur" || normalized === "modérateur") {
-      return "Modérateur";
+    if (normalized === 'moderator' || normalized === 'moderateur' || normalized === 'modérateur') {
+      return 'Modérateur';
     }
-    return name?.trim() || "Membre";
+    return name?.trim() || 'Membre';
   }
 
   /**
@@ -104,7 +104,7 @@ export class ChannelService {
   private async memberHasWorkspacePermission(
     workspaceId: string,
     userId: string,
-    permission: string,
+    permission: string
   ): Promise<boolean> {
     const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
     if (!member?.roleIds?.length) return false;
@@ -112,7 +112,7 @@ export class ChannelService {
     return roles.some(
       (r) =>
         r.permissions.includes(permission) ||
-        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
+        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
     );
   }
 
@@ -125,7 +125,7 @@ export class ChannelService {
   private async canAccessChannel(
     channel: Channel,
     _member: ChannelMember,
-    userId?: string,
+    userId?: string
   ): Promise<boolean> {
     if (!channel.isPrivate) return true;
     if (!userId) return false;
@@ -135,7 +135,7 @@ export class ChannelService {
     return this.memberHasWorkspacePermission(
       channel.workspaceId,
       normalized,
-      CHANNEL_PERMISSIONS.MANAGE_WORKSPACE,
+      CHANNEL_PERMISSIONS.MANAGE_WORKSPACE
     );
   }
 
@@ -146,21 +146,21 @@ export class ChannelService {
    *  - `admins` → roles carrying workspace.manage.
    */
   private async canWriteToChannel(channel: Channel, userId: string): Promise<boolean> {
-    const policy: ChannelWritePolicy = channel.writePolicy ?? "everyone";
-    if (policy === "everyone") return true;
+    const policy: ChannelWritePolicy = channel.writePolicy ?? 'everyone';
+    if (policy === 'everyone') return true;
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member?.roleIds?.length) return false;
     const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
-    if (policy === "admins") {
+    if (policy === 'admins') {
       return roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE));
     }
     // admins_moderators
     return roles.some(
       (r) =>
         r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_MESSAGES) ||
-        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
+        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
     );
   }
 
@@ -170,28 +170,28 @@ export class ChannelService {
    */
   private deriveEpochKey(masterSecret: string, channelId: string, version: number): Buffer {
     const salt = crypto
-      .createHash("sha256")
+      .createHash('sha256')
       .update(`channel-epoch:${channelId}:${version}`)
       .digest();
     const raw = crypto.hkdfSync(
-      "sha256",
-      Buffer.from(masterSecret, "base64"),
+      'sha256',
+      Buffer.from(masterSecret, 'base64'),
       salt,
-      Buffer.from("canari-channel-e2ee-v1"),
-      32,
+      Buffer.from('canari-channel-e2ee-v1'),
+      32
     );
     return Buffer.from(raw);
   }
 
   /** Builds the bootstrap payload (channelId, keyVersion, base64 epoch key) sent to a client on join or key refresh. */
   private buildChannelBootstrap(
-    channel: Pick<Channel, "id" | "keyVersion" | "masterSecret">,
+    channel: Pick<Channel, 'id' | 'keyVersion' | 'masterSecret'>
   ): ChannelBootstrapDto {
     const epochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
     return {
       channelId: channel.id,
       keyVersion: channel.keyVersion,
-      newEpochBaseKey: epochKey.toString("base64"),
+      newEpochBaseKey: epochKey.toString('base64'),
     };
   }
 
@@ -205,7 +205,7 @@ export class ChannelService {
     private readonly keyDistributionRepo: Repository<ChannelKeyDistribution>,
     @InjectRepository(WorkspaceInvite)
     private readonly inviteRepo: Repository<WorkspaceInvite>,
-    private readonly redis: RedisService,
+    private readonly redis: RedisService
   ) {}
 
   // ================= INVITES (shareable community links) =================
@@ -218,7 +218,7 @@ export class ChannelService {
     return roles.some(
       (r) =>
         r.permissions.includes(CHANNEL_PERMISSIONS.INVITE_MEMBERS) ||
-        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
+        r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
     );
   }
 
@@ -237,16 +237,16 @@ export class ChannelService {
   async createWorkspaceInvite(
     workspaceId: string,
     actorUserId: string,
-    opts?: { expiresAt?: string | null; maxUses?: number | null },
+    opts?: { expiresAt?: string | null; maxUses?: number | null }
   ): Promise<{ token: string }> {
     const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
-    if (!workspace) throw new NotFoundException("Workspace not found");
+    if (!workspace) throw new NotFoundException('Workspace not found');
     if (!(await this.actorCanInvite(workspaceId, actorUserId))) {
-      throw new ForbiddenException("Missing INVITE_USERS permission");
+      throw new ForbiddenException('Missing INVITE_USERS permission');
     }
     const invite = this.inviteRepo.create({
       workspaceId,
-      token: crypto.randomBytes(18).toString("base64url"),
+      token: crypto.randomBytes(18).toString('base64url'),
       createdBy: actorUserId,
       expiresAt: opts?.expiresAt ? new Date(opts.expiresAt) : null,
       maxUses: opts?.maxUses ?? null,
@@ -285,14 +285,14 @@ export class ChannelService {
    */
   async acceptWorkspaceInvite(
     token: string,
-    userId: string,
+    userId: string
   ): Promise<{ workspaceSlug: string; alreadyMember: boolean }> {
     const invite = await this.inviteRepo.findOne({ where: { token } });
     if (!invite || !this.inviteIsValid(invite)) {
-      throw new NotFoundException("Invalid or expired invitation.");
+      throw new NotFoundException('Invalid or expired invitation.');
     }
     const ws = await this.workspaceRepo.findOne({ where: { id: invite.workspaceId } });
-    if (!ws) throw new NotFoundException("Workspace not found");
+    if (!ws) throw new NotFoundException('Workspace not found');
 
     const existing = await this.memberRepo.findOne({
       where: { workspaceId: ws.id, userId },
@@ -307,10 +307,10 @@ export class ChannelService {
         workspaceId: ws.id,
         userId,
         roleIds: baseRole ? [baseRole.id] : [],
-      }),
+      })
     );
 
-    await this.inviteRepo.increment({ id: invite.id }, "uses", 1);
+    await this.inviteRepo.increment({ id: invite.id }, 'uses', 1);
 
     // Notify connected clients (the joining user's devices + existing members) to refresh.
     const repChannel = await this.channelRepo.findOne({
@@ -319,18 +319,18 @@ export class ChannelService {
     if (repChannel) {
       const memberIds = await this.getWorkspaceMemberIds(ws.id);
       await this.redis.publishChannelEvent(
-        "channel.member.joined",
+        'channel.member.joined',
         {
           channelId: repChannel.id,
           channelName: repChannel.name,
           workspaceId: ws.id,
           workspaceSlug: ws.slug,
           workspaceName: ws.name,
-          visibility: "public",
-          roleName: baseRole?.name ?? "Membre",
+          visibility: 'public',
+          roleName: baseRole?.name ?? 'Membre',
           joinedBy: userId,
         },
-        memberIds,
+        memberIds
       );
     }
     this.logger.log(`[INVITE] accepted workspace=${ws.id} user=${userId.slice(0, 8)}`);
@@ -356,7 +356,7 @@ export class ChannelService {
    */
   private async ensureUniqueWorkspaceSlug(requested: string): Promise<string> {
     const base = requested.trim();
-    if (!base) throw new BadRequestException("Slug de communaute invalide.");
+    if (!base) throw new BadRequestException('Slug de communaute invalide.');
 
     let candidate = base;
     for (let suffix = 2; ; suffix++) {
@@ -369,7 +369,7 @@ export class ChannelService {
   async createWorkspace(input: CreateWorkspaceDto) {
     const slug = await this.ensureUniqueWorkspaceSlug(input.slug);
     this.logger.log(
-      `[WORKSPACE] create name="${input.name}" slug="${slug}" (requested="${input.slug}") by=${input.createdBy.slice(0, 8)}`,
+      `[WORKSPACE] create name="${input.name}" slug="${slug}" (requested="${input.slug}") by=${input.createdBy.slice(0, 8)}`
     );
     const ws = this.workspaceRepo.create({
       name: input.name,
@@ -380,7 +380,7 @@ export class ChannelService {
 
     const adminRole = this.roleRepo.create({
       workspaceId: savedWs.id,
-      name: "Administrateur",
+      name: 'Administrateur',
       priority: 100,
       permissions: DEFAULT_ADMIN_PERMISSIONS as string[],
     });
@@ -388,7 +388,7 @@ export class ChannelService {
 
     const moderatorRole = this.roleRepo.create({
       workspaceId: savedWs.id,
-      name: "Modérateur",
+      name: 'Modérateur',
       priority: 50,
       permissions: DEFAULT_MODERATOR_PERMISSIONS as string[],
     });
@@ -396,7 +396,7 @@ export class ChannelService {
 
     const memberRole = this.roleRepo.create({
       workspaceId: savedWs.id,
-      name: "Membre",
+      name: 'Membre',
       priority: 10,
       permissions: DEFAULT_MEMBER_PERMISSIONS as string[],
     });
@@ -411,9 +411,9 @@ export class ChannelService {
 
     const generalChannel = this.channelRepo.create({
       workspaceId: savedWs.id,
-      name: "general",
+      name: 'general',
       isPrivate: false,
-      masterSecret: crypto.randomBytes(32).toString("base64"),
+      masterSecret: crypto.randomBytes(32).toString('base64'),
       keyVersion: 1,
     });
     const savedGeneralChannel = await this.channelRepo.save(generalChannel);
@@ -430,7 +430,7 @@ export class ChannelService {
    */
   async getWorkspaceBySlug(slug: string, userId?: string) {
     const ws = await this.workspaceRepo.findOne({ where: { slug } });
-    if (!ws) throw new NotFoundException("Workspace not found");
+    if (!ws) throw new NotFoundException('Workspace not found');
 
     const channels = await this.channelRepo.find({ where: { workspaceId: ws.id } });
     const members = await this.memberRepo.find({ where: { workspaceId: ws.id } });
@@ -439,13 +439,13 @@ export class ChannelService {
     let viewerCanManage = false;
     if (userId) {
       const viewerMember = members.find(
-        (m) => m.userId.trim().toLowerCase() === userId.trim().toLowerCase(),
+        (m) => m.userId.trim().toLowerCase() === userId.trim().toLowerCase()
       );
       if (viewerMember?.roleIds?.length) {
         const manageRoleIds = new Set(
           roles
             .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
-            .map((r) => r.id),
+            .map((r) => r.id)
         );
         viewerCanManage = viewerMember.roleIds.some((id) => manageRoleIds.has(id));
       }
@@ -473,7 +473,7 @@ export class ChannelService {
     const manageRoleIds = new Set(
       roles
         .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
-        .map((r) => r.id),
+        .map((r) => r.id)
     );
     const canManageByWorkspace = new Map<string, boolean>();
     for (const membership of memberships) {
@@ -482,7 +482,7 @@ export class ChannelService {
       // bearing a MANAGE_WORKSPACE role is enough to manage it.
       canManageByWorkspace.set(
         membership.workspaceId,
-        (canManageByWorkspace.get(membership.workspaceId) ?? false) || canManage,
+        (canManageByWorkspace.get(membership.workspaceId) ?? false) || canManage
       );
     }
 
@@ -503,7 +503,7 @@ export class ChannelService {
         viewerCanManage: canManageByWorkspace.get(w.id) ?? false,
       }))
       .sort(
-        (a, b) => (sortOrderByWorkspace.get(a.id) ?? 0) - (sortOrderByWorkspace.get(b.id) ?? 0),
+        (a, b) => (sortOrderByWorkspace.get(a.id) ?? 0) - (sortOrderByWorkspace.get(b.id) ?? 0)
       );
   }
 
@@ -515,8 +515,8 @@ export class ChannelService {
     this.logger.debug(`reorder ${orderedIds.length} workspaces for user=${userId}`);
     await Promise.all(
       orderedIds.map((workspaceId, index) =>
-        this.memberRepo.update({ userId, workspaceId }, { sortOrder: index }),
-      ),
+        this.memberRepo.update({ userId, workspaceId }, { sortOrder: index })
+      )
     );
   }
 
@@ -528,7 +528,7 @@ export class ChannelService {
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId: input.workspaceId, userId: input.actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
@@ -536,10 +536,10 @@ export class ChannelService {
       hasPerm = roles.some(
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES),
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
       );
     }
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_ROLES permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
 
     const role = this.roleRepo.create({
       workspaceId: input.workspaceId,
@@ -557,7 +557,7 @@ export class ChannelService {
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId: input.workspaceId, userId: input.actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
@@ -565,18 +565,18 @@ export class ChannelService {
       hasPerm = roles.some(
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL),
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_CHANNEL permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
-    const channelName = (input.name ?? "").trim().toLowerCase();
-    if (!channelName) throw new BadRequestException("Channel name cannot be empty");
+    const channelName = (input.name ?? '').trim().toLowerCase();
+    if (!channelName) throw new BadRequestException('Channel name cannot be empty');
     if (channelName.length > 80)
-      throw new BadRequestException("Channel name too long (max 80 characters)");
+      throw new BadRequestException('Channel name too long (max 80 characters)');
 
-    const masterSecret = crypto.randomBytes(32).toString("base64");
-    const isPrivate = input.visibility === "private";
+    const masterSecret = crypto.randomBytes(32).toString('base64');
+    const isPrivate = input.visibility === 'private';
 
     const channel = this.channelRepo.create({
       workspaceId: input.workspaceId,
@@ -595,7 +595,7 @@ export class ChannelService {
       id: savedChannel.id,
       workspaceId: savedChannel.workspaceId,
       name: savedChannel.name,
-      visibility: savedChannel.isPrivate ? "private" : "public",
+      visibility: savedChannel.isPrivate ? 'private' : 'public',
       keyVersion: savedChannel.keyVersion,
       keyBootstrap: this.buildChannelBootstrap(savedChannel),
     };
@@ -604,32 +604,32 @@ export class ChannelService {
   /** Updates the workspace's cover image and broadcasts a workspace.updated event to all members. */
   async updateWorkspaceImage(workspaceId: string, actorUserId: string, mediaId: string) {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(mediaId)) {
-      throw new ForbiddenException("Invalid mediaId format");
+      throw new ForbiddenException('Invalid mediaId format');
     }
 
     const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
-    if (!workspace) throw new NotFoundException("Workspace not found");
+    if (!workspace) throw new NotFoundException('Workspace not found');
 
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
       const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
       hasPerm = roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE));
     }
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_WORKSPACE permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
 
     workspace.imageMediaId = mediaId;
     await this.workspaceRepo.save(workspace);
 
     const workspaceMemberIds = await this.getWorkspaceMemberIds(workspaceId);
     await this.redis.publishChannelEvent(
-      "workspace.updated",
+      'workspace.updated',
       { workspaceId, imageMediaId: mediaId },
-      workspaceMemberIds,
+      workspaceMemberIds
     );
 
     return { success: true, workspaceId, imageMediaId: mediaId };
@@ -638,18 +638,18 @@ export class ChannelService {
   /** Removes the user from the workspace and broadcasts a member-kicked event so other clients clean up their UI. */
   async leaveWorkspace(workspaceId: string, userId: string) {
     const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
-    if (!workspace) throw new NotFoundException("Workspace not found");
+    if (!workspace) throw new NotFoundException('Workspace not found');
 
     const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
-    if (!member) throw new NotFoundException("Not a member of this workspace");
+    if (!member) throw new NotFoundException('Not a member of this workspace');
 
     await this.memberRepo.delete({ workspaceId, userId });
 
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
     await this.redis.publishChannelEvent(
-      "channel.member.kicked",
+      'channel.member.kicked',
       { workspaceId, kickedUserId: userId, kickedBy: userId },
-      [...remainingMemberIds, userId],
+      [...remainingMemberIds, userId]
     );
 
     return { success: true };
@@ -658,12 +658,12 @@ export class ChannelService {
   /** Renames a channel (lowercased) and broadcasts a channel.updated event so connected clients update their sidebar. */
   async renameChannel(channelId: string, actorUserId: string, newName: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
@@ -671,24 +671,24 @@ export class ChannelService {
       hasPerm = roles.some(
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL),
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_CHANNEL permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     const trimmedName = newName.trim().toLowerCase();
-    if (!trimmedName) throw new BadRequestException("Channel name cannot be empty");
+    if (!trimmedName) throw new BadRequestException('Channel name cannot be empty');
     if (trimmedName.length > 80)
-      throw new BadRequestException("Channel name too long (max 80 characters)");
+      throw new BadRequestException('Channel name too long (max 80 characters)');
 
     channel.name = trimmedName;
     await this.channelRepo.save(channel);
 
     const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
     await this.redis.publishChannelEvent(
-      "channel.updated",
+      'channel.updated',
       { channelId, name: channel.name, workspaceId: channel.workspaceId },
-      workspaceMemberIds,
+      workspaceMemberIds
     );
 
     return { success: true, channelId, name: channel.name };
@@ -697,18 +697,18 @@ export class ChannelService {
   /** Returns the channel's current access settings plus the workspace's available roles. */
   async getChannelAccess(channelId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: actorUserId },
     });
-    if (!member) throw new ForbiddenException("Not a member of this workspace");
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
 
     return {
       channelId,
       isPrivate: channel.isPrivate,
       allowedUsers: channel.allowedUsers || [],
-      writePolicy: channel.writePolicy ?? "everyone",
+      writePolicy: channel.writePolicy ?? 'everyone',
     };
   }
 
@@ -718,15 +718,15 @@ export class ChannelService {
     actorUserId: string,
     isPrivate: boolean,
     allowedUserIds: string[],
-    writePolicy?: ChannelWritePolicy,
+    writePolicy?: ChannelWritePolicy
   ) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
@@ -734,10 +734,10 @@ export class ChannelService {
       hasPerm = roles.some(
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL),
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_CHANNEL permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     channel.isPrivate = isPrivate;
     channel.allowedUsers = isPrivate ? allowedUserIds.map((u) => u.trim().toLowerCase()) : [];
@@ -758,12 +758,12 @@ export class ChannelService {
   /** Marks a channel as archived (hidden from listings) and broadcasts a channel.deleted event to workspace members. */
   async archiveChannel(channelId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
@@ -771,19 +771,19 @@ export class ChannelService {
       hasPerm = roles.some(
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL),
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_CHANNEL permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     channel.archived = true;
     await this.channelRepo.save(channel);
 
     const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
     await this.redis.publishChannelEvent(
-      "channel.deleted",
+      'channel.deleted',
       { channelId, workspaceId: channel.workspaceId },
-      workspaceMemberIds,
+      workspaceMemberIds
     );
 
     return { success: true };
@@ -795,12 +795,12 @@ export class ChannelService {
    */
   async rotateChannelKey(channelId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
@@ -808,14 +808,14 @@ export class ChannelService {
       hasPerm = roles.some(
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL),
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_CHANNEL permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
     // Backfill master secret if missing
     if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString("base64");
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
     }
 
     channel.keyVersion += 1;
@@ -825,13 +825,13 @@ export class ChannelService {
 
     const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
     await this.redis.publishChannelEvent(
-      "channel.key.rotated",
+      'channel.key.rotated',
       {
         channelId,
-        newEpochBaseKey: epochKey.toString("base64"),
+        newEpochBaseKey: epochKey.toString('base64'),
         keyVersion: channel.keyVersion,
       },
-      workspaceMemberIds,
+      workspaceMemberIds
     );
 
     return { channelId, keyVersion: channel.keyVersion };
@@ -842,19 +842,19 @@ export class ChannelService {
    */
   private async pushKeyToUser(channel: Channel, userId: string) {
     if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString("base64");
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
       await this.channelRepo.save(channel);
     }
 
     const epochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
     await this.redis.publishChannelEvent(
-      "channel.key.rotated",
+      'channel.key.rotated',
       {
         channelId: channel.id,
-        newEpochBaseKey: epochKey.toString("base64"),
+        newEpochBaseKey: epochKey.toString('base64'),
         keyVersion: channel.keyVersion,
       },
-      [userId],
+      [userId]
     );
   }
 
@@ -864,10 +864,10 @@ export class ChannelService {
     channel: Channel,
     channelName: string,
     epochKeyB64: string,
-    epochKeys?: Array<{ keyVersion: number; encryptedChannelKey: string }>,
+    epochKeys?: Array<{ keyVersion: number; encryptedChannelKey: string }>
   ): ChannelKeyDistributionPayloadDto {
     return {
-      type: "channel_key_distribution",
+      type: 'channel_key_distribution',
       channelId: channel.id,
       channelName,
       keyVersion: distribution.keyVersion,
@@ -883,39 +883,39 @@ export class ChannelService {
   private async updateDistributionStatus(
     distributionOrId: ChannelKeyDistribution | string,
     status: ChannelKeyDistributionStatus,
-    actorUserId?: string,
+    actorUserId?: string
   ) {
     const distribution =
-      typeof distributionOrId === "string"
+      typeof distributionOrId === 'string'
         ? await this.keyDistributionRepo.findOne({ where: { id: distributionOrId } })
         : distributionOrId;
-    if (!distribution) throw new NotFoundException("Channel key distribution not found");
+    if (!distribution) throw new NotFoundException('Channel key distribution not found');
 
     if (actorUserId && distribution.targetUserId !== actorUserId) {
-      throw new ForbiddenException("Only target user can update this distribution");
+      throw new ForbiddenException('Only target user can update this distribution');
     }
 
     const isValidTransition =
-      (distribution.status === "pending_key_distribution" && status === "key_sent") ||
-      (distribution.status === "key_sent" &&
-        (status === "key_received" || status === "key_acked")) ||
-      (distribution.status === "key_received" && status === "key_acked") ||
+      (distribution.status === 'pending_key_distribution' && status === 'key_sent') ||
+      (distribution.status === 'key_sent' &&
+        (status === 'key_received' || status === 'key_acked')) ||
+      (distribution.status === 'key_received' && status === 'key_acked') ||
       distribution.status === status;
     if (!isValidTransition) {
       throw new BadRequestException(
-        `Invalid distribution status transition ${distribution.status} -> ${status}`,
+        `Invalid distribution status transition ${distribution.status} -> ${status}`
       );
     }
 
     distribution.status = status;
-    if (status === "key_sent") {
+    if (status === 'key_sent') {
       distribution.sentAt = new Date();
       distribution.attempts += 1;
     }
-    if (status === "key_received") {
+    if (status === 'key_received') {
       distribution.receivedAt = new Date();
     }
-    if (status === "key_acked") {
+    if (status === 'key_acked') {
       distribution.ackedAt = new Date();
       if (!distribution.receivedAt) distribution.receivedAt = distribution.ackedAt;
     }
@@ -926,7 +926,7 @@ export class ChannelService {
   /** Lists all non-archived channels the user can access in a workspace, including the current epoch key bootstrap for each. */
   async listChannelsForUser(workspaceId: string, userId: string) {
     const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
-    if (!member) throw new ForbiddenException("Not a member of this workspace");
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
 
     const channels = await this.channelRepo.find({ where: { workspaceId, archived: false } });
     const accessible: typeof channels = [];
@@ -939,7 +939,7 @@ export class ChannelService {
       id: channel.id,
       workspaceId: channel.workspaceId,
       name: channel.name,
-      visibility: channel.isPrivate ? "private" : "public",
+      visibility: channel.isPrivate ? 'private' : 'public',
       keyVersion: channel.keyVersion,
       keyBootstrap: this.buildChannelBootstrap(channel),
     }));
@@ -948,14 +948,14 @@ export class ChannelService {
   /** Returns the current epoch key bootstrap for a single channel, used when reconnecting after a missed key rotation. */
   async getChannelKeyBootstrapForUser(channelId: string, userId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member) throw new ForbiddenException("Not a member of this workspace");
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
     if (!(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException("Not allowed to access this channel");
+      throw new ForbiddenException('Not allowed to access this channel');
     }
 
     return this.buildChannelBootstrap(channel);
@@ -964,21 +964,21 @@ export class ChannelService {
   /** Returns all epoch keys (versions 1…N) for a channel, allowing a new member to decrypt historical messages. */
   async getChannelHistoryKeysForUser(
     channelId: string,
-    userId: string,
+    userId: string
   ): Promise<ChannelHistoryKeysDto> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member) throw new ForbiddenException("Not a member of this workspace");
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
     if (!(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException("Not allowed to access this channel");
+      throw new ForbiddenException('Not allowed to access this channel');
     }
 
     if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString("base64");
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
       await this.channelRepo.save(channel);
     }
 
@@ -987,7 +987,7 @@ export class ChannelService {
       const key = this.deriveEpochKey(channel.masterSecret, channel.id, version);
       return {
         keyVersion: version,
-        encryptedChannelKey: key.toString("base64"),
+        encryptedChannelKey: key.toString('base64'),
       };
     });
 
@@ -1001,7 +1001,7 @@ export class ChannelService {
   /** Adds a user to a workspace channel. Creates the workspace membership with the default Member role if this is their first channel in the workspace. */
   async joinChannel(channelId: string, input: ChannelJoinDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const workspace = await this.workspaceRepo.findOne({ where: { id: channel.workspaceId } });
 
@@ -1012,7 +1012,7 @@ export class ChannelService {
 
     if (!member) {
       const defaultRole = await this.roleRepo.findOne({
-        where: { workspaceId: channel.workspaceId, name: "Member" },
+        where: { workspaceId: channel.workspaceId, name: 'Member' },
       });
       member = this.memberRepo.create({
         workspaceId: channel.workspaceId,
@@ -1026,18 +1026,18 @@ export class ChannelService {
     if (isNewMember) {
       const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
       await this.redis.publishChannelEvent(
-        "channel.member.joined",
+        'channel.member.joined',
         {
           channelId,
           channelName: channel.name,
           workspaceId: channel.workspaceId,
           workspaceSlug: workspace?.slug,
           workspaceName: workspace?.name,
-          visibility: channel.isPrivate ? "private" : "public",
-          roleName: input.roleName || "Member",
+          visibility: channel.isPrivate ? 'private' : 'public',
+          roleName: input.roleName || 'Member',
           joinedBy: input.userId,
         },
-        workspaceMemberIds,
+        workspaceMemberIds
       );
     }
 
@@ -1052,7 +1052,7 @@ export class ChannelService {
     if (!this.internalSecret) return true;
     try {
       const res = await fetch(`${this.deliveryUrl}/mls/devices/${encodeURIComponent(userId)}`, {
-        headers: { "X-Internal-Secret": this.internalSecret },
+        headers: { 'X-Internal-Secret': this.internalSecret },
         signal: AbortSignal.timeout(4_000),
       });
       if (!res.ok) return true;
@@ -1071,14 +1071,14 @@ export class ChannelService {
     channelId: string,
     distributionId: string,
     actorUserId: string,
-    keyVersion: number,
+    keyVersion: number
   ): Promise<{ distribution: ChannelKeyDistribution; member: ChannelMember; channel: Channel }> {
     const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
     if (!distribution || distribution.channelId !== channelId) {
-      throw new NotFoundException("Channel key distribution not found");
+      throw new NotFoundException('Channel key distribution not found');
     }
     if (distribution.keyVersion !== keyVersion) {
-      throw new ForbiddenException("Distribution keyVersion mismatch");
+      throw new ForbiddenException('Distribution keyVersion mismatch');
     }
     const [member, channel] = await Promise.all([
       this.memberRepo.findOne({
@@ -1087,7 +1087,7 @@ export class ChannelService {
       this.channelRepo.findOne({ where: { id: distribution.channelId } }),
     ]);
     if (!member || !channel || !(await this.canAccessChannel(channel, member, actorUserId))) {
-      throw new ForbiddenException("Target user no longer authorized for this channel");
+      throw new ForbiddenException('Target user no longer authorized for this channel');
     }
     return { distribution, member, channel };
   }
@@ -1095,7 +1095,7 @@ export class ChannelService {
   /** Invites a user to a channel. Rotates the channel key if it's a new member, then returns a full key-distribution payload so the invitee can decrypt all past messages. */
   async inviteToChannel(channelId: string, input: ChannelInviteDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const workspace = await this.workspaceRepo.findOne({ where: { id: channel.workspaceId } });
 
@@ -1103,7 +1103,7 @@ export class ChannelService {
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: input.actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
@@ -1112,16 +1112,16 @@ export class ChannelService {
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.INVITE_MEMBERS) ||
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL),
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
       );
     }
-    if (!hasPerm) throw new ForbiddenException("Missing INVITE_USERS permission");
+    if (!hasPerm) throw new ForbiddenException('Missing INVITE_USERS permission');
 
     // Reject early if the invitee has no MLS device - the key DM could never be delivered.
     const hasDevices = await this.userHasMlsDevices(input.targetUserId);
     if (!hasDevices) {
       throw new BadRequestException(
-        `User ${input.targetUserId} has not yet set up Canari on any device.`,
+        `User ${input.targetUserId} has not yet set up Canari on any device.`
       );
     }
 
@@ -1134,7 +1134,7 @@ export class ChannelService {
 
     if (!targetMember) {
       // Find the role to assign (default to Member if not specified)
-      const roleName = this.mapRoleInputToWorkspaceRoleName(input.roleName || "Membre");
+      const roleName = this.mapRoleInputToWorkspaceRoleName(input.roleName || 'Membre');
       const role = await this.roleRepo.findOne({
         where: { workspaceId: channel.workspaceId, name: roleName },
       });
@@ -1152,19 +1152,19 @@ export class ChannelService {
     if (isNewMember) {
       const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
       await this.redis.publishChannelEvent(
-        "channel.member.joined",
+        'channel.member.joined',
         {
           channelId,
           channelName: channel.name,
           workspaceId: channel.workspaceId,
           workspaceSlug: workspace?.slug,
           workspaceName: workspace?.name,
-          visibility: channel.isPrivate ? "private" : "public",
-          roleName: this.mapRoleInputToWorkspaceRoleName(input.roleName || "Membre"),
+          visibility: channel.isPrivate ? 'private' : 'public',
+          roleName: this.mapRoleInputToWorkspaceRoleName(input.roleName || 'Membre'),
           joinedBy: input.targetUserId,
           invitedBy: input.actorUserId,
         },
-        workspaceMemberIds,
+        workspaceMemberIds
       );
 
       // For private channels with user-based access, add the new member to allowedUsers.
@@ -1178,7 +1178,7 @@ export class ChannelService {
 
       // Membership change => mandatory channel key rotation.
       if (!channel.masterSecret) {
-        channel.masterSecret = crypto.randomBytes(32).toString("base64");
+        channel.masterSecret = crypto.randomBytes(32).toString('base64');
       }
       channel.keyVersion += 1;
       await this.channelRepo.save(channel);
@@ -1186,7 +1186,7 @@ export class ChannelService {
 
     // Existing members can be re-invited to resync historical keys.
     if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString("base64");
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
       await this.channelRepo.save(channel);
     }
 
@@ -1196,7 +1196,7 @@ export class ChannelService {
       const key = this.deriveEpochKey(channel.masterSecret, channel.id, version);
       return {
         keyVersion: version,
-        encryptedChannelKey: key.toString("base64"),
+        encryptedChannelKey: key.toString('base64'),
       };
     });
 
@@ -1207,16 +1207,16 @@ export class ChannelService {
         channelId: channel.id,
         targetUserId: input.targetUserId,
         keyVersion: channel.keyVersion,
-        status: In(["pending_key_distribution", "key_sent"]),
+        status: In(['pending_key_distribution', 'key_sent']),
       },
-      order: { createdAt: "DESC" },
+      order: { createdAt: 'DESC' },
     });
     const savedDistribution = await this.keyDistributionRepo.save(
       existingDist
         ? {
             ...existingDist,
             invitedBy: input.actorUserId,
-            status: "pending_key_distribution" as const,
+            status: 'pending_key_distribution' as const,
           }
         : this.keyDistributionRepo.create({
             workspaceId: channel.workspaceId,
@@ -1224,16 +1224,16 @@ export class ChannelService {
             targetUserId: input.targetUserId,
             invitedBy: input.actorUserId,
             keyVersion: channel.keyVersion,
-            status: "pending_key_distribution",
-          }),
+            status: 'pending_key_distribution',
+          })
     );
 
     const payload = this.toDistributionPayload(
       savedDistribution,
       channel,
       channel.name,
-      epochKey.toString("base64"),
-      epochKeys,
+      epochKey.toString('base64'),
+      epochKeys
     );
 
     return {
@@ -1247,18 +1247,18 @@ export class ChannelService {
   /** Removes a user from a channel (or strips their private-channel roles) and rotates the key so the departing user's copy is invalidated. */
   async leaveChannel(channelId: string, input: ChannelLeaveDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: input.userId },
     });
-    if (!member) throw new NotFoundException("Member not found");
+    if (!member) throw new NotFoundException('Member not found');
 
     // Rotate the key BEFORE removing the member so there is no window where the member
     // is absent but the key hasn't been rotated - which would let them decrypt messages
     // sent with the still-valid old key during that gap.
     if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString("base64");
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
     }
     channel.keyVersion += 1;
 
@@ -1274,13 +1274,13 @@ export class ChannelService {
     const newEpochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
     const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
     await this.redis.publishChannelEvent(
-      "channel.key.rotated",
+      'channel.key.rotated',
       {
         channelId,
-        newEpochBaseKey: newEpochKey.toString("base64"),
+        newEpochBaseKey: newEpochKey.toString('base64'),
         keyVersion: channel.keyVersion,
       },
-      workspaceMemberIds,
+      workspaceMemberIds
     );
 
     return { success: true };
@@ -1290,13 +1290,13 @@ export class ChannelService {
   async markKeyDistributionSent(channelId: string, distributionId: string, actorUserId: string) {
     const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
     if (!distribution || distribution.channelId !== channelId) {
-      throw new NotFoundException("Channel key distribution not found");
+      throw new NotFoundException('Channel key distribution not found');
     }
     if (distribution.invitedBy !== actorUserId) {
-      throw new ForbiddenException("Only inviter can mark distribution as sent");
+      throw new ForbiddenException('Only inviter can mark distribution as sent');
     }
-    await this.updateDistributionStatus(distribution, "key_sent");
-    return { success: true, distributionId, status: "key_sent" };
+    await this.updateDistributionStatus(distribution, 'key_sent');
+    return { success: true, distributionId, status: 'key_sent' };
   }
 
   /** Called by the target user once they have received (but not yet decrypted) the key package. Advances status → key_received. */
@@ -1304,16 +1304,16 @@ export class ChannelService {
     channelId: string,
     distributionId: string,
     actorUserId: string,
-    keyVersion: number,
+    keyVersion: number
   ) {
     const { distribution } = await this.resolveDistributionForTarget(
       channelId,
       distributionId,
       actorUserId,
-      keyVersion,
+      keyVersion
     );
-    await this.updateDistributionStatus(distribution, "key_received", actorUserId);
-    return { success: true, distributionId, status: "key_received" };
+    await this.updateDistributionStatus(distribution, 'key_received', actorUserId);
+    return { success: true, distributionId, status: 'key_received' };
   }
 
   /** Called by the target user once they have successfully decrypted and stored the key. Advances status → key_acked. */
@@ -1321,27 +1321,27 @@ export class ChannelService {
     channelId: string,
     distributionId: string,
     actorUserId: string,
-    keyVersion: number,
+    keyVersion: number
   ) {
     const { distribution } = await this.resolveDistributionForTarget(
       channelId,
       distributionId,
       actorUserId,
-      keyVersion,
+      keyVersion
     );
-    await this.updateDistributionStatus(distribution, "key_acked", actorUserId);
-    return { success: true, distributionId, status: "key_acked" };
+    await this.updateDistributionStatus(distribution, 'key_acked', actorUserId);
+    return { success: true, distributionId, status: 'key_acked' };
   }
 
   /** Removes a member from the workspace, broadcasts a kicked event, then rotates the channel key so the removed user can no longer decrypt new messages. */
   async kickMember(channelId: string, input: ChannelKickDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const adminMember = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: input.actorUserId },
     });
-    if (!adminMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!adminMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (adminMember.roleIds?.length > 0) {
@@ -1350,11 +1350,11 @@ export class ChannelService {
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS),
+          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS)
       );
     }
 
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_CHANNEL or KICK_MEMBERS permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
 
     await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.targetUserId });
 
@@ -1369,7 +1369,7 @@ export class ChannelService {
     // Also include the kicked user so they're notified
     const notifyIds = [...new Set([...workspaceMemberIds, input.targetUserId])];
     await this.redis.publishChannelEvent(
-      "channel.member.kicked",
+      'channel.member.kicked',
       {
         channelId,
         channelName: channel.name,
@@ -1377,13 +1377,13 @@ export class ChannelService {
         kickedUserId: input.targetUserId,
         kickedBy: input.actorUserId,
       },
-      notifyIds,
+      notifyIds
     );
 
     // Rotate key so the kicked user's in-memory epoch keys are no longer valid
     // for future messages. Backfill master secret if needed.
     if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString("base64");
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
     }
     channel.keyVersion += 1;
     await this.channelRepo.save(channel);
@@ -1391,13 +1391,13 @@ export class ChannelService {
     const newEpochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
     // Only notify remaining members (not the kicked user) of the new key
     await this.redis.publishChannelEvent(
-      "channel.key.rotated",
+      'channel.key.rotated',
       {
         channelId,
-        newEpochBaseKey: newEpochKey.toString("base64"),
+        newEpochBaseKey: newEpochKey.toString('base64'),
         keyVersion: channel.keyVersion,
       },
-      workspaceMemberIds,
+      workspaceMemberIds
     );
 
     return { success: true };
@@ -1406,12 +1406,12 @@ export class ChannelService {
   /** Kicks a member from the workspace entirely (removes from all channels). Requires MANAGE_WORKSPACE, MANAGE_CHANNEL, or KICK_MEMBERS permission. */
   async kickFromWorkspace(workspaceId: string, targetUserId: string, actorUserId: string) {
     const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
-    if (!workspace) throw new NotFoundException("Workspace not found");
+    if (!workspace) throw new NotFoundException('Workspace not found');
 
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
@@ -1420,16 +1420,16 @@ export class ChannelService {
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS),
+          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS)
       );
     }
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_CHANNEL or KICK_MEMBERS permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
 
     // Verify the target user is a member
     const targetMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: targetUserId },
     });
-    if (!targetMember) throw new NotFoundException("Target member not found in workspace");
+    if (!targetMember) throw new NotFoundException('Target member not found in workspace');
 
     await this.memberRepo.delete({ workspaceId, userId: targetUserId });
 
@@ -1437,17 +1437,17 @@ export class ChannelService {
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
     const notifyIds = [...new Set([...remainingMemberIds, targetUserId])];
     await this.redis.publishChannelEvent(
-      "channel.member.kicked",
+      'channel.member.kicked',
       {
         workspaceId,
         kickedUserId: targetUserId,
         kickedBy: actorUserId,
       },
-      notifyIds,
+      notifyIds
     );
 
     this.logger.log(
-      `[WORKSPACE] kick workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`,
+      `[WORKSPACE] kick workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`
     );
     return { success: true };
   }
@@ -1461,12 +1461,12 @@ export class ChannelService {
     workspaceId: string,
     targetUserId: string,
     roleName: string,
-    actorUserId: string,
+    actorUserId: string
   ) {
     const adminMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: actorUserId },
     });
-    if (!adminMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!adminMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (adminMember.roleIds?.length > 0) {
@@ -1474,15 +1474,15 @@ export class ChannelService {
       hasPerm = roles.some(
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES),
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
       );
     }
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_ROLES permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
 
     const targetMember = await this.memberRepo.findOne({
       where: { workspaceId, userId: targetUserId },
     });
-    if (!targetMember) throw new NotFoundException("Target member not found");
+    if (!targetMember) throw new NotFoundException('Target member not found');
 
     const role = await this.roleRepo.findOne({
       where: {
@@ -1490,14 +1490,14 @@ export class ChannelService {
         name: this.mapRoleInputToWorkspaceRoleName(roleName),
       },
     });
-    if (!role) throw new NotFoundException("Role not found");
+    if (!role) throw new NotFoundException('Role not found');
 
     // Replace all existing roles with the single specified role.
     targetMember.roleIds = [role.id];
     await this.memberRepo.save(targetMember);
 
     this.logger.log(
-      `[WORKSPACE] role set workspace=${workspaceId} target=${targetUserId.slice(0, 8)} role="${role.name}" by=${actorUserId.slice(0, 8)}`,
+      `[WORKSPACE] role set workspace=${workspaceId} target=${targetUserId.slice(0, 8)} role="${role.name}" by=${actorUserId.slice(0, 8)}`
     );
     return { success: true };
   }
@@ -1505,12 +1505,12 @@ export class ChannelService {
   /** Channel-scoped shim for {@link updateWorkspaceMemberRole}, kept for the legacy channel-members route. */
   async updateMemberRole(channelId: string, input: ChannelUpdateRoleDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
     return this.updateWorkspaceMemberRole(
       channel.workspaceId,
       input.targetUserId,
       input.roleName,
-      input.actorUserId,
+      input.actorUserId
     );
   }
 
@@ -1521,12 +1521,12 @@ export class ChannelService {
    *  Requires MANAGE_WORKSPACE or MANAGE_CHANNELS permission. */
   async removeMemberFromChannel(channelId: string, targetUserId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const adminMember = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: actorUserId },
     });
-    if (!adminMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!adminMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (adminMember.roleIds?.length > 0) {
@@ -1535,17 +1535,17 @@ export class ChannelService {
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS),
+          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS)
       );
     }
 
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_CHANNEL or KICK_MEMBERS permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
 
     // Verify the target user is a workspace member
     const targetMember = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: targetUserId },
     });
-    if (!targetMember) throw new NotFoundException("Target member not found in workspace");
+    if (!targetMember) throw new NotFoundException('Target member not found in workspace');
 
     // Remove from private channel's allowedUsers list
     if (channel.isPrivate) {
@@ -1558,7 +1558,7 @@ export class ChannelService {
     const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
     const notifyIds = [...new Set([...workspaceMemberIds, targetUserId])];
     await this.redis.publishChannelEvent(
-      "channel.member.removed",
+      'channel.member.removed',
       {
         channelId,
         channelName: channel.name,
@@ -1566,25 +1566,25 @@ export class ChannelService {
         removedUserId: targetUserId,
         removedBy: actorUserId,
       },
-      notifyIds,
+      notifyIds
     );
 
     // Rotate the channel key so the removed user can no longer decrypt new messages
     if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString("base64");
+      channel.masterSecret = crypto.randomBytes(32).toString('base64');
     }
     channel.keyVersion += 1;
     await this.channelRepo.save(channel);
 
     const newEpochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
     await this.redis.publishChannelEvent(
-      "channel.key.rotated",
+      'channel.key.rotated',
       {
         channelId,
-        newEpochBaseKey: newEpochKey.toString("base64"),
+        newEpochBaseKey: newEpochKey.toString('base64'),
         keyVersion: channel.keyVersion,
       },
-      workspaceMemberIds,
+      workspaceMemberIds
     );
 
     return { success: true };
@@ -1595,12 +1595,12 @@ export class ChannelService {
   /** Returns all members of the workspace that owns the channel, each with their highest-priority role normalized to admin/moderator/member. */
   async listChannelMembers(channelId: string, actorUserId: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     const members = await this.memberRepo.find({ where: { workspaceId: channel.workspaceId } });
     const roles = await this.roleRepo.find({ where: { workspaceId: channel.workspaceId } });
@@ -1624,19 +1624,19 @@ export class ChannelService {
    * Validates a poll descriptor and returns the initial server-side poll state.
    * Rejects fewer than 2 options, duplicate IDs, or a deadline already in the past.
    */
-  private buildPollMeta(input: NonNullable<SendChannelMessageDto["poll"]>): ChannelPollMeta {
+  private buildPollMeta(input: NonNullable<SendChannelMessageDto['poll']>): ChannelPollMeta {
     const optionIds = Array.isArray(input.optionIds) ? input.optionIds : [];
     if (optionIds.length < 2) {
-      throw new BadRequestException("A poll needs at least 2 options");
+      throw new BadRequestException('A poll needs at least 2 options');
     }
     if (new Set(optionIds).size !== optionIds.length) {
-      throw new BadRequestException("Poll option IDs must be unique");
+      throw new BadRequestException('Poll option IDs must be unique');
     }
     let endsAt: string | null = null;
     if (input.endsAt) {
       const ts = new Date(input.endsAt).getTime();
-      if (Number.isNaN(ts)) throw new BadRequestException("Invalid poll endsAt");
-      if (ts <= Date.now()) throw new BadRequestException("Poll deadline must be in the future");
+      if (Number.isNaN(ts)) throw new BadRequestException('Invalid poll endsAt');
+      if (ts <= Date.now()) throw new BadRequestException('Poll deadline must be in the future');
       endsAt = new Date(ts).toISOString();
     }
     return {
@@ -1650,26 +1650,26 @@ export class ChannelService {
   /** Persists a client-encrypted message after validating keyVersion against the current channel epoch, then publishes the ciphertext to all workspace members via Redis. */
   async sendMessage(channelId: string, input: SendChannelMessageDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId: input.senderId },
     });
-    if (!member) throw new ForbiddenException("Not a member of this workspace");
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
     if (!(await this.canAccessChannel(channel, member, input.senderId))) {
-      throw new ForbiddenException("Not allowed to access this channel");
+      throw new ForbiddenException('Not allowed to access this channel');
     }
     // Read access is not enough: the channel's writePolicy may restrict posting
     // (e.g. an announcements channel where only admins/moderators can write).
     if (!(await this.canWriteToChannel(channel, input.senderId))) {
-      throw new ForbiddenException("Not allowed to post in this channel");
+      throw new ForbiddenException('Not allowed to post in this channel');
     }
     if (input.keyVersion === undefined || input.keyVersion === null) {
-      throw new BadRequestException("keyVersion is required for channel messages");
+      throw new BadRequestException('keyVersion is required for channel messages');
     }
     if (input.keyVersion !== channel.keyVersion) {
       throw new ForbiddenException(
-        `Stale or invalid keyVersion (${input.keyVersion}) for channel epoch ${channel.keyVersion}`,
+        `Stale or invalid keyVersion (${input.keyVersion}) for channel epoch ${channel.keyVersion}`
       );
     }
 
@@ -1695,7 +1695,7 @@ export class ChannelService {
     const savedMsg = await this.messageRepo.save(msg);
     if (pollMeta) {
       this.logger.log(
-        `[POLL] created channel=${channelId} message=${savedMsg.id} options=${pollMeta.optionIds.length} endsAt=${pollMeta.endsAt ?? "none"}`,
+        `[POLL] created channel=${channelId} message=${savedMsg.id} options=${pollMeta.optionIds.length} endsAt=${pollMeta.endsAt ?? 'none'}`
       );
     }
 
@@ -1703,7 +1703,7 @@ export class ChannelService {
     this.getWorkspaceMemberIds(channel.workspaceId)
       .then((workspaceMemberIds) =>
         this.redis.publishChannelEvent(
-          "channel.message.created",
+          'channel.message.created',
           {
             channelId,
             messageId: savedMsg.id,
@@ -1716,15 +1716,15 @@ export class ChannelService {
             poll: pollMeta,
             pinned: savedMsg.pinned,
           },
-          workspaceMemberIds,
-        ),
+          workspaceMemberIds
+        )
       )
       .catch((err) => this.logger.error(`Failed to publish channel message event: ${err}`));
 
     // Fan out push notifications to offline/background members, honouring each member's
     // per-channel level. Fire-and-forget: never block the HTTP response on FCM.
     this.notifyChannelRecipients(channel, savedMsg, input).catch((err) =>
-      this.logger.error(`[CHANNEL_PUSH] fan-out failed channel=${channelId}: ${err}`),
+      this.logger.error(`[CHANNEL_PUSH] fan-out failed channel=${channelId}: ${err}`)
     );
 
     return savedMsg;
@@ -1743,10 +1743,10 @@ export class ChannelService {
   private async notifyChannelRecipients(
     channel: Channel,
     message: ChannelMessage,
-    input: SendChannelMessageDto,
+    input: SendChannelMessageDto
   ): Promise<void> {
     if (!this.internalSecret) {
-      this.logger.warn("[CHANNEL_PUSH] INTERNAL_SECRET not set - channel push disabled");
+      this.logger.warn('[CHANNEL_PUSH] INTERNAL_SECRET not set - channel push disabled');
       return;
     }
 
@@ -1755,25 +1755,25 @@ export class ChannelService {
 
     // FCM caps a data payload at ~4 KB; inline the ciphertext only when it comfortably fits,
     // otherwise the device fetches the message by id (Phase 2). nonce stays inline (small).
-    const inlineCiphertext = input.ciphertext.length <= 3000 ? input.ciphertext : "";
+    const inlineCiphertext = input.ciphertext.length <= 3000 ? input.ciphertext : '';
 
     const recipients: ChannelMember[] = [];
     for (const member of members) {
       if (member.userId === input.senderId) continue;
       if (!(await this.canAccessChannel(channel, member, member.userId))) continue;
-      const level: ChannelNotificationLevel = member.notifLevels?.[channel.id] ?? "all";
-      if (level === "none") continue;
-      if (level === "mentions" && !mentioned.has(member.userId.trim().toLowerCase())) continue;
+      const level: ChannelNotificationLevel = member.notifLevels?.[channel.id] ?? 'all';
+      if (level === 'none') continue;
+      if (level === 'mentions' && !mentioned.has(member.userId.trim().toLowerCase())) continue;
       recipients.push(member);
     }
 
     if (recipients.length === 0) return;
     this.logger.log(
-      `[CHANNEL_PUSH] channel=${channel.id} message=${message.id} recipients=${recipients.length}`,
+      `[CHANNEL_PUSH] channel=${channel.id} message=${message.id} recipients=${recipients.length}`
     );
 
     const data: Record<string, string> = {
-      type: "channel",
+      type: 'channel',
       channelId: channel.id,
       workspaceId: channel.workspaceId,
       channelName: channel.name,
@@ -1789,9 +1789,9 @@ export class ChannelService {
       recipients.map((member) =>
         this.sendInternalPush(member.userId, channel.name, {
           ...data,
-          mentioned: mentioned.has(member.userId.trim().toLowerCase()) ? "true" : "false",
-        }),
-      ),
+          mentioned: mentioned.has(member.userId.trim().toLowerCase()) ? 'true' : 'false',
+        })
+      )
     );
   }
 
@@ -1803,16 +1803,16 @@ export class ChannelService {
    */
   async markChannelRead(channelId: string, userId: string): Promise<void> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member || !(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException("Not allowed to access this channel");
+      throw new ForbiddenException('Not allowed to access this channel');
     }
     if (!this.internalSecret) return;
     await this.sendInternalPush(userId, channel.name, {
-      type: "channel_read",
+      type: 'channel_read',
       channelId: channel.id,
       workspaceId: channel.workspaceId,
       senderId: userId,
@@ -1826,24 +1826,24 @@ export class ChannelService {
   private async sendInternalPush(
     userId: string,
     title: string,
-    data: Record<string, string>,
+    data: Record<string, string>
   ): Promise<void> {
     try {
       const res = await fetch(`${this.deliveryUrl}/internal/push/notify`, {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
-          "X-Internal-Secret": this.internalSecret,
+          'Content-Type': 'application/json',
+          'X-Internal-Secret': this.internalSecret,
         },
         // body left empty: the device composes the visible text after decrypting the ciphertext.
-        body: JSON.stringify({ userId, title, body: "", data }),
+        body: JSON.stringify({ userId, title, body: '', data }),
         signal: AbortSignal.timeout(5_000),
       });
       if (!res.ok) {
         this.logger.warn(`[CHANNEL_PUSH] notify HTTP ${res.status} for user=${userId}`);
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "unknown error";
+      const msg = e instanceof Error ? e.message : 'unknown error';
       this.logger.warn(`[CHANNEL_PUSH] notify failed for user=${userId}: ${msg}`);
     }
   }
@@ -1856,17 +1856,17 @@ export class ChannelService {
   async setNotificationLevel(
     channelId: string,
     userId: string,
-    level: ChannelNotificationLevel,
+    level: ChannelNotificationLevel
   ): Promise<{ channelId: string; level: ChannelNotificationLevel }> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member) throw new ForbiddenException("Not a member of this workspace");
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
     if (!(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException("Not allowed to access this channel");
+      throw new ForbiddenException('Not allowed to access this channel');
     }
 
     // Use the DB-canonical `channel.id` (loaded above) rather than the raw request
@@ -1881,17 +1881,17 @@ export class ChannelService {
   /** Returns the calling member's notification level for one channel (`all` when never set). */
   async getNotificationLevel(
     channelId: string,
-    userId: string,
+    userId: string
   ): Promise<{ channelId: string; level: ChannelNotificationLevel }> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member) throw new ForbiddenException("Not a member of this workspace");
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
 
-    const level: ChannelNotificationLevel = member.notifLevels?.[channel.id] ?? "all";
+    const level: ChannelNotificationLevel = member.notifLevels?.[channel.id] ?? 'all';
     return { channelId, level };
   }
 
@@ -1901,20 +1901,20 @@ export class ChannelService {
    */
   async publishTyping(channelId: string, userId: string, isTyping: boolean): Promise<void> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member || !(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException("Not allowed to access this channel");
+      throw new ForbiddenException('Not allowed to access this channel');
     }
 
     const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
     await this.redis.publishChannelEvent(
-      "channel.typing",
-      { channelId, userId, state: isTyping ? "start" : "stop" },
-      workspaceMemberIds,
+      'channel.typing',
+      { channelId, userId, state: isTyping ? 'start' : 'stop' },
+      workspaceMemberIds
     );
   }
 
@@ -1923,20 +1923,20 @@ export class ChannelService {
     channelId: string,
     messageId: string,
     userId: string,
-    pinned: boolean,
+    pinned: boolean
   ): Promise<void> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member || !(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException("Not allowed to access this channel");
+      throw new ForbiddenException('Not allowed to access this channel');
     }
 
     const msg = await this.messageRepo.findOne({ where: { id: messageId, channelId } });
-    if (!msg) throw new NotFoundException("Message not found");
+    if (!msg) throw new NotFoundException('Message not found');
     if (msg.pinned !== pinned) {
       msg.pinned = pinned;
       await this.messageRepo.save(msg);
@@ -1944,9 +1944,9 @@ export class ChannelService {
 
     const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
     await this.redis.publishChannelEvent(
-      "channel.pin",
+      'channel.pin',
       { channelId, messageId, pinned },
-      workspaceMemberIds,
+      workspaceMemberIds
     );
   }
 
@@ -1960,16 +1960,16 @@ export class ChannelService {
     channelId: string,
     messageId: string,
     userId: string,
-    optionIds: string[],
+    optionIds: string[]
   ): Promise<ChannelPollMeta> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member || !(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException("Not allowed to access this channel");
+      throw new ForbiddenException('Not allowed to access this channel');
     }
 
     const selected = Array.isArray(optionIds) ? [...new Set(optionIds)] : [];
@@ -1977,24 +1977,24 @@ export class ChannelService {
     let poll!: ChannelPollMeta;
     await this.messageRepo.manager.transaction(async (manager) => {
       const msg = await manager
-        .createQueryBuilder(ChannelMessage, "m")
-        .where("m.id = :messageId AND m.channelId = :channelId", { messageId, channelId })
-        .setLock("pessimistic_write")
+        .createQueryBuilder(ChannelMessage, 'm')
+        .where('m.id = :messageId AND m.channelId = :channelId', { messageId, channelId })
+        .setLock('pessimistic_write')
         .getOne();
-      if (!msg) throw new NotFoundException("Message not found");
+      if (!msg) throw new NotFoundException('Message not found');
 
       const meta = (msg.metadata as { poll?: ChannelPollMeta } | null)?.poll;
-      if (!meta) throw new BadRequestException("This message is not a poll");
+      if (!meta) throw new BadRequestException('This message is not a poll');
 
       if (meta.endsAt && new Date(meta.endsAt).getTime() <= Date.now()) {
-        throw new ForbiddenException("This poll is closed");
+        throw new ForbiddenException('This poll is closed');
       }
       const unknown = selected.filter((id) => !meta.optionIds.includes(id));
       if (unknown.length > 0) {
-        throw new BadRequestException("Vote references unknown option(s)");
+        throw new BadRequestException('Vote references unknown option(s)');
       }
       if (!meta.multipleChoice && selected.length > 1) {
-        throw new BadRequestException("This poll is single-choice");
+        throw new BadRequestException('This poll is single-choice');
       }
 
       // Null-prototype map prevents prototype pollution via a crafted userId key.
@@ -2002,8 +2002,8 @@ export class ChannelService {
         meta.votesByUser = Object.assign(Object.create(null), meta.votesByUser);
       }
       // Security: mitigates CodeQL alerts #2477/#2476 — reject dangerous property keys
-      if (userId === "__proto__" || userId === "constructor" || userId === "prototype") {
-        throw new BadRequestException("Invalid user identifier");
+      if (userId === '__proto__' || userId === 'constructor' || userId === 'prototype') {
+        throw new BadRequestException('Invalid user identifier');
       }
       if (selected.length === 0) {
         delete meta.votesByUser[userId];
@@ -2017,15 +2017,15 @@ export class ChannelService {
     });
 
     this.logger.log(
-      `[POLL] vote channel=${channelId} message=${messageId} user=${userId} options=${selected.length}`,
+      `[POLL] vote channel=${channelId} message=${messageId} user=${userId} options=${selected.length}`
     );
 
     // Broadcast the updated tally so every member's card refreshes live.
     const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
     await this.redis.publishChannelEvent(
-      "channel.poll.vote",
+      'channel.poll.vote',
       { channelId, messageId, poll },
-      workspaceMemberIds,
+      workspaceMemberIds
     );
 
     return poll;
@@ -2038,26 +2038,26 @@ export class ChannelService {
    */
   async closePoll(channelId: string, messageId: string, userId: string): Promise<ChannelPollMeta> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member || !(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException("Not allowed to access this channel");
+      throw new ForbiddenException('Not allowed to access this channel');
     }
 
     let poll!: ChannelPollMeta;
     await this.messageRepo.manager.transaction(async (manager) => {
       const msg = await manager
-        .createQueryBuilder(ChannelMessage, "m")
-        .where("m.id = :messageId AND m.channelId = :channelId", { messageId, channelId })
-        .setLock("pessimistic_write")
+        .createQueryBuilder(ChannelMessage, 'm')
+        .where('m.id = :messageId AND m.channelId = :channelId', { messageId, channelId })
+        .setLock('pessimistic_write')
         .getOne();
-      if (!msg) throw new NotFoundException("Message not found");
+      if (!msg) throw new NotFoundException('Message not found');
 
       const meta = (msg.metadata as { poll?: ChannelPollMeta } | null)?.poll;
-      if (!meta) throw new BadRequestException("This message is not a poll");
+      if (!meta) throw new BadRequestException('This message is not a poll');
 
       // Non-authors must hold a moderation permission to close someone else's poll.
       if (msg.authorId !== userId) {
@@ -2068,15 +2068,15 @@ export class ChannelService {
           (r) =>
             r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_MESSAGES) ||
             r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
-            r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE),
+            r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
         );
         if (!canModerate) {
-          throw new ForbiddenException("Only the poll author or a moderator can close this poll");
+          throw new ForbiddenException('Only the poll author or a moderator can close this poll');
         }
       }
 
       if (meta.endsAt && new Date(meta.endsAt).getTime() <= Date.now()) {
-        throw new BadRequestException("This poll is already closed");
+        throw new BadRequestException('This poll is already closed');
       }
 
       meta.endsAt = new Date().toISOString();
@@ -2091,14 +2091,14 @@ export class ChannelService {
     // Refresh every member's card (now shows as closed) and clear the pinned banner.
     const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
     await this.redis.publishChannelEvent(
-      "channel.poll.vote",
+      'channel.poll.vote',
       { channelId, messageId, poll },
-      workspaceMemberIds,
+      workspaceMemberIds
     );
     await this.redis.publishChannelEvent(
-      "channel.pin",
+      'channel.pin',
       { channelId, messageId, pinned: false },
-      workspaceMemberIds,
+      workspaceMemberIds
     );
 
     return poll;
@@ -2107,19 +2107,19 @@ export class ChannelService {
   /** Returns the IDs of the pinned messages in a channel. Access-controlled by canAccessChannel. */
   async listPinnedMessageIds(channelId: string, userId: string): Promise<string[]> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member || !(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException("Not allowed to access this channel");
+      throw new ForbiddenException('Not allowed to access this channel');
     }
 
     const rows = await this.messageRepo.find({
       where: { channelId, pinned: true },
       select: { id: true },
-      order: { createdAt: "DESC" },
+      order: { createdAt: 'DESC' },
     });
     return rows.map((r) => r.id);
   }
@@ -2133,13 +2133,13 @@ export class ChannelService {
    */
   async listMessages(channelId: string, userId: string, limit = 50, before?: string) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException("Channel not found");
+    if (!channel) throw new NotFoundException('Channel not found');
 
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member || !(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException("Not allowed to access this channel");
+      throw new ForbiddenException('Not allowed to access this channel');
     }
 
     const safeLimit = Math.min(Math.max(1, limit), 200);
@@ -2151,7 +2151,7 @@ export class ChannelService {
         channelId,
         ...(hasValidCursor ? { createdAt: LessThan(beforeDate) } : {}),
       },
-      order: { createdAt: "DESC" },
+      order: { createdAt: 'DESC' },
       take: safeLimit,
     });
 
@@ -2168,7 +2168,7 @@ export class ChannelService {
       await this.messageRepo.update({ id: In(expiredPollIds) }, { pinned: false });
       for (const m of msgs) if (expiredPollIds.includes(m.id)) m.pinned = false;
       this.logger.log(
-        `[POLL] auto-unpinned ${expiredPollIds.length} closed poll(s) in channel=${channelId}`,
+        `[POLL] auto-unpinned ${expiredPollIds.length} closed poll(s) in channel=${channelId}`
       );
     }
 
@@ -2189,16 +2189,16 @@ export class ChannelService {
 
   // ================= ROLE BASE PERMISSIONS =================
 
-  /** Récupère les permissions de base d'un rôle au niveau workspace. */
+  /** Fetches a role's base permissions at the workspace level. */
   async getRoleBasePermissions(roleId: string, actorUserId: string) {
     const role = await this.roleRepo.findOne({ where: { id: roleId } });
-    if (!role) throw new NotFoundException("Role not found");
+    if (!role) throw new NotFoundException('Role not found');
 
-    // Vérifier que l'acteur a MANAGE_ROLES ou MANAGE_WORKSPACE
+    // Verify the actor has MANAGE_ROLES or MANAGE_WORKSPACE
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId: role.workspaceId, userId: actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
@@ -2206,10 +2206,10 @@ export class ChannelService {
       hasPerm = actorRoles.some(
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES),
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
       );
     }
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_ROLES permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
 
     return {
       roleId: role.id,
@@ -2218,16 +2218,16 @@ export class ChannelService {
     };
   }
 
-  /** Met à jour les permissions de base d'un rôle au niveau workspace. */
+  /** Updates a role's base permissions at the workspace level. */
   async setRoleBasePermissions(roleId: string, actorUserId: string, permissions: string[]) {
     const role = await this.roleRepo.findOne({ where: { id: roleId } });
-    if (!role) throw new NotFoundException("Role not found");
+    if (!role) throw new NotFoundException('Role not found');
 
-    // Vérifier que l'acteur a MANAGE_ROLES ou MANAGE_WORKSPACE
+    // Verify the actor has MANAGE_ROLES or MANAGE_WORKSPACE
     const actorMember = await this.memberRepo.findOne({
       where: { workspaceId: role.workspaceId, userId: actorUserId },
     });
-    if (!actorMember) throw new ForbiddenException("Not a member of this workspace");
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
 
     let hasPerm = false;
     if (actorMember.roleIds?.length > 0) {
@@ -2235,23 +2235,23 @@ export class ChannelService {
       hasPerm = actorRoles.some(
         (r) =>
           r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES),
+          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_ROLES)
       );
     }
-    if (!hasPerm) throw new ForbiddenException("Missing MANAGE_ROLES permission");
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_ROLES permission');
 
-    // Valider que les permissions sont valides
+    // Validate that permissions are valid
     const validPermissions = Object.values(CHANNEL_PERMISSIONS) as string[];
     const invalid = permissions.filter((p) => !validPermissions.includes(p));
     if (invalid.length > 0) {
-      throw new BadRequestException(`Invalid permissions: ${invalid.join(", ")}`);
+      throw new BadRequestException(`Invalid permissions: ${invalid.join(', ')}`);
     }
 
     role.permissions = permissions;
     await this.roleRepo.save(role);
 
     this.logger.log(
-      `[ROLE] permissions updated role=${roleId} by=${actorUserId.slice(0, 8)} perms=${permissions.length}`,
+      `[ROLE] permissions updated role=${roleId} by=${actorUserId.slice(0, 8)} perms=${permissions.length}`
     );
 
     return {

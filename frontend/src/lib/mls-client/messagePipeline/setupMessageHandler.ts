@@ -57,20 +57,20 @@ const EPOCH_GAP_ESCALATION_MS = 30_000;
 const noMatchKpFailures = new Map<string, number>();
 
 /**
- * Installe le handler de messages MLS.
+ * Installs the MLS message handler.
  *
  * Simplified architecture (RFC 9420 + OpenMLS fork-resolution):
- * - Welcome → traitement + replay du buffer
- * - Groupe inconnu → welcome_request immediat (seam) + buffer ; cadence owned by the SYNC_WATCHDOG
- * - Known group → decrypt → display / requestReAdd if out-of-sync
+ * - Welcome -> processing + buffer replay
+ * - Unknown group -> immediate welcome_request (seam) + buffer; cadence owned by the SYNC_WATCHDOG
+ * - Known group -> decrypt -> display / requestReAdd if out-of-sync
  *
- * Invariants :
+ * Invariants:
  * 1. Every message is ACKed exactly once.
- * 2. `requestReAdd` remplace toute escalade (pas de Poison Pill, pas de compteurs).
+ * 2. `requestReAdd` replaces every escalation (no Poison Pill, no counters).
  * 3. Recovery state (cooldowns) is in-memory only - reset on every session.
  */
 export function setupMessageHandler(deps: MessageHandlerDeps): void {
-  const { mlsService, pin, userId, log } = deps;
+  const { mlsService, deviceKeyB64, userId, log } = deps;
 
   // Start from a clean epoch-gap registry: it is module-global (shared with the outbox) and must
   // not carry a stale entry over from a previous session.
@@ -80,7 +80,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
   installWasmDuplicateDeliveryLogInterceptor();
 
-  const statePersister = createMlsStatePersister({ mlsService, pin, userId, log });
+  const statePersister = createMlsStatePersister({ mlsService, deviceKeyB64, userId, log });
   registerMlsStatePersister(statePersister);
   installMlsStatePersisterLifecycle(statePersister);
 
@@ -431,7 +431,7 @@ async function handleWelcome({
         log(
           `[WELCOME] NoMatchingKeyPackage pour ${rec.target.slice(0, 8)}… - republish + self-heal (externalJoin/welcome_request)`
         );
-        await mlsService.republishKeyMaterial(deps.pin).catch(() => {});
+        await mlsService.republishKeyMaterial(deps.deviceKeyB64).catch(() => {});
       } else {
         log(
           `[WELCOME] NoMatchingKeyPackage #${rec.failures} pour ${rec.target.slice(0, 8)}… - self-heal (externalJoin/welcome_request)`
@@ -520,7 +520,7 @@ async function handleKnownGroup({
     conversations,
     messageReactions,
     storage,
-    pin,
+    deviceKeyB64,
     addMessageToChat,
     onCallSignal,
     log,
@@ -606,7 +606,7 @@ async function handleKnownGroup({
                     readBy: t.readBy,
                     reactions: updated,
                   },
-                  pin
+                  deviceKeyB64
                 )
                 .catch(() => {});
             }
@@ -812,7 +812,7 @@ async function upsertConversation(
             serverTimestamp: m.serverTimestamp,
           }));
         if (toSave.length > 0) {
-          await deps.storage.saveMessages(toSave, deps.pin).catch(() => {});
+          await deps.storage.saveMessages(toSave, deps.deviceKeyB64).catch(() => {});
           deps.log(
             `[WELCOME] ${toSave.length} message(s) from ${existing.id.slice(0, 8)}… persisted in ${joinedGroupId.slice(0, 8)}… (re-keyed)`
           );

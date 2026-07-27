@@ -529,11 +529,11 @@ export class PushController {
       return { status: 'rejected', reason: 'not_a_member' };
     }
 
-    // Le commit background avance l'epoch reel : on le valide d'abord (comme le chemin foreground)
-    // pour garder activeEpoch en phase, sinon le prochain commit foreground est rejete a tort (C6).
-    // On valide AVANT d'envoyer le Welcome : un rejet ne doit ni diffuser le commit ni livrer un
-    // Welcome vers un etat que les autres membres n'adopteront pas. baseEpoch absent (JNI ancien) ->
-    // on conserve l'ancien comportement (diffusion sans validation) pour la retrocompatibilite.
+    // The background commit advances the real epoch: validate it first (same as foreground path)
+    // to keep activeEpoch in sync, otherwise the next foreground commit is wrongly rejected (C6).
+    // Validate BEFORE sending the Welcome: a rejection must neither broadcast the commit nor deliver
+    // a Welcome into a state other members won't adopt. Missing baseEpoch (legacy JNI) ->
+    // keep old behavior (broadcast without validation) for backward compatibility.
     if (typeof body.baseEpoch === 'number' && Number.isFinite(body.baseEpoch)) {
       const validation = await this.messagingService.validateCommit({
         groupId,

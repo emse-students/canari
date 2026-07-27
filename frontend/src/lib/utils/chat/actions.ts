@@ -37,11 +37,11 @@ export async function processPendingInvitations(params: {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   conversations: Map<string, Conversation>;
   log: (msg: string) => void;
 }) {
-  const { mlsService, storage, userId, pin, conversations, log } = params;
+  const { mlsService, storage, userId, deviceKeyB64, conversations, log } = params;
 
   const myDeviceId = mlsService.getDeviceId();
 
@@ -190,13 +190,13 @@ export async function processPendingInvitations(params: {
           }
 
           // Save MLS state after the merged commit (crash-safety).
-          await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+          await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 
           // The new member has joined at our epoch via the Welcome; send the full history bundle
           // (APPLICATION MESSAGES, not a commit, so it does not go through validateCommit). [[C8]]
           await sendFullHistoryBundle(groupId, {
             storage,
-            pin,
+            deviceKeyB64,
             mlsService,
             log,
           }).catch((e) =>
@@ -230,7 +230,7 @@ export async function processPendingInvitations(params: {
                 targetUserId: inv.userId,
                 targetDeviceId: inv.deviceId,
                 userId,
-                pin,
+                deviceKeyB64,
                 log,
               });
             } catch (kickErr) {
@@ -291,7 +291,7 @@ export function forceSyncReset(_userId: string, log: (msg: string) => void) {
 export async function discoverMissingGroups(params: {
   mlsService: IMlsService;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   conversations: Map<string, Conversation>;
   saveConversation?: (key: string) => Promise<void>;
   deleteConversation?: (key: string) => Promise<void>;
@@ -299,8 +299,15 @@ export async function discoverMissingGroups(params: {
   /** Optional: IndexedDB access to verify messages have been migrated before purge. */
   storage?: IStorage | null;
 }) {
-  const { mlsService, userId, pin, conversations, saveConversation, deleteConversation, log } =
-    params;
+  const {
+    mlsService,
+    userId,
+    deviceKeyB64,
+    conversations,
+    saveConversation,
+    deleteConversation,
+    log,
+  } = params;
 
   // ── Phase 1: Create placeholders for server groups not present locally ────
 
@@ -345,7 +352,7 @@ export async function discoverMissingGroups(params: {
       }
     }
     if (mlsMutated) {
-      await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+      await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
     }
 
     for (const [key, convo] of conversations.entries()) {
@@ -372,7 +379,7 @@ export async function discoverMissingGroups(params: {
           `[DISCOVERY] "${convo.name || convo.id}" dismissed but we are a member again - dismiss lifted`
         );
         void mlsService.undismissGroup(convo.id).catch(() => {});
-        // On laisse le traitement normal continuer (groupe actif).
+        // Let normal processing continue (active group).
       }
 
       if (!serverGroupIds.has(convo.id)) {
@@ -627,9 +634,12 @@ export async function importUserBackup(params: {
 }
 
 /** Dev helper: generates a new MLS KeyPackage for this device and returns it as a hex string. */
-export async function generateDevKeyPackage(params: { mlsService: IMlsService; pin: string }) {
-  const { mlsService, pin } = params;
-  const bytes = await mlsService.generateKeyPackage(pin);
+export async function generateDevKeyPackage(params: {
+  mlsService: IMlsService;
+  deviceKeyB64: string;
+}) {
+  const { mlsService, deviceKeyB64 } = params;
+  const bytes = await mlsService.generateKeyPackage(deviceKeyB64);
   return toHex(bytes);
 }
 
@@ -706,7 +716,7 @@ export async function handleWelcomeRequest(params: {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   conversations: Map<string, Conversation>;
   log: (msg: string) => void;
   requesterUserId: string;
@@ -719,7 +729,7 @@ export async function handleWelcomeRequest(params: {
     mlsService,
     storage,
     userId,
-    pin,
+    deviceKeyB64,
     conversations,
     log,
     requesterUserId,
@@ -870,7 +880,7 @@ export async function handleWelcomeRequest(params: {
         await kickStaleLeaf(groupId, requesterUserId, requesterDeviceId, mlsService, log);
 
         // Save MLS state after the remove commit
-        await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+        await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 
         // Re-fetch KeyPackage (may have changed after kick)
         // Best-effort: empty list on network error => freshDevice not found => clean skip.
@@ -911,13 +921,13 @@ export async function handleWelcomeRequest(params: {
     }
 
     // Save MLS state after the merged commit (crash-safety).
-    await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 
     // Send the full history to the new member. These are APPLICATION MESSAGES (not a commit, do not
     // go through validateCommit): the recipient has already joined via the Welcome (same epoch as
     // us). The bundle arrives after the Welcome client-side (order guaranteed by MLS) and reads
     // IndexedDB. [[C8]]
-    await sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
+    await sendFullHistoryBundle(groupId, { storage, deviceKeyB64, mlsService, log }).catch((e) =>
       log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
     );
   } catch (e) {
@@ -936,7 +946,7 @@ export async function handleWelcomeRequest(params: {
           targetUserId: requesterUserId,
           targetDeviceId: requesterDeviceId,
           userId,
-          pin,
+          deviceKeyB64,
           log,
         });
       } catch (kickErr) {
@@ -961,13 +971,14 @@ export async function handleWelcomeRequest(params: {
 export async function handleHistoryRequest(params: {
   mlsService: IMlsService;
   storage: IStorage | null;
-  pin: string;
+  deviceKeyB64: string;
   conversations: Map<string, Conversation>;
   log: (msg: string) => void;
   requesterUserId: string;
   groupId: string;
 }): Promise<void> {
-  const { mlsService, storage, pin, conversations, log, requesterUserId, groupId } = params;
+  const { mlsService, storage, deviceKeyB64, conversations, log, requesterUserId, groupId } =
+    params;
   if (!mlsService.getLocalGroups().includes(groupId)) {
     log(`[HISTORY_REQ] ${groupId.slice(0, 8)}... not local - cannot serve history, skip`);
     return;
@@ -977,7 +988,7 @@ export async function handleHistoryRequest(params: {
     return;
   }
   log(`[HISTORY_REQ] serving history bundle to ${requesterUserId} for ${groupId.slice(0, 8)}...`);
-  await sendFullHistoryBundle(groupId, { storage, pin, mlsService, log }).catch((e) =>
+  await sendFullHistoryBundle(groupId, { storage, deviceKeyB64, mlsService, log }).catch((e) =>
     log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
   );
 }

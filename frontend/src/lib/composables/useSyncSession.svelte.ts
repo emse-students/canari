@@ -21,8 +21,8 @@ export interface SyncSessionContext {
   userId: string;
   /** This device's MLS device ID. */
   myDeviceId: string;
-  /** User PIN used to encrypt/decrypt the backup payload. */
-  pin: string;
+  /** Device key (base64, 32B) used to encrypt/decrypt the backup payload and sync data. */
+  deviceKeyB64: string;
   /** Local IndexedDB storage (null until logged in). */
   storage: IStorage | null;
   /** Debug log sink. */
@@ -50,7 +50,7 @@ export function useSyncSession() {
     const result = await executeBidirectionalSyncRound({
       historyBaseUrl: ctx.historyBaseUrl,
       storage: ctx.storage,
-      pin: ctx.pin,
+      deviceKeyB64: ctx.deviceKeyB64,
       userId: ctx.userId,
       myDeviceId: ctx.myDeviceId,
       peerDeviceId,

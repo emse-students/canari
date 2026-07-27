@@ -276,11 +276,11 @@ async fn handle_socket(
         conn_id,
     };
 
-    // Compteur de pings consecutifs restes sans Pong. Incremente a chaque tick de ping,
-    // remis a zero des qu'une frame (Pong ou Text) prouve que le client repond. Le client
-    // n'est declare mort qu'apres MAX_MISSED_PONGS pings consecutifs sans reponse - une
-    // tolerance, pas un couperet sur un seul pong en retard (la jitter reseau d'1s+ est
-    // courante en wifi/mobile et ne doit pas fermer la connexion).
+    // Consecutive-pings-without-Pong counter. Incremented on each ping tick,
+    // reset to zero as soon as a frame (Pong or Text) proves the client is responsive.
+    // The client is only declared dead after MAX_MISSED_PONGS consecutive unanswered
+    // pings - a tolerance, not a guillotine on a single late pong (1s+ network jitter
+    // is common on wifi/mobile and must not tear down the connection).
     let awaiting_pong = Arc::new(AtomicU32::new(0));
 
     // Establish ONE shared Redis connection for this socket's lifetime.
@@ -366,12 +366,12 @@ async fn handle_socket(
     };
 
     // ── Send task: relay outbound frames + heartbeat ping ────────────────
-    // Ping toutes les PING_INTERVAL_SECS. Le client est declare mort apres
-    // MAX_MISSED_PONGS pings consecutifs sans Pong (fenetre de detection
-    // ~PING_INTERVAL_SECS * MAX_MISSED_PONGS), volontairement sous le
-    // proxy_read_timeout nginx (120s) pour que les pings gardent le tunnel ouvert.
-    // Tolerance indispensable : un seul pong en retard (jitter reseau) ne doit pas
-    // fermer la connexion (cause des deconnexions 1006 a repetition).
+    // Ping every PING_INTERVAL_SECS. The client is declared dead after
+    // MAX_MISSED_PONGS consecutive unanswered pings (detection window
+    // ~PING_INTERVAL_SECS * MAX_MISSED_PONGS), deliberately under the nginx
+    // proxy_read_timeout (120s) so that pings keep the tunnel alive.
+    // Essential tolerance: a single late pong (network jitter) must not
+    // close the connection (cause of repeated 1006 disconnections).
     const PING_INTERVAL_SECS: u64 = 15;
     const MAX_MISSED_PONGS: u32 = 4;
     let conn_key_ping = conn_key.clone();
@@ -393,8 +393,8 @@ async fn handle_socket(
                     }
                 }
                 _ = ping_interval.tick() => {
-                    // fetch_add renvoie la valeur AVANT incrementation : +1 = nb de pings
-                    // consecutifs non confirmes en comptant celui qu'on s'apprete a envoyer.
+                    // fetch_add returns the value BEFORE increment: +1 = number of
+                    // consecutive unacknowledged pings counting the one about to be sent.
                     let outstanding = pong_flag_send.fetch_add(1, Ordering::Relaxed) + 1;
                     if outstanding > MAX_MISSED_PONGS {
                         tracing::warn!(

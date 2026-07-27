@@ -14,7 +14,7 @@ import { m } from '$lib/paraglide/messages';
 /** Dependencies required to insert or update call system messages in a conversation. */
 export interface CallSystemMessageContext {
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   storage: IStorage | null;
   conversations: SvelteMap<string, Conversation>;
   addMessageToChat: (
@@ -125,7 +125,7 @@ export async function recordCallEnded(
           content: nextContent,
           timestamp: msg.timestamp.getTime(),
         },
-        ctx.pin
+        ctx.deviceKeyB64
       )
       .catch(() => {});
   }

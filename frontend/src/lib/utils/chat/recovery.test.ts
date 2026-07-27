@@ -45,7 +45,7 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
     mlsService: makeMls(),
     storage: null,
     userId: 'user-a',
-    pin: 'pin123',
+    deviceKeyB64: 'device-key-123',
     conversations: makeConversations(),
     getSelectedContact: () => null,
     setSelectedContact: vi.fn(),

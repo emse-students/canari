@@ -29,7 +29,7 @@ describe('createMlsStatePersister', () => {
     const saveState = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]));
     const persister = createMlsStatePersister({
       mlsService: { saveState } as any,
-      pin: '1234',
+      deviceKeyB64: '1234',
       userId: 'user-1',
     });
     return { saveState, persister };
@@ -94,7 +94,7 @@ describe('persistMlsStructuralCheckpoint', () => {
     const saveState = vi.fn().mockResolvedValue(new Uint8Array([4, 5]));
     const persister = createMlsStatePersister({
       mlsService: { saveState } as any,
-      pin: '9999',
+      deviceKeyB64: '9999',
       userId: 'user-struct',
     });
     registerMlsStatePersister(persister);
@@ -109,7 +109,7 @@ describe('persistMlsStructuralCheckpoint', () => {
 
     await persistMlsStructuralCheckpoint({
       mlsService: { saveState } as any,
-      pin: '1111',
+      deviceKeyB64: '1111',
       userId: 'fallback-user',
     });
 

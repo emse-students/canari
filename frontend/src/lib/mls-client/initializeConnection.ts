@@ -7,7 +7,7 @@ import { reSolicitAwaitingHistory } from '$lib/utils/chat/historySolicit';
 export interface ConnectionDeps {
   mlsService: IMlsService;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   scheduleReconnect: () => void;
   setIsWsConnected: (value: boolean) => void;
   setReconnectAttempts: (value: number) => void;
@@ -28,7 +28,12 @@ export interface ConnectionDeps {
 
 export type SyncAfterConnectDeps = Pick<
   ConnectionDeps,
-  'mlsService' | 'userId' | 'pin' | 'processDeviceInvitationsLocally' | 'log' | 'onGroupMissing'
+  | 'mlsService'
+  | 'userId'
+  | 'deviceKeyB64'
+  | 'processDeviceInvitationsLocally'
+  | 'log'
+  | 'onGroupMissing'
 > & {
   /**
    * Called when sync detects that a group was deleted server-side (deletedAt set) and the
@@ -97,17 +102,17 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
  * Deleted groups (tombstones): WASM state purged and the UI notified.
  */
 export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Promise<void> {
-  const { mlsService, userId, pin, processDeviceInvitationsLocally, log } = deps;
+  const { mlsService, userId, deviceKeyB64, processDeviceInvitationsLocally, log } = deps;
 
   if (!getIsTabLeader()) return;
 
-  // 1. Publier les KeyPackages
+  // 1. Publish KeyPackages
   // welcome_requests must only be sent if this step succeeds:
   // a device sending a welcome_request must have its KPs available on
   // the server so the host can invite it immediately after.
   let keyPackagePublished = false;
   try {
-    await mlsService.generateKeyPackage(pin);
+    await mlsService.generateKeyPackage(deviceKeyB64);
     log('KeyPackage published.');
     keyPackagePublished = true;
     // Proactive reconciliation (best-effort, background): purge orphaned one-time
@@ -202,7 +207,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   }
 
   if (stateMutated) {
-    await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
   }
 
   // Cross-session history retry: re-solicit the pre-join bundle for any group we hold locally that

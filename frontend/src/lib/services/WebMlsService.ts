@@ -1006,7 +1006,7 @@ export class WebMlsService extends BaseMlsService {
     }
   }
 
-  /** WASM client wrapper - vérifie via `this.client.key_package_has_private` qu'on possède la clé privée du KeyPackage. */
+  /** WASM client wrapper - checks via `this.client.key_package_has_private` that we hold the KeyPackage's private key. */
   protected async keyPackageHasPrivate(keyPackageBytes: Uint8Array): Promise<boolean> {
     return this.client.key_package_has_private(keyPackageBytes) as boolean;
   }

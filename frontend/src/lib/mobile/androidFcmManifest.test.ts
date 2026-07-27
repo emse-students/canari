@@ -3,14 +3,13 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Garde-fou anti-régression FCM.
+ * FCM anti-regression guardrail.
  *
- * Tauri régénère parfois AndroidManifest.xml (ex. `tauri android init`) et écrase
- * les déclarations custom. Sans le <service> CanariFirebaseMessagingService lié à
- * l'intent-filter `com.google.firebase.MESSAGING_EVENT`, Firebase n'appelle jamais
- * onMessageReceived : les push partent du serveur mais aucune notification n'apparaît
- * quand l'app est tuée. Cette régression (commit 53e659a0) est invisible à la
- * compilation - ces tests la font échouer en CI.
+ * Tauri sometimes regenerates AndroidManifest.xml (e.g. `tauri android init`) and overwrites the
+ * custom declarations. Without the <service> CanariFirebaseMessagingService bound to the
+ * `com.google.firebase.MESSAGING_EVENT` intent-filter, Firebase never calls onMessageReceived:
+ * pushes leave the server but no notification appears when the app is killed. This regression
+ * (commit 53e659a0) is invisible at compile time - these tests make it fail in CI.
  */
 const here = dirname(fileURLToPath(import.meta.url));
 const ANDROID_MAIN = resolve(here, '../../../src-tauri/gen/android/app/src/main');
@@ -52,9 +51,9 @@ describe('AndroidManifest FCM registration (anti-régression)', () => {
     expect(manifestChannel).toBe(ktChannel);
   });
 
-  it('déclare le receiver de boot (WP-XP-4) avec BOOT_COMPLETED + MY_PACKAGE_REPLACED', () => {
-    // Sans lui, un token FCM qui a tourné pendant que le téléphone était éteint reste
-    // mort côté serveur jusqu'à ouverture manuelle de l'app.
+  it('declares the boot receiver (WP-XP-4) with BOOT_COMPLETED + MY_PACKAGE_REPLACED', () => {
+    // Without it, an FCM token that rotated while the phone was off stays dead
+    // server-side until the app is manually opened.
     expect(manifest).toContain('android.permission.RECEIVE_BOOT_COMPLETED');
     const receiverBlocks = manifest.match(/<receiver\b[\s\S]*?<\/receiver>/g) ?? [];
     const bootReceiver = receiverBlocks.find((b) => b.includes('.CanariBootReceiver'));
@@ -63,23 +62,23 @@ describe('AndroidManifest FCM registration (anti-régression)', () => {
     expect(bootReceiver).toContain('android.intent.action.MY_PACKAGE_REPLACED');
   });
 
-  it('déclare le receiver des quick actions (WP-XP-1)', () => {
+  it('declares the quick-action receiver (WP-XP-1)', () => {
     expect(manifest).toMatch(/android:name=["']\.CanariNotificationActionReceiver["']/);
   });
 
-  it("demande USE_FULL_SCREEN_INTENT pour la sonnerie d'appel (WP-XP-5)", () => {
-    // Sans elle, la notification CallStyle ne peut pas s'afficher plein écran sur un
-    // téléphone verrouillé - l'appel entrant devient une simple bannière silencieuse.
+  it('requests USE_FULL_SCREEN_INTENT for the call ringtone (WP-XP-5)', () => {
+    // Without it, the CallStyle notification cannot display full-screen on a locked
+    // phone - the incoming call becomes a silent banner.
     expect(manifest).toContain('android.permission.USE_FULL_SCREEN_INTENT');
-    // Et le service Kotlin doit bien exposer les deux canaux WP-XP-5.
+    // And the Kotlin service must expose both WP-XP-5 channels.
     expect(fcmServiceKt).toMatch(/CHANNEL_CALLS\s*=\s*"canari_calls"/);
     expect(fcmServiceKt).toMatch(/CHANNEL_MENTIONS\s*=\s*"canari_mentions"/);
   });
 
-  it('ne réintroduit pas android:debuggable avec placeholder (casse le merge release)', () => {
-    // build.gradle.kts ne définit pas manifestPlaceholders["debuggable"] → un
-    // android:debuggable="${debuggable}" fait échouer processUniversalReleaseMainManifest.
-    // (On cible l'attribut, pas la chaîne - qui peut légitimement figurer en commentaire.)
+  it('does not reintroduce android:debuggable with placeholder (breaks release merge)', () => {
+    // build.gradle.kts does not define manifestPlaceholders["debuggable"] -> an
+    // android:debuggable="${debuggable}" causes processUniversalReleaseMainManifest to fail.
+    // (We target the attribute, not the string - which may legitimately appear in comments.)
     expect(manifest).not.toMatch(/android:debuggable\s*=\s*["']\$\{debuggable\}["']/);
   });
 

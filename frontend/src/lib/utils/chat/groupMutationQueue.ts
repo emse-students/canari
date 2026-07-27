@@ -1,30 +1,29 @@
 /**
- * Serialise les mutations de la Map reactive `conversations` PAR groupId (audit H3).
+ * Serializes mutations of the reactive `conversations` Map PER groupId (audit H3).
  *
- * Contexte : deux flux concurrents lisaient puis reecrivaient `conversations` autour de plusieurs
- * `await` reseau/stockage, s'entrelacant sur le meme groupId (ex. deux receptions de Welcome, ou
- * un Welcome et une reconciliation de doublons re-cle la meme conversation directe). Si l'un
- * s'intercale entre la LECTURE et l'ECRITURE de l'autre, on obtient un ecrasement des messages en
- * memoire (lost update). `runExclusiveForGroup` garantit qu'une seule section critique par groupId
- * tourne a la fois.
+ * Context: two concurrent flows used to read then rewrite `conversations` around several
+ * network/storage `await`s, interleaving on the same groupId (e.g. two Welcome receptions, or a
+ * Welcome and a duplicate reconciliation re-keying the same direct conversation). If one slips
+ * between the READ and the WRITE of the other, in-memory messages are overwritten (lost update).
+ * `runExclusiveForGroup` guarantees that a single critical section per groupId runs at a time.
  *
- * INVARIANT ANTI-DEADLOCK : une section verrouillee ici ne doit JAMAIS acquerir le verrou MLS
- * async (`runUnderMlsLock`). Les sections concernees ne touchent que la Map et le stockage
- * (SQLite/IndexedDB) ; `forgetGroup` est synchrone (ne prend pas le verrou MLS). Comme aucun
- * detenteur de CE verrou n'attend le verrou MLS, il ne peut pas y avoir de cycle d'attente avec
- * un appelant qui tient le verrou MLS et attend ce verrou-ci (ex. `upsertConversation`).
+ * ANTI-DEADLOCK INVARIANT: a section locked here must NEVER acquire the async MLS lock
+ * (`runUnderMlsLock`). The sections involved only touch the Map and storage (SQLite/IndexedDB);
+ * `forgetGroup` is synchronous (it does not take the MLS lock). Since no holder of THIS lock
+ * waits on the MLS lock, there can be no wait cycle with a caller holding the MLS lock and
+ * waiting on this one (e.g. `upsertConversation`).
  */
 const groupChains = new Map<string, Promise<unknown>>();
 
 /**
- * Execute `fn` en exclusion mutuelle avec toute autre section passee pour le MEME `groupId`.
- * Les groupes differents ne se bloquent pas entre eux. La chaine est nettoyee quand elle se vide
- * (pas de fuite memoire pour les groupes inactifs).
+ * Runs `fn` in mutual exclusion with any other section passed for the SAME `groupId`.
+ * Different groups do not block each other. The chain is cleaned up when it drains
+ * (no memory leak for inactive groups).
  */
 export function runExclusiveForGroup<T>(groupId: string, fn: () => Promise<T>): Promise<T> {
   const prev = groupChains.get(groupId) ?? Promise.resolve();
-  // `then(fn, fn)` : on enchaine quel que soit le sort du precedent (succes OU echec) pour ne
-  // jamais bloquer la file sur une erreur d'une section anterieure.
+  // `then(fn, fn)`: chain regardless of the previous outcome (success OR failure) so an error
+  // in an earlier section never blocks the queue.
   const run = prev.then(fn, fn);
   const settled = run.then(
     () => undefined,
@@ -32,7 +31,7 @@ export function runExclusiveForGroup<T>(groupId: string, fn: () => Promise<T>): 
   );
   groupChains.set(groupId, settled);
   void settled.then(() => {
-    // Ne supprimer que si aucune section plus recente n'a ete enchainee entre-temps.
+    // Only delete if no newer section was chained in the meantime.
     if (groupChains.get(groupId) === settled) groupChains.delete(groupId);
   });
   return run;

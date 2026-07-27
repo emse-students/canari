@@ -160,7 +160,7 @@
       historyBaseUrl: session.historyBaseUrl,
       userId: session.userId,
       myDeviceId: session.myDeviceId,
-      pin: session.pin,
+      deviceKeyB64: session.deviceKeyB64,
       storage: session.storage,
       log,
       loadExistingConversations: () => convs.loadAndRestoreConversations(convCtx()),
@@ -174,7 +174,7 @@
       storage: session.storage,
       ensureMls: session.ensureMls,
       userId: session.userId,
-      pin: session.pin,
+      deviceKeyB64: session.deviceKeyB64,
       historyBaseUrl: session.historyBaseUrl,
       messageReactions: messaging.messageReactions,
       log,
@@ -193,7 +193,7 @@
       ensureMls: session.ensureMls,
       conversations: convs.conversations,
       userId: session.userId,
-      pin: session.pin,
+      deviceKeyB64: session.deviceKeyB64,
       authToken: session.authToken,
       setAuthToken: (v: string) => {
         session.authToken = v;
@@ -417,7 +417,7 @@
             sendReadReceipt(toSend, {
               mlsService,
               userId: session.userId,
-              pin: session.pin,
+              deviceKeyB64: session.deviceKeyB64,
               conversation: fresh,
             }).catch(() => {});
           } catch {
@@ -624,7 +624,7 @@
       return aggregateSharedContent(msgs);
     }
     if (!session.storage) return { media: [], files: [], links: [] };
-    const msgs = await session.storage.getMessages(conversationId, session.pin);
+    const msgs = await session.storage.getMessages(conversationId, session.deviceKeyB64);
     return aggregateSharedContent(msgs);
   }
 
@@ -646,7 +646,7 @@
       return convs.searchChannelHistory(conversationId, query, convCtx());
     }
     if (!session.storage) return null;
-    const msgs = await session.storage.getMessages(conversationId, session.pin);
+    const msgs = await session.storage.getMessages(conversationId, session.deviceKeyB64);
     return msgs
       .filter((m) => !m.isDeleted && messageSearchText(m.content).toLowerCase().includes(q))
       .map((m) => m.id);

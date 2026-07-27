@@ -1,24 +1,23 @@
 /**
- * Types partagés par le pipeline, la recovery et la connection.
+ * Types shared by the pipeline, the recovery and the connection layers.
  *
- * Principe : `getLocalGroups()` est la seule source de vérité pour savoir
- * si un device est dans un groupe. Ces types décrivent le résultat du
- * traitement des messages entrants côté client.
+ * Principle: `getLocalGroups()` is the only source of truth for whether a device is in a group.
+ * These types describe the outcome of processing incoming messages on the client side.
  */
 
 /**
- * État de membership d'un device dans un groupe, côté serveur.
+ * Server-side membership state of a device in a group.
  *
- * - `pending` : le device n'a pas encore traité de Welcome pour ce groupe.
- * - `active`  : le device a traité son Welcome et est en sync.
+ * - `pending`: the device has not processed a Welcome for this group yet.
+ * - `active` : the device processed its Welcome and is in sync.
  */
 export type MembershipStatus = 'pending' | 'active';
 
 /**
  * Résultat typé du traitement d'un message MLS entrant.
  *
- * Remplace le retour `Uint8Array | null` ambigu de `processIncomingMessage`.
- * Produit en interprétant la sortie WASM + les flags de déduplication.
+ * Replaces the ambiguous `Uint8Array | null` return of `processIncomingMessage`.
+ * Produced by interpreting the WASM output plus the deduplication flags.
  */
 export type ProcessResult =
   | { kind: 'ok'; content: Uint8Array }

@@ -621,7 +621,7 @@ export class TauriMlsService extends BaseMlsService {
     return fallback;
   }
 
-  /** Tauri-native `invoke` wrapper - vérifie via `key_package_a_clef_privee` qu'on possède la clé privée du KeyPackage. */
+  /** Tauri-native `invoke` wrapper - checks via `key_package_a_clef_privee` that we hold the KeyPackage's private key. */
   protected async keyPackageHasPrivate(keyPackageBytes: Uint8Array): Promise<boolean> {
     return invoke<boolean>('key_package_a_clef_privee', {
       keyPackageBytes: Array.from(keyPackageBytes),

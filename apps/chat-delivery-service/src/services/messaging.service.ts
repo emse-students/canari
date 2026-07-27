@@ -148,9 +148,9 @@ export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
 
   /**
-   * Fenetre maximale, en arriere du moment d'activation, pour re-livrer a un device qui passe
-   * `active` les messages rates pendant qu'il etait `pending` (DF2). Borne la re-notification
-   * pour qu'un device longtemps reste `pending` ne declenche pas une avalanche de notifications.
+   * Maximum window, looking back from the activation moment, for re-delivering to a device
+   * becoming `active` the messages it missed while `pending` (DF2). Bounds the re-notification so
+   * a device left `pending` for a long time does not trigger an avalanche of notifications.
    */
   private static readonly ACTIVATION_REDELIVER_WINDOW_MS = 5 * 60 * 1000;
 
@@ -736,13 +736,13 @@ export class MessagingService {
         throw new BadRequestException(`Group ${groupId} not found`);
       }
 
-      // Strict epoch gate : le baseEpoch envoye doit egaler exactement l'activeEpoch serveur.
-      // Un groupe reellement non-initialise (cree a l'instant) OU fraichement re-bootstrappe
-      // (reset-epoch -> activeEpoch=0 puis force_create_group qui repart a l'epoch MLS 0) a
-      // toujours son premier commit a baseEpoch 0 : activeEpoch==0 n'accepte donc legitimement
-      // que baseEpoch==0. L'ancien bypass (accepter n'importe quel baseEpoch quand activeEpoch==0)
-      // laissait un device incoherent fast-forwarder le compteur (ex. baseEpoch=5 -> activeEpoch=6)
-      // et desaligner tout le monde (H4).
+      // Strict epoch gate: the submitted baseEpoch must match the server's activeEpoch exactly.
+      // A genuinely uninitialized group (just created) OR freshly re-bootstrapped
+      // (reset-epoch -> activeEpoch=0 then force_create_group restarting at MLS epoch 0)
+      // always has its first commit at baseEpoch 0: activeEpoch==0 therefore legitimately only
+      // accepts baseEpoch==0. The old bypass (accepting any baseEpoch when activeEpoch==0)
+      // let an inconsistent device fast-forward the counter (e.g. baseEpoch=5 -> activeEpoch=6)
+      // and desynchronize everyone (H4).
       if (baseEpoch !== group.activeEpoch) {
         this.logger.warn(
           `[COMMIT][${traceId}] REJECT epoch_mismatch group=${groupId} baseEpoch=${baseEpoch} activeEpoch=${group.activeEpoch}`
@@ -754,7 +754,7 @@ export class MessagingService {
         };
       }
 
-      // Advance the epoch (baseEpoch == activeEpoch garanti par le gate ci-dessus)
+      // Advance the epoch (baseEpoch == activeEpoch guaranteed by the gate above)
       group.activeEpoch = baseEpoch + 1;
       await this.groupRepo.save(group);
 
@@ -1096,20 +1096,20 @@ export class MessagingService {
   }
 
   /**
-   * Promeut la membership device en `active` et l'ajoute au set de routage Redis.
+   * Promotes a device membership to `active` and adds it to the Redis routing set.
    *
-   * Utilise par le chemin background PushSecret (FCM1) : un device qui rejoint un groupe via un
-   * Welcome FCM en arriere-plan ne passe pas par le chemin foreground `updateInvitationStatus`.
-   * Sans cette promotion, sa ligne `dm_device_group_memberships` reste `pending`, donc la
-   * resolution des destinataires (filtre `status='active'`) l'EXCLUT et il ne recoit jamais les
-   * messages suivants en temps reel ni en push (uniquement via le rattrapage d'historique).
-   * Idempotent : upsert sur la contrainte unique (deviceId, groupId).
+   * Used by the background PushSecret path (FCM1): a device that joins a group via a background
+   * FCM Welcome never goes through the foreground `updateInvitationStatus` path.
+   * Without this promotion, its `dm_device_group_memberships` row stays `pending`, so
+   * recipient resolution (`status='active'` filter) EXCLUDES it and it never receives
+   * subsequent messages in real time or via push (only through history catch-up).
+   * Idempotent: upsert on the unique constraint (deviceId, groupId).
    */
   async activateDeviceMembership(userId: string, deviceId: string, groupId: string): Promise<void> {
-    // Lire l'etat anterieur AVANT l'upsert : la re-livraison des messages rates (DF2) ne doit
-    // se faire QUE sur une vraie transition pending->active. activateDeviceMembership est aussi
-    // appelee de facon idempotente a chaque re-traitement de Welcome ; re-livrer alors qu'on
-    // etait deja `active` doublerait les notifications.
+    // Read prior state BEFORE the upsert: missed-message redelivery (DF2) must only
+    // happen on a genuine pending->active transition. activateDeviceMembership is also
+    // called idempotently on every Welcome re-processing; re-delivering when the device
+    // was already `active` would double notifications.
     const existing = await this.deviceGroupRepo.findOne({
       where: { deviceId, groupId },
     });
@@ -1119,16 +1119,16 @@ export class MessagingService {
       { userId, deviceId, groupId, status: 'active' as const },
       { conflictPaths: ['deviceId', 'groupId'] }
     );
-    // Routage immediat : ajouter au set Redis sans attendre une reconstruction du cache.
+    // Immediate routing: add to Redis set without waiting for a cache rebuild.
     await this.redis.sadd(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
     this.logger.log(`[MEMBERSHIP_ACTIVE] group=${groupId} device=${userId}:${deviceId}`);
 
     if (!wasAlreadyActive) {
-      // Pendant que le device etait `pending`, la resolution des destinataires (filtre
-      // `status='active'`) l'excluait : aucune notification push n'a ete dispatchee pour les
-      // messages envoyes dans cette fenetre. Maintenant qu'il est actif (donc qu'il a traite
-      // son Welcome -> il peut dechiffrer), on lui re-livre ces messages pour declencher la
-      // notification manquante (DF2). Best-effort, jamais bloquant pour l'activation.
+      // While the device was `pending`, recipient resolution (`status='active'` filter)
+      // excluded it: no push notification was dispatched for messages sent during that
+      // window. Now that it is active (meaning it processed its Welcome -> it can decrypt),
+      // we re-deliver those messages to trigger the missing notification (DF2).
+      // Best-effort, never blocking for activation.
       const pendingSinceMs = existing?.createdAt?.getTime();
       void this.redeliverMissedDuringActivationWindow(
         userId,
@@ -1144,14 +1144,14 @@ export class MessagingService {
   }
 
   /**
-   * Re-livre au device qui vient de passer `active` les messages applicatifs visibles envoyes
-   * pendant sa fenetre d'activation (ou il etait `pending`, donc exclu des destinataires et
-   * jamais notifie). Source : le stream `history:{groupId}`, qui ne contient QUE des messages
-   * applicatifs visibles (Welcome/Commit/silent en sont exclus a l'ecriture) - donc aucune
-   * frame de controle ne sera re-notifiee. Borne par {@link ACTIVATION_REDELIVER_WINDOW_MS} et
-   * un plafond de messages pour ne jamais spammer un device longtemps reste `pending`. Les
-   * messages propres du device sont ignores. Idempotence d'affichage : le client dedoublonne
-   * par messageId (un message deja recu via le rattrapage d'historique n'est pas re-affiche).
+   * Re-delivers to a device that just became `active` the visible application messages sent
+   * during its activation window (when it was `pending`, thus excluded from recipients and
+   * never notified). Source: the `history:{groupId}` stream, which ONLY contains visible
+   * application messages (Welcome/Commit/silent are excluded at write time) - so no control
+   * frame will ever be re-notified. Bounded by {@link ACTIVATION_REDELIVER_WINDOW_MS} and
+   * a message cap to never spam a device that stayed `pending` for a long time. The device's
+   * own messages are skipped. Display idempotency: the client deduplicates by messageId
+   * (a message already received via history catch-up is not re-displayed).
    */
   private async redeliverMissedDuringActivationWindow(
     userId: string,
@@ -1161,16 +1161,16 @@ export class MessagingService {
   ): Promise<void> {
     const traceId = this.makeTraceId('reactivate');
     const MAX_COUNT = 50;
-    // Plafond de fenetre : un device reste `pending` longtemps (zombie qui finit par activer)
-    // ne doit pas declencher une avalanche de notifications pour de vieux messages. Au-dela,
-    // il les recupere via le rattrapage d'historique (sans notification, ce qui est correct).
+    // Window cap: a device that stays `pending` for a long time (zombie that eventually
+    // activates) must not trigger an avalanche of notifications for old messages. Beyond
+    // the window, it catches up via history (without notification, which is correct).
     const windowStartMs = Math.max(
       pendingSinceMs ?? 0,
       Date.now() - MessagingService.ACTIVATION_REDELIVER_WINDOW_MS
     );
 
     const historyKey = `history:${groupId}`;
-    // Les IDs de stream sont horodates (`<ms>-<seq>`) : on borne le XRANGE des windowStartMs.
+    // Stream IDs are timestamped (`<ms>-<seq>`): bound the XRANGE from windowStartMs.
     const entries = await this.redis.xrange(
       historyKey,
       `${windowStartMs}`,
@@ -1187,7 +1187,7 @@ export class MessagingService {
       for (let i = 0; i + 1 < fields.length; i += 2) map.set(fields[i], fields[i + 1]);
       const senderId = map.get('sender_id') ?? '';
       const proto = map.get('content') ?? '';
-      if (!proto || senderId === userId) continue; // pas de payload, ou notre propre message
+      if (!proto || senderId === userId) continue; // no payload, or our own message
 
       const queued = await this.queuedMessageRepo.save(
         this.queuedMessageRepo.create({

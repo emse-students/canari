@@ -341,7 +341,7 @@ export async function listAggregatedCalendarFeed(opts: {
   from: string;
   to: string;
   associationId?: string;
-  /** Opt-in : inclut les événements en attente (honoré seulement pour les proposeurs/BDE/admin). Jamais passé pour l'export PDF. */
+  /** Opt-in: includes pending events (honoured only for proposers/BDE/admin). Never passed for the PDF export. */
   includePending?: boolean;
 }): Promise<AssociationCalendarFeedEvent[]> {
   const q = new URLSearchParams();
@@ -484,7 +484,7 @@ export async function listPendingCalendarEvents(): Promise<PendingCalendarEvents
   return request<PendingCalendarEventsResponse>('/api/associations/calendar/pending');
 }
 
-/** Association admins - publications et formulaires récents pour lier un événement d'agenda. */
+/** Association admins - recent posts and forms, used to link a calendar event. */
 export async function listAssociationLinkCandidates(
   associationId: string
 ): Promise<AssociationLinkCandidates> {
@@ -493,7 +493,7 @@ export async function listAssociationLinkCandidates(
   );
 }
 
-/** Public - événement d'agenda pointant vers cette publication (fil). */
+/** Public - calendar event pointing to this post (feed). */
 export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   linkedEvent: AssociationCalendarEvent | null;
 }> {

@@ -121,7 +121,7 @@ function oidcRedirectUri(): string {
   return `${window.location.origin}/auth/callback`;
 }
 
-/** Slug du flow Authentik MiConnect pour la connexion mot de passe (revue Google/Apple). */
+/** Slug of the MiConnect Authentik flow for password login (Google/Apple review). */
 export const PASSWORD_LOGIN_FLOW_SLUG = 'password-login';
 
 export type OidcLoginOptions = {

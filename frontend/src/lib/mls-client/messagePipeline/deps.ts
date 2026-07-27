@@ -11,7 +11,7 @@ export interface MessageHandlerDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   historyBaseUrl: string;
   conversations: SvelteMap<string, Conversation>;
   messageReactions: SvelteMap<string, MessageReaction[]>;
@@ -57,29 +57,29 @@ export interface MessageHandlerDeps {
   }) => void;
   onCallSignal?: (senderId: string, groupId: string, callMsg: unknown) => void;
   /**
-   * Appelé quand un Welcome est traité avec succès et que le groupe est prêt.
-   * Permet de relancer processPendingInvitations pour les invitations qui
-   * avaient été skippées parce que la conversation n'était pas encore prête.
+   * Called when a Welcome is processed successfully and the group is ready.
+   * Lets processPendingInvitations re-run for invitations that were skipped
+   * because the conversation was not ready yet.
    */
   onGroupReady?: (groupId: string) => void;
   /**
-   * Map partagée des timers de recovery par groupe (la même que
-   * `useChatSession.connectionRecoveryTimers`). Source de vérité unique : le pipeline de
-   * messages et la couche connexion arment/annulent leurs timers dans cette map commune, si
-   * bien qu'un `cancelReAdd` après un Welcome réussi annule TOUS les timers du groupe - plus
-   * besoin d'un callback `cancelGroupRecovery` pour ponter deux maps distinctes.
+   * Shared map of per-group recovery timers (the same one as
+   * `useChatSession.connectionRecoveryTimers`). Single source of truth: the message pipeline and
+   * the connection layer arm/cancel their timers in this common map, so a `cancelReAdd` after a
+   * successful Welcome cancels ALL of the group's timers - no more need for a
+   * `cancelGroupRecovery` callback to bridge two separate maps.
    */
   recoveryTimers: SvelteMap<string, ReturnType<typeof setTimeout>>;
   /**
-   * Appelé sur une erreur MLS fatale non récupérable nécessitant une action utilisateur.
-   * - `'oom'` : OOM WASM détecté → rechargement de l'app recommandé.
-   * - `'private_mode'` : navigation privée détectée (stockage indisponible) → état perdu à la fermeture.
-   * - `'keystore_lost'` : Keystore Android perdu (TEE reset) → reconnexion recommandée.
+   * Called on a fatal, unrecoverable MLS error requiring user action.
+   * - `'oom'`: WASM OOM detected -> app reload recommended.
+   * - `'private_mode'`: private browsing detected (storage unavailable) -> state lost on close.
+   * - `'keystore_lost'`: Android Keystore lost (TEE reset) -> re-login recommended.
    */
   onMlsFatalError?: (kind: 'oom' | 'private_mode' | 'keystore_lost') => void;
   /**
-   * Rejoue les messages orphelins bufferisés pour une conversation qui vient
-   * d'être ajoutée à la map. Appelé après un Welcome MLS réussi (FIX 3-4).
+   * Replays the buffered orphan messages for a conversation that has just been added to the
+   * map. Called after a successful MLS Welcome (FIX 3-4).
    */
   drainOrphanMessages?: (convoKey: string) => void;
   log: (msg: string) => void;

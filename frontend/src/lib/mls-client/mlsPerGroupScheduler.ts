@@ -39,7 +39,7 @@ export interface MlsPerGroupDrainHooks {
 export class MlsPerGroupScheduler {
   private readonly buckets = new Map<string, GroupBuckets>();
   private readonly rrKeys: string[] = [];
-  /** Set miroir de rrKeys pour les lookups O(1) en lieu de rrKeys.includes(). */
+  /** Mirror set of rrKeys for O(1) lookups instead of rrKeys.includes(). */
   private readonly rrKeySet = new Set<string>();
   private rrIndex = 0;
   private isDraining = false;

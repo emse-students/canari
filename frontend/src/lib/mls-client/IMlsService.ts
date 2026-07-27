@@ -114,22 +114,22 @@ export interface IMlsService {
   /** Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity key. */
   generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array>;
   /**
-   * Purge les KeyPackages publiés (fallback statique + pool one-time) et en republie
-   * de frais à partir du keystore local courant.
+   * Purges the published KeyPackages (static fallback + one-time pool) and republishes
+   * fresh ones from the current local keystore.
    *
-   * À appeler quand on détecte que nos KeyPackages serveur ne correspondent plus à nos
-   * clés privées locales (erreur `NoMatchingKeyPackage` au traitement d'un Welcome) :
-   * sans ça, l'invitant ré-ajoute en boucle avec le même KeyPackage orphelin.
+   * Call this when we detect that our server-side KeyPackages no longer match our local
+   * private keys (`NoMatchingKeyPackage` error while processing a Welcome): without it, the
+   * inviter keeps re-adding in a loop with the same orphaned KeyPackage.
    */
   republishKeyMaterial(deviceKeyB64: string): Promise<void>;
   /**
-   * Réconciliation proactive : liste les one-time prekeys publiés sur le serveur,
-   * valide localement lesquels on possède encore en clé privée, et purge du serveur
-   * ceux qui sont orphelins (clé privée perdue après reset/restauration d'état).
+   * Proactive reconciliation: lists the one-time prekeys published on the server, validates
+   * locally which ones we still hold a private key for, and purges the orphaned ones from the
+   * server (private key lost after a state reset/restore).
    *
-   * Empêche un pair de consommer un KeyPackage qu'on ne peut pas honorer - la cause
-   * de la boucle `NoMatchingKeyPackage` - au lieu d'attendre l'échec. Best-effort,
-   * conçu pour tourner en arrière-plan à la connexion.
+   * Prevents a peer from consuming a KeyPackage we cannot honour - the cause of the
+   * `NoMatchingKeyPackage` loop - instead of waiting for the failure. Best-effort, designed
+   * to run in the background on connect.
    */
   reconcilePublishedKeyPackages(): Promise<void>;
   /**
@@ -341,16 +341,16 @@ export interface IMlsService {
   getGroupMeta(groupId: string): Promise<GroupMeta | null>;
   /**
    * Statut serveur d'un groupe en distinguant l'absence CONFIRMEE (`'absent'` : ligne `dm_groups`
-   * disparue) de l'incertitude reseau (`'error'`) et de l'existence (`GroupMeta` : groupe vivant,
-   * tombstone supprime, ou exclusion). Utilise par la discovery pour n'auto-supprimer une conv que
-   * sur absence confirmee.
+   * gone) from network uncertainty (`'error'`) and from existence (`GroupMeta`: live group,
+   * deleted tombstone, or exclusion). Used by discovery so it only auto-deletes a conversation
+   * on a confirmed absence.
    */
   getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta>;
-  /** Liste les groupes que cet utilisateur a dismisses (suppression/quitter manuel propage a tous ses appareils). */
+  /** Lists the groups this user dismissed (manual deletion/leave, propagated to all their devices). */
   getDismissedGroups(): Promise<string[]>;
-  /** Marque un groupe comme dismisse (suppression/quitter manuel) - propage la purge aux autres appareils. */
+  /** Marks a group as dismissed (manual deletion/leave) - propagates the purge to the other devices. */
   dismissGroup(groupId: string): Promise<void>;
-  /** Leve le dismiss d'un groupe (re-ajout via Welcome). */
+  /** Lifts a group's dismiss (re-add via Welcome). */
   undismissGroup(groupId: string): Promise<void>;
 
   // DeviceGroupMembership tracking

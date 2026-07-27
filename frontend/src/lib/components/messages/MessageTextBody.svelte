@@ -22,8 +22,8 @@
 
   const normalizedSearchTerm = $derived(searchTerm.trim().toLowerCase());
 
-  /** Vrai si le message ne contient qu'un lien (pas de texte autour) - on masque l'URL brute.
-   * Exclut les GIFs qui s'affichent en inline dans le <p>. */
+  /** True if the message contains only a link (no surrounding text) - the raw URL is hidden.
+   * Excludes GIFs, which render inline inside the <p>. */
   const isLinkOnly = $derived(
     firstLink !== null &&
       !isGifUrl(firstLink) &&

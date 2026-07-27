@@ -46,7 +46,7 @@
     !!currentUserId && contactId.trim().toLowerCase() === currentUserId.toLowerCase()
   );
 
-  // Utilitaires de classes pour garder le template HTML propre
+  // Class utilities to keep the HTML template clean
   const baseTabClass =
     'flex-1 px-3 py-2 text-sm font-semibold rounded-xl transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-400';
   const activeTabClass =

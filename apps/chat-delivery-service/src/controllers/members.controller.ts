@@ -202,7 +202,7 @@ export class MembersController {
       'Cannot dismiss a group for another user'
     );
     const safeGroupId = sanitizeQueryValue(body?.groupId ?? '', 'groupId');
-    // Idempotent : ON CONFLICT DO NOTHING via la contrainte unique (userId, groupId).
+    // Idempotent: ON CONFLICT DO NOTHING via unique constraint (userId, groupId).
     await this.dismissedRepo
       .createQueryBuilder()
       .insert()

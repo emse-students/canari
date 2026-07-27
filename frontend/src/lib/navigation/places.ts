@@ -21,7 +21,7 @@ export interface AppPlace {
 }
 
 // Ordre mobile : Feed | Communautés | Discussions | Notifs | Tableau de bord
-// La sidebar desktop affiche toutes les places (mobileNav ignoré).
+// The desktop sidebar shows all places (mobileNav ignored).
 export const APP_PLACES: AppPlace[] = [
   {
     id: 'posts',

@@ -62,7 +62,7 @@ export interface ConversationContext {
   /** Returns (or lazily creates) the active MLS service. */
   ensureMls: () => IMlsService;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   historyBaseUrl: string;
   messageReactions: SvelteMap<string, MessageReaction[]>;
   log: (msg: string) => void;
@@ -234,7 +234,7 @@ export function useConversations() {
         if (cursor) {
           const existingPage = await ctx.storage.getMessagesPage(
             id,
-            ctx.pin,
+            ctx.deviceKeyB64,
             INITIAL_MESSAGES_PAGE
           );
           // If local DB is empty, let `replayConversationHistory` handle cursor reset safely.
@@ -246,7 +246,7 @@ export function useConversations() {
                   mapStoredMessagesToChatMessages(existingPage, ctx.userId),
                   ctx.storage,
                   id,
-                  ctx.pin
+                  ctx.deviceKeyB64
                 );
                 const current = conversations.get(contactName);
                 if (current) {
@@ -278,7 +278,7 @@ export function useConversations() {
           id,
           contactName,
           userId: ctx.userId,
-          pin: ctx.pin,
+          deviceKeyB64: ctx.deviceKeyB64,
           storage: ctx.storage,
           getConversation: (name) => conversations.get(name),
           setConversation: (name, next) => conversations.set(name, next),
@@ -289,12 +289,16 @@ export function useConversations() {
       commit?.();
       // Reload from DB so display reflects the latest saved state
       if (ctx.storage) {
-        const refreshed = await ctx.storage.getMessagesPage(id, ctx.pin, INITIAL_MESSAGES_PAGE);
+        const refreshed = await ctx.storage.getMessagesPage(
+          id,
+          ctx.deviceKeyB64,
+          INITIAL_MESSAGES_PAGE
+        );
         const msgs = await retroactivelyResolveHexIds(
           mapStoredMessagesToChatMessages(refreshed, ctx.userId),
           ctx.storage,
           id,
-          ctx.pin
+          ctx.deviceKeyB64
         );
         const current = conversations.get(contactName);
         if (current) {
@@ -469,7 +473,7 @@ export function useConversations() {
     try {
       await loadExistingConversations({
         userId: ctx.userId,
-        pin: ctx.pin,
+        deviceKeyB64: ctx.deviceKeyB64,
         storage: ctx.storage,
         mlsService: ctx.ensureMls(),
         conversations,
@@ -506,7 +510,7 @@ export function useConversations() {
 
     const older = await ctx.storage.getMessagesPage(
       convo.id,
-      ctx.pin,
+      ctx.deviceKeyB64,
       OLDER_MESSAGES_PAGE,
       beforeTimestamp
     );
@@ -516,7 +520,7 @@ export function useConversations() {
       mapStoredMessagesToChatMessages(older, ctx.userId),
       ctx.storage ?? null,
       convo.id,
-      ctx.pin
+      ctx.deviceKeyB64
     );
 
     const current = conversations.get(contactName);
@@ -715,7 +719,7 @@ export function useConversations() {
             mlsService,
             storage: ctx.storage,
             userId: ctx.userId,
-            pin: ctx.pin,
+            deviceKeyB64: ctx.deviceKeyB64,
             conversations,
             getSelectedContact: () => selectedContact,
             setSelectedContact: (id: string | null) => {
@@ -777,7 +781,7 @@ export function useConversations() {
       conversations,
       mlsService,
       userId: ctx.userId,
-      pin: ctx.pin,
+      deviceKeyB64: ctx.deviceKeyB64,
       contactKey,
       groupId: convo.id,
       deleteConversation: ctx.storage ? (key) => ctx.storage!.deleteConversation(key) : undefined,
@@ -796,7 +800,7 @@ export function useConversations() {
       mlsService: ctx.ensureMls(),
       storage: ctx.storage,
       userId: ctx.userId,
-      pin: ctx.pin,
+      deviceKeyB64: ctx.deviceKeyB64,
       historyBaseUrl: ctx.historyBaseUrl,
       conversations,
       selectConversation: (name) => selectConversationWithCtx(name, ctx),
@@ -823,7 +827,7 @@ export function useConversations() {
         mlsService: ctx.ensureMls(),
         storage: ctx.storage,
         userId: ctx.userId,
-        pin: ctx.pin,
+        deviceKeyB64: ctx.deviceKeyB64,
         historyBaseUrl: ctx.historyBaseUrl,
         conversations,
         selectConversation: (name) => selectConversationWithCtx(name, ctx),
@@ -846,7 +850,7 @@ export function useConversations() {
       mlsService: ctx.ensureMls(),
       storage: ctx.storage,
       userId: ctx.userId,
-      pin: ctx.pin,
+      deviceKeyB64: ctx.deviceKeyB64,
       historyBaseUrl: ctx.historyBaseUrl,
       conversations,
       selectConversation: (name) => selectConversationWithCtx(name, ctx),
@@ -868,7 +872,7 @@ export function useConversations() {
         groupId: convo.id,
         newName: name,
         userId: ctx.userId,
-        pin: ctx.pin,
+        deviceKeyB64: ctx.deviceKeyB64,
       });
       conversations.set(selectedContact, { ...convo, name });
       await saveConversation(selectedContact, ctx);
@@ -890,7 +894,7 @@ export function useConversations() {
         groupId: convo.id,
         mediaId,
         userId: ctx.userId,
-        pin: ctx.pin,
+        deviceKeyB64: ctx.deviceKeyB64,
       });
       conversations.set(selectedContact, { ...convo, imageMediaId: mediaId });
       await saveConversation(selectedContact, ctx);
@@ -913,7 +917,7 @@ export function useConversations() {
           mlsService: mls,
           groupId: convo.id,
           userId: ctx.userId,
-          pin: ctx.pin,
+          deviceKeyB64: ctx.deviceKeyB64,
         }),
       'DELETE',
       ctx
@@ -921,12 +925,12 @@ export function useConversations() {
   }
 
   /**
-   * Supprime la conversation uniquement localement (IndexedDB + map réactive),
-   * sans appel serveur ni broadcast MLS.
+   * Deletes the conversation locally only (IndexedDB + reactive map), with no server call and
+   * no MLS broadcast.
    *
-   * Utilisé quand la conversation est marquée `deletedRemotely=true` : le groupe
-   * a déjà été supprimé côté serveur par un autre participant ; on retire juste
-   * l'entrée locale à la demande de l'utilisateur.
+   * Used when the conversation is flagged `deletedRemotely=true`: the group has already been
+   * deleted server-side by another participant; we just remove the local entry at the user's
+   * request.
    */
   async function handleDeleteGroupLocally(ctx: ConversationContext) {
     if (!selectedContact) return;
@@ -950,7 +954,7 @@ export function useConversations() {
           mlsService: mls,
           groupId: convo.id,
           userId: ctx.userId,
-          pin: ctx.pin,
+          deviceKeyB64: ctx.deviceKeyB64,
         }),
       'LEAVE',
       ctx
@@ -968,7 +972,7 @@ export function useConversations() {
         groupId: convo.id,
         memberId,
         userId: ctx.userId,
-        pin: ctx.pin,
+        deviceKeyB64: ctx.deviceKeyB64,
       });
       membershipCache.delete(convo.id);
       groupMembers = groupMembers.filter((m) => m !== memberId);

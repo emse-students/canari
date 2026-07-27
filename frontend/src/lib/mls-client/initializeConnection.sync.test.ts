@@ -37,7 +37,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
     const done = syncConnectionAfterWsOpen({
       mlsService: mls as any,
       userId: 'u1',
-      pin: 'pin1',
+      deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       log,
     });
@@ -50,8 +50,8 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
   });
 
   it('does not purge local WASM groups when getUserGroups fails (server unavailable)', async () => {
-    // Régression : un redeploy CD rend getUserGroups indisponible. Sans garde-fou,
-    // l'étape 3 oubliait tous les groupes locaux → re-add storm via SYNC_WATCHDOG.
+    // Regression: a CD redeploy makes getUserGroups unavailable. Without a guardrail,
+    // step 3 would forget all local groups -> re-add storm via SYNC_WATCHDOG.
     const mls = {
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
@@ -66,7 +66,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
     const done = syncConnectionAfterWsOpen({
       mlsService: mls as any,
       userId: 'u1',
-      pin: 'pin1',
+      deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       log,
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
@@ -93,7 +93,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
     const done = syncConnectionAfterWsOpen({
       mlsService: mls as any,
       userId: 'u1',
-      pin: 'pin1',
+      deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       log,
     });

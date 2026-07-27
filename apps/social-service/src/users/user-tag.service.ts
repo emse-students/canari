@@ -215,9 +215,10 @@ export class UserTagService {
   private async buildTierLabelMap(assocId: string): Promise<Map<string, string>> {
     const map = new Map<string, string>();
     const assoRows: { slug: string; cotisationMode: CotisationMode | null }[] =
-      await this.repo.manager.query(`SELECT slug, "cotisationMode" FROM associations WHERE id = $1`, [
-        assocId,
-      ]);
+      await this.repo.manager.query(
+        `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
+        [assocId]
+      );
     const asso = assoRows[0];
     if (!asso?.cotisationMode) return map;
 
@@ -228,7 +229,12 @@ export class UserTagService {
     );
     for (const p of products) {
       if (!p.variantKey) continue;
-      const { tagName } = deriveCotisationTag(asso.slug, asso.cotisationMode, new Date(), p.variantKey);
+      const { tagName } = deriveCotisationTag(
+        asso.slug,
+        asso.cotisationMode,
+        new Date(),
+        p.variantKey
+      );
       map.set(tagName, p.name);
     }
     return map;
@@ -275,9 +281,10 @@ export class UserTagService {
          ${searchClause}`;
 
     const [countRows, rows, tierMap] = await Promise.all([
-      this.repo.manager.query(`SELECT COUNT(*)::text AS count ${baseFrom}`, [assocId, search]) as Promise<
-        { count: string }[]
-      >,
+      this.repo.manager.query(`SELECT COUNT(*)::text AS count ${baseFrom}`, [
+        assocId,
+        search,
+      ]) as Promise<{ count: string }[]>,
       this.repo.manager.query(
         `SELECT t.id AS "id", t."userId" AS "userId", t."tagName" AS "tagName", t."createdAt" AS "grantedAt",
                 t."expiresAt" AS "expiresAt", u."firstName" AS "firstName", u."lastName" AS "lastName",

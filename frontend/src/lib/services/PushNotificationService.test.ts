@@ -1,6 +1,6 @@
 // Stub Tauri internals before any import so the CJS module picks them up.
-// Vitest v4 ne supporte pas vi.mock pour les modules CJS comme @tauri-apps/api/core.
-// On stubbe donc l'objet global que le module CJS utilise en interne.
+// Vitest v4 does not support vi.mock for CJS modules like @tauri-apps/api/core.
+// We therefore stub the global object that the CJS module uses internally.
 const tauriInvokeStub = vi.fn((cmd: string) => {
   if (cmd === 'get_fcm_token') return Promise.resolve('tok-123');
   return Promise.resolve(undefined);
@@ -53,11 +53,11 @@ describe('startPushService - rotation de token FCM', () => {
       'android'
     );
 
-    // Ré-appel (retour premier plan) sans changement de token → pas de re-POST.
+    // Re-call (foreground return) without token change -> no re-POST.
     await startPushService('https://api', 'jwt', 'dev-1');
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
 
-    // Le token FCM tourne (onNewToken a écrit le nouveau localement) → ré-appel ré-enregistre.
+    // FCM token rotated (onNewToken wrote the new one locally) -> re-call re-registers.
     tauriInvokeStub.mockImplementation((cmd: string) => {
       if (cmd === 'get_fcm_token') return Promise.resolve('tok-456');
       return Promise.resolve(undefined);

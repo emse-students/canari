@@ -55,7 +55,7 @@ export interface OutboxDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   conversations: SvelteMap<string, Conversation>;
   log: (msg: string) => void;
   /** Emit a non-destructive welcome_request for a group missing from the WASM. */
@@ -89,7 +89,7 @@ type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip';
  * after a crash is deduplicated by the receiver), and never sends into an unhealthy group.
  */
 export function createOutbox(deps: OutboxDeps): OutboxController {
-  const { conversations, storage, mlsService, pin, log } = deps;
+  const { conversations, storage, mlsService, deviceKeyB64, log } = deps;
 
   let flushing = false;
   let rerun = false;
@@ -98,7 +98,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   /** Rewrite the native background-send mirror from the current queue (Tauri only; best-effort). */
   async function refreshMirror(): Promise<void> {
     if (!storage) return;
-    const entries = await storage.getOutboxEntries(pin).catch(() => [] as OutboxEntry[]);
+    const entries = await storage.getOutboxEntries(deviceKeyB64).catch(() => [] as OutboxEntry[]);
     await syncOutboxMirror(entries);
   }
 
@@ -152,7 +152,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           readBy: m.readBy,
           reactions: m.reactions,
         },
-        pin
+        deviceKeyB64
       )
       .catch((e) => log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`));
   }
@@ -184,7 +184,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         ?.updateOutboxEntry(
           entry.id,
           { media: { ...media, uploadedRef: ref, fileBytes: undefined } },
-          pin
+          deviceKeyB64
         )
         .catch(() => {});
     }
@@ -294,7 +294,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             lastAttemptAt: Date.now(),
             nextAttemptAt: Date.now() + backoffFor(attempts),
           },
-          pin
+          deviceKeyB64
         )
         .catch(() => {});
       log(
@@ -341,7 +341,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       await mlsService.waitForMessageQueueIdle().catch(() => {});
       do {
         rerun = false;
-        const entries = await storage.getOutboxEntries(pin).catch(() => [] as OutboxEntry[]);
+        const entries = await storage
+          .getOutboxEntries(deviceKeyB64)
+          .catch(() => [] as OutboxEntry[]);
         if (entries.length === 0) break;
         logMlsMetric({ kind: 'outbox_pending_count', count: entries.length });
         let anySent = false;
@@ -350,7 +352,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           if (outcome === 'sent') anySent = true;
         }
         // Re-read for backoff scheduling (statuses/attempts changed during the loop).
-        const remaining = await storage.getOutboxEntries(pin).catch(() => [] as OutboxEntry[]);
+        const remaining = await storage
+          .getOutboxEntries(deviceKeyB64)
+          .catch(() => [] as OutboxEntry[]);
         if (remaining.length > 0) scheduleBackoff(remaining);
         // Chain another pass if a send unblocked dependents, or a concurrent enqueue arrived.
         if (!anySent) break;
@@ -365,7 +369,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     async enqueue(entry: OutboxEntry): Promise<void> {
       if (!storage) return;
       await storage
-        .saveOutboxEntry(entry, pin)
+        .saveOutboxEntry(entry, deviceKeyB64)
         .catch((e) => log(`[OUTBOX] Enqueue failed: ${String(e)}`));
       await refreshMirror();
       runFlush();
@@ -377,7 +381,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
     async applyPendingStatuses(): Promise<void> {
       if (!storage) return;
-      const entries = await storage.getOutboxEntries(pin).catch(() => [] as OutboxEntry[]);
+      const entries = await storage.getOutboxEntries(deviceKeyB64).catch(() => [] as OutboxEntry[]);
       for (const entry of entries) {
         const found = findMessage(entry.id);
         // Only (re)apply 'pending'; do not clobber a live 'sending' transition.

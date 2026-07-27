@@ -27,7 +27,7 @@ function getSharedWorker(workerFactory: () => Worker): Worker {
 
 function runEncryptOnWorker(
   plain: Uint8Array,
-  pin: string,
+  deviceKeyB64: string,
   workerFactory: () => Worker
 ): Promise<Uint8Array> {
   const worker = getSharedWorker(workerFactory);
@@ -63,7 +63,9 @@ function runEncryptOnWorker(
 
     worker.addEventListener('message', onMessage);
     worker.addEventListener('error', onError);
-    worker.postMessage({ type: 'encrypt', payload: { plain: plainBuffer, pin } }, [plainBuffer]);
+    worker.postMessage({ type: 'encrypt', payload: { plain: plainBuffer, pin: deviceKeyB64 } }, [
+      plainBuffer,
+    ]);
   });
 }
 
@@ -73,7 +75,7 @@ function runEncryptOnWorker(
  */
 export async function encryptMlsStateOffThread(
   plain: Uint8Array,
-  pin: string,
+  deviceKeyB64: string,
   options?: {
     enabled?: boolean;
     workerFactory?: () => Worker;
@@ -83,11 +85,11 @@ export async function encryptMlsStateOffThread(
   const canUseWorker =
     enabled && (typeof Worker !== 'undefined' || options?.workerFactory !== undefined);
   if (!canUseWorker) {
-    return encryptMlsStateOnMainThread(plain, pin);
+    return encryptMlsStateOnMainThread(plain, deviceKeyB64);
   }
 
   const workerFactory = options?.workerFactory ?? (() => new MlsEncryptWorker());
-  const job = jobChain.then(() => runEncryptOnWorker(plain, pin, workerFactory));
+  const job = jobChain.then(() => runEncryptOnWorker(plain, deviceKeyB64, workerFactory));
   jobChain = job.then(
     () => undefined,
     () => undefined

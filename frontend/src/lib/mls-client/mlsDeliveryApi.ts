@@ -141,11 +141,11 @@ export class MlsDeliveryApi {
   /**
    * Fetches KeyPackages for all active devices of `userId`.
    *
-   * THROWS sur un echec transport/HTTP (reseau coupe, non-2xx) : un `[]` ne doit JAMAIS etre
-   * indiscernable d'un echec (cf. audit S2). Ne renvoie `[]` que pour un vrai 200 sans device.
-   * Les appelants best-effort (creation, fallback KeyPackage) opt-in explicitement via
-   * `.catch(() => [])` ; le chemin d'invitation laisse l'erreur remonter pour ne pas inviter un
-   * sous-ensemble silencieux de membres.
+   * THROWS on transport/HTTP failure (network down, non-2xx): a `[]` must NEVER be
+   * indistinguishable from a failure (see audit S2). Returns `[]` only for a genuine 200 with no
+   * device. Best-effort callers (creation, KeyPackage fallback) opt in explicitly via
+   * `.catch(() => [])`; the invitation path lets the error propagate so it never invites a
+   * silent subset of members.
    */
   async fetchUserDevices(userId: string): Promise<
     Array<{
@@ -657,8 +657,8 @@ export class MlsDeliveryApi {
 
   /**
    * Returns the current device-level member list (dm_device_group_memberships) for `groupId`.
-   * THROWS sur echec transport/HTTP : un `[]` ne doit pas masquer un echec reseau (audit S2).
-   * Ne renvoie `[]` que pour un vrai 200 sans membre. Les appelants tolerants opt-in via `.catch`.
+   * THROWS on transport/HTTP failure: a `[]` must not mask a network failure (audit S2).
+   * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
    */
   async getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/members`, {
@@ -670,8 +670,8 @@ export class MlsDeliveryApi {
 
   /**
    * Returns user-level members from dm_group_members for `groupId`.
-   * THROWS sur echec transport/HTTP : un `[]` ne doit pas masquer un echec reseau (audit S2).
-   * Ne renvoie `[]` que pour un vrai 200 sans membre. Les appelants tolerants opt-in via `.catch`.
+   * THROWS on transport/HTTP failure: a `[]` must not mask a network failure (audit S2).
+   * Returns `[]` only for a genuine 200 with no member. Tolerant callers opt in via `.catch`.
    */
   async getGroupUserMembers(groupId: string): Promise<{ userId: string }[]> {
     const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
@@ -693,15 +693,15 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Statut serveur d'un groupe, en distinguant absence CONFIRMEE et incertitude reseau - ce que
-   * `getGroupMeta` (qui renvoie `null` pour les deux) ne permet pas. `GET /api/mls/groups/:id`
-   * interroge `dm_groups` SANS controle de membership et renvoie `null` (corps) si la ligne
-   * n'existe pas, donc :
-   *  - `'absent'` : le serveur a repondu et la ligne `dm_groups` n'existe pas -> groupe vraiment
-   *    disparu (jamais cree / hard-purge). Seul cas ou la discovery doit auto-supprimer la conv.
-   *  - `'error'`  : echec HTTP/reseau -> statut inconnu, ne RIEN supprimer.
-   *  - `GroupMeta`: la ligne existe (groupe vivant, tombstone `deletedAt`, ou exclusion) -> garder
-   *    la conv localement (banniere + suppression manuelle).
+   * Server status of a group, distinguishing a CONFIRMED absence from network uncertainty -
+   * something `getGroupMeta` (which returns `null` for both) cannot do. `GET /api/mls/groups/:id`
+   * queries `dm_groups` WITHOUT a membership check and returns `null` (body) if the row does not
+   * exist, hence:
+   *  - `'absent'` : the server replied and the `dm_groups` row does not exist -> group really gone
+   *    (never created / hard-purged). The only case where discovery may auto-delete the conversation.
+   *  - `'error'`  : HTTP/network failure -> status unknown, delete NOTHING.
+   *  - `GroupMeta`: the row exists (live group, `deletedAt` tombstone, or exclusion) -> keep the
+   *    conversation locally (banner + manual deletion).
    */
   async getGroupServerStatus(groupId: string): Promise<'absent' | 'error' | GroupMeta> {
     let res: Response;
@@ -712,15 +712,15 @@ export class MlsDeliveryApi {
     } catch {
       return 'error';
     }
-    // 404 = aucune ligne dm_groups -> absent confirme (jamais cree ou hard-purge).
+    // 404 = no dm_groups row -> confirmed absent (never created or hard-purged).
     if (res.status === 404) return 'absent';
-    // Autre non-2xx (401/5xx/…) = doute reel -> ne jamais purger sur erreur.
+    // Other non-2xx (401/5xx/…) = real doubt -> never purge on error.
     if (!res.ok) return 'error';
-    // Le handler `GET mls/groups/:id` renvoie l'objet groupe, ou `null` quand il est introuvable.
-    // NestJS serialise ce `null` en un corps VIDE (200) -> `res.json()` jetterait. Un corps 2xx
-    // vide ou "null" depuis CET endpoint signifie donc sans ambiguite "groupe absent" (et non une
-    // erreur reseau). C'est la distinction qui permet a la discovery de purger un groupe supprime
-    // au lieu de le conserver indefiniment comme "statut incertain". [[lifecycle]]
+    // The `GET mls/groups/:id` handler returns the group object, or `null` when not found.
+    // NestJS serializes that `null` as an EMPTY body (200) -> `res.json()` would throw. An empty
+    // or "null" 2xx body from THIS endpoint therefore unambiguously means "group absent" (not a
+    // network error). This distinction lets discovery purge a deleted group instead of keeping
+    // it indefinitely as "uncertain status". [[lifecycle]]
     const text = await res.text().catch(() => null);
     if (text === null) return 'error';
     const trimmed = text.trim();
@@ -749,9 +749,9 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Liste les groupes que CET utilisateur a volontairement dismisses (suppression/quitter manuel).
-   * La discovery purge toute conversation locale presente dans cet ensemble - sur tous les
-   * appareils de l'utilisateur. Retourne `[]` en cas d'echec (on ne purge jamais sur un doute).
+   * Lists the groups THIS user deliberately dismissed (manual deletion/leave).
+   * Discovery purges every local conversation present in this set - across all of the user's
+   * devices. Returns `[]` on failure (never purge on a doubt).
    */
   async getDismissedGroups(): Promise<string[]> {
     try {
@@ -783,7 +783,7 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Leve le dismiss d'un groupe (re-ajout via Welcome : l'utilisateur veut de nouveau la conversation). Best-effort. */
+  /** Lifts a group's dismiss (re-add via Welcome: the user wants the conversation back). Best-effort. */
   async undismissGroup(groupId: string): Promise<void> {
     try {
       await this.f(

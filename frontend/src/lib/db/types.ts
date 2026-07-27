@@ -11,9 +11,9 @@ export interface ConversationMeta {
   /** Human-readable name shown in the conversation list. */
   name: string;
   /**
-   * Etat de cycle de vie persiste (cf. {@link ConversationLifecycle}). Remplace l'ancien booleen
-   * `isReady` et persiste desormais aussi l'etat `removed` -> une conversation supprimee/exclue
-   * survit au reload sans dependre d'une re-synchro serveur (regles 2 & 4).
+   * Persisted lifecycle state (see {@link ConversationLifecycle}). Replaces the old `isReady`
+   * boolean and now also persists the `removed` state -> a deleted/excluded conversation survives
+   * a reload without depending on a server re-sync (rules 2 & 4).
    */
   lifecycle: ConversationLifecycle;
   /** Unix milliseconds - used for ordering conversations by recency. */

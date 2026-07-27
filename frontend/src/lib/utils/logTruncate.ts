@@ -1,10 +1,10 @@
 /**
- * Troncature des identifiants longs dans les logs, pour un affichage compact et
- * lisible. Réplique web de la logique appliquée côté Android par test_adb.py,
- * afin que les logs des deux plateformes aient le même format condensé.
+ * Truncation of long identifiers in logs, for a compact and readable display. Web replica of
+ * the logic applied on the Android side by test_adb.py, so that logs from both platforms share
+ * the same condensed format.
  */
 
-/** UUID canonique (8-4-4-4-12), insensible à la casse. */
+/** Canonical UUID (8-4-4-4-12), case-insensitive. */
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 /** Suite hexadécimale d'au moins 16 caractères (userId 64-hex, clés, hashes SHA-256…). */
@@ -13,9 +13,8 @@ const LONG_HEX_RE = /\b[0-9a-f]{16,}\b/gi;
 let installed = false;
 
 /**
- * Réduit les UUIDs et les longues suites hexadécimales (≥ 16 caractères) à leurs
- * 8 premiers caractères suivis de " … ". Les hex courts (epochs, compteurs,
- * couleurs CSS) sont laissés intacts.
+ * Reduces UUIDs and long hexadecimal runs (>= 16 characters) to their first 8 characters
+ * followed by " ... ". Short hex values (epochs, counters, CSS colors) are left untouched.
  */
 export function truncateLogIds(text: string): string {
   return text
@@ -24,12 +23,11 @@ export function truncateLogIds(text: string): string {
 }
 
 /**
- * Installe une troncature globale des identifiants sur toutes les méthodes
- * `console.*`. Les arguments string sont condensés via {@link truncateLogIds} ;
- * les autres (objets, erreurs) passent inchangés. Idempotent : ne wrappe la
- * console qu'une seule fois quel que soit le nombre d'appels.
+ * Installs a global identifier truncation on every `console.*` method. String arguments are
+ * condensed via {@link truncateLogIds}; the others (objects, errors) pass through unchanged.
+ * Idempotent: wraps the console only once regardless of how many times it is called.
  *
- * Couvre d'un seul point d'entrée tous les logs web - `[API]`, `[WS]`,
+ * Covers every web log from a single entry point - `[API]`, `[WS]`,
  * `appendLog`, `[RUST::INFO]`… - sans toucher aux dizaines de sites d'appel.
  */
 export function installConsoleIdTruncation(): void {

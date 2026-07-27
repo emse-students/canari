@@ -1,12 +1,15 @@
 import type { IMlsService } from './IMlsService';
 
 /**
- * Publie des KeyPackages frais si le pool est sous le seuil recommandé.
+ * Publishes fresh KeyPackages if the pool is below the recommended threshold.
  *
- * La logique de pool (quota, fallback vs OTKPs) est dans `generateKeyPackage`
- * de chaque implémentation (WebMlsService / TauriMlsService). Ce module
- * expose un point d'entrée unique pour la connexion et les helpers.
+ * The pool logic (quota, fallback vs OTKPs) lives in each implementation's `generateKeyPackage`
+ * (WebMlsService / TauriMlsService). This module exposes a single entry point for the connection
+ * layer and the helpers.
  */
-export async function replenishKeyPackages(mlsService: IMlsService, pin: string): Promise<void> {
-  await mlsService.generateKeyPackage(pin);
+export async function replenishKeyPackages(
+  mlsService: IMlsService,
+  deviceKeyB64: string
+): Promise<void> {
+  await mlsService.generateKeyPackage(deviceKeyB64);
 }

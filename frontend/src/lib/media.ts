@@ -80,10 +80,10 @@ export const IMAGE_COMPRESS_PRESETS = {
   comment: { maxWidth: 1280, maxHeight: 1280, quality: 0.9 },
 } as const;
 
-/** Sous ce seuil, on garde l'original si aucun redimensionnement n'est nécessaire. */
+/** Below this threshold, keep the original if no resizing is needed. */
 const SKIP_REENCODE_UNDER_BYTES = 2 * 1024 * 1024;
 
-/** N'accepte la version WebP que si elle fait au moins 15 % de moins que l'original. */
+/** Only accept the WebP version if it is at least 15% smaller than the original. */
 const MIN_SIZE_SAVINGS_RATIO = 0.85;
 
 import { encryptMediaBuffer } from '$lib/mediaCrypto';

@@ -49,7 +49,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     await initializeConnection({
       mlsService: mls as any,
       userId: 'u1',
-      pin: 'p',
+      deviceKeyB64: 'p',
       scheduleReconnect: vi.fn(),
       setIsWsConnected: vi.fn(),
       setReconnectAttempts: vi.fn(),
@@ -88,7 +88,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     await initializeConnection({
       mlsService: mls as any,
       userId: 'u1',
-      pin: 'pin1',
+      deviceKeyB64: 'pin1',
       scheduleReconnect,
       setIsWsConnected,
       setReconnectAttempts,
@@ -101,18 +101,18 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(mls.connect).toHaveBeenCalledWith('jwt-access-token');
     expect(setIsWsConnected).toHaveBeenCalledWith(true);
     expect(mls.generateKeyPackage).toHaveBeenCalledWith('pin1');
-    // Groupe absent du WASM → onGroupMissing (recovery seam)
+    // Group absent from WASM -> onGroupMissing (recovery seam)
     expect(onGroupMissing).toHaveBeenCalledWith('g-not-in-wasm');
-    // Groupe dans le WASM → pas de onGroupMissing
+    // Group in WASM -> no onGroupMissing
     expect(onGroupMissing).not.toHaveBeenCalledWith('g-in-wasm');
-    // Groupe absent du serveur → forgetGroup
+    // Group absent from server -> forgetGroup
     expect(mls.forgetGroup).toHaveBeenCalledWith('g-orphan');
-    // Pas de sendWelcomeRequest direct (onGroupMissing est fourni)
+    // No direct sendWelcomeRequest (onGroupMissing is provided)
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Connected to network!'));
   });
 
-  it('purge le WASM et notifie pour les groupes supprimés (deletedAt)', async () => {
+  it('purges WASM and notifies for deleted groups (deletedAt)', async () => {
     const mls = {
       connect: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
@@ -139,7 +139,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     await initializeConnection({
       mlsService: mls as any,
       userId: 'u1',
-      pin: 'pin1',
+      deviceKeyB64: 'pin1',
       scheduleReconnect: vi.fn(),
       setIsWsConnected: vi.fn(),
       setReconnectAttempts: vi.fn(),
@@ -148,11 +148,11 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       onGroupDeletedRemotely,
     });
 
-    // Groupe supprimé et dans WASM → forgetGroup
+    // Deleted group and in WASM -> forgetGroup
     expect(mls.forgetGroup).toHaveBeenCalledWith('g-deleted');
-    // Pas de welcome_request pour un groupe supprimé
+    // No welcome_request for a deleted group
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
-    // onGroupDeletedRemotely est appelé pour notifier l'UI
+    // onGroupDeletedRemotely is called to notify the UI
     expect(onGroupDeletedRemotely).toHaveBeenCalledWith('g-deleted');
     expect(log).toHaveBeenCalledWith(expect.stringContaining('WASM removed'));
   });
@@ -179,7 +179,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     await initializeConnection({
       mlsService: mls as any,
       userId: 'u1',
-      pin: 'pin1',
+      deviceKeyB64: 'pin1',
       scheduleReconnect: vi.fn(),
       setIsWsConnected: vi.fn(),
       setReconnectAttempts: vi.fn(),
@@ -208,7 +208,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     await initializeConnection({
       mlsService: mls as any,
       userId: 'u',
-      pin: 'p',
+      deviceKeyB64: 'p',
       scheduleReconnect: vi.fn(),
       setIsWsConnected: vi.fn(),
       setReconnectAttempts: vi.fn(),

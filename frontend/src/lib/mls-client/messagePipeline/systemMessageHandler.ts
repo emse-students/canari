@@ -44,7 +44,7 @@ export async function handleSystemEvent(
     mlsService,
     storage,
     userId,
-    pin,
+    deviceKeyB64,
     conversations,
     messageReactions,
     addMessageToChat,
@@ -141,7 +141,7 @@ export async function handleSystemEvent(
         { isSystem: true }
       );
     } else {
-      // L'invité reçoit la carte d'invitation
+      // The invitee receives the invitation card
       const inviterDisplayName = String(data.inviterName || '');
       const inviteEnvelope = serializeEnvelope(
         mkChannelInviteEnvelope(
@@ -326,7 +326,7 @@ export async function handleSystemEvent(
                     reactions: messageReactions.get(m.id),
                     serverTimestamp: m.serverTimestamp,
                   },
-                  pin
+                  deviceKeyB64
                 );
               } catch {
                 // Non-blocking
@@ -372,7 +372,7 @@ export async function handleSystemEvent(
                 reactions: messageReactions.get(deletedMsg.id),
                 isDeleted: true,
               },
-              pin
+              deviceKeyB64
             );
           } catch {
             // Non-blocking
@@ -414,7 +414,7 @@ export async function handleSystemEvent(
                 reactions: messageReactions.get(editedMsg.id),
                 isEdited: true,
               },
-              pin
+              deviceKeyB64
             );
           } catch {
             // Non-blocking
@@ -533,7 +533,7 @@ export async function handleSystemEvent(
                       ...(msg.isDeleted ? { isDeleted: true } : {}),
                       ...(msg.isEdited ? { isEdited: true } : {}),
                     },
-                    pin
+                    deviceKeyB64
                   );
                 } catch {
                   // Non-blocking
@@ -574,7 +574,7 @@ export async function handleSystemEvent(
                 readBy: target.readBy,
                 reactions: filtered,
               },
-              pin
+              deviceKeyB64
             );
           } catch {
             // Non-blocking

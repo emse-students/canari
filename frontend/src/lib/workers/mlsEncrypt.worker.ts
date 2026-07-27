@@ -13,7 +13,7 @@ interface EncryptRequest {
   type: 'encrypt';
   payload: {
     plain: ArrayBuffer;
-    pin: string;
+    deviceKeyB64: string;
   };
 }
 
@@ -49,10 +49,10 @@ workerScope.onmessage = async (event: MessageEvent<EncryptRequest>) => {
   const msg = event.data;
   if (!msg || msg.type !== 'encrypt') return;
 
-  const { plain, pin } = msg.payload;
+  const { plain, deviceKeyB64 } = msg.payload;
   try {
     await ensureWasmReady();
-    const encrypted = await encryptMlsStateOnMainThread(new Uint8Array(plain), pin);
+    const encrypted = await encryptMlsStateOnMainThread(new Uint8Array(plain), deviceKeyB64);
     const response: EncryptOk = {
       type: 'encrypt:ok',
       payload: { encrypted: encrypted.slice().buffer },

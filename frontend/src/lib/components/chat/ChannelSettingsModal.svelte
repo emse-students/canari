@@ -85,7 +85,7 @@
 
   let channelNameInput = $state('');
 
-  // S'assurer que l'input se met à jour quand on change de canal
+  // Ensure the input updates when switching channels
   $effect(() => {
     if (open && selectedChannel) {
       channelNameInput = selectedChannel.name;

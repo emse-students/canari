@@ -18,7 +18,7 @@ interface GenerateKeyPackageRequest {
   payload: {
     userId: string;
     deviceId: string;
-    pin: string;
+    deviceKeyB64: string;
     needed: number;
     state?: ArrayBuffer;
   };
@@ -63,11 +63,11 @@ workerScope.onmessage = async (event: MessageEvent<GenerateKeyPackageRequest>) =
   const msg = event.data;
   if (!msg || msg.type !== 'generateKeyPackage') return;
 
-  const { userId, deviceId, pin, needed, state } = msg.payload;
+  const { userId, deviceId, deviceKeyB64, needed, state } = msg.payload;
   try {
     console.log(`[MLS Worker] generateKeyPackage start needed=${needed}`);
     const initialState = state ? new Uint8Array(state) : undefined;
-    const client = await loadAndInitWasm(userId, deviceId, initialState, pin);
+    const client = await loadAndInitWasm(userId, deviceId, initialState, deviceKeyB64);
 
     const fallback = client.generate_key_package() as Uint8Array;
     const poolPackages: ArrayBuffer[] =
@@ -76,7 +76,7 @@ workerScope.onmessage = async (event: MessageEvent<GenerateKeyPackageRequest>) =
             (bytes) => asTransferBuffer(bytes)
           )
         : [];
-    const nextState = client.save_state(pin) as Uint8Array;
+    const nextState = client.save_state(deviceKeyB64) as Uint8Array;
 
     const response: GenerateKeyPackageOk = {
       type: 'generateKeyPackage:ok',

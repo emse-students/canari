@@ -63,7 +63,7 @@ fn chat_gateway_cors_layer(allow_origin: &str) -> CorsLayer {
     }
 }
 
-/// Masque les credentials dans une URL Redis pour les logs.
+/// Masks credentials in a Redis URL for logging.
 /// `redis://user:password@host:port` -> `redis://host:port`
 fn mask_redis_url(url: &str) -> String {
     if let Some(rest) = url.strip_prefix("redis://")

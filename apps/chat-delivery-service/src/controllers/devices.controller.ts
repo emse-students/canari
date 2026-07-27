@@ -92,8 +92,8 @@ export class DevicesController {
         })
         .orderBy('otkp.createdAt', 'ASC')
         .limit(1)
-        // typeorm 1.0 a retire le mode 'pessimistic_partial_write' : on exprime
-        // le FOR UPDATE SKIP LOCKED via setLock('pessimistic_write') + setOnLocked.
+        // typeorm 1.0 removed 'pessimistic_partial_write' mode: express
+        // FOR UPDATE SKIP LOCKED via setLock('pessimistic_write') + setOnLocked.
         .setLock('pessimistic_write')
         .setOnLocked('skip_locked')
         .getOne();

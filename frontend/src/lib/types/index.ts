@@ -1,11 +1,11 @@
 /**
- * Etat de cycle de vie d'une conversation - source UNIQUE qui remplace l'ancien couple
- * `(isReady, deletedRemotely)`.
- *  - `active`  : groupe MLS etabli, membre actif -> lecture + ENVOI.
- *  - `pending` : placeholder en attente de Welcome (recovery applicable) -> lecture seule.
- *  - `removed` : supprime par un pair / exclusion / suppression locale en attente -> lecture seule +
- *                banniere, reste jusqu'a SUPPRESSION MANUELLE (regles 2 & 4).
- * Predicats et logique de transition : `$lib/utils/chat/groupLifecycle`.
+ * Lifecycle state of a conversation - the SINGLE source replacing the old
+ * `(isReady, deletedRemotely)` pair.
+ *  - `active` : MLS group established, active member -> read + SEND.
+ *  - `pending`: placeholder awaiting a Welcome (recovery applicable) -> read-only.
+ *  - `removed`: deleted by a peer / exclusion / pending local deletion -> read-only + banner,
+ *               stays until MANUAL DELETION (rules 2 & 4).
+ * Predicates and transition logic: `$lib/utils/chat/groupLifecycle`.
  */
 export type ConversationLifecycle = 'active' | 'pending' | 'removed';
 
@@ -92,9 +92,9 @@ export interface Conversation {
   contactName: string;
   messages: ChatMessage[];
   /**
-   * Etat de cycle de vie (cf. {@link ConversationLifecycle}) - source UNIQUE qui remplace l'ancien
-   * couple `(isReady, deletedRemotely)`. `active` = envoyable ; `pending` = placeholder en attente
-   * de Welcome (recovery applicable) ; `removed` = supprime/exclu, lecture seule + banniere.
+   * Lifecycle state (see {@link ConversationLifecycle}) - the SINGLE source replacing the old
+   * `(isReady, deletedRemotely)` pair. `active` = sendable; `pending` = placeholder awaiting a
+   * Welcome (recovery applicable); `removed` = deleted/excluded, read-only + banner.
    */
   lifecycle: ConversationLifecycle;
   mlsStateHex: string | null;

@@ -104,8 +104,8 @@ describe('decideAbsentGroupFate', () => {
     ).toBe('keep');
   });
 
-  // ── Invariant cle : jamais de purge sur autre chose qu'un absent confirme ──
-  it('seul un absent confirme produit purge (jamais tombstone/active/unknown)', () => {
+  // ── Key invariant: never purge except on confirmed absent ──
+  it('only confirmed absent produces purge (never tombstone/active/unknown)', () => {
     const nonAbsent: GroupServerStatus[] = [active(), tombstone(), { kind: 'unknown' }];
     const lifecycles: ConversationLifecycle[] = ['active', 'pending', 'removed'];
     for (const serverStatus of nonAbsent) {

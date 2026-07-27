@@ -1,6 +1,6 @@
 import { runExclusiveForGroup } from './groupMutationQueue';
 
-/** Petit helper : une promesse resolue manuellement. */
+/** Small helper: a manually resolved promise. */
 function deferred<T = void>() {
   let resolve!: (v: T) => void;
   const promise = new Promise<T>((r) => (resolve = r));
@@ -21,7 +21,7 @@ describe('runExclusiveForGroup', () => {
       events.push('b:start');
     });
 
-    // b ne doit pas demarrer tant que a n'est pas termine.
+    // b must not start until a is finished.
     await Promise.resolve();
     expect(events).toEqual(['a:start']);
 

@@ -19,7 +19,7 @@
       historyBaseUrl: session.historyBaseUrl,
       userId: session.userId,
       myDeviceId: session.myDeviceId,
-      pin: session.pin,
+      deviceKeyB64: session.deviceKeyB64,
       storage: session.storage,
       log: appendLog,
       loadExistingConversations: async () => {},

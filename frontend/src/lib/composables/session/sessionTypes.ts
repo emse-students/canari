@@ -154,7 +154,7 @@ export interface SessionContext {
 
   /** Updates the reactive flag exposed by useChatSession to the UI (follower banner). */
   setIsTabLeader(v: boolean): void;
-  /** Callback pour la promotion tab leader → reconnexion WebSocket. */
+  /** Callback for the tab-leader promotion -> WebSocket reconnection. */
   setTabLeaderSessionCb(cb: ChatSessionCallbacks | null): void;
 
   // ── Constantes de reconnexion ──────────────────────────────────────────────

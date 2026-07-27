@@ -34,7 +34,7 @@ export function runGroupDiscoveryImpl(
   discoverMissingGroups({
     mlsService,
     userId: ctx.getUserId(),
-    pin: ctx.getPin(),
+    deviceKeyB64: ctx.getDeviceKey(),
     conversations: cb.conversations,
     saveConversation: cb.saveConversation,
     deleteConversation: st ? (id) => st.deleteConversation(id) : undefined,
@@ -97,7 +97,7 @@ export async function attemptReconnectImpl(
     const connectionDeps = {
       mlsService,
       userId: ctx.getUserId(),
-      pin: ctx.getPin(),
+      deviceKeyB64: ctx.getDeviceKey(),
       scheduleReconnect: () => scheduleReconnectImpl(ctx, cb),
       setIsWsConnected: (v: boolean) => ctx.setIsWsConnected(v),
       setReconnectAttempts: (v: number) => ctx.setReconnectAttempts(v),

@@ -31,7 +31,7 @@ function activeConversations(groupId: string): Map<string, Conversation> {
 
 const base = {
   storage: null,
-  pin: 'pin',
+  deviceKeyB64: 'pin',
   log: vi.fn(),
   requesterUserId: 'u2',
 };

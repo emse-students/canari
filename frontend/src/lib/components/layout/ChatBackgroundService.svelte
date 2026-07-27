@@ -271,8 +271,8 @@
   }
 
   let showBiometricSheet = $state(false);
-  /** Flag permettant à startLoginFlow() de savoir que l'utilisateur a choisi
-   *  "Utiliser le code PIN" plutôt que la biométrie sur le BiometricBottomSheet. */
+  /** Lets startLoginFlow() know the user chose "use the PIN code" rather than biometrics on
+   *  the BiometricBottomSheet. */
   let biometricCancelled = $state(false);
 
   function onBiometricSkip() {
@@ -363,7 +363,7 @@
       storage: globalSession.storage,
       ensureMls: globalSession.ensureMls,
       userId: globalSession.userId,
-      pin: globalSession.pin,
+      deviceKeyB64: globalSession.deviceKeyB64,
       historyBaseUrl: globalSession.historyBaseUrl,
       messageReactions: globalMessaging.messageReactions,
       log: appendLog,
@@ -377,7 +377,7 @@
       ensureMls: globalSession.ensureMls,
       conversations: globalConvs.conversations,
       userId: globalSession.userId,
-      pin: globalSession.pin,
+      deviceKeyB64: globalSession.deviceKeyB64,
       authToken: globalSession.authToken,
       setAuthToken: (v: string) => {
         globalSession.authToken = v;
@@ -654,9 +654,11 @@
    * Consumes the native FCM cache and injects messages directly into reactive memory,
    * enabling immediate display without waiting for the next history poll (5s or foreground resume).
    */
-  async function flushFcmCache(pin: string, storage: IStorage) {
+  async function flushFcmCache(deviceKeyB64: string, storage: IStorage) {
     if (globalMessaging.isMessageCatchupActive) return;
-    const injected = await consumeFcmCache(pin, storage).catch(() => [] as StoredMessage[]);
+    const injected = await consumeFcmCache(deviceKeyB64, storage).catch(
+      () => [] as StoredMessage[]
+    );
     if (injected.length === 0 || !globalSession.userId) return;
     mergeFcmMessagesIntoConversations(injected, globalConvs.conversations, globalSession.userId);
   }

@@ -72,7 +72,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       mlsService: mls,
       storage: null,
       userId: 'user-a',
-      pin: 'pin',
+      deviceKeyB64: 'device-key',
       historyBaseUrl: 'https://hist',
       conversations,
       messageReactions: createTestMessageReactions(),
@@ -251,7 +251,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const ok = await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
     expect(ok).toBe(true);
     // First detection: republish fresh key material, then drive the externalJoin-first seam.
-    expect(mls.republishKeyMaterial).toHaveBeenCalledWith('pin');
+    expect(mls.republishKeyMaterial).toHaveBeenCalledWith('device-key');
     expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
     // The self-heal seam owns welcome_request (fallback); the handler no longer calls it directly.
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();

@@ -69,7 +69,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
       mlsService,
       storage: null,
       userId: 'self',
-      pin: 'pin',
+      deviceKeyB64: 'pin',
       conversations,
       log,
     });
@@ -105,7 +105,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
       mlsService,
       storage: null,
       userId: 'self',
-      pin: 'pin',
+      deviceKeyB64: 'pin',
       conversations,
       log,
     });
@@ -145,7 +145,7 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
       mlsService,
       storage: null,
       userId: 'self',
-      pin: 'pin',
+      deviceKeyB64: 'pin',
       conversations,
       log,
     });
@@ -179,7 +179,7 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
       mlsService,
       storage: null,
       userId: 'self',
-      pin: 'pin',
+      deviceKeyB64: 'pin',
       conversations,
       log,
     });

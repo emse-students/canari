@@ -178,13 +178,24 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       const sheet = workbook.worksheets[0];
       const headerRow = sheet.getRow(1).values as unknown[];
       const headers = headerRow.slice(1) as string[];
-      expect(headers).toEqual(['Nom', 'Prénom', 'Promo', 'Cotisation', 'Forfait', 'Date', 'Échéance']);
+      expect(headers).toEqual([
+        'Nom',
+        'Prénom',
+        'Promo',
+        'Cotisation',
+        'Forfait',
+        'Date',
+        'Échéance',
+      ]);
       expect(headers).not.toContain('Email');
     });
 
     it('falls back to a generic title when the association name cannot be resolved', async () => {
       const { service, repo } = makeService();
-      repo.manager.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+      repo.manager.query
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
 
       const { title } = await service.exportCotisants('missing-asso');
       expect(title).toBe('cotisants_cotisants');

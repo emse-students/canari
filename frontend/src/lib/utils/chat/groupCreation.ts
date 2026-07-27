@@ -18,7 +18,7 @@ interface GroupCreationDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   historyBaseUrl: string;
   /** Reactive map of all loaded conversations, keyed by MLS group ID. */
   conversations: SvelteMap<string, Conversation>;
@@ -100,8 +100,15 @@ async function fetchDevicesWithRetry(
  * conversation is removed from the reactive map.
  */
 export async function createNewGroup(name: string, deps: GroupCreationDeps): Promise<void> {
-  const { mlsService, userId, pin, conversations, selectConversation, saveConversation, log } =
-    deps;
+  const {
+    mlsService,
+    userId,
+    deviceKeyB64,
+    conversations,
+    selectConversation,
+    saveConversation,
+    log,
+  } = deps;
 
   if (!name.trim()) return;
   const groupDisplayName = name.trim();
@@ -157,7 +164,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
         });
 
         // Save MLS state after the merged commit (crash-safety).
-        await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+        await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
       } catch (e) {
         log(`Error syncing own devices: ${e}`);
         console.error('[GROUP] Sync own devices failed:', e);
@@ -166,7 +173,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
       }
     } else {
       // No other devices: still save state after createGroup.
-      await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+      await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
     }
 
     conversations.set(conversationKey, {
@@ -218,7 +225,7 @@ async function processBulkAddition(
   conversation: Conversation,
   deps: GroupCreationDeps
 ): Promise<void> {
-  const { mlsService, userId, pin, log } = deps;
+  const { mlsService, userId, deviceKeyB64, log } = deps;
   if (memberIds.length === 0) return;
 
   const targetUsers = memberIds.map((m) => m.trim().toLowerCase()).filter(Boolean);
@@ -286,7 +293,7 @@ async function processBulkAddition(
       const bulk = await mlsService.addMembersBulk(conversation.id, allDevices, excludeIds);
       warnSkippedKeyPackages(bulk.skippedDeviceIds, conversation.id, '[SYNC]', log);
 
-      await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+      await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 
       // Deliver welcomes per-device in parallel; one failure never aborts the others.
       log(`[SYNC] bulk.addedDeviceIds: ${bulk.addedDeviceIds.join(', ')}`);
@@ -332,7 +339,7 @@ async function processBulkAddition(
           mkSystem('memberAdded', JSON.stringify({ newUsers: [...announcedUsers] }))
         );
         await mlsService.sendMessage(conversation.id, controlMsg);
-        await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+        await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
       } catch (e) {
         console.warn('Failed to broadcast member addition:', e);
       }
@@ -361,9 +368,9 @@ async function performDirectAdd(
   allDevices: any[],
   contactDeviceIds: Set<string>,
   contact: string,
-  deps: Pick<GroupCreationDeps, 'mlsService' | 'userId' | 'pin' | 'log'>
+  deps: Pick<GroupCreationDeps, 'mlsService' | 'userId' | 'deviceKeyB64' | 'log'>
 ): Promise<void> {
-  const { mlsService, userId, pin, log } = deps;
+  const { mlsService, userId, deviceKeyB64, log } = deps;
 
   const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
   try {
@@ -395,7 +402,7 @@ async function performDirectAdd(
     });
 
     // Save MLS state after the merged commit (crash-safety).
-    await persistMlsStateAfterMutation(mlsService, userId, pin, log);
+    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
   } finally {
     if (lockAcquired) await mlsService.releaseAddLock(groupId).catch(() => {});
   }
@@ -519,7 +526,7 @@ export async function startNewConversation(
           mlsService,
           storage: deps.storage,
           userId,
-          pin: deps.pin,
+          deviceKeyB64: deps.deviceKeyB64,
           conversations,
           getSelectedContact: () => key,
           setSelectedContact: (id: string | null) => {

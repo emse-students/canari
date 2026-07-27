@@ -1,10 +1,10 @@
 import { MlsDeliveryApi, type MlsDeliveryFetch } from './mlsDeliveryApi';
 
 /**
- * `getGroupServerStatus` doit distinguer un groupe ABSENT (purge legitime) d'une vraie ERREUR
- * reseau (doute -> on conserve). Piege specifique du backend : `GET mls/groups/:id` renvoie le
- * `null` du handler sous forme d'un CORPS VIDE (200) -> `res.json()` jette. Sans le fix, ce cas
- * etait classe 'error' ("statut incertain") et la conversation supprimee n'etait jamais purgee.
+ * `getGroupServerStatus` must distinguish an ABSENT group (legitimate purge) from a genuine
+ * network ERROR (doubt -> keep it). Backend-specific trap: `GET mls/groups/:id` returns the
+ * handler's `null` as an EMPTY BODY (200) -> `res.json()` throws. Without the fix, that case was
+ * classified 'error' ("uncertain status") and the deleted conversation was never purged.
  */
 function makeApi(fetchImpl: MlsDeliveryFetch): MlsDeliveryApi {
   return new MlsDeliveryApi({

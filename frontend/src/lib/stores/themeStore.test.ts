@@ -1,6 +1,6 @@
 import { themeStore } from './themeStore.svelte';
 
-/** OS dark-mode flag piloté par le test, lu par le stub matchMedia. */
+/** OS dark-mode flag driven by the test, read by the matchMedia stub. */
 let osDark = false;
 
 beforeEach(() => {

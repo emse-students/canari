@@ -246,7 +246,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         // Device reconnected within the retention window - alive, leave it active.
         continue;
       }
-      // Remettre en pending - le device devra recevoir un nouveau Welcome.
+      // Reset to pending - the device will need to receive a new Welcome.
       member.status = 'pending';
       await this.deviceGroupRepo.save(member);
       await this.redis.srem(
@@ -330,28 +330,27 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Purge les invitations device-groupe restees `pending` au-dela de
-   * {@link STALE_PENDING_INVITATION_MS}.
+   * Purges device-group invitations left `pending` beyond {@link STALE_PENDING_INVITATION_MS}.
    *
-   * Une ligne `pending` est creee a l'invitation et ne passe `active` que lorsque le
-   * device invite confirme avoir traite son Welcome. Un device qui rejoint l'arbre MLS
-   * mais ne confirme jamais (Welcome perdu, device zombie qui se reconnecte sans jamais
-   * traiter son Welcome) laisse sa ligne `pending` indefiniment : `getPendingInvitations`
-   * la re-liste a chaque sync et les membres actifs la re-traitent en boucle (acquisition
-   * de verrou + relecture de l'arbre pour un skip). Le GC `cleanupStaleDevices` ne la
-   * rattrape pas tant que le device republie un KeyPackage frais a chaque connexion.
+   * A `pending` row is created on invitation and only becomes `active` once the invited device
+   * confirms it processed its Welcome. A device that joins the MLS tree but never confirms
+   * (lost Welcome, zombie device reconnecting without ever processing its Welcome) leaves its
+   * `pending` row forever: `getPendingInvitations` re-lists it on every sync and active members
+   * re-process it in a loop (lock acquisition + tree re-read only to skip). The
+   * `cleanupStaleDevices` GC does not catch it as long as the device republishes a fresh
+   * KeyPackage on every connection.
    *
-   * Supprimer la ligne `pending` (+ entree de routage Redis) n'empeche PAS la reprise d'un
-   * device encore vivant : il reste `GroupMember` au niveau utilisateur, donc a sa prochaine
-   * connexion il rejoint soit via son Welcome encore en file (table separee, retention 90j -
-   * sans nouveau commit), soit via `welcome_request` qui declenche un re-ajout a l'epoch
-   * courante. Le seuil est donc volontairement bien plus court que la retention du Welcome :
-   * il ne borne que la duree pendant laquelle on conserve le declencheur/fallback durable cote
-   * inviteur. On ne touche jamais les lignes `active` ni `dm_group_members`.
+   * Deleting the `pending` row (+ its Redis routing entry) does NOT prevent a still-alive device
+   * from recovering: it remains a user-level `GroupMember`, so on its next connection it rejoins
+   * either through its Welcome still queued (separate table, 90d retention - without a new
+   * commit), or through `welcome_request`, which triggers a re-add at the current epoch. The
+   * threshold is therefore deliberately much shorter than the Welcome retention: it only bounds
+   * how long the durable trigger/fallback is kept on the inviter side. `active` rows and
+   * `dm_group_members` are never touched.
    *
-   * Filtre sur `updatedAt` (et non `createdAt`) : un device jadis `active` puis remis
-   * `pending` par {@link detectStaleDevices} obtient ainsi une nouvelle fenetre de grace
-   * depuis sa derniere transition d'etat, alignee sur la semantique de fraicheur existante.
+   * Filters on `updatedAt` (not `createdAt`): a device that was once `active` and then put back
+   * to `pending` by {@link detectStaleDevices} thus gets a fresh grace window from its last state
+   * transition, aligned with the existing freshness semantics.
    */
   private async cleanupStalePendingInvitations() {
     const expiry = new Date(Date.now() - STALE_PENDING_INVITATION_MS);

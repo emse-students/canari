@@ -1,6 +1,6 @@
 import { handleSystemEvent } from './systemMessageHandler';
 
-/** Construit un contexte minimal pour exercer le chemin read_receipt. */
+/** Builds a minimal context to exercise the read_receipt path. */
 function makeCtx(overrides: Record<string, unknown> = {}) {
   const conversations = new Map<string, any>();
   conversations.set('g1', {
@@ -12,7 +12,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     mlsService: {},
     storage: null,
     userId: 'me',
-    pin: 'pin',
+    deviceKeyB64: 'device-key',
     conversations,
     messageReactions: new Map(),
     addMessageToChat: vi.fn(),
@@ -38,7 +38,7 @@ describe('handleSystemEvent - read_receipt cross-device', () => {
 
     expect((ctx.conversations.get('g1') as any).unreadCount).toBe(0);
     expect(ctx.saveConversation).toHaveBeenCalledWith('g1');
-    // Le message est aussi marqué lu par moi.
+    // The message is also marked read by me.
     expect((ctx.conversations.get('g1') as any).messages[0].readBy).toContain('me');
   });
 

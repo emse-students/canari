@@ -1,27 +1,27 @@
 /**
- * Registre process-global des groupes en gap d'epoch non resolu (`msg_epoch > group_epoch`).
+ * Process-global registry of groups stuck in an unresolved epoch gap (`msg_epoch > group_epoch`).
  *
- * Un groupe entre dans le registre quand le pipeline de messages recoit une frame qu'il ne
- * peut pas dechiffrer parce que son etat local est en retard d'epoch ; il en sort des qu'un
- * commit avance reellement l'epoch (gap resorbe) ou apres escalade forget+re-Welcome.
+ * A group enters the registry when the message pipeline receives a frame it cannot decrypt
+ * because its local state lags behind in epoch; it leaves as soon as a commit actually
+ * advances the epoch (gap resolved) or after a forget + re-Welcome escalation.
  *
- * Pourquoi un module partage plutot qu'une Map locale au handler : l'outbox (`isGroupHealthy`)
- * doit pouvoir consulter cet etat pour NE PAS envoyer un message applicatif dans un groupe
- * qu'on sait en retard - sinon le ciphertext est chiffre a une epoch perimee et les
- * destinataires (a jour) ne peuvent pas le dechiffrer. Le pipeline et l'outbox vivent dans
- * des modules distincts ; un singleton evite de threader la Map a travers toutes les couches.
+ * Why a shared module rather than a Map local to the handler: the outbox (`isGroupHealthy`)
+ * must be able to consult this state so it does NOT send an application message into a group
+ * known to be lagging - otherwise the ciphertext is encrypted at a stale epoch and the
+ * (up-to-date) recipients cannot decrypt it. The pipeline and the outbox live in separate
+ * modules; a singleton avoids threading the Map through every layer.
  *
- * Il n'existe qu'une session active par process (l'etat MLS WASM/Tauri est lui-meme global),
- * donc un Map module-level est sans risque de collision entre sessions.
+ * Only one session is active per process (the MLS WASM/Tauri state is itself global), so a
+ * module-level Map carries no risk of collision between sessions.
  */
 
-/** Timestamp (ms) du 1er gap d'epoch non resolu, par groupe. */
+/** Timestamp (ms) of the first unresolved epoch gap, per group. */
 const epochGapSince = new Map<string, number>();
 
 /**
- * Marque un groupe comme entre en gap d'epoch s'il ne l'etait pas deja, et renvoie le
- * timestamp (ms) du debut du gap (existant ou nouvellement pose). Sert a mesurer la duree
- * du gap pour decider de l'escalade.
+ * Marks a group as having entered an epoch gap if it was not already, and returns the
+ * timestamp (ms) of the gap start (existing or newly recorded). Used to measure the gap
+ * duration in order to decide on escalation.
  */
 export function markEpochGap(groupId: string): number {
   const existing = epochGapSince.get(groupId);
@@ -31,27 +31,27 @@ export function markEpochGap(groupId: string): number {
   return now;
 }
 
-/** Renvoie le timestamp (ms) de debut du gap pour ce groupe, ou `undefined` s'il n'est pas en gap. */
+/** Returns the gap start timestamp (ms) for this group, or `undefined` if it is not in a gap. */
 export function getEpochGapSince(groupId: string): number | undefined {
   return epochGapSince.get(groupId);
 }
 
-/** Efface l'etat de gap d'un groupe (gap resorbe par un commit, ou escalade declenchee). */
+/** Clears a group's gap state (gap resolved by a commit, or escalation triggered). */
 export function clearEpochGap(groupId: string): void {
   epochGapSince.delete(groupId);
 }
 
-/** True si le groupe est actuellement en gap d'epoch non resolu (donc non sendable). */
+/** True if the group is currently in an unresolved epoch gap (therefore not sendable). */
 export function isInEpochGap(groupId: string): boolean {
   return epochGapSince.has(groupId);
 }
 
 /**
- * Vide tout le registre. Appele a l'initialisation d'une session (setup du handler de messages)
- * pour repartir d'un etat propre : un gap non resolu d'une session precedente (logout sans
- * resorption) ne doit pas survivre au re-login et bloquer indefiniment l'outbox - les messages
- * applicatifs ne resorbent pas un gap (seul un commit le fait), donc une entree perimee ne
- * s'effacerait jamais d'elle-meme sans nouvelle frame indechiffrable declenchant l'escalade.
+ * Empties the whole registry. Called when a session initializes (message handler setup) to
+ * start from a clean state: an unresolved gap from a previous session (logout without
+ * resolution) must not survive a re-login and freeze the outbox indefinitely - application
+ * messages do not resolve a gap (only a commit does), so a stale entry would never clear
+ * itself without a new undecryptable frame triggering the escalation.
  */
 export function resetEpochGapRegistry(): void {
   epochGapSince.clear();

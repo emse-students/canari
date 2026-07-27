@@ -23,9 +23,7 @@ export class NginxAuthGuard implements CanActivate {
     // In production, verify the authenticity of the nginx request.
     // Security: reject requests when NODE_ENV is unset (ambiguous mode)
     if (!process.env.NODE_ENV) {
-      throw new UnauthorizedException(
-        'NODE_ENV must be set to "production" or "development"'
-      );
+      throw new UnauthorizedException('NODE_ENV must be set to "production" or "development"');
     }
 
     if (process.env.NODE_ENV === 'production') {

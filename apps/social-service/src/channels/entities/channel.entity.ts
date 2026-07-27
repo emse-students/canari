@@ -5,16 +5,16 @@ import {
   CreateDateColumn,
   Index,
   UpdateDateColumn,
-} from "typeorm";
+} from 'typeorm';
 
 /** TypeORM entity representing a channel within a workspace. */
-@Entity("channels")
-@Index(["workspaceId", "name"], { unique: true })
+@Entity('channels')
+@Index(['workspaceId', 'name'], { unique: true })
 export class Channel {
-  @PrimaryGeneratedColumn("uuid")
+  @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: "uuid" })
+  @Column({ type: 'uuid' })
   workspaceId: string;
 
   @Column()
@@ -23,10 +23,10 @@ export class Channel {
   @Column({ default: false })
   isPrivate: boolean;
 
-  @Column("simple-array", { default: "" })
+  @Column('simple-array', { default: '' })
   allowedRoles: string[];
 
-  @Column("simple-array", { default: "" })
+  @Column('simple-array', { default: '' })
   allowedUsers: string[];
 
   /**
@@ -34,8 +34,8 @@ export class Channel {
    * `admins_moderators` restricts posting to roles carrying channel.moderate or workspace.manage;
    * `admins` restricts it to roles carrying workspace.manage. Reading is unaffected.
    */
-  @Column({ type: "varchar", default: "everyone" })
-  writePolicy: "everyone" | "admins_moderators" | "admins";
+  @Column({ type: 'varchar', default: 'everyone' })
+  writePolicy: 'everyone' | 'admins_moderators' | 'admins';
 
   @Column({ default: 1 })
   keyVersion: number;

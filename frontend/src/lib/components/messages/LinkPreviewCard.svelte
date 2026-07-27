@@ -34,7 +34,7 @@
     }
   });
 
-  /** Vrai si le lien pointe vers un album MiGallery (gallery.mitv.fr/albums/[id]). */
+  /** True if the link points to a MiGallery album (gallery.mitv.fr/albums/[id]). */
   const isMiGalleryAlbum = $derived(
     parsed.host === 'gallery.mitv.fr' && /^\/albums\/[0-9a-f-]+\/?$/i.test(parsed.path)
   );

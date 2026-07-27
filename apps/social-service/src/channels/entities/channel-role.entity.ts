@@ -1,4 +1,11 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index, AfterLoad } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryGeneratedColumn,
+  CreateDateColumn,
+  Index,
+  AfterLoad,
+} from 'typeorm';
 import { LEGACY_PERMISSION_MAPPING } from '../permissions';
 
 /** TypeORM entity representing a named role within a workspace, holding an ordered permission set. */
@@ -24,16 +31,13 @@ export class ChannelRole {
   createdAt: Date;
 
   /**
-   * Normalise les permissions legacy (MANAGE_WORKSPACE, SEND_MESSAGES, etc.) vers
-   * les nouvelles clés unifiées (workspace.manage, channel.send, etc.) au chargement
-   * depuis la base de données. Garantit que tout le code en aval travaille avec les
-   * nouvelles clés, même si la base contient encore d'anciennes valeurs.
+   * Normalizes legacy permissions (MANAGE_WORKSPACE, SEND_MESSAGES, etc.) to the new unified
+   * keys (workspace.manage, channel.send, etc.) when loading from the database. Guarantees that
+   * all downstream code works with the new keys, even if the database still holds old values.
    */
   @AfterLoad()
   normalizePermissions() {
     if (!this.permissions || this.permissions.length === 0) return;
-    this.permissions = this.permissions.map(
-      (perm) => LEGACY_PERMISSION_MAPPING[perm] ?? perm
-    );
+    this.permissions = this.permissions.map((perm) => LEGACY_PERMISSION_MAPPING[perm] ?? perm);
   }
 }

@@ -77,7 +77,7 @@ function convoWith(id: string, messageIds: string[]): Conversation {
 function makeDeps(over: Partial<OutboxDeps> & { mlsService: any; storage: any }): OutboxDeps {
   return {
     userId: 'u',
-    pin: 'pin',
+    deviceKeyB64: 'device-key',
     conversations: new SvelteMap<string, Conversation>(),
     log: () => {},
     requestReAdd: vi.fn().mockResolvedValue(undefined),

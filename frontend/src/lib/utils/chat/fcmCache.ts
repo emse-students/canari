@@ -33,7 +33,10 @@ interface FcmCacheEntry {
  * without waiting for the next history reload.
  * No-op on web/desktop (no native cache available) -> returns [].
  */
-export async function consumeFcmCache(pin: string, storage: IStorage): Promise<StoredMessage[]> {
+export async function consumeFcmCache(
+  deviceKeyB64: string,
+  storage: IStorage
+): Promise<StoredMessage[]> {
   if (!isTauriRuntime()) return [];
 
   // Declared without initializer: catch always returns, so entries is definitely
@@ -81,7 +84,7 @@ export async function consumeFcmCache(pin: string, storage: IStorage): Promise<S
         updatedAt: entry.timestamp,
       });
       // .saveMessage() uses .put() - the MLS pipeline can overwrite with the full data
-      await storage.saveMessage(msg, pin);
+      await storage.saveMessage(msg, deviceKeyB64);
       injected.push(msg);
       appendLog(
         `[FCM_CACHE] ✓ id=${entry.messageId.slice(0, 8)} group=${entry.groupId.slice(0, 8)} type=${entry.type}`

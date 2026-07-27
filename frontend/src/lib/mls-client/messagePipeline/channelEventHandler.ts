@@ -25,7 +25,7 @@ export interface ChannelEventContext extends Pick<
   | 'onWorkspaceUpdated'
   | 'log'
 > {
-  /** Appelé quand un commit est rejeté (epoch désynchronisée) - déclenche une demande de re-add. */
+  /** Called when a commit is rejected (desynced epoch) - triggers a re-add request. */
   onOutOfSync: (groupId: string) => Promise<void>;
 }
 
