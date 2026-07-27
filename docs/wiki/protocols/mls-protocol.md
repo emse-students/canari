@@ -321,14 +321,28 @@ enqueueMessage()      enqueueMessage()
 - Atomically consumed by inviting devices.
 - On fresh start: old OTKPs have no matching private keys -> purged via `DELETE /api/mls/devices/:userId/:deviceId/prekeys` **before** generating new ones.
 
-## Credential mismatch recovery
+## Failing to load a saved state
 
-If saved WASM/Rust state embeds a different device ID than what's in localStorage (after localStorage clear or reinstall):
+`loadStateWithKey` can reject two ways, and `_initImpl` must tell them apart -
+`BaseMlsService.classifyStateLoadFailure` is the single place that does:
 
-1. `init()` throws `"identity mismatch"` / `"Credential identity"`
-2. Discard stale state; generate new device ID
-3. `deleteDevice(userId, oldDeviceId)` -> cleans up server registrations
-4. Proceed as fresh start (OTKP purge + new KP registration)
+| Verdict | Meaning | Recovery |
+|---|---|---|
+| `sealed` | The blob would not decrypt (AEAD failure): the account key was rotated on another device. | Honour `MlsInitOptions.noFreshStart`: throw `MLS_LOCAL_STATE_UNDECRYPTABLE` so the caller can offer the old PIN and recover the history intact. |
+| `mismatch` | The blob decrypted; its credential names another device (localStorage cleared, reinstall, or an interrupted fresh start). | Fresh start. `noFreshStart` does NOT apply - no PIN can repair an identity, so pausing would strand the user. |
+
+Fresh start, in order:
+
+1. Generate a new device ID and write it to `mls_device_id_{userId}`.
+2. `loadStateWithKey(key, undefined)` -> empty client.
+3. **Persist immediately** (`saveState` -> `mls.bin` / IndexedDB) - see below.
+4. `deleteDevice(userId, oldDeviceId)` -> cleans up server registrations.
+5. Continue as a fresh start (OTKP purge + new KP registration).
+
+Step 3 is load-bearing. Without it the new device ID lands in localStorage while the OLD blob
+stays in storage, so the next launch mismatches again and mints yet another device - a loop that
+produced four device IDs in eight seconds in production, each deleted server-side, none ever
+publishing a KeyPackage.
 
 ## History replay
 

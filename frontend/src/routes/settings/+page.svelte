@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { SlidersHorizontal } from '@lucide/svelte';
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
+  import { currentUserId } from '$lib/stores/user';
   import SettingsPreferencesSection from '$lib/components/settings/SettingsPreferencesSection.svelte';
   import SettingsSecuritySection from '$lib/components/settings/SettingsSecuritySection.svelte';
   import SettingsSyncSection from '$lib/components/settings/SettingsSyncSection.svelte';
@@ -20,8 +21,14 @@
   // Account management hub: preferences, security, sync, payments and the danger zone.
   // Identity (avatar, bio, associations...) stays on /profile. Each section owns its own
   // data loading, so this page is a thin assembly.
+  //
+  // The guard tests for an ACCOUNT session, not `session.isLoggedIn` (which means "MLS is
+  // ready"). Those two diverge whenever the OIDC session is valid but MLS init failed, and
+  // bouncing to /login there produced an endless ping-pong: the login page saw a live refresh
+  // cookie and sent the user straight back. Sections that need MLS handle its absence
+  // themselves.
   onMount(() => {
-    if (!session.isLoggedIn) {
+    if (!currentUserId()) {
       void goto('/login?returnTo=/settings', { replaceState: true });
     }
   });

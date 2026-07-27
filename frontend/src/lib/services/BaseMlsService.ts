@@ -162,6 +162,24 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
+  /**
+   * Classifies why {@link loadStateWithKey} rejected, so `_initImpl` can pick a recovery that
+   * actually addresses the cause.
+   *
+   * The distinction is not cosmetic. `sealed` means the blob would not decrypt: the account key
+   * changed on another device, and re-entering the OLD PIN recovers it - so the caller must stop
+   * and offer that path rather than destroy anything. `mismatch` means the blob DID decrypt and
+   * only carries another device's identity; no PIN can fix that, so pausing for a recovery the
+   * user cannot complete just strands them. Treating the two alike is what surfaced a false
+   * "your PIN was changed on another device" to users who had never changed their PIN.
+   */
+  protected classifyStateLoadFailure(error: unknown): 'mismatch' | 'sealed' {
+    const errStr = String(error);
+    return errStr.includes('identity mismatch') || errStr.includes('Credential identity')
+      ? 'mismatch'
+      : 'sealed';
+  }
+
   /** Platform-specific init body (WASM load vs Tauri invoke). */
   protected abstract _initImpl(
     userId: string,

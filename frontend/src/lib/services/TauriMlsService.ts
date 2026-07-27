@@ -373,7 +373,7 @@ export class TauriMlsService extends BaseMlsService {
     return null;
   }
 
-  /** Implementation body for init(); resolves device ID from native push context or localStorage, calls `initialiser_mls_avec_clef`, and seeds the known-groups cache. */
+  /** Implementation body for init(); resolves device ID from native push context or localStorage, calls `initialiser_mls`, and seeds the known-groups cache. */
   protected async _initImpl(
     userId: string,
     deviceKeyB64: string,
@@ -398,33 +398,38 @@ export class TauriMlsService extends BaseMlsService {
       // (credential mismatch, partial corruption, invalid key…).
       // → systematic fresh-start to avoid blocking the user indefinitely.
       // If state == null and error → real crash (no state to blame) → rethrow.
-      const errStr = String(e);
-      const isCredentialMismatch =
-        errStr.includes('identity mismatch') || errStr.includes('Credential identity');
+      const cause = this.classifyStateLoadFailure(e);
 
       // "No keystore key and no device key provided" is a recoverable error (the
       // user just needs to enter their PIN).  Do NOT destroy the device
       // identity — let the error propagate so the caller can fall back to
       // the PIN modal.
-      const isKeystoreEmpty = /no keystore key/i.test(errStr);
+      const isKeystoreEmpty = /no keystore key/i.test(String(e));
 
-      if ((isCredentialMismatch || state != null) && !isKeystoreEmpty) {
-        // Caller wants a chance to recover (decrypt with the old key) before any
-        // destructive fresh-start: signal instead of discarding local history.
-        if (opts?.noFreshStart) throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
+      if ((cause === 'mismatch' || state != null) && !isKeystoreEmpty) {
+        // Only a `sealed` state is worth pausing for: the caller can offer the old PIN and
+        // recover the history intact. A `mismatch` decrypted fine and no PIN can repair it,
+        // so honouring noFreshStart there would strand the user with nothing to try.
+        if (opts?.noFreshStart && cause === 'sealed') {
+          throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
+        }
         const oldDeviceId = this.deviceId; // capture before overwriting
-        if (isCredentialMismatch) {
+        if (cause === 'mismatch') {
           console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');
         } else {
           console.warn(
             '[MLS] Loaded state unusable (corruption?) → fresh-start:',
-            errStr.slice(0, 200)
+            String(e).slice(0, 200)
           );
         }
         this.deviceId = this.generateDeviceId(userId);
         localStorage.setItem(deviceKey, this.deviceId);
         this.delivery.deviceId = this.deviceId;
         await this.loadStateWithKey(deviceKeyB64, undefined);
+        // Persist mls.bin under the new id BEFORE anything else can fail. The opportunistic
+        // save further down is swallowed on error; leaving the old blob on disk next to a new
+        // localStorage id is what made the churn repeat on every launch.
+        await this.saveState(deviceKeyB64);
         // Deregister the stale device from the server so other devices no longer
         // try to use its key packages when generating Welcome messages.
         // Without this, re-bootstrap sends a Welcome for the OLD key package
@@ -485,12 +490,12 @@ export class TauriMlsService extends BaseMlsService {
     this._knownGroups.add(groupId);
   }
 
-  /** Tauri-native `invoke` wrapper - calls `sauvegarder_mls_et_persister_avec_clef` to encrypt and persist the MLS state to the native mls.bin file using the device key. */
+  /** Tauri-native `invoke` wrapper - calls `sauvegarder_mls_et_persister` to encrypt and persist the MLS state to the native mls.bin file using the device key. */
   async saveState(deviceKeyB64: string): Promise<Uint8Array> {
     await this.awaitRustMutations();
     // Native command handles save_encrypted_with_key + mls.bin write in one invoke
     // to avoid JS Array.from(…) conversion on large state blobs (notably Android).
-    const raw = await invoke<number[]>('sauvegarder_mls_et_persister_avec_clef', { deviceKeyB64 });
+    const raw = await invoke<number[]>('sauvegarder_mls_et_persister', { deviceKeyB64 });
     const bytes = Uint8Array.from(raw);
     return bytes;
   }
@@ -532,7 +537,7 @@ export class TauriMlsService extends BaseMlsService {
   protected async loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void> {
     this._deviceKeyB64 = deviceKeyB64;
     const encryptedState = state ? Array.from(state) : null;
-    await invoke('initialiser_mls_avec_clef', {
+    await invoke('initialiser_mls', {
       userId: this.userId,
       deviceId: this.deviceId,
       deviceKeyB64,
@@ -575,7 +580,7 @@ export class TauriMlsService extends BaseMlsService {
     console.log('[MLS][Tauri] Device key changed - state re-encrypted and persisted.');
   }
 
-  /** Tauri-native `invoke` wrapper - calls `generer_key_packages_et_persister_avec_clef`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
+  /** Tauri-native `invoke` wrapper - calls `generer_key_packages_et_persister`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
   async generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array> {
     // On fresh start (no saved WASM state), old OTKPs on the server belong to
     // a previous session whose private keys are gone. Purge them so inviting
@@ -594,7 +599,7 @@ export class TauriMlsService extends BaseMlsService {
 
     // Single native command: generate fallback + OTKPs + persist encrypted state.
     const nativeBatch = await invoke<NativeKeyPackageBatchResult>(
-      'generer_key_packages_et_persister_avec_clef',
+      'generer_key_packages_et_persister',
       {
         deviceKeyB64,
         count: needed,

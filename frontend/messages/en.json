@@ -14,6 +14,7 @@
   "auth_update_required": "Update Canari (minimum {version}) before signing in.",
   "auth_pin_required": "Please enter your PIN.",
   "auth_pin_min_length": "The PIN must be at least 4 characters.",
+  "auth_redirect_loop_blocked": "That page keeps sending you back here. Sign in again to continue.",
   "auth_pin_title_setup": "Choose an encryption PIN",
   "auth_pin_title": "Encryption PIN",
   "auth_pin_first_heading": "First sign-in - choose your PIN",

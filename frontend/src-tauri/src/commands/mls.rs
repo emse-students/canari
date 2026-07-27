@@ -6,6 +6,7 @@ use crate::state::{
     decrypt_messages_batch, AppState, BatchDecryptItem, KeyPackageBatchResult, PendingDb,
 };
 use mls_core::{DecryptErrorKind, DeviceKeyStore, MlsManager};
+use std::sync::Mutex;
 
 #[tauri::command]
 pub(crate) async fn initialiser_mls(
@@ -17,34 +18,62 @@ pub(crate) async fn initialiser_mls(
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let manager_state = state.mls_manager.clone();
+    let device_key_state = state.device_key.clone();
     let keystore = PluginDeviceKeyStore::new(app);
 
     // Empty device_key_b64 → biometric mode: the keystore holds the device key directly.
-    // load_encrypted_with_keystore will use Path A (retrieve_device_key) which
-    // triggers a single BiometricPrompt on Android/iOS.
+    // resolve_at_rest_key then takes Path A (retrieve_device_key), which triggers a single
+    // BiometricPrompt on Android/iOS.
     let key_b64_opt = if device_key_b64.is_empty() {
         None
     } else {
         Some(device_key_b64)
     };
     tauri::async_runtime::spawn_blocking(move || {
-        let manager = MlsManager::load_encrypted_with_keystore(
+        // Resolve the key explicitly instead of letting the loader do it internally: the
+        // resolved key is cached below so later saves in this session (which arrive with an
+        // empty device_key_b64 in biometric mode) never have to prompt again.
+        let key = MlsManager::resolve_at_rest_key(
             &user_id,
             &device_id,
-            encrypted_state,
+            encrypted_state.as_deref(),
             key_b64_opt,
             &keystore,
         )
         .map_err(|e| e.to_string())?;
 
+        let manager = MlsManager::load_with_key(&user_id, &device_id, encrypted_state, &key)
+            .map_err(|e| e.to_string())?;
+
         let mut lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
         *lock = Some(manager);
+        *device_key_state
+            .lock()
+            .map_err(|_| "Failed to lock device key".to_string())? = Some(key);
         Ok::<String, String>("MLS Initialized".into())
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Resolve the at-rest key for a save: the caller's base64 key when it supplied one, otherwise
+/// the key `initialiser_mls` cached for this session.
+///
+/// The JS layer passes an empty string on the biometric path, where it never holds the key.
+fn session_at_rest_key(
+    device_key_b64: &str,
+    cached: &Mutex<Option<[u8; 32]>>,
+) -> Result<[u8; 32], String> {
+    if !device_key_b64.is_empty() {
+        return mls_core::crypto::decode_base64_to_32_bytes(device_key_b64)
+            .map_err(|e| format!("invalid device_key_b64: {e}"));
+    }
+    (*cached
+        .lock()
+        .map_err(|_| "Failed to lock device key".to_string())?)
+    .ok_or_else(|| "no device key for this session - MLS not initialized".to_string())
 }
 
 #[tauri::command]
@@ -53,6 +82,7 @@ pub(crate) async fn sauvegarder_mls(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<u8>, String> {
     let manager_state = state.mls_manager.clone();
+    let device_key_state = state.device_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let lock = manager_state
             .lock()
@@ -60,8 +90,7 @@ pub(crate) async fn sauvegarder_mls(
         let manager = lock
             .as_ref()
             .ok_or_else(|| "MLS Manager not initialized".to_string())?;
-        let key = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
-            .map_err(|e| format!("invalid device_key_b64: {e}"))?;
+        let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
         let encrypted = manager
             .save_encrypted_with_key(&key)
             .map_err(|e| e.to_string())?;
@@ -78,6 +107,7 @@ pub(crate) async fn sauvegarder_mls_et_persister(
     app: tauri::AppHandle,
 ) -> Result<Vec<u8>, String> {
     let manager_state = state.mls_manager.clone();
+    let device_key_state = state.device_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let lock = manager_state
             .lock()
@@ -85,8 +115,7 @@ pub(crate) async fn sauvegarder_mls_et_persister(
         let manager = lock
             .as_ref()
             .ok_or_else(|| "MLS Manager not initialized".to_string())?;
-        let key = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
-            .map_err(|e| format!("invalid device_key_b64: {e}"))?;
+        let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
         let encrypted = manager
             .save_encrypted_with_key(&key)
             .map_err(|e| e.to_string())?;
@@ -179,6 +208,7 @@ pub(crate) async fn generer_key_packages_et_persister(
     app: tauri::AppHandle,
 ) -> Result<KeyPackageBatchResult, String> {
     let manager_state = state.mls_manager.clone();
+    let device_key_state = state.device_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let lock = manager_state
             .lock()
@@ -199,8 +229,7 @@ pub(crate) async fn generer_key_packages_et_persister(
         } else {
             Vec::new()
         };
-        let key = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
-            .map_err(|e| format!("invalid device_key_b64: {e}"))?;
+        let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
         let encrypted_state = manager
             .save_encrypted_with_key(&key)
             .map_err(|e| e.to_string())?;

@@ -30,12 +30,48 @@
     return platformInfo.maintenance.message || m.auth_maintenance_default();
   });
 
+  /** Key holding the last auto-redirect target and its timestamp, for the loop breaker. */
+  const LAST_AUTO_REDIRECT_KEY = 'canari_login_auto_redirect';
+  /** A second bounce to the same target within this window is treated as a loop. */
+  const AUTO_REDIRECT_LOOP_WINDOW_MS = 5000;
+
   // ─── Helpers ─────────────────────────────────────────────────────────────────
   function getSafeReturnTarget(): string {
     const target = requestedReturnTo?.startsWith('/') ? requestedReturnTo : '/posts';
     // Prevent redirect loops back to the login page.
     if (target === '/login' || target.startsWith('/login?')) return '/posts';
     return target;
+  }
+
+  /**
+   * Loop breaker for the silent post-session redirect.
+   *
+   * A page can send the user here because ITS notion of "signed in" is unmet while the OIDC
+   * session this page checks is perfectly valid - the two never converge, and the pair spins
+   * at roughly one full round trip per second, each one burning a token refresh. Refusing the
+   * second identical bounce inside a short window leaves the user on /login, where the sign-in
+   * button and the reset action are both reachable.
+   *
+   * Only the automatic redirect is throttled; an explicit sign-in still honours returnTo.
+   */
+  function shouldAutoRedirectTo(target: string): boolean {
+    try {
+      const raw = sessionStorage.getItem(LAST_AUTO_REDIRECT_KEY);
+      const now = Date.now();
+      if (raw) {
+        const { target: last, at } = JSON.parse(raw) as { target: string; at: number };
+        if (last === target && now - at < AUTO_REDIRECT_LOOP_WINDOW_MS) {
+          sessionStorage.removeItem(LAST_AUTO_REDIRECT_KEY);
+          console.warn(`[auth] redirect loop to ${target} broken - staying on /login`);
+          loginError = m.auth_redirect_loop_blocked();
+          return false;
+        }
+      }
+      sessionStorage.setItem(LAST_AUTO_REDIRECT_KEY, JSON.stringify({ target, at: now }));
+    } catch {
+      // sessionStorage unavailable (private mode): fall through and redirect as before.
+    }
+    return true;
   }
 
   // ─── Initialization ──────────────────────────────────────────────────────────
@@ -84,8 +120,9 @@
           const target = getSafeReturnTarget();
           const current = window.location.pathname + window.location.search;
 
-          // Only redirect when not already on the target page.
-          if (target !== current) {
+          // Only redirect when not already on the target page, and never twice in a row to a
+          // target that just bounced back here.
+          if (target !== current && shouldAutoRedirectTo(target)) {
             await goto(target, { replaceState: true });
           }
         } catch {

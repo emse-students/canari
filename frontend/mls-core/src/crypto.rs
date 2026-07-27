@@ -42,14 +42,37 @@ impl MlsManager {
         device_key_b64: Option<String>,
         keystore: &dyn crate::keystore::DeviceKeyStore,
     ) -> Result<Self, MlsError> {
+        let key = Self::resolve_at_rest_key(
+            user_id,
+            device_id,
+            encrypted_blob.as_deref(),
+            device_key_b64,
+            keystore,
+        )?;
+        Self::load_with_key(user_id, device_id, encrypted_blob, &key)
+    }
+
+    /// Resolve the 32-byte at-rest key for this device, from the caller's base64 key when it has
+    /// one, otherwise from the platform keystore (alias `mls_device_key_{user_id}_{device_id}`).
+    ///
+    /// Split out of [`Self::load_encrypted_with_keystore`] so a caller can resolve ONCE per
+    /// session and reuse the result. That matters on the biometric path: the key never reaches
+    /// the JS layer there, so every later save arrives with no key, and re-resolving would fire
+    /// one `retrieve_device_key` BiometricPrompt per save instead of one per session.
+    pub fn resolve_at_rest_key(
+        user_id: &str,
+        device_id: &str,
+        encrypted_blob: Option<&[u8]>,
+        device_key_b64: Option<String>,
+        keystore: &dyn crate::keystore::DeviceKeyStore,
+    ) -> Result<[u8; 32], MlsError> {
         let alias = format!("mls_device_key_{user_id}_{device_id}");
 
         // Path B: device_key_b64 provided (C3 first login or C4/C5 with PinVault).
         // Decode the base64 key directly — no Argon2id needed.
         if let Some(key_b64) = device_key_b64 {
-            let key = decode_base64_to_32_bytes(&key_b64)
-                .map_err(|e| MlsError::OpenMls(format!("invalid device_key_b64: {e}")))?;
-            return Self::load_with_key(user_id, device_id, encrypted_blob, &key);
+            return decode_base64_to_32_bytes(&key_b64)
+                .map_err(|e| MlsError::OpenMls(format!("invalid device_key_b64: {e}")));
         }
 
         // Path A (no device_key_b64 — biometric mode): retrieve key from platform keystore.
@@ -57,12 +80,12 @@ impl MlsManager {
             // Quick validation: can the key actually decrypt the blob?
             // If not (PIN changed, blob re-encrypted with a new key), delete the
             // stale keystore entry so the user is prompted for the new PIN.
-            let key_valid = match &encrypted_blob {
+            let key_valid = match encrypted_blob {
                 Some(blob) if blob.len() >= 12 => crate::security::decrypt_blob(&key, blob).is_ok(),
                 _ => true, // No blob yet (first launch) — key is valid by definition.
             };
             if key_valid {
-                return Self::load_with_key(user_id, device_id, encrypted_blob, &key);
+                return Ok(key);
             }
             // Stale key — delete it.
             let _ = keystore.delete_device_key(&alias);

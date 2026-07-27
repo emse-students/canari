@@ -567,26 +567,32 @@ export class WebMlsService extends BaseMlsService {
       // (credential mismatch, partial corruption, invalid key…).
       // → systematic fresh-start to avoid blocking the user indefinitely.
       // If state == null and error → real crash (no state to blame) → rethrow.
-      const errStr = String(e);
-      const isCredentialMismatch =
-        errStr.includes('identity mismatch') || errStr.includes('Credential identity');
-      if (isCredentialMismatch || state != null) {
-        // Caller wants a chance to recover (decrypt with the old key) before any
-        // destructive fresh-start: signal instead of discarding local history.
-        if (opts?.noFreshStart) throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
+      const cause = this.classifyStateLoadFailure(e);
+      if (cause === 'mismatch' || state != null) {
+        // Only a `sealed` state is worth pausing for: the caller can offer the old PIN and
+        // recover the history intact. A `mismatch` decrypted fine and no PIN can repair it,
+        // so honouring noFreshStart there would strand the user with nothing to try.
+        if (opts?.noFreshStart && cause === 'sealed') {
+          throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
+        }
         const oldDeviceId = this.deviceId;
-        if (isCredentialMismatch) {
+        if (cause === 'mismatch') {
           console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');
         } else {
           console.warn(
             '[MLS] Loaded state unusable (corruption?) → fresh-start:',
-            errStr.slice(0, 200)
+            String(e).slice(0, 200)
           );
         }
         this.deviceId = this.generateDeviceId(userId);
         localStorage.setItem(deviceKey, this.deviceId);
         this.delivery.deviceId = this.deviceId;
         await this.loadStateWithKey(deviceKeyB64, undefined);
+        // Persist the fresh state under the new id BEFORE anything else can fail. Skipping this
+        // is what made the churn self-sustaining: the new id went to localStorage while the old
+        // blob stayed in storage, so the next launch mismatched again and minted yet another
+        // device - four in eight seconds, each deleted server-side.
+        await saveMlsState(this.userId, await this.saveState(deviceKeyB64));
         this.deleteDevice(userId, oldDeviceId).catch((err) =>
           console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
         );

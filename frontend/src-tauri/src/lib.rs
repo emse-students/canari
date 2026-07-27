@@ -573,6 +573,7 @@ pub fn run() {
     builder
         .manage(AppState {
             mls_manager: Arc::new(Mutex::new(None)),
+            device_key: Arc::new(Mutex::new(None)),
         })
         .manage(HttpClient(
             reqwest::Client::builder()

@@ -30,6 +30,22 @@ async sendMessage(groupId: string, plaintext: Uint8Array): Promise<Uint8Array> {
 
 The Rust side is in `frontend/src-tauri/src/` (Tauri commands) and `frontend/mls-core/` (shared MLS logic, same crate used by WASM). `BaseMlsService` provides the shared `runCommitTransaction` / `stageAddMembers` / `mergePendingCommit` primitives that both `WebMlsService` and `TauriMlsService` extend.
 
+> **The command name is an untyped string on both sides.** Nothing checks that the literal passed
+> to `invoke()` matches a `#[tauri::command]` listed in `generate_handler!` in `lib.rs`; a stale or
+> renamed name compiles, lints and type-checks, then fails only at runtime with "command not
+> found". v0.11.0 shipped `initialiser_mls_avec_clef`, `sauvegarder_mls_et_persister_avec_clef` and
+> `generer_key_packages_et_persister_avec_clef` against Rust commands that had kept their original
+> names - every native MLS init, save and KeyPackage publication failed for as long as it was live.
+> When renaming a command, grep both sides.
+
+### Device key on the biometric path
+
+In biometric mode the at-rest key never reaches JS: `ctx.getDeviceKey()` stays `''` for the whole
+session, so every `invoke` carries an empty `deviceKeyB64`. `initialiser_mls` resolves the key once
+(`MlsManager::resolve_at_rest_key`, keystore Path A) and caches it in `AppState.device_key`; the
+save and KeyPackage commands fall back to that cache. Resolving per call would instead fire one
+`retrieve_device_key` BiometricPrompt per save.
+
 ### Tauri-specific MLS
 
 - **Epoch caching**: `_epochByGroupId` + `refreshEpochCache()` — Tauri cannot read the WASM group directly, so epoch is cached and refreshed after each queue item, Welcome, and commit.

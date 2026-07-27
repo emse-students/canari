@@ -6,6 +6,13 @@ use std::sync::{Arc, Mutex};
 /// Application state managed by Tauri, injected into every command.
 pub(crate) struct AppState {
     pub mls_manager: Arc<Mutex<Option<MlsManager>>>,
+    /// At-rest key of the live MLS session, resolved once by `initialiser_mls`.
+    ///
+    /// Biometric sessions keep the key in the platform keystore and never hand it to the JS
+    /// layer, so every later `sauvegarder_*` / `generer_key_packages_*` call arrives with an
+    /// empty `device_key_b64`. Caching the resolved key here is what lets those saves succeed
+    /// without firing one BiometricPrompt per save.
+    pub device_key: Arc<Mutex<Option<[u8; 32]>>>,
 }
 
 /// SQLite pool dedicated to queued MLS messages (Sender Ratchet gap).
