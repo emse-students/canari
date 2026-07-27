@@ -91,6 +91,31 @@ Shipped:
 Todo:
 - \[x\] **WP-Calls-UX call UI overhaul** (P1-P9 implemented; svelte-check 0/0, oxlint 0/0, tests 8/8).
 
+#### POST-v0.11.0 REMEDIATION (audit v0.10.4 -> v0.11.0)
+
+Audit found 15 gaps (T1-T15). Remediation lots, in order:
+
+- \[ \] **Lot 1 - mobile background push (BLOCKER)**
+  - T1: `mobile/background.rs` `decrypt_with_raw_key` / `background_group_epoch_with_key` / `decrypt_push_message_with_commits_with_key` strip a 16-byte salt the v0.11.0 format no longer has (`[nonce 12 || ct]`) -> background decrypt ALWAYS fails on Android + iOS. Fix: route through `MlsManager::load_with_key` (it is `pub`, contrary to the in-file comment).
+  - T2: delete LLM scratch comments committed at `background.rs:347-356`.
+  - T10a: rename `pin`/`pin_str` -> `device_key_b64` in `mobile/ios_ffi.rs`; fix rustdoc links to deleted fns.
+- \[ \] **Lot 2 - frontend key chain**
+  - T4: no Argon2id PIN->deviceKeyB64 derivation exists in the frontend despite CHANGELOG/KEYSTORE_PLAN. Decide: implement it, or document that the PIN is not the key source. Then remove `deviceKeyB64 || ctx.getPin()` fallbacks (`sessionAuth.ts:388,447`).
+  - T3: `SettingsSecuritySection.svelte:60` passes `session.pin` to the DEVICE-KEY vault -> must be `session.deviceKeyB64`.
+  - T5: `reloadStateFromDisk()` is now a silent no-op on Tauri (`BaseMlsService.ts`) but still called from `ChatBackgroundService.svelte` -> anti-SecretReuse protection lost. Implement with `_deviceKeyB64` or remove the call.
+- \[ \] **Lot 3 - prod & migrations**
+  - T6: migration history rewritten (003 modified; 023/025/026/027 deleted; gaps 023, 026-029). Prod applies SQL BY HAND (`synchronize:false`, no runner, no tracking table). VERIFY 030/031/032 are applied in prod (`channels.writePolicy` present, `channel_permission_overrides` gone) - `writePolicy` is enforced server-side on send, so a missing column kills the feature. Then add a tracking table or a checklist in `infrastructure/MIGRATION.md`.
+- \[ \] **Lot 4 - hygiene**
+  - T10b: delete `src/lib/db/salt.ts` (tombstone), the dead deprecated block in `pinVault.ts` (`loadPin`/`savePin`/`clearPin`/`clearPinAndKey` have ZERO callers), rename `pinVault.ts` -> `deviceKeyVault.ts`.
+  - T11: French comments -> English (`background.rs:1,97-98`, `sessionAuth.ts:914`, `mls.rs:710`, `locks.controller.ts:24`, `mlsDeliveryApi.ts:10`, `same_epoch_ratchet.rs:8`).
+  - T12: hardcoded thrown strings -> Paraglide (`sessionAuth.ts:371,399,405`). Careful: the stale-key recovery regexes match this text.
+  - T13: ~20 stale Argon2/PBKDF2 comments still describe the old scheme.
+  - T14: confirm legacy `encrypt_with_pin`/`decrypt_with_pin` is only used by backup v1 (`backup.ts:174`), isolate it.
+- \[ \] **Lot 5 - docs & state**
+  - T7: CHANGELOG `[Unreleased]` still holds all v0.11.0 content; no v0.10.10-v0.10.15 sections; the PIN->deviceKey block is in French.
+  - T9: `plans/` and `docs/strategy/` are TEMPORARY working trees (user-confirmed) - DELETE once T1-T15 are closed. `docs/TESTS-DEVICE-PENDING.md` was deleted with open items in it.
+  - T15: ~12 non-descriptive commits (`fix`, `cd`, `doc`, `communautes`).
+
 #### MULTI-TIER COTISATIONS (Cercle) - COMPLETE
 
 Durable gotchas:
