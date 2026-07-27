@@ -25,7 +25,7 @@ pub(crate) fn save_mls_state(app: tauri::AppHandle, data: Vec<u8>) -> Result<(),
 pub(crate) async fn recharger_mls_au_resume(
     user_id: String,
     device_id: String,
-    pin: String,
+    device_key_b64: String,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
@@ -37,7 +37,7 @@ pub(crate) async fn recharger_mls_au_resume(
     tauri::async_runtime::spawn_blocking(move || {
         let path = data_dir.join("mls.bin");
         // Lecture du fichier SOUS le verrou (ne pas lire pendant qu'un JNI ecrit). On relache avant
-        // le load_encrypted (Argon2) : la garde foreground bloque desormais toute nouvelle ecriture.
+        // le decrypt (ChaCha20 direct via device key) : la garde foreground bloque desormais toute nouvelle ecriture.
         let bytes = {
             let _guard = mls_bin_write_lock()
                 .lock()
@@ -52,7 +52,9 @@ pub(crate) async fn recharger_mls_au_resume(
             log::debug!("[RESUME] mls.bin absent - rien a recharger (C2)");
             return Ok(false);
         };
-        let candidate = MlsManager::load_encrypted(&user_id, &device_id, Some(bytes), &pin)
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
+            .map_err(|e| format!("invalid device_key_b64: {e}"))?;
+        let candidate = MlsManager::load_with_key(&user_id, &device_id, Some(bytes), &key)
             .map_err(|e| format!("reload mls.bin: {e}"))?;
         let mut lock = manager_state
             .lock()

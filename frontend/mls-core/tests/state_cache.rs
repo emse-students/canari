@@ -150,8 +150,9 @@ fn encrypt_state_blob_round_trip() {
 
     manager.invalidate_persisted_snapshot();
     let plain = manager.save_state().expect("plain snapshot");
-    let encrypted = MlsManager::encrypt_state_blob(&plain, "4242").expect("encrypt");
-    let restored = MlsManager::load_encrypted("enc-user", "enc-device", Some(encrypted), "4242")
+    let key = [42u8; 32];
+    let encrypted = MlsManager::encrypt_state_blob_with_key(&plain, &key).expect("encrypt");
+    let restored = MlsManager::load_with_key("enc-user", "enc-device", Some(encrypted), &key)
         .expect("load encrypted");
 
     manager.invalidate_persisted_snapshot();

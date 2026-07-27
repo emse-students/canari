@@ -3,7 +3,11 @@
  * isBiometricPromptDismissed, dismissBiometricPromptImpl, enrollBiometricImpl.
  */
 import { BiometricService } from '$lib/services/biometric';
-import { clearPinAndKey, savePin, setPinPersistence } from '$lib/utils/pinVault';
+import {
+  clearDeviceKeyAndWrapKey,
+  saveDeviceKey,
+  setDeviceKeyPersistence,
+} from '$lib/utils/pinVault';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -70,20 +74,20 @@ export async function enrollBiometricImpl(ctx: SessionContext): Promise<void> {
       showToast(m.auth_biometric_no_biometric_enrolled(), 'info');
       return;
     }
-    // Biometric is now enabled — wipe the session PIN so the next launch
+    // Biometric is now enabled — wipe the session device key so the next launch
     // uses the keystore path (getKeyBytes → BiometricPrompt).
-    clearPinAndKey();
-    // Also clear the "stay signed in" persistence flag so the PIN is
+    clearDeviceKeyAndWrapKey();
+    // Also clear the "stay signed in" persistence flag so the device key is
     // not re-saved on the next login (the keystore holds the key).
     try {
-      await setPinPersistence(false, null);
+      await setDeviceKeyPersistence(false, null);
     } catch {}
     // Ne pas appeler clear_push_context_key : la cle dans le keystore
     // reste valide, seul le mode d'acces change (empreinte au lieu de PIN).
     // deviceKeyB64 dans push_context.json reste utilisable pour les push FCM.
     ctx.setShowBiometricEnrollPrompt(false);
     localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);
-    appendLog('[BIOMETRIC] Enrollment OK - PIN cleared from session (hardware keystore)');
+    appendLog('[BIOMETRIC] Enrollment OK - device key cleared from session (hardware keystore)');
   } catch (e) {
     appendLog(`[BIOMETRIE] Echec inscription: ${e instanceof Error ? e.message : String(e)}`);
     console.error('Biometric enrollment failed:', e);
@@ -105,20 +109,20 @@ export async function disableBiometricImpl(ctx: SessionContext): Promise<void> {
   const alias = userId && deviceId ? `mls_device_key_${userId}_${deviceId}` : undefined;
   await BiometricService.disable(alias);
 
-  const pin = ctx.getPin();
-  if (pin) await savePin(pin).catch(() => {});
+  const deviceKey = ctx.getDeviceKey() || ctx.getPin();
+  if (deviceKey) await saveDeviceKey(deviceKey).catch(() => {});
 
   // Regenerer la cle keystore et re-remplir deviceKeyB64 dans push_context.json
   // pour que les push arriere-plan continuent de fonctionner sans biometrie.
-  if (isTauriRuntime() && userId && deviceId && pin) {
+  if (isTauriRuntime() && userId && deviceId && deviceKey) {
     const { invoke } = await import('@tauri-apps/api/core');
     // Regenerer la cle keystore a partir du PIN (le keystore est vide apres BiometricService.disable)
-    await invoke('actualiser_cle_keystore', { pin, userId, deviceId }).catch(() => {});
+    await invoke('actualiser_cle_keystore', { pin: deviceKey, userId, deviceId }).catch(() => {});
     // Re-remplir push_context.json avec la cle keystore fraichement regeneree
     const { getToken } = await import('$lib/stores/auth');
     const pushToken = await getToken().catch(() => undefined);
     await invoke('store_push_context', {
-      pin,
+      pin: deviceKey,
       userId,
       deviceId,
       baseUrl: ctx.getHistoryBaseUrl(),

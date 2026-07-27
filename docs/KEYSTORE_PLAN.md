@@ -1,27 +1,32 @@
 # Plan d'implémentation : Keystore natif Android/iOS pour la clé de chiffrement MLS
 
-> **Statut** : Plan détaillé — l'implémentation complète est estimée à 2-3 jours et dépasse le cadre d'une session unique.
+> **Statut** : ✅ Implémenté (2026-07-27) — Le keystore stocke désormais `deviceKeyB64` directement (clé de 32 bytes en base64), plus de dérivation Argon2id à chaque lancement.
 > **Tâche** : P1b — Intégration Keystore natif pour protéger la clé de chiffrement MLS.
-> **Date** : 2026-07-24
+> **Date** : 2026-07-24 (plan initial) / 2026-07-27 (finalisé)
+>
+> **⚠️ Évolution par rapport au plan initial** : Le design final stocke `deviceKeyB64` (clé de 32 bytes) directement dans le keystore, sans passer par Argon2id. Le PIN n'est utilisé qu'au premier login pour dériver `deviceKeyB64`, puis n'est plus jamais utilisé pour le chiffrement. Le DeviceKeyVault (ex-PinVault) stocke `deviceKeyB64` chiffré en AES-GCM. Voir [`plan-remplacement-pin-par-devicekey.md`](../../plans/plan-remplacement-pin-par-devicekey.md) pour le détail complet.
 
 ---
 
 ## 1. Résumé exécutif
 
-Actuellement, la clé de chiffrement de l'état MLS est dérivée du PIN utilisateur via Argon2id **à chaque lancement** (cf. [`frontend/mls-core/src/crypto.rs:33`](frontend/mls-core/src/crypto.rs:33) — `MlsManager::load_encrypted`). La tâche P1b vise à stocker cette clé dérivée dans le Keystore matériel de la plateforme afin que :
+La clé de chiffrement de l'état MLS est désormais `deviceKeyB64` (clé de 32 bytes en base64), stockée directement dans le Keystore matériel de la plateforme. Le PIN n'est plus utilisé pour le chiffrement :
 
-1. La clé ne soit re-dérivée qu'au **premier setup** (le PIN n'est saisi qu'une fois)
-2. La clé soit protégée par le **Secure Enclave** (iOS) / **TEE/StrongBox** (Android)
-3. L'accès à la clé puisse être conditionné à l'**authentification biométrique**
+1. La clé est dérivée au **premier setup** uniquement (le PIN n'est saisi qu'une fois pour Argon2id)
+2. La clé est protégée par le **Secure Enclave** (iOS) / **TEE/StrongBox** (Android)
+3. L'accès à la clé est conditionné à l'**authentification biométrique**
 
-### Workflow cible
+### Workflow actuel
 
 ```
-Premier lancement:
-  PIN → Argon2id → clé 32B → stockée Keystore/Keychain → PIN zeroizé
+Premier lancement (C3):
+  PIN → Argon2id (1 fois) → deviceKeyB64 → stockée Keystore/Keychain ET DeviceKeyVault (AES-GCM)
+  mls.bin : ChaCha20-Poly1305 direct avec deviceKeyB64 (format: [nonce 12 || ciphertext])
+  Messages locaux : AES-256-GCM direct avec deviceKeyB64 (format: [iv 12 || ciphertext])
 
-Lancements suivants:
-  Récupération clé depuis Keystore/Keychain → déchiffrement état MLS
+Lancements suivants (C4, C5):
+  Récupération deviceKeyB64 depuis Keystore/Keychain (biométrie) OU DeviceKeyVault (AES-GCM)
+  → déchiffrement mls.bin + messages locaux (pas d'Argon2id, pas de PBKDF2)
 ```
 
 ---
@@ -88,14 +93,14 @@ Lancements suivants:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 Décision architecturale clé : pourquoi étendre le plugin existant ?
+### 2.2 Décision architecturale clé : stockage direct de `deviceKeyB64`
 
 Le plugin [`tauri-plugin-keystore`](frontend/src-tauri/patches/tauri-plugin-keystore/) est déjà intégré et patché. Il gère correctement :
 
 - **Android** : `AndroidKeyStore` + `KeyGenParameterSpec` avec `setUserAuthenticationRequired(true)`
 - **iOS** : `SecAccessControlCreateWithFlags` avec `.userPresence` + `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`
 
-Plutôt que de dupliquer la logique d'accès au Keystore dans du code JNI Rust (extrêmement verbeux et fragile), on **étend le plugin natif existant** avec des méthodes dédiées au stockage de clés brutes (`ByteArray`/`Data`), puis on expose ces méthodes via un bridge Rust → Natif.
+La clé stockée est `deviceKeyB64` directement (32 bytes décodés depuis base64), **sans dérivation Argon2id préalable**. La dérivation Argon2id(PIN, salt) → `deviceKeyB64` a lieu une seule fois au premier login, côté frontend. Le keystore reçoit la clé déjà dérivée.
 
 ---
 
@@ -522,20 +527,7 @@ impl MlsManager {
 }
 ```
 
-> **⚠️ Point d'attention** : Actuellement, le format de chiffrement est `[salt (16)] [nonce (12) || ciphertext]`. Le salt est utilisé pour Argon2id. Avec le keystore, on n'a plus besoin du salt (la clé est stockée directement). Il faut soit :
-> - (A) Ignorer le salt quand on utilise le keystore (simple, rétrocompatible)
-> - (B) Migrer vers un nouveau format sans salt pour les nouveaux chiffrements (plus propre, mais migration nécessaire)
->
-> **Recommandation** : Option (A) pour P1b, migration en P2.
-
-#### 5.3 Modification du format de chiffrement (Option A — rétrocompatible)
-
-Ajouter un magic byte ou utiliser un format détectable. Proposition : préfixer le blob par un octet de version.
-
-```
-Version 0 (actuel): [0x00] [salt 16] [nonce 12 || ciphertext]
-Version 1 (keystore): [0x01] [nonce 12 || ciphertext]   // pas de salt
-```
+> **✅ Résolu** : Le format actuel est `[nonce 12 || ciphertext]` pour `mls.bin` (plus de salt 16 bytes). La migration est faite — le salt Argon2id n'est plus stocké dans le blob. Pour les messages locaux, le format est `[iv 12 || ciphertext]` (plus de salt PBKDF2).
 
 ---
 
@@ -654,13 +646,13 @@ Aucune — on étend les plugins Kotlin/Swift existants.
 
 | Risque | Impact | Mitigation |
 |--------|--------|------------|
-| **Incompatibilité de format** entre l'ancien chiffrement (avec salt Argon2) et le nouveau (sans salt) | Élevé | Utiliser un magic byte de version (0x00 vs 0x01) |
-| **Double source de vérité** : clé dans keystore + clé dérivable du PIN | Moyen | Le keystore est la source primaire ; le PIN est le fallback |
-| **Background push sans runtime Tauri** : le plugin bridge ne fonctionne pas en arrière-plan | Moyen | Laisser le background push utiliser le PIN (comme actuellement) ; migration en P1c |
+| ~~**Incompatibilité de format** entre l'ancien chiffrement (avec salt Argon2) et le nouveau (sans salt)~~ | ~~Élevé~~ | ✅ Résolu — format `[nonce 12 \|\| ciphertext]` unifié |
+| **Double source de vérité** : `deviceKeyB64` dans keystore + DeviceKeyVault | Faible | Le keystore est utilisé en priorité ; le DeviceKeyVault (AES-GCM) est le fallback |
+| ~~**Background push sans runtime Tauri**~~ | ~~Moyen~~ | ✅ Résolu — le background utilise `deviceKeyB64` via `_with_key` |
 | **Timeout biométrique** : 5 min sur Android, pas de timeout natif sur iOS (`.userPresence` = chaque accès) | Faible | Accepter la différence de comportement plateforme |
-| **Migration des utilisateurs existants** : ceux qui ont déjà un état MLS chiffré avec PIN | Élevé | Ajouter une commande `migrate_to_keystore` qui déchiffre avec PIN, ré-encrypte avec clé keystore |
+| ~~**Migration des utilisateurs existants**~~ | ~~Élevé~~ | ✅ Résolu — migration paresseuse au prochain login |
 | **Suppression de l'app** : le Keystore/Keychain persiste (Android) ou non (iOS) selon la plateforme | Faible | Documenter ; la clé est recouvrable via PIN (fallback) |
-| **`kSecClassKey` vs `kSecClassGenericPassword`** : le premier nécessite une `SecKey`, pas un blob arbitraire | Élevé | Utiliser `kSecClassGenericPassword` avec `SecAccessControl` (même niveau de sécurité) |
+| ~~**`kSecClassKey` vs `kSecClassGenericPassword`**~~ | ~~Élevé~~ | ✅ Résolu — `kSecClassGenericPassword` avec `SecAccessControl` |
 
 ---
 
@@ -681,9 +673,9 @@ Aucune — on étend les plugins Kotlin/Swift existants.
 
 ## 7. Prochaines étapes après P1b
 
-1. **P1c** : Keystore pour le chemin background push (JNI/FFI direct sans Tauri runtime)
-2. **P2** : Migration du format de chiffrement (nouveau magic byte, suppression du salt Argon2 quand keystore est utilisé)
-3. **P2** : Rotation de clé (regénération périodique de la clé keystore)
+1. ✅ **P1c** : Keystore pour le chemin background push — le background utilise déjà `deviceKeyB64` (variantes `_with_key` dans [`background.rs`](frontend/src-tauri/src/mobile/background.rs))
+2. ✅ **P2** : Migration du format de chiffrement — le format `[nonce 12 || ciphertext]` sans salt est en place
+3. **P3** : Rotation de clé (regénération périodique de la clé keystore)
 4. **P3** : Intégration avec `tauri-plugin-biometric` pour le flux UX (vérification biométrique avant accès MLS)
 
 ---

@@ -1,6 +1,4 @@
-use argon2::password_hash::rand_core::{OsRng, RngCore};
 use openmls_traits::OpenMlsProvider;
-use zeroize::Zeroize;
 
 use crate::MlsError;
 use crate::security;
@@ -9,160 +7,89 @@ use crate::state::MlsManager;
 impl MlsManager {
     // --- F. CHIFFREMENT / DÉCHIFFREMENT (Helper) ---
 
-    /// Encrypts a plain CBOR MLS snapshot (Argon2 + ChaCha20). Usable off-thread without a live manager.
-    #[allow(deprecated)]
-    pub fn encrypt_state_blob(plain_state: &[u8], pin: &str) -> Result<Vec<u8>, MlsError> {
-        security::encrypt_state_with_pin(pin, plain_state)
-            .map_err(|s| MlsError::OpenMls(format!("encrypt_state_blob: {}", s)))
+    /// Encrypts a plain CBOR MLS snapshot with a pre-derived 32-byte key (ChaCha20-Poly1305 direct, no Argon2id).
+    /// Wire format: `[nonce (12) || ciphertext]` — no salt prefix.
+    pub fn encrypt_state_blob_with_key(
+        plain_state: &[u8],
+        key: &[u8; 32],
+    ) -> Result<Vec<u8>, MlsError> {
+        security::encrypt_blob(key, plain_state)
+            .map_err(|s| MlsError::OpenMls(format!("encrypt_state_blob_with_key: {}", s)))
     }
 
-    #[allow(deprecated)]
-    pub fn save_encrypted(&self, pin: &str) -> Result<Vec<u8>, MlsError> {
+    /// Save the MLS state encrypted with a pre-derived 32-byte key (no Argon2id needed).
+    ///
+    /// Wire format: `[nonce (12) || ciphertext]`. No salt prefix.
+    /// Used by background push handlers (Android JNI / iOS FFI) that hold the raw device
+    /// key from `push_context.json` instead of the user's PIN.
+    pub fn save_encrypted_with_key(&self, key: &[u8; 32]) -> Result<Vec<u8>, MlsError> {
         let plain_state = self.save_state()?;
-        Self::encrypt_state_blob(&plain_state, pin)
-    }
-
-    /// Owned variant of [`save_encrypted`] that takes ownership of the PIN [`String`]
-    /// and zeroizes it after encryption, preventing the PIN from lingering in memory.
-    pub fn save_encrypted_owned(&self, mut pin: String) -> Result<Vec<u8>, MlsError> {
-        let result = self.save_encrypted(&pin);
-        pin.zeroize();
-        result
-    }
-
-    #[allow(deprecated)]
-    pub fn load_encrypted(
-        user_id: &str,
-        device_id: &str,
-        encrypted_blob: Option<Vec<u8>>,
-        pin: &str,
-    ) -> Result<Self, MlsError> {
-        let decrypted_state = if let Some(blob) = encrypted_blob {
-            if blob.len() < 16 {
-                return Err(MlsError::InvalidData);
-            }
-
-            let (salt, rest) = blob.split_at(16);
-
-            let key = security::derive_key_from_pin(pin, salt)
-                .map_err(|s| MlsError::OpenMls(format!("Key derivation: {}", s)))?;
-
-            let plain = security::decrypt_blob(&key, rest)
-                .map_err(|s| MlsError::OpenMls(format!("Decryption: {}", s)))?;
-
-            Some(plain)
-        } else {
-            None
-        };
-
-        Self::load_or_create(user_id, device_id, decrypted_state)
-    }
-
-    /// Owned variant of [`load_encrypted`] that takes ownership of the PIN [`String`]
-    /// and zeroizes it after key derivation, preventing the PIN from lingering in memory.
-    pub fn load_encrypted_owned(
-        user_id: &str,
-        device_id: &str,
-        encrypted_blob: Option<Vec<u8>>,
-        mut pin: String,
-    ) -> Result<Self, MlsError> {
-        let result = Self::load_encrypted(user_id, device_id, encrypted_blob, &pin);
-        pin.zeroize();
-        result
+        security::encrypt_blob(key, &plain_state)
+            .map_err(|s| MlsError::OpenMls(format!("save_encrypted_with_key: {}", s)))
     }
 
     // --- Keystore-aware loading ---
 
-    /// Load the MLS manager, trying the platform keystore first for the decryption key.
+    /// Load the MLS manager. When `device_key_b64` is provided, the key is decoded from base64
+    /// and used directly for decryption (no Argon2id).
     ///
-    /// If a key is found in the keystore (under alias `mls_device_key_{user_id}_{device_id}`),
-    /// it is used directly — no PIN needed. The PIN is only used as a fallback when the
-    /// keystore is empty (first launch, app reinstall, or desktop/web where the keystore
-    /// is a no-op).
-    ///
-    /// When the PIN fallback path succeeds, the derived key is automatically stored in the
-    /// keystore so that subsequent launches can skip the PIN.
+    /// When `device_key_b64` is `None` (biometric mode), the key is retrieved from the platform
+    /// keystore (under alias `mls_device_key_{user_id}_{device_id}`) and used directly.
     pub fn load_encrypted_with_keystore(
         user_id: &str,
         device_id: &str,
         encrypted_blob: Option<Vec<u8>>,
-        pin: Option<String>,
+        device_key_b64: Option<String>,
         keystore: &dyn crate::keystore::DeviceKeyStore,
     ) -> Result<Self, MlsError> {
         let alias = format!("mls_device_key_{user_id}_{device_id}");
 
-        // Path A: keystore has a key for this device — use it directly.
+        // Path B: device_key_b64 provided (C3 first login or C4/C5 with PinVault).
+        // Decode the base64 key directly — no Argon2id needed.
+        if let Some(key_b64) = device_key_b64 {
+            let key = decode_base64_to_32_bytes(&key_b64)
+                .map_err(|e| MlsError::OpenMls(format!("invalid device_key_b64: {e}")))?;
+            return Self::load_with_key(user_id, device_id, encrypted_blob, &key);
+        }
+
+        // Path A (no device_key_b64 — biometric mode): retrieve key from platform keystore.
         if let Some(key) = keystore.retrieve_device_key(&alias) {
             // Quick validation: can the key actually decrypt the blob?
             // If not (PIN changed, blob re-encrypted with a new key), delete the
-            // stale keystore entry and fall through to Path B so the user is
-            // prompted for the new PIN. This makes the system self-healing.
+            // stale keystore entry so the user is prompted for the new PIN.
             let key_valid = match &encrypted_blob {
-                Some(blob) if blob.len() >= 16 => {
-                    let (_salt, rest) = blob.split_at(16);
-                    crate::security::decrypt_blob(&key, rest).is_ok()
-                }
+                Some(blob) if blob.len() >= 12 => crate::security::decrypt_blob(&key, blob).is_ok(),
                 _ => true, // No blob yet (first launch) — key is valid by definition.
             };
             if key_valid {
                 return Self::load_with_key(user_id, device_id, encrypted_blob, &key);
             }
-            // Stale key — delete it and fall through to Path B (PIN prompt).
+            // Stale key — delete it.
             let _ = keystore.delete_device_key(&alias);
-            log::warn!(
-                "[MLS] Keystore key failed to decrypt blob — key deleted, falling back to PIN."
-            );
+            log::warn!("[MLS] Keystore key failed to decrypt blob — key deleted.");
         }
 
-        // Path B: no (valid) keystore key — fall back to PIN.
-        match pin {
-            Some(pin_str) => {
-                if let Some(ref blob) = encrypted_blob
-                    && blob.len() >= 16
-                {
-                    let salt = &blob[..16];
-                    let key = crate::security::derive_and_store_device_key(
-                        pin_str, salt, &alias, keystore,
-                    )
-                    .map_err(MlsError::OpenMls)?;
-                    // PIN has been zeroized by derive_and_store_device_key.
-                    return Self::load_with_key(user_id, device_id, encrypted_blob, &key);
-                }
-                // No blob or blob too short — first launch with PIN.
-                // Generate a fresh salt and derive the key.
-                let mut salt = [0u8; 16];
-                OsRng.fill_bytes(&mut salt);
-                let key =
-                    crate::security::derive_and_store_device_key(pin_str, &salt, &alias, keystore)
-                        .map_err(MlsError::OpenMls)?;
-                // PIN has been zeroized by derive_and_store_device_key.
-                // encrypted_blob is None (or too short) — load_or_create handles the fresh state.
-                Self::load_with_key(user_id, device_id, encrypted_blob, &key)
-            }
-            None => Err(MlsError::OpenMls(
-                "No keystore key and no PIN provided".into(),
-            )),
-        }
+        // No device_key_b64 and no keystore key — nothing we can do.
+        Err(MlsError::OpenMls(
+            "No keystore key and no device_key_b64 provided".into(),
+        ))
     }
 
-    /// Internal: load using a pre-derived 32-byte key (no Argon2id needed).
+    /// Load using a pre-derived 32-byte key (no Argon2id needed).
     ///
-    /// The encrypted blob format is `[salt 16] [nonce 12 || ciphertext]`.
-    /// When the key comes from the keystore, the salt is ignored — the key
-    /// was already derived and stored at setup time.
-    fn load_with_key(
+    /// The encrypted blob format is `[nonce (12) || ciphertext]`.
+    /// The key is used directly for ChaCha20-Poly1305 decryption.
+    pub fn load_with_key(
         user_id: &str,
         device_id: &str,
         encrypted_blob: Option<Vec<u8>>,
         key: &[u8; 32],
     ) -> Result<Self, MlsError> {
         let decrypted_state = if let Some(blob) = encrypted_blob {
-            if blob.len() < 16 {
+            if blob.len() < 12 {
                 return Err(MlsError::InvalidData);
             }
-            // Skip the 16-byte salt — key is pre-derived.
-            let (_salt, rest) = blob.split_at(16);
-            let plain = crate::security::decrypt_blob(key, rest)
+            let plain = crate::security::decrypt_blob(key, &blob)
                 .map_err(|s| MlsError::OpenMls(format!("Decryption: {}", s)))?;
             Some(plain)
         } else {
@@ -190,4 +117,22 @@ impl MlsManager {
             .export_secret(self.provider.crypto(), label, context, key_len)
             .map_err(|e| MlsError::OpenMls(format!("Export secret error: {:?}", e)))
     }
+}
+
+/// Decodes a base64-encoded string into a 32-byte array.
+/// Used to convert `deviceKeyB64` from the frontend into a raw key for ChaCha20-Poly1305.
+pub fn decode_base64_to_32_bytes(b64: &str) -> Result<[u8; 32], String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("base64 decode failed: {e}"))?;
+    if bytes.len() != 32 {
+        return Err(format!(
+            "deviceKeyB64 must decode to 32 bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&bytes);
+    Ok(key)
 }

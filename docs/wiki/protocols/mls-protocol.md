@@ -73,7 +73,7 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 | `GroupMember` | User <-> group membership |
 | `DeviceGroupMembership` | Per-device state machine (`pending` / `active` / `removed`) |
 | `QueuedMessage` | Pending messages for offline devices |
-| `PinVerifier` | PBKDF2 verifier to detect PIN mismatch across devices |
+| `PinVerifier` | Argon2id verifier to detect PIN mismatch across devices |
 | `PushToken` | FCM push token per device |
 | `RevokedDevice` | Revoked device IDs (triggers resetRequired on next login) |
 

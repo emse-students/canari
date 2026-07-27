@@ -74,7 +74,7 @@ async function startLoginFlow() {
 
       if (biometricReady) {
         // Connexion suivante avec biométrie ENROLÉE :
-        // → BiometricBottomSheet direct, PAS de PIN stocké
+        // → BiometricBottomSheet direct, deviceKeyB64 récupérée du keystore
         biometricConfigured = true;
         showBiometricSheet = true;
         await globalSession.biometricLogin({
@@ -86,17 +86,17 @@ async function startLoginFlow() {
 
       if (!globalSession.isLoggedIn) {
         // Biométrie a échoué, annulée, ou pas configurée
-        // → Essayer le PIN stocké
-        const savedPin = await loadPin();
-        if (savedPin) {
-          globalSession.pin = savedPin;
+        // → Essayer deviceKeyB64 depuis le DeviceKeyVault
+        const savedKey = await loadDeviceKey();
+        if (savedKey) {
+          globalSession.deviceKeyB64 = savedKey;
           globalSession.isLoginInProgress = false;
           void globalSession.login({
             ...sessionCb(),
             onLoginFailed: onSavedPinFailed,
           });
         } else {
-          // Pas de PIN stocké → PinModal SANS bouton empreinte
+          // Pas de deviceKeyB64 stockée → PinModal SANS bouton empreinte
           biometricConfigured = false;  // Pas d'empreinte → pas de bouton
           globalSession.isLoginInProgress = false;
           await openPinModal(savedUser);
@@ -107,10 +107,10 @@ async function startLoginFlow() {
 
     // ── BRANCHE WEB ──
     const savedUser = currentUserId();
-    const savedPin = await loadPin();
-    if (savedUser && savedPin) {
+    const savedKey = await loadDeviceKey();
+    if (savedUser && savedKey) {
       globalSession.userId = savedUser;
-      globalSession.pin = savedPin;
+      globalSession.deviceKeyB64 = savedKey;
       globalSession.isLoginInProgress = false;
       void globalSession.login({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
     } else if (savedUser) {
@@ -131,7 +131,7 @@ async function startLoginFlow() {
 1. **Mobile : biométrie d'abord UNIQUEMENT si clé keystore présente** (`BiometricService.isKeyPresent`). Pas de vérification de `isAvailable` : si la clé est là, c'est que l'utilisateur a déjà enrolé.
 2. **Mobile : PAS de `BiometricBottomSheet` avant le PIN** sur première connexion. La bottom sheet n'apparaît que quand `biometricReady === true`.
 3. **Mobile : `biometricConfigured = false`** quand on tombe dans le fallback PIN sans empreinte configurée, pour que le `PinModal` n'affiche pas le bouton empreinte.
-4. **Web : inchangé** — PIN stocké → auto-login, sinon PinModal.
+4. **Web : `loadDeviceKey()`** remplace `loadPin()` — le DeviceKeyVault stocke `deviceKeyB64` (clé 32B base64), pas le PIN.
 
 ## 2. Templates à modifier dans [`ChatBackgroundService.svelte`](frontend/src/lib/components/layout/ChatBackgroundService.svelte)
 
@@ -204,13 +204,13 @@ import { Fingerprint, Phone, PhoneOff, Video } from '@lucide/svelte';
 
 | Contexte | Condition | Action |
 |----------|-----------|--------|
-| **WEB** - PIN stocké | `loadPin() !== null` | auto-login → loginImpl |
-| **WEB** - Pas de PIN | `loadPin() === null` | PinModal (`showBiometricButton=false`, `showStaySignedIn=true`) |
+| **WEB** - deviceKeyB64 stockée | `loadDeviceKey() !== null` | auto-login → loginImpl |
+| **WEB** - Pas de deviceKeyB64 | `loadDeviceKey() === null` | PinModal (`showBiometricButton=false`, `showStaySignedIn=true`) |
 | **MOBILE** - Empreinte configurée | `BiometricService.isKeyPresent(alias) === true` | BiometricBottomSheet → biometricLoginImpl |
-| **MOBILE** - Empreinte échoue/annulée + PIN stocké | `isLoggedIn === false && loadPin() !== null` | auto-login PIN |
-| **MOBILE** - Empreinte échoue/annulée + pas de PIN | `isLoggedIn === false && loadPin() === null` | PinModal (`showBiometricButton=false`) |
+| **MOBILE** - Empreinte échoue/annulée + deviceKeyB64 stockée | `isLoggedIn === false && loadDeviceKey() !== null` | auto-login avec deviceKeyB64 |
+| **MOBILE** - Empreinte échoue/annulée + pas de deviceKeyB64 | `isLoggedIn === false && loadDeviceKey() === null` | PinModal (`showBiometricButton=false`) |
 | **MOBILE** - Première connexion, PIN submit réussi | `loginImpl` succès | Vérifier si `BiometricService.isAvailable() && !BiometricService.isConfigured() && !isBiometricPromptDismissed()` → bannière enrôlement |
-| **MOBILE** - Enrôlement accepté | Clic "Activer" | `BiometricService.enableBiometric()` → `clearPinAndKey()` → cacher bannière |
+| **MOBILE** - Enrôlement accepté | Clic "Activer" | `BiometricService.enableBiometric()` → `clearDeviceKeyAndWrapKey()` → cacher bannière |
 | **MOBILE** - Enrôlement refusé | Clic "Plus tard" | `dismissBiometricPromptImpl` (flag permanent) |
 
 ### Détail des flags
@@ -218,6 +218,7 @@ import { Fingerprint, Phone, PhoneOff, Video } from '@lucide/svelte';
 - **`biometricConfigured`** (état local `ChatBackgroundService`) : `true` quand l'utilisateur a une clé keystore (`isKeyPresent`). Contrôle `showBiometricButton` du `PinModal` et si on tente la biométrie en premier.
 - **`showBiometricEnrollPrompt`** (état dans `globalSession`) : `true` après un login PIN réussi sur mobile si les conditions sont remplies. Consommé par le template bannière. Mis à `false` par `enrollBiometricImpl` ou `dismissBiometricPromptImpl`.
 - **`biometricPromptDismissed`** (flag localStorage + Tauri natif) : persistant, empêche de reproposer l'enrôlement.
+- **`deviceKeyB64`** (état dans `globalSession`) : clé de 32 bytes en base64, stockée dans le DeviceKeyVault (ex-PinVault, chiffré AES-GCM). Utilisée pour ChaCha20 (mls.bin) et AES-256-GCM (messages locaux).
 
 ## 4. Gestion du flag `showBiometricEnrollPrompt`
 
@@ -313,15 +314,15 @@ const showStaySignedIn = !isTauriRuntime();
 const showStaySignedIn = true;  // Toujours afficher la checkbox
 ```
 
-La logique métier (suppression du PIN si enrôlement biométrique) est gérée par `enrollBiometricImpl` → `clearPinAndKey()`.
+La logique métier (suppression de deviceKeyB64 du DeviceKeyVault si enrôlement biométrique) est gérée par `enrollBiometricImpl` → `clearDeviceKeyAndWrapKey()`.
 
 ## 6. Modifications de [`sessionAuth.ts`](frontend/src/lib/composables/session/sessionAuth.ts)
 
-**Aucune modification nécessaire.** Les fonctions sont déjà correctes :
+**Modifications appliquées :**
 
-- [`loginImpl`](frontend/src/lib/composables/session/sessionAuth.ts:221) : supporte le mode biométrique (PIN vide). Sauvegarde le PIN via `savePin` en fin de flow.
-- [`biometricLoginImpl`](frontend/src/lib/composables/session/sessionAuth.ts:903) : passe un PIN vide, intercepte les erreurs "keystore empty" proprement.
-- [`nativeStorageLoginImpl`](frontend/src/lib/composables/session/sessionAuth.ts:875) : déjà OK pour le fallback PIN natif.
+- [`loginImpl`](frontend/src/lib/composables/session/sessionAuth.ts:221) : supporte le mode biométrique (deviceKeyB64 vide). Sauvegarde `deviceKeyB64` via `saveDeviceKey()` en fin de flow (plus `savePin`).
+- [`biometricLoginImpl`](frontend/src/lib/composables/session/sessionAuth.ts:903) : passe un deviceKeyB64 vide, intercepte les erreurs "keystore empty" proprement.
+- [`nativeStorageLoginImpl`](frontend/src/lib/composables/session/sessionAuth.ts:875) : utilise `loadDeviceKey()` au lieu de `loadPin()`.
 
 ## 7. Modifications de [`sessionBiometrics.ts`](frontend/src/lib/composables/session/sessionBiometrics.ts)
 
@@ -406,4 +407,4 @@ La logique métier (suppression du PIN si enrôlement biométrique) est gérée 
 
    **Si on garde la BottomSheet** : il faut lancer `biometricLogin` SEULEMENT quand l'utilisateur interagit avec (pas de `onSkip`). Il faut ajouter un callback `onBiometric` à la BottomSheet, ou lancer le flux biométrique automatiquement quand la sheet s'affiche.
 
-5. **Suppression du PIN après enrôlement** : `enrollBiometricImpl` appelle `clearPinAndKey()` qui supprime le PIN du vault. C'est correct. Mais le PIN est encore dans `globalSession.pin` en mémoire. Il faudrait aussi vider `globalSession.pin = ''` après enrôlement pour que le prochain login ne tente pas un auto-login PIN. `clearPinAndKey` ne vide pas `ctx.setPin('')`. À vérifier si c'est nécessaire.
+5. **Suppression de deviceKeyB64 après enrôlement** : `enrollBiometricImpl` appelle `clearDeviceKeyAndWrapKey()` qui supprime la deviceKeyB64 du DeviceKeyVault. La clé reste dans le keystore pour les connexions biométriques. `globalSession.deviceKeyB64` est vidé après enrôlement.

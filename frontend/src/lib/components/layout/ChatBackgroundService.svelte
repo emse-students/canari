@@ -15,7 +15,11 @@
   import { page } from '$app/stores';
   import { m } from '$lib/paraglide/messages';
   import { BiometricService } from '$lib/services/biometric';
-  import { loadPin, isPinPersistenceEnabled, setPinPersistence } from '$lib/utils/pinVault';
+  import {
+    loadDeviceKey,
+    isDeviceKeyPersistenceEnabled,
+    setDeviceKeyPersistence,
+  } from '$lib/utils/pinVault';
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import { getToken, clearAuth } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
@@ -196,7 +200,7 @@
   // Desactive quand la biometric est configuree car le PIN sauvegarde ne sera jamais utilise
   // (le flux biometrique prend le pas au prochain lancement).
   let showStaySignedIn = $derived(!biometricConfigured);
-  let pinStaySignedIn = $state(isPinPersistenceEnabled());
+  let pinStaySignedIn = $state(true);
 
   // Bannière d'enrôlement biométrique post-login (Tauri uniquement)
   let showBiometricEnrollBanner = $state(false);
@@ -782,10 +786,10 @@
 
       // ── BRANCHE WEB ──
       const savedUser = currentUserId();
-      const savedPin = await loadPin();
-      if (savedUser && savedPin) {
+      const savedDeviceKeyB64 = await loadDeviceKey();
+      if (savedUser && savedDeviceKeyB64) {
         globalSession.userId = savedUser;
-        globalSession.pin = savedPin;
+        globalSession.deviceKeyB64 = savedDeviceKeyB64;
         // loginImpl checks isLoginInProgress itself and will bail if it's true.
         // Reset it here so loginImpl can set it and manage its own lifecycle.
         globalSession.isLoginInProgress = false;
@@ -868,7 +872,7 @@
         return;
       }
       if (document.visibilityState === 'visible' && globalSession.isLoggedIn) {
-        const { pin, storage } = globalSession;
+        const { deviceKeyB64, storage } = globalSession;
         // Ordered resume sequence. C2 first: reload mls.bin into the warm engine BEFORE anything
         // processes, because a background join/send may have advanced it while we were away; the
         // stale warm state would otherwise clobber that advance on the next save (SecretReuse).
@@ -886,8 +890,8 @@
           }
           checkSiblingCallWarning();
           // Flush FCM messages cached while the app was in the background.
-          if (pin && storage) {
-            void flushFcmCache(pin, storage);
+          if (deviceKeyB64 && storage) {
+            void flushFcmCache(deviceKeyB64, storage);
           }
         })();
       }
@@ -907,9 +911,9 @@
     const fcmPollTimer = isTauri
       ? setInterval(() => {
           if (document.hidden || globalMessaging.isMessageCatchupActive) return;
-          const { pin, storage } = globalSession;
-          if (!pin || !storage) return;
-          void flushFcmCache(pin, storage);
+          const { deviceKeyB64, storage } = globalSession;
+          if (!deviceKeyB64 || !storage) return;
+          void flushFcmCache(deviceKeyB64, storage);
         }, FCM_POLL_INTERVAL)
       : null;
 
@@ -982,7 +986,7 @@
     globalSession.pin = submittedPin;
     // Record the "stay signed in" choice before login: loginImpl's savePin then writes the
     // PIN vault into the matching store (localStorage when persistent, sessionStorage otherwise).
-    if (showStaySignedIn) void setPinPersistence(pinStaySignedIn, null);
+    if (showStaySignedIn) void setDeviceKeyPersistence(pinStaySignedIn, null);
     _loginInProgress = true;
     // An explicit PIN submit takes priority over any background login that may have set
     // this flag (onMount/afterNavigate race); loginImpl bails silently if it is still set.

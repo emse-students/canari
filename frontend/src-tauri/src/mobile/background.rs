@@ -95,10 +95,11 @@ pub fn decrypt_media_blob(raw_key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Optio
 }
 
 /// Cree un Welcome MLS pour un nouveau device (background, app tuee).
-pub fn create_welcome_background(
+/// Variante basee sur clef : utilise la clef device pre-derivee (base64) au lieu du PIN.
+pub fn create_welcome_background_with_key(
     files_dir: &Path,
     state_bytes: &[u8],
-    pin: &str,
+    key_b64: &str,
     user_id: &str,
     device_id: &str,
     group_id: &str,
@@ -108,8 +109,20 @@ pub fn create_welcome_background(
         .decode(key_package_b64.trim())
         .map_err(|e| format!("base64 decode key_package: {e}"))?;
 
+    let key_bytes = STANDARD
+        .decode(key_b64.trim())
+        .map_err(|e| format!("base64 decode device key: {e}"))?;
+    if key_bytes.len() != 32 {
+        return Err(format!(
+            "invalid device key length: {} (want 32)",
+            key_bytes.len()
+        ));
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&key_bytes);
+
     let mut manager =
-        MlsManager::load_encrypted(user_id, device_id, Some(state_bytes.to_vec()), pin)
+        MlsManager::load_with_key(user_id, device_id, Some(state_bytes.to_vec()), &key)
             .map_err(|e| e.to_string())?;
 
     let base_epoch = manager.get_epoch(group_id).map_err(|e| e.to_string())?;
@@ -134,7 +147,9 @@ pub fn create_welcome_background(
         .export_ratchet_tree_for(group_id)
         .map_err(|e| e.to_string())?;
 
-    let enc = manager.save_encrypted(pin).map_err(|e| e.to_string())?;
+    let enc = manager
+        .save_encrypted_with_key(&key)
+        .map_err(|e| e.to_string())?;
     let mls_path = files_dir.join("mls.bin");
     background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
     log::info!(
@@ -152,10 +167,11 @@ pub fn create_welcome_background(
 }
 
 /// Applique un Welcome MLS recu en arriere-plan (cote receveur).
-pub fn process_welcome_background(
+/// Variante basee sur clef : utilise la clef device pre-derivee (base64) au lieu du PIN.
+pub fn process_welcome_background_with_key(
     files_dir: &Path,
     state_bytes: &[u8],
-    pin: &str,
+    key_b64: &str,
     user_id: &str,
     device_id: &str,
     welcome_b64: &str,
@@ -176,15 +192,29 @@ pub fn process_welcome_background(
         )
     };
 
+    let key_bytes = STANDARD
+        .decode(key_b64.trim())
+        .map_err(|e| format!("base64 decode device key: {e}"))?;
+    if key_bytes.len() != 32 {
+        return Err(format!(
+            "invalid device key length: {} (want 32)",
+            key_bytes.len()
+        ));
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&key_bytes);
+
     let mut manager =
-        MlsManager::load_encrypted(user_id, device_id, Some(state_bytes.to_vec()), pin)
+        MlsManager::load_with_key(user_id, device_id, Some(state_bytes.to_vec()), &key)
             .map_err(|e| e.to_string())?;
 
     let group_id = manager
         .process_welcome(&welcome_bytes, ratchet_tree_bytes.as_deref())
         .map_err(|e| format!("process_welcome: {e:?}"))?;
 
-    let enc = manager.save_encrypted(pin).map_err(|e| e.to_string())?;
+    let enc = manager
+        .save_encrypted_with_key(&key)
+        .map_err(|e| e.to_string())?;
     let mls_path = files_dir.join("mls.bin");
     background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
     log::info!(
@@ -195,10 +225,11 @@ pub fn process_welcome_background(
 }
 
 /// Chiffre un message sortant en attente et persiste `mls.bin`.
-pub fn send_message_background(
+/// Variante basee sur clef : utilise la clef device pre-derivee (base64) au lieu du PIN.
+pub fn send_message_background_with_key(
     files_dir: &Path,
     state_bytes: &[u8],
-    pin: &str,
+    key_b64: &str,
     user_id: &str,
     device_id: &str,
     group_id: &str,
@@ -208,15 +239,29 @@ pub fn send_message_background(
         .decode(proto_b64.trim())
         .map_err(|e| format!("base64 decode proto: {e}"))?;
 
+    let key_bytes = STANDARD
+        .decode(key_b64.trim())
+        .map_err(|e| format!("base64 decode device key: {e}"))?;
+    if key_bytes.len() != 32 {
+        return Err(format!(
+            "invalid device key length: {} (want 32)",
+            key_bytes.len()
+        ));
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&key_bytes);
+
     let mut manager =
-        MlsManager::load_encrypted(user_id, device_id, Some(state_bytes.to_vec()), pin)
+        MlsManager::load_with_key(user_id, device_id, Some(state_bytes.to_vec()), &key)
             .map_err(|e| e.to_string())?;
 
     let ciphertext = manager
         .send_message(group_id, &proto_bytes)
         .map_err(|e| format!("send_message: {e:?}"))?;
 
-    let enc = manager.save_encrypted(pin).map_err(|e| e.to_string())?;
+    let enc = manager
+        .save_encrypted_with_key(&key)
+        .map_err(|e| e.to_string())?;
     let mls_path = files_dir.join("mls.bin");
     background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
     log::info!(

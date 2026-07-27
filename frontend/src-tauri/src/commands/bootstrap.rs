@@ -58,7 +58,7 @@ pub(crate) async fn bootstrap_dead_conversation(
     expected_bootstrap_version: u32,
     auth_token: String,
     base_url: String,
-    pin: String,
+    device_key_b64: String,
     state: tauri::State<'_, AppState>,
     pending_db: tauri::State<'_, PendingDb>,
     http_client: tauri::State<'_, HttpClient>,
@@ -235,7 +235,11 @@ pub(crate) async fn bootstrap_dead_conversation(
             .lock()
             .map_err(|_| "Failed to lock state")?;
         let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
-        manager.save_encrypted(&pin).map_err(|e| e.to_string())?
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
+            .map_err(|e| format!("invalid device_key_b64: {e}"))?;
+        manager
+            .save_encrypted_with_key(&key)
+            .map_err(|e| e.to_string())?
     };
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

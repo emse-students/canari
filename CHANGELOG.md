@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Per-channel write policy (`everyone` / `admins_moderators` / `admins`) for announcement-style channels, enforced server-side on send (migration 031)
 
 ### Changed
+- **PIN remplacé par `deviceKeyB64`** dans toute la chaîne de chiffrement : `mls.bin` utilise ChaCha20-Poly1305 directement (plus d'Argon2id), les messages locaux utilisent AES-256-GCM directement (plus de PBKDF2), le PinVault est remplacé par DeviceKeyVault qui stocke la clé de 32 bytes et non le PIN. Format `mls.bin` : `[nonce 12 || ciphertext]`. Format messages locaux : `[iv 12 || ciphertext]`. Le PIN ne sert plus qu'à l'UI (PinModal) et à la dérivation initiale de `deviceKeyB64` au premier login. Le changement de PIN re-dérive une nouvelle `deviceKeyB64` et re-chiffre tout.
 - Simplified community access model to public/private + admin-always-access; admins now reach every private channel without being explicitly added
 - Biometric enrollment no longer throws when no fingerprint/Face ID is configured; falls back to PIN with a user-facing toast (fr/en)
 - Replaced all `unwrap()` calls with `?` in tauri-plugin-keystore `desktop.rs`

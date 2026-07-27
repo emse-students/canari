@@ -1,88 +1,67 @@
-// PIN-based encryption using the Web Crypto API (PBKDF2-HMAC-SHA256 + AES-256-GCM).
+// Device-key-based encryption using the Web Crypto API (AES-256-GCM).
 // Works on both web and Tauri without any WASM initialisation.
 //
-// Blob format (same layout as the previous WASM implementation):
-//   salt (16 bytes) || iv (12 bytes) || ciphertext (variable)
+// Blob format:
+//   iv (12 bytes) || ciphertext (variable)
 //
-// Note: switching from Argon2+ChaCha20 (WASM) to PBKDF2+AES-GCM breaks
-// backward compatibility - db.ts bumps its schema version and drops all
-// rows encrypted with the old format.
+// The deviceKeyB64 (base64-encoded 32-byte key derived from the user's PIN
+// via Argon2id once at first login) is imported directly as an AES-GCM
+// CryptoKey, eliminating the per-message PBKDF2 derivation. No salt is
+// needed — the key itself is the secret, and each message gets a fresh
+// random 12-byte IV/nonce.
 
-const PBKDF2_ITERATIONS = 100_000;
-
-// Session-level key cache keyed by "pin:base64(salt)".
-// When all messages share the same stable per-user salt (see db.ts), the key is
-// derived exactly once per session instead of once per message.
-const derivedKeyCache = new Map<string, Promise<CryptoKey>>();
+// Session-level key cache keyed by deviceKeyB64.  The base64 → CryptoKey
+// import is performed once per session instead of once per message.
+const deviceKeyCache = new Map<string, Promise<CryptoKey>>();
 
 /**
- * Derive a 256-bit AES-GCM CryptoKey from a PIN using PBKDF2-HMAC-SHA-256 (100 000 iterations).
- * Results are cached in memory by "pin:base64(salt)" so that the expensive derivation is only
- * performed once per unique (pin, salt) pair for the lifetime of the page.
+ * Import a base64-encoded 32-byte key as a non-extractable AES-256-GCM
+ * CryptoKey.  Results are cached in memory by deviceKeyB64 so that the
+ * import is performed only once for the lifetime of the page.
  */
-async function deriveKey(pin: string, salt: Uint8Array): Promise<CryptoKey> {
-  const saltB64 = btoa(Array.from(salt, (b) => String.fromCharCode(b)).join(''));
-  const cacheKey = `${pin}:${saltB64}`;
-  const cached = derivedKeyCache.get(cacheKey);
+async function importDeviceKey(deviceKeyB64: string): Promise<CryptoKey> {
+  const cached = deviceKeyCache.get(deviceKeyB64);
   if (cached) return cached;
   const promise = (async () => {
-    const baseKey = await crypto.subtle.importKey(
-      'raw',
-      new TextEncoder().encode(pin),
-      'PBKDF2',
-      false,
-      ['deriveKey']
-    );
-    return crypto.subtle.deriveKey(
-      {
-        name: 'PBKDF2',
-        salt: new Uint8Array(salt),
-        iterations: PBKDF2_ITERATIONS,
-        hash: 'SHA-256',
-      },
-      baseKey,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
+    const keyBytes = Uint8Array.from(atob(deviceKeyB64), (c) => c.charCodeAt(0));
+    return crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, [
+      'encrypt',
+      'decrypt',
+    ]);
   })();
-  derivedKeyCache.set(cacheKey, promise);
+  deviceKeyCache.set(deviceKeyB64, promise);
   return promise;
 }
 
 /**
- * Encrypt `data` with the given PIN.
+ * Encrypt `data` with the given device key (base64-encoded 32 bytes).
  *
- * Pass `stableSalt` (a per-user salt from localStorage) to reuse the cached
- * derived key across all messages in the same session.  When omitted, a fresh
- * random salt is generated (backward-compatible path for legacy callers).
+ * Returns the 12-byte IV and the AES-256-GCM ciphertext (which includes the
+ * 16-byte authentication tag).
  */
 export async function encryptData(
-  data: any,
-  pin: string,
-  stableSalt?: Uint8Array
-): Promise<{ iv: Uint8Array; salt: Uint8Array; cipherText: Uint8Array }> {
-  const salt = stableSalt ?? crypto.getRandomValues(new Uint8Array(16));
+  data: unknown,
+  deviceKeyB64: string
+): Promise<{ iv: Uint8Array; cipherText: Uint8Array }> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveKey(pin, salt);
+  const key = await importDeviceKey(deviceKeyB64);
   const plaintext = new TextEncoder().encode(JSON.stringify(data));
   const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
-  return { salt, iv, cipherText: new Uint8Array(cipherBuf) };
+  return { iv, cipherText: new Uint8Array(cipherBuf) };
 }
 
 /**
- * Decrypt a ciphertext blob produced by encryptData.
- * Derives the AES-256-GCM key from `pin` and `salt` (cache hit for stable-salt callers),
- * then decrypts and JSON-parses the plaintext.
- * Throws with "Decryption failed. Wrong PIN?" if the tag does not verify (wrong PIN or corruption).
+ * Decrypt a ciphertext blob produced by {@link encryptData}.
+ *
+ * Throws with "Decryption failed. Wrong device key?" if the authentication
+ * tag does not verify (wrong key or data corruption).
  */
 export async function decryptData(
   cipherText: Uint8Array,
   iv: Uint8Array,
-  salt: Uint8Array,
-  pin: string
-): Promise<any> {
-  const key = await deriveKey(pin, salt); // cache hit for stable-salt messages
+  deviceKeyB64: string
+): Promise<unknown> {
+  const key = await importDeviceKey(deviceKeyB64);
   try {
     const plainBuf = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: new Uint8Array(iv) },
@@ -91,6 +70,6 @@ export async function decryptData(
     );
     return JSON.parse(new TextDecoder().decode(plainBuf));
   } catch {
-    throw new Error('Decryption failed. Wrong PIN?');
+    throw new Error('Decryption failed. Wrong device key?');
   }
 }

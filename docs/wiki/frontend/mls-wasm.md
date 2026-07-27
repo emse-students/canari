@@ -66,11 +66,11 @@ The primary TypeScript interface to the WASM module, used by `WebMlsService`:
 
 ```typescript
 class WasmMlsClient {
-  static async new(userId: string, deviceId: string, savedState: string | null, pin: string): Promise<WasmMlsClient>
+  static async new(userId: string, deviceId: string, savedState: string | null, deviceKeyB64: string): Promise<WasmMlsClient>
 
   // Key packages
-  generateKeyPackage(pin: string): Promise<KeyPackageBundle>
-  generateKeyPackages(pin: string, count: number): Promise<KeyPackageBundle[]>
+  generateKeyPackage(deviceKeyB64: string): Promise<KeyPackageBundle>
+  generateKeyPackages(deviceKeyB64: string, count: number): Promise<KeyPackageBundle[]>
 
   // Groups
   createGroup(groupId: string): Promise<void>
@@ -83,7 +83,7 @@ class WasmMlsClient {
   processCommit(groupId: string, commitBytes: Uint8Array): Promise<void>
 
   // State
-  saveState(pin: string): Promise<string>
+  saveState(deviceKeyB64: string): Promise<string>
   forgetGroup(groupId: string): Promise<void>
   getLocalGroups(): Promise<string[]>
 }
@@ -95,8 +95,8 @@ Both `WebMlsService` (WASM) and `TauriMlsService` (native) implement `IMlsServic
 
 ```typescript
 interface IMlsService {
-  init(userId: string, deviceId: string, pin: string, savedState?: string): Promise<void>
-  generateKeyPackage(pin: string): Promise<KeyPackageBundle>
+  init(userId: string, deviceId: string, deviceKeyB64: string, savedState?: string): Promise<void>
+  generateKeyPackage(deviceKeyB64: string): Promise<KeyPackageBundle>
   createGroup(groupId: string): Promise<void>
   addMembersBulk(groupId: string, devices: DeviceInfo[]): Promise<CommitBundle>
   sendMessage(groupId: string, appMessageBytes: Uint8Array): Promise<Uint8Array>
@@ -105,7 +105,7 @@ interface IMlsService {
   processCommit(groupId: string, commitBytes: Uint8Array): Promise<void>
   forgetGroup(groupId: string): Promise<void>
   getLocalGroups(): Promise<string[]>
-  saveState(pin: string): Promise<string>
+  saveState(deviceKeyB64: string): Promise<string>
   acquireAddLock(groupId: string): Promise<boolean>
   releaseAddLock(groupId: string): Promise<void>
 }
@@ -113,12 +113,12 @@ interface IMlsService {
 
 ## State persistence
 
-WASM state is serialized by `saveState(pin)` as an encrypted blob (PIN-derived key). Storage backend:
+WASM state is serialized by `saveState(deviceKeyB64)` as an encrypted blob using ChaCha20-Poly1305 directly with `deviceKeyB64` (no Argon2id derivation). Storage backend:
 
 | Platform | Storage |
 |---|---|
 | Browser | `IndexedDB` (key: `mls_state_{deviceId}`) |
-| Tauri | Filesystem (`~/.canari/mls_state_{deviceId}`) |
+| Tauri | Filesystem (`mls.bin`, format: `[nonce 12 || ciphertext]`) |
 
 The persister (`mlsStatePersister.ts`) debounces writes and flushes immediately on `visibilitychange` (page hide) and on commit completion.
 

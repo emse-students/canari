@@ -51,35 +51,6 @@ pub fn decrypt_blob(key: &[u8; 32], encrypted_data: &[u8]) -> Result<Vec<u8>, St
     cipher.decrypt(nonce, ciphertext).map_err(|e| e.to_string())
 }
 
-/// Encrypts a plain MLS CBOR snapshot with Argon2id + ChaCha20-Poly1305.
-/// Wire format: `[salt (16)] [nonce (12) || ciphertext]`.
-#[deprecated(note = "Use `encrypt_state_with_pin_owned` to zeroize the PIN after use")]
-#[allow(deprecated)]
-pub fn encrypt_state_with_pin(pin: &str, plain_state: &[u8]) -> Result<Vec<u8>, String> {
-    let mut salt = [0u8; 16];
-    OsRng.fill_bytes(&mut salt);
-
-    let key = derive_key_from_pin(pin, &salt)?;
-    let ciphertext = encrypt_blob(&key, plain_state)?;
-
-    let mut result = Vec::with_capacity(salt.len() + ciphertext.len());
-    result.extend_from_slice(&salt);
-    result.extend_from_slice(&ciphertext);
-    Ok(result)
-}
-
-/// Owned variant of [`encrypt_state_with_pin`] that takes ownership of the PIN [`String`]
-/// and zeroizes it after encryption, preventing the PIN from lingering in memory.
-#[allow(deprecated)]
-pub fn encrypt_state_with_pin_owned(
-    mut pin: String,
-    plain_state: &[u8],
-) -> Result<Vec<u8>, String> {
-    let result = encrypt_state_with_pin(&pin, plain_state);
-    pin.zeroize();
-    result
-}
-
 // --- Keystore integration ---
 
 /// Derives a 32-byte key from a PIN and best-effort stores it in the platform
@@ -109,4 +80,12 @@ pub fn derive_and_store_device_key(
         );
     }
     Ok(key)
+}
+
+/// Generates a random 16-byte salt for key derivation.
+/// Used when `mls.bin` does not exist yet (first login).
+pub fn generate_salt() -> [u8; 16] {
+    let mut salt = [0u8; 16];
+    OsRng.fill_bytes(&mut salt);
+    salt
 }

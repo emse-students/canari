@@ -54,6 +54,7 @@ export function useChatSession() {
   // ── Identity ──────────────────────────────────────────────────────────────
   let userId = $state('');
   let pin = $state('');
+  let deviceKeyB64 = $state('');
   let authToken = $state('');
   let myDeviceId = $state('');
   let loginError = $state('');
@@ -145,6 +146,10 @@ export function useChatSession() {
     getPin: () => pin,
     setPin: (v) => {
       pin = v;
+    },
+    getDeviceKey: () => deviceKeyB64,
+    setDeviceKey: (v) => {
+      deviceKeyB64 = v;
     },
     getAuthToken: () => authToken,
     setAuthToken: (v) => {
@@ -291,6 +296,13 @@ export function useChatSession() {
     },
     set pin(v: string) {
       pin = v;
+    },
+    /** Device key (base64, 44 chars) derived from the PIN — used for MLS + local encryption. */
+    get deviceKeyB64() {
+      return deviceKeyB64;
+    },
+    set deviceKeyB64(v: string) {
+      deviceKeyB64 = v;
     },
     /** Current JWT access token (in-memory only). */
     get authToken() {

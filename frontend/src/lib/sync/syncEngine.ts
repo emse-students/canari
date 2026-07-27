@@ -257,7 +257,6 @@ function serializeChunks(chunks: SyncTransferChunk[]): SyncSerializedChunk[] {
       conversationId: encodeConversationTransportId(normalizeConversationId(row.conversationId)),
       timestamp: row.timestamp,
       iv: bytesToBase64(row.iv),
-      salt: bytesToBase64(row.salt),
       cipherText: bytesToBase64(row.cipherText),
     })),
   }));
@@ -278,7 +277,6 @@ function deserializeChunks(chunks: SyncSerializedChunk[]): SyncTransferChunk[] {
       conversationId: normalizeConversationId(decodeConversationTransportId(row.conversationId)),
       timestamp: row.timestamp,
       iv: base64ToBytes(row.iv),
-      salt: base64ToBytes(row.salt),
       cipherText: base64ToBytes(row.cipherText),
     })),
   }));

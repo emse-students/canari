@@ -119,8 +119,8 @@ export class WebMlsService extends BaseMlsService {
    * if it does not regress any live group (see {@link swapClientMonotonic}).
    * Returns whether the live client was actually replaced.
    */
-  private async reloadClientFromState(state: Uint8Array, pin: string): Promise<boolean> {
-    const candidate = await loadAndInitWasm(this.userId, this.deviceId, state, pin);
+  private async reloadClientFromState(state: Uint8Array, deviceKeyB64: string): Promise<boolean> {
+    const candidate = await loadAndInitWasm(this.userId, this.deviceId, state, deviceKeyB64);
     return this.swapClientMonotonic(candidate);
   }
 
@@ -143,7 +143,7 @@ export class WebMlsService extends BaseMlsService {
    *   memory duplication on snapshots that may weigh several hundred KB.
    */
   private runWorkerKeyPackageGeneration(
-    pin: string,
+    deviceKeyB64: string,
     needed: number,
     state?: Uint8Array
   ): Promise<WorkerKeyPackageResult> {
@@ -212,7 +212,7 @@ export class WebMlsService extends BaseMlsService {
           payload: {
             userId: this.userId,
             deviceId: this.deviceId,
-            pin,
+            deviceKeyB64,
             needed,
             state: workerState?.buffer,
           },
@@ -527,15 +527,15 @@ export class WebMlsService extends BaseMlsService {
    * Initialises the WASM MLS client, short-circuiting if already initialised.
    * Delegates dedup and actual init to the base class / {@link _initImpl}.
    */
-  override async init(userId: string, pin: string, state?: Uint8Array): Promise<void> {
+  override async init(userId: string, deviceKeyB64: string, state?: Uint8Array): Promise<void> {
     if (this.client) return;
-    return super.init(userId, pin, state);
+    return super.init(userId, deviceKeyB64, state);
   }
 
   /** Implementation body for init(); resolves device ID from localStorage and calls `loadAndInitWasm`, handling credential-mismatch recovery. */
   protected async _initImpl(
     userId: string,
-    pin: string,
+    deviceKeyB64: string,
     state?: Uint8Array,
     opts?: MlsInitOptions
   ): Promise<void> {
@@ -552,17 +552,17 @@ export class WebMlsService extends BaseMlsService {
     await this.resolveDeviceId(userId);
 
     try {
-      await this.loadStateWithPin(pin, state);
+      await this.loadStateWithKey(deviceKeyB64, state);
     } catch (e) {
       // If init fails AND a saved state existed, the state is to blame
-      // (credential mismatch, partial corruption, invalid Argon2 key…).
+      // (credential mismatch, partial corruption, invalid key…).
       // → systematic fresh-start to avoid blocking the user indefinitely.
       // If state == null and error → real crash (no state to blame) → rethrow.
       const errStr = String(e);
       const isCredentialMismatch =
         errStr.includes('identity mismatch') || errStr.includes('Credential identity');
       if (isCredentialMismatch || state != null) {
-        // Caller wants a chance to recover (decrypt with the old PIN) before any
+        // Caller wants a chance to recover (decrypt with the old key) before any
         // destructive fresh-start: signal instead of discarding local history.
         if (opts?.noFreshStart) throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
         const oldDeviceId = this.deviceId;
@@ -577,7 +577,7 @@ export class WebMlsService extends BaseMlsService {
         this.deviceId = this.generateDeviceId(userId);
         localStorage.setItem(deviceKey, this.deviceId);
         this.delivery.deviceId = this.deviceId;
-        await this.loadStateWithPin(pin, undefined);
+        await this.loadStateWithKey(deviceKeyB64, undefined);
         this.deleteDevice(userId, oldDeviceId).catch((err) =>
           console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
         );
@@ -588,9 +588,9 @@ export class WebMlsService extends BaseMlsService {
     }
   }
 
-  /** WASM decrypt + client init for a given PIN/state; throws on wrong PIN (no fresh-start). */
-  protected async loadStateWithPin(pin: string, state?: Uint8Array): Promise<void> {
-    this.client = await loadAndInitWasm(this.userId, this.deviceId, state, pin);
+  /** WASM decrypt + client init for a given device key/state; throws on wrong key (no fresh-start). */
+  protected async loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void> {
+    this.client = await loadAndInitWasm(this.userId, this.deviceId, state, deviceKeyB64);
   }
 
   /** WASM client wrapper - calls `this.client.create_group` to create a new local MLS group. */
@@ -611,14 +611,14 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** Encrypts a plain CBOR snapshot (worker when enabled, else main-thread WASM). */
-  async encryptState(plain: Uint8Array, pin: string): Promise<Uint8Array> {
-    return encryptMlsStateOffThread(plain, pin, { enabled: this.useEncryptWorker });
+  async encryptState(plain: Uint8Array, deviceKeyB64: string): Promise<Uint8Array> {
+    return encryptMlsStateOffThread(plain, deviceKeyB64, { enabled: this.useEncryptWorker });
   }
 
   /** Plain CBOR on main thread, then Argon2+ChaCha off-thread when the encrypt worker is enabled. */
-  async saveState(pin: string): Promise<Uint8Array> {
+  async saveState(deviceKeyB64: string): Promise<Uint8Array> {
     const plain = await this.saveStatePlain();
-    const encrypted = await this.encryptState(plain, pin);
+    const encrypted = await this.encryptState(plain, deviceKeyB64);
     // Carry the plain snapshot's version onto the encrypted bytes so the off-thread Argon2 step
     // cannot reorder the write relative to a concurrent, fresher save.
     propagateMlsSnapshotVersion(plain, encrypted);
@@ -627,18 +627,18 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /**
-   * Re-encrypts the in-memory MLS state with the new PIN and writes it to storage.
+   * Re-encrypts the in-memory MLS state with the new device key and writes it to storage.
    * The in-memory client state is unchanged; only the persisted blob is re-encrypted.
    */
-  async changePIN(newPin: string): Promise<void> {
-    const newState = await this.saveState(newPin);
+  async changeDeviceKey(newDeviceKeyB64: string): Promise<void> {
+    const newState = await this.saveState(newDeviceKeyB64);
     this.lastKnownState = newState.slice();
     await saveMlsState(this.userId, newState);
-    console.log('[MLS] PIN changed - state re-encrypted and persisted.');
+    console.log('[MLS] Device key changed - state re-encrypted and persisted.');
   }
 
   /** WASM client wrapper - calls `this.client.generate_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
-  async generateKeyPackage(pin: string): Promise<Uint8Array> {
+  async generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array> {
     // On fresh start (no saved WASM state), old OTKPs on the server belong to
     // a previous session whose private keys are gone. Purge them so inviting
     // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.
@@ -665,9 +665,13 @@ export class WebMlsService extends BaseMlsService {
       const workerGenResult = await this.messageScheduler.runUnderMlsLock(async () => {
         try {
           console.log('[MLS] generateKeyPackage via worker (under mlsLock)');
-          const snapshot = (this.client.save_state(pin) as Uint8Array).slice();
-          const workerResult = await this.runWorkerKeyPackageGeneration(pin, needed, snapshot);
-          const swapped = await this.reloadClientFromState(workerResult.state, pin);
+          const snapshot = (this.client.save_state(deviceKeyB64) as Uint8Array).slice();
+          const workerResult = await this.runWorkerKeyPackageGeneration(
+            deviceKeyB64,
+            needed,
+            snapshot
+          );
+          const swapped = await this.reloadClientFromState(workerResult.state, deviceKeyB64);
           if (!swapped) {
             // The worker snapshot became stale (a mutation advanced the live client while it
             // ran): its key packages belong to a state we refused, so their private keys are
@@ -686,7 +690,7 @@ export class WebMlsService extends BaseMlsService {
             return {
               fallback: fb,
               poolPackages: pool,
-              stateBytesToPersist: this.client.save_state(pin) as Uint8Array,
+              stateBytesToPersist: this.client.save_state(deviceKeyB64) as Uint8Array,
             };
           }
           return {
@@ -704,7 +708,7 @@ export class WebMlsService extends BaseMlsService {
           return {
             fallback: fb,
             poolPackages: pool,
-            stateBytesToPersist: this.client.save_state(pin) as Uint8Array,
+            stateBytesToPersist: this.client.save_state(deviceKeyB64) as Uint8Array,
           };
         }
       });
@@ -720,7 +724,7 @@ export class WebMlsService extends BaseMlsService {
           ...(this.client.generate_key_packages(needed) as unknown as Iterable<Uint8Array>),
         ];
       }
-      stateBytesToPersist = this.client.save_state(pin) as Uint8Array;
+      stateBytesToPersist = this.client.save_state(deviceKeyB64) as Uint8Array;
     }
 
     if (stateBytesToPersist) {

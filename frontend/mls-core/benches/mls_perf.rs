@@ -12,7 +12,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 use mls_core::MlsManager;
 use support::{build_decrypt_fixture, build_persistence_fixture};
 
-const BENCH_PIN: &str = "4242";
+const BENCH_KEY: [u8; 32] = [42u8; 32];
 const GROUP_COUNTS: [usize; 3] = [5, 20, 50];
 const KEY_PACKAGE_POOL: usize = 50;
 const DECRYPT_BATCH_SIZES: [usize; 3] = [1, 100, 1000];
@@ -62,7 +62,7 @@ fn bench_save_state_cached_hit(c: &mut Criterion) {
 }
 
 fn bench_save_encrypted(c: &mut Criterion) {
-    let mut group = c.benchmark_group("save_state_encrypted_argon2");
+    let mut group = c.benchmark_group("save_state_encrypted_with_key");
     group.sample_size(20);
 
     for group_count in GROUP_COUNTS {
@@ -75,8 +75,8 @@ fn bench_save_encrypted(c: &mut Criterion) {
                 b.iter(|| {
                     let bytes = f
                         .manager
-                        .save_encrypted(BENCH_PIN)
-                        .expect("save_encrypted should succeed");
+                        .save_encrypted_with_key(&BENCH_KEY)
+                        .expect("save_encrypted_with_key should succeed");
                     black_box(bytes);
                 });
             },

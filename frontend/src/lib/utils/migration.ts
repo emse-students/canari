@@ -11,7 +11,7 @@ import type { IStorage } from '../db';
  */
 export async function migrateFromLocalStorage(
   userId: string,
-  pin: string,
+  deviceKeyB64: string,
   storage: IStorage,
   log: (msg: string) => void
 ) {
@@ -61,7 +61,7 @@ export async function migrateFromLocalStorage(
             isDeleted: m.isDeleted === true ? true : undefined,
             isEdited: m.isEdited === true ? true : undefined,
           },
-          pin
+          deviceKeyB64
         );
       } catch {
         // skip invalid rows

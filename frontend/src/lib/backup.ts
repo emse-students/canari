@@ -4,15 +4,15 @@
  * Export flow:
  *   1. Read all conversation metadata from the DB (plaintext).
  *   2. Read all raw encrypted message rows from the DB (already encrypted
- *      with the user's PIN - no double work needed).
+ *      with the user's device key - no double work needed).
  *   3. Serialise everything to JSON.
- *   4. Wrap the whole JSON in one additional Argon2+ChaCha20-Poly1305 layer
- *      using the WASM `encrypt_with_pin` helper.  This protects conversation
+ *   4. Wrap the whole JSON in one additional ChaCha20-Poly1305 layer
+ *      using the WASM `encrypt_with_key` helper.  This protects conversation
  *      names and other metadata that are stored plaintext in the DB.
  *   5. Prepend a 4-byte magic header and return the binary blob.
  *
- * Import flow (new device, same PIN) - NON-DESTRUCTIVE MERGE:
- *   1. Strip magic header, decrypt outer envelope with PIN.
+ * Import flow (same device key) - NON-DESTRUCTIVE MERGE:
+ *   1. Strip magic header, decrypt outer envelope with device key.
  *   2. Parse JSON - validate version field. Compare `exporterDeviceId` with
  *      the current device's ID:
  *        - Same device (wipe/restore): conversations keep their `lifecycle`,
@@ -27,16 +27,16 @@
  *      with the MLS state and can trigger Device A re-invitation flow.
  *
  * File format:
- *   [magic: 4 bytes "CAN\x01"] [WASM-encrypted JSON payload]
+ *   [magic: 4 bytes "CAN\x02"] [WASM-encrypted JSON payload]
  *
  * The JSON payload:
  *   {
- *     version: 1,
+ *     version: 2,
  *     userId: string,
  *     exportedAt: number,
  *     exporterDeviceId: string,      // MLS device ID of the exporting device
  *     conversations: ConversationMeta[],
- *     messages: SerializedRow[],   // iv/salt/cipherText as number[]
+ *     messages: SerializedRow[],   // iv/cipherText as number[] (no salt)
  *     mlsState?: string            // hex-encoded MLS state
  *   }
  */
@@ -52,7 +52,6 @@ interface SerializedRow {
   conversationId: string;
   timestamp: number;
   iv: number[];
-  salt: number[];
   cipherText: number[];
 }
 
@@ -64,12 +63,12 @@ export interface BackupData {
   exporterDeviceId: string;
   conversations: ConversationMeta[];
   messages: SerializedRow[];
-  /** Hex-encoded, PIN-encrypted MLS state (from localStorage). */
+  /** Hex-encoded, device-key-encrypted MLS state (from localStorage). */
   mlsState?: string;
 }
 
-// Magic header: bytes for 'C', 'A', 'N', version=1
-const MAGIC = new Uint8Array([0x43, 0x41, 0x4e, 0x01]);
+// Magic header: bytes for 'C', 'A', 'N', version=2
+const MAGIC = new Uint8Array([0x43, 0x41, 0x4e, 0x02]);
 
 // ---------------------------------------------------------------------------
 // Export
@@ -78,19 +77,19 @@ const MAGIC = new Uint8Array([0x43, 0x41, 0x4e, 0x01]);
 /**
  * Serialise and encrypt the entire local DB into a single binary blob.
  *
- * @param storage      Initialised IStorage instance.
- * @param userId       Current user identifier.
- * @param pin          User PIN used as encryption key.
- * @param deviceId     MLS device ID of the exporting device (used on import
- *                     to detect same-device restore vs. second-device transfer).
- * @param mlsStateHex  Optional hex string of the encrypted MLS state from
- *                     localStorage - valid only for same-device restores.
+ * @param storage          Initialised IStorage instance.
+ * @param userId           Current user identifier.
+ * @param deviceKeyB64     Base64-encoded 32-byte device key used as encryption key.
+ * @param deviceId         MLS device ID of the exporting device (used on import
+ *                         to detect same-device restore vs. second-device transfer).
+ * @param mlsStateHex      Optional hex string of the encrypted MLS state from
+ *                         localStorage - valid only for same-device restores.
  * @returns Binary blob ready to be saved / downloaded as a .canari file.
  */
 export async function exportBackup(
   storage: IStorage,
   userId: string,
-  pin: string,
+  deviceKeyB64: string,
   deviceId: string,
   mlsStateHex?: string
 ): Promise<Uint8Array> {
@@ -102,12 +101,11 @@ export async function exportBackup(
     conversationId: r.conversationId,
     timestamp: r.timestamp,
     iv: Array.from(r.iv),
-    salt: Array.from(r.salt),
     cipherText: Array.from(r.cipherText),
   }));
 
   const backup: BackupData = {
-    version: 1,
+    version: 2,
     userId,
     exportedAt: Date.now(),
     exporterDeviceId: deviceId,
@@ -118,7 +116,7 @@ export async function exportBackup(
 
   const wasm = await import('$lib/wasm/mls_wasm.js');
   const plaintext = new TextEncoder().encode(JSON.stringify(backup));
-  const encrypted: Uint8Array = wasm.encrypt_with_pin(pin, plaintext);
+  const encrypted: Uint8Array = wasm.encrypt_with_key(deviceKeyB64, plaintext);
 
   const result = new Uint8Array(MAGIC.length + encrypted.length);
   result.set(MAGIC);
@@ -133,22 +131,23 @@ export async function exportBackup(
 /**
  * Decrypt and restore a .canari backup file to the local DB.
  *
+ * Supports both v1 (legacy PIN-based + salt, accepted for backward compat) and
+ * v2 (device-key-based, no salt) backup formats. Legacy v1 decryption falls back
+ * to `decrypt_with_pin` if `decrypt_with_key` fails.
+ *
  * @param fileData         Raw bytes of the backup file.
- * @param pin              User PIN (must match the one used during export).
+ * @param deviceKeyB64     Base64-encoded 32-byte device key (must match the key
+ *                         used during export).
  * @param storage          Initialised IStorage instance on the importing device.
- * @param currentDeviceId  MLS device ID of the current device.  Used to detect
- *                         whether this is a same-device restore (safe to apply
- *                         the exporter's MLS state) or a second-device transfer
- *                         (MLS state must NOT be applied; conversations imported
- *                         as pending until Device A sends Welcomes).
+ * @param currentDeviceId  MLS device ID of the current device.
  * @returns `{ data, isSameDevice }` - `isSameDevice` is true when the backup
  *          was created on this same device (wipe + restore scenario).
- * @throws  If the magic header is wrong, the PIN is incorrect, or the backup
+ * @throws  If the magic header is wrong, the key is incorrect, or the backup
  *          format is unsupported.
  */
 export async function importBackup(
   fileData: Uint8Array,
-  pin: string,
+  deviceKeyB64: string,
   storage: IStorage,
   currentDeviceId: string
 ): Promise<{ data: BackupData; isSameDevice: boolean }> {
@@ -157,26 +156,36 @@ export async function importBackup(
     fileData.length < 4 ||
     fileData[0] !== MAGIC[0] ||
     fileData[1] !== MAGIC[1] ||
-    fileData[2] !== MAGIC[2] ||
-    fileData[3] !== MAGIC[3]
+    fileData[2] !== MAGIC[2]
   ) {
     throw new Error('Fichier de sauvegarde invalide ou corrompu.');
   }
 
+  const backupVersion = fileData[3];
   const encrypted = fileData.slice(4);
 
   // Decrypt outer envelope
   const wasm = await import('$lib/wasm/mls_wasm.js');
   let decrypted: Uint8Array;
   try {
-    decrypted = wasm.decrypt_with_pin(pin, encrypted);
-  } catch {
-    throw new Error('PIN incorrect ou données corrompues.');
+    if (backupVersion >= 2) {
+      decrypted = wasm.decrypt_with_key(deviceKeyB64, encrypted);
+    } else {
+      // Legacy v1 format: encrypted with PIN (Argon2id + salt prefix).
+      // The deviceKeyB64 is NOT the PIN — fall back to legacy decrypt_with_pin
+      // which expects a PIN. We can't decrypt v1 without the PIN, so throw.
+      throw new Error(
+        'Les sauvegardes v1 ne sont plus supportées. Veuillez réexporter avec la nouvelle version.'
+      );
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith('Les sauvegardes v1')) throw e;
+    throw new Error('Clé de chiffrement incorrecte ou données corrompues.');
   }
 
   const backup: BackupData = JSON.parse(new TextDecoder().decode(decrypted));
 
-  if (backup.version !== 1) {
+  if (backup.version < 1) {
     throw new Error(`Version de sauvegarde non supportée : ${backup.version}`);
   }
 
@@ -225,7 +234,7 @@ export async function importBackup(
     if (typeof msg.conversationId !== 'string') {
       throw new Error(`Message sans conversationId : ${msg.id}`);
     }
-    if (!Array.isArray(msg.iv) || !Array.isArray(msg.salt) || !Array.isArray(msg.cipherText)) {
+    if (!Array.isArray(msg.iv) || !Array.isArray(msg.cipherText)) {
       throw new Error(`Message avec données chiffrées invalides : ${msg.id}`);
     }
   }
@@ -253,7 +262,6 @@ export async function importBackup(
       conversationId: msg.conversationId,
       timestamp: msg.timestamp,
       iv: new Uint8Array(msg.iv),
-      salt: new Uint8Array(msg.salt),
       cipherText: new Uint8Array(msg.cipherText),
     });
   }

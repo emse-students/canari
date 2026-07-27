@@ -77,6 +77,8 @@ export interface SessionContext {
   setUserId(v: string): void;
   getPin(): string;
   setPin(v: string): void;
+  getDeviceKey(): string;
+  setDeviceKey(v: string): void;
   getAuthToken(): string;
   setAuthToken(v: string): void;
   getMyDeviceId(): string;

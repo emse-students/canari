@@ -159,8 +159,6 @@ export interface SyncSerializedEncryptedRow {
   timestamp: number;
   /** AES-GCM initialisation vector as a base64 string. */
   iv: string;
-  /** PBKDF2 salt used to derive the encryption key as a base64 string. */
-  salt: string;
   /** AES-GCM ciphertext as a base64 string. */
   cipherText: string;
 }

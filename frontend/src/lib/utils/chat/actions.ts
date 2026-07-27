@@ -526,13 +526,13 @@ export async function discoverMissingGroups(params: {
 export async function exportUserBackup(params: {
   storage: IStorage;
   userId: string;
-  pin: string;
+  deviceKeyB64: string;
   myDeviceId: string;
   log: (msg: string) => void;
 }) {
-  const { storage, userId, pin, myDeviceId, log } = params;
+  const { storage, userId, deviceKeyB64, myDeviceId, log } = params;
   const mlsStateHex = await exportMlsStateAsHex(userId);
-  const blob = await exportBackup(storage, userId, pin, myDeviceId, mlsStateHex);
+  const blob = await exportBackup(storage, userId, deviceKeyB64, myDeviceId, mlsStateHex);
   const date = new Date().toISOString().split('T')[0];
   const filename = `canari-backup-${userId}-${date}.canari`;
 
@@ -575,7 +575,7 @@ export async function exportUserBackup(params: {
 /** Imports a `.canari` backup file: decrypts conversations/messages, restores the MLS state if this is the same device, then reloads the conversation list. */
 export async function importUserBackup(params: {
   file: File;
-  pin: string;
+  deviceKeyB64: string;
   storage: IStorage;
   myDeviceId: string;
   userId: string;
@@ -583,13 +583,21 @@ export async function importUserBackup(params: {
   reloadConversations: () => Promise<void>;
   clearConversations: () => void;
 }) {
-  const { file, pin, storage, myDeviceId, userId, log, reloadConversations, clearConversations } =
-    params;
+  const {
+    file,
+    deviceKeyB64,
+    storage,
+    myDeviceId,
+    userId,
+    log,
+    reloadConversations,
+    clearConversations,
+  } = params;
 
   const arrayBuffer = await file.arrayBuffer();
   const { data: backup, isSameDevice } = await importBackup(
     new Uint8Array(arrayBuffer),
-    pin,
+    deviceKeyB64,
     storage,
     myDeviceId
   );

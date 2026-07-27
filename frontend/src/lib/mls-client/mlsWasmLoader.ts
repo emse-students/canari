@@ -101,21 +101,21 @@ export function resetMlsWasmModuleCacheForTests(): void {
   wasmModulePromise = null;
 }
 
-/** Argon2 + ChaCha20 on the current thread (fallback when workers are unavailable). */
+/** ChaCha20 encrypt on the current thread with a base64-encoded 32-byte key (fallback when workers are unavailable). */
 export async function encryptMlsStateOnMainThread(
   plain: Uint8Array,
-  pin: string
+  deviceKeyB64: string
 ): Promise<Uint8Array> {
   const wasm = await loadMlsWasmModule();
-  return wasm.encrypt_mls_state_blob(plain, pin) as Uint8Array;
+  return wasm.encrypt_mls_state_blob_with_key(plain, deviceKeyB64) as Uint8Array;
 }
 
 export async function loadAndInitWasm(
   userId: string,
   deviceId: string,
   state: Uint8Array | undefined,
-  pin?: string
+  deviceKeyB64?: string
 ): Promise<any> {
   const initWasm = await loadMlsWasmModule();
-  return new initWasm.WasmMlsClient(userId, deviceId, state, pin);
+  return new initWasm.WasmMlsClient(userId, deviceId, state, deviceKeyB64);
 }

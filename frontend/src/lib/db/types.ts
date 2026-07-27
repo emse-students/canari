@@ -63,8 +63,6 @@ export interface EncryptedMessageRow {
   timestamp: number;
   /** 12-byte AES-GCM initialization vector, unique per encrypted blob. */
   iv: Uint8Array;
-  /** 16-byte PBKDF2 salt used to derive the AES-256 key from the user's PIN. */
-  salt: Uint8Array;
   /** AES-256-GCM ciphertext of the JSON-serialized message payload (includes 16-byte auth tag). */
   cipherText: Uint8Array;
 }
@@ -141,8 +139,9 @@ export interface OutboxEntry {
  * Storage backend abstraction for Canari's local message store.
  *
  * Two implementations exist: IndexedDbStorage (browser / PWA) and SqliteStorage (Tauri desktop/mobile).
- * Conversation metadata is stored as plaintext; message content is encrypted with the user's PIN before
- * being written to disk (PBKDF2-HMAC-SHA-256 key derivation + AES-256-GCM encryption).
+ * Conversation metadata is stored as plaintext; message content is encrypted with the user's
+ * device key (32-byte key derived from the PIN via Argon2id once at first login) using AES-256-GCM.
+ * No PBKDF2 or per-message salt is needed — the device key is imported directly as a CryptoKey.
  */
 export interface IStorage {
   /** Open the underlying database and run any pending schema migrations. Must be called once before any other method. */
@@ -159,18 +158,18 @@ export interface IStorage {
   /** Delete all messages for a conversation without removing its metadata row. */
   deleteMessagesForConversation(conversationId: string): Promise<void>;
 
-  // Messages (content encrypted with user PIN)
+  // Messages (content encrypted with device key)
 
   /** Encrypt and persist a single message to the local store. */
-  saveMessage(msg: StoredMessage, pin: string): Promise<void>;
+  saveMessage(msg: StoredMessage, deviceKeyB64: string): Promise<void>;
   /** Encrypt and persist a batch of messages in a single atomic write. */
-  saveMessages(msgs: StoredMessage[], pin: string): Promise<void>;
+  saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void>;
   /** Decrypt and return all messages for a conversation, sorted oldest-first. */
-  getMessages(conversationId: string, pin: string): Promise<StoredMessage[]>;
+  getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]>;
   /** Return the most recent `limit` messages, optionally those strictly before `beforeTimestamp`. */
   getMessagesPage(
     conversationId: string,
-    pin: string,
+    deviceKeyB64: string,
     limit: number,
     beforeTimestamp?: number
   ): Promise<StoredMessage[]>;
@@ -181,7 +180,7 @@ export interface IStorage {
   deleteOldMessages(maxAgeMs: number): Promise<number>;
 
   // Backup helpers - expose raw encrypted rows so backups don't require
-  // re-encryption and can be imported to a new device with the same PIN.
+  // re-encryption and can be imported to a new device with the same device key.
 
   /** Return all encrypted message rows as-is (no decryption) for use in backup export. */
   getAllEncryptedRows(): Promise<EncryptedMessageRow[]>;
@@ -200,16 +199,19 @@ export interface IStorage {
    */
   importEncryptedRow(row: EncryptedMessageRow): Promise<void>;
 
-  // Outbox (queued outbound messages; sensitive payload encrypted with user PIN)
+  // Outbox (queued outbound messages; sensitive payload encrypted with device key)
 
   /** Encrypt and upsert a queued outbound message. */
-  saveOutboxEntry(entry: OutboxEntry, pin: string): Promise<void>;
+  saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void>;
   /** Decrypt and return all queued entries, sorted by `sentAt` ascending (compose order). */
-  getOutboxEntries(pin: string): Promise<OutboxEntry[]>;
+  getOutboxEntries(deviceKeyB64: string): Promise<OutboxEntry[]>;
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
-  getOutboxEntriesForConversation(conversationId: string, pin: string): Promise<OutboxEntry[]>;
+  getOutboxEntriesForConversation(
+    conversationId: string,
+    deviceKeyB64: string
+  ): Promise<OutboxEntry[]>;
   /** Merge `patch` into the stored entry (read-modify-write; re-encrypts the payload). No-op if absent. */
-  updateOutboxEntry(id: string, patch: Partial<OutboxEntry>, pin: string): Promise<void>;
+  updateOutboxEntry(id: string, patch: Partial<OutboxEntry>, deviceKeyB64: string): Promise<void>;
   /** Remove a queued entry (after a confirmed send or a permanent failure). */
   deleteOutboxEntry(id: string): Promise<void>;
 

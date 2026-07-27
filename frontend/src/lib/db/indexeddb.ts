@@ -1,6 +1,5 @@
 import { encryptData, decryptData } from '../encryption';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
-import { getOrCreateEncryptionSalt } from './salt';
 import type {
   ConversationMeta,
   EncryptedMessageRow,
@@ -33,14 +32,16 @@ export class IndexedDbStorage implements IStorage {
     this.dbName = `CanariDB_${userId}`;
   }
 
-  /** Open (or upgrade) the IndexedDB database and apply schema migrations up to version 5. */
+  /** Open (or upgrade) the IndexedDB database and apply schema migrations up to version 6. */
   async init(): Promise<void> {
     return new Promise((resolve, reject) => {
       // Version 3: conversation.id is now the MLS groupId UUID (was human-readable contactName).
       // Migration: the conversations store is recreated (same keyPath 'id') and all existing
       // rows are migrated by setting id = groupId (old rows had a separate groupId field).
       // Version 5: adds the `outbox` store (queued outbound messages).
-      const request = indexedDB.open(this.dbName, 5);
+      // Version 6: PBKDF2+salt → deviceKeyB64 (direct AES-256-GCM). Drops all encrypted
+      //            messages/outbox rows — they will be re-fetched from the server.
+      const request = indexedDB.open(this.dbName, 6);
 
       request.onerror = () => reject('IndexedDB open error');
       request.onsuccess = () => {
@@ -85,6 +86,24 @@ export class IndexedDbStorage implements IStorage {
             outboxStore.createIndex('byConversation', 'conversationId', { unique: false });
             outboxStore.createIndex('bySentAt', 'sentAt', { unique: false });
           }
+        }
+
+        if (oldVersion < 6) {
+          // v5→v6: PBKDF2+salt replaced by direct deviceKeyB64 AES-256-GCM.
+          // All encrypted rows (messages, outbox) are dropped — messages will be
+          // re-fetched from the server and re-encrypted with the device key.
+          // Conversations (plaintext metadata) are preserved.
+          if (db.objectStoreNames.contains('messages')) {
+            db.deleteObjectStore('messages');
+          }
+          if (db.objectStoreNames.contains('outbox')) {
+            db.deleteObjectStore('outbox');
+          }
+          const freshMsgStore = db.createObjectStore('messages', { keyPath: 'id' });
+          freshMsgStore.createIndex('byConversation', 'conversationId', { unique: false });
+          const freshOutboxStore = db.createObjectStore('outbox', { keyPath: 'id' });
+          freshOutboxStore.createIndex('byConversation', 'conversationId', { unique: false });
+          freshOutboxStore.createIndex('bySentAt', 'sentAt', { unique: false });
         }
 
         if (oldVersion < 3 && oldVersion >= 2) {
@@ -225,19 +244,18 @@ export class IndexedDbStorage implements IStorage {
   // -- Messages ------------------------------------------------------------
 
   /** Encrypt and persist a single message; delegates to saveMessages. */
-  async saveMessage(msg: StoredMessage, pin: string): Promise<void> {
-    return this.saveMessages([msg], pin);
+  async saveMessage(msg: StoredMessage, deviceKeyB64: string): Promise<void> {
+    return this.saveMessages([msg], deviceKeyB64);
   }
 
   /**
    * Encrypt and persist a batch of messages in a single IndexedDB transaction.
    * Each message's senderId, content, reactions, and flags are JSON-serialized and
-   * encrypted with AES-256-GCM before being written; the stable per-user salt is
-   * reused so the PBKDF2 key is derived only once for the whole batch.
+   * encrypted with AES-256-GCM (deviceKeyB64 imported directly as a CryptoKey — no
+   * PBKDF2 derivation or per-message salt needed).
    */
-  async saveMessages(msgs: StoredMessage[], pin: string): Promise<void> {
+  async saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void> {
     const db = this.ensureDb();
-    const stableSalt = getOrCreateEncryptionSalt(this.dbName);
     const encryptedMessages = await Promise.all(
       msgs.map(async (msg) => {
         const payload: Record<string, unknown> = {
@@ -250,7 +268,7 @@ export class IndexedDbStorage implements IStorage {
         if (msg.serverTimestamp) payload.serverTimestamp = msg.serverTimestamp;
         if (msg.isDeleted) payload.isDeleted = true;
         if (msg.isEdited) payload.isEdited = true;
-        const encrypted = await encryptData(payload, pin, stableSalt);
+        const encrypted = await encryptData(payload, deviceKeyB64);
         return {
           id: msg.id,
           conversationId: msg.conversationId,
@@ -273,8 +291,8 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
-  /** Decrypt and return all messages for `conversationId`, sorted oldest-first. Rows that fail decryption (wrong PIN or corruption) are silently skipped. */
-  async getMessages(conversationId: string, pin: string): Promise<StoredMessage[]> {
+  /** Decrypt and return all messages for `conversationId`, sorted oldest-first. Rows that fail decryption (wrong key or corruption) are silently skipped. */
+  async getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]> {
     const db = this.ensureDb();
     const rows: any[] = await new Promise((resolve, reject) => {
       const tx = db.transaction('messages', 'readonly');
@@ -289,7 +307,8 @@ export class IndexedDbStorage implements IStorage {
     const results: StoredMessage[] = [];
     for (const row of rows) {
       try {
-        const payload = await decryptData(row.cipherText, row.iv, row.salt, pin);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const payload = (await decryptData(row.cipherText, row.iv, deviceKeyB64)) as any;
         results.push({
           id: row.id,
           conversationId: row.conversationId,
@@ -322,7 +341,7 @@ export class IndexedDbStorage implements IStorage {
    */
   async getMessagesPage(
     conversationId: string,
-    pin: string,
+    deviceKeyB64: string,
     limit: number,
     beforeTimestamp?: number
   ): Promise<StoredMessage[]> {
@@ -351,7 +370,8 @@ export class IndexedDbStorage implements IStorage {
     const results: StoredMessage[] = [];
     for (const row of page) {
       try {
-        const payload = await decryptData(row.cipherText, row.iv, row.salt, pin);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const payload = (await decryptData(row.cipherText, row.iv, deviceKeyB64)) as any;
         results.push({
           id: row.id,
           conversationId: row.conversationId,
@@ -458,11 +478,11 @@ export class IndexedDbStorage implements IStorage {
   // -- Outbox --------------------------------------------------------------
 
   /** Decrypt a batch of outbox rows, skipping any that fail, sorted by `sentAt` (compose order). */
-  private async decodeOutboxRows(rows: any[], pin: string): Promise<OutboxEntry[]> {
+  private async decodeOutboxRows(rows: any[], deviceKeyB64: string): Promise<OutboxEntry[]> {
     const out: OutboxEntry[] = [];
     for (const row of rows) {
       try {
-        const payload = await decryptData(row.cipherText, row.iv, row.salt, pin);
+        const payload = await decryptData(row.cipherText, row.iv, deviceKeyB64);
         out.push(decodeOutboxEntry(row, payload));
       } catch {
         console.warn('Failed to decrypt outbox entry', row.id);
@@ -472,10 +492,9 @@ export class IndexedDbStorage implements IStorage {
   }
 
   /** Encrypt the sensitive payload and upsert a queued outbound message. */
-  async saveOutboxEntry(entry: OutboxEntry, pin: string): Promise<void> {
+  async saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void> {
     const db = this.ensureDb();
-    const stableSalt = getOrCreateEncryptionSalt(this.dbName);
-    const encrypted = await encryptData(encodeOutboxSensitive(entry), pin, stableSalt);
+    const encrypted = await encryptData(encodeOutboxSensitive(entry), deviceKeyB64);
     const row = { ...outboxClearColumns(entry), ...encrypted };
     return new Promise((resolve, reject) => {
       const tx = db.transaction('outbox', 'readwrite');
@@ -486,7 +505,7 @@ export class IndexedDbStorage implements IStorage {
   }
 
   /** Decrypt and return all queued entries, sorted by `sentAt` ascending. */
-  async getOutboxEntries(pin: string): Promise<OutboxEntry[]> {
+  async getOutboxEntries(deviceKeyB64: string): Promise<OutboxEntry[]> {
     const db = this.ensureDb();
     const rows: any[] = await new Promise((resolve, reject) => {
       const tx = db.transaction('outbox', 'readonly');
@@ -494,13 +513,13 @@ export class IndexedDbStorage implements IStorage {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
-    return this.decodeOutboxRows(rows, pin);
+    return this.decodeOutboxRows(rows, deviceKeyB64);
   }
 
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
   async getOutboxEntriesForConversation(
     conversationId: string,
-    pin: string
+    deviceKeyB64: string
   ): Promise<OutboxEntry[]> {
     const db = this.ensureDb();
     const rows: any[] = await new Promise((resolve, reject) => {
@@ -512,11 +531,15 @@ export class IndexedDbStorage implements IStorage {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
-    return this.decodeOutboxRows(rows, pin);
+    return this.decodeOutboxRows(rows, deviceKeyB64);
   }
 
   /** Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent. */
-  async updateOutboxEntry(id: string, patch: Partial<OutboxEntry>, pin: string): Promise<void> {
+  async updateOutboxEntry(
+    id: string,
+    patch: Partial<OutboxEntry>,
+    deviceKeyB64: string
+  ): Promise<void> {
     const db = this.ensureDb();
     const existing: any = await new Promise((resolve, reject) => {
       const tx = db.transaction('outbox', 'readonly');
@@ -527,12 +550,12 @@ export class IndexedDbStorage implements IStorage {
     if (!existing) return;
     let entry: OutboxEntry;
     try {
-      const payload = await decryptData(existing.cipherText, existing.iv, existing.salt, pin);
+      const payload = await decryptData(existing.cipherText, existing.iv, deviceKeyB64);
       entry = decodeOutboxEntry(existing, payload);
     } catch {
       return;
     }
-    await this.saveOutboxEntry(mergeOutboxEntry(entry, patch), pin);
+    await this.saveOutboxEntry(mergeOutboxEntry(entry, patch), deviceKeyB64);
   }
 
   /** Remove a queued entry (after a confirmed send or a permanent failure). */

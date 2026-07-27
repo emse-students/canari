@@ -5,31 +5,34 @@ use crate::keystore_bridge::PluginDeviceKeyStore;
 use crate::state::{
     decrypt_messages_batch, AppState, BatchDecryptItem, KeyPackageBatchResult, PendingDb,
 };
-use mls_core::{DecryptErrorKind, MlsManager};
-use tauri::Manager;
+use mls_core::{DecryptErrorKind, DeviceKeyStore, MlsManager};
 
 #[tauri::command]
 pub(crate) async fn initialiser_mls(
     app: tauri::AppHandle,
     user_id: String,
     device_id: String,
-    pin: String,
+    device_key_b64: String,
     encrypted_state: Option<Vec<u8>>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let manager_state = state.mls_manager.clone();
     let keystore = PluginDeviceKeyStore::new(app);
 
-    // Empty PIN → biometric mode: the keystore holds the device key directly.
+    // Empty device_key_b64 → biometric mode: the keystore holds the device key directly.
     // load_encrypted_with_keystore will use Path A (retrieve_device_key) which
     // triggers a single BiometricPrompt on Android/iOS.
-    let pin_opt = if pin.is_empty() { None } else { Some(pin) };
+    let key_b64_opt = if device_key_b64.is_empty() {
+        None
+    } else {
+        Some(device_key_b64)
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let manager = MlsManager::load_encrypted_with_keystore(
             &user_id,
             &device_id,
             encrypted_state,
-            pin_opt,
+            key_b64_opt,
             &keystore,
         )
         .map_err(|e| e.to_string())?;
@@ -46,7 +49,7 @@ pub(crate) async fn initialiser_mls(
 
 #[tauri::command]
 pub(crate) async fn sauvegarder_mls(
-    pin: String,
+    device_key_b64: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<u8>, String> {
     let manager_state = state.mls_manager.clone();
@@ -57,8 +60,10 @@ pub(crate) async fn sauvegarder_mls(
         let manager = lock
             .as_ref()
             .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
+            .map_err(|e| format!("invalid device_key_b64: {e}"))?;
         let encrypted = manager
-            .save_encrypted_owned(pin)
+            .save_encrypted_with_key(&key)
             .map_err(|e| e.to_string())?;
         Ok::<Vec<u8>, String>(encrypted)
     })
@@ -68,7 +73,7 @@ pub(crate) async fn sauvegarder_mls(
 
 #[tauri::command]
 pub(crate) async fn sauvegarder_mls_et_persister(
-    pin: String,
+    device_key_b64: String,
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<Vec<u8>, String> {
@@ -80,8 +85,10 @@ pub(crate) async fn sauvegarder_mls_et_persister(
         let manager = lock
             .as_ref()
             .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
+            .map_err(|e| format!("invalid device_key_b64: {e}"))?;
         let encrypted = manager
-            .save_encrypted_owned(pin)
+            .save_encrypted_with_key(&key)
             .map_err(|e| e.to_string())?;
         write_mls_state_blob(&app, &encrypted)?;
         Ok::<Vec<u8>, String>(encrypted)
@@ -166,7 +173,7 @@ pub(crate) async fn key_package_a_clef_privee(
 
 #[tauri::command]
 pub(crate) async fn generer_key_packages_et_persister(
-    pin: String,
+    device_key_b64: String,
     count: usize,
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
@@ -192,8 +199,10 @@ pub(crate) async fn generer_key_packages_et_persister(
         } else {
             Vec::new()
         };
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
+            .map_err(|e| format!("invalid device_key_b64: {e}"))?;
         let encrypted_state = manager
-            .save_encrypted_owned(pin)
+            .save_encrypted_with_key(&key)
             .map_err(|e| e.to_string())?;
         write_mls_state_blob(&app, &encrypted_state)?;
         log::debug!(
@@ -697,43 +706,31 @@ pub(crate) fn exporter_secret(
         .map_err(|e| e.to_string())
 }
 
-/// Re-derive la clé de chiffrement du device à partir du nouveau PIN et l'écrase
-/// dans le keystore. Appelée après un changement de PIN pour que le login biométrique
-/// continue de fonctionner avec le nouveau PIN.
+/// Stocke la nouvelle deviceKeyB64 directement dans le keystore après un changement de PIN.
+/// La dérivation Argon2id(newPin, salt) a déjà été faite côté frontend.
 ///
-/// Lit `mls.bin` pour extraire le sel (16 premiers octets), dérive la nouvelle clé
-/// via Argon2id et la stocke dans le keystore sous l'alias `mls_device_key_{user_id}_{device_id}`.
+/// Décode la base64 en 32 bytes et les stocke sous l'alias `mls_device_key_{user_id}_{device_id}`.
 /// Best-effort : si le keystore est indisponible, l'erreur est loggée mais la commande
 /// réussit quand même (le prochain login PIN re-dérivera la clé automatiquement).
 #[tauri::command]
-pub(crate) async fn actualiser_cle_keystore(
-    pin: String,
+pub(crate) async fn actualiser_cle_keystore_avec_devicekey(
+    device_key_b64: String,
     user_id: String,
     device_id: String,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let mls_path = data_dir.join("mls.bin");
-
-    let blob = std::fs::read(&mls_path).map_err(|e| format!("read mls.bin: {e}"))?;
-    if blob.len() < 16 {
-        return Err("mls.bin too short (no salt)".into());
-    }
-
-    let mut salt = [0u8; 16];
-    salt.copy_from_slice(&blob[..16]);
     let alias = format!("mls_device_key_{user_id}_{device_id}");
     let keystore = PluginDeviceKeyStore::new(app);
 
-    tauri::async_runtime::spawn_blocking(move || {
-        // derive_and_store_device_key zeroizes the PIN after derivation.
-        mls_core::security::derive_and_store_device_key(pin, &salt, &alias, &keystore)
-            .map(|_key| ())
-            .map_err(|e| {
-                log::warn!("[PIN_CHANGE] Failed to refresh keystore key: {e}");
-                // Non-fatal: the next PIN login will re-derive and store the key.
-                e
-            })
+    let key_bytes = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
+        .map_err(|e| format!("invalid device_key_b64: {e}"))?;
+
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        keystore.store_device_key(&key_bytes, &alias).map_err(|e| {
+            log::warn!("[DEVICEKEY_CHANGE] Failed to refresh keystore key: {e}");
+            // Non-fatal: the next login will re-derive and store the key.
+            e
+        })
     })
     .await
     .map_err(|e| e.to_string())?

@@ -43,7 +43,7 @@ import {
   summarizeConversationStats,
   installCatchupBenchDevTools,
 } from '$lib/mls-client/catchupBenchmark';
-import { savePin, clearPin, clearPinAndKey } from '$lib/utils/pinVault';
+import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/utils/pinVault';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
@@ -92,7 +92,7 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
     mlsService: ctx.ensureMls(),
     storage: st,
     userId: ctx.getUserId(),
-    pin: ctx.getPin(),
+    pin: ctx.getDeviceKey(),
     conversations: cb.conversations,
     getSelectedContact: cb.getSelectedContact,
     setSelectedContact: cb.setSelectedContact,
@@ -116,7 +116,7 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     mlsService: ctx.ensureMls(),
     storage: ctx.getStorage(),
     userId: ctx.getUserId(),
-    pin: ctx.getPin(),
+    pin: ctx.getDeviceKey(),
     conversations: cb.conversations,
     log: cb.log,
     requestReAdd: (groupId: string) =>
@@ -152,7 +152,7 @@ export async function processDeviceInvitationsLocally(
       mlsService: ctx.ensureMls(),
       storage: ctx.getStorage(),
       userId: ctx.getUserId(),
-      pin: ctx.getPin(),
+      pin: ctx.getDeviceKey(),
       conversations: cb.conversations,
       log: cb.log,
     });
@@ -201,7 +201,7 @@ export async function resetDeviceAsFreshImpl(
   ctx.setMyDeviceId('');
   ctx.setIsLoggedIn(false);
   ctx.setIsWsConnected(false);
-  clearPinAndKey();
+  clearDeviceKeyAndWrapKey();
   clearUserLocally();
   cb.log('[SECURITY] Revoked device detected: local state purged, reconnection required.');
 }
@@ -221,9 +221,13 @@ export async function resetDeviceAsFreshImpl(
 export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): Promise<void> {
   const userId = ctx.getUserId();
   const pin = ctx.getPin();
+  const deviceKeyB64 = ctx.getDeviceKey();
 
   // Biometric mode: skip the PIN-fields guard. The keystore handles authentication.
-  const isBiometric = pin.length === 0;
+  // Vault-based (nativeStorageLogin) also skips pin-check: deviceKeyB64 is loaded from
+  // the encrypted vault, proving the user already authenticated with the correct PIN.
+  const isBiometric = deviceKeyB64.length === 0 && pin.length === 0;
+  const isVaultLogin = deviceKeyB64.length > 0 && pin.length === 0;
 
   if (!userId.trim()) {
     const msg = 'Please fill in all fields.';
@@ -313,9 +317,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       );
     }
 
-    // Biometric mode: skip server-side PIN verification. The keystore
-    // (retrieve_device_key → BiometricPrompt) is the authentication factor.
-    if (!isBiometric) {
+    // Biometric mode & vault-based login: skip server-side PIN verification.
+    // The keystore (retrieve_device_key → BiometricPrompt) or the encrypted
+    // device key vault are the authentication factors.
+    if (!isBiometric && !isVaultLogin) {
       cb.log('Initialising MLS...');
       // Resolve the device id and verify the PIN BEFORE init(). init() decrypts the
       // encrypted MLS state, and a WRONG PIN makes that decryption fail - which would
@@ -367,6 +372,8 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         );
       }
       if (pinCheckData.status === 'registered') cb.log('First device: PIN registered.');
+    } else if (isVaultLogin) {
+      cb.log('Initialising MLS (vault device key path)...');
     } else {
       cb.log('Initialising MLS (biometric keystore path)...');
     }
@@ -378,7 +385,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // drop history. In biometric mode, an empty PIN is passed so the Rust side invokes
     // retrieve_device_key (single BiometricPrompt).
     const [mlsInitSettled, storageSettled] = await Promise.allSettled([
-      mlsService.init(ctx.getUserId(), ctx.getPin(), mlsStateResult?.bytes, {
+      mlsService.init(ctx.getUserId(), deviceKeyB64 || ctx.getPin(), mlsStateResult?.bytes, {
         noFreshStart: !!mlsStateResult?.bytes,
       }),
       getStorage(ctx.getUserId()),
@@ -433,11 +440,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     cb.log('[INIT] MLS ready - syncing messages in background.');
     cb.onMlsReady?.();
 
-    // Fire-and-forget: savePin is independent of conversation loading.
-    // The PIN is always saved — on Tauri it feeds push_context.json for
+    // Fire-and-forget: saveDeviceKey is independent of conversation loading.
+    // The device key is always saved — on Tauri it feeds push_context.json for
     // background FCM decryption; on web it powers auto-login.
     void (async () => {
-      await savePin(ctx.getPin());
+      await saveDeviceKey(deviceKeyB64 || ctx.getPin());
     })();
 
     // Check push health AFTER registration so pending_push_secret.txt is present
@@ -487,9 +494,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     await applyOutboxPendingStatuses();
 
     beginStartupCatchupPhase('fcm_cache');
-    const fcmInjected = await consumeFcmCache(ctx.getPin(), ctx.getStorage()!).catch(
-      () => [] as []
-    );
+    const fcmInjected = await consumeFcmCache(
+      ctx.getDeviceKey() || ctx.getPin(),
+      ctx.getStorage()!
+    ).catch(() => [] as []);
     if (Array.isArray(fcmInjected) && fcmInjected.length > 0) {
       const mergedCount = mergeFcmMessagesIntoConversations(
         fcmInjected,
@@ -545,7 +553,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
     const callSystemCtx = {
       userId: ctx.getUserId(),
-      pin: ctx.getPin(),
+      pin: ctx.getDeviceKey() || ctx.getPin(),
       storage: ctx.getStorage(),
       conversations: cb.conversations,
       addMessageToChat: cb.addMessageToChat,
@@ -562,7 +570,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       mlsService,
       storage: ctx.getStorage(),
       userId: ctx.getUserId(),
-      pin: ctx.getPin(),
+      pin: ctx.getDeviceKey() || ctx.getPin(),
       historyBaseUrl: ctx.getHistoryBaseUrl(),
       conversations: cb.conversations,
       messageReactions: cb.messageReactions,
@@ -615,7 +623,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
                 mlsService: ctx.ensureMls(),
                 storage: ctx.getStorage(),
                 userId: ctx.getUserId(),
-                pin: ctx.getPin(),
+                pin: ctx.getDeviceKey() || ctx.getPin(),
                 conversations: cb.conversations,
                 log: cb.log,
                 requesterUserId: req.requesterUserId,
@@ -711,7 +719,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             mlsService: ctx.ensureMls(),
             storage: ctx.getStorage(),
             userId: ctx.getUserId(),
-            pin: ctx.getPin(),
+            pin: ctx.getDeviceKey() || ctx.getPin(),
             conversations: cb.conversations,
             log: cb.log,
             requesterUserId,
@@ -741,7 +749,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           await handleHistoryRequest({
             mlsService: ctx.ensureMls(),
             storage: ctx.getStorage(),
-            pin: ctx.getPin(),
+            pin: ctx.getDeviceKey() || ctx.getPin(),
             conversations: cb.conversations,
             log: cb.log,
             requesterUserId,
@@ -765,7 +773,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     await initializeConnection({
       mlsService,
       userId: ctx.getUserId(),
-      pin: ctx.getPin(),
+      pin: ctx.getDeviceKey() || ctx.getPin(),
       scheduleReconnect: () => scheduleReconnectImpl(ctx, cb),
       setIsWsConnected: (v) => ctx.setIsWsConnected(v),
       setReconnectAttempts: (v) => ctx.setReconnectAttempts(v),
@@ -849,7 +857,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     console.error('[INIT] Login failed:', msg);
     ctx.resetMls();
     clearUserLocally();
-    clearPin();
+    clearDeviceKey();
     // A dead session (refresh cookie expired/revoked) is not retryable via the PIN modal:
     // hand it to onSessionExpired so the caller logs out and redirects to /login. When no
     // callback is wired, redirect directly so the user is never stranded in the modal.
@@ -903,16 +911,16 @@ export async function nativeStorageLoginImpl(
     // Si on ne peut pas vérifier, on continue avec le comportement actuel.
   }
 
-  // Lire le PIN depuis le PinVault (AES-GCM chiffré), jamais depuis push_context.json.
+  // Lire le deviceKeyB64 depuis le PinVault (AES-GCM chiffré), jamais depuis push_context.json.
   try {
-    const { loadPin } = await import('$lib/utils/pinVault');
-    const pin = await loadPin();
-    if (!pin) {
-      appendLog('[PIN] No PIN in vault - auto-login impossible');
+    const { loadDeviceKey } = await import('$lib/utils/pinVault');
+    const deviceKeyB64 = await loadDeviceKey();
+    if (!deviceKeyB64) {
+      appendLog('[PIN] No device key in vault - auto-login impossible');
       return false;
     }
-    appendLog('[PIN] PIN restored from PinVault - auto-login…');
-    ctx.setPin(pin);
+    appendLog('[PIN] Device key restored from PinVault - auto-login…');
+    ctx.setDeviceKey(deviceKeyB64);
     await loginImpl(ctx, cb);
     return ctx.isLoggedIn();
   } catch {
@@ -1100,7 +1108,7 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   ctx.getCallService()?.setChatNotifier(null);
   resetSiblingCallWarning();
   clearUserLocally();
-  clearPinAndKey();
+  clearDeviceKeyAndWrapKey();
   clearAuth();
   cb.log('[LOGOUT] Local state cleared - redirecting to /login.');
   void goto('/login', { replaceState: true });

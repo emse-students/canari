@@ -110,7 +110,7 @@
         {
           userId: session.userId,
           mlsService: session.ensureMls(),
-          setPin: (p: string) => (session.pin = p),
+          setDeviceKey: (k: string) => (session.deviceKeyB64 = k),
           log: appendLog,
           onProgress: (progress) => {
             changePinProgress = progress;

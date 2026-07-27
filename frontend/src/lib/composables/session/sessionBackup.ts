@@ -20,7 +20,7 @@ export async function exportBackupImpl(
     await exportUserBackup({
       storage: ctx.getStorage()!,
       userId: ctx.getUserId(),
-      pin: ctx.getPin(),
+      deviceKeyB64: ctx.getDeviceKey() || ctx.getPin(),
       myDeviceId: ctx.getMyDeviceId(),
       log,
     });
@@ -49,7 +49,7 @@ export async function importBackupImpl(
   try {
     await importUserBackup({
       file,
-      pin: ctx.getPin(),
+      deviceKeyB64: ctx.getDeviceKey() || ctx.getPin(),
       storage: ctx.getStorage()!,
       myDeviceId: ctx.getMyDeviceId(),
       userId: ctx.getUserId(),

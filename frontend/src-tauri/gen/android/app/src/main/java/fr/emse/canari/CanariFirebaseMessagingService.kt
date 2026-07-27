@@ -478,7 +478,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 val filesDir = MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }.absolutePath
                 val jsonStr = service.nativeSendMessageBackground(
-                    filesDir, stateBytes, "", ctx.userId, ctx.deviceId, entry.groupId, entry.proto,
+                    filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, entry.groupId, entry.proto,
                 )
                 val json = JSONObject(jsonStr)
                 if (!json.optBoolean("ok", false)) {
@@ -720,7 +720,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     external fun nativeCreateWelcomeBackground(
         filesDir: String,
         stateBytes: ByteArray,
-        pin: String,
+        keyB64: String,
         userId: String,
         deviceId: String,
         groupId: String,
@@ -736,7 +736,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     external fun nativeProcessWelcomeBackground(
         filesDir: String,
         stateBytes: ByteArray,
-        pin: String,
+        keyB64: String,
         userId: String,
         deviceId: String,
         welcomeB64: String,
@@ -751,7 +751,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     external fun nativeSendMessageBackground(
         filesDir: String,
         stateBytes: ByteArray,
-        pin: String,
+        keyB64: String,
         userId: String,
         deviceId: String,
         groupId: String,
@@ -1218,7 +1218,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
                 val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
                 val jsonStr = nativeCreateWelcomeBackground(
-                    filesDir, stateBytes, "", ctx.userId, ctx.deviceId,
+                    filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId,
                     groupId, keyPackage,
                 )
                 result = JSONObject(jsonStr)
@@ -1469,7 +1469,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             Log.d(TAG, "tryDecrypt: MLS state loaded (${stateBytes.size} bytes), userId=${ctx.userId} deviceId=${ctx.deviceId}")
             return decryptProto(
-                stateBytes, "", ctx.userId, ctx.deviceId, groupId, protoB64,
+                stateBytes, ctx.userId, ctx.deviceId, groupId, protoB64,
                 deviceKeyB64 = ctx.deviceKeyB64,
             )
         } finally {
@@ -1583,7 +1583,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             val filesDir = MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }.absolutePath
             joined = nativeProcessWelcomeBackground(
-                filesDir, stateBytes, "", ctx.userId, ctx.deviceId, welcomeB64!!, ratchetTreeB64,
+                filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, welcomeB64!!, ratchetTreeB64,
             )
         } finally {
             MlsStateLock.LOCK.unlock()
@@ -1701,7 +1701,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /** Parses the JSON returned by nativeDecryptMessageWithKey and returns a structured DecryptedMessage. */
     private fun decryptProto(
         stateBytes: ByteArray,
-        pin: String,
         userId: String,
         deviceId: String,
         groupId: String,
@@ -1800,7 +1799,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         return withMlsStateLock(5) {
             val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock null
             decryptProtoWithCommits(
-                stateBytes, "", ctx.userId, ctx.deviceId, groupId, commitsJson, cipherBytes,
+                stateBytes, ctx.userId, ctx.deviceId, groupId, commitsJson, cipherBytes,
                 deviceKeyB64 = ctx.deviceKeyB64,
             )
         }
@@ -1829,7 +1828,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /** Parses the JSON from nativeDecryptMessageWithCommitsWithKey into a DecryptedMessage (mirror of decryptProto). */
     private fun decryptProtoWithCommits(
         stateBytes: ByteArray,
-        pin: String,
         userId: String,
         deviceId: String,
         groupId: String,

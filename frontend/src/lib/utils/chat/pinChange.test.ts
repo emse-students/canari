@@ -3,7 +3,7 @@ import { encryptData } from '$lib/encryption';
 import { reencryptLocalMessages } from './pinChange';
 
 /** In-memory IStorage stub that persists real encrypted rows (no IndexedDB). */
-function makeEncryptedStorage(stableSalt: Uint8Array): IStorage & { rows: EncryptedMessageRow[] } {
+function makeEncryptedStorage(): IStorage & { rows: EncryptedMessageRow[] } {
   const rows: EncryptedMessageRow[] = [];
   return {
     rows,
@@ -13,18 +13,19 @@ function makeEncryptedStorage(stableSalt: Uint8Array): IStorage & { rows: Encryp
     deleteConversation: vi.fn().mockResolvedValue(undefined),
     deleteMessagesForConversation: vi.fn().mockResolvedValue(undefined),
     saveMessage: vi.fn(),
-    saveMessages: vi.fn(async (msgs: StoredMessage[], pin: string) => {
+    saveMessages: vi.fn(async (msgs: StoredMessage[], deviceKeyB64: string) => {
       for (const msg of msgs) {
         const payload: Record<string, unknown> = {
           senderId: msg.senderId,
           content: msg.content,
         };
-        const encrypted = await encryptData(payload, pin, stableSalt);
+        const encrypted = await encryptData(payload, deviceKeyB64);
         const row: EncryptedMessageRow = {
           id: msg.id,
           conversationId: msg.conversationId,
           timestamp: msg.timestamp,
-          ...encrypted,
+          iv: encrypted.iv,
+          cipherText: encrypted.cipherText,
         };
         const idx = rows.findIndex((r) => r.id === row.id);
         if (idx >= 0) rows[idx] = row;
@@ -47,12 +48,11 @@ function makeEncryptedStorage(stableSalt: Uint8Array): IStorage & { rows: Encryp
 }
 
 describe('reencryptLocalMessages', () => {
-  const oldPin = '1234';
-  const newPin = '5678';
-  const stableSalt = crypto.getRandomValues(new Uint8Array(16));
+  const oldKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+  const newKey = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
 
-  it('re-encrypts stored messages so the new PIN can read them', async () => {
-    const storage = makeEncryptedStorage(stableSalt);
+  it('re-encrypts stored messages so the new device key can read them', async () => {
+    const storage = makeEncryptedStorage();
     await storage.saveMessages(
       [
         {
@@ -63,22 +63,22 @@ describe('reencryptLocalMessages', () => {
           timestamp: 1_700_000_000_000,
         },
       ],
-      oldPin
+      oldKey
     );
 
-    const count = await reencryptLocalMessages(storage, oldPin, newPin);
+    const count = await reencryptLocalMessages(storage, oldKey, newKey);
     expect(count).toBe(1);
     expect(storage.rows).toHaveLength(1);
 
     const { decryptData } = await import('$lib/encryption');
     const row = storage.rows[0]!;
-    await expect(decryptData(row.cipherText, row.iv, row.salt, oldPin)).rejects.toThrow();
-    const payload = await decryptData(row.cipherText, row.iv, row.salt, newPin);
-    expect(payload.content).toBe('{"type":"text","body":"hello"}');
+    await expect(decryptData(row.cipherText, row.iv, oldKey)).rejects.toThrow();
+    const payload = await decryptData(row.cipherText, row.iv, newKey);
+    expect((payload as Record<string, unknown>).content).toBe('{"type":"text","body":"hello"}');
   });
 
-  it('throws when no message decrypts with the old PIN', async () => {
-    const storage = makeEncryptedStorage(stableSalt);
+  it('throws when no message decrypts with the old device key', async () => {
+    const storage = makeEncryptedStorage();
     await storage.saveMessages(
       [
         {
@@ -89,16 +89,16 @@ describe('reencryptLocalMessages', () => {
           timestamp: 1_700_000_000_001,
         },
       ],
-      oldPin
+      oldKey
     );
 
-    await expect(reencryptLocalMessages(storage, 'wrong-pin', newPin)).rejects.toThrow(
-      /Impossible de déchiffrer les messages locaux/
-    );
+    await expect(
+      reencryptLocalMessages(storage, 'wrong-key-base64-string-aaaaaaaaaaaaaa=', newKey)
+    ).rejects.toThrow(/Impossible de déchiffrer les messages locaux/);
   });
 
-  it('is a no-op when old and new PIN are identical', async () => {
-    const storage = makeEncryptedStorage(stableSalt);
+  it('is a no-op when old and new device key are identical', async () => {
+    const storage = makeEncryptedStorage();
     await storage.saveMessages(
       [
         {
@@ -109,11 +109,11 @@ describe('reencryptLocalMessages', () => {
           timestamp: 1_700_000_000_002,
         },
       ],
-      oldPin
+      oldKey
     );
     const before = storage.rows[0]!.cipherText.slice();
 
-    const count = await reencryptLocalMessages(storage, oldPin, oldPin);
+    const count = await reencryptLocalMessages(storage, oldKey, oldKey);
     expect(count).toBe(0);
     expect(storage.rows[0]!.cipherText).toEqual(before);
   });

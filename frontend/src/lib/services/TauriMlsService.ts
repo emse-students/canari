@@ -13,7 +13,6 @@ import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
-import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { BiometricService } from '$lib/services/biometric';
 import { BaseMlsService } from './BaseMlsService';
@@ -43,9 +42,9 @@ export class TauriMlsService extends BaseMlsService {
   /** In-flight Rust MLS mutations; drained before `saveState` so mls.bin matches `_knownGroups`. */
   private pendingRustMutations: Promise<unknown>[] = [];
   private appVersionCache: string | null | undefined = undefined;
-  // PIN kept in memory after init() to re-encrypt the MLS state after each message
-  // without asking the user for the PIN again.
-  private _pin = '';
+  // Device key kept in memory after init() to re-encrypt the MLS state after each
+  // message without asking the user for the PIN again.
+  private _deviceKeyB64 = '';
 
   constructor() {
     super('tauri', fetch);
@@ -360,10 +359,10 @@ export class TauriMlsService extends BaseMlsService {
     }
   }
 
-  /** Tauri-native `invoke` wrapper - initializes the Rust MLS state via `initialiser_mls`, deduplicating concurrent calls via a shared promise. */
-  async init(userId: string, pin: string, state?: Uint8Array): Promise<void> {
+  /** Tauri-native `invoke` wrapper - initializes the Rust MLS state via `initialiser_mls_avec_clef`, deduplicating concurrent calls via a shared promise. */
+  async init(userId: string, deviceKeyB64: string, state?: Uint8Array): Promise<void> {
     if (this.initPromise) return this.initPromise;
-    this.initPromise = this._initImpl(userId, pin, state);
+    this.initPromise = this._initImpl(userId, deviceKeyB64, state);
     await this.initPromise;
   }
 
@@ -382,16 +381,16 @@ export class TauriMlsService extends BaseMlsService {
     return null;
   }
 
-  /** Implementation body for init(); resolves device ID from native push context or localStorage, calls `initialiser_mls`, and seeds the known-groups cache. */
+  /** Implementation body for init(); resolves device ID from native push context or localStorage, calls `initialiser_mls_avec_clef`, and seeds the known-groups cache. */
   protected async _initImpl(
     userId: string,
-    pin: string,
+    deviceKeyB64: string,
     state?: Uint8Array,
     opts?: MlsInitOptions
   ): Promise<void> {
     this.userId = userId;
     this.delivery.userId = userId;
-    this._pin = pin;
+    this._deviceKeyB64 = deviceKeyB64;
     this.freshStart = !state;
 
     // Per-user device ID (same rationale as WebMlsService). resolveDeviceId restores
@@ -401,24 +400,24 @@ export class TauriMlsService extends BaseMlsService {
     await this.resolveDeviceId(userId);
 
     try {
-      await this.loadStateWithPin(pin, state);
+      await this.loadStateWithKey(deviceKeyB64, state);
     } catch (e) {
       // If init fails AND a saved state existed, the state is to blame
-      // (credential mismatch, partial corruption, invalid Argon2 key…).
+      // (credential mismatch, partial corruption, invalid key…).
       // → systematic fresh-start to avoid blocking the user indefinitely.
       // If state == null and error → real crash (no state to blame) → rethrow.
       const errStr = String(e);
       const isCredentialMismatch =
         errStr.includes('identity mismatch') || errStr.includes('Credential identity');
 
-      // "No keystore key and no PIN provided" is a recoverable error (the
+      // "No keystore key and no device key provided" is a recoverable error (the
       // user just needs to enter their PIN).  Do NOT destroy the device
       // identity — let the error propagate so the caller can fall back to
       // the PIN modal.
       const isKeystoreEmpty = /no keystore key/i.test(errStr);
 
       if ((isCredentialMismatch || state != null) && !isKeystoreEmpty) {
-        // Caller wants a chance to recover (decrypt with the old PIN) before any
+        // Caller wants a chance to recover (decrypt with the old key) before any
         // destructive fresh-start: signal instead of discarding local history.
         if (opts?.noFreshStart) throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
         const oldDeviceId = this.deviceId; // capture before overwriting
@@ -433,7 +432,7 @@ export class TauriMlsService extends BaseMlsService {
         this.deviceId = this.generateDeviceId(userId);
         localStorage.setItem(deviceKey, this.deviceId);
         this.delivery.deviceId = this.deviceId;
-        await this.loadStateWithPin(pin, undefined);
+        await this.loadStateWithKey(deviceKeyB64, undefined);
         // Deregister the stale device from the server so other devices no longer
         // try to use its key packages when generating Welcome messages.
         // Without this, re-bootstrap sends a Welcome for the OLD key package
@@ -446,25 +445,30 @@ export class TauriMlsService extends BaseMlsService {
       }
     }
 
-    // Save session context for Android push notifications (no-op on desktop).
-    // The pushToken is included so the Kotlin service can fetch the MLS proto
-    // when it is not included inline in the FCM payload (large messages).
-    // deviceKeyB64 is always derived from the keystore by store_push_context.
-    void getToken()
-      .then((pushToken: string) =>
-        invoke('store_push_context', {
-          pin,
-          userId,
-          deviceId: this.deviceId,
-          baseUrl: this.historyUrl,
-          pushToken,
-        })
-      )
-      .catch(() => {});
-
     // Write mls.bin immediately after init so the FCM service can decrypt
     // even if no message has been processed yet (saveState not yet called).
-    void this.saveState(pin).catch(() => {});
+    const savePromise = this.saveState(deviceKeyB64).catch(() => {});
+
+    // Save session context for Android push notifications (no-op on desktop).
+    // Must run AFTER saveState writes mls.bin (C3: race condition fix).
+    // Only applicable when a device key is available (C5: skip in biometric mode
+    // where deviceKeyB64="" would store an empty key, overwriting the
+    // biometric key already stored by biometricLoginImpl → getKeyBytes).
+    if (deviceKeyB64.length > 0) {
+      void savePromise.then(() =>
+        getToken()
+          .then((pushToken: string) =>
+            invoke('store_push_context', {
+              deviceKeyB64,
+              userId,
+              deviceId: this.deviceId,
+              baseUrl: this.historyUrl,
+              pushToken,
+            })
+          )
+          .catch(() => {})
+      );
+    }
 
     // Populate the local groups cache from Rust after init.
     try {
@@ -489,12 +493,12 @@ export class TauriMlsService extends BaseMlsService {
     this._knownGroups.add(groupId);
   }
 
-  /** Tauri-native `invoke` wrapper - calls `sauvegarder_mls` to encrypt and persist the MLS state to the native mls.bin file. */
-  async saveState(pin: string): Promise<Uint8Array> {
+  /** Tauri-native `invoke` wrapper - calls `sauvegarder_mls_et_persister_avec_clef` to encrypt and persist the MLS state to the native mls.bin file using the device key. */
+  async saveState(deviceKeyB64: string): Promise<Uint8Array> {
     await this.awaitRustMutations();
-    // Native command handles save_encrypted + mls.bin write in one invoke to
-    // avoid JS Array.from(…) conversion on large state blobs (notably Android).
-    const raw = await invoke<number[]>('sauvegarder_mls_et_persister', { pin });
+    // Native command handles save_encrypted_with_key + mls.bin write in one invoke
+    // to avoid JS Array.from(…) conversion on large state blobs (notably Android).
+    const raw = await invoke<number[]>('sauvegarder_mls_et_persister_avec_clef', { deviceKeyB64 });
     const bytes = Uint8Array.from(raw);
     return bytes;
   }
@@ -504,89 +508,65 @@ export class TauriMlsService extends BaseMlsService {
    * BEFORE the WS resumes processing: while backgrounded, a native engine (Welcome/send) may
    * have advanced `mls.bin`; without this the warm state is stale and its next save would clobber
    * that advance (lost-update -> SecretReuse). Also marks the foreground active server-side so the
-   * background engines stop writing. Refreshes the known-groups cache (a background Welcome may
-   * have joined a new group) and clears the epoch cache (epochs may have advanced under us).
+   * background engines stop writing.
+   *
+   * @deprecated This method depended on `this._pin` (Argon2id per reload). With deviceKeyB64
+   * the reload should use the device key directly. The method is removed — the base class
+   * default no-op takes over. A future C2 implementation will use `_deviceKeyB64`.
    */
-  override async reloadStateFromDisk(): Promise<void> {
-    // Both native mobile platforms run a background engine that advances mls.bin (Android JNI
-    // FirebaseMessagingService, iOS canari_push.mm via the C FFI); on desktop Tauri the in-memory
-    // engine is the sole writer, so a reload would re-derive Argon2 for nothing.
-    if (!isMobileTauriRuntime() || !this._pin) return;
-    await this.awaitRustMutations();
-    try {
-      const reloaded = await invoke<boolean>('recharger_mls_au_resume', {
-        userId: this.userId,
-        deviceId: this.deviceId,
-        pin: this._pin,
-      });
-      if (reloaded) {
-        this._epochByGroupId.clear();
-        try {
-          const groups = await invoke<string[]>('lister_groupes');
-          this._knownGroups = new Set(groups);
-        } catch {
-          /* cache stays as-is; GroupAlreadyExists fallback handles drift */
-        }
-        console.log('[MLS][Tauri] etat recharge depuis mls.bin au resume (C2)');
-      }
-    } catch (e) {
-      console.warn('[MLS][Tauri] reloadStateFromDisk failed:', e);
-    }
-  }
+  // reloadStateFromDisk() removed — depended on _pin for Argon2id re-derivation.
+  // The base class default no-op (BaseMlsService.reloadStateFromDisk) is now used.
 
-  /**
-   * Re-encrypts the MLS state with the new PIN via the native Tauri command and updates
-   * the cached PIN used for background saves. Must be called after a successful PIN change.
-   */
-  /** Native decrypt + client init for a given PIN/state; throws on wrong PIN (no fresh-start). */
-  protected async loadStateWithPin(pin: string, state?: Uint8Array): Promise<void> {
-    this._pin = pin;
+  /** Native decrypt + client init for a given device key/state; throws on wrong key (no fresh-start). */
+  protected async loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void> {
+    this._deviceKeyB64 = deviceKeyB64;
     const encryptedState = state ? Array.from(state) : null;
-    await invoke('initialiser_mls', {
+    await invoke('initialiser_mls_avec_clef', {
       userId: this.userId,
       deviceId: this.deviceId,
-      pin,
+      deviceKeyB64,
       encryptedState,
     });
   }
 
-  async changePIN(newPin: string): Promise<void> {
-    this._pin = newPin;
-    await this.saveState(newPin);
+  async changeDeviceKey(newDeviceKeyB64: string): Promise<void> {
+    this._deviceKeyB64 = newDeviceKeyB64;
+    await this.saveState(newDeviceKeyB64);
 
     // Toujours regenerer la cle keystore pour les push arriere-plan,
     // independamment du flag biometrique. La cle keystore est necessaire
     // pour le dechiffrement FCM meme sans biometrie.
     if (isTauriRuntime()) {
-      invoke('actualiser_cle_keystore', {
-        pin: newPin,
+      invoke('actualiser_cle_keystore_avec_devicekey', {
+        deviceKeyB64: newDeviceKeyB64,
         userId: this.userId,
         deviceId: this.deviceId,
       }).catch((e) =>
-        console.warn('[MLS][Tauri] Keystore key refresh after PIN change failed:', e)
+        console.warn('[MLS][Tauri] Keystore key refresh after device key change failed:', e)
       );
     }
 
     // Refresh the native push context so background FCM decryption uses the
-    // updated keystore key (re-derived from newPin by actualiser_cle_keystore above).
-    // deviceKeyB64 is always derived from the keystore by store_push_context.
+    // updated keystore key.
     void getToken()
       .then((pushToken: string) =>
         invoke('store_push_context', {
-          pin: newPin,
+          deviceKeyB64: newDeviceKeyB64,
           userId: this.userId,
           deviceId: this.deviceId,
           baseUrl: this.historyUrl,
           pushToken,
         })
       )
-      .catch((e) => console.warn('[MLS][Tauri] push_context refresh after PIN change failed:', e));
+      .catch((e) =>
+        console.warn('[MLS][Tauri] push_context refresh after device key change failed:', e)
+      );
 
-    console.log('[MLS][Tauri] PIN changed - state re-encrypted and persisted.');
+    console.log('[MLS][Tauri] Device key changed - state re-encrypted and persisted.');
   }
 
-  /** Tauri-native `invoke` wrapper - calls `generer_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
-  async generateKeyPackage(pin: string): Promise<Uint8Array> {
+  /** Tauri-native `invoke` wrapper - calls `generer_key_packages_et_persister_avec_clef`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
+  async generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array> {
     // On fresh start (no saved WASM state), old OTKPs on the server belong to
     // a previous session whose private keys are gone. Purge them so inviting
     // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.
@@ -604,9 +584,9 @@ export class TauriMlsService extends BaseMlsService {
 
     // Single native command: generate fallback + OTKPs + persist encrypted state.
     const nativeBatch = await invoke<NativeKeyPackageBatchResult>(
-      'generer_key_packages_et_persister',
+      'generer_key_packages_et_persister_avec_clef',
       {
-        pin,
+        deviceKeyB64,
         count: needed,
       }
     );

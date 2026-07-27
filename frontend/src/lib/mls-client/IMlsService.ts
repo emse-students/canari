@@ -70,16 +70,21 @@ export type GroupMeta = {
 };
 
 export interface IMlsService {
-  /** Initialises the MLS identity for the given user, decrypting stored state with the PIN. */
-  init(userId: string, pin: string, state?: Uint8Array, opts?: MlsInitOptions): Promise<void>;
+  /** Initialises the MLS identity for the given user, decrypting stored state with the device key. */
+  init(
+    userId: string,
+    deviceKeyB64: string,
+    state?: Uint8Array,
+    opts?: MlsInitOptions
+  ): Promise<void>;
   /** Creates a new local MLS group with the given ID. */
   createGroup(groupId: string): Promise<void>;
   /** Wipes any orphan OpenMLS state for groupId then creates a fresh group. */
   forceCreateGroup(groupId: string): Promise<void>;
   /** Creates a new named group on the delivery server and returns its assigned group ID. */
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
-  /** Serialises and AES-GCM encrypts the current MLS state to a byte array using the PIN. */
-  saveState(pin: string): Promise<Uint8Array>;
+  /** Serialises and encrypts the current MLS state to a byte array using the device key. */
+  saveState(deviceKeyB64: string): Promise<Uint8Array>;
   /**
    * Reloads the persisted MLS state from disk into the in-memory engine (C2). Android-only:
    * while the app is backgrounded, a native JNI engine (Welcome/send/worker) may advance
@@ -89,25 +94,25 @@ export interface IMlsService {
    */
   reloadStateFromDisk(): Promise<void>;
   /**
-   * Re-encrypts the in-memory MLS state with a new PIN and persists it.
+   * Re-encrypts the in-memory MLS state with a new device key and persists it.
    * Must be called after the user successfully changes their PIN on the server,
    * so the stored state remains decryptable on the next login.
    */
-  changePIN(newPin: string): Promise<void>;
+  changeDeviceKey(newDeviceKeyB64: string): Promise<void>;
   /**
-   * Forgot-PIN-elsewhere recovery: decrypts this device's local state with the OLD pin
-   * (non-destructively) then re-encrypts it under the NEW account pin, preserving all
+   * Forgot-PIN-elsewhere recovery: decrypts this device's local state with the OLD key
+   * (non-destructively) then re-encrypts it under the NEW key, preserving all
    * local messages. Marks the client initialised so a following login reuses it.
-   * Returns `false` if `oldPin` does not decrypt the local state.
+   * Returns `false` if `oldDeviceKeyB64` does not decrypt the local state.
    */
   recoverAndRekey(
     userId: string,
-    oldPin: string,
-    newPin: string,
+    oldDeviceKeyB64: string,
+    newDeviceKeyB64: string,
     state: Uint8Array
   ): Promise<boolean>;
-  /** Generates a fresh MLS KeyPackage for this device, signed with the PIN-encrypted identity key. */
-  generateKeyPackage(pin: string): Promise<Uint8Array>;
+  /** Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity key. */
+  generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array>;
   /**
    * Purge les KeyPackages publiés (fallback statique + pool one-time) et en republie
    * de frais à partir du keystore local courant.
@@ -116,7 +121,7 @@ export interface IMlsService {
    * clés privées locales (erreur `NoMatchingKeyPackage` au traitement d'un Welcome) :
    * sans ça, l'invitant ré-ajoute en boucle avec le même KeyPackage orphelin.
    */
-  republishKeyMaterial(pin: string): Promise<void>;
+  republishKeyMaterial(deviceKeyB64: string): Promise<void>;
   /**
    * Réconciliation proactive : liste les one-time prekeys publiés sur le serveur,
    * valide localement lesquels on possède encore en clé privée, et purge du serveur

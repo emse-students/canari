@@ -72,7 +72,7 @@ export class WasmMlsClient {
      * l'epoch local. Pendant de `clear_pending_commit`. [[C7]] Option A : valider-puis-merger.
      */
     merge_pending_commit(group_id: string): void;
-    constructor(user_id: string, device_id: string, state_bytes?: Uint8Array | null, pin?: string | null);
+    constructor(user_id: string, device_id: string, state_bytes?: Uint8Array | null, device_key_b64?: string | null);
     process_incoming_message(group_id: string, message_bytes: Uint8Array): string | undefined;
     /**
      * Returns the raw decrypted bytes of an MLS application message (proto-encoded AppMessage).
@@ -102,7 +102,7 @@ export class WasmMlsClient {
      * Only removes the targeted leaves, leaving other devices of the same user intact.
      */
     remove_members_by_device(group_id: string, device_identities: Array<any>): Uint8Array;
-    save_state(pin?: string | null): Uint8Array;
+    save_state(device_key_b64?: string | null): Uint8Array;
     send_message(group_id: string, message: string): Uint8Array;
     /**
      * Encrypts raw bytes (e.g. a proto-encoded AppMessage) as the MLS application payload.
@@ -110,13 +110,34 @@ export class WasmMlsClient {
     send_message_bytes(group_id: string, message_bytes: Uint8Array): Uint8Array;
 }
 
+export function decrypt_with_key(key_b64: string, encrypted_data: Uint8Array): Uint8Array;
+
+/**
+ * @deprecated Use `decrypt_with_key` instead.
+ */
 export function decrypt_with_pin(pin: string, encrypted_data: Uint8Array): Uint8Array;
 
 /**
- * Argon2 + ChaCha20 encrypt of a plain MLS CBOR snapshot. Safe to call from a Web Worker.
+ * ChaCha20 decrypt of an MLS CBOR snapshot (produced by `encrypt_mls_state_blob_with_key`).
+ */
+export function decrypt_mls_state_blob_with_key(encrypted: Uint8Array, key_b64: string): Uint8Array;
+
+/**
+ * @deprecated Use `encrypt_mls_state_blob_with_key` instead.
+ * Argon2 + ChaCha20 encrypt of a plain MLS CBOR snapshot.
  */
 export function encrypt_mls_state_blob(plain_state: Uint8Array, pin: string): Uint8Array;
 
+/**
+ * ChaCha20 encrypt of a plain MLS CBOR snapshot with a base64-encoded 32-byte key.
+ */
+export function encrypt_mls_state_blob_with_key(plain_state: Uint8Array, key_b64: string): Uint8Array;
+
+export function encrypt_with_key(key_b64: string, data: Uint8Array): Uint8Array;
+
+/**
+ * @deprecated Use `encrypt_with_key` instead.
+ */
 export function encrypt_with_pin(pin: string, data: Uint8Array): Uint8Array;
 
 export function init_logger(): void;
@@ -126,8 +147,12 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmmlsclient_free: (a: number, b: number) => void;
+    readonly decrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly decrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly decrypt_mls_state_blob_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly encrypt_mls_state_blob: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly encrypt_mls_state_blob_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly encrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly encrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly init_logger: () => void;
     readonly wasmmlsclient_add_member: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];

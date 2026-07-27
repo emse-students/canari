@@ -1,7 +1,6 @@
 import { encryptData, decryptData } from '../encryption';
 import { readStoredTimestampMs } from '$lib/utils/dates';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
-import { getOrCreateEncryptionSalt } from './salt';
 import type {
   ConversationMeta,
   EncryptedMessageRow,
@@ -88,7 +87,7 @@ export class SqliteStorage implements IStorage {
     this.dbPath = `sqlite:canari_${userId}.db`;
   }
 
-  /** Open (or create) the SQLite database, enable WAL mode, create tables, and run migrations up to version 4. */
+  /** Open (or create) the SQLite database, enable WAL mode, create tables, and run migrations up to version 5. */
   async init(): Promise<void> {
     const Database = (await import('@tauri-apps/plugin-sql')).default;
     this.db = await Database.load(this.dbPath);
@@ -115,16 +114,17 @@ export class SqliteStorage implements IStorage {
             )
         `);
 
-    // Colonnes TEXT (base64) pour iv/salt/cipher_text.
+    // Colonnes TEXT (base64) pour iv/cipher_text.
     // The old schema used BLOB columns, which caused the Tauri SQL plugin to
     // serialise Uint8Array values as JSON text "[1,2,3]" → unreadable after restart.
+    // No salt column — the deviceKeyB64 is imported directly as an AES-256-GCM key
+    // (no PBKDF2 derivation needed per message).
     await this.db.execute(`
             CREATE TABLE IF NOT EXISTS messages (
                 id              TEXT PRIMARY KEY,
                 conversation_id TEXT NOT NULL,
                 timestamp       INTEGER,
                 iv              TEXT,
-                salt            TEXT,
                 cipher_text     TEXT,
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
             )
@@ -148,7 +148,6 @@ export class SqliteStorage implements IStorage {
                 next_attempt_at INTEGER,
                 created_at      INTEGER,
                 iv              TEXT,
-                salt            TEXT,
                 cipher_text     TEXT
             )
         `);
@@ -196,6 +195,15 @@ export class SqliteStorage implements IStorage {
       }
       await this.db.execute('PRAGMA user_version = 4');
     }
+
+    if (currentVersion < 5) {
+      // v4→v5: PBKDF2+salt replaced by direct deviceKeyB64 AES-256-GCM.
+      // All encrypted rows are dropped — messages will be re-fetched from the server
+      // and re-encrypted with the device key. Conversations (plaintext) are preserved.
+      await this.db.execute('DELETE FROM messages');
+      await this.db.execute('DELETE FROM outbox');
+      await this.db.execute('PRAGMA user_version = 5');
+    }
   }
 
   // -- Conversations -------------------------------------------------------
@@ -235,17 +243,17 @@ export class SqliteStorage implements IStorage {
   // -- Messages ------------------------------------------------------------
 
   /** Encrypt and persist a single message; delegates to saveMessages. */
-  async saveMessage(msg: StoredMessage, pin: string): Promise<void> {
-    return this.saveMessages([msg], pin);
+  async saveMessage(msg: StoredMessage, deviceKeyB64: string): Promise<void> {
+    return this.saveMessages([msg], deviceKeyB64);
   }
 
   /**
    * Encrypt and persist a batch of messages wrapped in a single SQLite transaction.
-   * Binary iv/salt/cipherText are stored as base64 TEXT to avoid a Tauri SQL plugin
+   * Binary iv/cipherText are stored as base64 TEXT to avoid a Tauri SQL plugin
    * serialisation bug where BLOB bindings are read back as JSON arrays on restart.
+   * No salt column — the deviceKeyB64 is imported directly as an AES-256-GCM key.
    */
-  async saveMessages(msgs: StoredMessage[], pin: string): Promise<void> {
-    const stableSalt = getOrCreateEncryptionSalt(this.dbPath);
+  async saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void> {
     const encryptedMessages = await Promise.all(
       msgs.map(async (msg) => {
         const payload: Record<string, unknown> = {
@@ -258,7 +266,7 @@ export class SqliteStorage implements IStorage {
         if (msg.serverTimestamp) payload.serverTimestamp = msg.serverTimestamp;
         if (msg.isDeleted) payload.isDeleted = true;
         if (msg.isEdited) payload.isEdited = true;
-        const encrypted = await encryptData(payload, pin, stableSalt);
+        const encrypted = await encryptData(payload, deviceKeyB64);
         return { msg, encrypted };
       })
     );
@@ -271,13 +279,12 @@ export class SqliteStorage implements IStorage {
       try {
         for (const item of encryptedMessages) {
           await this.db.execute(
-            'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, salt, cipher_text) VALUES ($1, $2, $3, $4, $5, $6)',
+            'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text) VALUES ($1, $2, $3, $4, $5)',
             [
               item.msg.id,
               item.msg.conversationId,
               item.msg.timestamp,
               uint8ToBase64(item.encrypted.iv),
-              uint8ToBase64(item.encrypted.salt),
               uint8ToBase64(item.encrypted.cipherText),
             ]
           );
@@ -291,7 +298,7 @@ export class SqliteStorage implements IStorage {
   }
 
   /** Decrypt and return all messages for `conversationId` sorted oldest-first; silently skips rows that fail decryption. */
-  async getMessages(conversationId: string, pin: string): Promise<StoredMessage[]> {
+  async getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]> {
     const rows: any[] = await this.db.select(
       'SELECT * FROM messages WHERE conversation_id = $1 ORDER BY timestamp ASC',
       [conversationId]
@@ -300,9 +307,9 @@ export class SqliteStorage implements IStorage {
     for (const row of rows) {
       try {
         const iv = base64ToUint8(row.iv);
-        const salt = base64ToUint8(row.salt);
         const cipherText = base64ToUint8(row.cipher_text);
-        const payload = await decryptData(cipherText, iv, salt, pin);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const payload = (await decryptData(cipherText, iv, deviceKeyB64)) as any;
         results.push({
           id: row.id,
           conversationId: row.conversation_id,
@@ -335,7 +342,7 @@ export class SqliteStorage implements IStorage {
    */
   async getMessagesPage(
     conversationId: string,
-    pin: string,
+    deviceKeyB64: string,
     limit: number,
     beforeTimestamp?: number
   ): Promise<StoredMessage[]> {
@@ -356,9 +363,9 @@ export class SqliteStorage implements IStorage {
     for (const row of rows) {
       try {
         const iv = base64ToUint8(row.iv);
-        const salt = base64ToUint8(row.salt);
         const cipherText = base64ToUint8(row.cipher_text);
-        const payload = await decryptData(cipherText, iv, salt, pin);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const payload = (await decryptData(cipherText, iv, deviceKeyB64)) as any;
         results.push({
           id: row.id,
           conversationId: row.conversation_id,
@@ -393,7 +400,6 @@ export class SqliteStorage implements IStorage {
       conversationId: row.conversation_id,
       timestamp: row.timestamp,
       iv: base64ToUint8(row.iv),
-      salt: base64ToUint8(row.salt),
       cipherText: base64ToUint8(row.cipher_text),
     }));
   }
@@ -412,13 +418,12 @@ export class SqliteStorage implements IStorage {
     // INSERT OR IGNORE: skip rows that already exist on this device so that
     // messages received after the backup was taken are never overwritten.
     await this.db.execute(
-      'INSERT OR IGNORE INTO messages (id, conversation_id, timestamp, iv, salt, cipher_text) VALUES ($1, $2, $3, $4, $5, $6)',
+      'INSERT OR IGNORE INTO messages (id, conversation_id, timestamp, iv, cipher_text) VALUES ($1, $2, $3, $4, $5)',
       [
         row.id,
         row.conversationId,
         row.timestamp,
         uint8ToBase64(row.iv),
-        uint8ToBase64(row.salt),
         uint8ToBase64(row.cipherText),
       ]
     );
@@ -437,12 +442,11 @@ export class SqliteStorage implements IStorage {
   // -- Outbox --------------------------------------------------------------
 
   /** Decrypt one outbox row into an entry, or null if it cannot be decrypted. */
-  private async decodeOutboxRow(row: any, pin: string): Promise<OutboxEntry | null> {
+  private async decodeOutboxRow(row: any, deviceKeyB64: string): Promise<OutboxEntry | null> {
     try {
       const iv = base64ToUint8(row.iv);
-      const salt = base64ToUint8(row.salt);
       const cipherText = base64ToUint8(row.cipher_text);
-      const payload = await decryptData(cipherText, iv, salt, pin);
+      const payload = await decryptData(cipherText, iv, deviceKeyB64);
       return decodeOutboxEntry(
         {
           id: row.id,
@@ -464,14 +468,13 @@ export class SqliteStorage implements IStorage {
   }
 
   /** Encrypt the sensitive payload and upsert a queued outbound message. */
-  async saveOutboxEntry(entry: OutboxEntry, pin: string): Promise<void> {
-    const stableSalt = getOrCreateEncryptionSalt(this.dbPath);
-    const encrypted = await encryptData(encodeOutboxSensitive(entry), pin, stableSalt);
+  async saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void> {
+    const encrypted = await encryptData(encodeOutboxSensitive(entry), deviceKeyB64);
     const c = outboxClearColumns(entry);
     await this.db.execute(
       `INSERT OR REPLACE INTO outbox
-         (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, created_at, iv, salt, cipher_text)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+         (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, created_at, iv, cipher_text)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         c.id,
         c.conversationId,
@@ -483,18 +486,17 @@ export class SqliteStorage implements IStorage {
         c.nextAttemptAt ?? null,
         c.createdAt,
         uint8ToBase64(encrypted.iv),
-        uint8ToBase64(encrypted.salt),
         uint8ToBase64(encrypted.cipherText),
       ]
     );
   }
 
   /** Decrypt and return all queued entries, sorted by `sentAt` ascending. */
-  async getOutboxEntries(pin: string): Promise<OutboxEntry[]> {
+  async getOutboxEntries(deviceKeyB64: string): Promise<OutboxEntry[]> {
     const rows: any[] = await this.db.select('SELECT * FROM outbox ORDER BY sent_at ASC');
     const out: OutboxEntry[] = [];
     for (const row of rows) {
-      const entry = await this.decodeOutboxRow(row, pin);
+      const entry = await this.decodeOutboxRow(row, deviceKeyB64);
       if (entry) out.push(entry);
     }
     return out;
@@ -503,7 +505,7 @@ export class SqliteStorage implements IStorage {
   /** Decrypt and return queued entries targeting `conversationId`, sorted by `sentAt`. */
   async getOutboxEntriesForConversation(
     conversationId: string,
-    pin: string
+    deviceKeyB64: string
   ): Promise<OutboxEntry[]> {
     const rows: any[] = await this.db.select(
       'SELECT * FROM outbox WHERE conversation_id = $1 ORDER BY sent_at ASC',
@@ -511,19 +513,23 @@ export class SqliteStorage implements IStorage {
     );
     const out: OutboxEntry[] = [];
     for (const row of rows) {
-      const entry = await this.decodeOutboxRow(row, pin);
+      const entry = await this.decodeOutboxRow(row, deviceKeyB64);
       if (entry) out.push(entry);
     }
     return out;
   }
 
   /** Read-modify-write: merge `patch` into the stored entry and re-encrypt. No-op if absent. */
-  async updateOutboxEntry(id: string, patch: Partial<OutboxEntry>, pin: string): Promise<void> {
+  async updateOutboxEntry(
+    id: string,
+    patch: Partial<OutboxEntry>,
+    deviceKeyB64: string
+  ): Promise<void> {
     const rows: any[] = await this.db.select('SELECT * FROM outbox WHERE id = $1', [id]);
     if (rows.length === 0) return;
-    const entry = await this.decodeOutboxRow(rows[0], pin);
+    const entry = await this.decodeOutboxRow(rows[0], deviceKeyB64);
     if (!entry) return;
-    await this.saveOutboxEntry(mergeOutboxEntry(entry, patch), pin);
+    await this.saveOutboxEntry(mergeOutboxEntry(entry, patch), deviceKeyB64);
   }
 
   /** Remove a queued entry (after a confirmed send or a permanent failure). */

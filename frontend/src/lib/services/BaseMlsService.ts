@@ -145,12 +145,12 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async init(
     userId: string,
-    pin: string,
+    deviceKeyB64: string,
     state?: Uint8Array,
     opts?: MlsInitOptions
   ): Promise<void> {
     if (this.initPromise) return this.initPromise;
-    const p = this._initImpl(userId, pin, state, opts);
+    const p = this._initImpl(userId, deviceKeyB64, state, opts);
     this.initPromise = p;
     try {
       await p;
@@ -165,48 +165,48 @@ export abstract class BaseMlsService implements IMlsService {
   /** Platform-specific init body (WASM load vs Tauri invoke). */
   protected abstract _initImpl(
     userId: string,
-    pin: string,
+    deviceKeyB64: string,
     state?: Uint8Array,
     opts?: MlsInitOptions
   ): Promise<void>;
 
   /**
-   * Platform-specific decrypt + client init for a given PIN and (optional) saved state.
-   * Throws on a wrong PIN / unusable state - and unlike {@link _initImpl} performs NO
-   * fresh-start fallback, so callers can probe a candidate PIN non-destructively.
+   * Platform-specific decrypt + client init for a given device key and (optional) saved state.
+   * Throws on a wrong key / unusable state - and unlike {@link _initImpl} performs NO
+   * fresh-start fallback, so callers can probe a candidate key non-destructively.
    * `this.userId` and `this.deviceId` must already be resolved.
    */
-  protected abstract loadStateWithPin(pin: string, state?: Uint8Array): Promise<void>;
+  protected abstract loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void>;
 
   /**
    * Forgot-PIN-elsewhere recovery: the account PIN was changed on another device, so this
-   * device's local state is still sealed under the OLD pin. Decrypts it with `oldPin`
+   * device's local state is still sealed under the OLD key. Decrypts it with `oldDeviceKeyB64`
    * (non-destructively - no fresh-start, device id untouched) then re-encrypts it under
-   * `newPin` via {@link changePIN}, preserving all local messages. Marks the client as
-   * initialised so a following {@link init}/login reuses it instead of re-decrypting.
+   * `newDeviceKeyB64` via {@link changeDeviceKey}, preserving all local messages. Marks the
+   * client as initialised so a following {@link init}/login reuses it instead of re-decrypting.
    *
-   * Returns `false` when `oldPin` does not decrypt the local state (so the caller can show
-   * an "ancien PIN incorrect" error); `true` on success.
+   * Returns `false` when `oldDeviceKeyB64` does not decrypt the local state (so the caller can
+   * show an "ancien PIN incorrect" error); `true` on success.
    */
   async recoverAndRekey(
     userId: string,
-    oldPin: string,
-    newPin: string,
+    oldDeviceKeyB64: string,
+    newDeviceKeyB64: string,
     state: Uint8Array
   ): Promise<boolean> {
     this.userId = userId;
     this.delivery.userId = userId;
     await this.resolveDeviceId(userId);
     try {
-      await this.loadStateWithPin(oldPin, state);
+      await this.loadStateWithKey(oldDeviceKeyB64, state);
     } catch (e) {
       console.warn(
-        '[MLS] recoverAndRekey: old PIN did not decrypt local state:',
+        '[MLS] recoverAndRekey: old device key did not decrypt local state:',
         String(e).slice(0, 160)
       );
       return false;
     }
-    await this.changePIN(newPin);
+    await this.changeDeviceKey(newDeviceKeyB64);
     // The client is already decrypted in memory and the persisted blob is now re-encrypted
     // under newPin; short-circuit init() so the subsequent login reuses this exact client.
     this.initPromise = Promise.resolve();
@@ -683,12 +683,12 @@ export abstract class BaseMlsService implements IMlsService {
    * même temps, mais une seule purge/régénération (coûteuse, jusqu'à 50 KeyPackages)
    * suffit à réconcilier tout le matériel publié.
    */
-  async republishKeyMaterial(pin: string): Promise<void> {
+  async republishKeyMaterial(deviceKeyB64: string): Promise<void> {
     const now = Date.now();
     if (now - this.lastKeyMaterialRepublish < 30_000) return;
     this.lastKeyMaterialRepublish = now;
     await this.delivery.deleteAllOneTimePrekeys();
-    await this.generateKeyPackage(pin);
+    await this.generateKeyPackage(deviceKeyB64);
   }
 
   /**
@@ -930,9 +930,9 @@ export abstract class BaseMlsService implements IMlsService {
 
   // ── Platform-specific (abstract) ──────────────────────────────────────────
 
-  abstract saveState(pin: string): Promise<Uint8Array>;
-  abstract changePIN(newPin: string): Promise<void>;
-  abstract generateKeyPackage(pin: string): Promise<Uint8Array>;
+  abstract saveState(deviceKeyB64: string): Promise<Uint8Array>;
+  abstract changeDeviceKey(newDeviceKeyB64: string): Promise<void>;
+  abstract generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array>;
   abstract publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
   abstract createGroup(groupId: string): Promise<void>;
   abstract forceCreateGroup(groupId: string): Promise<void>;

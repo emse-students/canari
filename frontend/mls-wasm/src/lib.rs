@@ -50,10 +50,50 @@ pub fn init_logger() {
     let _ = log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Info));
 }
 
+/// @deprecated Use `encrypt_mls_state_blob_with_key` instead.
 /// Argon2 + ChaCha20 encrypt of a plain MLS CBOR snapshot. Safe to call from a Web Worker.
 #[wasm_bindgen]
 pub fn encrypt_mls_state_blob(plain_state: &[u8], pin: &str) -> Result<Vec<u8>, JsValue> {
-    MlsManager::encrypt_state_blob(plain_state, pin).map_err(|e| JsValue::from_str(&e.to_string()))
+    // Legacy path: uses Argon2id with a fresh random salt.
+    let pin_owned = pin.to_string();
+    let salt = mls_core::security::generate_salt();
+    let key = mls_core::security::derive_key_from_pin_owned(pin_owned, &salt)
+        .map_err(|e| JsValue::from_str(&e))?;
+    let ct =
+        mls_core::security::encrypt_blob(&key, plain_state).map_err(|e| JsValue::from_str(&e))?;
+    // Legacy format: [salt (16) || nonce (12) || ciphertext]
+    let mut result = Vec::with_capacity(16 + ct.len());
+    result.extend_from_slice(&salt);
+    result.extend_from_slice(&ct);
+    Ok(result)
+}
+
+/// ChaCha20 encrypt of a plain MLS CBOR snapshot with a base64-encoded 32-byte key.
+/// Wire format: `[nonce (12) || ciphertext]` — no salt prefix. Safe to call from a Web Worker.
+#[wasm_bindgen]
+pub fn encrypt_mls_state_blob_with_key(
+    plain_state: &[u8],
+    key_b64: &str,
+) -> Result<Vec<u8>, JsValue> {
+    let key =
+        mls_core::crypto::decode_base64_to_32_bytes(key_b64).map_err(|e| JsValue::from_str(&e))?;
+    MlsManager::encrypt_state_blob_with_key(plain_state, &key)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// ChaCha20 decrypt of an MLS CBOR snapshot (produced by `encrypt_mls_state_blob_with_key`).
+/// Wire format: `[nonce (12) || ciphertext]` — no salt prefix.
+#[wasm_bindgen]
+pub fn decrypt_mls_state_blob_with_key(
+    encrypted: &[u8],
+    key_b64: &str,
+) -> Result<Vec<u8>, JsValue> {
+    if encrypted.len() < 12 {
+        return Err(JsValue::from_str("Invalid encrypted data length"));
+    }
+    let key =
+        mls_core::crypto::decode_base64_to_32_bytes(key_b64).map_err(|e| JsValue::from_str(&e))?;
+    mls_core::security::decrypt_blob(&key, encrypted).map_err(|e| JsValue::from_str(&e))
 }
 
 // ----------------------------------------------------
@@ -67,13 +107,17 @@ pub struct WasmMlsClient {
 
 #[wasm_bindgen]
 impl WasmMlsClient {
-    // Constructor called from JavaScript (e.g. new WasmMlsClient(...))
+    /// Constructor called from JavaScript (e.g. new WasmMlsClient(...))
+    ///
+    /// When `device_key_b64` is provided with an encrypted state blob, the state is
+    /// decrypted with the given key (ChaCha20-Poly1305 direct, no Argon2id). Otherwise,
+    /// the state is loaded/created as plain CBOR.
     #[wasm_bindgen(constructor)]
     pub fn new(
         user_id: &str,
         device_id: &str,
         state_bytes: Option<Vec<u8>>,
-        pin: Option<String>,
+        device_key_b64: Option<String>,
     ) -> Result<WasmMlsClient, JsValue> {
         // Redirect Rust panics to the browser console.
         console_error_panic_hook::set_once();
@@ -85,14 +129,18 @@ impl WasmMlsClient {
             device_id
         );
 
-        let manager = if let (Some(blob), Some(p)) = (state_bytes.clone(), pin.clone()) {
-            log::info!("Loading encrypted state");
-            MlsManager::load_encrypted(user_id, device_id, Some(blob), &p)
+        let manager = if let (Some(blob), Some(key_b64)) =
+            (state_bytes.clone(), device_key_b64.clone())
+        {
+            log::info!("Loading encrypted state with device key");
+            let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64)
+                .map_err(|e| JsValue::from_str(&e))?;
+            MlsManager::load_with_key(user_id, device_id, Some(blob), &key)
                 .map_err(|e| JsValue::from_str(&e.to_string()))?
         } else {
-            if state_bytes.is_none() && pin.is_some() {
+            if state_bytes.is_none() && device_key_b64.is_some() {
                 log::warn!(
-                    "PIN provided but no encrypted state — PIN ignored, creating fresh state"
+                    "device_key_b64 provided but no encrypted state — key ignored, creating fresh state"
                 );
             }
             log::info!("Loading/Creating clean state");
@@ -160,13 +208,18 @@ impl WasmMlsClient {
         Ok(epoch as f64)
     }
 
-    // Save state (returns a Uint8Array in JS)
+    /// Save state (returns a Uint8Array in JS).
+    ///
+    /// When `device_key_b64` is provided, the state is encrypted with ChaCha20-Poly1305
+    /// using the given key (no Argon2id). Otherwise, the state is saved as plain CBOR
+    /// (legacy/dev fallback).
     #[wasm_bindgen]
-    pub fn save_state(&self, pin: Option<String>) -> Result<Vec<u8>, JsValue> {
-        // If PIN is provided, encrypt. Otherwise save plain (legacy/dev).
-        if let Some(p) = pin {
+    pub fn save_state(&self, device_key_b64: Option<String>) -> Result<Vec<u8>, JsValue> {
+        if let Some(key_b64) = device_key_b64 {
+            let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64)
+                .map_err(|e| JsValue::from_str(&e))?;
             self.manager
-                .save_encrypted(&p)
+                .save_encrypted_with_key(&key)
                 .map_err(|e| JsValue::from_str(&e.to_string()))
         } else {
             self.manager

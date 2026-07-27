@@ -1,21 +1,21 @@
 /**
- * Authenticated PIN change for a logged-in user.
+ * Device-key-based change for a logged-in user.
  *
  * Unlike the destructive "forgot PIN" reset, this preserves all messages: the
  * in-memory MLS state (already decrypted at login) is re-encrypted under the new
- * PIN via {@link IMlsService.changePIN}, the local message DB is re-encrypted via
- * {@link reencryptLocalMessages}, and the account-wide verifier is rotated
- * server-side after proving knowledge of the current PIN.
+ * device key via {@link IMlsService.changeDeviceKey}, and the local message DB is
+ * re-encrypted via {@link reencryptLocalMessages}.
  *
+ * The account-wide PIN verifier rotation is handled by the caller BEFORE calling
+ * {@link performPinChange} — this module only handles the local re-encryption.
  * Because the verifier is account-wide, the user's other devices keep their old
- * PIN locally and will hit a mismatch at their next login - they must re-enter the
- * new PIN (and re-enrol biometric). That is inherent: the PIN never leaves a device.
+ * key locally and will hit a mismatch at their next login - they must re-enter the
+ * new PIN (and re-enrol biometric). That is inherent: the device key never leaves
+ * the device.
  */
-import { decryptData } from '$lib/encryption';
+import { decryptData, encryptData } from '$lib/encryption';
 import { getStorage, type IStorage, type StoredMessage } from '$lib/db';
-import { computePinVerifier } from '$lib/utils/chat/auth';
-import { savePin } from '$lib/utils/pinVault';
-import { getToken } from '$lib/stores/auth';
+import { saveDeviceKey } from '$lib/utils/pinVault';
 import { BiometricService } from '$lib/services/biometric';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { m } from '$lib/paraglide/messages';
@@ -28,7 +28,7 @@ const REENCRYPT_BATCH_SIZE = 200;
 /** How often re-encryption reports progress and yields to the UI thread. */
 const REENCRYPT_PROGRESS_INTERVAL = 25;
 
-/** Identifies the current step of a PIN change or cross-device recovery flow. */
+/** Identifies the current step of a device key change or cross-device recovery flow. */
 export type PinOperationStage =
   | 'verify'
   | 'server'
@@ -38,7 +38,7 @@ export type PinOperationStage =
   | 'finalize'
   | 'login';
 
-/** User-facing progress snapshot for PIN change / recovery modals. */
+/** User-facing progress snapshot for device key change / recovery modals. */
 export interface PinOperationProgress {
   /** 0-100 inclusive. */
   percent: number;
@@ -59,21 +59,21 @@ function reportProgress(
 }
 
 /**
- * Re-encrypts every locally stored message from `oldPin` to `newPin`.
- * Conversation metadata is plaintext and untouched; only message payloads use the PIN.
+ * Re-encrypts every locally stored message from `oldDeviceKeyB64` to `newDeviceKeyB64`.
+ * Conversation metadata is plaintext and untouched; only message payloads use the device key.
  *
  * @returns The number of messages successfully re-encrypted.
- * @throws When encrypted rows exist but none decrypt with `oldPin` (wrong PIN or corruption).
+ * @throws When encrypted rows exist but none decrypt with `oldDeviceKeyB64` (wrong key or corruption).
  */
 export async function reencryptLocalMessages(
   storage: IStorage,
-  oldPin: string,
-  newPin: string,
+  oldDeviceKeyB64: string,
+  newDeviceKeyB64: string,
   log: (msg: string) => void = () => {},
   onProgress?: PinProgressCallback,
   percentRange: { start: number; end: number } = { start: 30, end: 80 }
 ): Promise<number> {
-  if (oldPin === newPin) return 0;
+  if (oldDeviceKeyB64 === newDeviceKeyB64) return 0;
 
   const rows = await storage.getAllEncryptedRows();
   if (rows.length === 0) return 0;
@@ -81,32 +81,39 @@ export async function reencryptLocalMessages(
   const { start, end } = percentRange;
   const span = end - start;
 
-  log(`[PIN_CHANGE] Re-chiffrement de ${rows.length} message(s) local(aux)…`);
+  log(`[DEVICEKEY_CHANGE] Re-chiffrement de ${rows.length} message(s) local(aux)…`);
 
   const decrypted: StoredMessage[] = [];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]!;
     try {
-      const payload = await decryptData(row.cipherText, row.iv, row.salt, oldPin);
+      const payload = (await decryptData(row.cipherText, row.iv, oldDeviceKeyB64)) as Record<
+        string,
+        unknown
+      >;
       decrypted.push({
         id: row.id,
         conversationId: row.conversationId,
         timestamp: row.timestamp,
-        senderId: payload.senderId,
-        content: payload.content,
-        readBy: Array.isArray(payload.readBy) ? payload.readBy : undefined,
-        reactions: Array.isArray(payload.reactions) ? payload.reactions : undefined,
+        senderId: payload.senderId as string,
+        content: payload.content as string,
+        readBy: Array.isArray(payload.readBy) ? (payload.readBy as string[]) : undefined,
+        reactions: Array.isArray(payload.reactions)
+          ? (payload.reactions as Array<{ emoji: string; userId: string }>)
+          : undefined,
         readAt:
-          typeof payload.readAt === 'number' && payload.readAt > 0 ? payload.readAt : undefined,
+          typeof payload.readAt === 'number' && payload.readAt > 0
+            ? (payload.readAt as number)
+            : undefined,
         serverTimestamp:
           typeof payload.serverTimestamp === 'number' && payload.serverTimestamp > 0
-            ? payload.serverTimestamp
+            ? (payload.serverTimestamp as number)
             : undefined,
         isDeleted: payload.isDeleted === true ? true : undefined,
         isEdited: payload.isEdited === true ? true : undefined,
       });
     } catch {
-      console.warn('[PIN_CHANGE] Failed to decrypt message', row.id);
+      console.warn('[DEVICEKEY_CHANGE] Failed to decrypt message', row.id);
     }
 
     if (onProgress && (i % REENCRYPT_PROGRESS_INTERVAL === 0 || i === rows.length - 1)) {
@@ -129,13 +136,13 @@ export async function reencryptLocalMessages(
 
   if (decrypted.length < rows.length) {
     log(
-      `[PIN_CHANGE] Warning: ${rows.length - decrypted.length} message(s) skipped (decryption failed).`
+      `[DEVICEKEY_CHANGE] Warning: ${rows.length - decrypted.length} message(s) skipped (decryption failed).`
     );
   }
 
   const batchCount = Math.ceil(decrypted.length / REENCRYPT_BATCH_SIZE);
   for (let i = 0; i < decrypted.length; i += REENCRYPT_BATCH_SIZE) {
-    await storage.saveMessages(decrypted.slice(i, i + REENCRYPT_BATCH_SIZE), newPin);
+    await storage.saveMessages(decrypted.slice(i, i + REENCRYPT_BATCH_SIZE), newDeviceKeyB64);
     const batchIdx = Math.floor(i / REENCRYPT_BATCH_SIZE) + 1;
     if (onProgress) {
       const frac = batchIdx / batchCount;
@@ -149,37 +156,38 @@ export async function reencryptLocalMessages(
     if (batchIdx < batchCount) await yieldToMainThread();
   }
 
-  log(`[PIN_CHANGE] ${decrypted.length} message(s) re-encrypted with the new PIN.`);
+  log(`[DEVICEKEY_CHANGE] ${decrypted.length} message(s) re-encrypted with the new device key.`);
   return decrypted.length;
 }
 
 /**
- * Refreshes this device's locally stored PIN material after the account PIN changed:
- * updates the session PIN vault and, on Tauri, deletes the stale keystore key (derived
- * from the old PIN) so the next PIN login re-derives and stores the new key.  Shared by
- * both the change and recovery flows.
+ * Refreshes this device's locally stored device key after the account PIN changed:
+ * updates the session device key vault and, on Tauri, stores the new key in the
+ * keystore so biometric login keeps working. Shared by both the change and recovery flows.
  */
-export async function applyNewPinLocally(
-  newPin: string,
+export async function applyNewDeviceKeyLocally(
+  newDeviceKeyB64: string,
   userId: string,
   deviceId: string,
   log: (msg: string) => void
 ): Promise<void> {
-  await savePin(newPin).catch(() => {});
+  await saveDeviceKey(newDeviceKeyB64).catch(() => {});
   if (isTauriRuntime() && (await BiometricService.isConfigured().catch(() => false))) {
     const alias = `mls_device_key_${userId}_${deviceId}`;
+    // Delete the old keystore entry; the new device key will be stored by
+    // actualiser_cle_keystore_avec_devicekey called by the caller.
     await BiometricService.disable(alias).catch(() => {});
-    log('[PIN] PIN changed — old keystore key deleted. Will be re-derived on next PIN login.');
+    log('[DEVICEKEY] Device key changed — old keystore key deleted.');
   }
 }
 
 export interface PinChangeOptions {
-  /** ID of the logged-in user whose PIN is changing. */
+  /** ID of the logged-in user whose device key is changing. */
   userId: string;
-  /** Live MLS service whose in-memory state will be re-encrypted under the new PIN. */
+  /** Live MLS service whose in-memory state will be re-encrypted under the new device key. */
   mlsService: IMlsService;
-  /** Updates the session's in-memory PIN so subsequent encryption uses the new value. */
-  setPin: (pin: string) => void;
+  /** Updates the session's in-memory device key so subsequent encryption uses the new value. */
+  setDeviceKey: (deviceKeyB64: string) => void;
   /** Debug log sink. */
   log: (msg: string) => void;
   /** Optional progress reporter for modal progress bars. */
@@ -187,57 +195,52 @@ export interface PinChangeOptions {
 }
 
 /**
- * Performs the full PIN change. Throws with a user-facing (localized) message on
- * failure (e.g. wrong current PIN).
+ * Performs the full device key change (local re-encryption only).
  *
- * Server-first ordering: the verifier rotation is the operation gated on the old
- * PIN, so it runs first; the local re-encryption follows. If the local step were
- * to fail afterwards the user can still recover by re-logging in with the new PIN.
+ * The caller MUST have already rotated the PIN verifier server-side before calling
+ * this function. This function handles:
+ * 1. Re-encrypting the in-memory MLS state under the new device key.
+ * 2. Re-encrypting all locally stored messages.
+ * 3. Persisting the new device key in the vault and keystore.
+ *
+ * Throws with a user-facing (localized) message on failure.
  */
 export async function performPinChange(
   opts: PinChangeOptions,
-  currentPin: string,
-  newPin: string
+  currentDeviceKeyB64: string,
+  newDeviceKeyB64: string
 ): Promise<void> {
-  const { userId, mlsService, setPin, log, onProgress } = opts;
-  log('[PIN_CHANGE] Starting PIN change…');
-  reportProgress(onProgress, { percent: 5, stage: 'server' });
+  const { userId, mlsService, setDeviceKey, log, onProgress } = opts;
+  log('[DEVICEKEY_CHANGE] Starting device key change…');
+  reportProgress(onProgress, { percent: 5, stage: 'mls' });
 
-  const token = await getToken();
-  const saltRes = await fetch(`/api/mls/security/pin-salt/${encodeURIComponent(userId)}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!saltRes.ok) throw new Error('Cannot fetch PIN salt (server unreachable).');
-  const { salt } = (await saltRes.json()) as { salt: string };
-  const [oldVerifier, newVerifier] = await Promise.all([
-    computePinVerifier(userId, currentPin, salt),
-    computePinVerifier(userId, newPin, salt),
-  ]);
-
-  const res = await fetch('/api/mls/security/pin-change', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ userId, oldVerifier, newVerifier }),
-  });
-  if (res.status === 403) throw new Error(m.profile_pin_error_wrong_current());
-  if (!res.ok) throw new Error(m.profile_pin_error_server_failed());
-
-  reportProgress(onProgress, { percent: 20, stage: 'mls' });
-  // Verifier rotated - re-encrypt MLS state and local message DB under the new PIN.
-  await mlsService.changePIN(newPin);
-  log('[PIN_CHANGE] MLS state re-encrypted with the new PIN.');
+  // Re-encrypt MLS state under the new device key.
+  await mlsService.changeDeviceKey(newDeviceKeyB64);
+  log('[DEVICEKEY_CHANGE] MLS state re-encrypted with the new device key.');
 
   const storage = await getStorage(userId);
-  await reencryptLocalMessages(storage, currentPin, newPin, log, onProgress, {
-    start: 25,
+  await reencryptLocalMessages(storage, currentDeviceKeyB64, newDeviceKeyB64, log, onProgress, {
+    start: 10,
     end: 85,
   });
 
   reportProgress(onProgress, { percent: 92, stage: 'finalize' });
-  setPin(newPin);
+  setDeviceKey(newDeviceKeyB64);
 
-  // Refresh this device's stored PIN + biometric so silent re-login keeps working.
-  await applyNewPinLocally(newPin, userId, mlsService.getDeviceId(), log);
+  // Refresh this device's stored device key + keystore so silent re-login keeps working.
+  await applyNewDeviceKeyLocally(newDeviceKeyB64, userId, mlsService.getDeviceId(), log);
   reportProgress(onProgress, { percent: 100, stage: 'finalize' });
-  log('[PIN_CHANGE] Done.');
+  log('[DEVICEKEY_CHANGE] Done.');
+}
+
+/**
+ * @deprecated Use {@link applyNewDeviceKeyLocally} instead.
+ */
+export async function applyNewPinLocally(
+  newPin: string,
+  userId: string,
+  deviceId: string,
+  log: (msg: string) => void
+): Promise<void> {
+  return applyNewDeviceKeyLocally(newPin, userId, deviceId, log);
 }

@@ -25,13 +25,14 @@ use crate::state::{AppState, HttpClient, PendingDb};
 // Re-export commands for generate_handler!
 use crate::commands::bootstrap::bootstrap_dead_conversation;
 use crate::commands::mls::{
-    actualiser_cle_keystore, ajouter_membres_bulk, annuler_commit, confirmer_commit, creer_groupe,
-    envoyer_message, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
-    exporter_secret, generer_key_package, generer_key_packages, generer_key_packages_et_persister,
-    initialiser_mls, key_package_a_clef_privee, lister_groupes, obtenir_epoch, oublier_groupe,
-    recevoir_message, recevoir_message_bytes, recevoir_messages_batch,
-    rejoindre_par_commit_externe, retirer_membres, retirer_membres_par_appareil, sauvegarder_mls,
-    sauvegarder_mls_et_persister, supprimer_groupe, trailer_welcome,
+    actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
+    creer_groupe, envoyer_message, envoyer_message_bytes, exporter_group_info,
+    exporter_ratchet_tree, exporter_secret, generer_key_package, generer_key_packages,
+    generer_key_packages_et_persister, initialiser_mls, key_package_a_clef_privee, lister_groupes,
+    obtenir_epoch, oublier_groupe, recevoir_message, recevoir_message_bytes,
+    recevoir_messages_batch, rejoindre_par_commit_externe, retirer_membres,
+    retirer_membres_par_appareil, sauvegarder_mls, sauvegarder_mls_et_persister, supprimer_groupe,
+    trailer_welcome,
 };
 use crate::commands::push::{
     check_push_secret_health, clear_push_context_key, get_fcm_token, get_voip_token,
@@ -305,7 +306,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
     _service: jni::objects::JObject<'a>,
     files_dir: jni::objects::JString<'a>,
     state_bytes: jni::objects::JByteArray<'a>,
-    pin: jni::objects::JString<'a>,
+    key_b64: jni::objects::JString<'a>,
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
@@ -319,7 +320,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
         let state_vec = env
             .convert_byte_array(&state_bytes)
             .map_err(|e| e.to_string())?;
-        let pin_str: String = env.get_string(&pin).map_err(|e| e.to_string())?.into();
+        let key_b64_str: String = env.get_string(&key_b64).map_err(|e| e.to_string())?.into();
         let user_id_str: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
         let device_id_str: String = env
             .get_string(&device_id)
@@ -331,10 +332,10 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeCreat
             .map_err(|e| e.to_string())?
             .into();
 
-        mobile::background::create_welcome_background(
+        mobile::background::create_welcome_background_with_key(
             std::path::Path::new(&files_dir_str),
             &state_vec,
-            &pin_str,
+            &key_b64_str,
             &user_id_str,
             &device_id_str,
             &group_id_str,
@@ -361,7 +362,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
     _service: jni::objects::JObject,
     files_dir: jni::objects::JString,
     state_bytes: jni::objects::JByteArray,
-    pin: jni::objects::JString,
+    key_b64: jni::objects::JString,
     user_id: jni::objects::JString,
     device_id: jni::objects::JString,
     welcome_b64: jni::objects::JString,
@@ -375,7 +376,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
         let state_vec = env
             .convert_byte_array(&state_bytes)
             .map_err(|e| e.to_string())?;
-        let pin_str: String = env.get_string(&pin).map_err(|e| e.to_string())?.into();
+        let key_b64_str: String = env.get_string(&key_b64).map_err(|e| e.to_string())?.into();
         let user_id_str: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
         let device_id_str: String = env
             .get_string(&device_id)
@@ -390,10 +391,10 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeProce
             .map_err(|e| e.to_string())?
             .into();
 
-        mobile::background::process_welcome_background(
+        mobile::background::process_welcome_background_with_key(
             std::path::Path::new(&files_dir_str),
             &state_vec,
-            &pin_str,
+            &key_b64_str,
             &user_id_str,
             &device_id_str,
             &welcome_b64_str,
@@ -480,7 +481,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
     _service: jni::objects::JObject<'a>,
     files_dir: jni::objects::JString<'a>,
     state_bytes: jni::objects::JByteArray<'a>,
-    pin: jni::objects::JString<'a>,
+    key_b64: jni::objects::JString<'a>,
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
     group_id: jni::objects::JString<'a>,
@@ -494,7 +495,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
         let state_vec = env
             .convert_byte_array(&state_bytes)
             .map_err(|e| e.to_string())?;
-        let pin_str: String = env.get_string(&pin).map_err(|e| e.to_string())?.into();
+        let key_b64_str: String = env.get_string(&key_b64).map_err(|e| e.to_string())?.into();
         let user_id_str: String = env.get_string(&user_id).map_err(|e| e.to_string())?.into();
         let device_id_str: String = env
             .get_string(&device_id)
@@ -506,10 +507,10 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
             .map_err(|e| e.to_string())?
             .into();
 
-        mobile::background::send_message_background(
+        mobile::background::send_message_background_with_key(
             std::path::Path::new(&files_dir_str),
             &state_vec,
-            &pin_str,
+            &key_b64_str,
             &user_id_str,
             &device_id_str,
             &group_id_str,
@@ -828,7 +829,7 @@ pub fn run() {
             read_and_clear_pending_call_accept,
             get_voip_token,
             store_channel_key,
-            actualiser_cle_keystore
+            actualiser_cle_keystore_avec_devicekey
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

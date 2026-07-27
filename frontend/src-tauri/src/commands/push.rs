@@ -1,7 +1,6 @@
 //! Commandes Tauri pour le contexte push (FCM, VOIP, cache, outbox mirror).
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use mls_core::keystore::DeviceKeyStore;
 use tauri::Manager;
 
 use crate::keystore_bridge::PluginDeviceKeyStore;
@@ -315,18 +314,38 @@ pub(crate) fn store_push_context(
     push_token: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let _ = pin; // Le PIN n'est plus stocke, garde pour retrocompatibilite de l'API
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
-    // Toujours recuperer la cle du keystore pour que le service
-    // Kotlin puisse dechiffrer les push sans PIN.
+    // Dériver la clé depuis le PIN au lieu d'appeler retrieve_device_key()
+    // (qui déclenche un BiometricPrompt parasite sur Android).
+    // On lit le sel depuis mls.bin (16 premiers octets), ou on génère un sel
+    // aléatoire si mls.bin n'existe pas encore (premier login).
     let alias = format!("mls_device_key_{user_id}_{device_id}");
     let keystore = PluginDeviceKeyStore::new(app.clone());
-    let device_key_b64: String = keystore
-        .retrieve_device_key(&alias)
-        .map(|key| STANDARD.encode(&key))
-        .unwrap_or_default();
+
+    let mls_path = data_dir.join("mls.bin");
+    let salt: [u8; 16] = match std::fs::read(&mls_path) {
+        Ok(blob) if blob.len() >= 16 => {
+            let mut s = [0u8; 16];
+            s.copy_from_slice(&blob[..16]);
+            s
+        }
+        _ => {
+            // Premier login : mls.bin n'existe pas encore, on génère un sel frais.
+            mls_core::security::generate_salt()
+        }
+    };
+
+    // derive_and_store_device_key zeroize le PIN après dérivation.
+    let device_key_b64: String =
+        match mls_core::security::derive_and_store_device_key(pin, &salt, &alias, &keystore) {
+            Ok(key) => STANDARD.encode(&key),
+            Err(e) => {
+                log::warn!("[PushCtx] derive_and_store_device_key failed: {e}");
+                String::new()
+            }
+        };
 
     let json = serde_json::json!({
         "userId": user_id,
