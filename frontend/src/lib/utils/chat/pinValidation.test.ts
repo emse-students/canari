@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { isValidPin, isValidNewPin, MIN_PIN_LENGTH, MAX_PIN_LENGTH } from './pinValidation';
+import { isValidPin, MIN_PIN_LENGTH } from './pinValidation';
 
-describe('isValidPin (unlock path)', () => {
+describe('isValidPin', () => {
   it('accepts a PIN of exactly 4 digits', () => {
     expect(isValidPin('1234')).toBe(true);
   });
@@ -26,9 +26,9 @@ describe('isValidPin (unlock path)', () => {
     expect(isValidPin(' 1234 ')).toBe(true);
   });
 
-  it('stays permissive for legacy PINs the creation policy would now reject', () => {
-    // Longer than MAX_PIN_LENGTH, and alphanumeric: both were allowed before the policy and
-    // must keep unlocking, otherwise their owners lose access to their own messages.
+  it('imposes no upper bound and no character-set restriction', () => {
+    // The device key derives from the exact string typed, so anything the user was ever
+    // allowed to choose must stay enterable at unlock.
     expect(isValidPin('123456789012')).toBe(true);
     expect(isValidPin('correct-horse')).toBe(true);
   });
@@ -37,34 +37,5 @@ describe('isValidPin (unlock path)', () => {
     expect(MIN_PIN_LENGTH).toBe(4);
     expect(isValidPin('1'.repeat(MIN_PIN_LENGTH))).toBe(true);
     expect(isValidPin('1'.repeat(MIN_PIN_LENGTH - 1))).toBe(false);
-  });
-});
-
-describe('isValidNewPin (creation path)', () => {
-  it('accepts the policy bounds', () => {
-    expect(isValidNewPin('1'.repeat(MIN_PIN_LENGTH))).toBe(true);
-    expect(isValidNewPin('1'.repeat(MAX_PIN_LENGTH))).toBe(true);
-  });
-
-  it('rejects a PIN below the minimum', () => {
-    expect(isValidNewPin('1'.repeat(MIN_PIN_LENGTH - 1))).toBe(false);
-  });
-
-  it('rejects a PIN above the maximum', () => {
-    expect(isValidNewPin('1'.repeat(MAX_PIN_LENGTH + 1))).toBe(false);
-  });
-
-  it('rejects non-digit characters', () => {
-    expect(isValidNewPin('12a4')).toBe(false);
-    expect(isValidNewPin('12 34')).toBe(false);
-    expect(isValidNewPin('correct-horse')).toBe(false);
-  });
-
-  it('trims surrounding whitespace before validating', () => {
-    expect(isValidNewPin(' 1234 ')).toBe(true);
-  });
-
-  it('rejects an empty PIN', () => {
-    expect(isValidNewPin('')).toBe(false);
   });
 });

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- PIN policy simplified back to a single rule - at least 4 characters - applied identically on setup, change, recovery and unlock. The 4-to-8-digit creation rule added in v0.11.1 is gone, along with the numpad and input caps it implied
+
 ## [v0.11.1] - 2026-07-27
 
 ### Added

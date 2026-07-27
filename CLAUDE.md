@@ -67,7 +67,7 @@ Legend: \[x\] done+pushed, \[ \] todo, \[~\] in progress.
 - **Device key persistence:** `deviceKeyVault.ts` picks storage via `vaultStore()` keyed on `canari_device_key_persist` (default `sessionStorage`, opt-in `localStorage`); `setDeviceKeyPersistence` wipes BOTH stores before re-saving.
 - **NEVER branch on a login error message.** `onLoginFailed(msg, code)` carries a typed `LoginErrorCode` (`loginErrors.ts`) precisely because the message is localized: a regex over it ships dead in French. Same rule for any future UI branch on an error.
 - **Who owns the keystore key:** `store_push_context` (login) and `IMlsService.changeDeviceKey` (PIN change/recovery) write alias `mls_device_key_{userId}_{deviceId}`. `applyNewDeviceKeyLocally` must NEVER call `BiometricService.disable` - that deletes the entry just written and silently turns biometrics off.
-- **PIN policy is creation-only:** `isValidNewPin` (4-8 digits) guards setup/change; unlock uses the permissive `isValidPin` so pre-policy PINs still open the app. Never tighten the unlock check - it locks existing users out of their own messages.
+- **PIN policy is one rule, everywhere:** `isValidPin` (>= 4 characters, no max, no charset limit) guards setup, change, recovery AND unlock. Never add a stricter creation-only rule: the device key derives from the exact string typed, so a PIN accepted at creation but refused at unlock locks its owner out of their own messages.
 
 #### CROSS-PLATFORM ENHANCEMENTS
 
@@ -114,7 +114,7 @@ breakage was in orchestration. All fixed:
   biometrics and raising a "disable biometric unlock" prompt mid-change. Same path in recovery.
 - PIN sheet hid the fingerprint button after a failed biometric login; `biometricLoginImpl` never
   cleared the session device key, so a retry could reuse a failed key instead of the keystore.
-- PIN policy 4-8 digits on creation paths only (`isValidNewPin`); unlock stays permissive.
+- PIN policy is a single minimum of 4 characters (`isValidPin`) on every path.
 - Enrolment offer is now a bottom sheet (`BiometricEnrollSheet`); the in-app biometric sheet is
   raised from `enrollBiometricImpl` via the `biometricPrompt` store, so the post-login offer and
   the Settings toggle behave identically.

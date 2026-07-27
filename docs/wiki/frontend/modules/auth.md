@@ -61,10 +61,11 @@ domain-separated PBKDF2-SHA256 derivations over the same server-issued salt:
 local messages are AES-256-GCM (`[iv 12 || ct]`). Rotating the PIN re-derives the key and
 re-encrypts both (`utils/chat/pinChange.ts`).
 
-**PIN policy** (`utils/chat/pinValidation.ts`): 4 to 8 digits, enforced by `isValidNewPin` on
-creation paths only (first setup, PIN change). Unlock uses the permissive `isValidPin` so PINs
-created before the policy - longer, or alphanumeric - can still be entered. The recovery modal's
-"new PIN" field is an *existing* account PIN, so it also uses the permissive check.
+**PIN policy** (`utils/chat/pinValidation.ts`): at least 4 characters, no upper bound and no
+character-set restriction, checked by the single `isValidPin` on every path (first setup, PIN
+change, recovery, unlock). The rule is deliberately uniform: the device key derives from the
+exact string typed, so any check a PIN could pass at creation but fail at unlock would lock its
+owner out of their own messages.
 
 ### Where the key lives
 

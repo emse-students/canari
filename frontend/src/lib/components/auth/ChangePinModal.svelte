@@ -3,7 +3,7 @@
   import { LoaderCircle, AlertTriangle, KeyRound } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import type { PinOperationProgress } from '$lib/utils/chat/pinChange';
-  import { isValidPin, isValidNewPin } from '$lib/utils/chat/pinValidation';
+  import { isValidPin } from '$lib/utils/chat/pinValidation';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -98,11 +98,10 @@
       internalError = m.auth_changepin_fill_all();
       return;
     }
-    // 'change' creates a new PIN, so it must satisfy the 4-8 digit policy. 'recover' does NOT:
-    // there the "new" field is the PIN already chosen on another device, which may predate the
-    // policy - validating it strictly would make recovery impossible for those accounts.
-    if (isRecover ? !isValidPin(next) : !isValidNewPin(next)) {
-      internalError = isRecover ? m.auth_changepin_min_length() : m.auth_pin_policy();
+    // Same minimum in both modes. In 'recover' the "new" field is the PIN already chosen on
+    // another device, so it could not take a stricter rule anyway.
+    if (!isValidPin(next)) {
+      internalError = m.auth_changepin_min_length();
       return;
     }
     if (next !== confirm) {

@@ -2164,7 +2164,6 @@
   "auth_no_local_state_recover": "No local state to recover on this device.",
   "auth_login_failed_after_recovery": "Login failed after recovery.",
   "auth_device_key_stale_reenter_pin": "Your saved device key is no longer valid. Enter your PIN to regenerate it.",
-  "auth_pin_policy": "The PIN must be 4 to 8 digits.",
   "auth_biometric_enroll_desc": "Unlock Canari with your fingerprint or Face ID instead of typing your PIN. Your PIN will be erased from this device.",
   "auth_biometric_enroll_confirm_title": "Registering your fingerprint",
   "auth_biometric_enroll_confirm_desc": "Confirm with your fingerprint or Face ID to enable biometric unlock."

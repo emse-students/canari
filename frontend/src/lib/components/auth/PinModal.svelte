@@ -3,7 +3,7 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import { LoaderCircle, Fingerprint, AlertTriangle } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { isValidPin, isValidNewPin, MAX_PIN_LENGTH } from '$lib/utils/chat/pinValidation';
+  import { isValidPin } from '$lib/utils/chat/pinValidation';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -88,10 +88,10 @@
       internalError = m.auth_pin_required();
       return;
     }
-    // Setup applies the 4-8 digit policy; unlock stays permissive so PINs created before the
-    // policy (longer, or alphanumeric) can still be entered. See pinValidation.ts.
-    if (isFirstSetup ? !isValidNewPin(trimmed) : !isValidPin(trimmed)) {
-      internalError = isFirstSetup ? m.auth_pin_policy() : m.auth_pin_min_length();
+    // Same minimum on setup and unlock: see pinValidation.ts for why no stricter rule may
+    // apply to creation alone.
+    if (!isValidPin(trimmed)) {
+      internalError = m.auth_pin_min_length();
       return;
     }
     internalError = '';
@@ -169,9 +169,7 @@
                 internalError = '';
                 if (key === '⌫') {
                   pin = pin.slice(0, -1);
-                } else if (!isFirstSetup || pin.length < MAX_PIN_LENGTH) {
-                  // The cap applies to setup only: a legacy PIN longer than MAX_PIN_LENGTH
-                  // must still be typeable to unlock.
+                } else {
                   pin = pin + key;
                 }
               }}
@@ -207,7 +205,6 @@
           type="password"
           autocomplete={isFirstSetup ? 'new-password' : 'current-password'}
           inputmode={isFirstSetup ? 'numeric' : undefined}
-          maxlength={isFirstSetup ? MAX_PIN_LENGTH : undefined}
           bind:value={pin}
           oninput={() => {
             internalError = '';
