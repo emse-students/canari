@@ -7,9 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- PIN policy: new PINs are 4 to 8 digits, enforced on setup and on PIN change. Unlock stays permissive so PINs created before the policy still work
+- Biometric enrolment is now offered in a bottom sheet after the first PIN entry, and the in-app biometric sheet accompanies the OS prompt during enrolment (from the post-login offer and the Settings toggle alike)
+
 ### Changed
 - Database migrations are now tracked in a `schema_migrations` ledger (filename + checksum) instead of replaying every file on every deploy; one-shot data backfills no longer re-apply and silently revert admin changes
 - Renumbered `007_mls_commit_log.sql` to `012_` (it collided with `007_drop_orphan_columns.sql`)
+- "Stay signed in" now reflects the stored preference instead of always starting checked
+
+### Fixed
+- **Changing the PIN silently disabled biometric unlock**: the local finalisation step deleted the keystore entry that had just been rewritten with the new device key, and raised a confusing "disable biometric unlock" system prompt in the middle of the change. Same path ran during cross-device recovery
+- **The "PIN changed on another device" recovery link never appeared in French**: the branch matched a regex against a localized message. It now uses the machine-readable `LoginErrorCode` already carried by `onLoginFailed`
+- After a failed or cancelled biometric login, the PIN sheet kept hiding the "use fingerprint" button, forcing a PIN entry with no way to retry the prompt
+- Biometric login could silently reuse a device key from a previous failed PIN attempt instead of reading the keystore
+
+### Removed
+- Orphan `showBiometricEnrollPrompt` session state and the deprecated `applyNewPinLocally` helper
 
 ## [v0.11.0] - 2026-07-27
 

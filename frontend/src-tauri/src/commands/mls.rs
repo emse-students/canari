@@ -1,4 +1,4 @@
-//! Commandes Tauri MLS : initialisation, groupes, chiffrement, dechiffrement.
+//! MLS Tauri commands: initialisation, groups, encryption, decryption.
 
 use crate::concurrency::write_mls_state_blob;
 use crate::keystore_bridge::PluginDeviceKeyStore;

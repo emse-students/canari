@@ -43,7 +43,7 @@ describe('runExclusiveForGroup', () => {
     });
 
     await Promise.resolve();
-    // g2 demarre sans attendre g1 (groupes independants).
+    // g2 starts without waiting for g1 (independent groups).
     expect(events).toContain('g2:start');
 
     gate.resolve();

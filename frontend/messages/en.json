@@ -25,11 +25,11 @@
   "auth_pin_use_fingerprint": "Use fingerprint",
   "auth_pin_or_enter": "or enter your PIN",
   "auth_pin_numeric_keypad": "Numeric keypad",
-  "auth_pin_hint_setup_short": "At least 4 digits.",
+  "auth_pin_hint_setup_short": "4 to 8 digits.",
   "auth_pin_hint_returning": "Enter the PIN you chose on your first sign-in.",
   "auth_pin_manual_entry": "Manual entry",
   "auth_pin_label": "PIN code",
-  "auth_pin_hint_setup_long": "At least 4 digits or characters of your choice.",
+  "auth_pin_hint_setup_long": "4 to 8 digits.",
   "auth_pin_verifying": "Verifying…",
   "auth_pin_create": "Create my PIN",
   "auth_pin_unlock": "Unlock",
@@ -2163,5 +2163,9 @@
   "auth_pin_old_incorrect": "The old PIN is incorrect (it does not decrypt this device's state).",
   "auth_no_local_state_recover": "No local state to recover on this device.",
   "auth_login_failed_after_recovery": "Login failed after recovery.",
-  "auth_device_key_stale_reenter_pin": "Your saved device key is no longer valid. Enter your PIN to regenerate it."
+  "auth_device_key_stale_reenter_pin": "Your saved device key is no longer valid. Enter your PIN to regenerate it.",
+  "auth_pin_policy": "The PIN must be 4 to 8 digits.",
+  "auth_biometric_enroll_desc": "Unlock Canari with your fingerprint or Face ID instead of typing your PIN. Your PIN will be erased from this device.",
+  "auth_biometric_enroll_confirm_title": "Registering your fingerprint",
+  "auth_biometric_enroll_confirm_desc": "Confirm with your fingerprint or Face ID to enable biometric unlock."
 }

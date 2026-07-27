@@ -3,7 +3,7 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import { LoaderCircle, Fingerprint, AlertTriangle } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { isValidPin } from '$lib/utils/chat/pinValidation';
+  import { isValidPin, isValidNewPin, MAX_PIN_LENGTH } from '$lib/utils/chat/pinValidation';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -19,8 +19,8 @@
     /** Whether to render the "stay signed in on this device" opt-in checkbox. */
     showStaySignedIn?: boolean;
     /**
-     * Two-way bound state of the "stay signed in" checkbox. When true, the caller
-     * persists the PIN vault across browser restarts (see pinVault.setPinPersistence).
+     * Two-way bound state of the "stay signed in" checkbox. When true, the caller persists
+     * the device key vault across restarts (see `deviceKeyVault.setDeviceKeyPersistence`).
      */
     staySignedIn?: boolean;
     /** Error message set by the parent (e.g. wrong PIN); displayed below the input. */
@@ -88,8 +88,10 @@
       internalError = m.auth_pin_required();
       return;
     }
-    if (!isValidPin(trimmed)) {
-      internalError = m.auth_pin_min_length();
+    // Setup applies the 4-8 digit policy; unlock stays permissive so PINs created before the
+    // policy (longer, or alphanumeric) can still be entered. See pinValidation.ts.
+    if (isFirstSetup ? !isValidNewPin(trimmed) : !isValidPin(trimmed)) {
+      internalError = isFirstSetup ? m.auth_pin_policy() : m.auth_pin_min_length();
       return;
     }
     internalError = '';
@@ -167,7 +169,9 @@
                 internalError = '';
                 if (key === '⌫') {
                   pin = pin.slice(0, -1);
-                } else {
+                } else if (!isFirstSetup || pin.length < MAX_PIN_LENGTH) {
+                  // The cap applies to setup only: a legacy PIN longer than MAX_PIN_LENGTH
+                  // must still be typeable to unlock.
                   pin = pin + key;
                 }
               }}
@@ -202,6 +206,8 @@
           id="encryption-pin"
           type="password"
           autocomplete={isFirstSetup ? 'new-password' : 'current-password'}
+          inputmode={isFirstSetup ? 'numeric' : undefined}
+          maxlength={isFirstSetup ? MAX_PIN_LENGTH : undefined}
           bind:value={pin}
           oninput={() => {
             internalError = '';

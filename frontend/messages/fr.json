@@ -25,11 +25,11 @@
   "auth_pin_use_fingerprint": "Utiliser l'empreinte digitale",
   "auth_pin_or_enter": "ou entrez votre PIN",
   "auth_pin_numeric_keypad": "Clavier numérique",
-  "auth_pin_hint_setup_short": "Au moins 4 chiffres.",
+  "auth_pin_hint_setup_short": "4 à 8 chiffres.",
   "auth_pin_hint_returning": "Entrez le PIN choisi lors de votre première connexion.",
   "auth_pin_manual_entry": "Saisie manuelle",
   "auth_pin_label": "Code PIN",
-  "auth_pin_hint_setup_long": "Au moins 4 chiffres ou caractères de votre choix.",
+  "auth_pin_hint_setup_long": "4 à 8 chiffres.",
   "auth_pin_verifying": "Vérification…",
   "auth_pin_create": "Créer mon PIN",
   "auth_pin_unlock": "Déverrouiller",
@@ -2163,5 +2163,9 @@
   "auth_pin_old_incorrect": "L'ancien PIN est incorrect (il ne déchiffre pas l'état de cet appareil).",
   "auth_no_local_state_recover": "Aucun état local à récupérer sur cet appareil.",
   "auth_login_failed_after_recovery": "Échec de la connexion après récupération.",
-  "auth_device_key_stale_reenter_pin": "Votre clé d'appareil enregistrée n'est plus valide. Entrez votre PIN pour la régénérer."
+  "auth_device_key_stale_reenter_pin": "Votre clé d'appareil enregistrée n'est plus valide. Entrez votre PIN pour la régénérer.",
+  "auth_pin_policy": "Le code doit comporter 4 à 8 chiffres.",
+  "auth_biometric_enroll_desc": "Déverrouillez Canari avec votre empreinte ou Face ID au lieu de saisir votre code. Votre PIN sera effacé de cet appareil.",
+  "auth_biometric_enroll_confirm_title": "Enregistrement de l'empreinte",
+  "auth_biometric_enroll_confirm_desc": "Confirmez avec votre empreinte ou Face ID pour activer le déverrouillage biométrique."
 }

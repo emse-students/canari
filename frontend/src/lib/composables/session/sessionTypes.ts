@@ -96,7 +96,7 @@ export interface SessionContext {
   setStorage(v: IStorage | null): void;
   getHistoryBaseUrl(): string;
 
-  // ── Drapeaux ───────────────────────────────────────────────────────────────
+  // ── Flags ──────────────────────────────────────────────────────────────────
   isLoggedIn(): boolean;
   setIsLoggedIn(v: boolean): void;
   isWsConnected(): boolean;
@@ -130,10 +130,7 @@ export interface SessionContext {
   setLastCommit(v: string): void;
   setLastWelcome(v: string): void;
 
-  // ── Biometrics ────────────────────────────────────────────────────────────
-  setShowBiometricEnrollPrompt(v: boolean): void;
-
-  // ── Erreurs MLS ────────────────────────────────────────────────────────────
+  // ── MLS errors ─────────────────────────────────────────────────────────────
   setMlsFatalError(v: 'oom' | 'private_mode' | 'keystore_lost' | null): void;
 
   /**
@@ -157,7 +154,7 @@ export interface SessionContext {
   /** Callback for the tab-leader promotion -> WebSocket reconnection. */
   setTabLeaderSessionCb(cb: ChatSessionCallbacks | null): void;
 
-  // ── Constantes de reconnexion ──────────────────────────────────────────────
+  // ── Reconnection constants ─────────────────────────────────────────────────
   readonly RECONNECT_DELAYS: number[];
   readonly MAX_RECONNECT_ATTEMPTS: number;
 }

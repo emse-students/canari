@@ -63,7 +63,6 @@ export function useChatSession() {
   // ── Session status ────────────────────────────────────────────────────────
   let isLoggedIn = $state(false);
   let isWsConnected = $state(false);
-  let showBiometricEnrollPrompt = $state(false);
 
   // ── Services ──────────────────────────────────────────────────────────────
   let mls: IMlsService | null = $state(null);
@@ -136,7 +135,7 @@ export function useChatSession() {
     return mls;
   }
 
-  // ── Construction du SessionContext ────────────────────────────────────────
+  // ── SessionContext construction ───────────────────────────────────────────
 
   const ctx: SessionContext = {
     // Identity
@@ -173,7 +172,7 @@ export function useChatSession() {
     },
     getHistoryBaseUrl: () => historyBaseUrl,
 
-    // Drapeaux
+    // Flags
     isLoggedIn: () => isLoggedIn,
     setIsLoggedIn: (v) => {
       isLoggedIn = v;
@@ -203,7 +202,7 @@ export function useChatSession() {
       isMessagingInitializing = v;
     },
 
-    // Reconnexion
+    // Reconnection
     getReconnectAttempts: () => reconnectAttempts,
     setReconnectAttempts: (v) => {
       reconnectAttempts = v;
@@ -231,12 +230,7 @@ export function useChatSession() {
       lastWelcome = v;
     },
 
-    // Biometrics
-    setShowBiometricEnrollPrompt: (v) => {
-      showBiometricEnrollPrompt = v;
-    },
-
-    // Erreurs MLS
+    // MLS errors
     setMlsFatalError: (v) => {
       mlsFatalError = v;
     },
@@ -358,13 +352,6 @@ export function useChatSession() {
       if (isTabLeaderState) return;
       requestLeadershipTakeover();
     },
-    /** True when the biometric enrolment banner should be shown (Tauri only). */
-    get showBiometricEnrollPrompt() {
-      return showBiometricEnrollPrompt;
-    },
-    set showBiometricEnrollPrompt(v: boolean) {
-      showBiometricEnrollPrompt = v;
-    },
     /** Active IndexedDB storage instance (null before login). */
     get storage() {
       return storage;
@@ -449,11 +436,11 @@ export function useChatSession() {
     biometricLogin: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       biometricLoginImpl(ctx, cb),
     /** Saves the PIN to the hardware keystore and clears it from memory. */
-    enrollBiometric: () => enrollBiometricImpl(ctx),
+    enrollBiometric: () => enrollBiometricImpl(),
     /** Removes the biometric keystore secret and restores the PIN to the session vault. */
     disableBiometric: () => disableBiometricImpl(ctx),
     /** Persists the "dismissed" flag and hides the biometric enrolment banner. */
-    dismissBiometricPrompt: () => dismissBiometricPromptImpl(ctx),
+    dismissBiometricPrompt: () => dismissBiometricPromptImpl(),
     /** Clears session state and redirects to /login. */
     logout: (cb: import('./session/sessionTypes').ChatSessionCallbacks) => logoutImpl(ctx, cb),
     /** Pauses WebSocket and clears background timers when the app is backgrounded. */

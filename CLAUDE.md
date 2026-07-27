@@ -64,8 +64,10 @@ Legend: \[x\] done+pushed, \[ \] todo, \[~\] in progress.
 - **CI signing:** Two NAMED provisioning profiles matching `PROVISIONING_PROFILE_SPECIFIER` exactly (`Canari` app + `CanariNotifications` NSE), team "Les Rootz" `4CLNB8SR6L`, profiles expire 2027-07-11.
 - **Version bump:** `scripts/bump-app-version.sh` must patch NSE's `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in pbxproj. `bump-version.yml` stages an EXPLICIT `git add` list - any new file the bump script patches must be added there.
 - **Store publish:** iOS `altool` can exit 0 while output says `UPLOAD FAILED` - workflow greps transcript for failure markers. Android Play API rejects `changesNotSentForReview` post-launch (flag must stay absent). Post-release CD: `workflow_run` `branches` filter silently drops release-triggered workflows - never add a branches filter to a workflow_run chained off a release-triggered workflow.
-- **PIN persistence:** `pinVault.ts` picks storage via `vaultStore()` keyed on `canari_pin_persist` flag (default `sessionStorage`, opt-in `localStorage`); `setPinPersistence` wipes BOTH stores before re-saving.
-- **Stale-PIN recovery regex:** recovery-detection regexes in `sessionAuth.ts`/`ChatBackgroundService.svelte` MUST match actual thrown text - a never-matching regex ships unnoticed.
+- **Device key persistence:** `deviceKeyVault.ts` picks storage via `vaultStore()` keyed on `canari_device_key_persist` (default `sessionStorage`, opt-in `localStorage`); `setDeviceKeyPersistence` wipes BOTH stores before re-saving.
+- **NEVER branch on a login error message.** `onLoginFailed(msg, code)` carries a typed `LoginErrorCode` (`loginErrors.ts`) precisely because the message is localized: a regex over it ships dead in French. Same rule for any future UI branch on an error.
+- **Who owns the keystore key:** `store_push_context` (login) and `IMlsService.changeDeviceKey` (PIN change/recovery) write alias `mls_device_key_{userId}_{deviceId}`. `applyNewDeviceKeyLocally` must NEVER call `BiometricService.disable` - that deletes the entry just written and silently turns biometrics off.
+- **PIN policy is creation-only:** `isValidNewPin` (4-8 digits) guards setup/change; unlock uses the permissive `isValidPin` so pre-policy PINs still open the app. Never tighten the unlock check - it locks existing users out of their own messages.
 
 #### CROSS-PLATFORM ENHANCEMENTS
 
@@ -91,43 +93,37 @@ Shipped:
 Todo:
 - \[x\] **WP-Calls-UX call UI overhaul** (P1-P9 implemented; svelte-check 0/0, oxlint 0/0, tests 8/8).
 
-#### POST-v0.11.0 REMEDIATION (audit v0.10.4 -> v0.11.0) - COMPLETE
+#### POST-v0.11.0 REMEDIATION - COMPLETE
 
-All 15 audit gaps (T1-T15) + T16 + B1 (i18n parity) closed and gate-verified. Only the two
-`[device]` checks below remain. Agent delegation log + verification verdicts: `AGENTS.md`.
+All 15 audit gaps (T1-T15) + T16 + i18n parity closed and gate-verified across 5 lots (mobile
+background push, frontend key chain, prod migration ledger, hygiene, docs). Delegation log and
+verification verdicts: `AGENTS.md`. Durable lessons folded into the gotchas above.
 
-- \[x\] **Lot 1 - mobile background push (BLOCKER)** - commit `6e6a7e1e`
-  - T1/T2/T10a done: the three broken paths now go through `MlsManager::load_with_key` via the new `load_manager_with_key_b64` / `load_manager_for_push` helpers in `mobile/background.rs`; scratch comments removed; `pin`->`device_key_b64` in `ios_ffi.rs` + both iOS C headers; French rustdoc/logs translated; `AddMembersBulkResult`/`AddMemberResult` made `pub`. clippy 0 warnings on src-tauri/mls-core/mls-wasm, svelte-check 0/0.
-  - \[ \] [device] verify a decrypted notification on Android AND iOS - this is the whole point of the fix.
-- \[x\] **Lot 2 - frontend key chain (BLOCKER, bigger than the audit said)** - commit `529c924d`
-  - T4 root cause was worse than "derivation missing": EVERY consumer fell back to the raw PIN, which can never be 32 bytes of base64 -> the entire at-rest chain failed closed on web AND native. New `$lib/crypto/deviceKey.ts` (PBKDF2-SHA256 310k, salt `canari-device-key-v1|{serverSalt}|{userId}`) is now the SINGLE source of the key. WebCrypto only - browser/desktop/mobile derive identical keys, no WASM or FFI on the login path. Domain-separated from `computePinVerifier` (which is sent to the server), asserted by a test.
-  - Three MORE shipped defects found and fixed here: (a) `store_push_context` declared `pin` while all 3 call sites passed `deviceKeyB64` -> invoke failed on a missing arg EVERY time, swallowed by `.catch(() => {})`; it also read `mls.bin[..16]` as an Argon2id salt that no longer exists and stored the resulting garbage key in the keystore. Lot 1 could not have worked without this. (b) the change-PIN flow never called `POST mls/security/pin-change` - endpoint existed with ZERO callers, so the account verifier was never rotated. (c) `disableBiometricImpl` invoked `actualiser_cle_keystore`, a command that no longer exists.
-  - T3, T5, T10b, T12 done. T5: `recharger_mls_au_resume` was already correct and key-based in Rust - only the TS caller had been deleted.
-  - Recovery detection no longer regexes error text: typed `LoginFailure` codes in `session/loginErrors.ts`. **Never reintroduce message-matching here** - localizing a string silently disabled the branch, which is exactly how this broke.
-  - `pinVault.ts` -> `deviceKeyVault.ts`; `db/salt.ts`, `derive_and_store_device_key`, legacy `encrypt_mls_state_blob` deleted.
-  - \[ \] [device] a PIN login now re-derives the key - verify login, PIN change, and biometric enable/disable on a real device.
-- \[x\] **Lot 3 - prod & migrations**
-  - T6 premise was WRONG: prod is NOT hand-applied. `cd.yml` "Run database migrations" has always collected `apps/*/src/migrations/*.sql`, sorted by path, and piped each into the postgres container with `ON_ERROR_STOP=1`. Verified against the live 2026-07-27 run: all 41 files applied green.
-  - Prod schema verified clean: `channels."writePolicy"` present, `channel_permission_overrides` + `usePermissionOverrides` gone, 0 legacy permission keys left in `channel_roles`. A full entity-vs-prod diff (46 entities / 440 columns, script in scratchpad) found ZERO drift.
-  - Real defect found instead: **no ledger meant every file replayed on every deploy**, so one-shot data backfills kept re-applying - 004 re-granted `MANAGE_STRIPE_CONNECT`, 016 re-enabled `cotisationEnabled`. Both are no-ops on today's data (verified, 0 rows), but any admin revoking either would have seen it silently restored at the next deploy. Fixed with a `schema_migrations` ledger (filename PK + sha256 + applied_at); the first deploy after this applies all 41 once more (idempotent) and records them.
-  - Editing an applied migration now only WARNS (checksum mismatch) - prod keeps the version it ran. Write a new file instead.
-  - `007_mls_commit_log.sql` -> `012_` (duplicate number with `007_drop_orphan_columns.sql`); French headers in it and in `030` translated. Numbering gaps (023, 026-029) left alone: harmless, documented.
-  - Migration contract documented in `docs/wiki/infrastructure/databases.md` (+ real prod table names, the old list was wrong) and `infrastructure/MIGRATION.md`.
-  - Files are a PATCH SET, not a schema: migration 001 opens with `ALTER TABLE users`. A fresh prod DB comes from a backup restore, never from replaying migrations.
-- \[x\] **Lot 4 - hygiene** (T10b/T12 closed by Lot 2)
-  - **The audit undercounted T11 twice over.** First by an order of magnitude (426 line-comment matches / 74 files, not ~10). Then the sweep itself was incomplete: it only searched `//` comments, leaving ~250 French lines in JSDoc/rustdoc **block** comments across 67 files - whole files (`epochGapRegistry.ts`, `mlsDecryptError.ts`, `groupLifecycle.ts`) were French end to end. Both halves are now done; recipes live in `AGENTS.md`.
-  - T13 DONE: `encryption.ts` still said "Argon2id" (Lot 2 made it PBKDF2-SHA256); `biometric.ts` x3 `derive_and_store_device_key` -> `store_push_context`; `mls.rs`, `same_epoch_ratchet.rs`, `mlsDeliveryApi.ts` + `locks.controller.ts` ("persist Argon2 (~5-8 s)" -> "state persist").
-  - i18n gap found while translating: `biometric.ts` passed **hardcoded French** to `authenticate()` (the OS biometric prompt, user-visible) - now `m.auth_biometric_prompt_enable()` / `m.auth_biometric_prompt_disable()`.
-  - T14 DONE: legacy `encrypt_with_pin`/`decrypt_with_pin` reachable only from `backup.ts:174` (v1 branch); header says so.
-  - B1 DONE: `fr.json` / `en.json` both 2165 keys, zero orphans in either direction.
-- \[x\] **T16 - `pin` renamed to `deviceKeyB64` across the MLS client** (130 occurrences / 37 files)
-  - Legitimate PIN uses deliberately preserved: `PinModal`, `computePinVerifier`, `pinChange.ts`, `canari_pin_persist`, `isValidPin`, WASM `encrypt_with_pin`/`decrypt_with_pin`, `ctx.getPin()` in `sessionAuth.ts` (verifier path).
-  - **Real bugs it exposed:** `sessionConnection.ts` x2 and `sessionDevTools.ts` passed `ctx.getPin()` where the device key was required. Plus **5 test fixtures** left on `pin:` fed `undefined` into production code - `setupMessageHandler.test.ts` was RED. Test fixtures use `as unknown as X` casts, so svelte-check cannot catch this: **after any dep-shape rename, run `bun run test`, not just `check`.**
-- \[x\] **Lot 5 - docs & state**
-  - T7: `[Unreleased]` translated AND cut into v0.10.10 - v0.11.0 sections, attributed from tag ranges. `SECURITY.md` (shipped v0.1.0, 2026-03-08) moved out of `[Unreleased]` into the v0.10.9 catch-all.
-  - T9: `plans/` and `docs/strategy/` deleted.
-  - T15: ~15 non-descriptive commits - NOT rebasable (on `main`, tagged, pushed). Forward fix only: strengthen the commit-msg hook.
-- Fixed in passing: `apps/social-service` had 19 files failing `oxfmt --check` on HEAD (pre-existing, double-quoted strings). Formatted; 124/124 tests still pass.
+- \[ \] [device] decrypted push notification on Android AND iOS.
+- \[ \] [device] login, PIN change, biometric enable/disable on real hardware.
+
+#### MOBILE AUTH CHAIN AUDIT (2026-07-27) - COMPLETE
+
+Audited the mobile login/PIN/biometric chain against the intended spec after the deviceKey
+migrations. **The crypto chain survived intact** - PBKDF2 derivation, ChaCha20-Poly1305 `mls.bin`,
+AES-GCM messages, keystore alias convention and `pin-change` wiring all self-consistent. The
+breakage was in orchestration. All fixed:
+
+- Recovery link was dead in French (regex over a localized message) -> typed `LoginErrorCode`.
+- PIN change deleted the keystore key `changeDeviceKey` had just written, silently disabling
+  biometrics and raising a "disable biometric unlock" prompt mid-change. Same path in recovery.
+- PIN sheet hid the fingerprint button after a failed biometric login; `biometricLoginImpl` never
+  cleared the session device key, so a retry could reuse a failed key instead of the keystore.
+- PIN policy 4-8 digits on creation paths only (`isValidNewPin`); unlock stays permissive.
+- Enrolment offer is now a bottom sheet (`BiometricEnrollSheet`); the in-app biometric sheet is
+  raised from `enrollBiometricImpl` via the `biometricPrompt` store, so the post-login offer and
+  the Settings toggle behave identically.
+- Dead code removed (`showBiometricEnrollPrompt`, `applyNewPinLocally`); remaining French comments
+  swept; `docs/wiki/frontend/modules/auth.md` rewritten with the full chain.
+
+Known and deliberate: `push_context.json` keeps `deviceKeyB64` in cleartext app data after
+enrolment - background FCM decryption needs it. Enabling biometrics changes the unlock method,
+not where that copy lives.
 
 #### MULTI-TIER COTISATIONS (Cercle) - COMPLETE
 

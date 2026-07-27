@@ -967,10 +967,14 @@ export async function biometricLoginImpl(
     }
     cb.log(`[BIOMETRIC] Authenticating for userId=${savedUser.slice(0, 8)} via device keystore...`);
     ctx.setUserId(savedUser);
-    // Pass an empty PIN — loginImpl will skip the server-side pin-check and
-    // mlsService.init() will call load_encrypted_with_keystore(pin: None),
+    // Pass an empty PIN AND an empty device key — loginImpl selects its mode from that pair,
+    // and only (deviceKey === '' && pin === '') means biometric. Clearing the device key is
+    // required, not cosmetic: after a failed PIN attempt the session still holds the derived
+    // key, which would put loginImpl in vault mode and silently retry that same key instead
+    // of reading the keystore. loginImpl then calls load_encrypted_with_keystore(key: None),
     // which triggers retrieve_device_key → single BiometricPrompt.
     ctx.setPin('');
+    ctx.setDeviceKey('');
 
     // P2-B: never swallow the authentication error. If the user cancels the BiometricPrompt
     // the error must reach startLoginFlow, which then shows the PinModal (P2-A). Rust
@@ -1134,7 +1138,7 @@ export async function recoverPinImpl(
   cb.log('[PIN_RECOVER] Local messages re-encrypted with the new device key.');
 
   onProgress?.({ percent: 88, stage: 'finalize' });
-  await applyNewDeviceKeyLocally(newDeviceKeyB64, userId, mls.getDeviceId(), cb.log);
+  await applyNewDeviceKeyLocally(newDeviceKeyB64, cb.log);
   ctx.setPin(newPin);
   ctx.setDeviceKey(newDeviceKeyB64);
 
@@ -1195,7 +1199,6 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   cb.setSelectedContact(null);
   ctx.setStorage(null);
   ctx.setAuthToken('');
-  ctx.setShowBiometricEnrollPrompt(false);
   setCallSystemMessageContext(null);
   ctx.getCallService()?.setChatNotifier(null);
   resetSiblingCallWarning();

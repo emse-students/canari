@@ -28,7 +28,7 @@ export function truncateLogIds(text: string): string {
  * Idempotent: wraps the console only once regardless of how many times it is called.
  *
  * Covers every web log from a single entry point - `[API]`, `[WS]`,
- * `appendLog`, `[RUST::INFO]`… - sans toucher aux dizaines de sites d'appel.
+ * `appendLog`, `[RUST::INFO]`… - without touching the dozens of call sites.
  */
 export function installConsoleIdTruncation(): void {
   if (installed) return;

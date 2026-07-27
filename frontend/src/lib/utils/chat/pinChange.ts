@@ -15,7 +15,7 @@
  */
 import { decryptData } from '$lib/encryption';
 import { getStorage, type IStorage, type StoredMessage } from '$lib/db';
-import { saveDeviceKey } from '$lib/utils/deviceKeyVault';
+import { clearDeviceKeyAndWrapKey, saveDeviceKey } from '$lib/utils/deviceKeyVault';
 import { BiometricService } from '$lib/services/biometric';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { m } from '$lib/paraglide/messages';
@@ -81,7 +81,7 @@ export async function reencryptLocalMessages(
   const { start, end } = percentRange;
   const span = end - start;
 
-  log(`[DEVICEKEY_CHANGE] Re-chiffrement de ${rows.length} message(s) local(aux)…`);
+  log(`[DEVICEKEY_CHANGE] Re-encrypting ${rows.length} local message(s)…`);
 
   const decrypted: StoredMessage[] = [];
   for (let i = 0; i < rows.length; i++) {
@@ -161,24 +161,26 @@ export async function reencryptLocalMessages(
 }
 
 /**
- * Refreshes this device's locally stored device key after the account PIN changed:
- * updates the session device key vault and, on Tauri, stores the new key in the
- * keystore so biometric login keeps working. Shared by both the change and recovery flows.
+ * Points this device's local unlock path at the new device key after the account PIN changed.
+ * Shared by both the change and recovery flows.
+ *
+ * The keystore entry is NOT touched here: {@link IMlsService.changeDeviceKey} has already
+ * overwritten it (and `push_context.json`) with the new key. Deleting it at this point would
+ * destroy the entry that was just written and turn biometric unlock off behind the user's back.
  */
 export async function applyNewDeviceKeyLocally(
   newDeviceKeyB64: string,
-  userId: string,
-  deviceId: string,
   log: (msg: string) => void
 ): Promise<void> {
-  await saveDeviceKey(newDeviceKeyB64).catch(() => {});
   if (isTauriRuntime() && (await BiometricService.isConfigured().catch(() => false))) {
-    const alias = `mls_device_key_${userId}_${deviceId}`;
-    // Delete the old keystore entry; the new device key will be stored by
-    // actualiser_cle_keystore_avec_devicekey called by the caller.
-    await BiometricService.disable(alias).catch(() => {});
-    log('[DEVICEKEY] Device key changed — old keystore key deleted.');
+    // Biometrics on: the keystore is the source of truth. Keep the vault empty so the next
+    // launch still takes the biometric path rather than a silent vault login.
+    clearDeviceKeyAndWrapKey();
+    log('[DEVICEKEY] New device key kept in the keystore - biometric unlock preserved.');
+    return;
   }
+  await saveDeviceKey(newDeviceKeyB64).catch(() => {});
+  log('[DEVICEKEY] New device key saved to the local vault.');
 }
 
 export interface PinChangeOptions {
@@ -227,20 +229,8 @@ export async function performPinChange(
   reportProgress(onProgress, { percent: 92, stage: 'finalize' });
   setDeviceKey(newDeviceKeyB64);
 
-  // Refresh this device's stored device key + keystore so silent re-login keeps working.
-  await applyNewDeviceKeyLocally(newDeviceKeyB64, userId, mlsService.getDeviceId(), log);
+  // Point this device's local unlock path at the new key so re-login keeps working.
+  await applyNewDeviceKeyLocally(newDeviceKeyB64, log);
   reportProgress(onProgress, { percent: 100, stage: 'finalize' });
   log('[DEVICEKEY_CHANGE] Done.');
-}
-
-/**
- * @deprecated Use {@link applyNewDeviceKeyLocally} instead.
- */
-export async function applyNewPinLocally(
-  newPin: string,
-  userId: string,
-  deviceId: string,
-  log: (msg: string) => void
-): Promise<void> {
-  return applyNewDeviceKeyLocally(newPin, userId, deviceId, log);
 }

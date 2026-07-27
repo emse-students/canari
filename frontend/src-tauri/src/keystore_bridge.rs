@@ -1,4 +1,4 @@
-//! Bridge Rust → Keystore natif (Android KeyStore / iOS Keychain).
+//! Rust bridge to the native keystore (Android KeyStore / iOS Keychain).
 //!
 //! Implements [`mls_core::keystore::DeviceKeyStore`] by delegating to the
 //! Tauri keystore plugin, which in turn calls the native Kotlin/Swift

@@ -11,6 +11,7 @@ import {
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showToast } from '$lib/stores/toast.svelte';
+import { biometricPrompt } from '$lib/stores/biometricPrompt.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { SessionContext } from './sessionTypes';
 
@@ -48,8 +49,7 @@ export async function isBiometricPromptDismissed(): Promise<boolean> {
  * Hides the biometric enrolment banner and persists a "dismissed" flag both in
  * localStorage and in the Tauri native store (if running on Tauri).
  */
-export async function dismissBiometricPromptImpl(ctx: SessionContext): Promise<void> {
-  ctx.setShowBiometricEnrollPrompt(false);
+export async function dismissBiometricPromptImpl(): Promise<void> {
   localStorage.setItem(BIOMETRIC_DISMISSED_KEY, 'true');
   if (isTauriRuntime()) {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -65,10 +65,18 @@ export async function dismissBiometricPromptImpl(ctx: SessionContext): Promise<v
  * mark the flag and clear the session device key so future logins go through the biometric
  * path (`retrieve_device_key` behind a single BiometricPrompt).
  */
-export async function enrollBiometricImpl(ctx: SessionContext): Promise<void> {
+export async function enrollBiometricImpl(): Promise<void> {
   appendLog('[BIOMETRIC] Biometric enrollment in progress…');
   try {
-    const result = await BiometricService.enableBiometric();
+    // Raise the in-app sheet alongside the OS prompt, from here rather than from each caller,
+    // so the post-login offer and the Settings toggle behave identically.
+    biometricPrompt.openEnroll();
+    let result: Awaited<ReturnType<typeof BiometricService.enableBiometric>>;
+    try {
+      result = await BiometricService.enableBiometric();
+    } finally {
+      biometricPrompt.close();
+    }
     if (!result.enrolled) {
       appendLog('[BIOMETRIC] No biometric enrolled on device — falling back to PIN.');
       showToast(m.auth_biometric_no_biometric_enrolled(), 'info');
@@ -85,7 +93,6 @@ export async function enrollBiometricImpl(ctx: SessionContext): Promise<void> {
     // Deliberately NOT calling clear_push_context_key: the keystore key stays valid, only the
     // unlock method changes (fingerprint instead of PIN). deviceKeyB64 in push_context.json
     // must stay readable or background FCM decryption breaks.
-    ctx.setShowBiometricEnrollPrompt(false);
     localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);
     appendLog('[BIOMETRIC] Enrollment OK - device key cleared from session (hardware keystore)');
   } catch (e) {
