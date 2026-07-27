@@ -483,7 +483,7 @@ export class WebMlsService extends BaseMlsService {
               `[WS RCV] proto reçu mais messageCallback non initialisé. Message ignoré.`
             );
           }
-          // Pas de proto → event non-MLS (post, channel), ignoré silencieusement.
+          // No proto → non-MLS event (post, channel), silently ignored.
         } catch (e) {
           console.error('[WS RCV] Failed to process WebSocket message:', e);
         }

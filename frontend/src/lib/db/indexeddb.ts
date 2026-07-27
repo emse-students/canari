@@ -191,7 +191,7 @@ export class IndexedDbStorage implements IStorage {
       const tx = db.transaction('conversations', 'readonly');
       const req = tx.objectStore('conversations').getAll();
       req.onsuccess = () => {
-        // Normalise les anciennes lignes (champ `isReady` avant l'introduction de `lifecycle`).
+        // Normalize legacy rows (the `isReady` field, from before `lifecycle` was introduced).
         const rows = (req.result as Array<ConversationMeta & { isReady?: boolean }>).map((r) => ({
           ...r,
           lifecycle: normalizeConversationLifecycle(r.lifecycle, r.isReady),

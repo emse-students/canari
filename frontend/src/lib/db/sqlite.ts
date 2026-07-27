@@ -92,15 +92,15 @@ export class SqliteStorage implements IStorage {
     const Database = (await import('@tauri-apps/plugin-sql')).default;
     this.db = await Database.load(this.dbPath);
 
-    // WAL mode : lectures concurrentes non bloquantes, critique sur mobile
+    // WAL mode: non-blocking concurrent reads, critical on mobile.
     await this.db.execute('PRAGMA journal_mode=WAL');
 
-    // busy_timeout : si une AUTRE connexion tient le verrou d'ecriture (moteur natif
-    // background/FCM, WorkManager, ou checkpoint WAL), attendre jusqu'a 5s au lieu d'echouer
-    // IMMEDIATEMENT en "database is locked" (SQLITE_BUSY). Sans ca, un replay d'historique qui
-    // tombe sur un verrou perd les messages : le ratchet MLS a deja avance (session.finish), donc
-    // une nouvelle tentative ne peut plus les dechiffrer -> messages definitivement invisibles
-    // cote destinataire (symptome observe : "Echec replay historique … database is locked").
+    // busy_timeout: if ANOTHER connection holds the write lock (native background/FCM engine,
+    // WorkManager, or a WAL checkpoint), wait up to 5s instead of failing IMMEDIATELY with
+    // "database is locked" (SQLITE_BUSY). Without it, a history replay that hits a lock loses the
+    // messages: the MLS ratchet has already advanced (session.finish), so a retry can no longer
+    // decrypt them -> messages permanently invisible on the recipient side (observed symptom:
+    // "Echec replay historique ... database is locked").
     await this.db.execute('PRAGMA busy_timeout=5000');
 
     // Schema: conversations carry their lifecycle state (active|pending|removed).
@@ -114,7 +114,7 @@ export class SqliteStorage implements IStorage {
             )
         `);
 
-    // Colonnes TEXT (base64) pour iv/cipher_text.
+    // TEXT (base64) columns for iv/cipher_text.
     // The old schema used BLOB columns, which caused the Tauri SQL plugin to
     // serialise Uint8Array values as JSON text "[1,2,3]" → unreadable after restart.
     // No salt column — the deviceKeyB64 is imported directly as an AES-256-GCM key
@@ -134,8 +134,9 @@ export class SqliteStorage implements IStorage {
       'CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id)'
     );
 
-    // Outbox : messages sortants en file. Colonnes claires pour le tri/re-key sans le PIN ;
-    // la charge utile sensible (text/replyTo/media) est chiffree dans cipher_text (base64 TEXT).
+    // Outbox: queued outgoing messages. Cleartext columns so sorting/re-keying works without the
+    // device key; the sensitive payload (text/replyTo/media) is encrypted in cipher_text
+    // (base64 TEXT).
     await this.db.execute(`
             CREATE TABLE IF NOT EXISTS outbox (
                 id              TEXT PRIMARY KEY,

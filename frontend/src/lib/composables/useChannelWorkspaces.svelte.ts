@@ -549,7 +549,7 @@ export function useChannelWorkspaces() {
             );
             await mlsService.sendMessage(directConvo[1].id, controlMsg);
 
-            // Envoyer un message channel_invitation visible dans la conversation DM
+            // Send a channel_invitation message, visible in the DM conversation
             const inviterId = currentUserId();
             if (inviterId) {
               const getName = await resolveDisplayNames([memberId, inviterId]);
@@ -586,7 +586,7 @@ export function useChannelWorkspaces() {
         }
       }
 
-      // Envoyer un message système chiffré dans le canal pour notifier les membres
+      // Send an encrypted system message into the channel to notify its members
       const inviterId = currentUserId();
       const getName = await resolveDisplayNames(inviterId ? [memberId, inviterId] : [memberId]);
       const displayName = getName(memberId);
@@ -602,7 +602,7 @@ export function useChannelWorkspaces() {
           await sendEncryptedChannelMessage(channelConversationId, systemBytes);
         } catch (err) {
           console.warn('[Channel Invite] Failed to send system message to channel:', err);
-          // Ne pas bloquer l'invitation si le message système échoue
+          // Do not block the invitation if the system message fails
         }
       }
 

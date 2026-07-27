@@ -1,13 +1,14 @@
 import { authenticate, BiometryType, checkStatus, type Status } from '@tauri-apps/plugin-biometric';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { m } from '$lib/paraglide/messages';
 
 /**
  * Flag persisted in localStorage (and mirrored to Tauri native store) that
- * indicates the user opted into biometric unlock.  The actual MLS-derived key
- * is stored in the platform keystore during the normal PIN login flow
- * (`derive_and_store_device_key` → `storeKeyBytes`) — no separate keystore
- * write is needed at enrollment time.
+ * indicates the user opted into biometric unlock.  The actual device key is
+ * stored in the platform keystore during the normal PIN login flow
+ * (`store_push_context` → `storeKeyBytes`) — no separate keystore write is
+ * needed at enrollment time.
  */
 const CONFIG_FLAG_KEY = 'canari_biometric_configured';
 const NATIVE_FLAG_KEY = 'biometricConfigured';
@@ -23,9 +24,9 @@ export type BiometricEnrollResult = { enrolled: true } | { enrolled: false; noBi
 
 export class BiometricService {
   /**
-   * Marks biometric unlock as configured.  The derived MLS key is already
-   * stored in the platform keystore by `derive_and_store_device_key` during
-   * the PIN login flow — no additional keystore write is performed here.
+   * Marks biometric unlock as configured.  The device key is already stored in
+   * the platform keystore by `store_push_context` during the PIN login flow —
+   * no additional keystore write is performed here.
    *
    * @returns A {@link BiometricEnrollResult} describing the outcome.
    */
@@ -36,12 +37,10 @@ export class BiometricService {
         return { enrolled: false, noBiometric: true };
       }
 
-      // Vérifie l'empreinte digitale / reconnaissance faciale AVANT d'enregistrer
-      // les flags. Sur Android, cela déclenche un BiometricPrompt ; sur iOS,
-      // cela déclenche Face ID / Touch ID via LAContext.evaluatePolicy().
-      // Si l'utilisateur annule ou échoue, la promesse est rejetée et le catch
-      // ci-dessous traite l'erreur.
-      await authenticate('Activez le déverrouillage biométrique pour Canari');
+      // Verify the fingerprint / face BEFORE writing the flags. On Android this raises a
+      // BiometricPrompt; on iOS it raises Face ID / Touch ID via LAContext.evaluatePolicy().
+      // If the user cancels or fails, the promise rejects and the catch below handles it.
+      await authenticate(m.auth_biometric_prompt_enable());
 
       localStorage.setItem(CONFIG_FLAG_KEY, 'true');
       if (isTauri()) {
@@ -114,16 +113,14 @@ export class BiometricService {
   }
 
   /**
-   * Turns biometric unlock off.  Clears the "configured" flag and deletes
-   * the derived MLS key from the platform keystore.  The next PIN login will
-   * call `derive_and_store_device_key` and restore the key automatically.
+   * Turns biometric unlock off.  Clears the "configured" flag and deletes the
+   * device key from the platform keystore.  The next PIN login re-derives the
+   * key and `store_push_context` puts it back automatically.
    */
   static async disable(alias?: string): Promise<void> {
-    // Exige une authentification biométrique avant de supprimer la clé keystore.
-    // Si l'utilisateur annule le prompt biométrique, authenticate() lève une
-    // exception et la désactivation n'a pas lieu — la clé et les flags restent
-    // intacts.
-    await authenticate('Désactiver le déverrouillage biométrique');
+    // Require a biometric authentication before deleting the keystore key. If the user cancels the
+    // prompt, authenticate() throws and the disable does not happen — key and flags stay intact.
+    await authenticate(m.auth_biometric_prompt_disable());
     if (alias && isTauri()) {
       await invoke('plugin:app.tauri.keystore|deleteKeyBytes', { alias }).catch(() => {});
     }

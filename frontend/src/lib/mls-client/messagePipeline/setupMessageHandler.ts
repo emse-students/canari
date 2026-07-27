@@ -72,8 +72,8 @@ const noMatchKpFailures = new Map<string, number>();
 export function setupMessageHandler(deps: MessageHandlerDeps): void {
   const { mlsService, pin, userId, log } = deps;
 
-  // Repartir d'un registre de gap d'epoch vierge : ce registre est module-global (partage
-  // avec l'outbox) et ne doit pas conserver d'entree perimee d'une session precedente.
+  // Start from a clean epoch-gap registry: it is module-global (shared with the outbox) and must
+  // not carry a stale entry over from a previous session.
   resetEpochGapRegistry();
   // Same rationale for the recovery cooldowns: a re-login must not inherit a stale throttle.
   resetReAddCooldowns();
@@ -139,7 +139,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
       if (!groupId) return true; // ACK without group - control frame
 
-      // ── Groupe inconnu (pas dans le WASM local) ───────────────────────────
+      // ── Unknown group (not in the local WASM) ─────────────────────────────
       const inGroup = mlsService.getLocalGroups().includes(groupId);
       if (!inGroup) {
         return handleUnknownGroup({
@@ -232,13 +232,13 @@ async function handleWelcome({
       deps.conversations.set(terminalId, { ...convo, lifecycle: 'active' });
       await saveConversation(terminalId).catch(() => {});
     }
-    // Promotion serveur de la membership en 'active' - INDISPENSABLE meme sur ce chemin idempotent.
-    // Cas reel : un device qui rejoint le groupe en ARRIERE-PLAN (Welcome via FCM/JNI) ne passe
-    // pas par le chemin de join normal ci-dessous (qui appelle updateInvitationStatus). Quand il
-    // revient au premier plan, le Welcome est redelivre mais le groupe est deja local -> on tombe
-    // ici. Sans cet appel, sa ligne dm_device_group_memberships reste 'pending', donc la resolution
-    // des destinataires (status='active') l'EXCLUT : il ne recoit jamais les messages en temps reel
-    // ni en push (seulement via le rattrapage d'historique au reload). Fire-and-forget, idempotent.
+    // Server-side promotion of the membership to 'active' - REQUIRED even on this idempotent path.
+    // Real case: a device that joins the group in the BACKGROUND (Welcome via FCM/JNI) does not go
+    // through the normal join path below (which calls updateInvitationStatus). When it returns to
+    // the foreground the Welcome is redelivered but the group is already local -> we land here.
+    // Without this call its dm_device_group_memberships row stays 'pending', so recipient
+    // resolution (status='active') EXCLUDES it: it never receives messages in realtime or by push
+    // (only through the history catch-up on reload). Fire-and-forget, idempotent.
     void mlsService
       .updateInvitationStatus(mlsService.getDeviceId(), userId, terminalId, 'active')
       .catch(() => {});
@@ -265,9 +265,9 @@ async function handleWelcome({
       const joinedGroupId =
         (await mlsService.processWelcome(content, ratchetTreeBytes)) ?? groupId ?? '';
 
-      // FIX 1 — Ajout anticipé de la conversation dans la map pour éviter la condition de course
-      // entre le Welcome (qui ajoute le groupe dans WASM) et l'arrivée de messages système
-      // (channel_key_distribution) qui nécessitent que handleKnownGroup trouve la conversation.
+      // FIX 1 — Add the conversation to the map early, to avoid the race between the Welcome
+      // (which adds the group to WASM) and the arrival of system messages
+      // (channel_key_distribution) that need handleKnownGroup to find the conversation.
       if (!deps.conversations.has(joinedGroupId)) {
         const isDirectByPattern = joinedGroupId.includes('::');
         const directPeerId = isDirectByPattern
@@ -287,8 +287,8 @@ async function handleWelcome({
         saveConversation(joinedGroupId).catch(() => {});
       }
 
-      // FIX 4 — Drainer les messages orphelins arrivés avant que la conversation
-      // ne soit dans la map (condition de course channel_key_distribution / Welcome).
+      // FIX 4 — Drain the orphan messages that arrived before the conversation was in the map
+      // (channel_key_distribution / Welcome race).
       deps.drainOrphanMessages?.(joinedGroupId);
 
       // Drop the pending buffer for this group; cancel any recovery bookkeeping (cooldown + timer).
@@ -346,7 +346,7 @@ async function handleWelcome({
                     );
                   }
                 } else if (appMsg.system) {
-                  // FIX 2 — Replay des messages système bufferisés avant le Welcome
+                  // FIX 2 — Replay the system messages buffered before the Welcome
                   const event = appMsg.system.event ?? '';
                   let data: any = {};
                   try {

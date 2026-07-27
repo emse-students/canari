@@ -4,11 +4,11 @@
 // Blob format:
 //   iv (12 bytes) || ciphertext (variable)
 //
-// The deviceKeyB64 (base64-encoded 32-byte key derived from the user's PIN
-// via Argon2id once at first login) is imported directly as an AES-GCM
-// CryptoKey, eliminating the per-message PBKDF2 derivation. No salt is
-// needed — the key itself is the secret, and each message gets a fresh
-// random 12-byte IV/nonce.
+// The deviceKeyB64 (base64-encoded 32-byte key derived once from the user's
+// PIN by `$lib/crypto/deviceKey.ts`, PBKDF2-SHA256) is imported directly as an
+// AES-GCM CryptoKey, eliminating any per-message derivation. No salt is needed
+// — the key itself is the secret, and each message gets a fresh random 12-byte
+// IV/nonce.
 
 // Session-level key cache keyed by deviceKeyB64.  The base64 → CryptoKey
 // import is performed once per session instead of once per message.

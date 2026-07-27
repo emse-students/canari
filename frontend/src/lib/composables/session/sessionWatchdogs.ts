@@ -70,7 +70,7 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
         }
         continue;
       }
-      // Channels utilisent AES-GCM, pas MLS - jamais en recovery MLS.
+      // Channels use AES-GCM, not MLS - never part of MLS recovery.
       if (isChannelConversationId(id)) {
         clearGroupNotReady(recoveryDeps.userId, id);
         continue;

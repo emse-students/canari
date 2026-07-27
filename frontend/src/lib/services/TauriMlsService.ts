@@ -312,7 +312,7 @@ export class TauriMlsService extends BaseMlsService {
               `[WS RCV] proto reçu mais messageCallback non initialisé. Message ignoré.`
             );
           }
-          // Pas de proto → event non-MLS (post, channel), ignoré silencieusement.
+          // No proto → non-MLS event (post, channel), silently ignored.
         } catch (e) {
           console.error('[WS RCV] Failed to process WebSocket message:', e);
         }
@@ -551,9 +551,8 @@ export class TauriMlsService extends BaseMlsService {
     this._deviceKeyB64 = newDeviceKeyB64;
     await this.saveState(newDeviceKeyB64);
 
-    // Toujours regenerer la cle keystore pour les push arriere-plan,
-    // independamment du flag biometrique. La cle keystore est necessaire
-    // pour le dechiffrement FCM meme sans biometrie.
+    // Always regenerate the keystore key for background push, regardless of the biometric flag.
+    // The keystore key is required for FCM decryption even without biometrics.
     if (isTauriRuntime()) {
       invoke('actualiser_cle_keystore_avec_devicekey', {
         deviceKeyB64: newDeviceKeyB64,

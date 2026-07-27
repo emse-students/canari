@@ -6,10 +6,10 @@ import { toBase64, fromBase64 } from '$lib/utils/hex';
 export type MlsDeliveryFetch = typeof fetch;
 
 /**
- * TTL du verrou add (serialisation cross-device des commits d'ajout). Dimensionne sur le pire
- * cas mobile reel : bulk add + persist Argon2 (~5-8 s) + commit valide + boucle de Welcomes, qui
- * depasse facilement les 10 s d'origine -> le verrou expirait en cours d'operation -> deux devices
- * committaient en parallele -> fork d'epoch sur le successeur (H1). [[H1]]
+ * Add-lock TTL (cross-device serialization of add commits). Sized on the real worst-case mobile
+ * path: bulk add + state persist (~5-8 s) + validated commit + the Welcome loop, which easily
+ * exceeds the original 10 s -> the lock expired mid-operation -> two devices committed in parallel
+ * -> epoch fork on the successor (H1). [[H1]]
  */
 export const MLS_ADD_LOCK_TTL_MS = 30_000;
 

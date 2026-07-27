@@ -197,12 +197,12 @@
   let biometricConfigured = $state(false);
   // "Stay signed in" opt-in (browser only): persists the PIN vault across browser restarts.
   // Offered on the PIN modal; initialised from the stored preference so it reflects a prior choice.
-  // Desactive quand la biometric est configuree car le PIN sauvegarde ne sera jamais utilise
-  // (le flux biometrique prend le pas au prochain lancement).
+  // Disabled once biometrics are configured, because the saved PIN would never be used (the
+  // biometric flow takes over at the next launch).
   let showStaySignedIn = $derived(!biometricConfigured);
   let pinStaySignedIn = $state(true);
 
-  // Bannière d'enrôlement biométrique post-login (Tauri uniquement)
+  // Post-login biometric enrollment banner (Tauri only)
   let showBiometricEnrollBanner = $state(false);
   let biometricCheckedForEnrollment = $state(false);
 
@@ -720,9 +720,8 @@
         }
         globalSession.userId = savedUser;
 
-        // Étape 1 : Vérifier si biométrie est CONFIGURÉE (flag utilisateur) — P1-A
-        // Ne JAMAIS interroger le keystore si l'utilisateur a désactivé la biométrie,
-        // même si une clé résiduelle est présente.
+        // Step 1: check whether biometrics are CONFIGURED (user flag) — P1-A
+        // NEVER query the keystore if the user disabled biometrics, even if a leftover key exists.
         let biometricAttempted = false;
         const isBiometricConfigured = await BiometricService.isConfigured();
 
@@ -737,15 +736,14 @@
 
             if (keyPresent) {
               biometricAttempted = true;
-              // Connexion suivante avec biométrie ENROLÉE → BiometricBottomSheet directe
+              // Subsequent login with biometrics ENROLLED → straight to BiometricBottomSheet
               biometricConfigured = true;
               biometricCancelled = false;
               showBiometricSheet = true;
 
-              // Laisse un court délai pour que l'utilisateur puisse interagir avec
-              // le BiometricBottomSheet (choisir "Utiliser le code PIN"). Si onSkip
-              // est déclenché pendant ce délai, biometricCancelled passe à true et
-              // on évite d'afficher le prompt biométrique OS.
+              // Leave a short delay so the user can interact with the BiometricBottomSheet
+              // (choosing "Use my PIN"). If onSkip fires during that delay, biometricCancelled
+              // flips to true and we skip the OS biometric prompt.
               await new Promise((resolve) => setTimeout(resolve, 250));
               if (biometricCancelled) {
                 showBiometricSheet = false;
@@ -761,9 +759,9 @@
         }
 
         if (!globalSession.isLoggedIn) {
-          // P2-A : Pas de fallback automatique après échec biométrique.
-          // Si la biométrie a été tentée et a échoué/été annulée, l'utilisateur
-          // doit saisir son PIN explicitement — pas de nativeStorageLogin.
+          // P2-A: no automatic fallback after a biometric failure. If biometrics were attempted
+          // and failed or were cancelled, the user must enter their PIN explicitly — no
+          // nativeStorageLogin.
           if (!biometricAttempted) {
             globalSession.isLoginInProgress = false;
             const ok = await globalSession.nativeStorageLogin(
@@ -947,7 +945,7 @@
   async function handleBiometricEnroll() {
     showBiometricEnrollBanner = false;
     await globalSession.enrollBiometric();
-    // Après enrôlement réussi, mettre à jour biometricConfigured pour le prochain flux
+    // After a successful enrollment, refresh biometricConfigured for the next flow
     if (globalSession.isLoggedIn) {
       biometricConfigured = await BiometricService.isConfigured().catch(() => false);
     }

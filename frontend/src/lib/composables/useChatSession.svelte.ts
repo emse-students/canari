@@ -119,7 +119,7 @@ export function useChatSession() {
     return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3010';
   })();
 
-  /** Object boxant les timers pour permettre la mutation depuis les sous-modules. */
+  /** Box holding the timers so the sub-modules can mutate them. */
   const timers: SessionContext['timers'] = {
     reconnect: null,
     health: null,

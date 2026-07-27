@@ -12,8 +12,8 @@ import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExter
 import { inAppPathFromPublicUrl, isPublicAppUrl } from '$lib/utils/publicAppUrl';
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
 
-// Condense les identifiants longs (UUIDs, hex ≥ 16) dans tous les logs console,
-// avant tout autre logging, pour des logs web aussi lisibles que ceux d'adb.
+// Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
+// web logs stay as readable as adb ones.
 installConsoleIdTruncation();
 
 /** Called on unhandled client-side errors; logs to console (SvelteKit default behaviour). */

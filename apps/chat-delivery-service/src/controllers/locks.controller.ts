@@ -21,8 +21,8 @@ export class LocksController {
     const userId = sanitizeQueryValue(userIdRaw ?? '', 'x-user-id');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    // Clamp max 60 s : couvre le pire cas mobile (bulk add + Argon2 + commit + Welcomes) sans
-    // permettre qu'un device crashe en bloque un autre indefiniment (H1).
+    // Clamp to 60 s max: covers the worst-case mobile path (bulk add + state persist + commit +
+    // Welcomes) without letting one crashed device block another indefinitely (H1).
     const ttlSec = Math.max(1, Math.min(60, Math.round((body.ttlMs ?? 30_000) / 1000)));
     // Redis SET NX EX: acquires the lock only if the key does not yet exist.
     const lockKey = `mls:addlock:${groupId}`;

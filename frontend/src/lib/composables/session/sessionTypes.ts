@@ -43,8 +43,8 @@ export interface ChatSessionCallbacks {
     senderId: string;
     messageIds: string[];
   }) => void;
-  /** Vide le buffer d'orphelins pour une conversation quand elle est ajoutée à la map
-   *  (ex: après traitement d'un Welcome MLS). Appelé via MessageHandlerDeps. */
+  /** Drains the orphan buffer for a conversation once it is added to the map
+   *  (e.g. after processing an MLS Welcome). Called through MessageHandlerDeps. */
   drainOrphanMessages?: (convoKey: string) => void;
   onSendError: (msg: string) => void;
   /** Called as soon as the PIN is validated and MLS is initialised (isLoggedIn just flipped true),

@@ -768,10 +768,10 @@ export function useConversations() {
         `[${label}] Erreur serveur (${e instanceof Error ? e.message : String(e)}) - purge MLS/UI locale`
       );
     }
-    // Suppression/quitter MANUEL : on enregistre le dismiss per-user pour que la conversation
-    // disparaisse aussi des AUTRES appareils de l'utilisateur (regles 3 & 5) - leur discovery la
-    // purgera au lieu d'afficher la banniere " supprimee " (reservee aux suppressions d'un pair /
-    // exclusions). Best-effort : la purge locale ci-dessous a lieu quoi qu'il arrive.
+    // MANUAL delete/leave: record the per-user dismiss so the conversation also disappears from
+    // the user's OTHER devices (rules 3 & 5) - their discovery purges it instead of showing the
+    // "deleted" banner (reserved for peer deletions / exclusions). Best-effort: the local purge
+    // below happens either way.
     await mlsService.dismissGroup(convo.id).catch(() => {});
     await purgeOrphanGroup({
       conversations,
