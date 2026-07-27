@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Every session minted a new device id and deleted the previous one server-side.** `WebMlsService.init` and `TauriMlsService.init` redeclared the override without the `opts` parameter, silently dropping `noFreshStart`; an undecryptable local state then took the destructive fresh-start branch instead of surfacing the recoverable "state sealed with the old key" signal. The Tauri override also never cleared `initPromise` on failure, so a retry after recovery would have replayed the cached rejection - it now inherits `BaseMlsService.init`
+
 ### Changed
 - PIN policy simplified back to a single rule - at least 4 characters - applied identically on setup, change, recovery and unlock. The 4-to-8-digit creation rule added in v0.11.1 is gone, along with the numpad and input caps it implied
 

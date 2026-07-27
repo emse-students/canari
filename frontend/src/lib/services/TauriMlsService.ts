@@ -358,13 +358,6 @@ export class TauriMlsService extends BaseMlsService {
     }
   }
 
-  /** Tauri-native `invoke` wrapper - initializes the Rust MLS state via `initialiser_mls_avec_clef`, deduplicating concurrent calls via a shared promise. */
-  async init(userId: string, deviceKeyB64: string, state?: Uint8Array): Promise<void> {
-    if (this.initPromise) return this.initPromise;
-    this.initPromise = this._initImpl(userId, deviceKeyB64, state);
-    await this.initPromise;
-  }
-
   /**
    * Tauri override: when localStorage was cleared (Android WebView eviction / reinstall),
    * restore the original device id from native push_context.json so we don't generate a

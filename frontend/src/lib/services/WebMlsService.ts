@@ -527,9 +527,18 @@ export class WebMlsService extends BaseMlsService {
    * Initialises the WASM MLS client, short-circuiting if already initialised.
    * Delegates dedup and actual init to the base class / {@link _initImpl}.
    */
-  override async init(userId: string, deviceKeyB64: string, state?: Uint8Array): Promise<void> {
+  override async init(
+    userId: string,
+    deviceKeyB64: string,
+    state?: Uint8Array,
+    opts?: MlsInitOptions
+  ): Promise<void> {
     if (this.client) return;
-    return super.init(userId, deviceKeyB64, state);
+    // `opts` MUST be forwarded: dropping it silences `noFreshStart`, and an undecryptable
+    // saved state then takes the destructive fresh-start branch (new device id, old device
+    // deleted server-side) instead of surfacing MLS_LOCAL_STATE_UNDECRYPTABLE for recovery.
+    // TypeScript accepts an override that declares fewer parameters, so the loss is silent.
+    return super.init(userId, deviceKeyB64, state, opts);
   }
 
   /** Implementation body for init(); resolves device ID from localStorage and calls `loadAndInitWasm`, handling credential-mismatch recovery. */
