@@ -21,11 +21,11 @@ use thiserror::Error;
 /// Maximum size for incoming MLS messages (1 MiB).
 pub const MAX_MLS_MESSAGE_BYTES: usize = 1_048_576;
 
-// --- GESTION DES ERREURS PROPRE ---
+// --- Error handling ---
 
 #[derive(Error, Debug)]
 pub enum MlsError {
-    #[error("Erreur Crypto/OpenMLS: {0}")]
+    #[error("Crypto/OpenMLS error: {0}")]
     OpenMls(String),
     #[error("CBOR serialization error: {0}")]
     Serialization(String),
@@ -46,24 +46,24 @@ pub enum MlsError {
     AlreadyMember(String),
 }
 
-/// Classification d'une erreur de dechiffrement entrant. Source UNIQUE du string-matching natif
-/// des erreurs OpenMLS (miroir Rust de `classifyIncomingDecryptError` cote TS), pour eviter la
-/// divergence entre `recevoir_message_bytes` et `map_decrypt_outcome` cote `src-tauri`. [[S5]]
+/// Classification of an incoming decryption error. THE single source of native string-matching on
+/// OpenMLS errors (Rust mirror of `classifyIncomingDecryptError` on the TS side), so
+/// `recevoir_message_bytes` and `map_decrypt_outcome` in `src-tauri` cannot diverge. [[S5]]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecryptErrorKind {
-    /// Cle de ratchet deja consommee (doublon benin) : ACK + drop, ne dechiffrera jamais.
+    /// Ratchet key already consumed (benign duplicate): ACK + drop, it will never decrypt.
     SecretReuse,
-    /// Erreur OpenMLS sur le meme epoch : gap du Sender Ratchet (generation future) -> file/retry.
+    /// OpenMLS error on the same epoch: Sender Ratchet gap (future generation) -> queue/retry.
     SenderRatchetGap,
-    /// Etat MLS irrecuperable (corruption/inconsistance) : le frontend doit re-bootstrapper.
+    /// Unrecoverable MLS state (corruption/inconsistency): the frontend must re-bootstrap.
     Unrecoverable,
-    /// Non classe.
+    /// Unclassified.
     Other,
 }
 
 impl MlsError {
-    /// Classe une erreur de dechiffrement entrant a partir de sa variante / de son message OpenMLS.
-    /// Centralise ici le matching de sous-chaines auparavant duplique cote `src-tauri`. [[S5]]
+    /// Classifies an incoming decryption error from its variant / its OpenMLS message.
+    /// Centralizes the substring matching previously duplicated in `src-tauri`. [[S5]]
     pub fn decrypt_kind(&self) -> DecryptErrorKind {
         match self {
             MlsError::Unrecoverable(_) => DecryptErrorKind::Unrecoverable,

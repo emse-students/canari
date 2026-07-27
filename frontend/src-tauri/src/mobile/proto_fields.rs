@@ -1,8 +1,8 @@
-//! Helpers protobuf minimaux pour extraire le texte affichable d'un `AppMessage` déchiffré.
-//! Pas de dépendance externe : suffisant pour les notifications push background.
+//! Minimal protobuf helpers extracting the displayable text of a decrypted `AppMessage`.
+//! No external dependency: enough for background push notifications.
 
-/// Lit un varint protobuf depuis `bytes` à la position `pos`.
-/// Retourne (valeur, position_suivante) ou None si invalide.
+/// Reads a protobuf varint from `bytes` at position `pos`.
+/// Returns (value, next_position), or None if invalid.
 pub fn read_varint(bytes: &[u8], pos: usize) -> Option<(u64, usize)> {
     let mut result: u64 = 0;
     let mut shift = 0u32;
@@ -22,7 +22,7 @@ pub fn read_varint(bytes: &[u8], pos: usize) -> Option<(u64, usize)> {
     Some((result, cur))
 }
 
-/// Cherche le premier champ `field_num` de wire type 2 (LEN) dans `bytes`.
+/// Finds the first `field_num` field of wire type 2 (LEN) in `bytes`.
 pub fn find_length_delimited_field(bytes: &[u8], field_num: u32) -> Option<Vec<u8>> {
     let mut pos = 0usize;
     while pos < bytes.len() {
@@ -65,7 +65,7 @@ pub fn find_length_delimited_field(bytes: &[u8], field_num: u32) -> Option<Vec<u
     None
 }
 
-/// Cherche le premier champ `field_num` de wire type 0 (varint) dans `bytes`.
+/// Finds the first `field_num` field of wire type 0 (varint) in `bytes`.
 pub fn find_varint_field(bytes: &[u8], field_num: u32) -> Option<u64> {
     let mut pos = 0usize;
     while pos < bytes.len() {
@@ -173,7 +173,7 @@ fn ok_message_json(
     })
 }
 
-/// Extrait les métadonnées complètes d'un `AppMessage` protobuf déchiffré pour l'affichage push.
+/// Extracts the full metadata of a decrypted `AppMessage` protobuf for push display.
 pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
     let message_id = find_length_delimited_field(bytes, 6)
         .and_then(|b| String::from_utf8(b).ok())

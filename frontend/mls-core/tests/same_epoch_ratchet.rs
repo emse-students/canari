@@ -1,23 +1,23 @@
-/// Tests de robustesse du Sender Ratchet a meme epoch (rafales + livraison dupliquee).
+/// Sender Ratchet robustness tests at the same epoch (bursts + duplicate delivery).
 ///
-/// Contexte : envoyer plusieurs messages d'un coup, combine a une livraison multi-chemin
-/// (publish realtime + file d'attente + FCM + requeue natif), delivre regulierement des
-/// generations dans le desordre ou en double. Avec la tolerance OpenMLS par defaut (5), une
-/// generation arrivee trop tard tombait hors fenetre -> `SecretTreeError(TooDistantInThePast)`,
-/// et un doublon -> `SecretReuseError`. Ces deux erreurs sont PERMANENTES : les remettre en
-/// file les faisait boucler indefiniment (storm + Argon2 a repetition sur mobile).
+/// Context: sending several messages at once, combined with multi-path delivery (realtime
+/// publish, queue, FCM, native requeue), regularly delivers generations out of order or twice.
+/// With the default OpenMLS tolerance (5), a generation arriving too late fell outside the window
+/// -> `SecretTreeError(TooDistantInThePast)`, and a duplicate -> `SecretReuseError`. Both errors
+/// are PERMANENT: requeueing them looped forever (retry storm, plus repeated state
+/// decrypt/persist on mobile).
 ///
-/// Deux garanties verifiees ici :
-///  1. Un doublon a meme epoch est un drop benin (`Ok(None)`), jamais une erreur.
-///  2. Une rafale livree dans le desordre se dechiffre grace a la fenetre elargie.
+/// Two guarantees verified here:
+///  1. A same-epoch duplicate is a benign drop (`Ok(None)`), never an error.
+///  2. An out-of-order burst still decrypts thanks to the widened window.
 use mls_core::MlsManager;
 
 fn make_device(user_id: &str, device_id: &str) -> MlsManager {
     MlsManager::load_or_create(user_id, device_id, None)
-        .unwrap_or_else(|e| panic!("Impossible de creer le device '{user_id}:{device_id}': {e}"))
+        .unwrap_or_else(|e| panic!("could not create device '{user_id}:{device_id}': {e}"))
 }
 
-/// Cree un groupe a deux membres (alice cree, bob rejoint via Welcome) tous deux a l'epoch 1.
+/// Creates a two-member group (alice creates, bob joins via Welcome), both at epoch 1.
 fn pair_in_group(gid: &str) -> (MlsManager, MlsManager, String) {
     let mut alice = make_device("alice", "dev1");
     let mut bob = make_device("bob", "dev1");

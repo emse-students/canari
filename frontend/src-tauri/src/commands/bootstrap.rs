@@ -1,14 +1,14 @@
-//! Commande Tauri de re-bootstrap (Fail-Safe) pour recreer un groupe MLS mort.
+//! Re-bootstrap (fail-safe) Tauri command, used to recreate a dead MLS group.
 
 use crate::concurrency::write_mls_state_blob;
 use crate::state::{AppState, HttpClient, PendingDb};
 use base64::Engine as _;
 
-/// Resultat du bootstrap retourne au frontend TypeScript.
+/// Bootstrap result returned to the TypeScript frontend.
 #[derive(serde::Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub(crate) enum BootstrapOutcome {
-    /// Bootstrap reussi : le frontend doit envoyer les Welcome + le commit.
+    /// Bootstrap succeeded: the frontend must send the Welcomes plus the commit.
     Success {
         commit: Vec<u8>,
         welcome: Option<Vec<u8>>,
@@ -16,10 +16,10 @@ pub(crate) enum BootstrapOutcome {
         ratchet_tree: Option<Vec<u8>>,
         new_bootstrap_version: u32,
     },
-    /// Race condition : un autre device a deja bootstrappe le groupe.
-    /// Le frontend doit ignorer et attendre le Welcome entrant.
+    /// Race condition: another device already bootstrapped the group.
+    /// The frontend must ignore this and wait for the incoming Welcome.
     Conflict,
-    /// Aucun device tiers a inviter (groupe solo ou tous hors-ligne).
+    /// No third-party device to invite (solo group, or all of them offline).
     NoMembers,
 }
 
@@ -68,7 +68,7 @@ pub(crate) async fn bootstrap_dead_conversation(
     http_client: tauri::State<'_, HttpClient>,
     app: tauri::AppHandle,
 ) -> Result<BootstrapOutcome, String> {
-    // --- Etape 1 : Acquerir le verrou optimiste --------------------------------
+    // --- Step 1: acquire the optimistic lock -----------------------------------
     let base = base_url.trim_end_matches('/');
     let claim_url = format!(
         "{}/api/mls/groups/{}/claim-bootstrap",
@@ -103,7 +103,7 @@ pub(crate) async fn bootstrap_dead_conversation(
         .map_err(|e| format!("claim-bootstrap response parse error: {}", e))?;
     let new_bootstrap_version = claim_body.bootstrap_version;
 
-    // --- Etape 2 : Reset de l'epoch serveur a 0 -------------------------------
+    // --- Step 2: reset the server epoch to 0 -----------------------------------
     let reset_url = format!("{}/api/mls/groups/{}/reset-epoch", base, conversation_id);
     let reset_resp = http_client
         .0
@@ -119,7 +119,7 @@ pub(crate) async fn bootstrap_dead_conversation(
         );
     }
 
-    // --- Etape 3 : Creer un etat MLS frais en local ---------------------------
+    // --- Step 3: create a fresh local MLS state --------------------------------
     {
         let mut lock = state
             .mls_manager
@@ -131,8 +131,8 @@ pub(crate) async fn bootstrap_dead_conversation(
             .map_err(|e| e.to_string())?;
     }
 
-    // --- Etape 4 : Recuperer les KeyPackages de chaque membre -----------------
-    // Tous les appels HTTP se font HORS du Mutex (pas d'await sous lock).
+    // --- Step 4: fetch every member's KeyPackages ------------------------------
+    // All HTTP calls happen OUTSIDE the Mutex (never await under the lock).
     let mut all_key_packages: Vec<Vec<u8>> = Vec::new();
     let mut added_device_ids: Vec<String> = Vec::new();
 
@@ -201,7 +201,7 @@ pub(crate) async fn bootstrap_dead_conversation(
         return Ok(BootstrapOutcome::NoMembers);
     }
 
-    // --- Etape 5 : Ajouter tous les devices en bulk ---------------------------
+    // --- Step 5: add every device in bulk --------------------------------------
     let (commit, welcome, ratchet_tree) = {
         let mut lock = state
             .mls_manager
@@ -232,7 +232,7 @@ pub(crate) async fn bootstrap_dead_conversation(
         (commit_b, welcome_b, Some(rt_b))
     };
 
-    // --- Etape 6 : Sauvegarder l'etat MLS ------------------------------------
+    // --- Step 6: persist the MLS state -----------------------------------------
     let enc = {
         let lock = state
             .mls_manager

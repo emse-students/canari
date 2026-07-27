@@ -224,7 +224,7 @@ pub(crate) async fn generer_key_packages_et_persister(
 #[tauri::command]
 pub(crate) fn oublier_groupe(
     group_id: String,
-    // u64 : meme largeur que l'epoch source (Tauri serialise en JSON number cote JS). [[S4]]
+    // u64: same width as the source epoch (Tauri serializes it as a JSON number on the JS side). [[S4]]
     min_epoch: u64,
     state: tauri::State<AppState>,
 ) -> Result<(), String> {
@@ -237,8 +237,8 @@ pub(crate) fn oublier_groupe(
     Ok(())
 }
 
-/// Purge definitive d'un groupe (Poison Pill) : memoire + stockage OpenMLS + verrou
-/// d'epoch a MAX. Aucun Welcome ne sera jamais accepte pour ce groupId apres cet appel.
+/// Permanent purge of a group (poison pill): memory + OpenMLS storage + epoch lock at MAX.
+/// No Welcome will ever be accepted for this groupId after this call.
 #[tauri::command]
 pub(crate) fn supprimer_groupe(
     group_id: String,
@@ -273,7 +273,7 @@ pub(crate) fn obtenir_epoch(
         .lock()
         .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
-    // u64 : pas de troncature ; Tauri serialise en JSON number (exact <= 2^53, jamais atteint). [[S4]]
+    // u64: no truncation; Tauri serializes it as a JSON number (exact <= 2^53, never reached). [[S4]]
     manager.get_epoch(&group_id).map_err(|e| e.to_string())
 }
 
@@ -416,13 +416,13 @@ pub(crate) fn retirer_membres_par_appareil(
         .map_err(|e| e.to_string())
 }
 
-/// Confirme (merge) un commit *stage* (ADD ou REMOVE) APRES acceptation serveur (`validateCommit`).
-/// Avance l'epoch local. Pendant de `annuler_commit`. [[C7]] Option A : valider-puis-merger,
-/// jamais de fork local sur rejet (regime unifie ADD+REMOVE).
+/// Confirms (merges) a *staged* commit (ADD or REMOVE) AFTER the server accepts it
+/// (`validateCommit`). Advances the local epoch. Counterpart of `annuler_commit`. [[C7]] Option A:
+/// validate-then-merge, never a local fork on rejection (unified ADD+REMOVE regime).
 ///
-/// NE persiste PAS : l'appelant enchaine `persistMlsStateAfterMutation` (qui detient le pin,
-/// recupere via le keystore au niveau session) comme pour tout autre mutation - meme fenetre
-/// merge->persist qu'avant.
+/// Does NOT persist: the caller chains `persistMlsStateAfterMutation` (which holds the device key,
+/// retrieved from the session-level keystore) as for any other mutation - same merge->persist
+/// window as before.
 #[tauri::command]
 pub(crate) fn confirmer_commit(
     group_id: String,
@@ -438,8 +438,8 @@ pub(crate) fn confirmer_commit(
         .map_err(|e| e.to_string())
 }
 
-/// Annule (clear) un commit *stage* (ADD ou REMOVE) quand le serveur le REJETTE. L'epoch local
-/// reste inchange (aucun fork). Pas de persistance : `mls.bin` est deja a l'etat pre-stage. [[C7]]
+/// Clears a *staged* commit (ADD or REMOVE) when the server REJECTS it. The local epoch stays
+/// unchanged (no fork). No persistence: `mls.bin` is already at the pre-stage state. [[C7]]
 #[tauri::command]
 pub(crate) fn annuler_commit(
     group_id: String,
@@ -455,8 +455,8 @@ pub(crate) fn annuler_commit(
         .map_err(|e| e.to_string())
 }
 
-/// Exporte le ratchet tree du groupe depuis l'etat COURANT (post-merge) pour le Welcome. Pour un
-/// ADD, a appeler APRES `confirmer_commit` (le nouveau membre rejoint l'epoch N+1). [[C7]]
+/// Exports the group's ratchet tree from the CURRENT state (post-merge) for the Welcome. For an
+/// ADD, call it AFTER `confirmer_commit` (the new member joins at epoch N+1). [[C7]]
 #[tauri::command]
 pub(crate) fn exporter_ratchet_tree(
     group_id: String,
@@ -472,8 +472,8 @@ pub(crate) fn exporter_ratchet_tree(
         .map_err(|e| e.to_string())
 }
 
-/// Exporte un GroupInfo auto-suffisant (arbre inclus) pour `group_id`, a stocker cote serveur et a
-/// servir aux membres autorises qui rejoignent via un commit externe (`rejoindre_par_commit_externe`).
+/// Exports a self-contained GroupInfo (tree included) for `group_id`, to be stored server-side and
+/// served to authorized members joining via an external commit (`rejoindre_par_commit_externe`).
 #[tauri::command]
 pub(crate) fn exporter_group_info(
     group_id: String,
@@ -489,11 +489,11 @@ pub(crate) fn exporter_group_info(
         .map_err(|e| e.to_string())
 }
 
-/// Rejoint un groupe via un commit externe construit depuis un GroupInfo servi. Le groupe retourne
-/// est a l'epoch N+1 avec le commit *stage* : l'appelant soumet le commit pour validation d'epoch
-/// serveur (contre l'epoch de base du GroupInfo), puis `confirmer_commit` si accepte, ou
-/// `oublier_groupe` + retry avec un GroupInfo plus frais si rejete (un commit externe ne s'annule
-/// pas). Retourne (group_id, commit).
+/// Joins a group via an external commit built from a served GroupInfo. The returned group is at
+/// epoch N+1 with the commit *staged*: the caller submits the commit for epoch validation
+/// server-side (against the GroupInfo's base epoch), then `confirmer_commit` if accepted, or
+/// `oublier_groupe` + retry with a fresher GroupInfo if rejected (an external commit cannot be
+/// rolled back). Returns (group_id, commit).
 #[tauri::command]
 pub(crate) fn rejoindre_par_commit_externe(
     group_info_bytes: Vec<u8>,
@@ -510,10 +510,9 @@ pub(crate) fn rejoindre_par_commit_externe(
 }
 
 /// Dechiffre un message MLS entrant.
-/// Si le dechiffrement echoue avec "Process error:" (gap du Sender Ratchet : la
-/// generation recue est superieure a celle attendue), le message est stocke dans
-/// SQLite via PendingDb et la commande retourne Err("GAP_QUEUED:<group_id>") pour
-/// que le frontend sache qu'il doit aller chercher les messages manquants.
+/// If decryption fails with "Process error:" (Sender Ratchet gap: the received generation is
+/// higher than the expected one), the message is stored in SQLite via PendingDb and the command
+/// returns Err("GAP_QUEUED:<group_id>") so the frontend knows it must fetch the missing messages.
 #[tauri::command]
 pub(crate) async fn recevoir_message_bytes(
     group_id: String,
@@ -522,8 +521,8 @@ pub(crate) async fn recevoir_message_bytes(
     pending_db: tauri::State<'_, PendingDb>,
 ) -> Result<Option<Vec<u8>>, String> {
     // Chantier 1 : detection proactive de l'epoch gap AVANT tout dechiffrement.
-    // L'epoch est en clair dans l'en-tete MLS -> aucune cle de ratchet consommee.
-    // Le MutexGuard est libere dans le bloc interieur AVANT tout .await.
+    // The epoch is cleartext in the MLS header -> no ratchet key consumed.
+    // The MutexGuard is released in the inner block BEFORE any .await.
     let epoch_gap: Option<(u64, u64)> = {
         let lock = state
             .mls_manager
@@ -539,7 +538,7 @@ pub(crate) async fn recevoir_message_bytes(
             }
             None => None,
         }
-        // lock est libere ici - aucun await n'a encore eu lieu
+        // lock is released here - no await has happened yet
     };
     if let Some((msg_ep, group_ep)) = epoch_gap {
         log::warn!(
@@ -578,8 +577,8 @@ pub(crate) async fn recevoir_message_bytes(
         ));
     }
 
-    // Acquiert + libere le Mutex AVANT toute operation async pour eviter les
-    // deadlocks avec std::sync::Mutex (non-Send across await points).
+    // Acquire + release the Mutex BEFORE any async operation, to avoid deadlocks with
+    // std::sync::Mutex (non-Send across await points).
     let result = {
         let mut lock = state
             .mls_manager
@@ -601,27 +600,27 @@ pub(crate) async fn recevoir_message_bytes(
 
             // Classification centralisee cote mls-core (source unique du string-matching). [[S5]]
             match e.decrypt_kind() {
-                // Corruption detectee par mls-core -> etat irrecuperable, declencher re-bootstrap.
+                // Corruption detected by mls-core -> unrecoverable state, trigger a re-bootstrap.
                 DecryptErrorKind::Unrecoverable => Err(format!("UNRECOVERABLE:{}", group_id)),
 
-                // SecretReuseError = la cle de ratchet de ce message a deja ete consommee
-                // (doublon : livraison realtime + queue, ou requeue apres restart). A l'inverse
-                // d'un gap de generation FUTURE, elle ne dechiffrera JAMAIS : la mettre en file
-                // SQLite la ferait boucler indefiniment. On la traite comme un doublon benin -
-                // Ok(None) -> le frontend ACK et la supprime (parite avec le chemin WASM web).
+                // SecretReuseError = this message's ratchet key was already consumed (duplicate:
+                // realtime delivery + queue, or a requeue after restart). Unlike a FUTURE
+                // generation gap, it will NEVER decrypt: queueing it in SQLite would loop forever.
+                // Treated as a benign duplicate - Ok(None) -> the frontend ACKs and drops it
+                // (parity with the web WASM path).
                 DecryptErrorKind::SecretReuse => {
                     log::debug!(
-                        "[DUP] SecretReuseError group={} - doublon deja consomme, ACK silencieux",
+                        "[DUP] SecretReuseError group={} - already-consumed duplicate, silent ACK",
                         group_id
                     );
                     Ok(None)
                 }
 
-                // "Process error:" = erreur OpenMLS sur le meme epoch -> probable gap du Sender
-                // Ratchet (generation future recue) -> mise en file SQLite pour retry.
+                // "Process error:" = OpenMLS error on the same epoch -> likely a Sender Ratchet gap
+                // (future generation received) -> queued in SQLite for retry.
                 DecryptErrorKind::SenderRatchetGap => {
                     log::warn!(
-                        "[GAP] Sender Ratchet gap pour group={} - message mis en file SQLite",
+                        "[GAP] Sender Ratchet gap for group={} - message queued in SQLite",
                         group_id
                     );
                     let ts = std::time::SystemTime::now()
@@ -703,12 +702,12 @@ pub(crate) fn exporter_secret(
         .map_err(|e| e.to_string())
 }
 
-/// Stocke la nouvelle deviceKeyB64 directement dans le keystore après un changement de PIN.
-/// La dérivation Argon2id(newPin, salt) a déjà été faite côté frontend.
+/// Stores the new deviceKeyB64 straight into the keystore after a PIN change.
+/// The derivation (PBKDF2-SHA256, see `$lib/crypto/deviceKey.ts`) already happened on the frontend.
 ///
-/// Décode la base64 en 32 bytes et les stocke sous l'alias `mls_device_key_{user_id}_{device_id}`.
-/// Best-effort : si le keystore est indisponible, l'erreur est loggée mais la commande
-/// réussit quand même (le prochain login PIN re-dérivera la clé automatiquement).
+/// Decodes the base64 into 32 bytes and stores them under the alias
+/// `mls_device_key_{user_id}_{device_id}`. Best-effort: if the keystore is unavailable the error is
+/// logged but the command still succeeds (the next PIN login re-derives the key automatically).
 #[tauri::command]
 pub(crate) async fn actualiser_cle_keystore_avec_devicekey(
     device_key_b64: String,

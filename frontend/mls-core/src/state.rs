@@ -11,7 +11,7 @@ use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::MlsError;
 
-// --- 1. LE MODÈLE DE PERSISTANCE (DISQUE) ---
+// --- 1. Persistence model (on disk) ---
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedState {
@@ -46,7 +46,7 @@ pub(crate) struct IdentityBundle {
     pub(crate) credential: Vec<u8>,
 }
 
-// --- 2. LE GESTIONNAIRE (MÉMOIRE VIVE) ---
+// --- 2. Manager (in memory) ---
 
 /// In-memory CBOR snapshot cache for `save_state` / `save_encrypted`.
 /// Uses interior mutability so `generate_key_package` (`&self`) can invalidate it.
@@ -181,7 +181,7 @@ impl MlsManager {
                 *lock = state.storage_values;
             }
 
-            // 3. Restaurer les groupes
+            // 3. Restore the groups
             let mut groups = HashMap::new();
             for gid_bytes in state.group_ids {
                 let group_id = GroupId::from_slice(&gid_bytes);

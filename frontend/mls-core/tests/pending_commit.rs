@@ -1,10 +1,10 @@
-//! Tests du flux valider-puis-merger (C7 Option A) sur le regime unifie ADD + REMOVE.
+//! Tests for the validate-then-merge flow (C7 Option A) on the unified ADD + REMOVE regime.
 //!
-//! `add_members_bulk` et `remove_members_for_*` *stagent* desormais le commit sans le merger.
-//! L'appelant le confirme (`merge_pending_commit_for`) apres acceptation serveur, ou l'annule
-//! (`clear_pending_commit_for`) sur rejet. Invariant : tant que le commit n'est pas confirme,
-//! l'epoch local n'avance pas - donc un rejet serveur ne laisse jamais l'appareil sur une branche
-//! forkee (ni pour un ADD, ni pour un REMOVE).
+//! `add_members_bulk` and `remove_members_for_*` now *stage* the commit without merging it. The
+//! caller confirms it (`merge_pending_commit_for`) once the server accepts, or clears it
+//! (`clear_pending_commit_for`) on rejection. Invariant: while the commit is unconfirmed the local
+//! epoch does not advance - so a server rejection never leaves the device on a forked branch
+//! (neither for an ADD nor for a REMOVE).
 use mls_core::MlsManager;
 
 fn make_device(user_id: &str, device_id: &str) -> MlsManager {
@@ -12,7 +12,7 @@ fn make_device(user_id: &str, device_id: &str) -> MlsManager {
         .unwrap_or_else(|e| panic!("device '{user_id}:{device_id}': {e}"))
 }
 
-/// alice cree un groupe et y ajoute bob (add stage-only C7-A puis merge). Setup commun.
+/// alice creates a group and adds bob to it (stage-only add C7-A, then merge). Shared setup.
 fn group_with_alice_bob() -> (MlsManager, &'static str) {
     let mut alice = make_device("alice", "dev1");
     let mut bob = make_device("bob", "dev1");
@@ -32,22 +32,22 @@ fn remove_stages_without_advancing_epoch_then_confirm_merges() {
     let (mut alice, gid) = group_with_alice_bob();
     let epoch_before = alice.get_epoch(gid).expect("epoch");
 
-    // Stage le retrait de bob : l'epoch local NE DOIT PAS avancer (commit non merge).
+    // Stage bob's removal: the local epoch MUST NOT advance (commit not merged).
     let _commit = alice
         .remove_members_for_devices(gid, &["bob:dev1"])
         .expect("stage remove");
     assert_eq!(
         alice.get_epoch(gid).expect("epoch"),
         epoch_before,
-        "stage ne doit pas avancer l'epoch (validate-then-merge)"
+        "staging must not advance the epoch (validate-then-merge)"
     );
 
-    // Confirme (le serveur a accepte) : l'epoch avance enfin d'exactement 1.
+    // Confirm (the server accepted): the epoch finally advances by exactly 1.
     alice.merge_pending_commit_for(gid).expect("confirm");
     assert_eq!(
         alice.get_epoch(gid).expect("epoch"),
         epoch_before + 1,
-        "confirm doit avancer l'epoch d'exactement 1"
+        "confirming must advance the epoch by exactly 1"
     );
 }
 
@@ -56,7 +56,7 @@ fn remove_abort_keeps_epoch_and_allows_a_fresh_commit() {
     let (mut alice, gid) = group_with_alice_bob();
     let epoch_before = alice.get_epoch(gid).expect("epoch");
 
-    // Stage puis ANNULE (le serveur a rejete) : aucun fork, epoch inchange.
+    // Stage then CLEAR (the server rejected): no fork, epoch unchanged.
     let _commit = alice
         .remove_members_for_devices(gid, &["bob:dev1"])
         .expect("stage remove");
@@ -64,18 +64,18 @@ fn remove_abort_keeps_epoch_and_allows_a_fresh_commit() {
     assert_eq!(
         alice.get_epoch(gid).expect("epoch"),
         epoch_before,
-        "abort doit laisser l'epoch inchange (pas de fork)"
+        "aborting must leave the epoch unchanged (no fork)"
     );
 
-    // Apres abort, plus aucun commit en attente ne bloque : on peut re-stager puis confirmer.
+    // After an abort no pending commit blocks anything: we can re-stage then confirm.
     let _commit2 = alice
         .remove_members_for_devices(gid, &["bob:dev1"])
-        .expect("re-stage remove apres abort");
+        .expect("re-stage remove after abort");
     alice.merge_pending_commit_for(gid).expect("confirm");
     assert_eq!(
         alice.get_epoch(gid).expect("epoch"),
         epoch_before + 1,
-        "un commit confirme apres un abort doit avancer l'epoch normalement"
+        "a commit confirmed after an abort must advance the epoch normally"
     );
 }
 
@@ -90,7 +90,7 @@ fn remove_by_device_stage_confirm_advances_epoch() {
     assert_eq!(
         alice.get_epoch(gid).expect("epoch"),
         epoch_before,
-        "stage par appareil ne doit pas avancer l'epoch"
+        "staging a per-device removal must not advance the epoch"
     );
 
     alice.merge_pending_commit_for(gid).expect("confirm");
@@ -105,21 +105,21 @@ fn add_stages_without_advancing_epoch_then_confirm_merges() {
     alice.create_group(gid.to_string()).expect("create_group");
     let epoch_before = alice.get_epoch(gid).expect("epoch");
 
-    // Stage l'ajout de bob : l'epoch local NE DOIT PAS avancer (commit non merge).
+    // Stage bob's addition: the local epoch MUST NOT advance (commit not merged).
     let kp_bob = bob.generate_key_package().expect("kp bob");
     let _staged = alice.add_members_bulk(gid, &[&kp_bob]).expect("stage add");
     assert_eq!(
         alice.get_epoch(gid).expect("epoch"),
         epoch_before,
-        "stage add ne doit pas avancer l'epoch (validate-then-merge)"
+        "staging an add must not advance the epoch (validate-then-merge)"
     );
 
-    // Confirme (le serveur a accepte) : l'epoch avance enfin d'exactement 1.
+    // Confirm (the server accepted): the epoch finally advances by exactly 1.
     alice.merge_pending_commit_for(gid).expect("confirm");
     assert_eq!(
         alice.get_epoch(gid).expect("epoch"),
         epoch_before + 1,
-        "confirm doit avancer l'epoch d'exactement 1"
+        "confirming must advance the epoch by exactly 1"
     );
 }
 
@@ -131,17 +131,17 @@ fn add_abort_keeps_epoch_and_allows_a_fresh_commit() {
     alice.create_group(gid.to_string()).expect("create_group");
     let epoch_before = alice.get_epoch(gid).expect("epoch");
 
-    // Stage puis ANNULE (le serveur a rejete) : aucun fork, epoch inchange.
+    // Stage then CLEAR (the server rejected): no fork, epoch unchanged.
     let kp_bob = bob.generate_key_package().expect("kp bob");
     let _staged = alice.add_members_bulk(gid, &[&kp_bob]).expect("stage add");
     alice.clear_pending_commit_for(gid).expect("abort");
     assert_eq!(
         alice.get_epoch(gid).expect("epoch"),
         epoch_before,
-        "abort doit laisser l'epoch inchange (pas de fork)"
+        "aborting must leave the epoch unchanged (no fork)"
     );
 
-    // Apres abort, un nouvel ajout peut etre stage puis confirme normalement.
+    // After an abort a new add can be staged then confirmed normally.
     let kp_bob2 = bob.generate_key_package().expect("kp bob 2");
     let _staged2 = alice
         .add_members_bulk(gid, &[&kp_bob2])
@@ -150,6 +150,6 @@ fn add_abort_keeps_epoch_and_allows_a_fresh_commit() {
     assert_eq!(
         alice.get_epoch(gid).expect("epoch"),
         epoch_before + 1,
-        "un ajout confirme apres un abort doit avancer l'epoch normalement"
+        "an add confirmed after an abort must advance the epoch normally"
     );
 }

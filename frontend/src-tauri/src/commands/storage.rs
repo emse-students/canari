@@ -1,4 +1,4 @@
-//! Commandes Tauri de stockage : persistance, rechargement, heartbeat, flags.
+//! Storage Tauri commands: persistence, reload, heartbeat, flags.
 
 use crate::concurrency::{mark_foreground_active, mls_bin_write_lock, write_mls_state_blob};
 use crate::state::AppState;
@@ -14,13 +14,12 @@ pub(crate) fn save_mls_state(app: tauri::AppHandle, data: Vec<u8>) -> Result<(),
     write_mls_state_blob(&app, &data)
 }
 
-/// C2 : recharge `mls.bin` du disque dans le manager foreground en memoire, sous le verrou global,
-/// et marque le foreground actif. Appele au retour premier-plan AVANT toute operation : pendant
-/// l'arriere-plan, un moteur JNI (Welcome/send/worker) a pu faire avancer `mls.bin` ; sans ce
-/// rechargement le manager chaud est perime et sa prochaine persistance ECRASERAIT l'avancee
-/// background (lost-update -> SecretReuse + regression d'epoch). Renvoie `true` si rechargement
-/// effectif, `false` si `mls.bin` absent (rien a faire). Android uniquement cote appelant (aucun
-/// moteur background sur desktop).
+/// C2: reloads `mls.bin` from disk into the in-memory foreground manager, under the global lock,
+/// and marks the foreground active. Called on foreground return BEFORE any operation: while in the
+/// background a JNI engine (Welcome/send/worker) may have advanced `mls.bin`; without this reload
+/// the hot manager is stale and its next persist would OVERWRITE the background advance
+/// (lost-update -> SecretReuse + epoch regression). Returns `true` if a reload happened, `false` if
+/// `mls.bin` is absent (nothing to do). Callers are mobile-only (no background engine on desktop).
 #[tauri::command]
 pub(crate) async fn recharger_mls_au_resume(
     user_id: String,
@@ -29,15 +28,15 @@ pub(crate) async fn recharger_mls_au_resume(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    // Marquer actif AVANT de lire : toute ecriture background en cours finit son ecriture (verrou)
-    // puis les suivantes abandonnent -> la lecture ci-dessous capte la derniere avancee background.
+    // Mark active BEFORE reading: any in-flight background write completes (lock) and subsequent
+    // ones give up -> the read below picks up the latest background advance.
     mark_foreground_active();
     let manager_state = state.mls_manager.clone();
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let path = data_dir.join("mls.bin");
-        // Lecture du fichier SOUS le verrou (ne pas lire pendant qu'un JNI ecrit). On relache avant
-        // le decrypt (ChaCha20 direct via device key) : la garde foreground bloque desormais toute nouvelle ecriture.
+        // Read the file UNDER the lock (never read while a JNI engine writes). Released before the
+        // decrypt (direct ChaCha20 via device key): the foreground guard now blocks any new write.
         let bytes = {
             let _guard = mls_bin_write_lock()
                 .lock()
@@ -49,7 +48,7 @@ pub(crate) async fn recharger_mls_au_resume(
             }
         };
         let Some(bytes) = bytes else {
-            log::debug!("[RESUME] mls.bin absent - rien a recharger (C2)");
+            log::debug!("[RESUME] mls.bin absent - nothing to reload (C2)");
             return Ok(false);
         };
         let key = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
@@ -71,23 +70,23 @@ pub(crate) async fn recharger_mls_au_resume(
             }
         }
         *lock = Some(candidate);
-        log::debug!("[RESUME] manager foreground recharge depuis mls.bin (C2)");
+        log::debug!("[RESUME] foreground manager reloaded from mls.bin (C2)");
         Ok(true)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// Heartbeat foreground : rafraichit la garde tant que la WebView est visible. Tant qu'elle est
-/// fraiche, les moteurs JNI background abandonnent leurs ecritures `mls.bin` (C1/FCM3).
+/// Foreground heartbeat: refreshes the guard while the WebView is visible. As long as it stays
+/// fresh, background JNI engines give up their `mls.bin` writes (C1/FCM3).
 #[tauri::command]
 pub(crate) fn mls_foreground_heartbeat() {
     mark_foreground_active();
 }
 
-/// Libere la garde foreground (passage en arriere-plan) : autorise immediatement les moteurs JNI
-/// a ecrire `mls.bin`. La garde expirerait de toute facon apres FOREGROUND_GRACE_MS ; ceci accelere
-/// le cas propre (evenement `hidden` recu) pour ne pas retarder la livraison background.
+/// Releases the foreground guard (moving to the background): immediately allows JNI engines to
+/// write `mls.bin`. The guard would expire anyway after FOREGROUND_GRACE_MS; this speeds up the
+/// clean case (`hidden` event received) so background delivery is not delayed.
 #[tauri::command]
 pub(crate) fn pause_mls_foreground() {
     crate::concurrency::mark_foreground_inactive();
@@ -104,9 +103,9 @@ pub(crate) fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-/// Lit {app_data_dir}/mls.bin et retourne son contenu chiffre.
-/// Retourne None si le fichier n'existe pas (premiere installation).
-/// Utilise au demarrage sur mobile quand localStorage est vide (WebView nettoye).
+/// Reads {app_data_dir}/mls.bin and returns its encrypted contents.
+/// Returns None when the file does not exist (first install).
+/// Used at startup on mobile when localStorage is empty (WebView cleared).
 #[tauri::command]
 pub(crate) fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
     let data_dir = match app.path().app_data_dir() {
@@ -127,7 +126,7 @@ pub(crate) fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
     }
 }
 
-// Supprime tous les fichiers .db dans le dossier de l'app
+// Deletes every .db file in the app data directory.
 #[tauri::command]
 pub(crate) fn clear_app_data(app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;

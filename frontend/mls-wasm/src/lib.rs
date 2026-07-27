@@ -530,8 +530,9 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Merge le commit *stage* (ADD ou REMOVE) APRES acceptation serveur (`validateCommit`). Avance
-    /// l'epoch local. Pendant de `clear_pending_commit`. [[C7]] Option A : valider-puis-merger.
+    /// Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).
+    /// Advances the local epoch. Counterpart of `clear_pending_commit`. [[C7]] Option A:
+    /// validate-then-merge.
     #[wasm_bindgen]
     pub fn merge_pending_commit(&mut self, group_id: String) -> Result<(), JsValue> {
         self.manager
@@ -539,8 +540,8 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Annule le commit *stage* (ADD ou REMOVE) quand le serveur le REJETTE. L'epoch local reste
-    /// inchange (aucun fork) et un nouveau commit peut etre genere. [[C7]] Option A.
+    /// Clears the *staged* commit (ADD or REMOVE) when the server REJECTS it. The local epoch stays
+    /// unchanged (no fork) and a new commit can be generated. [[C7]] Option A.
     #[wasm_bindgen]
     pub fn clear_pending_commit(&mut self, group_id: String) -> Result<(), JsValue> {
         self.manager

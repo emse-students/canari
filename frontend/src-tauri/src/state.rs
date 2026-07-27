@@ -8,14 +8,14 @@ pub(crate) struct AppState {
     pub mls_manager: Arc<Mutex<Option<MlsManager>>>,
 }
 
-/// Pool SQLite dédié aux messages MLS en attente (gap du Sender Ratchet).
-/// Séparé de tauri-plugin-sql (côté JS) pour rester accessible depuis les commandes Rust.
+/// SQLite pool dedicated to queued MLS messages (Sender Ratchet gap).
+/// Separate from tauri-plugin-sql (JS side) so it stays reachable from Rust commands.
 pub(crate) struct PendingDb(pub Arc<sqlx::SqlitePool>);
 
-/// Client HTTP réutilisable (pool de connexions) pour le gap fetching côté Rust.
+/// Reusable HTTP client (connection pool) for Rust-side gap fetching.
 pub(crate) struct HttpClient(pub reqwest::Client);
 
-/// Résultat d'une génération de KeyPackage par lot.
+/// Result of a batch KeyPackage generation.
 #[derive(serde::Serialize)]
 pub(crate) struct KeyPackageBatchResult {
     pub fallback: Vec<u8>,
@@ -49,7 +49,7 @@ pub(crate) fn map_decrypt_outcome(
             error: None,
         },
         Err(e) => {
-            // SecretReuse = doublon benin (cle deja consommee) : ACK + drop, parite temps-reel. [[S5]]
+            // SecretReuse = benign duplicate (key already consumed): ACK + drop, realtime parity. [[S5]]
             if e.decrypt_kind() == mls_core::DecryptErrorKind::SecretReuse {
                 return BatchDecryptItem {
                     ok: true,

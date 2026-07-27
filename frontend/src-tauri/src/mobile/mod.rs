@@ -1,7 +1,7 @@
-//! Logique mobile partagée entre Android (JNI) et iOS (FFI C).
+//! Mobile logic shared between Android (JNI) and iOS (C FFI).
 //!
-//! Centralise le déchiffrement MLS en arrière-plan et le parsing protobuf minimal
-//! utilisé par les services push natifs.
+//! Centralizes background MLS decryption and the minimal protobuf parsing used by the native push
+//! services.
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub mod background;

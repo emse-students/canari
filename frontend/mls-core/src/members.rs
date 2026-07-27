@@ -46,9 +46,9 @@ impl MlsManager {
             .remove_members(&self.provider, &self.keypair, &leaf_indices)
             .map_err(|e| MlsError::OpenMls(format!("RemoveMembers error: {:?}", e)))?;
 
-        // C7-A : on NE merge PAS ici. Le commit n'est que *stage*. L'appelant le valide cote
-        // serveur PUIS appelle merge_pending_commit_for (accepte) ou clear_pending_commit_for
-        // (rejete) - plus jamais de merge-avant-validation, donc plus de fork local sur rejet.
+        // C7-A: do NOT merge here. The commit is only *staged*. The caller validates it
+        // server-side THEN calls merge_pending_commit_for (accepted) or clear_pending_commit_for
+        // (rejected) - never merge-before-validation again, hence no local fork on rejection.
         self.mark_state_dirty();
         commit_msg_out
             .tls_serialize_detached()
@@ -102,9 +102,9 @@ impl MlsManager {
             .map_err(|e| MlsError::OpenMls(e.to_string()))
     }
 
-    /// Merge le commit en attente (staged) du groupe : a appeler APRES que le serveur a accepte
-    /// le commit (`validateCommit`). Avance l'epoch local. Pendant de `clear_pending_commit_for`.
-    /// [[C7]] Option A : valider-puis-merger, jamais de fork local sur rejet.
+    /// Merges the group's pending (staged) commit: call AFTER the server accepted the commit
+    /// (`validateCommit`). Advances the local epoch. Counterpart of `clear_pending_commit_for`.
+    /// [[C7]] Option A: validate-then-merge, never a local fork on rejection.
     pub fn merge_pending_commit_for(&mut self, group_id: &str) -> Result<(), MlsError> {
         let group = self
             .groups
@@ -117,8 +117,8 @@ impl MlsManager {
         Ok(())
     }
 
-    /// Annule le commit en attente (staged) du groupe : a appeler quand le serveur REJETTE le
-    /// commit. L'epoch local reste inchange (aucun fork) et un nouveau commit peut etre genere.
+    /// Clears the group's pending (staged) commit: call when the server REJECTS the commit.
+    /// The local epoch stays unchanged (no fork) and a new commit can be generated.
     /// [[C7]] Option A.
     pub fn clear_pending_commit_for(&mut self, group_id: &str) -> Result<(), MlsError> {
         let group = self
@@ -192,8 +192,8 @@ impl MlsManager {
         // this same batch), tracking the original index of each one kept.
         let mut key_packages: Vec<KeyPackage> = Vec::new();
         let mut added_indices: Vec<u32> = Vec::new();
-        // Positions des KeyPackages invalides/illisibles, remontees a l'appelant (pas les
-        // deja-membres, qui relevent d'une dedup benigne). [[C5]]
+        // Positions of invalid/unreadable KeyPackages, reported back to the caller (not the
+        // already-members, which are a benign dedup). [[C5]]
         let mut skipped_indices: Vec<u32> = Vec::new();
         let mut any_already_member = false;
         for (idx, kp_bytes) in key_packages_bytes.iter().enumerate() {

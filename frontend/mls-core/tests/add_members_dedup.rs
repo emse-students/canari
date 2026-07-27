@@ -1,17 +1,16 @@
-/// Tests pour le garde-fou anti-doublon de `add_members_bulk`.
+/// Tests for the anti-duplicate guard in `add_members_bulk`.
 ///
-/// Contexte : si un appareil ajoute un device en bulk, fusionne le commit localement,
-/// puis échoue à livrer le Welcome/commit sur le réseau, ce device reste un "membre
-/// fantôme" dans l'arbre MLS local sans être réellement notifié. Une nouvelle tentative
-/// d'invitation de ce même device faisait alors échouer tout le commit avec
-/// `ProposalValidationError(DuplicateSignatureKey)` côté OpenMLS, bloquant aussi les
-/// autres invités du même lot. `add_members_bulk` doit désormais filtrer ces doublons en
-/// amont et signaler le cas "tout le lot est déjà membre" via `MlsError::AlreadyMember`.
+/// Context: if a device adds another device in bulk, merges the commit locally, then fails to
+/// deliver the Welcome/commit over the network, that device stays a "ghost member" in the local
+/// MLS tree without ever being notified. Re-inviting the same device then failed the whole commit
+/// with `ProposalValidationError(DuplicateSignatureKey)` on the OpenMLS side, blocking the other
+/// invitees of the same batch too. `add_members_bulk` must now filter those duplicates up front and
+/// report the "every member of the batch is already in" case via `MlsError::AlreadyMember`.
 use mls_core::{MlsError, MlsManager};
 
 fn make_device(user_id: &str, device_id: &str) -> MlsManager {
     MlsManager::load_or_create(user_id, device_id, None)
-        .unwrap_or_else(|e| panic!("Impossible de créer le device '{user_id}:{device_id}': {e}"))
+        .unwrap_or_else(|e| panic!("could not create device '{user_id}:{device_id}': {e}"))
 }
 
 #[test]
@@ -23,7 +22,7 @@ fn add_members_bulk_rejects_keypackage_of_an_existing_member() {
     alice.create_group(gid.to_string()).expect("create_group");
     let kp_bob = bob.generate_key_package().expect("kp bob");
 
-    // Premier ajout : doit réussir et inclure bob à l'index 0.
+    // First add: must succeed and include bob at index 0.
     let (_, welcome, added, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob])
         .expect("first add should succeed");
@@ -34,9 +33,9 @@ fn add_members_bulk_rejects_keypackage_of_an_existing_member() {
     bob.process_welcome(welcome.as_deref().unwrap(), Some(&rt))
         .expect("bob joins");
 
-    // bob est désormais un membre réel de l'arbre local d'alice. Si une tentative
-    // précédente avait merge un commit similaire sans jamais livrer le Welcome, alice
-    // se retrouverait dans le même état : bob présent dans l'arbre, ré-invitation requise.
+    // bob is now a real member of alice's local tree. Had an earlier attempt merged a similar
+    // commit without ever delivering the Welcome, alice would be in the same state: bob present in
+    // the tree, re-invitation required.
     let kp_bob_again = bob.generate_key_package().expect("kp bob again");
     let err = alice
         .add_members_bulk(gid, &[&kp_bob_again])
@@ -64,14 +63,14 @@ fn add_members_bulk_skips_existing_member_but_adds_the_rest_of_the_batch() {
     bob.process_welcome(welcome.as_deref().unwrap(), Some(&rt))
         .expect("bob joins");
 
-    // Lot mixte : bob (déjà membre - doit être ignoré) + carol (nouvelle - doit être ajoutée).
+    // Mixed batch: bob (already a member - must be skipped) + carol (new - must be added).
     let kp_bob_stale = bob.generate_key_package().expect("kp bob stale");
     let kp_carol = carol.generate_key_package().expect("kp carol");
     let (_, welcome2, added, _skipped) = alice
         .add_members_bulk(gid, &[&kp_bob_stale, &kp_carol])
         .expect("mixed batch should still add carol");
 
-    // Seul l'index 1 (carol) doit être marqué comme ajouté.
+    // Only index 1 (carol) must be marked as added.
     assert_eq!(added, vec![1]);
     alice
         .merge_pending_commit_for(gid)
@@ -82,9 +81,9 @@ fn add_members_bulk_skips_existing_member_but_adds_the_rest_of_the_batch() {
         .expect("carol joins");
 }
 
-/// [[C5]] Un KeyPackage invalide/illisible ne doit pas disparaitre silencieusement : son index
-/// doit etre remonte dans `skipped_indices` (et NON dans `added_indices`), tandis que les
-/// KeyPackages valides du meme lot sont ajoutes normalement.
+/// [[C5]] An invalid/unreadable KeyPackage must not vanish silently: its index must be reported in
+/// `skipped_indices` (and NOT in `added_indices`), while the valid KeyPackages of the same batch
+/// are added normally.
 #[test]
 fn add_members_bulk_reports_invalid_keypackage_in_skipped_indices() {
     let mut alice = make_device("alice", "dev1");
@@ -93,23 +92,23 @@ fn add_members_bulk_reports_invalid_keypackage_in_skipped_indices() {
 
     alice.create_group(gid.to_string()).expect("create_group");
 
-    // Index 0 : bytes corrompus (echec de deserialisation) -> doit etre marque skipped.
+    // Index 0: corrupted bytes (deserialization failure) -> must be marked skipped.
     let garbage: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0x00, 0x01, 0x02, 0x03];
-    // Index 1 : KeyPackage valide de bob -> doit etre ajoute.
+    // Index 1: bob's valid KeyPackage -> must be added.
     let kp_bob = bob.generate_key_package().expect("kp bob");
 
     let (_, welcome, added, skipped) = alice
         .add_members_bulk(gid, &[&garbage, &kp_bob])
         .expect("batch with one invalid KP still adds the valid one");
 
-    assert_eq!(added, vec![1], "seul bob (index 1) doit etre ajoute");
+    assert_eq!(added, vec![1], "only bob (index 1) must be added");
     assert_eq!(
         skipped,
         vec![0],
-        "le KeyPackage corrompu (index 0) doit etre remonte dans skipped_indices"
+        "the corrupted KeyPackage (index 0) must be reported in skipped_indices"
     );
 
-    // Le membre valide rejoint bien malgre le KP invalide du lot.
+    // The valid member does join despite the invalid KP in the batch.
     alice.merge_pending_commit_for(gid).expect("merge add bob");
     let rt = alice.export_ratchet_tree_for(gid).expect("tree");
     bob.process_welcome(welcome.as_deref().unwrap(), Some(&rt))
