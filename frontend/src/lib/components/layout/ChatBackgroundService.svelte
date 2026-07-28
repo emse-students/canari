@@ -1206,12 +1206,12 @@
   {@const callerName = getUserDisplayNameSync(globalSession.callService?.incomingCallerId ?? '')}
   {@const isVideoCall = globalSession.callService?.incomingHasVideo ?? true}
   <div
-    class="fixed top-4 left-1/2 -translate-x-1/2 z-[310] max-w-sm w-[calc(100%-2rem)] bg-[#0a0d14]/95 backdrop-blur-2xl rounded-2xl shadow-2xl ring-1 ring-white/10 px-4 py-3 flex items-center gap-3 animate-[slideDown_0.3s_ease-out]"
+    class="fixed top-4 left-1/2 -translate-x-1/2 z-[310] max-w-sm w-[calc(100%-2rem)] bg-cn-scrim/95 backdrop-blur-2xl rounded-2xl shadow-2xl ring-1 ring-white/10 px-4 py-3 flex items-center gap-3 animate-[slideDown_0.3s_ease-out]"
     transition:fly={{ y: -20, duration: 250 }}
   >
     <div class="relative h-10 w-10 shrink-0">
       <span
-        class="absolute -right-0.5 -top-0.5 z-10 h-3 w-3 rounded-full bg-amber-400 animate-pulse ring-2 ring-[#0a0d14]"
+        class="absolute -right-0.5 -top-0.5 z-10 h-3 w-3 rounded-full bg-amber-400 animate-pulse ring-2 ring-cn-scrim"
       ></span>
       <div class="h-full w-full overflow-hidden rounded-full ring-1 ring-white/20 bg-black/30">
         <Avatar

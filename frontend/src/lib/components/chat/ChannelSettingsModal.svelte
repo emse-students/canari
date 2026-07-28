@@ -479,7 +479,7 @@
               {m.common_loading_label()}
             </div>
           {:else if accessError}
-            <div class="p-3 rounded-xl bg-red-err/10 text-red-600 text-sm border border-red-err/30">
+            <div class="p-3 rounded-xl bg-red-err/10 text-red-err text-sm border border-red-err/30">
               {accessError}
             </div>
           {:else}
@@ -490,7 +490,7 @@
               <div class="flex items-center justify-between gap-4">
                 <div class="flex items-center gap-3">
                   {#if accessIsPrivate}
-                    <div class="p-2 rounded-xl bg-amber-500/10 text-amber-600">
+                    <div class="p-2 rounded-xl bg-amber-500/10 text-amber-warn">
                       <Lock size={18} strokeWidth={2.5} />
                     </div>
                     <div>
@@ -502,7 +502,7 @@
                       </p>
                     </div>
                   {:else}
-                    <div class="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
+                    <div class="p-2 rounded-xl bg-emerald-500/10 text-green-ok">
                       <Globe size={18} strokeWidth={2.5} />
                     </div>
                     <div>
@@ -647,7 +647,7 @@
                   {/if}
                 </button>
                 {#if accessSaved}
-                  <span class="text-xs font-medium text-emerald-600 flex items-center gap-1">
+                  <span class="text-xs font-medium text-green-ok flex items-center gap-1">
                     <Check size={12} strokeWidth={3} />
                     {m.common_saved_label()}
                   </span>

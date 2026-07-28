@@ -151,7 +151,7 @@
   </form>
 
   {#if error}
-    <p class="text-sm text-red-600">{error}</p>
+    <p class="text-sm text-red-err">{error}</p>
   {:else if searched && !loading}
     <p class="text-sm text-text-muted">
       {total !== 1

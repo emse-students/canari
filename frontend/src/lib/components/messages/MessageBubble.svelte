@@ -761,7 +761,7 @@
 
     {#if showQuickReactions && onReact}
       <div
-        class="absolute z-30 flex items-center gap-1 rounded-2xl border border-black/8 dark:border-white/10 bg-white/95 dark:bg-[#1a1f2e]/95 backdrop-blur-xl shadow-lg px-2 py-1.5
+        class="absolute z-30 flex items-center gap-1 rounded-2xl border border-black/8 dark:border-white/10 bg-cn-surface/95 backdrop-blur-xl shadow-lg px-2 py-1.5
           {isOwn ? 'right-0 bottom-full mb-2' : 'left-0 bottom-full mb-2'}"
         use:clickOutside={() => (showQuickReactions = false)}
       >

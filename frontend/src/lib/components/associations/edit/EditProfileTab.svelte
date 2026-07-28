@@ -179,7 +179,7 @@
             type="button"
             onclick={handleRemoveLogo}
             disabled={logoBusy}
-            class="rounded-xl px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-err/10 disabled:opacity-50"
+            class="rounded-xl px-4 py-2 text-sm font-semibold text-red-err hover:bg-red-err/10 disabled:opacity-50"
           >
             {m.asso_edit_logo_remove()}
           </button>
@@ -317,7 +317,7 @@
     {/if}
   </div>
   {#if settingsError}
-    <div class="text-sm text-red-600">{settingsError}</div>
+    <div class="text-sm text-red-err">{settingsError}</div>
   {/if}
   {#if canEdit}
     <div class="flex items-center gap-3 flex-wrap">
@@ -330,7 +330,7 @@
         {saving ? m.asso_edit_saving_label() : m.asso_edit_save_profile_button()}
       </button>
       {#if saveSuccess}
-        <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
+        <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-green-ok">
           <Check size={15} />
           {m.asso_edit_saved_success()}
         </span>

@@ -95,7 +95,7 @@
 <div class="max-w-3xl mx-auto px-4 py-8 space-y-6">
   <div class="flex items-center justify-between gap-4">
     <div class="flex items-center gap-3">
-      <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-600">
+      <div class="p-2.5 rounded-xl bg-amber-500/10 text-amber-warn">
         <Users size={22} strokeWidth={2.5} />
       </div>
       <div>
@@ -117,7 +117,7 @@
   </div>
 
   {#if error}
-    <div class="p-4 rounded-xl bg-red-err/10 text-red-600 text-sm border border-red-err/30">
+    <div class="p-4 rounded-xl bg-red-err/10 text-red-err text-sm border border-red-err/30">
       {error}
     </div>
   {/if}
@@ -155,7 +155,7 @@
 
           <div class="flex items-center gap-3 flex-shrink-0">
             {#if feedback[user.id]}
-              <span class="text-xs text-emerald-600 font-medium">{feedback[user.id]}</span>
+              <span class="text-xs text-green-ok font-medium">{feedback[user.id]}</span>
             {/if}
             <button
               type="button"

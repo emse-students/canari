@@ -467,7 +467,7 @@
             {#if stripeStatusLoading && !stripeConnectStatus}
               <p class="text-sm text-text-muted">{m.asso_stripe_status_verifying()}</p>
             {:else if stripeConnectStatus?.status === 'active' || stripePaymentsReady}
-              <p class="text-sm text-green-600 font-semibold">{m.asso_stripe_connected_label()}</p>
+              <p class="text-sm text-green-ok font-semibold">{m.asso_stripe_connected_label()}</p>
               <p class="text-xs text-text-muted">
                 {m.asso_stripe_connected_desc()}
               </p>
@@ -561,7 +561,7 @@
                 </p>
               </div>
             {:else if stripeConnectStatus?.status === 'unavailable'}
-              <p class="text-sm text-amber-700">{m.asso_stripe_unavailable()}</p>
+              <p class="text-sm text-amber-warn">{m.asso_stripe_unavailable()}</p>
             {:else}
               <p class="text-sm text-text-muted leading-relaxed">
                 {#if asso.stripeAccountId}

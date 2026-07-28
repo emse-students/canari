@@ -297,7 +297,7 @@
   {#if canModerateAgenda}
     <a
       href="/admin/agenda"
-      class="flex items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/70 dark:bg-amber-950/30 px-4 py-3 hover:border-amber-300 transition-colors"
+      class="flex items-center justify-between gap-3 rounded-2xl border border-amber-warn/30 bg-amber-warn/10 px-4 py-3 hover:border-amber-warn/40 transition-colors"
     >
       <span
         class="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100"
@@ -478,7 +478,7 @@
         <CoOwnerPicker bind:selectedIds={depositCoOwnerIds} excludeId={depositTargetAssocId} />
 
         {#if depositError}
-          <p class="text-sm text-red-600">{depositError}</p>
+          <p class="text-sm text-red-err">{depositError}</p>
         {/if}
 
         <div class="flex flex-wrap gap-2 justify-end pt-2">

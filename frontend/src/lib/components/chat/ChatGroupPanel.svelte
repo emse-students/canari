@@ -362,7 +362,7 @@
                 </button>
               </div>
               {#if shareCopied}
-                <p class="text-xs font-semibold text-emerald-600 px-1">
+                <p class="text-xs font-semibold text-green-ok px-1">
                   {m.chat_group_link_copied_label()}
                 </p>
               {/if}

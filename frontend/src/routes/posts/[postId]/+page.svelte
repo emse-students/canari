@@ -48,7 +48,7 @@
           type="button"
           onclick={copyPostLink}
           class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl transition-colors {copiedLink
-            ? 'text-green-600 bg-green-50 dark:bg-green-950/20'
+            ? 'text-green-ok bg-green-50 dark:bg-green-950/20'
             : 'text-text-muted hover:text-text-main hover:bg-cn-border/30'}"
         >
           {#if copiedLink}

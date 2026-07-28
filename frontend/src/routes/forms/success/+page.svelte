@@ -49,8 +49,8 @@
       <p class="text-text-muted">{m.form_success_verifying()}</p>
     {:else if status === 'confirmed'}
       <div class="flex justify-center">
-        <div class="p-4 rounded-full bg-green-100">
-          <CircleCheck size={48} class="text-green-600" />
+        <div class="p-4 rounded-full bg-green-ok/15">
+          <CircleCheck size={48} class="text-green-ok" />
         </div>
       </div>
       <div>

@@ -556,18 +556,18 @@
 
   {#if canEdit && !loading && sortedPendingEvents.length > 0}
     <div class="space-y-3">
-      <h3 class="text-sm font-bold text-amber-700 uppercase tracking-wide">
+      <h3 class="text-sm font-bold text-amber-warn uppercase tracking-wide">
         {m.asso_calendar_pending_section_title({ count: sortedPendingEvents.length })}
       </h3>
       {#each sortedPendingEvents as ev (ev.id)}
         <div
-          class="rounded-2xl border border-amber-200 bg-amber-50/60 px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-3"
+          class="rounded-2xl border border-amber-warn/30 bg-amber-warn/10 px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-3"
         >
           <div class="min-w-0 flex-1">
             <p class="font-bold text-text-main flex items-center gap-2 flex-wrap">
               {ev.title}
               <span
-                class="text-[10px] font-bold uppercase tracking-wide text-amber-800 bg-amber-200/80 px-2 py-0.5 rounded-full"
+                class="text-[10px] font-bold uppercase tracking-wide text-amber-warn bg-amber-warn/20 px-2 py-0.5 rounded-full"
               >
                 {m.asso_calendar_pending_badge()}
               </span>
@@ -595,7 +595,7 @@
             <button
               type="button"
               onclick={() => removeEvent(ev.id)}
-              class="rounded-xl border border-red-err/30 p-2 text-red-600 hover:bg-red-err/10"
+              class="rounded-xl border border-red-err/30 p-2 text-red-err hover:bg-red-err/10"
               title={m.common_delete_button()}
             >
               <Trash2 size={16} />
@@ -626,7 +626,7 @@
             </p>
             <p class="text-xs text-text-muted mt-0.5">{formatEventRange(ev)}</p>
             {#if ev.rejectionReason?.trim()}
-              <p class="text-xs text-red-600 mt-1">
+              <p class="text-xs text-red-err mt-1">
                 {m.asso_calendar_rejection_reason_prefix()}{ev.rejectionReason}
               </p>
             {/if}
@@ -635,7 +635,7 @@
             <button
               type="button"
               onclick={() => removeEvent(ev.id)}
-              class="rounded-xl border border-red-err/30 p-2 text-red-600 hover:bg-red-err/10"
+              class="rounded-xl border border-red-err/30 p-2 text-red-err hover:bg-red-err/10"
               title={m.common_delete_button()}
             >
               <Trash2 size={16} />
@@ -815,7 +815,7 @@
           </div>
         {/if}
         {#if formError}
-          <p class="text-sm text-red-600">{formError}</p>
+          <p class="text-sm text-red-err">{formError}</p>
         {/if}
         <div class="flex flex-wrap gap-2 justify-end pt-2">
           <button

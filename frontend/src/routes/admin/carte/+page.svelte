@@ -277,7 +277,7 @@
                   onclick={() => handleDeleteCategory(cat)}
                   disabled={busyCategoryIds.has(cat.id)}
                   title={m.common_remove_label()}
-                  class="inline-flex items-center justify-center rounded-lg border border-red-err/30 bg-red-err/10 p-1.5 text-red-600 hover:bg-red-err/20 disabled:opacity-50 transition-colors"
+                  class="inline-flex items-center justify-center rounded-lg border border-red-err/30 bg-red-err/10 p-1.5 text-red-err hover:bg-red-err/20 disabled:opacity-50 transition-colors"
                 >
                   <Trash2 size={14} />
                 </button>
@@ -347,7 +347,7 @@
                     onclick={() => handleDeleteProject(project)}
                     disabled={busyProjectIds.has(project.id)}
                     title={m.common_remove_label()}
-                    class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-600 hover:bg-red-err/20 disabled:opacity-50 transition-colors"
+                    class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 disabled:opacity-50 transition-colors"
                   >
                     <Trash2 size={15} />
                   </button>

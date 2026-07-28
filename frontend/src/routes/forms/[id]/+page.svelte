@@ -409,7 +409,7 @@
         type="button"
         onclick={copyFormLink}
         class="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl transition-colors {copiedLink
-          ? 'text-green-600 bg-green-50 dark:bg-green-950/20'
+          ? 'text-green-ok bg-green-50 dark:bg-green-950/20'
           : 'text-text-muted hover:text-text-main hover:bg-cn-border/30'}"
       >
         {#if copiedLink}
@@ -431,7 +431,7 @@
     <div
       class="rounded-3xl border border-cn-border bg-[var(--cn-surface)] p-10 text-center space-y-3"
     >
-      <p class="text-red-600 font-semibold">{error}</p>
+      <p class="text-red-err font-semibold">{error}</p>
       <button class="text-sm text-text-muted hover:underline" onclick={() => goto(redirectTo)}
         >{m.common_back()}</button
       >
@@ -489,7 +489,7 @@
             {/if}
           </div>
           {#if submitted}
-            <div class="p-2 rounded-xl bg-green-100 text-green-600 shrink-0">
+            <div class="p-2 rounded-xl bg-green-ok/15 text-green-ok shrink-0">
               <Check size={20} />
             </div>
           {/if}
@@ -553,7 +553,7 @@
             disabled={reminder.toggling}
             class="flex items-center gap-1.5 text-xs font-bold shrink-0 px-3 py-2 rounded-xl transition-colors {reminder.subscribed
               ? 'bg-amber-600 text-white hover:bg-amber-700'
-              : 'bg-amber-200/60 text-amber-900 dark:text-amber-300 hover:bg-amber-200'}"
+              : 'bg-amber-warn/20 text-amber-warn hover:bg-amber-warn/30'}"
           >
             {#if reminder.subscribed}
               <BellOff size={13} />{m.form_view_reminder_active()}
@@ -568,9 +568,9 @@
     <!-- ── Success ── -->
     {#if successMessage}
       <div
-        class="rounded-2xl border border-green-200 bg-green-50 dark:bg-green-950/20 px-5 py-4 mb-4 flex items-center gap-3"
+        class="rounded-2xl border border-green-ok/30 bg-green-ok/10 px-5 py-4 mb-4 flex items-center gap-3"
       >
-        <div class="p-2 rounded-xl bg-green-100 dark:bg-green-900/40 text-green-600 shrink-0">
+        <div class="p-2 rounded-xl bg-green-100 dark:bg-green-900/40 text-green-ok shrink-0">
           <Check size={20} />
         </div>
         <div>
@@ -782,7 +782,7 @@
               </table>
             </div>
           {:else}
-            <div class="p-3 bg-red-err/10 text-red-600 text-xs rounded-xl border border-red-err/30">
+            <div class="p-3 bg-red-err/10 text-red-err text-xs rounded-xl border border-red-err/30">
               Unsupported type: <strong>{item.type}</strong>
             </div>
           {/if}
@@ -857,7 +857,7 @@
       >
         <div class="flex-1 min-w-0">
           {#if submitted}
-            <span class="text-sm font-bold text-green-600 flex items-center gap-1.5"
+            <span class="text-sm font-bold text-green-ok flex items-center gap-1.5"
               ><Check size={16} /> {m.form_view_response_sent()}</span
             >
           {:else if calculateTotal() > 0}
@@ -895,7 +895,7 @@
       </div>
 
       {#if paymentPending}
-        <p class="pointer-events-auto text-sm text-amber-600 font-medium text-center mt-2">
+        <p class="pointer-events-auto text-sm text-amber-warn font-medium text-center mt-2">
           {m.form_view_payment_pending_note()}
         </p>
       {:else if formFull && !submitted}

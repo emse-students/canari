@@ -99,11 +99,13 @@ redefined under `:root[data-theme='dark']` and exposed to Tailwind through `@the
 | -------------------------------- | ------------------- | ------------------------------------- |
 | `bg-cn-bg`                       | `--cn-bg`           | App/page background                   |
 | `bg-cn-surface`                  | `--cn-surface`      | Panels, cards, inputs, sheets         |
+| `bg-surface-elevated` / `bg-cn-surface-alt` | `--surface-elevated` / `--cn-surface-alt` | One step toward / away from the reader (popovers, inactive chips) |
 | `border-cn-border`               | `--cn-border`       | Borders and dividers                  |
 | `text-text-main` / `text-text-muted` | `--text-main` / `--text-muted` | Body and secondary text   |
-| `text-red-err` / `text-green-ok` | `--red-err` / `--green-ok` | Error and success accents      |
+| `text-red-err` / `text-green-ok` / `text-amber-warn` | `--red-err` / `--green-ok` / `--amber-warn` | The status triad: error, success, warning |
 | `bg-cn-yellow` / `hover:bg-cn-yellow-hover` | `--cn-yellow` | Brand fill                    |
 | `text-cn-ink`                    | fixed `#151b2c`     | Ink **on** the brand yellow           |
+| `bg-cn-scrim` / `bg-cn-tooltip`  | fixed `#0a0d14` / `#1a2236` | Surfaces that are dark in BOTH themes (call chrome, tooltips) |
 | `text-cn-dark`                   | `--cn-dark`         | Emphasis text — **flips** with theme  |
 
 Rules:
@@ -117,6 +119,24 @@ Rules:
   query — `dark:` pairs work, but a single flipping token is preferred over a two-class pair.
 - Tint with an opacity modifier on a token (`bg-red-err/10`, `bg-cn-yellow/15`) rather than a
   fixed-palette tint: the tint then tracks the theme too.
+- A `-600` shade is not a safe middle ground. `text-red-600` reads fine on a light card and drops
+  to roughly 3.9:1 once that card flips; `text-red-err` stays above 7:1 in both.
+
+### Finding one-way colours
+
+`node scripts/find-oneway-colors.mjs [pathFilter]` (from `frontend/`) reports them. Two things it
+gets right that a grep does not:
+
+- Detection is **per class list**, not per file: `bg-white dark:bg-slate-900` flips and is fine, so
+  a plain grep over-reports by roughly 4x.
+- It does **not** tokenize on `:`, which would strip the `dark:` prefix off every counterpart and
+  make correctly-paired utilities look one-way.
+
+It deliberately stays quiet about black (a `bg-black/40` scrim is meant to darken what is behind it)
+and about `bg-white/N` at 20% or less (the glassmorphism highlight idiom). What it still reports is
+intentional and should stay: switch thumbs (`bg-white` on a coloured track), colour-picker handles,
+the always-dark call and lightbox chrome, and the white plate behind a QR code, which has to be
+white to scan.
 
 ## Auth / token management
 

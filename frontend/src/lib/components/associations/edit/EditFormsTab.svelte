@@ -109,7 +109,7 @@
 
   {#if hasPaidForms && !stripePaymentsReady}
     <div
-      class="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm text-amber-800 flex items-start gap-2.5"
+      class="rounded-xl border border-amber-warn/30 bg-amber-warn/10 px-4 py-3 text-sm text-amber-warn flex items-start gap-2.5"
     >
       <AlertTriangle size={15} class="shrink-0 mt-0.5" />
       <span>
@@ -159,7 +159,7 @@
                 {form.allowCashPayment ? ` · ${m.asso_forms_cash_accepted()}` : ''}
                 {#if form.basePrice > 0 && !stripePaymentsReady}
                   <span
-                    class="inline-flex items-center gap-1 text-amber-700 font-medium"
+                    class="inline-flex items-center gap-1 text-amber-warn font-medium"
                     title="Stripe Connect not configured - online payments inactive"
                   >
                     <AlertTriangle size={11} />
@@ -178,14 +178,14 @@
 
           {#if pendingCash[form.id]?.length}
             <div class="border-t border-cn-border/50 pt-3 space-y-2">
-              <p class="text-xs font-bold text-amber-700 flex items-center gap-1.5">
+              <p class="text-xs font-bold text-amber-warn flex items-center gap-1.5">
                 <AlertTriangle size={13} />
                 {m.asso_forms_pending_cash_label({ count: pendingCash[form.id].length })}
               </p>
               <ul class="space-y-2">
                 {#each pendingCash[form.id] as sub (sub.id)}
                   <li
-                    class="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2"
+                    class="flex items-center gap-3 rounded-xl border border-amber-warn/30 bg-amber-warn/10 px-3 py-2"
                   >
                     <div class="min-w-0 flex-1">
                       <p class="text-xs font-semibold text-text-main truncate">
@@ -201,13 +201,13 @@
                       <button
                         type="button"
                         onclick={() => validateCash(form.id, sub.id)}
-                        class="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors"
+                        class="rounded-lg border border-green-ok/40 bg-green-ok/10 px-3 py-1.5 text-xs font-semibold text-green-ok hover:bg-green-ok/20 transition-colors"
                         >{m.common_validate_button()}</button
                       >
                       <button
                         type="button"
                         onclick={() => cancelCash(form.id, sub.id)}
-                        class="rounded-lg border border-red-err/30 bg-red-err/10 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-err/20 transition-colors"
+                        class="rounded-lg border border-red-err/30 bg-red-err/10 px-3 py-1.5 text-xs font-semibold text-red-err hover:bg-red-err/20 transition-colors"
                         >{m.common_cancel_button()}</button
                       >
                     </div>

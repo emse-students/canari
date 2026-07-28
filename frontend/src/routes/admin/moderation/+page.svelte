@@ -363,7 +363,7 @@
       onclick={() => switchTab('reports')}
       class="flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg transition-colors {tab ===
       'reports'
-        ? 'bg-white shadow-sm text-text-main'
+        ? 'bg-cn-surface shadow-sm text-text-main'
         : 'text-text-muted hover:text-text-main'}"
     >
       <Flag size={16} />
@@ -378,7 +378,7 @@
       onclick={() => switchTab('hidden')}
       class="flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg transition-colors {tab ===
       'hidden'
-        ? 'bg-white shadow-sm text-text-main'
+        ? 'bg-cn-surface shadow-sm text-text-main'
         : 'text-text-muted hover:text-text-main'}"
     >
       <EyeOff size={16} />
@@ -395,7 +395,7 @@
       onclick={() => switchTab('muted')}
       class="flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg transition-colors {tab ===
       'muted'
-        ? 'bg-white shadow-sm text-text-main'
+        ? 'bg-cn-surface shadow-sm text-text-main'
         : 'text-text-muted hover:text-text-main'}"
     >
       <UserX size={16} />
@@ -419,7 +419,9 @@
     {#if loadingReports}
       <div class="space-y-3">
         {#each { length: 3 } as _, i (i)}
-          <div class="rounded-2xl border border-cn-border bg-white/60 p-5 animate-pulse space-y-2">
+          <div
+            class="rounded-2xl border border-cn-border bg-cn-surface/60 p-5 animate-pulse space-y-2"
+          >
             <div class="h-3 w-2/3 rounded bg-cn-border/60"></div>
             <div class="h-3 w-full rounded bg-cn-border/40"></div>
           </div>
@@ -439,7 +441,7 @@
         <div class="space-y-3 mb-8">
           {#each pendingReports as report (report.id)}
             <div
-              class="rounded-2xl border border-cn-border bg-white/70 backdrop-blur-sm p-4 shadow-sm"
+              class="rounded-2xl border border-cn-border bg-cn-surface/70 backdrop-blur-sm p-4 shadow-sm"
             >
               <!-- Header row -->
               <div class="flex items-center gap-2 flex-wrap mb-3">
@@ -449,7 +451,7 @@
                   {contentTypeLabel[report.contentType]}
                 </span>
                 <span
-                  class="text-[11px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full"
+                  class="text-[11px] font-semibold text-amber-warn bg-amber-warn/10 px-2 py-0.5 rounded-full"
                 >
                   {reasonLabel[report.reason] ?? report.reason}
                 </span>
@@ -652,7 +654,9 @@
         </h2>
         <div class="space-y-2">
           {#each resolvedReports as report (report.id)}
-            <div class="rounded-xl border border-cn-border bg-white/40 p-3 flex items-center gap-3">
+            <div
+              class="rounded-xl border border-cn-border bg-cn-surface/40 p-3 flex items-center gap-3"
+            >
               <span
                 class="text-[11px] font-bold px-2 py-0.5 rounded-full shrink-0 {statusClass[
                   report.status
@@ -711,7 +715,9 @@
     {#if loadingHidden}
       <div class="space-y-3">
         {#each { length: 3 } as _, i (i)}
-          <div class="rounded-2xl border border-cn-border bg-white/60 p-5 animate-pulse space-y-2">
+          <div
+            class="rounded-2xl border border-cn-border bg-cn-surface/60 p-5 animate-pulse space-y-2"
+          >
             <div class="h-3 w-1/2 rounded bg-cn-border/60"></div>
             <div class="h-3 w-full rounded bg-cn-border/40"></div>
             <div class="h-3 w-3/4 rounded bg-cn-border/30"></div>
@@ -767,7 +773,7 @@
             <!-- Report count + ID -->
             <div class="flex items-center gap-2 mb-3">
               <span
-                class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-err/20 text-red-600"
+                class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-err/20 text-red-err"
               >
                 {m.moderation_pending_reports_count_label({ count: post.pendingReportCount })}
               </span>
@@ -842,7 +848,9 @@
     {#if loadingMuted}
       <div class="space-y-3">
         {#each { length: 3 } as _, i (i)}
-          <div class="rounded-2xl border border-cn-border bg-white/60 p-5 animate-pulse space-y-2">
+          <div
+            class="rounded-2xl border border-cn-border bg-cn-surface/60 p-5 animate-pulse space-y-2"
+          >
             <div class="h-3 w-2/3 rounded bg-cn-border/60"></div>
           </div>
         {/each}
@@ -856,7 +864,7 @@
       <div class="space-y-3">
         {#each mutedUsers as user (user.userId)}
           <div
-            class="rounded-2xl border border-cn-border bg-white/70 backdrop-blur-sm p-4 shadow-sm flex items-start gap-3"
+            class="rounded-2xl border border-cn-border bg-cn-surface/70 backdrop-blur-sm p-4 shadow-sm flex items-start gap-3"
           >
             <div class="shrink-0 mt-0.5"><Avatar userId={user.userId} size="sm" /></div>
             <div class="flex-1 min-w-0">

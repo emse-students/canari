@@ -60,7 +60,7 @@
 
     <div
       use:portal
-      class="fixed z-[200] right-4 top-[calc(env(safe-area-inset-top,0px)+3.5rem)] w-80 rounded-xl border border-cn-border bg-white dark:bg-[#0f1622] shadow-2xl overflow-hidden"
+      class="fixed z-[200] right-4 top-[calc(env(safe-area-inset-top,0px)+3.5rem)] w-80 rounded-xl border border-cn-border bg-cn-surface shadow-2xl overflow-hidden"
     >
       <div class="px-4 py-3 border-b border-cn-border flex items-center justify-between">
         <span class="text-sm font-semibold">{m.notif_bell_heading()}</span>

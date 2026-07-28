@@ -410,7 +410,7 @@
 {#if compact}
   <!-- Docked, non-blocking widget: the rest of the app stays interactive. -->
   <div
-    class="fixed bottom-4 right-4 z-[300] w-[min(20rem,calc(100vw-2rem))] rounded-3xl bg-[#0a0d14]/95 backdrop-blur-2xl shadow-2xl ring-1 ring-white/10 p-4 select-none"
+    class="fixed bottom-4 right-4 z-[300] w-[min(20rem,calc(100vw-2rem))] rounded-3xl bg-cn-scrim/95 backdrop-blur-2xl shadow-2xl ring-1 ring-white/10 p-4 select-none"
     transition:fly={{ y: 30, duration: 250 }}
   >
     <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
@@ -441,7 +441,7 @@
     <div class="flex items-center gap-3">
       <div class="relative h-12 w-12 shrink-0">
         <span
-          class="absolute -right-0.5 -top-0.5 z-10 h-3 w-3 rounded-full ring-2 ring-[#0a0d14] {callState ===
+          class="absolute -right-0.5 -top-0.5 z-10 h-3 w-3 rounded-full ring-2 ring-cn-scrim {callState ===
           'incall'
             ? 'bg-emerald-400'
             : 'bg-amber-400 animate-pulse'}"
@@ -555,7 +555,7 @@
     <div
       class="relative w-full h-full {isMobileRtc
         ? 'max-w-full max-h-full rounded-none'
-        : 'max-w-6xl max-h-[82vh] rounded-[2rem]'} bg-[#0a0d14] overflow-hidden shadow-2xl ring-1 ring-white/10 flex flex-col transition-all duration-300"
+        : 'max-w-6xl max-h-[82vh] rounded-[2rem]'} bg-cn-scrim overflow-hidden shadow-2xl ring-1 ring-white/10 flex flex-col transition-all duration-300"
       style={isMobileRtc
         ? 'padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);'
         : ''}
@@ -734,7 +734,7 @@
                 class="w-full h-full object-cover -scale-x-100"
               ></video>
             {:else if currentUserId}
-              <div class="w-full h-full flex items-center justify-center bg-[#0a0d14]">
+              <div class="w-full h-full flex items-center justify-center bg-cn-scrim">
                 <div
                   class="w-20 h-20 md:w-28 md:h-28 rounded-full overflow-hidden ring-2 ring-white/20"
                 >

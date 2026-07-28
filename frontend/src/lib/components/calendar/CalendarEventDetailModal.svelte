@@ -120,7 +120,7 @@
           <button
             type="button"
             onclick={() => onDelete?.(event.id)}
-            class="inline-flex items-center gap-1.5 rounded-xl border border-red-err/30 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-err/10 transition-colors"
+            class="inline-flex items-center gap-1.5 rounded-xl border border-red-err/30 px-3 py-2 text-xs font-semibold text-red-err hover:bg-red-err/10 transition-colors"
           >
             <Trash2 size={14} />
             {m.common_delete_button()}

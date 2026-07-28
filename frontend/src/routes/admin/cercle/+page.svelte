@@ -456,7 +456,7 @@
                       <p class="font-semibold text-sm text-text-main">{product.name}</p>
                       <span
                         class="rounded-full px-2 py-0.5 text-xs font-semibold {product.isActive
-                          ? 'bg-emerald-100 text-emerald-700'
+                          ? 'bg-green-ok/15 text-green-ok'
                           : 'bg-cn-surface-alt text-text-muted'}"
                       >
                         {product.isActive
@@ -497,7 +497,7 @@
                       type="button"
                       onclick={() => handleDeleteProduct(product)}
                       title={m.common_delete_button()}
-                      class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-600 hover:bg-red-err/20 transition-colors"
+                      class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 transition-colors"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -653,14 +653,14 @@
 
         {#if webhookFailures.length > 0}
           <div class="border-t border-cn-border pt-5 space-y-3">
-            <h3 class="text-sm font-bold text-text-main flex items-center gap-2 text-amber-700">
+            <h3 class="text-sm font-bold text-text-main flex items-center gap-2 text-amber-warn">
               <AlertTriangle size={16} />
               {m.admin_cercle_webhook_failures_title({ count: webhookFailures.length })}
             </h3>
             <ul class="space-y-2">
               {#each webhookFailures as delivery (delivery.id)}
                 <li
-                  class="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3"
+                  class="flex items-center gap-3 rounded-xl border border-amber-warn/30 bg-amber-warn/10 px-4 py-3"
                 >
                   <div class="min-w-0 flex-1">
                     <p class="text-xs font-semibold text-text-main">
@@ -678,7 +678,7 @@
                         : '-'}
                     </p>
                     {#if delivery.lastError}
-                      <p class="text-xs text-red-600 truncate">{delivery.lastError}</p>
+                      <p class="text-xs text-red-err truncate">{delivery.lastError}</p>
                     {/if}
                   </div>
                   <button

@@ -125,7 +125,7 @@
     {#if !isOwnPost}
       {#if reportOpen}
         <div
-          class="absolute top-0 right-0 flex flex-col gap-2 bg-white dark:bg-[#1a2236] border border-cn-border rounded-xl p-3 shadow-lg w-52 z-50"
+          class="absolute top-0 right-0 flex flex-col gap-2 bg-surface-elevated border border-cn-border rounded-xl p-3 shadow-lg w-52 z-50"
           transition:slide={{ duration: 150 }}
         >
           <p class="text-[0.65rem] font-bold text-text-muted uppercase tracking-wide">

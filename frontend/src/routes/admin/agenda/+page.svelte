@@ -217,7 +217,7 @@
                 type="button"
                 onclick={() => openRejectModal(ev)}
                 disabled={actingId === ev.id}
-                class="inline-flex items-center gap-1.5 rounded-xl border border-orange-300 px-3 py-2 text-xs font-semibold text-orange-700 hover:bg-orange-50 disabled:opacity-50"
+                class="inline-flex items-center gap-1.5 rounded-xl border border-amber-warn/40 px-3 py-2 text-xs font-semibold text-amber-warn hover:bg-amber-warn/10 disabled:opacity-50"
               >
                 <X size={14} />
                 {m.admin_agenda_reject_button()}
@@ -234,7 +234,7 @@
               type="button"
               onclick={() => remove(ev)}
               disabled={actingId === ev.id}
-              class="inline-flex items-center gap-1 rounded-xl border border-red-err/30 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-err/10 disabled:opacity-50"
+              class="inline-flex items-center gap-1 rounded-xl border border-red-err/30 px-3 py-2 text-xs font-semibold text-red-err hover:bg-red-err/10 disabled:opacity-50"
             >
               <Trash2 size={14} />
               {m.common_delete_button()}
@@ -292,7 +292,7 @@
           type="button"
           onclick={confirmReject}
           disabled={rejecting}
-          class="inline-flex items-center gap-1.5 rounded-xl border border-orange-300 px-4 py-2 text-sm font-bold text-orange-700 hover:bg-orange-50 disabled:opacity-50"
+          class="inline-flex items-center gap-1.5 rounded-xl border border-amber-warn/40 px-4 py-2 text-sm font-bold text-amber-warn hover:bg-amber-warn/10 disabled:opacity-50"
         >
           <X size={14} />
           {rejecting

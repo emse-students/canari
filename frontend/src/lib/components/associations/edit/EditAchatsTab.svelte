@@ -245,8 +245,8 @@
                 <span
                   class="rounded-full px-2 py-0.5 text-xs font-semibold {purchase.source ===
                   'product'
-                    ? 'bg-emerald-100 text-emerald-700'
-                    : 'bg-sky-100 text-sky-700'}"
+                    ? 'bg-green-ok/15 text-green-ok'
+                    : 'bg-sky-500/15 text-sky-600 dark:text-sky-400'}"
                 >
                   {purchase.source === 'product'
                     ? m.asso_achats_source_product()

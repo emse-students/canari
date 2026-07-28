@@ -53,7 +53,7 @@
 </script>
 
 <div class="px-4 py-8 sm:px-6 min-h-dvh flex items-start justify-center">
-  <div class="w-full max-w-md rounded-2xl border border-cn-border bg-white/80 p-6 shadow-sm">
+  <div class="w-full max-w-md rounded-2xl border border-cn-border bg-cn-surface/80 p-6 shadow-sm">
     <h1 class="text-2xl font-extrabold text-text-main tracking-tight mb-6">
       {m.event_buy_heading()}
     </h1>

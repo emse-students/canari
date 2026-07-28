@@ -229,7 +229,7 @@
           </div>
         </div>
         {#if formError}
-          <p class="text-sm text-red-600">{formError}</p>
+          <p class="text-sm text-red-err">{formError}</p>
         {/if}
         <div class="flex gap-2 justify-end">
           <button

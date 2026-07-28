@@ -111,7 +111,7 @@
     role="dialog"
     aria-modal="true"
     aria-label={m.payment_modal_title()}
-    class="keyboard-aware-modal-panel w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-white shadow-2xl max-h-[min(92dvh,var(--app-viewport-height,100dvh))] overflow-y-auto"
+    class="keyboard-aware-modal-panel w-full max-w-md rounded-t-3xl sm:rounded-2xl border border-cn-border bg-cn-surface shadow-2xl max-h-[min(92dvh,var(--app-viewport-height,100dvh))] overflow-y-auto"
   >
     <!-- Header -->
     <div class="flex items-center justify-between px-6 pt-5 pb-4 border-b border-cn-border">

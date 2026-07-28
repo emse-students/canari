@@ -433,9 +433,9 @@
       />
       <div class="flex items-center justify-end gap-3 pt-1">
         {#if noteError}
-          <span class="text-xs text-red-600 mr-auto">{noteError}</span>
+          <span class="text-xs text-red-err mr-auto">{noteError}</span>
         {:else if noteSaved}
-          <span class="text-xs text-green-600 mr-auto">{m.asso_doc_saved_label()}</span>
+          <span class="text-xs text-green-ok mr-auto">{m.asso_doc_saved_label()}</span>
         {/if}
         <button
           type="button"
@@ -498,7 +498,7 @@
         {uploading ? m.asso_doc_upload_encrypting() : m.asso_doc_upload_button()}
       </button>
       {#if uploadError}
-        <p class="text-sm text-red-600 mt-2">{uploadError}</p>
+        <p class="text-sm text-red-err mt-2">{uploadError}</p>
       {/if}
     </div>
 
@@ -523,7 +523,7 @@
             <div class="min-w-0 flex-1">
               <p class="font-semibold text-text-main text-sm truncate flex items-center gap-1.5">
                 {#if isProtected(doc)}
-                  <Lock size={13} class="shrink-0 text-amber-600" />
+                  <Lock size={13} class="shrink-0 text-amber-warn" />
                 {/if}
                 <span class="truncate">{doc.name}</span>
               </p>
@@ -544,7 +544,7 @@
                     : m.asso_doc_visibility_make_public_title()}
                 class="inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs font-bold transition-colors disabled:opacity-40
                   {doc.visibility === 'public' && !isProtected(doc)
-                  ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                  ? 'border-green-ok/40 bg-green-ok/10 text-green-ok'
                   : 'border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-text-main'}"
               >
                 {#if doc.visibility === 'public' && !isProtected(doc)}
@@ -582,7 +582,7 @@
                 type="button"
                 onclick={() => handleDelete(doc)}
                 title={m.common_delete_button()}
-                class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-600 hover:bg-red-err/20 transition-colors"
+                class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 transition-colors"
               >
                 <Trash2 size={15} />
               </button>
@@ -657,7 +657,7 @@
         aria-labelledby="pw-prompt-title"
       >
         <h3 id="pw-prompt-title" class="text-lg font-bold text-text-main flex items-center gap-2">
-          <Lock size={18} class="text-amber-600" />
+          <Lock size={18} class="text-amber-warn" />
           {m.asso_doc_protected_title()}
         </h3>
         <p class="text-sm text-text-muted truncate">{pwPromptDoc.name}</p>
@@ -670,7 +670,7 @@
         >
           <Input label={m.common_password_label()} type="password" bind:value={pwPromptValue} />
           {#if pwPromptError}
-            <p class="text-sm text-red-600">{pwPromptError}</p>
+            <p class="text-sm text-red-err">{pwPromptError}</p>
           {/if}
           <div class="flex flex-wrap gap-2 justify-end pt-1">
             <button
@@ -725,7 +725,7 @@
             placeholder={m.asso_doc_rename_placeholder()}
           />
           {#if renameError}
-            <p class="text-sm text-red-600">{renameError}</p>
+            <p class="text-sm text-red-err">{renameError}</p>
           {/if}
           <div class="flex flex-wrap gap-2 justify-end pt-1">
             <button

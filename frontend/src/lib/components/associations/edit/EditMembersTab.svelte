@@ -227,7 +227,7 @@
       </button>
     </form>
     {#if memberError}
-      <p class="text-sm text-red-600 mt-3">{memberError}</p>
+      <p class="text-sm text-red-err mt-3">{memberError}</p>
     {/if}
   </div>
 </div>

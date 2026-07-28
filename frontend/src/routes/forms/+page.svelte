@@ -235,7 +235,7 @@
                 class="inline-flex items-center gap-1.5 rounded-xl border-2 border-cn-border bg-[var(--cn-surface)] px-3.5 py-2 text-xs font-bold text-text-main hover:border-cn-yellow/40 transition-colors"
               >
                 {#if copiedId === form.id}
-                  <Check size={14} class="text-green-600" />
+                  <Check size={14} class="text-green-ok" />
                   {m.form_list_link_copied()}
                 {:else}
                   <Link size={14} />
@@ -264,7 +264,7 @@
               <button
                 onclick={() => handleDelete(form.id, form.title)}
                 disabled={deletingId === form.id}
-                class="inline-flex items-center justify-center rounded-xl border-2 border-red-err/30 bg-red-err/10 p-2 text-red-600 hover:bg-red-err/20 transition-colors disabled:opacity-50"
+                class="inline-flex items-center justify-center rounded-xl border-2 border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 transition-colors disabled:opacity-50"
                 title={m.common_delete_button()}
               >
                 <Trash2 size={14} />
@@ -282,7 +282,7 @@
                   ></div>
                 </div>
               {:else if submissionsData[form.id] === 'error'}
-                <p class="text-sm text-red-600 text-center py-2">
+                <p class="text-sm text-red-err text-center py-2">
                   {m.form_list_responses_error()}
                 </p>
               {:else if Array.isArray(submissionsData[form.id]) && (submissionsData[form.id] as Submission[]).length === 0}

@@ -11,6 +11,11 @@
      (always-light) amber brand surface, where `cn-dark` would wrongly flip to near-white
      in dark mode and wreck contrast. */
   --color-cn-ink: #151b2c;
+  /* The other two fixed colours, same reasoning as `cn-ink`: surfaces that are deliberately dark
+     in BOTH themes, so they must not be built from `cn-surface`. `cn-scrim` is the call/video
+     chrome, `cn-tooltip` the dark tooltip bubble - both always carry white text. */
+  --color-cn-scrim: #0a0d14;
+  --color-cn-tooltip: #1a2236;
   --color-cn-yellow: var(--cn-yellow);
   --color-cn-yellow-hover: var(--cn-yellow-hover);
   --color-cn-bg: var(--cn-bg);
@@ -18,11 +23,20 @@
      hardcoding `bg-white`, which never flips and turns text-on-surface unreadable in dark. */
   --color-cn-surface: var(--cn-surface);
   --color-surface-elevated: var(--surface-elevated);
+  /* Recessed surface, one step AWAY from the reader (inactive badges, muted chips) - the mirror
+     of `surface-elevated`. Six components already used `bg-cn-surface-alt` before this entry
+     existed, so Tailwind generated nothing and those badges rendered with no background at all. */
+  --color-cn-surface-alt: var(--cn-surface-alt);
   --color-cn-border: var(--cn-border);
   --color-text-main: var(--text-main);
   --color-text-muted: var(--text-muted);
   --color-green-ok: var(--green-ok);
   --color-red-err: var(--red-err);
+  /* Third member of the status triad, next to `green-ok` and `red-err`. Warning banners used to
+     hardcode `text-amber-700` / `bg-amber-50` / `border-amber-200`, none of which flip, so the
+     banner stayed light while the text on it went near-white. Tint it with an opacity modifier
+     (`bg-amber-warn/10`, `border-amber-warn/30`) rather than reaching for the amber scale. */
+  --color-amber-warn: var(--amber-warn);
 }
 
 :root {
@@ -36,11 +50,13 @@
   --text-muted: #607188;
   --green-ok: #19b56a;
   --red-err: #e04d4d;
+  --amber-warn: #b45309;
   --app-bg-gradient:
     radial-gradient(circle at 10% -10%, #ffe8a3 0%, transparent 30%),
     radial-gradient(circle at 90% 0%, #cde7ff 0%, transparent 35%),
     linear-gradient(180deg, #f9fbff 0%, #eef3fa 100%);
   --surface-elevated: color-mix(in srgb, var(--cn-surface) 84%, #ffffff 16%);
+  --cn-surface-alt: #eef2f8;
   --app-viewport-height: 100dvh;
 }
 
@@ -55,11 +71,13 @@
   --text-muted: #91a6c2;
   --green-ok: #2dd089;
   --red-err: #f07474;
+  --amber-warn: #fbbf24;
   --app-bg-gradient:
     radial-gradient(circle at 20% -10%, #5a4510 0%, transparent 35%),
     radial-gradient(circle at 90% 0%, #0f2f5f 0%, transparent 42%),
     linear-gradient(180deg, #060a11 0%, #04070d 100%);
   --surface-elevated: color-mix(in srgb, var(--cn-surface) 92%, #ffffff 8%);
+  --cn-surface-alt: #1a2236;
 }
 
 /* Theme transitions - scoped to elements that actually change theme colors.

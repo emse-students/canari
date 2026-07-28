@@ -72,7 +72,7 @@
     {:else if error}
       <div class="py-12 text-center px-4">
         <FileX size={40} class="mx-auto mb-3 text-text-muted opacity-40" />
-        <p class="text-sm text-red-600">{error}</p>
+        <p class="text-sm text-red-err">{error}</p>
       </div>
     {:else if post}
       <Card class="overflow-hidden border-cn-border/80 shadow-sm">

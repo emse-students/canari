@@ -855,8 +855,8 @@
         {#if submitMessage}
           <p
             class="mt-1 text-center text-xs font-semibold {submitError
-              ? 'text-red-600'
-              : 'text-green-600'}"
+              ? 'text-red-err'
+              : 'text-green-ok'}"
           >
             {submitMessage}
           </p>

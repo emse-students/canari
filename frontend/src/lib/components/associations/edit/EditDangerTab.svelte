@@ -117,7 +117,7 @@
     <button
       type="button"
       onclick={handleDelete}
-      class="rounded-xl bg-white border border-red-300 px-4 py-2.5 text-sm font-bold text-red-err hover:bg-red-err/20"
+      class="rounded-xl bg-cn-surface border border-red-err/30 px-4 py-2.5 text-sm font-bold text-red-err hover:bg-red-err/20"
     >
       {kind === 'list' ? m.asso_danger_delete_list() : m.asso_danger_delete_asso()}
     </button>

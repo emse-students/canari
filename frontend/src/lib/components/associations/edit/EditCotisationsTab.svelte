@@ -429,7 +429,7 @@
           {/if}
         </div>
         {#if activateError}
-          <p class="text-sm text-red-600">{activateError}</p>
+          <p class="text-sm text-red-err">{activateError}</p>
         {/if}
         <button
           type="button"
@@ -489,7 +489,7 @@
           {/if}
         </div>
         {#if configError}
-          <p class="text-sm text-red-600">{configError}</p>
+          <p class="text-sm text-red-err">{configError}</p>
         {/if}
         <div class="flex gap-2">
           <button
@@ -542,7 +542,7 @@
           </div>
 
           {#if tiersError}
-            <p class="text-sm text-red-600">{tiersError}</p>
+            <p class="text-sm text-red-err">{tiersError}</p>
           {/if}
 
           {#if tiersLoading}
@@ -564,7 +564,7 @@
                         <p class="font-semibold text-sm text-text-main">{product.name}</p>
                         {#if product.variantKey}
                           <span
-                            class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-100 text-amber-800"
+                            class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-warn/15 text-amber-warn"
                           >
                             {product.variantKey}
                           </span>
@@ -606,7 +606,7 @@
                           type="button"
                           onclick={() => void handleDeleteTier(product)}
                           title={m.common_delete_button()}
-                          class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-600 hover:bg-red-err/20 transition-colors"
+                          class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 transition-colors"
                         >
                           <Trash2 size={14} />
                         </button>
@@ -844,7 +844,7 @@
         {/if}
       </div>
       {#if exportError}
-        <p class="text-sm text-red-600">{exportError}</p>
+        <p class="text-sm text-red-err">{exportError}</p>
       {/if}
 
       <div class="relative">
@@ -894,7 +894,7 @@
                         <p class="text-sm font-semibold text-text-main">{cotisantName(item)}</p>
                         {#if item.tier}
                           <span
-                            class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-100 text-amber-800"
+                            class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-warn/15 text-amber-warn"
                           >
                             {item.tier}
                           </span>
@@ -968,7 +968,7 @@
           </button>
         </form>
         {#if addError}
-          <p class="text-sm text-red-600">{addError}</p>
+          <p class="text-sm text-red-err">{addError}</p>
         {/if}
       {/if}
     </div>

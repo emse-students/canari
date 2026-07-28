@@ -180,7 +180,7 @@
       <button
         type="button"
         onclick={handleLogout}
-        class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-red-400/40 bg-red-500/5 text-red-600 hover:bg-red-500/10 transition-colors"
+        class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-red-400/40 bg-red-500/5 text-red-err hover:bg-red-500/10 transition-colors"
         title={m.dashboard_logout_title()}
       >
         <LogOut size={22} />

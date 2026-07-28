@@ -449,7 +449,7 @@
         <h2 class="text-lg font-bold text-text-main">{m.form_image_section()}</h2>
       </div>
       {#if imageError}
-        <p class="text-sm text-red-600 mb-3">{imageError}</p>
+        <p class="text-sm text-red-err mb-3">{imageError}</p>
       {/if}
       {#if imageUrl}
         <div class="relative rounded-xl overflow-hidden border border-cn-border mb-2">
@@ -608,7 +608,7 @@
         {m.form_coowners_desc()}
       </p>
       {#if coOwnerError}
-        <p class="text-sm text-red-600 mb-3">{coOwnerError}</p>
+        <p class="text-sm text-red-err mb-3">{coOwnerError}</p>
       {/if}
       {#if coOwners.length > 0}
         <ul class="space-y-2 mb-4">
@@ -751,7 +751,7 @@
     >
       <p class="text-sm text-text-muted min-h-[1.25rem]">
         {#if titleMissing}
-          <span class="text-amber-600 font-medium">{m.form_title_required_hint()}</span>
+          <span class="text-amber-warn font-medium">{m.form_title_required_hint()}</span>
         {:else}
           {items.length === 1
             ? m.form_questions_count_one()

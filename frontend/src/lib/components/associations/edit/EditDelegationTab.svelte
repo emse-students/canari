@@ -241,7 +241,7 @@
           </p>
         </div>
         {#if !delegation.parentReady}
-          <p class="flex items-start gap-2 text-sm text-amber-700">
+          <p class="flex items-start gap-2 text-sm text-amber-warn">
             <AlertTriangle size={16} class="mt-0.5 shrink-0" />
             {m.asso_deleg_parent_not_ready()}
           </p>
@@ -296,7 +296,7 @@
       </div>
 
       {#if !canReceiveDelegation}
-        <p class="flex items-start gap-2 text-sm text-amber-700">
+        <p class="flex items-start gap-2 text-sm text-amber-warn">
           <AlertTriangle size={16} class="mt-0.5 shrink-0" />
           {m.asso_deleg_parent_not_stripe_ready()}
         </p>
@@ -314,8 +314,8 @@
                   <span
                     class="rounded-full px-2 py-0.5 text-xs font-semibold {child.status ===
                     'approved'
-                      ? 'bg-emerald-100 text-emerald-700'
-                      : 'bg-amber-100 text-amber-700'}"
+                      ? 'bg-green-ok/15 text-green-ok'
+                      : 'bg-amber-warn/15 text-amber-warn'}"
                   >
                     {child.status === 'approved'
                       ? m.asso_deleg_child_approved_badge()

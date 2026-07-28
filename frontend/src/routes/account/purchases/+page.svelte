@@ -130,7 +130,7 @@
               <CotisationTagRow {tag}>
                 {#snippet trailing()}
                   <span
-                    class="shrink-0 rounded-full bg-emerald-100 text-emerald-700 px-3 py-1 text-xs font-bold"
+                    class="shrink-0 rounded-full bg-green-ok/15 text-green-ok px-3 py-1 text-xs font-bold"
                   >
                     {m.purchases_tag_active_badge()}
                   </span>

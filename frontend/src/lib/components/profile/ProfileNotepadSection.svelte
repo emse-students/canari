@@ -67,9 +67,9 @@
     />
     <div class="flex items-center justify-end gap-3 pt-3">
       {#if noteError}
-        <span class="text-xs text-red-600 mr-auto">{noteError}</span>
+        <span class="text-xs text-red-err mr-auto">{noteError}</span>
       {:else if noteSaved}
-        <span class="text-xs text-green-600 mr-auto">{m.profile_notepad_saved()}</span>
+        <span class="text-xs text-green-ok mr-auto">{m.profile_notepad_saved()}</span>
       {/if}
       <button
         type="button"

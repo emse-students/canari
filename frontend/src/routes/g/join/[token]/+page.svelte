@@ -59,7 +59,7 @@
     {:else if joined}
       <div class="flex flex-col items-center gap-3 py-2">
         <div
-          class="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600"
+          class="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/10 text-green-ok"
         >
           <Check size={30} />
         </div>

@@ -197,7 +197,9 @@
   {/if}
 
   {#if !stripePaymentsReady}
-    <div class="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 text-sm">
+    <div
+      class="rounded-xl border border-amber-warn/30 bg-amber-warn/10 text-amber-warn px-4 py-3 text-sm"
+    >
       {#if stripePending}
         {m.asso_boutique_stripe_pending()}
       {:else}
@@ -415,7 +417,7 @@
                 <p class="font-semibold text-sm text-text-main">{product.name}</p>
                 <span
                   class="rounded-full px-2 py-0.5 text-xs font-semibold {product.isActive
-                    ? 'bg-emerald-100 text-emerald-700'
+                    ? 'bg-green-ok/15 text-green-ok'
                     : 'bg-cn-surface-alt text-text-muted'}"
                 >
                   {product.isActive
@@ -424,7 +426,7 @@
                 </span>
                 {#if product.membersOnly}
                   <span
-                    class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-100 text-amber-800"
+                    class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-warn/15 text-amber-warn"
                   >
                     {m.asso_boutique_members_only_label()}
                   </span>
@@ -477,7 +479,7 @@
                 type="button"
                 onclick={() => handleDeleteProduct(product)}
                 title={m.common_delete_button()}
-                class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-600 hover:bg-red-err/20 transition-colors"
+                class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 transition-colors"
               >
                 <Trash2 size={14} />
               </button>

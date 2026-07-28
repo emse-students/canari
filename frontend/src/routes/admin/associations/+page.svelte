@@ -122,9 +122,7 @@
               {#if savingIds.has(assoc.id)}
                 <Loader2 size={14} class="animate-spin text-cn-yellow" />
               {/if}
-              <span
-                class="text-xs font-bold {assoc.isBDE ? 'text-emerald-600' : 'text-text-muted'}"
-              >
+              <span class="text-xs font-bold {assoc.isBDE ? 'text-green-ok' : 'text-text-muted'}">
                 BDE
               </span>
               <input

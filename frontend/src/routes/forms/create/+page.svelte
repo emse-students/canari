@@ -377,7 +377,7 @@
           </p>
         {:else}
           <div
-            class="rounded-2xl border-2 border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 px-4 py-3 space-y-2"
+            class="rounded-2xl border-2 border-amber-warn/30 bg-amber-warn/10 px-4 py-3 space-y-2"
           >
             <p class="text-sm font-semibold text-amber-900 dark:text-amber-100">
               {m.form_no_stripe_title()}
@@ -604,7 +604,7 @@
   >
     <p class="text-sm text-text-muted min-h-[1.25rem]">
       {#if titleMissing}
-        <span class="text-amber-600 font-medium">{m.form_title_required_hint()}</span>
+        <span class="text-amber-warn font-medium">{m.form_title_required_hint()}</span>
       {:else}
         {items.length === 1
           ? m.form_questions_count_one()

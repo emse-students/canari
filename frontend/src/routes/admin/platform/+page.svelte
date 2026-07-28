@@ -162,7 +162,7 @@
         <p class="text-sm text-red-500" role="alert">{error}</p>
       {/if}
       {#if savedMessage}
-        <p class="text-sm text-emerald-600" role="status">{savedMessage}</p>
+        <p class="text-sm text-green-ok" role="status">{savedMessage}</p>
       {/if}
 
       <div class="flex flex-wrap gap-2">
