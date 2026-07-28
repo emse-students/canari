@@ -75,7 +75,7 @@
     ? isOpen
       ? 'hidden w-64 lg:w-72 xl:flex border-l border-black/5 dark:border-white/10'
       : 'hidden'
-    : 'flex h-full w-full'} flex-col bg-white/70 dark:bg-[#151B2C]/90 backdrop-blur-2xl overflow-y-auto custom-scrollbar transition-all duration-300"
+    : 'flex h-full w-full'} flex-col bg-white/70 dark:bg-cn-ink/90 backdrop-blur-2xl overflow-y-auto custom-scrollbar transition-all duration-300"
 >
   {#if mode === 'mobile'}
     <div
@@ -117,7 +117,7 @@
                 <Avatar userId={member.userId} size="sm" />
                 {#if member.status === 'online'}
                   <span
-                    class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-[#151B2C] shadow-sm bg-emerald-500"
+                    class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-cn-ink shadow-sm bg-emerald-500"
                   ></span>
                 {/if}
               </div>
@@ -152,7 +152,7 @@
                 <Avatar userId={member.userId} size="sm" />
                 {#if member.status === 'online'}
                   <span
-                    class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-[#151B2C] shadow-sm bg-emerald-500"
+                    class="absolute bottom-0 right-0 block h-3 w-3 rounded-full ring-2 ring-white dark:ring-cn-ink shadow-sm bg-emerald-500"
                   ></span>
                 {/if}
               </div>

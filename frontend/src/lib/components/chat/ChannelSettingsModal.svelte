@@ -380,7 +380,7 @@
                 onclick={handleRenameChannel}
                 disabled={!channelNameInput.trim() ||
                   channelNameInput.trim() === selectedChannel?.name}
-                class="rounded-xl bg-amber-500 px-6 py-3 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-amber-500/20 disabled:shadow-none"
+                class="rounded-xl bg-amber-500 px-6 py-3 text-sm font-bold text-cn-ink hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-amber-500/20 disabled:shadow-none"
               >
                 {m.chat_rename_channel_button()}
               </button>
@@ -479,9 +479,7 @@
               {m.common_loading_label()}
             </div>
           {:else if accessError}
-            <div
-              class="p-3 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 text-sm border border-red-200 dark:border-red-800"
-            >
+            <div class="p-3 rounded-xl bg-red-err/10 text-red-600 text-sm border border-red-err/30">
               {accessError}
             </div>
           {:else}
@@ -588,7 +586,7 @@
                             type="button"
                             onclick={() => handleRemoveMemberFromChannel(uid)}
                             disabled={memberRemoving[uid]}
-                            class="text-red-500 hover:text-red-700 disabled:opacity-50 transition-colors flex-shrink-0"
+                            class="text-red-500 hover:text-red-err disabled:opacity-50 transition-colors flex-shrink-0"
                             title={m.chat_channel_remove_access_title()}
                           >
                             {#if memberRemoving[uid]}
@@ -622,7 +620,7 @@
                         type="button"
                         onclick={addAllowedUser}
                         disabled={!addingUserId.trim()}
-                        class="rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md shadow-amber-500/20 mt-0"
+                        class="rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold text-cn-ink hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md shadow-amber-500/20 mt-0"
                       >
                         <Check size={14} strokeWidth={3} />
                         {m.common_add_button()}
@@ -640,7 +638,7 @@
                   type="button"
                   onclick={saveChannelAccess}
                   disabled={accessSaving}
-                  class="rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2 shadow-md shadow-amber-500/20"
+                  class="rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-amber-400 active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2 shadow-md shadow-amber-500/20"
                 >
                   {#if accessSaving}
                     <Loader size={14} class="animate-spin" /> {m.common_saving_label()}

@@ -20,7 +20,7 @@
 <div class="flex items-center gap-3 group select-none">
   <!-- Conteneur de l'icône -->
   <div
-    class="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-[#151B2C] shadow-md shadow-black/10 border border-black/5 dark:border-white/10 overflow-hidden transition-all duration-300 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-black/20 dark:group-hover:shadow-white/5"
+    class="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-cn-ink shadow-md shadow-black/10 border border-black/5 dark:border-white/10 overflow-hidden transition-all duration-300 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-black/20 dark:group-hover:shadow-white/5"
   >
     <!-- Le logo avec un léger effet de rotation au survol pour le dynamisme -->
     <img

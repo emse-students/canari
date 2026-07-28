@@ -61,7 +61,9 @@
 
 <div class="space-y-6">
   {#if error}
-    <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
+    <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+      {error}
+    </div>
   {/if}
 
   <div
@@ -104,18 +106,18 @@
     </button>
   </div>
 
-  <div class="rounded-2xl border border-red-200 bg-red-50/60 p-6 space-y-3">
-    <h2 class="text-base font-bold text-red-700 flex items-center gap-2">
+  <div class="rounded-2xl border border-red-err/30 bg-red-err/10 p-6 space-y-3">
+    <h2 class="text-base font-bold text-red-err flex items-center gap-2">
       <Trash2 size={18} />
       {m.asso_danger_title()}
     </h2>
-    <p class="text-sm text-red-800/90">
+    <p class="text-sm text-red-err">
       {kind === 'list' ? m.asso_danger_delete_desc_list() : m.asso_danger_delete_desc_asso()}
     </p>
     <button
       type="button"
       onclick={handleDelete}
-      class="rounded-xl bg-white border border-red-300 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100"
+      class="rounded-xl bg-white border border-red-300 px-4 py-2.5 text-sm font-bold text-red-err hover:bg-red-err/20"
     >
       {kind === 'list' ? m.asso_danger_delete_list() : m.asso_danger_delete_asso()}
     </button>

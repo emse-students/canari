@@ -186,7 +186,7 @@
 
 <div class="space-y-6">
   {#if error}
-    <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+    <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
       {error}
     </div>
   {/if}
@@ -337,7 +337,7 @@
                       type="button"
                       onclick={() => void handleReject(child.associationId)}
                       disabled={busyChildIds.has(child.associationId)}
-                      class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-red-700 disabled:opacity-50"
+                      class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-red-err disabled:opacity-50"
                     >
                       <X size={14} />
                       {m.asso_deleg_reject_button()}
@@ -369,7 +369,7 @@
                       type="button"
                       onclick={() => void handleReject(child.associationId)}
                       disabled={busyChildIds.has(child.associationId)}
-                      class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-red-700 disabled:opacity-50"
+                      class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-red-err disabled:opacity-50"
                     >
                       <X size={14} />
                       {m.asso_deleg_revoke_button()}

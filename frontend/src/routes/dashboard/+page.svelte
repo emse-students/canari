@@ -253,7 +253,7 @@
         {#if isAdmin}
           <a
             href="/admin/moderation"
-            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-red-400 hover:bg-red-50/40 transition-colors"
+            class="flex flex-col items-center gap-2 p-4 rounded-2xl border border-cn-border bg-[var(--cn-surface)] hover:border-red-400 hover:bg-red-err/10 transition-colors"
             title={m.dashboard_admin_moderation_label()}
           >
             <ShieldAlert size={22} class="text-red-500" />

@@ -139,7 +139,7 @@
     <div class="px-6 py-5 space-y-3">
       {#if error}
         <div
-          class="flex items-start gap-2 rounded-xl bg-red-50 border border-red-200 text-red-700 px-4 py-3 text-sm"
+          class="flex items-start gap-2 rounded-xl bg-red-err/10 border border-red-err/30 text-red-err px-4 py-3 text-sm"
         >
           <AlertCircle size={16} class="shrink-0 mt-0.5" />
           {error}

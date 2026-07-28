@@ -252,7 +252,7 @@
           {:else if poll.multipleChoice}
             <button
               type="button"
-              class="px-5 py-2.5 rounded-xl bg-amber-500 text-[#151B2C] font-extrabold text-sm transition-all shadow-md shadow-amber-500/20 hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 active:scale-95 active:shadow-md disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-md disabled:active:scale-100 disabled:shadow-none outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
+              class="px-5 py-2.5 rounded-xl bg-amber-500 text-cn-ink font-extrabold text-sm transition-all shadow-md shadow-amber-500/20 hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 active:scale-95 active:shadow-md disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-md disabled:active:scale-100 disabled:shadow-none outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
               disabled={selectedOptions.length === 0}
               onclick={() => onSubmitVote(poll.id)}
             >

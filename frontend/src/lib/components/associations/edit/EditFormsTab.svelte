@@ -129,7 +129,7 @@
   {/if}
 
   {#if formsError}
-    <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+    <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
       {formsError}
     </div>
   {/if}
@@ -207,7 +207,7 @@
                       <button
                         type="button"
                         onclick={() => cancelCash(form.id, sub.id)}
-                        class="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100 transition-colors"
+                        class="rounded-lg border border-red-err/30 bg-red-err/10 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-err/20 transition-colors"
                         >{m.common_cancel_button()}</button
                       >
                     </div>

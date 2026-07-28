@@ -122,7 +122,7 @@
           <!-- Red dot mini-badge shown when the sidebar is collapsed. -->
           {#if unread > 0 && !isExpanded}
             <span
-              class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-[var(--surface-elevated)] dark:ring-[#151B2C]"
+              class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-[var(--surface-elevated)] dark:ring-cn-ink"
             ></span>
           {/if}
         </span>

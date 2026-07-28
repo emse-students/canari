@@ -89,7 +89,7 @@
     />
 
     {#if error}
-      <div class="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+      <div class="rounded-xl border border-red-err/30 bg-red-err/10 px-4 py-3 text-sm text-red-600">
         {error}
       </div>
     {/if}

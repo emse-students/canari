@@ -117,9 +117,7 @@
   </div>
 
   {#if error}
-    <div
-      class="p-4 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 text-sm border border-red-200 dark:border-red-800"
-    >
+    <div class="p-4 rounded-xl bg-red-err/10 text-red-600 text-sm border border-red-err/30">
       {error}
     </div>
   {/if}

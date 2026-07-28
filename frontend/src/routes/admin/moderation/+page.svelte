@@ -409,7 +409,7 @@
   </div>
 
   {#if error}
-    <div class="p-4 rounded-xl bg-red-50 text-red-700 border border-red-200 text-sm mb-6">
+    <div class="p-4 rounded-xl bg-red-err/10 text-red-err border border-red-err/30 text-sm mb-6">
       {error}
     </div>
   {/if}
@@ -766,7 +766,9 @@
 
             <!-- Report count + ID -->
             <div class="flex items-center gap-2 mb-3">
-              <span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">
+              <span
+                class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-err/20 text-red-600"
+              >
                 {m.moderation_pending_reports_count_label({ count: post.pendingReportCount })}
               </span>
               <button

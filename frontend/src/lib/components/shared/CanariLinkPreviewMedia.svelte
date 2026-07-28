@@ -21,7 +21,7 @@
 </script>
 
 <div
-  class="shrink-0 relative overflow-hidden rounded-xl border border-black/5 dark:border-white/10 flex items-center justify-center w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] bg-gradient-to-br from-[#151B2C] via-[#1e2848] to-amber-700/70"
+  class="shrink-0 relative overflow-hidden rounded-xl border border-black/5 dark:border-white/10 flex items-center justify-center w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] bg-gradient-to-br from-cn-ink via-[#1e2848] to-amber-700/70"
 >
   {#if loading}
     <div

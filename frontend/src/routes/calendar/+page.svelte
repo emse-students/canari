@@ -376,7 +376,7 @@
   <MonthCalendarGridRich {focusDate} events={sortedEvents} {loading} bind:selectedDay />
 
   {#if loadError}
-    <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">
+    <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
       {loadError}
     </div>
   {:else if !loading && sortedEvents.length === 0}

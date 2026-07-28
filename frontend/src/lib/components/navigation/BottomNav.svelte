@@ -74,7 +74,7 @@
 
           {#if badge > 0}
             <span
-              class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white dark:ring-[#151B2C] shadow-sm"
+              class="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white dark:ring-cn-ink shadow-sm"
               aria-label="{badge} non lus"
             ></span>
           {/if}

@@ -293,7 +293,9 @@
       ></div>
     </div>
   {:else if error && !asso}
-    <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
+    <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+      {error}
+    </div>
   {:else if asso}
     <header class="space-y-1">
       <h1 class="text-2xl font-extrabold text-text-main tracking-tight">
@@ -303,7 +305,9 @@
     </header>
 
     {#if error}
-      <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
+      <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+        {error}
+      </div>
     {/if}
 
     <!-- Section tabs -->
@@ -424,8 +428,8 @@
             onclick={() => (editSection = 'danger')}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
             {editSection === 'danger'
-              ? 'bg-red-100 text-red-800 border border-red-200'
-              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-red-700'}"
+              ? 'bg-red-err/20 text-red-err border border-red-err/30'
+              : 'border border-cn-border bg-[var(--cn-surface)] text-text-muted hover:text-red-err'}"
           >
             <AlertTriangle size={17} />
             {m.asso_edit_tab_danger()}
@@ -544,7 +548,7 @@
               </div>
             {:else if stripeConnectStatus?.status === 'restricted'}
               <div
-                class="rounded-xl border border-red-200 bg-red-50 text-red-800 px-4 py-3 text-sm space-y-1"
+                class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm space-y-1"
               >
                 <p class="font-semibold">{m.asso_stripe_restricted_title()}</p>
                 <p>

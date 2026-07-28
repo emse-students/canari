@@ -128,10 +128,10 @@
     <Mic size={20} />
   </button>
 {:else}
-  <div class="flex items-center gap-2 px-3 py-2 bg-red-50 rounded-2xl border border-red-200">
+  <div class="flex items-center gap-2 px-3 py-2 bg-red-err/10 rounded-2xl border border-red-err/30">
     <div class="flex items-center gap-2">
       <div class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-      <span class="text-sm font-mono text-red-700">{formatDuration(recordingDuration)}</span>
+      <span class="text-sm font-mono text-red-err">{formatDuration(recordingDuration)}</span>
     </div>
 
     <button

@@ -350,7 +350,7 @@
 </script>
 
 <article
-  class="relative mb-6 overflow-hidden rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/70 dark:bg-[#151B2C]/70 shadow-sm backdrop-blur-2xl transition-all duration-300 focus-within:shadow-lg focus-within:border-amber-500/30"
+  class="relative mb-6 overflow-hidden rounded-[2rem] border border-black/5 dark:border-white/10 bg-white/70 dark:bg-cn-ink/70 shadow-sm backdrop-blur-2xl transition-all duration-300 focus-within:shadow-lg focus-within:border-amber-500/30"
 >
   <!-- En-tête du Formulaire -->
   <div class="border-b border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 px-5 py-4">

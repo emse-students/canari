@@ -173,7 +173,7 @@
                 onclick={() => handleRemove(grant)}
                 disabled={removingIds.has(grant.userId)}
                 title={m.docreview_revoke_button()}
-                class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 disabled:opacity-50 transition-colors"
+                class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-600 hover:bg-red-err/20 disabled:opacity-50 transition-colors"
               >
                 <Trash2 size={15} />
               </button>

@@ -526,7 +526,7 @@
   </div>
 
   {#if loadError}
-    <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+    <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
       {loadError}
     </div>
   {/if}
@@ -595,7 +595,7 @@
             <button
               type="button"
               onclick={() => removeEvent(ev.id)}
-              class="rounded-xl border border-red-200 p-2 text-red-600 hover:bg-red-50"
+              class="rounded-xl border border-red-err/30 p-2 text-red-600 hover:bg-red-err/10"
               title={m.common_delete_button()}
             >
               <Trash2 size={16} />
@@ -608,18 +608,18 @@
 
   {#if canEdit && !loading && sortedRejectedEvents.length > 0}
     <div class="space-y-3">
-      <h3 class="text-sm font-bold text-red-700 uppercase tracking-wide">
+      <h3 class="text-sm font-bold text-red-err uppercase tracking-wide">
         {m.asso_calendar_rejected_section_title({ count: sortedRejectedEvents.length })}
       </h3>
       {#each sortedRejectedEvents as ev (ev.id)}
         <div
-          class="rounded-2xl border border-red-200 bg-red-50/60 dark:bg-red-950/20 px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-3"
+          class="rounded-2xl border border-red-err/30 bg-red-err/10 dark:bg-red-950/20 px-4 py-3 flex flex-col sm:flex-row sm:items-start gap-3"
         >
           <div class="min-w-0 flex-1">
             <p class="font-bold text-text-main flex items-center gap-2 flex-wrap">
               {ev.title}
               <span
-                class="text-[10px] font-bold uppercase tracking-wide text-red-700 bg-red-200/80 px-2 py-0.5 rounded-full"
+                class="text-[10px] font-bold uppercase tracking-wide text-red-err bg-red-err/20 px-2 py-0.5 rounded-full"
               >
                 {m.asso_calendar_rejected_badge()}
               </span>
@@ -635,7 +635,7 @@
             <button
               type="button"
               onclick={() => removeEvent(ev.id)}
-              class="rounded-xl border border-red-200 p-2 text-red-600 hover:bg-red-50"
+              class="rounded-xl border border-red-err/30 p-2 text-red-600 hover:bg-red-err/10"
               title={m.common_delete_button()}
             >
               <Trash2 size={16} />

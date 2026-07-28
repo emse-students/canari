@@ -226,7 +226,7 @@
 
   {#if error}
     <div
-      class="rounded-2xl bg-red-50 border-2 border-red-200 text-red-700 px-4 py-3 mb-6 text-sm font-medium flex items-center gap-2"
+      class="rounded-2xl bg-red-err/10 border-2 border-red-err/30 text-red-err px-4 py-3 mb-6 text-sm font-medium flex items-center gap-2"
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -600,7 +600,7 @@
 
   <!-- Save bar -->
   <div
-    class="mt-5 rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/85 dark:bg-[#151B2C]/85 backdrop-blur-xl shadow-lg px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3 text-center sm:text-left"
+    class="mt-5 rounded-2xl border border-cn-border/60 bg-[var(--cn-surface)]/85 dark:bg-cn-ink/85 backdrop-blur-xl shadow-lg px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3 text-center sm:text-left"
   >
     <p class="text-sm text-text-muted min-h-[1.25rem]">
       {#if titleMissing}

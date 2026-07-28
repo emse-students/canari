@@ -289,7 +289,7 @@
                       </span>
                       {#if isCurrentDevice}
                         <span
-                          class="text-[0.65rem] px-2 py-0.5 rounded-full bg-amber-500 text-[#151B2C] font-extrabold uppercase tracking-wider shadow-sm"
+                          class="text-[0.65rem] px-2 py-0.5 rounded-full bg-amber-500 text-cn-ink font-extrabold uppercase tracking-wider shadow-sm"
                         >
                           {m.chat_current_device_badge()}
                         </span>

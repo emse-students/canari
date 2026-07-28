@@ -50,7 +50,7 @@
     <!-- Logo -->
     <div class="mb-10">
       <div
-        class="w-24 h-24 rounded-[32px] bg-[#151B2C] shadow-[0_8px_32px_rgba(0,0,0,0.3)] border border-white/10 flex items-center justify-center mx-auto mb-6 transform hover:scale-105 transition-transform duration-300"
+        class="w-24 h-24 rounded-[32px] bg-cn-ink shadow-[0_8px_32px_rgba(0,0,0,0.3)] border border-white/10 flex items-center justify-center mx-auto mb-6 transform hover:scale-105 transition-transform duration-300"
       >
         <img
           src="/favicon.png"
@@ -78,12 +78,12 @@
       <button
         onclick={onLogin}
         disabled={isLoggingIn || loginDisabled}
-        class="w-full py-4 bg-cn-yellow text-[#151B2C] rounded-2xl font-extrabold text-lg transition-all hover:bg-cn-yellow-hover hover:-translate-y-0.5 active:translate-y-0 shadow-lg shadow-cn-yellow/20 disabled:opacity-70 disabled:cursor-wait"
+        class="w-full py-4 bg-cn-yellow text-cn-ink rounded-2xl font-extrabold text-lg transition-all hover:bg-cn-yellow-hover hover:-translate-y-0.5 active:translate-y-0 shadow-lg shadow-cn-yellow/20 disabled:opacity-70 disabled:cursor-wait"
       >
         {#if isLoggingIn}
           <span class="inline-flex items-center gap-2">
             <span
-              class="inline-block w-4 h-4 border-2 border-[#151B2C]/20 border-t-[#151B2C] rounded-full animate-spin"
+              class="inline-block w-4 h-4 border-2 border-cn-ink/20 border-t-cn-ink rounded-full animate-spin"
             ></span>
             {m.auth_redirecting()}
           </span>

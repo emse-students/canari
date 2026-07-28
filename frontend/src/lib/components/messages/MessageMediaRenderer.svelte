@@ -60,11 +60,11 @@
   // isOwn = amber background (dark text); !isOwn = glassmorphism light/dark (theme-adaptive text).
   const glassBoxClass = $derived(
     isOwn
-      ? 'bg-black/10 border-black/10 text-[#151B2C]'
+      ? 'bg-black/10 border-black/10 text-cn-ink'
       : 'bg-black/5 dark:bg-white/10 border-black/5 dark:border-white/10'
   );
 
-  const textMutedClass = $derived(isOwn ? 'text-[#151B2C]/70' : 'text-text-muted');
+  const textMutedClass = $derived(isOwn ? 'text-cn-ink/70' : 'text-text-muted');
 
   const imageAspectStyle = $derived(
     mediaRef?.type === 'image' ? mediaAspectStyle(mediaRef.width, mediaRef.height) : ''

@@ -543,7 +543,7 @@
       <button
         onclick={() => onJoinChannel?.(channelInvite.channelId)}
         type="button"
-        class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-[#151B2C] hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20"
+        class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-cn-ink hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20"
       >
         <Building2 size={12} strokeWidth={3} />
         {m.msg_channel_invite_join_button()}

@@ -456,7 +456,9 @@
       ></div>
     </div>
   {:else if error}
-    <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-4 text-sm">{error}</div>
+    <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-4 text-sm">
+      {error}
+    </div>
   {:else if stats}
     <!-- Quota bar -->
     <div class="space-y-1.5">
@@ -580,7 +582,7 @@
                 type="button"
                 onclick={() => handleDelete(doc)}
                 title={m.common_delete_button()}
-                class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors"
+                class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-600 hover:bg-red-err/20 transition-colors"
               >
                 <Trash2 size={15} />
               </button>

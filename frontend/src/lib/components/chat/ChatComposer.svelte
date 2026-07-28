@@ -398,7 +398,7 @@
   {#if replyingTo}
     <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">
       <div
-        class="mx-3 sm:mx-4 md:mx-6 mb-3 flex items-center justify-between bg-white/85 dark:bg-[#151B2C]/85 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-2xl p-3 md:p-4 shadow-lg relative overflow-hidden"
+        class="mx-3 sm:mx-4 md:mx-6 mb-3 flex items-center justify-between bg-white/85 dark:bg-cn-ink/85 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-2xl p-3 md:p-4 shadow-lg relative overflow-hidden"
       >
         <div
           class="absolute left-0 top-0 bottom-0 w-1.5 bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"
@@ -447,7 +447,7 @@
                 : 'aspect-ratio: 1'}
             <div
               transition:scale={{ duration: 200, start: 0.9 }}
-              class="relative rounded-[1rem] bg-white/90 dark:bg-[#151B2C]/90 backdrop-blur-xl border border-black/5 dark:border-white/10 overflow-hidden w-20 sm:w-24 shadow-md group/file"
+              class="relative rounded-[1rem] bg-white/90 dark:bg-cn-ink/90 backdrop-blur-xl border border-black/5 dark:border-white/10 overflow-hidden w-20 sm:w-24 shadow-md group/file"
               style="{thumbAspect}; max-height: 6rem;"
             >
               {#if isImageFile(file) && previewUrls[key]}
@@ -530,7 +530,7 @@
           class="absolute left-1/2 -translate-x-1/2 -translate-y-16 z-10 pointer-events-none"
         >
           <span
-            class="px-4 py-2.5 bg-amber-500 text-[#151B2C] font-extrabold rounded-full shadow-xl shadow-amber-500/20 text-sm flex items-center gap-2 whitespace-nowrap"
+            class="px-4 py-2.5 bg-amber-500 text-cn-ink font-extrabold rounded-full shadow-xl shadow-amber-500/20 text-sm flex items-center gap-2 whitespace-nowrap"
           >
             <UploadCloud size={18} strokeWidth={2.5} />
             {m.chat_drag_files_badge()}

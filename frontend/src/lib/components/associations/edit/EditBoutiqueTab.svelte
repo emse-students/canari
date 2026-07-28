@@ -191,7 +191,7 @@
   </div>
 
   {#if productsError}
-    <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+    <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
       {productsError}
     </div>
   {/if}
@@ -477,7 +477,7 @@
                 type="button"
                 onclick={() => handleDeleteProduct(product)}
                 title={m.common_delete_button()}
-                class="inline-flex items-center justify-center rounded-xl border border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors"
+                class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-600 hover:bg-red-err/20 transition-colors"
               >
                 <Trash2 size={14} />
               </button>

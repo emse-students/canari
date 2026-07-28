@@ -179,7 +179,7 @@
             type="button"
             onclick={handleRemoveLogo}
             disabled={logoBusy}
-            class="rounded-xl px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+            class="rounded-xl px-4 py-2 text-sm font-semibold text-red-600 hover:bg-red-err/10 disabled:opacity-50"
           >
             {m.asso_edit_logo_remove()}
           </button>

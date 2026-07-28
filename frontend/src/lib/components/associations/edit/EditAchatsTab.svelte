@@ -205,7 +205,7 @@
   </form>
 
   {#if purchasesError}
-    <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+    <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
       {purchasesError}
     </div>
   {/if}

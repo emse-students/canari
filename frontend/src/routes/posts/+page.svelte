@@ -457,7 +457,7 @@
                   <div class="relative" use:markPostSeen={post}>
                     {#if isNew(post)}
                       <span
-                        class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-[#151B2C] px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30"
+                        class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-cn-ink px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30"
                       >
                         {m.posts_badge_new()}
                       </span>

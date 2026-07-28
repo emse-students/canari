@@ -227,7 +227,7 @@
   >
     <a
       href="/chat"
-      class="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] transition-all text-[#151B2C] text-[0.85rem] font-extrabold shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
+      class="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] transition-all text-cn-ink text-[0.85rem] font-extrabold shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
     >
       <MessageCircle size={18} strokeWidth={2.5} class="ml-0.5 mt-0.5" />
       {m.post_conversations_open_messaging_label()}

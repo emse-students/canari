@@ -57,7 +57,7 @@
   >
     {#if error}
       <div class="space-y-4">
-        <div class="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto">
+        <div class="w-16 h-16 rounded-full bg-red-err/20 flex items-center justify-center mx-auto">
           <span class="text-red-600 text-2xl">✗</span>
         </div>
         <h2 class="text-lg font-bold text-text-main">{m.auth_callback_error_title()}</h2>

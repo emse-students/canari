@@ -782,7 +782,7 @@
               </table>
             </div>
           {:else}
-            <div class="p-3 bg-red-50 text-red-600 text-xs rounded-xl border border-red-200">
+            <div class="p-3 bg-red-err/10 text-red-600 text-xs rounded-xl border border-red-err/30">
               Unsupported type: <strong>{item.type}</strong>
             </div>
           {/if}
@@ -838,7 +838,7 @@
     <!-- ── Error ── -->
     {#if error}
       <div
-        class="mt-4 rounded-2xl border border-red-200 bg-red-50 dark:bg-red-950/20 px-4 py-3 text-sm font-medium text-red-700 dark:text-red-300"
+        class="mt-4 rounded-2xl border border-red-err/30 bg-red-err/10 dark:bg-red-950/20 px-4 py-3 text-sm font-medium text-red-err"
       >
         {error}
       </div>

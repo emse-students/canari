@@ -87,11 +87,21 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
   exists for either (the `channel_messages.reactions` column is unused). Separate from the
   moderation permission, which now works - this is a plain missing feature.
 
-- \[ \] **WP-UI-1 (P3) - Sweep the REST of the UI for one-way colours.** The two reported
-  components are done (community settings modal + both biometric sheets, tokens throughout).
-  What remains is the audit: grep the frontend for `bg-white`, `bg-*-50`, `bg-*-100`,
-  `text-*-800/900` and raw hex, convert to `app.css` tokens. Contract + token table:
-  `docs/wiki/frontend/architecture.md` "Theming".
+- \[ \] **WP-UI-1 (P3) - Finish the one-way colour sweep. 390 -> 212 occurrences, 91 -> 67 files.**
+  Done: every raw `[#151B2C]` is now the `cn-ink` token (same colour, 47 sites), and the whole red
+  error triad (`bg-red-50`/`border-red-200`/`text-red-700`, ~120 sites) is `bg-red-err/10`,
+  `border-red-err/30`, `text-red-err`, with the now-redundant `dark:bg-red-900` overrides dropped.
+  Remaining, by family: amber/emerald/green/sky banners (`text-amber-700/800`, `border-amber-200`,
+  `bg-amber-50|100`, `text-emerald-700`, `bg-emerald-100`, `bg-green-100`, `bg-sky-100`) -> use the
+  `text-green-ok` token where it fits, otherwise a paired mid-palette (`bg-amber-500/10
+  border-amber-500/20 text-amber-600 dark:text-amber-400`), plus the remaining dark hexes
+  (`[#0a0d14]`, `[#1a2236]`, `[#1e2848]`, `[#1a1f2e]`) which have no exact token.
+  **The detector matters more than the list:** a plain grep flags `bg-white dark:bg-slate-900`,
+  which is fine. Only a class list with NO `dark:` counterpart for the same property group is a
+  bug. Script (brace-balanced `class={...}` parsing, must NOT split tokens on `:` or every
+  `dark:` prefix is stripped and everything looks one-way): see the WP-UI-1 commit message.
+  `CallOverlay.svelte` tops the list at 35 but is a deliberately always-dark video surface -
+  judge intent before converting.
   Still unexplained: the enrolment sheet reported DARK under a LIGHT theme. The `dark:` variant is
   correct on web (verified by computed style in both themes), so the suspect is the native
   runtime - re-check on device during WP-VERIF-3.

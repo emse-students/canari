@@ -151,7 +151,7 @@
         e.stopPropagation();
         togglePlay();
       }}
-      class="shrink-0 w-11 h-11 rounded-full bg-amber-500 text-[#151B2C] inline-flex items-center justify-center shadow-md hover:bg-amber-400 hover:scale-105 active:scale-95 transition-all outline-none focus-visible:ring-4 focus-visible:ring-amber-500/40"
+      class="shrink-0 w-11 h-11 rounded-full bg-amber-500 text-cn-ink inline-flex items-center justify-center shadow-md hover:bg-amber-400 hover:scale-105 active:scale-95 transition-all outline-none focus-visible:ring-4 focus-visible:ring-amber-500/40"
       aria-label={isPlaying ? m.msg_pause_voice_message_label() : m.msg_play_voice_message_label()}
     >
       {#if isPlaying}

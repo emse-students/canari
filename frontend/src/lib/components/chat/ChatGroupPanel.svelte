@@ -219,7 +219,7 @@
       role="dialog"
       aria-modal="true"
       aria-label={m.chat_group_panel_label()}
-      class="relative pointer-events-auto w-full md:w-[28rem] h-full bg-white/85 dark:bg-[#151B2C]/95 border-l border-black/5 dark:border-white/10 shadow-[-10px_0_30px_rgba(0,0,0,0.1)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.4)] backdrop-blur-3xl flex flex-col overflow-hidden text-text-main"
+      class="relative pointer-events-auto w-full md:w-[28rem] h-full bg-white/85 dark:bg-cn-ink/95 border-l border-black/5 dark:border-white/10 shadow-[-10px_0_30px_rgba(0,0,0,0.1)] dark:shadow-[-10px_0_30px_rgba(0,0,0,0.4)] backdrop-blur-3xl flex flex-col overflow-hidden text-text-main"
       transition:fly={{ x: 20, duration: 300, easing: (t) => t * (2 - t) }}
     >
       <!-- Panel header -->
@@ -326,7 +326,7 @@
               />
               <button
                 onclick={submitRename}
-                class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-amber-500 text-[#151B2C] font-bold rounded-xl hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-amber-500 text-cn-ink font-bold rounded-xl hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
                 aria-label={m.chat_group_validate_rename_label()}
               >
                 <Check size={16} strokeWidth={3} />
@@ -595,7 +595,7 @@
     <button
       onclick={handleInviteMembers}
       disabled={newMembers.length === 0}
-      class="w-full py-3.5 bg-amber-500 text-[#151B2C] font-extrabold rounded-2xl hover:bg-amber-400 hover:-translate-y-0.5 active:translate-y-0 shadow-lg shadow-amber-500/20 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 mt-2"
+      class="w-full py-3.5 bg-amber-500 text-cn-ink font-extrabold rounded-2xl hover:bg-amber-400 hover:-translate-y-0.5 active:translate-y-0 shadow-lg shadow-amber-500/20 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 mt-2"
     >
       {m.chat_group_send_invite_button()}{newMembers.length > 0 ? ` (${newMembers.length})` : ''}
     </button>

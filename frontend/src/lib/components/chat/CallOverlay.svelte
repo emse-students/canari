@@ -506,7 +506,7 @@
     <div class="mt-3 flex items-center justify-center gap-2">
       <button
         class="rounded-full p-3 transition-all {isMuted
-          ? 'bg-white text-[#151B2C]'
+          ? 'bg-white text-cn-ink'
           : 'bg-white/10 text-white hover:bg-white/20'}"
         onclick={() => callService.toggleMute()}
         aria-label={isMuted ? m.call_unmute_label() : m.call_mute_label()}
@@ -517,7 +517,7 @@
         <button
           class="rounded-full p-3 transition-all {isSpeakerOn
             ? 'bg-white/10 text-white hover:bg-white/20'
-            : 'bg-white text-[#151B2C]'}"
+            : 'bg-white text-cn-ink'}"
           onclick={toggleSpeaker}
           aria-label={isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label()}
         >
@@ -860,7 +860,7 @@
       {:else}
         <button
           class="p-4 rounded-full transition-all {isMuted
-            ? 'bg-white text-[#151B2C]'
+            ? 'bg-white text-cn-ink'
             : 'bg-white/10 text-white hover:bg-white/20'}"
           onclick={() => callService.toggleMute()}
           aria-label={isMuted ? m.call_unmute_label() : m.call_mute_label()}
@@ -871,7 +871,7 @@
           <button
             class="p-4 rounded-full transition-all {isSpeakerOn
               ? 'bg-white/10 text-white hover:bg-white/20'
-              : 'bg-white text-[#151B2C]'}"
+              : 'bg-white text-cn-ink'}"
             onclick={toggleSpeaker}
             aria-label={isSpeakerOn ? m.call_speaker_label() : m.call_earpiece_label()}
           >
@@ -880,7 +880,7 @@
         {/if}
         <button
           class="p-4 rounded-full transition-all {isVideoOff
-            ? 'bg-white text-[#151B2C]'
+            ? 'bg-white text-cn-ink'
             : 'bg-white/10 text-white hover:bg-white/20'}"
           onclick={() => void callService.toggleVideo()}
           aria-label={isVideoOff ? m.call_enable_camera_label() : m.call_disable_camera_label()}

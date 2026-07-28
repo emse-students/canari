@@ -247,7 +247,7 @@
 
     <!-- Fenetre Modale -->
     <section
-      class="keyboard-aware-modal-panel relative pointer-events-auto w-full md:w-[36rem] max-h-[92dvh] overflow-y-auto bg-white/90 dark:bg-[#151B2C]/95 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-t-3xl sm:rounded-3xl shadow-2xl p-6 md:p-8 flex flex-col gap-6"
+      class="keyboard-aware-modal-panel relative pointer-events-auto w-full md:w-[36rem] max-h-[92dvh] overflow-y-auto bg-white/90 dark:bg-cn-ink/95 backdrop-blur-2xl border border-black/5 dark:border-white/10 rounded-t-3xl sm:rounded-3xl shadow-2xl p-6 md:p-8 flex flex-col gap-6"
       transition:fly={{ y: 20, duration: 300, easing: (t) => t * (2 - t) }}
     >
       <!-- En-tete -->
@@ -324,7 +324,7 @@
         {#if hasScannerSupport}
           <button
             onclick={toggleScanner}
-            class="w-full px-4 py-3.5 rounded-2xl border-2 border-transparent bg-amber-500 hover:bg-amber-400 text-[#151B2C] font-bold inline-flex items-center justify-center gap-2.5 active:scale-[0.98] transition-all shadow-md shadow-amber-500/20 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
+            class="w-full px-4 py-3.5 rounded-2xl border-2 border-transparent bg-amber-500 hover:bg-amber-400 text-cn-ink font-bold inline-flex items-center justify-center gap-2.5 active:scale-[0.98] transition-all shadow-md shadow-amber-500/20 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50"
           >
             <Camera size={18} strokeWidth={2.5} />
             {isScanning ? m.sync_stop_camera_button() : m.sync_start_scanner_button()}
@@ -368,7 +368,7 @@
             <button
               onclick={onConfirmJoin}
               disabled={isBusy || !joinPayload.trim()}
-              class="w-full px-4 py-3.5 rounded-2xl bg-amber-500 text-[#151B2C] font-bold inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-all shadow-md shadow-amber-500/20"
+              class="w-full px-4 py-3.5 rounded-2xl bg-amber-500 text-cn-ink font-bold inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-all shadow-md shadow-amber-500/20"
             >
               {#if isBusy}
                 <Loader2 size={16} class="animate-spin" />

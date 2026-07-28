@@ -31,7 +31,7 @@
 <div class="min-h-screen flex items-center justify-center px-4">
   <div class="max-w-md w-full text-center space-y-6">
     <div class="flex justify-center">
-      <div class="p-4 rounded-full bg-red-100">
+      <div class="p-4 rounded-full bg-red-err/20">
         <CircleX size={48} class="text-red-500" />
       </div>
     </div>

@@ -264,7 +264,7 @@
               <button
                 onclick={() => handleDelete(form.id, form.title)}
                 disabled={deletingId === form.id}
-                class="inline-flex items-center justify-center rounded-xl border-2 border-red-200 bg-red-50/80 p-2 text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50"
+                class="inline-flex items-center justify-center rounded-xl border-2 border-red-err/30 bg-red-err/10 p-2 text-red-600 hover:bg-red-err/20 transition-colors disabled:opacity-50"
                 title={m.common_delete_button()}
               >
                 <Trash2 size={14} />
@@ -329,7 +329,7 @@
                                   : sub.paymentStatus === 'pending' ||
                                       sub.paymentStatus === 'pending_cash'
                                     ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
-                                    : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'}"
+                                    : 'bg-red-err/20 text-red-err'}"
                             >
                               {statusLabel(sub.paymentStatus)}
                             </span>
@@ -341,7 +341,7 @@
                             <button
                               onclick={() => void handleDeleteSubmission(form.id, sub)}
                               disabled={deletingSubmissionId === sub.id}
-                              class="inline-flex items-center justify-center rounded-lg p-1.5 text-text-muted hover:text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                              class="inline-flex items-center justify-center rounded-lg p-1.5 text-text-muted hover:text-red-600 hover:bg-red-err/10 transition-colors disabled:opacity-50"
                               title={m.form_list_delete_response_title()}
                             >
                               <X size={13} />

@@ -132,7 +132,7 @@
   </div>
 
   {#if error}
-    <div class="rounded-xl border border-red-200 bg-red-50 text-red-700 px-4 py-3 text-sm">
+    <div class="rounded-xl border border-red-err/30 bg-red-err/10 text-red-err px-4 py-3 text-sm">
       {error}
     </div>
   {/if}
@@ -234,7 +234,7 @@
               type="button"
               onclick={() => remove(ev)}
               disabled={actingId === ev.id}
-              class="inline-flex items-center gap-1 rounded-xl border border-red-200 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+              class="inline-flex items-center gap-1 rounded-xl border border-red-err/30 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-err/10 disabled:opacity-50"
             >
               <Trash2 size={14} />
               {m.common_delete_button()}

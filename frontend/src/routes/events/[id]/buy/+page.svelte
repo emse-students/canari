@@ -79,7 +79,7 @@
     </div>
 
     {#if paymentError}
-      <div class="rounded-xl bg-red-50 border border-red-200 text-red-700 p-3 mb-4 text-sm">
+      <div class="rounded-xl bg-red-err/10 border border-red-err/30 text-red-err p-3 mb-4 text-sm">
         {paymentError}
       </div>
     {/if}

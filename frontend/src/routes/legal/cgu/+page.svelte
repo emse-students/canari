@@ -33,7 +33,7 @@
         {m.common_back()}
       </button>
       <div
-        class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#151B2C] shadow-lg"
+        class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-cn-ink shadow-lg"
       >
         <img src="/favicon.png" alt="Canari" class="h-8 w-8 object-contain" />
       </div>

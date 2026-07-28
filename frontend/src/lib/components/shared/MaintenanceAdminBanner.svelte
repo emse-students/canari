@@ -8,7 +8,7 @@
 </script>
 
 <div
-  class="fixed top-0 inset-x-0 z-[120] flex items-center justify-center gap-2 bg-amber-500 px-4 py-2 text-center text-xs font-bold text-[#151B2C] shadow-md"
+  class="fixed top-0 inset-x-0 z-[120] flex items-center justify-center gap-2 bg-amber-500 px-4 py-2 text-center text-xs font-bold text-cn-ink shadow-md"
   role="status"
 >
   <TriangleAlert size={14} />
