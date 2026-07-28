@@ -59,15 +59,26 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
 
 ### CANARI - OPEN WORK PACKAGES
 
+- \[ \] **WP-IOS-1 (P1) - The whole iOS background decrypt path is dead and has been since v0.11.0.**
+  `canari_push.mm` and the NSE parse `json["pin"]` from `push_context.json`; the v0.11.0 rename made
+  `store_push_context` write `deviceKeyB64` and nothing has written `pin` since. Both readers
+  hard-reject on the empty field, so `CanariLoadPushContext` returns nil on EVERY call: every push
+  serves the generic fallback, and quick reply, mark-read, welcome-request and the outbox drain all
+  abort. Android is fine (`MlsContextLoader` reads the right key). Exact edits + the regression guard
+  that was missing: `AGENTS.md` "Pending delegation brief", Part A. **Do this before WP-SEC-1**, which
+  rewrites the same read path.
+
 - \[ \] **WP-SEC-1 (P1) - Move the background-decrypt device key out of cleartext app data.**
   `push_context.json` stores `deviceKeyB64` in plain app storage because a background FCM/NSE
   handler decrypts with no user present and so cannot prompt for biometrics. The requirement is
-  real; the plaintext file is not the way to meet it. Target: iOS keychain item in App Group
-  `group.fr.emse.canari` with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; Android
-  `AndroidKeyStore` key with `setUserAuthenticationRequired(false)` +
-  `setUnlockedDeviceRequired(true)`. `push_context.json` then keeps only non-secret fields (device
-  id, user id, push secret handle). Enabling biometrics changes the unlock METHOD, never where this
-  copy lives - do not conflate the two.
+  real; the plaintext file is not the way to meet it. Full implementation brief (files, line
+  anchors, migration, gates, device checks, traps): `AGENTS.md` "Pending delegation brief", Part B.
+  Two corrections to the original target, established while writing it: **Android must NOT use
+  `setUnlockedDeviceRequired(true)`** - it makes the key unusable while the screen is locked, which
+  is exactly when a push arrives - and Android needs no new key at all, only a Context-only reader,
+  since the existing alias is already `setUserAuthenticationRequired(false)`. iOS does need a new
+  keychain item (App Group access group + `AfterFirstUnlockThisDeviceOnly`, no access control).
+  Enabling biometrics changes the unlock METHOD, never where this copy lives - do not conflate.
 
 - \[ \] **WP-VERIF-1 (P1) - [device] Tauri login end to end (init + save + KeyPackage).** All three
   were dead from v0.11.0 to v0.11.2 (`invoke` names matching no Rust command). Native has NOT run
