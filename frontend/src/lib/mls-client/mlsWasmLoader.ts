@@ -110,6 +110,37 @@ export async function encryptMlsStateOnMainThread(
   return wasm.encrypt_mls_state_blob_with_key(plain, deviceKeyB64) as Uint8Array;
 }
 
+/**
+ * Re-seals a pre-v0.11.0 MLS snapshot under the current device key.
+ *
+ * Installs that predate v0.11.0 hold their snapshot in the Argon2id envelope
+ * `[salt (16) || nonce (12) || ciphertext]`, keyed on the raw PIN. v0.11.x reads
+ * `[nonce (12) || ciphertext]` keyed on the PBKDF2 device key, and `CanariDBMls_<userId>` is
+ * still at schema version 1 - so nothing ever rewrote or dropped those blobs. Without this
+ * one-shot conversion every such install reports "your PIN was changed on another device" and
+ * offers a recovery that no PIN can satisfy.
+ *
+ * @param blob         The stored snapshot, as read from IndexedDB.
+ * @param pin          The PIN just verified server-side; the legacy key derives from it.
+ * @param deviceKeyB64 Current device key the snapshot is re-sealed under.
+ * @returns The re-sealed snapshot, or `null` when `blob` is not a legacy envelope this PIN opens
+ *          (a current-format blob sealed with another key, or genuinely the wrong PIN).
+ */
+export async function migrateLegacyMlsStateBlob(
+  blob: Uint8Array,
+  pin: string,
+  deviceKeyB64: string
+): Promise<Uint8Array | null> {
+  const wasm = await loadMlsWasmModule();
+  try {
+    const plain = wasm.decrypt_with_pin(pin, blob) as Uint8Array;
+    return wasm.encrypt_mls_state_blob_with_key(plain, deviceKeyB64) as Uint8Array;
+  } catch {
+    // Not a legacy blob (or not this PIN): the caller falls back to the recovery path.
+    return null;
+  }
+}
+
 export async function loadAndInitWasm(
   userId: string,
   deviceId: string,

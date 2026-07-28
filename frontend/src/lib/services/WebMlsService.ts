@@ -5,6 +5,7 @@ import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
   loadAndInitWasm,
+  migrateLegacyMlsStateBlob,
   detectRuntimeDeviceOs,
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   type MlsInitOptions,
@@ -568,6 +569,24 @@ export class WebMlsService extends BaseMlsService {
       // → systematic fresh-start to avoid blocking the user indefinitely.
       // If state == null and error → real crash (no state to blame) → rethrow.
       const cause = this.classifyStateLoadFailure(e);
+
+      // Before treating a sealed state as a PIN rotation, check whether it is simply older than
+      // the v0.11.0 envelope change. Those snapshots were never rewritten (the MLS IndexedDB is
+      // still at schema version 1), so on the first v0.11.x login they look exactly like a state
+      // sealed with someone else's key - and the recovery offered for that cannot open them.
+      if (cause === 'sealed' && state && opts?.legacyPin) {
+        const migrated = await migrateLegacyMlsStateBlob(state, opts.legacyPin, deviceKeyB64);
+        if (migrated) {
+          console.log('[MLS] Pre-v0.11.0 snapshot re-sealed under the device key.');
+          await this.loadStateWithKey(deviceKeyB64, migrated);
+          // Persist immediately: leaving the legacy blob in place would replay this migration on
+          // every launch, and any later failure would surface the same false PIN-rotation error.
+          this.lastKnownState = migrated.slice();
+          await saveMlsState(userId, migrated);
+          return;
+        }
+      }
+
       if (cause === 'mismatch' || state != null) {
         // Only a `sealed` state is worth pausing for: the caller can offer the old PIN and
         // recover the history intact. A `mismatch` decrypted fine and no PIN can repair it,

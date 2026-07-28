@@ -393,6 +393,9 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     const [mlsInitSettled, storageSettled] = await Promise.allSettled([
       mlsService.init(ctx.getUserId(), deviceKeyB64, mlsStateResult?.bytes, {
         noFreshStart: !!mlsStateResult?.bytes,
+        // Only the PIN paths can carry it, and only a snapshot older than the v0.11.0 envelope
+        // change needs it: init re-seals such a snapshot instead of reporting a PIN rotation.
+        legacyPin: !isBiometric && !isVaultLogin ? pin : undefined,
       }),
       getStorage(ctx.getUserId()),
     ]);

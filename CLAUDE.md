@@ -71,6 +71,25 @@ Legend: \[x\] done+pushed, \[ \] todo, \[~\] in progress.
 - **Tauri command names are unchecked strings on both sides.** A literal passed to `invoke()` that matches no `#[tauri::command]` in `generate_handler!` compiles, lints and type-checks, then fails at runtime with "command not found". v0.11.0 renamed three TS call sites to `*_avec_clef` without touching Rust: native MLS init, save AND KeyPackage publication were dead on every mobile/desktop build until 2026-07-28. Grep both sides on any rename.
 - **Two ways a saved MLS state can fail to load, and they need different answers.** `BaseMlsService.classifyStateLoadFailure` is the only place that decides: `sealed` (AEAD failure, key rotated elsewhere) honours `noFreshStart` so the old PIN can recover the history; `mismatch` (blob decrypted, credential names another device) must NOT - no PIN repairs an identity, so pausing strands the user. After any fresh start, persist the new state BEFORE anything else can fail, or the new device id in localStorage and the old blob in storage will mismatch again next launch (the churn loop).
 - **"Logged in" means two different things.** `globalSession.isLoggedIn` = MLS is ready; the login page checks the OIDC/refresh session. A route guard that redirects to `/login` on the former while the latter is valid ping-pongs forever. Page guards test `currentUserId()`; MLS-dependent sections handle MLS absence themselves.
+- **Changing an at-rest envelope needs a migration, not a comment.** v0.11.0 moved `mls.bin` from
+  `[salt 16 || nonce 12 || ct]` sealed with Argon2id(PIN, salt) to `[nonce 12 || ct]` sealed with
+  the PBKDF2 device key, and shipped no reader for the old envelope. `CanariDBMls_<userId>` is
+  pinned at schema version 1 and native `mls.bin` is never versioned either, so nothing rewrote or
+  dropped those blobs: every pre-v0.11.0 install failed to decrypt its own state and was told "your
+  PIN was changed on another device", offering a recovery no PIN could satisfy. Both platforms now
+  try the legacy envelope once (`migrateLegacyMlsStateBlob` on web, `migrate_legacy_state_blob` in
+  `commands/mls.rs`) and re-seal + persist. Format locked by `mls-core/tests/legacy_state_envelope.rs`
+  - if you ever change the envelope again, add the reader for the previous one in the SAME commit.
+- **`push_context.json` holds `deviceKeyB64` in cleartext app data, and the file is the problem -
+  not the copy.** A background FCM/NSE handler decrypts without any user present, so it cannot
+  prompt for biometrics: the key must be readable while the device is locked. That is a real
+  constraint, and every messenger that decrypts notifications in the background satisfies it the
+  same way - not with a plaintext file, but with an OS-guarded store that unlocks after first
+  unlock. Solution to implement: iOS keychain item in App Group `group.fr.emse.canari` with
+  `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; Android `AndroidKeyStore` key with
+  `setUserAuthenticationRequired(false)` + `setUnlockedDeviceRequired(true)`. `push_context.json`
+  then keeps only the non-secret fields (device id, user id, push secret handle). Enabling
+  biometrics changes the unlock method, never where this copy lives - do not conflate the two.
 - **PIN policy is one rule, everywhere:** `isValidPin` (>= 4 characters, no max, no charset limit) guards setup, change, recovery AND unlock. Never add a stricter creation-only rule: the device key derives from the exact string typed, so a PIN accepted at creation but refused at unlock locks its owner out of their own messages.
 
 #### CROSS-PLATFORM ENHANCEMENTS

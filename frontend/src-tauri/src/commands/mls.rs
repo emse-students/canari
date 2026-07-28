@@ -8,6 +8,14 @@ use crate::state::{
 use mls_core::{DecryptErrorKind, DeviceKeyStore, MlsManager};
 use std::sync::Mutex;
 
+/// Initialises the MLS manager for this session and caches its at-rest key.
+///
+/// `legacy_pin` is the one-shot migration path for `mls.bin` files written before v0.11.0, which
+/// are sealed in the Argon2id envelope `[salt (16) || nonce (12) || ciphertext]` keyed on the raw
+/// PIN. Nothing ever rewrote them, so on the first v0.11.x launch they fail to decrypt exactly
+/// like a snapshot sealed with another device's key. When it is supplied and the normal load
+/// fails, the legacy envelope is tried once; on success the snapshot is re-sealed under the
+/// device key and written back, so the conversion happens at most once per install.
 #[tauri::command]
 pub(crate) async fn initialiser_mls(
     app: tauri::AppHandle,
@@ -15,11 +23,12 @@ pub(crate) async fn initialiser_mls(
     device_id: String,
     device_key_b64: String,
     encrypted_state: Option<Vec<u8>>,
+    legacy_pin: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
-    let keystore = PluginDeviceKeyStore::new(app);
+    let keystore = PluginDeviceKeyStore::new(app.clone());
 
     // Empty device_key_b64 → biometric mode: the keystore holds the device key directly.
     // resolve_at_rest_key then takes Path A (retrieve_device_key), which triggers a single
@@ -42,8 +51,24 @@ pub(crate) async fn initialiser_mls(
         )
         .map_err(|e| e.to_string())?;
 
-        let manager = MlsManager::load_with_key(&user_id, &device_id, encrypted_state, &key)
-            .map_err(|e| e.to_string())?;
+        let manager =
+            match MlsManager::load_with_key(&user_id, &device_id, encrypted_state.clone(), &key) {
+                Ok(manager) => manager,
+                Err(e) => {
+                    let migrated = match (&encrypted_state, &legacy_pin) {
+                        (Some(blob), Some(pin)) => migrate_legacy_state_blob(&app, blob, pin, &key),
+                        _ => None,
+                    };
+                    match migrated {
+                        Some(resealed) => {
+                            log::info!("[MLS] Pre-v0.11.0 mls.bin re-sealed under the device key.");
+                            MlsManager::load_with_key(&user_id, &device_id, Some(resealed), &key)
+                                .map_err(|e| e.to_string())?
+                        }
+                        None => return Err(e.to_string()),
+                    }
+                }
+            };
 
         let mut lock = manager_state
             .lock()
@@ -56,6 +81,36 @@ pub(crate) async fn initialiser_mls(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Opens a pre-v0.11.0 `mls.bin` (Argon2id, `[salt (16) || nonce (12) || ciphertext]`) with `pin`
+/// and rewrites it sealed under `key`, returning the re-sealed bytes.
+///
+/// Returns `None` when the blob is not that envelope or `pin` does not open it - the caller then
+/// keeps the original load error and falls back to recovery. The rewrite happens here rather than
+/// being left to the opportunistic save on the JS side: a snapshot left in the legacy envelope
+/// replays this migration on every launch, and any failure in between resurfaces as a bogus
+/// "PIN changed on another device".
+fn migrate_legacy_state_blob(
+    app: &tauri::AppHandle,
+    blob: &[u8],
+    pin: &str,
+    key: &[u8; 32],
+) -> Option<Vec<u8>> {
+    if blob.len() < 16 + 12 {
+        return None;
+    }
+    let (salt, sealed) = blob.split_at(16);
+    let legacy_key = mls_core::security::derive_key_from_pin_owned(pin.to_string(), salt).ok()?;
+    let plain = mls_core::security::decrypt_blob(&legacy_key, sealed).ok()?;
+
+    let resealed = MlsManager::encrypt_state_blob_with_key(&plain, key)
+        .map_err(|e| log::error!("[MLS] Re-sealing the legacy snapshot failed: {e}"))
+        .ok()?;
+    write_mls_state_blob(app, &resealed)
+        .map_err(|e| log::error!("[MLS] Persisting the re-sealed snapshot failed: {e}"))
+        .ok()?;
+    Some(resealed)
 }
 
 /// Resolve the at-rest key for a save: the caller's base64 key when it supplied one, otherwise

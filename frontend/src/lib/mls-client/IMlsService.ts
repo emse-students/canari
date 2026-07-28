@@ -17,6 +17,15 @@ export interface MlsInitOptions {
    * before any local history is dropped.
    */
   noFreshStart?: boolean;
+  /**
+   * The PIN just verified server-side, supplied ONLY so a snapshot left behind by a pre-v0.11.0
+   * install can be re-sealed under the current device key (Argon2id + salt-prefix envelope ->
+   * ChaCha20-Poly1305 + device key). Absent on the biometric and vault paths, where no PIN was
+   * typed and therefore no legacy snapshot can be opened.
+   *
+   * Never used as a key: it is passed straight to the one-shot legacy decrypt and dropped.
+   */
+  legacyPin?: string;
 }
 
 /**

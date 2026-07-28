@@ -406,7 +406,25 @@ export class TauriMlsService extends BaseMlsService {
       // the PIN modal.
       const isKeystoreEmpty = /no keystore key/i.test(String(e));
 
-      if ((cause === 'mismatch' || state != null) && !isKeystoreEmpty) {
+      // A snapshot written before v0.11.0 sits in the Argon2id envelope and cannot decrypt with
+      // the device key, which is indistinguishable here from a key rotated on another device.
+      // Retry once letting Rust try that envelope: on success it re-seals and persists mls.bin.
+      // Must not `return` on success - the push-context write below this block still has to run.
+      let migrated = false;
+      if (cause === 'sealed' && state && opts?.legacyPin && !isKeystoreEmpty) {
+        try {
+          await this.invokeInit(deviceKeyB64, state, opts.legacyPin);
+          migrated = true;
+          console.log('[MLS] Pre-v0.11.0 mls.bin re-sealed under the device key.');
+        } catch (migrationError) {
+          console.warn('[MLS] Not a pre-v0.11.0 snapshot:', String(migrationError).slice(0, 160));
+        }
+      }
+
+      if (migrated) {
+        // State recovered in place: keep the device identity and fall through to the normal
+        // post-init steps.
+      } else if ((cause === 'mismatch' || state != null) && !isKeystoreEmpty) {
         // Only a `sealed` state is worth pausing for: the caller can offer the old PIN and
         // recover the history intact. A `mismatch` decrypted fine and no PIN can repair it,
         // so honouring noFreshStart there would strand the user with nothing to try.
@@ -535,6 +553,22 @@ export class TauriMlsService extends BaseMlsService {
 
   /** Native decrypt + client init for a given device key/state; throws on wrong key (no fresh-start). */
   protected async loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void> {
+    await this.invokeInit(deviceKeyB64, state);
+  }
+
+  /**
+   * Single `initialiser_mls` call site.
+   *
+   * `legacyPin` is only ever set on the migration retry from {@link _initImpl}: with it, the Rust
+   * side may fall back to the pre-v0.11.0 Argon2id envelope, re-seal `mls.bin` under
+   * `deviceKeyB64` and persist it. {@link loadStateWithKey} must stay free of it so probing a
+   * candidate key (recoverAndRekey) cannot rewrite the stored snapshot as a side effect.
+   */
+  private async invokeInit(
+    deviceKeyB64: string,
+    state?: Uint8Array,
+    legacyPin?: string
+  ): Promise<void> {
     this._deviceKeyB64 = deviceKeyB64;
     const encryptedState = state ? Array.from(state) : null;
     await invoke('initialiser_mls', {
@@ -542,6 +576,7 @@ export class TauriMlsService extends BaseMlsService {
       deviceId: this.deviceId,
       deviceKeyB64,
       encryptedState,
+      legacyPin: legacyPin ?? null,
     });
   }
 

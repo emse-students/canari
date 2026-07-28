@@ -323,8 +323,38 @@ enqueueMessage()      enqueueMessage()
 
 ## Failing to load a saved state
 
-`loadStateWithKey` can reject two ways, and `_initImpl` must tell them apart -
-`BaseMlsService.classifyStateLoadFailure` is the single place that does:
+`loadStateWithKey` can reject three ways. Two are told apart by
+`BaseMlsService.classifyStateLoadFailure`; the third is checked first because it looks exactly like
+`sealed` and has a completely different answer.
+
+### An envelope older than v0.11.0
+
+Before v0.11.0 the snapshot was sealed `[salt (16) || nonce (12) || ciphertext]` with
+Argon2id(PIN, salt). v0.11.x seals `[nonce (12) || ciphertext]` with the PBKDF2 device key, and
+shipped no reader for the old envelope - while `CanariDBMls_<userId>` stayed pinned at schema
+version 1 and native `mls.bin` carries no version either. Nothing rewrote or dropped those blobs,
+so on the first v0.11.x login they fail to decrypt and are indistinguishable from a key rotated
+elsewhere. Reported as such, they sent every upgrading user into an old-PIN recovery that could
+never succeed.
+
+So on a `sealed` verdict, when the caller supplied `MlsInitOptions.legacyPin` (the PIN just
+verified server-side; absent on the biometric and vault paths), the legacy envelope is tried once:
+
+| Platform | Entry point | On success |
+|---|---|---|
+| Web | `migrateLegacyMlsStateBlob` (`mlsWasmLoader.ts`) - `decrypt_with_pin` then `encrypt_mls_state_blob_with_key` | `_initImpl` reloads from the re-sealed bytes and `saveMlsState`s them |
+| Tauri | `legacyPin` forwarded to `initialiser_mls`; `migrate_legacy_state_blob` in `commands/mls.rs` | Rust re-seals and `write_mls_state_blob`s before returning |
+
+Persisting is part of the migration, not a follow-up: a snapshot left in the legacy envelope
+replays the conversion at every launch, and any failure in between resurfaces as the same false
+"PIN changed on another device". The layout both sides depend on is locked by
+`mls-core/tests/legacy_state_envelope.rs` - **if the envelope changes again, ship the reader for
+the previous one in the same commit.**
+
+A blob the PIN does not open falls through to the table below, so a genuine rotation still gets
+its recovery.
+
+### The two `classifyStateLoadFailure` verdicts
 
 | Verdict | Meaning | Recovery |
 |---|---|---|

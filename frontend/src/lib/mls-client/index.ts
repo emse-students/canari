@@ -12,7 +12,7 @@ export type {
   BulkIngestObserver,
 } from './IMlsService';
 export { MLS_LOCAL_STATE_UNDECRYPTABLE } from './IMlsService';
-export { loadAndInitWasm } from './mlsWasmLoader';
+export { loadAndInitWasm, migrateLegacyMlsStateBlob } from './mlsWasmLoader';
 export {
   shouldAckAfterSuccess,
   shouldAckAfterException,
