@@ -72,28 +72,35 @@ Cercle keeps `memberships` as a display-only mirror while Canari owns tier assig
 get site access without a cotisation but may NOT consume; cash top-ups allowed with an audit
 trail; Canari credits but never displays the balance.
 
-- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link.** IN PROGRESS, the repo
-  currently **does not compile** (mid-refactor, committed as WIP).
-  DONE and tested: `db/sql/migrate/02-canari_integration.sql` (ledger `account_movements` with
-  `balance_after` + UNIQUE `idempotency_key`, cotisant snapshot on `users`, `menu_items.
-  requires_alcohol`, `memberships.variant_key`, `transactions` rebuilt so `datetime` keeps the time
-  of day) - verified v1 -> v2 on a throwaway DB, 12 rows preserved, zero ledger drift; `schema.sql`
-  rewritten to the post-migration shape; `seed.sql` patched; `db/scripts/create.ts` now stamps
-  `user_version` (it did not, so any later `db:migrate` replayed 01..N and died); NEW
-  `src/lib/server/session.ts` (signed JWT) replacing the deleted `src/lib/session.ts`; NEW
-  `src/lib/server/canari/index.ts`; `src/lib/types/index.ts` extended.
-  NEXT, in order: (1) 3 stale `$lib/session` imports - `hooks.server.ts`, `auth/callback`,
-  `auth/logout` - and `setSession`/`getSession` are now async and take `url`; (2)
-  `db/users/index.ts` - swap `INSERT OR REPLACE` for `ON CONFLICT DO UPDATE`, map the new columns,
-  add `applyCotisantStatus`; (3) NEW `db/movements/index.ts` ledger writer; (4)
-  `db/transactions/index.ts` - the debit `UPDATE` has NO `WHERE` plus 3 broken SELECTs (missing
-  comma, `WHERE uuid` instead of `uuid_user`, `LIMIT` before `ORDER BY`); (5) `hooks.server.ts`
-  gate; (6) route authz; (7) NEW `/api/canari/topup`, `/compte`, `/unauthorized`; (8)
-  `/gestion/comptes` cash top-up + `/gestion/cotisations` read-only; (9) `.env.example`.
+**Cercle gotchas (cost time once, will again):** `bun run dev` MUST run Vite under Bun
+(`bun --bun vite dev`) or `bun:sqlite` fails to import and every request 500s. A SvelteKit layout
+`load` does NOT run for a child page's form action, so `gestion/+layout.server.ts` protected
+nothing that POSTs - each action guards itself. `CANARI_INTEGRATION_ENABLED=false` is the local
+switch: it freezes the cotisant snapshot instead of refreshing it, and never opens the gate.
+
+- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link.** CODE COMPLETE, commit
+  `de92e18`. `bun run check` 0 errors, eslint clean, every page renders, 26/26 end-to-end checks
+  pass on a freshly seeded DB (script was scratchpad-only, not committed). **Not pushed, no PR
+  open yet** - that is all that remains.
+  Verified by those checks: forged/tampered session refused; non-cotisant -> `/unauthorized`;
+  `/api/*` 401 anon and 403 for a non-cercleux; GET on `/events/open` no longer opens a perm;
+  unsigned and mis-signed webhooks 401 while a signed one credits exactly once on replay; the
+  charge uses the server price (form said 1, charge was 40) and a sans-alcool tier is refused
+  alcohol; `/gestion` actions 403 for a cotisant; cash top-up traced to its cercleux; zero
+  ledger drift throughout.
+  Still owed before merge: run it against a REAL Canari (`CANARI_INTEGRATION_ENABLED=true` has
+  never been exercised - the 24 h grace window and the TTL refresh are untested against a live
+  `cotisant-status`), and a real OIDC login round trip (the checks mint their own cookies).
+  **WP-COT-11 must land first or the alcohol gate is wrong for real alcohol cotisants.**
 
 - \[ \] **WP-CERCLE-2 (P3) - No way to correct a mis-keyed consumption.** The ledger is
   append-only and the user declined an `adjustment` kind, so a drink charged twice or to the wrong
   account cannot be undone. Revisit once the bar has used it for a term.
+
+- \[ \] **WP-CERCLE-3 (P3) - Dev secrets are in the working `.env`.** `SESSION_SECRET` and
+  `CANARI_WEBHOOK_SECRET` there are throwaway placeholders. Generate real ones for prod
+  (`openssl rand -base64 48`); rotating `SESSION_SECRET` is also the only way to revoke every
+  session at once.
 
 ---
 
