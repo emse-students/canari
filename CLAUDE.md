@@ -46,9 +46,12 @@
 
 ## **SESSION STATE (Active Memory)**
 
-State lives HERE (canonical). Four repos, all `emse-students/*`, all on `main`:
-Canari (this monorepo) | Sky (../Sky) | MiGallery (../MiGallery) | Portail-etu (../refonte-portail-etu).
+State lives HERE (canonical). Five repos, all `emse-students/*`:
+Canari (this monorepo) | Sky (../Sky) | MiGallery (../MiGallery) | Portail-etu (../refonte-portail-etu)
+| **Le Cercle (../le-cercle)**.
 Sky, MiGallery and Portail-etu are COMPLETE - nothing open on any of them.
+All on `main` EXCEPT Le Cercle: that repo has another primary developer, so work happens on the
+branch `audit/security-and-canari-integration` and ships as a PR. Never commit to its `main`.
 
 Work is tracked as Work Packages ordered by severity: **P1** (security, or a user-facing path that
 is broken), **P2** (correctness, nothing at risk), **P3** (hygiene). `[ ]` open, `[~]` in progress.
@@ -57,7 +60,66 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
 
 ---
 
+### LE CERCLE (../le-cercle) - OPEN WORK PACKAGES
+
+Branch `audit/security-and-canari-integration`, forked from `main` @ `df692f2`. SvelteKit 5 +
+`bun:sqlite` (file DB, `DB_PATH`), hand-written SQL modules under `src/lib/server/db/`, migrations
+= numbered files in `db/sql/migrate/` replayed by `bun run db:migrate` (the runner wraps each file
+in a transaction - so NO `BEGIN`/`COMMIT` and no `PRAGMA foreign_keys` inside a migration).
+
+**Architecture decisions taken 2026-07-28 (do not re-litigate):** ledger + cached column; the
+Cercle keeps `memberships` as a display-only mirror while Canari owns tier assignment; cercleux
+get site access without a cotisation but may NOT consume; cash top-ups allowed with an audit
+trail; Canari credits but never displays the balance.
+
+- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link.** IN PROGRESS, the repo
+  currently **does not compile** (mid-refactor, committed as WIP).
+  DONE and tested: `db/sql/migrate/02-canari_integration.sql` (ledger `account_movements` with
+  `balance_after` + UNIQUE `idempotency_key`, cotisant snapshot on `users`, `menu_items.
+  requires_alcohol`, `memberships.variant_key`, `transactions` rebuilt so `datetime` keeps the time
+  of day) - verified v1 -> v2 on a throwaway DB, 12 rows preserved, zero ledger drift; `schema.sql`
+  rewritten to the post-migration shape; `seed.sql` patched; `db/scripts/create.ts` now stamps
+  `user_version` (it did not, so any later `db:migrate` replayed 01..N and died); NEW
+  `src/lib/server/session.ts` (signed JWT) replacing the deleted `src/lib/session.ts`; NEW
+  `src/lib/server/canari/index.ts`; `src/lib/types/index.ts` extended.
+  NEXT, in order: (1) 3 stale `$lib/session` imports - `hooks.server.ts`, `auth/callback`,
+  `auth/logout` - and `setSession`/`getSession` are now async and take `url`; (2)
+  `db/users/index.ts` - swap `INSERT OR REPLACE` for `ON CONFLICT DO UPDATE`, map the new columns,
+  add `applyCotisantStatus`; (3) NEW `db/movements/index.ts` ledger writer; (4)
+  `db/transactions/index.ts` - the debit `UPDATE` has NO `WHERE` plus 3 broken SELECTs (missing
+  comma, `WHERE uuid` instead of `uuid_user`, `LIMIT` before `ORDER BY`); (5) `hooks.server.ts`
+  gate; (6) route authz; (7) NEW `/api/canari/topup`, `/compte`, `/unauthorized`; (8)
+  `/gestion/comptes` cash top-up + `/gestion/cotisations` read-only; (9) `.env.example`.
+
+- \[ \] **WP-CERCLE-2 (P3) - No way to correct a mis-keyed consumption.** The ledger is
+  append-only and the user declined an `adjustment` kind, so a drink charged twice or to the wrong
+  account cannot be undone. Revisit once the bar has used it for a term.
+
+---
+
 ### CANARI - OPEN WORK PACKAGES
+
+- \[ \] **WP-COT-9 (P1) - Cross-tenant tag revocation (IDOR).** `revokeTag`
+  (`associations.controller.ts:851`) takes `:tagId` and ignores `:id`, and
+  `UserTagService.revoke` deletes by primary key with no ownership check - so MANAGE_MEMBERS on
+  ANY association revokes a tag issued by ANY other. Scope the delete to `issuingAssocId`.
+
+- \[ \] **WP-COT-10 (P2) - Manual cotisant add cannot assign a tier.** `grantCotisant`
+  (`user-tag.service.ts:147`) calls `deriveCotisationTag(slug, mode)` with no variant, so a manual
+  add always grants the base tag - never `avec-alcool`/`sans-alcool` - and it skips
+  `revokeSiblingTierTags`, so a manual grant can leave a user holding two tiers at once. This is
+  the bug reported from the UI ("on ne peut pas leur assigner un palier"). Needs an optional
+  `variantKey` on `GrantCotisantDto` + the XOR revoke, and the roster's "Forfait" column then
+  stops being blank for manually-added cotisants.
+
+- \[ \] **WP-COT-11 (P2) - Le Cercle's base tier has no `variantKey`, so `tier` comes back null.**
+  The auto-provisioned base membership product is `variantKey: null` and cannot be deleted from
+  the Cotisations tab, so `/api/public/cotisant-status` answers `tier: null` for anyone holding
+  it - and Le Cercle cannot tell an alcohol cotisant from a non-alcohol one. The Cercle side
+  currently fails closed (null -> `sans-alcool`, `resolveTier` in `src/lib/server/canari/`), which
+  is safe but wrong for a real alcohol cotisant. Fix: let Le Cercle's base product carry an
+  explicit `variantKey`, or stop auto-provisioning a base tier for a multi-tier association.
+  **Blocks the alcohol gate being correct end to end.**
 
 - \[ \] **WP-VERIF-0 (P1) - [device] WP-IOS-1 + WP-SEC-1 shipped unverified.** Code landed
   2026-07-28 (delegated, verified with corrections - see `AGENTS.md`). Swift/ObjC do not compile
