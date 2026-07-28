@@ -55,6 +55,31 @@ export function seedUserDisplayName(userId: string, name: string): void {
   if (trimmed) displayNameCache.set(normalizeUserId(userId), trimmed);
 }
 
+/**
+ * Returns an already-known display name, or `null` when nothing is known yet.
+ *
+ * Unlike {@link getUserDisplayNameSync}, this never invents a placeholder. Callers that
+ * persist the result - system message text is stored server-side and can never be
+ * re-resolved - must be able to tell "not resolved yet" from a real name, otherwise they
+ * bake the "unknown user" label into content that outlives the cache miss.
+ */
+export function peekUserDisplayName(userId: string): string | null {
+  const normalized = normalizeUserId(userId);
+
+  const cached = displayNameCache.get(normalized);
+  if (cached) return cached;
+
+  if (currentUserId()?.toLowerCase() === normalized) {
+    const me = getSavedDisplayName()?.trim();
+    if (me) {
+      displayNameCache.set(normalized, me);
+      return me;
+    }
+  }
+
+  return null;
+}
+
 export function getUserDisplayNameSync(userId: string, fallback?: string): string {
   const normalized = normalizeUserId(userId);
   const cached = displayNameCache.get(normalized);
@@ -113,15 +138,19 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
 /**
  * Resolves display names for multiple IDs concurrently.
  * Returns a getter function (id) => name for building system message text.
+ *
+ * Uses {@link peekUserDisplayName} rather than {@link getUserDisplayNameSync}: the latter
+ * answers with the "unknown user" label on a cache miss, which is indistinguishable from a
+ * real name and would short-circuit the fetch below for every user except the caller.
  */
 export async function resolveDisplayNames(ids: string[]): Promise<(id: string) => string> {
   const map = new Map<string, string>();
   await Promise.all(
     ids.map(async (id) => {
       const norm = normalizeUserId(id);
-      const sync = getUserDisplayNameSync(norm);
-      if (sync !== norm) {
-        map.set(norm, sync);
+      const known = peekUserDisplayName(norm);
+      if (known) {
+        map.set(norm, known);
         return;
       }
       const resolved = await resolveUserDisplayName(norm);

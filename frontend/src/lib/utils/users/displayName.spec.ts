@@ -17,7 +17,10 @@ vi.mock('$lib/stores/user', () => ({
   fetchUserProfile: vi.fn(),
 }));
 
+// resolveDisplayNames is imported dynamically inside its own suite: those tests call
+// vi.resetModules() to get a fresh display-name cache, which a static import would defeat.
 import { seedUserDisplayName, getUserDisplayNameSync, getUserInitials } from './displayName';
+import * as userStore from '$lib/stores/user';
 
 // Convenience: the mocked label
 const UNKNOWN_LABEL = 'Utilisateur inconnu';
@@ -92,6 +95,58 @@ describe('getUserDisplayNameSync', () => {
     const result = mod.getUserDisplayNameSync('abc123def456');
     expect(result).not.toContain('abc123');
     expect(result).not.toContain('def456');
+  });
+});
+
+// ===========================================================================
+// resolveDisplayNames
+// ===========================================================================
+describe('resolveDisplayNames', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.mocked(userStore.currentUserId).mockReturnValue(null);
+    vi.mocked(userStore.getSavedDisplayName).mockReturnValue(null);
+  });
+
+  it('fetches the profile of an uncached user instead of labelling it unknown', async () => {
+    // Regression: the miss path used to be gated on getUserDisplayNameSync(id) !== id, and that
+    // helper answers with the "unknown user" label on a miss - never the id - so the fetch below
+    // was unreachable and every system message named its subject "Utilisateur inconnu".
+    const mod = await import('./displayName');
+    vi.mocked(userStore.fetchUserProfile).mockResolvedValueOnce({
+      id: 'user-9',
+      firstName: 'Claire',
+      lastName: 'Van Ruymbeke',
+    } as never);
+
+    const getName = await mod.resolveDisplayNames(['user-9']);
+
+    expect(userStore.fetchUserProfile).toHaveBeenCalledWith('user-9');
+    expect(getName('user-9')).toBe('Claire Van Ruymbeke');
+  });
+
+  it('serves a cached name without hitting the network', async () => {
+    const mod = await import('./displayName');
+    mod.seedUserDisplayName('user-8', 'Alice');
+
+    const getName = await mod.resolveDisplayNames(['user-8']);
+
+    expect(userStore.fetchUserProfile).not.toHaveBeenCalled();
+    expect(getName('user-8')).toBe('Alice');
+  });
+
+  it('labels a profile that genuinely carries no name', async () => {
+    // Distinct from the regression above: here the fetch DID happen and the profile simply has
+    // no first/last/display name. The label is the right answer - a raw UUID in the middle of a
+    // sentence would read worse than "unknown user".
+    const mod = await import('./displayName');
+    vi.mocked(userStore.fetchUserProfile).mockResolvedValueOnce({ id: 'user-7' } as never);
+
+    const getName = await mod.resolveDisplayNames(['user-7']);
+
+    expect(userStore.fetchUserProfile).toHaveBeenCalledWith('user-7');
+    expect(getName('user-7')).toBe(UNKNOWN_LABEL);
   });
 });
 
