@@ -129,7 +129,7 @@ verification verdicts: `AGENTS.md`. Durable lessons folded into the gotchas abov
 
 Triggered by "0 appareil(s) connecte(s)" + a login stuck on "PIN changed on another device".
 Evidence came from prod (`ssh canari`, chat-delivery + gateway + nginx logs), not from reading.
-Five defects found and fixed, all introduced by the v0.11.0 PIN -> deviceKey refactor:
+Six defects found and fixed, all introduced by the v0.11.0 PIN -> deviceKey refactor:
 
 - Three `invoke('*_avec_clef')` targets that exist in NO Rust command -> native MLS init, save and
   KeyPackage publication dead on every Tauri build since v0.11.0.
@@ -137,12 +137,21 @@ Five defects found and fixed, all introduced by the v0.11.0 PIN -> deviceKey ref
   cached in `AppState.device_key`.
 - Credential mismatch reported as "PIN changed elsewhere"; fresh start never persisted -> churn.
 - `/settings` <-> `/login` redirect ping-pong (MLS-readiness vs OIDC-session predicates).
+- **The at-rest envelope changed with no reader for the old one** (`399b07aa`): every pre-v0.11.0
+  install was told its PIN had been changed elsewhere. This was the actual lockout the user hit
+  twice; the four above only shaped how it was reported. See the durable gotcha on envelopes.
+
+Deployed on web (bundle `app.rlG6uclM.js`, CD green 2026-07-28 ~09:5x). Escape hatch if a state
+still refuses to open: the PIN modal's "forgot PIN" (`handlePinReset`) already wipes server + local
+MLS state and restarts in first-setup mode - at the cost of local history. No new UI needed.
 
 Open, NOT yet explained: on web, `generateKeyPackage` reached `prekeys/count` but never issued
 `POST /api/mls/register-device` (20:39:29 prod). Needs the client line `[KP] Publication failed
-(...)` from a session where MLS init succeeds. Re-check after this fix is deployed.
+(...)` from a session where MLS init succeeds - only reachable now that login completes.
 
 - \[ \] [device] Tauri login end-to-end (init + save + KeyPackage) - all three were broken.
+- \[ \] [browser] confirm the legacy snapshot migrates on the reporter's own profile (only place
+  a pre-v0.11.0 blob exists; a fresh Chrome profile cannot reproduce it).
 
 #### MOBILE AUTH CHAIN AUDIT (2026-07-27) - COMPLETE
 
