@@ -69,7 +69,8 @@ Channels use server-assisted symmetric encryption (not MLS):
 | PATCH | `/api/channels/workspaces/:workspaceId/members/:userId/role` | Set a member's workspace role, replacing existing roles (MANAGE_WORKSPACE / MANAGE_ROLES) |
 | GET \| PATCH | `/api/channels/:channelId/access` | Get/set channel visibility (`isPrivate`), `allowedUsers`, and `writePolicy` (MANAGE_CHANNEL to write) |
 | GET \| PUT | `/api/channels/roles/:roleId/permissions` | Get/set a workspace role's base permissions (MANAGE_WORKSPACE / MANAGE_ROLES) |
-| POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message |
+| DELETE | `/api/channels/:channelId/messages/:messageId` | Delete a channel message: own always, someone else's with `channel.moderate` |
+| POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message (own always, someone else's with `channel.moderate`) |
 | POST | `/api/channels/:channelId/messages/:messageId/poll/vote` | Vote on a poll (empty = retract) |
 | PATCH | `/api/channels/:channelId/messages/:messageId/poll/close` | Close a poll now (author or moderator); forces the deadline + unpins |
 | GET | `/api/channels/:channelId/notification-level` | Caller's push level for the channel |
@@ -93,6 +94,24 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   posting: `everyone` (default), `admins_moderators` (roles with `channel.moderate` or
   `workspace.manage`), or `admins` (`workspace.manage` only). Enforced in `sendMessage` via
   `canWriteToChannel`; used for announcement-style channels. Set from the channel settings "Accès" tab.
+
+#### Message moderation (`channel.moderate`)
+
+The role matrix advertises this permission as "pin or delete other members' messages", and that
+is exactly what it does. `memberCanModerateMessages` is the single check, shared by every entry
+point (`deleteChannelMessage`, `setMessagePinned`, `closePoll`); MANAGE_CHANNEL and
+MANAGE_WORKSPACE subsume it via `roleGrantsModeration`. In each case the **author** is allowed
+unconditionally and the permission only widens the action to *someone else's* message. Editing is
+never moderation - only the author can edit, in channels as in DMs.
+
+The workspace listing carries `viewerCanModerate` alongside `viewerCanManage` so the client can
+decide whether to render the delete affordance on another member's bubble without probing the
+API for a 403. It is a UI hint: the server re-checks on every call.
+
+Deletion drops the row (the content is a ciphertext the server cannot read, so there is nothing
+worth tombstoning) and broadcasts `channel.message.deleted` (`{ channelId, messageId, deletedBy }`)
+to the workspace, which is how other members' clients replace the bubble with the local
+"deleted message" placeholder.
 
 #### Deleting a community
 

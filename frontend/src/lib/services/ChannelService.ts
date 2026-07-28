@@ -12,6 +12,8 @@ export interface WorkspaceDto {
   imageMediaId?: string | null;
   /** Server-authoritative flag: true when the calling user holds MANAGE_WORKSPACE in this workspace. Drives admin-control gating in the UI. */
   viewerCanManage?: boolean;
+  /** Server-authoritative flag: true when the calling user holds `channel.moderate` (or a permission that subsumes it), i.e. may delete other members' channel messages. */
+  viewerCanModerate?: boolean;
 }
 
 export interface CreateChannelDto {
@@ -392,6 +394,20 @@ export class ChannelService {
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}`, {
       method: 'DELETE',
     });
+    await this.handleError(res);
+    return res.json();
+  }
+
+  /**
+   * Deletes a channel message. The server allows the author unconditionally and anyone holding
+   * `channel.moderate` for someone else's message, then broadcasts `channel.message.deleted`.
+   */
+  async deleteChannelMessage(channelId: string, messageId: string) {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/${cid}/messages/${messageId}`,
+      { method: 'DELETE' }
+    );
     await this.handleError(res);
     return res.json();
   }

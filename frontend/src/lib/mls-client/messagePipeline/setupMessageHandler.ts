@@ -115,6 +115,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       onChannelDeleted: deps.onChannelDeleted,
       onWorkspaceUpdated: deps.onWorkspaceUpdated,
       onWorkspaceDeleted: deps.onWorkspaceDeleted,
+      onChannelMessageDeleted: deps.onChannelMessageDeleted,
       log,
       onOutOfSync,
     });

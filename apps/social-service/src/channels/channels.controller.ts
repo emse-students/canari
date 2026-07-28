@@ -498,6 +498,17 @@ export class ChannelsController {
     return { ok: true };
   }
 
+  /** Deletes a channel message: own message always, someone else's with `channel.moderate`. */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':channelId/messages/:messageId')
+  deleteChannelMessage(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Param('messageId') messageId: string
+  ) {
+    return this.service.deleteChannelMessage(channelId, messageId, xUserId.trim().toLowerCase());
+  }
+
   /** Records the caller's vote on a poll message (empty optionIds retracts the vote). */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/messages/:messageId/poll/vote')

@@ -2110,6 +2110,7 @@
   "channel_action_channel_delete": "Channel deleted",
   "channel_action_community_leave": "Left community",
   "channel_action_community_delete": "Community deletion",
+  "channel_action_message_delete": "Message deletion",
   "channel_action_community_image": "Community image updated",
   "channel_action_role_update": "Role updated",
   "channel_action_error_permission": "{action}: insufficient permissions ({detail}).",

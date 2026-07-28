@@ -82,18 +82,10 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
   `fr.emse.canari.outboxRetry`. Both fire from `maybeNotifyPendingSync` when an opportunistic drain
   leaves `remaining > 0`. Never observed waking up on hardware.
 
-- \[ \] **WP-COM-1 (P2) - A community can never be deleted.** No `DELETE workspaces/:id` exists in
-  `channels.controller.ts` and the admin modal offers only "Quitter la communaute". A community
-  created by mistake is permanent for everyone in it, and its admin leaving orphans it. Needs an
-  endpoint (admin-only, soft-delete + tombstone like groups) and the UI to call it.
-  Left behind by the 2026-07-28 test run: **"QA Canari Test"** on jolan.boudin + claire.vanruymbeke,
-  undeletable until this ships.
-
-- \[ \] **WP-COM-2 (P3) - "Moderer les messages" drives nothing.** The community role matrix
-  advertises the permission per role, but `MainChatPage.svelte` passes `onDelete`/`onEdit`/
-  `onReact`/`onForward` as `undefined` whenever `isSelectedChannel` - so in a channel NOBODY,
-  admin included, can delete or edit a message. Either wire channel moderation to the permission
-  or stop advertising it in the matrix.
+- \[ \] **WP-COM-3 (P3) - Channels still have no reactions and no forward.** `MainChatPage` passes
+  `onReact`/`onForward` as `undefined` when `isSelectedChannel`, because no backend endpoint
+  exists for either (the `channel_messages.reactions` column is unused). Separate from the
+  moderation permission, which now works - this is a plain missing feature.
 
 - \[ \] **WP-UX-1 (P3) - Revoking a device asks nothing.** "Supprimer l'appareil" fires
   `purgeDeviceFootprint` (KeyPackages, prekeys, push tokens, queued messages, memberships, Redis)
@@ -128,6 +120,8 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 
 - **MLS membership and server routing are different memberships, and only one routes.** The MLS group says who can decrypt; `DeviceGroupMembership` (`status='active'`, mirrored in Redis `group:members:<groupId>`) says who chat-delivery actually sends to. Any new way of entering a group must promote that row - an **external commit is the one join path with no Welcome**, so nothing else creates it.
 - **Redelivery asymmetry:** `activateDeviceMembership` replays the pending window for a Welcomed device, but an external-commit joiner lands at the CURRENT epoch and forward secrecy makes those frames unreadable - pass `redeliverMissed: false` and let the history bundle carry the past.
+- **A community is soft-deleted, never dropped.** `DELETE workspaces/:id` needs MANAGE_WORKSPACE **only** (a kick or channel archive also accept MANAGE_CHANNEL - this one hits every member at once); it flips `channel_workspaces.archived` + its channels, and every read path filters it (listing, slug, invite preview, invite accept). Recovery = two UPDATEs.
+- **`channel.moderate` = pin or delete SOMEONE ELSE's message, nothing more.** `memberCanModerateMessages` is the only check, shared by delete/pin/closePoll; the author is always allowed; editing is never moderation. `viewerCanModerate` on the workspace listing is a UI hint - the server re-checks.
 - **Dead devices ARE reaped, after 90 days.** `detectStaleDevices` (hourly) keys liveness on `KeyPackage.createdAt`, refreshed by every WS reconnect; past `RETENTION_WINDOW_MS` it does `srem` on the Redis set and resets the row to `pending`, then `cleanupStaleDevices` purges the whole footprint. Until then a churned device id keeps receiving fan-out - that is the designed offline window, not a leak.
 
 #### Contracts that the compiler does not check

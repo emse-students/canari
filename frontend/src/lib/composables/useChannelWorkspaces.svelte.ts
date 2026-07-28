@@ -40,6 +40,8 @@ export interface ChannelSidebarWorkspace {
   imageMediaId?: string | null;
   /** Server-authoritative: true when the current user may manage this workspace (MANAGE_WORKSPACE). Gates admin controls. Defaults to false until the backend listing confirms it. */
   viewerCanManage?: boolean;
+  /** Server-authoritative: true when the current user holds `channel.moderate` (or a permission that subsumes it) here, letting them delete other members' channel messages. */
+  viewerCanModerate?: boolean;
   /** Ordered list of channels belonging to this workspace. */
   channels: ChannelSidebarItem[];
 }
@@ -178,6 +180,8 @@ export function useChannelWorkspaces() {
       if (workspace.imageMediaId !== undefined) existing.imageMediaId = workspace.imageMediaId;
       if (workspace.viewerCanManage !== undefined)
         existing.viewerCanManage = workspace.viewerCanManage;
+      if (workspace.viewerCanModerate !== undefined)
+        existing.viewerCanModerate = workspace.viewerCanModerate;
       channelWorkspaces = [...channelWorkspaces];
       return existing;
     }
@@ -189,6 +193,7 @@ export function useChannelWorkspaces() {
       avatarUserId: workspace.name || workspaceSlug,
       imageMediaId: workspace.imageMediaId ?? null,
       viewerCanManage: workspace.viewerCanManage ?? false,
+      viewerCanModerate: workspace.viewerCanModerate ?? false,
       channels: [],
     };
     channelWorkspaces = [...channelWorkspaces, created];
@@ -720,6 +725,60 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /**
+   * Replaces a channel message with the local "deleted" tombstone, mirroring how a deleted DM
+   * renders. The server row is already gone, so this is purely what the reader sees until the
+   * next history reload drops it entirely.
+   */
+  function markChannelMessageDeleted(
+    channelConversationId: string,
+    messageId: string,
+    ctx: WorkspacePurgeContext
+  ) {
+    const convo = ctx.conversations.get(channelConversationId);
+    if (!convo) return;
+    const idx = convo.messages.findIndex((msg) => msg.id === messageId);
+    if (idx === -1) return;
+    const messages = [...convo.messages];
+    messages[idx] = {
+      ...messages[idx],
+      isDeleted: true,
+      content: m.chat_system_message_deleted(),
+    };
+    ctx.conversations.set(channelConversationId, { ...convo, messages });
+  }
+
+  /**
+   * Deletes a message from a community channel. The server allows the author unconditionally
+   * and a `channel.moderate` holder for anyone else's, then broadcasts the removal - so other
+   * members are handled by {@link handleChannelMessageDeleted}, not by this call.
+   */
+  async function deleteChannelMessage(
+    channelConversationId: string,
+    messageId: string,
+    ctx: ChannelWorkspaceContext
+  ) {
+    if (!channelConversationId || !messageId) return;
+    try {
+      await service.deleteChannelMessage(channelConversationId, messageId);
+      markChannelMessageDeleted(channelConversationId, messageId, ctx);
+      ctx.invalidateChannelHistoryCache?.(channelConversationId);
+    } catch (error) {
+      ctx.log(toUiActionError(m.channel_action_message_delete(), error));
+    }
+  }
+
+  /** Applies a `channel.message.deleted` broadcast (the author or a moderator removed a message). */
+  function handleChannelMessageDeleted(
+    event: { channelId: string; messageId: string },
+    ctx: WorkspacePurgeContext
+  ) {
+    if (!event.channelId || !event.messageId) return;
+    const channelConversationId = `channel_${event.channelId}`;
+    markChannelMessageDeleted(channelConversationId, event.messageId, ctx);
+    ctx.invalidateChannelHistoryCache?.(channelConversationId);
+  }
+
   /** Applies a `workspace.deleted` broadcast: an admin deleted a community this user belongs to. */
   async function handleWorkspaceDeleted(
     event: { workspaceId: string },
@@ -878,5 +937,9 @@ export function useChannelWorkspaces() {
     handleWorkspaceUpdated,
     /** Applies an incoming real-time workspace-deleted event (an admin deleted the community). */
     handleWorkspaceDeleted,
+    /** Deletes a channel message (own message, or anyone's with `channel.moderate`). */
+    deleteChannelMessage,
+    /** Applies an incoming real-time channel-message-deleted event. */
+    handleChannelMessageDeleted,
   };
 }

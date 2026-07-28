@@ -108,6 +108,8 @@
     onClosePoll?: (messageId: string) => void;
     /** Callback to delete a message by ID. */
     onDelete?: (messageId: string) => void;
+    /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
+    canModerate?: boolean;
     /** Callback to edit a message by ID with new text. */
     onEdit?: (messageId: string, text: string) => void;
     /** Callback to cancel the current reply. */
@@ -181,6 +183,7 @@
     onNavigateToMessage,
     onReact,
     onDelete,
+    canModerate = false,
     onEdit,
     onCancelReply,
     authToken = '',
@@ -916,6 +919,7 @@
             {onVotePoll}
             {onClosePoll}
             {onDelete}
+            {canModerate}
             {onEdit}
             {onTogglePin}
             {pinnedIds}

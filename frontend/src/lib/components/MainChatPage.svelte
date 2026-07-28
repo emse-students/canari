@@ -57,6 +57,21 @@
   /** True when the currently selected conversation is a channel (not an MLS DM or group). */
   const isSelectedChannel = $derived(isChannelConversationId(convs.selectedContact ?? ''));
 
+  /**
+   * Whether the viewer may delete OTHER members' messages in the open channel - the
+   * `channel.moderate` permission the community role matrix advertises. Server-authoritative
+   * (`viewerCanModerate`) and fail-closed; the API re-checks it, so this only decides whether
+   * the delete affordance is worth offering. Always false outside a channel: in a DM or group,
+   * deletion stays limited to your own messages.
+   */
+  const canModerateSelectedChannel = $derived(
+    isSelectedChannel &&
+      (channels.channelWorkspaces.find((ws) =>
+        ws.channels.some((ch) => ch.id === convs.selectedContact)
+      )?.viewerCanModerate ??
+        false)
+  );
+
   /** True while MLS unlock / queue catch-up is running. */
   const isSyncing = $derived(session.isMessagingInitializing || messaging.isMessageCatchupActive);
 
@@ -854,8 +869,14 @@
           onReact={isSelectedChannel
             ? undefined
             : (msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
+          canModerate={canModerateSelectedChannel}
           onDelete={isSelectedChannel
-            ? undefined
+            ? (msgId) =>
+                void channels.deleteChannelMessage(
+                  convs.selectedContact ?? '',
+                  msgId,
+                  channelsCtx()
+                )
             : (msgId) => void messaging.handleDeleteMessage(msgId, msgCtx())}
           onEdit={isSelectedChannel
             ? undefined

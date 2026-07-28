@@ -34,6 +34,12 @@
     onEdit?: () => void;
     /** Called when the delete button is clicked. Omit to hide the button. */
     onDelete?: () => void;
+    /**
+     * Whether the viewer may delete OTHER members' messages here - the `channel.moderate`
+     * permission in a community channel. Only widens delete; editing someone else's message
+     * is never moderation.
+     */
+    canModerate?: boolean;
   }
 
   let {
@@ -51,6 +57,7 @@
     onPin,
     onEdit,
     onDelete,
+    canModerate = false,
   }: Props = $props();
 </script>
 
@@ -151,7 +158,7 @@
       <Pencil size={16} />
     </button>
   {/if}
-  {#if !isDeleted && isOwn && onDelete}
+  {#if !isDeleted && (isOwn || canModerate) && onDelete}
     <button
       onclick={(e) => {
         e.stopPropagation();

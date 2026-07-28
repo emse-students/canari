@@ -45,6 +45,12 @@
     onDelete?: () => void;
     /** Called when the backdrop or center button is tapped to close the menu. */
     onClose?: () => void;
+    /**
+     * Whether the viewer may delete OTHER members' messages here - the `channel.moderate`
+     * permission in a community channel. Only widens delete; editing someone else's message
+     * is never moderation.
+     */
+    canModerate?: boolean;
   }
 
   let {
@@ -67,6 +73,7 @@
     onEdit,
     onDelete,
     onClose,
+    canModerate = false,
   }: Props = $props();
 </script>
 
@@ -197,7 +204,7 @@
           </button>
         {/if}
 
-        {#if !isDeleted && isOwn && canDelete}
+        {#if !isDeleted && (isOwn || canModerate) && canDelete}
           <button
             onclick={() => {
               onDelete?.();

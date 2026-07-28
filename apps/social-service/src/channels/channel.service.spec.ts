@@ -36,6 +36,7 @@ describe('ChannelService security hardening', () => {
     const messageRepo = {
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
+      delete: jest.fn(() => Promise.resolve({ affected: 1 })),
       find: jest.fn(),
       findOne: jest.fn(),
       manager: {
@@ -301,6 +302,82 @@ describe('ChannelService security hardening', () => {
     });
 
     await expect(service.closePoll('ch1', 'm1', 'u1')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  // ── Channel moderation (`channel.moderate`) ───────────────────────────────
+  // The role matrix advertises this permission as "pin or delete other members' messages".
+  // These cases pin down that the matrix and the enforcement agree - the whole point of the
+  // permission is that it grants something a plain member does not have.
+
+  it('deleteChannelMessage lets the author delete their own message', async () => {
+    const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    messageRepo.findOne.mockResolvedValue({ id: 'm1', channelId: 'ch1', authorId: 'u1' });
+
+    await service.deleteChannelMessage('ch1', 'm1', 'u1');
+
+    expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.message.deleted',
+      expect.objectContaining({ channelId: 'ch1', messageId: 'm1', deletedBy: 'u1' }),
+      expect.any(Array)
+    );
+  });
+
+  it("deleteChannelMessage rejects a plain member deleting someone else's message", async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    messageRepo.findOne.mockResolvedValue({
+      id: 'm1',
+      channelId: 'ch1',
+      authorId: 'someone-else',
+    });
+
+    await expect(service.deleteChannelMessage('ch1', 'm1', 'u1')).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(messageRepo.delete).not.toHaveBeenCalled();
+  });
+
+  it("deleteChannelMessage lets a channel.moderate holder delete someone else's message", async () => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['channel.moderate'] }]);
+    messageRepo.findOne.mockResolvedValue({
+      id: 'm1',
+      channelId: 'ch1',
+      authorId: 'someone-else',
+    });
+
+    await service.deleteChannelMessage('ch1', 'm1', 'u1');
+
+    expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
+  });
+
+  it("setMessagePinned rejects a plain member pinning someone else's message", async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const msg = { id: 'm1', channelId: 'ch1', authorId: 'someone-else', pinned: false };
+    messageRepo.findOne.mockResolvedValue(msg);
+
+    await expect(service.setMessagePinned('ch1', 'm1', 'u1', true)).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+    expect(msg.pinned).toBe(false);
+  });
+
+  it("setMessagePinned lets a channel.moderate holder pin someone else's message", async () => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['channel.moderate'] }]);
+    const msg = { id: 'm1', channelId: 'ch1', authorId: 'someone-else', pinned: false };
+    messageRepo.findOne.mockResolvedValue(msg);
+
+    await service.setMessagePinned('ch1', 'm1', 'u1', true);
+
+    expect(msg.pinned).toBe(true);
   });
 
   it('rejects listMessages for a private channel when the user is neither admin nor allow-listed', async () => {

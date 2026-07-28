@@ -98,6 +98,11 @@
     onClosePoll?: (messageId: string) => void;
     /** Called when the user confirms message deletion. */
     onDelete?: (messageId: string) => void;
+    /**
+     * Whether the viewer holds `channel.moderate` in this conversation's community, letting
+     * them delete other members' messages. False everywhere else (DMs, groups, plain members).
+     */
+    canModerate?: boolean;
     /** Whether this message is currently pinned in the conversation. */
     pinned?: boolean;
     /** Called to toggle this message's pinned state. Omit to hide the pin action. */
@@ -145,6 +150,7 @@
     onVotePoll,
     onClosePoll,
     onDelete,
+    canModerate = false,
     onEdit,
     pinned = false,
     onTogglePin,
@@ -711,8 +717,9 @@
               showEmojiPicker = !showEmojiPicker;
             }
           : undefined}
+        {canModerate}
         onEdit={!isDeleted && isOwn && !mediaRef && onEdit ? startInlineEdit : undefined}
-        onDelete={!isDeleted && isOwn && onDelete
+        onDelete={!isDeleted && (isOwn || canModerate) && onDelete
           ? () => {
               showDeleteModal = true;
             }
@@ -831,7 +838,8 @@
             showMobileActions = false;
           }
         : undefined}
-      onDelete={!isDeleted && isOwn && onDelete
+      {canModerate}
+      onDelete={!isDeleted && (isOwn || canModerate) && onDelete
         ? () => {
             showDeleteModal = true;
             showMobileActions = false;

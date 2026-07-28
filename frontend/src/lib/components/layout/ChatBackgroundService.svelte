@@ -608,6 +608,13 @@
             }
           });
       },
+      onChannelMessageDeleted: (event: { channelId: string; messageId: string }) => {
+        globalChannels.handleChannelMessageDeleted(event, {
+          conversations: globalConvs.conversations,
+          invalidateChannelHistoryCache: globalConvs.invalidateChannelHistoryCache,
+          log: appendLog,
+        });
+      },
       onReadReceiptReceived: (e: {
         conversationKey: string;
         senderId: string;

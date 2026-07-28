@@ -165,6 +165,29 @@ export class ChannelService {
   }
 
   /**
+   * Whether `member` may act on OTHER members' messages in their workspace - the concrete
+   * meaning of the `channel.moderate` permission advertised in the role matrix ("pin or delete
+   * other members' messages"). MANAGE_CHANNEL and MANAGE_WORKSPACE subsume it.
+   *
+   * Every moderation entry point (pin, delete, close poll) routes through here so the matrix
+   * and the enforcement can never drift apart.
+   */
+  private async memberCanModerateMessages(member: ChannelMember): Promise<boolean> {
+    if (!member.roleIds?.length) return false;
+    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
+    return roles.some((r) => this.roleGrantsModeration(r.permissions));
+  }
+
+  /** The permission set that grants message moderation. Single source for enforcement and for the `viewerCanModerate` flag the client gates its UI on. */
+  private roleGrantsModeration(permissions: string[]): boolean {
+    return (
+      permissions.includes(CHANNEL_PERMISSIONS.MANAGE_MESSAGES) ||
+      permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
+      permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
+    );
+  }
+
+  /**
    * Derive a 32-byte AES-256 key from the channel's master secret + version.
    * Uses HKDF-SHA256 to produce a unique key per epoch.
    */
@@ -447,6 +470,7 @@ export class ChannelService {
     const roles = await this.roleRepo.find({ where: { workspaceId: ws.id } });
 
     let viewerCanManage = false;
+    let viewerCanModerate = false;
     if (userId) {
       const viewerMember = members.find(
         (m) => m.userId.trim().toLowerCase() === userId.trim().toLowerCase()
@@ -457,11 +481,15 @@ export class ChannelService {
             .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
             .map((r) => r.id)
         );
+        const moderateRoleIds = new Set(
+          roles.filter((r) => this.roleGrantsModeration(r.permissions)).map((r) => r.id)
+        );
         viewerCanManage = viewerMember.roleIds.some((id) => manageRoleIds.has(id));
+        viewerCanModerate = viewerMember.roleIds.some((id) => moderateRoleIds.has(id));
       }
     }
 
-    return { workspace: { ...ws, viewerCanManage }, channels, members, roles };
+    return { workspace: { ...ws, viewerCanManage, viewerCanModerate }, channels, members, roles };
   }
 
   /** Returns all workspaces the user belongs to (derived from their ChannelMember records). */
@@ -489,14 +517,25 @@ export class ChannelService {
         .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
         .map((r) => r.id)
     );
+    // Moderation is a separate, weaker grant: it lets the client offer "delete this message"
+    // on someone else's message without having to probe the API for a 403.
+    const moderateRoleIds = new Set(
+      roles.filter((r) => this.roleGrantsModeration(r.permissions)).map((r) => r.id)
+    );
     const canManageByWorkspace = new Map<string, boolean>();
+    const canModerateByWorkspace = new Map<string, boolean>();
     for (const membership of memberships) {
       const canManage = (membership.roleIds ?? []).some((id) => manageRoleIds.has(id));
+      const canModerate = (membership.roleIds ?? []).some((id) => moderateRoleIds.has(id));
       // A user may hold several membership rows for the same workspace; any one row
       // bearing a MANAGE_WORKSPACE role is enough to manage it.
       canManageByWorkspace.set(
         membership.workspaceId,
         (canManageByWorkspace.get(membership.workspaceId) ?? false) || canManage
+      );
+      canModerateByWorkspace.set(
+        membership.workspaceId,
+        (canModerateByWorkspace.get(membership.workspaceId) ?? false) || canModerate
       );
     }
 
@@ -515,6 +554,7 @@ export class ChannelService {
         ...w,
         id: w.id,
         viewerCanManage: canManageByWorkspace.get(w.id) ?? false,
+        viewerCanModerate: canModerateByWorkspace.get(w.id) ?? false,
       }))
       .sort(
         (a, b) => (sortOrderByWorkspace.get(a.id) ?? 0) - (sortOrderByWorkspace.get(b.id) ?? 0)
@@ -2001,6 +2041,13 @@ export class ChannelService {
 
     const msg = await this.messageRepo.findOne({ where: { id: messageId, channelId } });
     if (!msg) throw new NotFoundException('Message not found');
+
+    // Pinning someone else's message is a moderation act, exactly as the role matrix
+    // advertises it. Own messages stay free to pin.
+    if (msg.authorId !== userId && !(await this.memberCanModerateMessages(member))) {
+      throw new ForbiddenException('Missing channel.moderate permission to pin this message');
+    }
+
     if (msg.pinned !== pinned) {
       msg.pinned = pinned;
       await this.messageRepo.save(msg);
@@ -2124,19 +2171,8 @@ export class ChannelService {
       if (!meta) throw new BadRequestException('This message is not a poll');
 
       // Non-authors must hold a moderation permission to close someone else's poll.
-      if (msg.authorId !== userId) {
-        const roles = member.roleIds?.length
-          ? await this.roleRepo.find({ where: { id: In(member.roleIds) } })
-          : [];
-        const canModerate = roles.some(
-          (r) =>
-            r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_MESSAGES) ||
-            r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
-            r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
-        );
-        if (!canModerate) {
-          throw new ForbiddenException('Only the poll author or a moderator can close this poll');
-        }
+      if (msg.authorId !== userId && !(await this.memberCanModerateMessages(member))) {
+        throw new ForbiddenException('Only the poll author or a moderator can close this poll');
       }
 
       if (meta.endsAt && new Date(meta.endsAt).getTime() <= Date.now()) {
@@ -2166,6 +2202,50 @@ export class ChannelService {
     );
 
     return poll;
+  }
+
+  /**
+   * Deletes a message from a channel. The author may always delete their own; deleting someone
+   * else's requires `channel.moderate` (or the permissions that subsume it) - this is the
+   * "delete other members' messages" half of the moderation permission.
+   *
+   * The row is dropped outright rather than tombstoned: the content is a ciphertext the server
+   * cannot read, so there is nothing to preserve for a "deleted message" placeholder, and DM
+   * deletion behaves the same way.
+   */
+  async deleteChannelMessage(channelId: string, messageId: string, userId: string) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    const msg = await this.messageRepo.findOne({ where: { id: messageId, channelId } });
+    if (!msg) throw new NotFoundException('Message not found');
+
+    if (msg.authorId !== userId && !(await this.memberCanModerateMessages(member))) {
+      throw new ForbiddenException('Missing channel.moderate permission to delete this message');
+    }
+
+    await this.messageRepo.delete({ id: messageId, channelId });
+
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.message.deleted',
+      { channelId, messageId, deletedBy: userId },
+      workspaceMemberIds
+    );
+
+    this.logger.log(
+      `[CHANNEL] message deleted channel=${channelId} message=${messageId} by=${userId.slice(0, 8)}${
+        msg.authorId === userId ? '' : ' (moderation)'
+      }`
+    );
+    return { success: true, channelId, messageId };
   }
 
   /** Returns the IDs of the pinned messages in a channel. Access-controlled by canAccessChannel. */
