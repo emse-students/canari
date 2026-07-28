@@ -10,6 +10,7 @@ import {
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   type MlsInitOptions,
 } from '$lib/mls-client';
+import type { MlsKeyPackageRequest } from '$lib/mls-client/mlsWorkerProtocol';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import {
@@ -207,19 +208,17 @@ export class WebMlsService extends BaseMlsService {
       // Transfer the buffer (ownership move, no copy) to avoid doubling
       // memory on a snapshot that may weigh several hundred KB.
       const workerState = state ? state.slice() : undefined;
-      worker.postMessage(
-        {
-          type: 'generateKeyPackage',
-          payload: {
-            userId: this.userId,
-            deviceId: this.deviceId,
-            deviceKeyB64,
-            needed,
-            state: workerState?.buffer,
-          },
+      const request: MlsKeyPackageRequest = {
+        type: 'generateKeyPackage',
+        payload: {
+          userId: this.userId,
+          deviceId: this.deviceId,
+          deviceKeyB64,
+          needed,
+          state: workerState?.buffer,
         },
-        workerState ? [workerState.buffer] : []
-      );
+      };
+      worker.postMessage(request, workerState ? [workerState.buffer] : []);
     });
   }
 

@@ -68,6 +68,7 @@ Legend: \[x\] done+pushed, \[ \] todo, \[~\] in progress.
 - **NEVER branch on a login error message.** `onLoginFailed(msg, code)` carries a typed `LoginErrorCode` (`loginErrors.ts`) precisely because the message is localized: a regex over it ships dead in French. Same rule for any future UI branch on an error.
 - **Who owns the keystore key:** `store_push_context` (login) and `IMlsService.changeDeviceKey` (PIN change/recovery) write alias `mls_device_key_{userId}_{deviceId}`. `applyNewDeviceKeyLocally` must NEVER call `BiometricService.disable` - that deletes the entry just written and silently turns biometrics off.
 - **Never redeclare an `init`/lifecycle override with fewer parameters.** TypeScript accepts it, so the dropped argument is invisible to `bun run check`. `WebMlsService.init`/`TauriMlsService.init` each dropped `opts`, killing `noFreshStart`: an undecryptable `mls.bin` fell into the destructive fresh-start (new device id + old device deleted server-side) instead of the recoverable `MLS_LOCAL_STATE_UNDECRYPTABLE` path. Prefer inheriting `BaseMlsService.init` over copying it - the copy had already lost the clear-`initPromise`-on-failure cleanup.
+- **A `postMessage` payload is typed by whoever writes the literal - i.e. by nobody.** The worker declaring `interface Request { payload: { deviceKeyB64 } }` does not constrain the sender's inline object. v0.11.0 renamed the encrypt worker's reader and left the sender posting `pin`: the worker sealed with `undefined` and wasm-bindgen died on `undefined.length`, so NO MLS state could be saved off-thread. Only logged on checkpoint paths, fatal on the fresh start (which awaits the save). All three MLS worker contracts now live in `src/lib/mls-client/mlsWorkerProtocol.ts`, imported by both ends - add new worker messages THERE, never as a local interface.
 - **Tauri command names are unchecked strings on both sides.** A literal passed to `invoke()` that matches no `#[tauri::command]` in `generate_handler!` compiles, lints and type-checks, then fails at runtime with "command not found". v0.11.0 renamed three TS call sites to `*_avec_clef` without touching Rust: native MLS init, save AND KeyPackage publication were dead on every mobile/desktop build until 2026-07-28. Grep both sides on any rename.
 - **Two ways a saved MLS state can fail to load, and they need different answers.** `BaseMlsService.classifyStateLoadFailure` is the only place that decides: `sealed` (AEAD failure, key rotated elsewhere) honours `noFreshStart` so the old PIN can recover the history; `mismatch` (blob decrypted, credential names another device) must NOT - no PIN repairs an identity, so pausing strands the user. After any fresh start, persist the new state BEFORE anything else can fail, or the new device id in localStorage and the old blob in storage will mismatch again next launch (the churn loop).
 - **"Logged in" means two different things.** `globalSession.isLoggedIn` = MLS is ready; the login page checks the OIDC/refresh session. A route guard that redirects to `/login` on the former while the latter is valid ping-pongs forever. Page guards test `currentUserId()`; MLS-dependent sections handle MLS absence themselves.
@@ -129,7 +130,12 @@ verification verdicts: `AGENTS.md`. Durable lessons folded into the gotchas abov
 
 Triggered by "0 appareil(s) connecte(s)" + a login stuck on "PIN changed on another device".
 Evidence came from prod (`ssh canari`, chat-delivery + gateway + nginx logs), not from reading.
-Six defects found and fixed, all introduced by the v0.11.0 PIN -> deviceKey refactor:
+Seven defects found and fixed, all introduced by the v0.11.0 PIN -> deviceKey refactor:
+
+- The encrypt worker's sender still posted `pin` after the reader moved to `deviceKeyB64` -> every
+  off-thread save sealed with `undefined` and died in wasm-bindgen on `undefined.length`. Surfaced
+  as `can't access property "length", e is undefined` at login once the fresh start (which awaits
+  the save) started running. Contracts now shared: `mls-client/mlsWorkerProtocol.ts`.
 
 - Three `invoke('*_avec_clef')` targets that exist in NO Rust command -> native MLS init, save and
   KeyPackage publication dead on every Tauri build since v0.11.0.

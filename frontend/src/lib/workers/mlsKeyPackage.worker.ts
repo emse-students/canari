@@ -1,4 +1,9 @@
 import { loadAndInitWasm } from '$lib/mls-client/mlsWasmLoader';
+import type {
+  MlsKeyPackageErr,
+  MlsKeyPackageOk,
+  MlsKeyPackageRequest,
+} from '$lib/mls-client/mlsWorkerProtocol';
 
 /**
  * Some generated WASM glue paths still reference `window` unconditionally.
@@ -9,56 +14,20 @@ if (typeof workerGlobal.window === 'undefined') {
   workerGlobal.window = workerGlobal;
 }
 
-/**
- * Request payload for key package generation in the dedicated worker.
- * The worker owns a temporary WASM client instance so heavy crypto does not block UI rendering.
- */
-interface GenerateKeyPackageRequest {
-  type: 'generateKeyPackage';
-  payload: {
-    userId: string;
-    deviceId: string;
-    deviceKeyB64: string;
-    needed: number;
-    state?: ArrayBuffer;
-  };
-}
-
-/**
- * Successful worker response with generated fallback key package, one-time packages, and updated state.
- */
-interface GenerateKeyPackageOk {
-  type: 'generateKeyPackage:ok';
-  payload: {
-    fallback: ArrayBuffer;
-    poolPackages: ArrayBuffer[];
-    state: ArrayBuffer;
-  };
-}
-
-/** Failed worker response with a human-readable error message. */
-interface GenerateKeyPackageErr {
-  type: 'generateKeyPackage:error';
-  error: string;
-}
-
 /** Returns a detached ArrayBuffer copy suitable for transferable postMessage payloads. */
 function asTransferBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.slice().buffer;
 }
 
 type KeyPackageWorkerScope = typeof self & {
-  onmessage: ((event: MessageEvent<GenerateKeyPackageRequest>) => void) | null;
-  postMessage: (
-    message: GenerateKeyPackageOk | GenerateKeyPackageErr,
-    transfer?: Transferable[]
-  ) => void;
+  onmessage: ((event: MessageEvent<MlsKeyPackageRequest>) => void) | null;
+  postMessage: (message: MlsKeyPackageOk | MlsKeyPackageErr, transfer?: Transferable[]) => void;
 };
 
 const workerScope = self as KeyPackageWorkerScope;
 
 /** Worker-side message handler for MLS heavy startup operations. */
-workerScope.onmessage = async (event: MessageEvent<GenerateKeyPackageRequest>) => {
+workerScope.onmessage = async (event: MessageEvent<MlsKeyPackageRequest>) => {
   if (event.origin && event.origin !== self.location.origin) return;
   const msg = event.data;
   if (!msg || msg.type !== 'generateKeyPackage') return;
@@ -78,7 +47,7 @@ workerScope.onmessage = async (event: MessageEvent<GenerateKeyPackageRequest>) =
         : [];
     const nextState = client.save_state(deviceKeyB64) as Uint8Array;
 
-    const response: GenerateKeyPackageOk = {
+    const response: MlsKeyPackageOk = {
       type: 'generateKeyPackage:ok',
       payload: {
         fallback: asTransferBuffer(fallback),
@@ -95,7 +64,7 @@ workerScope.onmessage = async (event: MessageEvent<GenerateKeyPackageRequest>) =
     console.log('[MLS Worker] generateKeyPackage done');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const response: GenerateKeyPackageErr = { type: 'generateKeyPackage:error', error: message };
+    const response: MlsKeyPackageErr = { type: 'generateKeyPackage:error', error: message };
     workerScope.postMessage(response);
   }
 };

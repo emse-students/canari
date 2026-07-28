@@ -1,4 +1,9 @@
 import { encryptMlsStateOnMainThread, loadMlsWasmModule } from '$lib/mls-client/mlsWasmLoader';
+import type {
+  MlsEncryptErr,
+  MlsEncryptOk,
+  MlsEncryptRequest,
+} from '$lib/mls-client/mlsWorkerProtocol';
 
 /**
  * Some generated WASM glue paths still reference `window` unconditionally.
@@ -7,24 +12,6 @@ import { encryptMlsStateOnMainThread, loadMlsWasmModule } from '$lib/mls-client/
 const workerGlobal = globalThis as any;
 if (typeof workerGlobal.window === 'undefined') {
   workerGlobal.window = workerGlobal;
-}
-
-interface EncryptRequest {
-  type: 'encrypt';
-  payload: {
-    plain: ArrayBuffer;
-    deviceKeyB64: string;
-  };
-}
-
-interface EncryptOk {
-  type: 'encrypt:ok';
-  payload: { encrypted: ArrayBuffer };
-}
-
-interface EncryptErr {
-  type: 'encrypt:error';
-  error: string;
 }
 
 let wasmReady: Promise<void> | null = null;
@@ -38,13 +25,13 @@ function ensureWasmReady(): Promise<void> {
 }
 
 type EncryptWorkerScope = typeof self & {
-  onmessage: ((event: MessageEvent<EncryptRequest>) => void) | null;
-  postMessage: (message: EncryptOk | EncryptErr, transfer?: Transferable[]) => void;
+  onmessage: ((event: MessageEvent<MlsEncryptRequest>) => void) | null;
+  postMessage: (message: MlsEncryptOk | MlsEncryptErr, transfer?: Transferable[]) => void;
 };
 
 const workerScope = self as EncryptWorkerScope;
 
-workerScope.onmessage = async (event: MessageEvent<EncryptRequest>) => {
+workerScope.onmessage = async (event: MessageEvent<MlsEncryptRequest>) => {
   if (event.origin && event.origin !== self.location.origin) return;
   const msg = event.data;
   if (!msg || msg.type !== 'encrypt') return;
@@ -53,7 +40,7 @@ workerScope.onmessage = async (event: MessageEvent<EncryptRequest>) => {
   try {
     await ensureWasmReady();
     const encrypted = await encryptMlsStateOnMainThread(new Uint8Array(plain), deviceKeyB64);
-    const response: EncryptOk = {
+    const response: MlsEncryptOk = {
       type: 'encrypt:ok',
       payload: { encrypted: encrypted.slice().buffer },
     };

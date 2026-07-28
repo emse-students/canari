@@ -1,11 +1,8 @@
 import MlsEncryptWorker from '../workers/mlsEncrypt.worker?worker';
 import { encryptMlsStateOnMainThread } from './mlsWasmLoader';
+import type { MlsEncryptRequest, MlsEncryptResponse } from './mlsWorkerProtocol';
 
 const ENCRYPT_WORKER_TIMEOUT_MS = 60_000;
-
-type EncryptWorkerOk = { type: 'encrypt:ok'; payload: { encrypted: ArrayBuffer } };
-type EncryptWorkerErr = { type: 'encrypt:error'; error: string };
-type EncryptWorkerResponse = EncryptWorkerOk | EncryptWorkerErr;
 
 let sharedWorker: Worker | null = null;
 /** Serialises encrypt jobs on a single worker (WASM init is not re-entrant). */
@@ -39,7 +36,7 @@ function runEncryptOnWorker(
       reject(new Error(`MLS encrypt worker timeout (${ENCRYPT_WORKER_TIMEOUT_MS}ms)`));
     }, ENCRYPT_WORKER_TIMEOUT_MS);
 
-    const onMessage = (event: MessageEvent<EncryptWorkerResponse>) => {
+    const onMessage = (event: MessageEvent<MlsEncryptResponse>) => {
       const msg = event.data;
       if (!msg) return;
       cleanup();
@@ -63,9 +60,13 @@ function runEncryptOnWorker(
 
     worker.addEventListener('message', onMessage);
     worker.addEventListener('error', onError);
-    worker.postMessage({ type: 'encrypt', payload: { plain: plainBuffer, pin: deviceKeyB64 } }, [
-      plainBuffer,
-    ]);
+    // Typed through the shared contract: the worker reads `payload.deviceKeyB64`, and a rename
+    // on either side must not be able to reach production as a silent `undefined`.
+    const request: MlsEncryptRequest = {
+      type: 'encrypt',
+      payload: { plain: plainBuffer, deviceKeyB64 },
+    };
+    worker.postMessage(request, [plainBuffer]);
   });
 }
 

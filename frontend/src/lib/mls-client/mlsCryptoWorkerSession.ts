@@ -1,5 +1,10 @@
 import type { MlsBatchProcessResult } from './IMlsService';
 import MlsCryptoWorker from '../workers/mlsCrypto.worker?worker';
+import type {
+  MlsCryptoWorkerOk,
+  MlsCryptoWorkerRequest,
+  MlsCryptoWorkerResponse,
+} from './mlsWorkerProtocol';
 
 /** Max wait for any single worker request (init / page / finalize) before giving up. */
 const WORKER_REQUEST_TIMEOUT_MS = 120_000;
@@ -29,16 +34,6 @@ export interface MlsCryptoWorkerSession {
   dispose(): void;
 }
 
-type WorkerOk =
-  | { type: 'init:ok' }
-  | {
-      type: 'decryptPage:ok';
-      results: Array<{ ok: true; data: ArrayBuffer | null } | { ok: false; error: string }>;
-    }
-  | { type: 'finalize:ok'; state: ArrayBuffer };
-type WorkerErr = { type: 'error'; error: string };
-type WorkerResponse = WorkerOk | WorkerErr;
-
 /**
  * Spawns a crypto worker and initialises its MLS client from `params.state`.
  * Rejects (without leaking the worker) if initialisation fails or times out.
@@ -53,7 +48,7 @@ export async function createMlsCryptoWorkerSession(
   let faulted = false;
   /** Single in-flight request resolver; the session is driven sequentially. */
   let pending: {
-    resolve: (msg: WorkerOk) => void;
+    resolve: (msg: MlsCryptoWorkerOk) => void;
     reject: (err: Error) => void;
     timer: ReturnType<typeof setTimeout>;
   } | null = null;
@@ -76,7 +71,7 @@ export async function createMlsCryptoWorkerSession(
   };
 
   function onMessage(event: MessageEvent): void {
-    const msg = event.data as WorkerResponse | undefined;
+    const msg = event.data as MlsCryptoWorkerResponse | undefined;
     if (!msg || !pending) return;
     clearTimeout(pending.timer);
     const { resolve, reject } = pending;
@@ -99,11 +94,14 @@ export async function createMlsCryptoWorkerSession(
   worker.addEventListener('error', onError);
 
   /** Posts one request and awaits its matching reply (or timeout). */
-  function request(message: Record<string, unknown>, transfer: Transferable[]): Promise<WorkerOk> {
+  function request(
+    message: MlsCryptoWorkerRequest,
+    transfer: Transferable[]
+  ): Promise<MlsCryptoWorkerOk> {
     if (disposed) return Promise.reject(new Error('MLS crypto worker session disposed'));
     if (faulted) return Promise.reject(new Error('MLS crypto worker session faulted'));
     if (pending) return Promise.reject(new Error('MLS crypto worker session is busy'));
-    return new Promise<WorkerOk>((resolve, reject) => {
+    return new Promise<MlsCryptoWorkerOk>((resolve, reject) => {
       const timer = setTimeout(() => {
         pending = null;
         faulted = true;

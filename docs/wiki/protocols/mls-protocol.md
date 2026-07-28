@@ -380,6 +380,29 @@ stays in storage, so the next launch mismatches again and mints yet another devi
 produced four device IDs in eight seconds in production, each deleted server-side, none ever
 publishing a KeyPackage.
 
+Step 3 is also where a broken save becomes fatal rather than merely logged - see the worker
+contracts below.
+
+## Worker message contracts
+
+Three workers carry MLS work off the main thread: `mlsEncrypt.worker` (seal a snapshot),
+`mlsCrypto.worker` (warm client for catch-up decryption), `mlsKeyPackage.worker` (key package
+generation). Their request/response shapes live in `src/lib/mls-client/mlsWorkerProtocol.ts` and
+are imported by **both** ends.
+
+That single module is not tidiness. A `postMessage` argument is structurally typed by whatever the
+call site writes, so an object literal built inline is checked by nobody: the v0.11.0 PIN ->
+deviceKey rename updated the encrypt worker's destructuring to `deviceKeyB64` and left the sender
+posting `pin`. The worker then sealed with `undefined`, wasm-bindgen read `undefined.length`, and
+every state save through the worker failed. On the checkpoint paths that rejection was only
+logged; on the fresh-start path, which awaits the save (step 3 above), it aborted login with
+`can't access property "length", e is undefined`. Same failure mode as an `invoke()` name that
+matches no `#[tauri::command]` - **a string or shape crossing a boundary is unchecked unless one
+declaration governs both sides.**
+
+`mlsEncryptWorkerSession.test.ts` drives the real worker handler with the real posted message, so a
+field renamed on one side alone fails the suite as well as `svelte-check`.
+
 ## History replay
 
 `replayConversationHistory()` in `history.ts`:
