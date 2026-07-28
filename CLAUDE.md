@@ -48,197 +48,117 @@
 
 State lives HERE (canonical). Four repos, all `emse-students/*`, all on `main`:
 Canari (this monorepo) | Sky (../Sky) | MiGallery (../MiGallery) | Portail-etu (../refonte-portail-etu).
-Legend: \[x\] done+pushed, \[ \] todo, \[~\] in progress.
+Sky, MiGallery and Portail-etu are COMPLETE - nothing open on any of them.
+
+Work is tracked as Work Packages ordered by severity: **P1** (security, or a user-facing path that
+is broken), **P2** (correctness, nothing at risk), **P3** (hygiene). `[ ]` open, `[~]` in progress.
+Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, the story to
+`CHANGELOG.md`.
 
 ---
 
-### CANARI
+### CANARI - OPEN WORK PACKAGES
 
-#### DURABLE ARCHITECTURAL GOTCHAS
+- \[ \] **WP-SEC-1 (P1) - Move the background-decrypt device key out of cleartext app data.**
+  `push_context.json` stores `deviceKeyB64` in plain app storage because a background FCM/NSE
+  handler decrypts with no user present and so cannot prompt for biometrics. The requirement is
+  real; the plaintext file is not the way to meet it. Target: iOS keychain item in App Group
+  `group.fr.emse.canari` with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; Android
+  `AndroidKeyStore` key with `setUserAuthenticationRequired(false)` +
+  `setUnlockedDeviceRequired(true)`. `push_context.json` then keeps only non-secret fields (device
+  id, user id, push secret handle). Enabling biometrics changes the unlock METHOD, never where this
+  copy lives - do not conflate the two.
 
-- **iOS push = all-FCM:** ONE transport (FCM) for both platforms; FCM relays iOS->APNs via the .p8 in Firebase console. Backend sends every PushToken via `getMessaging().send()` (data+android+apns); `ApnsService` deleted. Firebase App Delegate Proxy must stay enabled. Arch: `docs/wiki/services/chat-delivery.md`.
-- **Firebase 12 data path:** FirebaseMessaging 12 REMOVED `messaging:didReceiveMessage:`. FCM data now arrives via `UIApplicationDelegate` swizzle (`CanariInstallRemoteNotificationHook`) + `UNUserNotificationCenter` callbacks, funnelling into `CanariHandleFcmData()`. Hook new iOS push work into `CanariHandleFcmData`/`CanariPushProcessRemoteNotificationUserInfo`.
-- **Platform branches:** Use `isIosTauriRuntime()`/`isMobileTauriRuntime()` (`appVersion.ts`). Android-only behaviors (heartbeat, notif suppression, `reloadStateFromDisk`) must be broadened to all-mobile.
-- **iOS pbxproj:** `canari.xcodeproj/project.pbxproj` is hand-maintained (NOT xcodegen). Targets/resources/variant groups added directly. Custom URL scheme, `NS*UsageDescription` keys, `FirebaseAppDelegateProxyEnabled`, localized `InfoPlist.strings` (fr/en `PBXVariantGroup`) are all hand-edited. NSE (`CanariNotifications` target) decrypts via Rust FFI with App Group `group.fr.emse.canari`.
-- **iOS keychain:** namespace `fr.emse.canari`/`canari_biometric_user`; Android alias `unime_dev` deliberately UNTOUCHED (renaming orphans enrolled keys).
-- **CI signing:** Two NAMED provisioning profiles matching `PROVISIONING_PROFILE_SPECIFIER` exactly (`Canari` app + `CanariNotifications` NSE), team "Les Rootz" `4CLNB8SR6L`, profiles expire 2027-07-11.
-- **Version bump:** `scripts/bump-app-version.sh` must patch NSE's `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION` in pbxproj. `bump-version.yml` stages an EXPLICIT `git add` list - any new file the bump script patches must be added there.
-- **Store publish:** iOS `altool` can exit 0 while output says `UPLOAD FAILED` - workflow greps transcript for failure markers. Android Play API rejects `changesNotSentForReview` post-launch (flag must stay absent). Post-release CD: `workflow_run` `branches` filter silently drops release-triggered workflows - never add a branches filter to a workflow_run chained off a release-triggered workflow.
-- **Device key persistence:** `deviceKeyVault.ts` picks storage via `vaultStore()` keyed on `canari_device_key_persist` (default `sessionStorage`, opt-in `localStorage`); `setDeviceKeyPersistence` wipes BOTH stores before re-saving.
-- **NEVER branch on a login error message.** `onLoginFailed(msg, code)` carries a typed `LoginErrorCode` (`loginErrors.ts`) precisely because the message is localized: a regex over it ships dead in French. Same rule for any future UI branch on an error.
-- **Who owns the keystore key:** `store_push_context` (login) and `IMlsService.changeDeviceKey` (PIN change/recovery) write alias `mls_device_key_{userId}_{deviceId}`. `applyNewDeviceKeyLocally` must NEVER call `BiometricService.disable` - that deletes the entry just written and silently turns biometrics off.
-- **Never redeclare an `init`/lifecycle override with fewer parameters.** TypeScript accepts it, so the dropped argument is invisible to `bun run check`. `WebMlsService.init`/`TauriMlsService.init` each dropped `opts`, killing `noFreshStart`: an undecryptable `mls.bin` fell into the destructive fresh-start (new device id + old device deleted server-side) instead of the recoverable `MLS_LOCAL_STATE_UNDECRYPTABLE` path. Prefer inheriting `BaseMlsService.init` over copying it - the copy had already lost the clear-`initPromise`-on-failure cleanup.
-- **A `postMessage` payload is typed by whoever writes the literal - i.e. by nobody.** The worker declaring `interface Request { payload: { deviceKeyB64 } }` does not constrain the sender's inline object. v0.11.0 renamed the encrypt worker's reader and left the sender posting `pin`: the worker sealed with `undefined` and wasm-bindgen died on `undefined.length`, so NO MLS state could be saved off-thread. Only logged on checkpoint paths, fatal on the fresh start (which awaits the save). All three MLS worker contracts now live in `src/lib/mls-client/mlsWorkerProtocol.ts`, imported by both ends - add new worker messages THERE, never as a local interface.
-- **Tauri command names are unchecked strings on both sides.** A literal passed to `invoke()` that matches no `#[tauri::command]` in `generate_handler!` compiles, lints and type-checks, then fails at runtime with "command not found". v0.11.0 renamed three TS call sites to `*_avec_clef` without touching Rust: native MLS init, save AND KeyPackage publication were dead on every mobile/desktop build until 2026-07-28. Grep both sides on any rename.
-- **Two ways a saved MLS state can fail to load, and they need different answers.** `BaseMlsService.classifyStateLoadFailure` is the only place that decides: `sealed` (AEAD failure, key rotated elsewhere) honours `noFreshStart` so the old PIN can recover the history; `mismatch` (blob decrypted, credential names another device) must NOT - no PIN repairs an identity, so pausing strands the user. After any fresh start, persist the new state BEFORE anything else can fail, or the new device id in localStorage and the old blob in storage will mismatch again next launch (the churn loop).
-- **"Logged in" means two different things.** `globalSession.isLoggedIn` = MLS is ready; the login page checks the OIDC/refresh session. A route guard that redirects to `/login` on the former while the latter is valid ping-pongs forever. Page guards test `currentUserId()`; MLS-dependent sections handle MLS absence themselves.
-- **Changing an at-rest envelope needs a migration, not a comment.** v0.11.0 moved `mls.bin` from
-  `[salt 16 || nonce 12 || ct]` sealed with Argon2id(PIN, salt) to `[nonce 12 || ct]` sealed with
-  the PBKDF2 device key, and shipped no reader for the old envelope. `CanariDBMls_<userId>` is
-  pinned at schema version 1 and native `mls.bin` is never versioned either, so nothing rewrote or
-  dropped those blobs: every pre-v0.11.0 install failed to decrypt its own state and was told "your
-  PIN was changed on another device", offering a recovery no PIN could satisfy. Both platforms now
-  try the legacy envelope once (`migrateLegacyMlsStateBlob` on web, `migrate_legacy_state_blob` in
-  `commands/mls.rs`) and re-seal + persist. Format locked by `mls-core/tests/legacy_state_envelope.rs`
-  - if you ever change the envelope again, add the reader for the previous one in the SAME commit.
-- **`push_context.json` holds `deviceKeyB64` in cleartext app data, and the file is the problem -
-  not the copy.** A background FCM/NSE handler decrypts without any user present, so it cannot
-  prompt for biometrics: the key must be readable while the device is locked. That is a real
-  constraint, and every messenger that decrypts notifications in the background satisfies it the
-  same way - not with a plaintext file, but with an OS-guarded store that unlocks after first
-  unlock. Solution to implement: iOS keychain item in App Group `group.fr.emse.canari` with
-  `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; Android `AndroidKeyStore` key with
-  `setUserAuthenticationRequired(false)` + `setUnlockedDeviceRequired(true)`. `push_context.json`
-  then keeps only the non-secret fields (device id, user id, push secret handle). Enabling
-  biometrics changes the unlock method, never where this copy lives - do not conflate the two.
-- **PIN policy is one rule, everywhere:** `isValidPin` (>= 4 characters, no max, no charset limit) guards setup, change, recovery AND unlock. Never add a stricter creation-only rule: the device key derives from the exact string typed, so a PIN accepted at creation but refused at unlock locks its owner out of their own messages.
-- **MLS membership and server routing are two different memberships, and only one of them
-  routes.** The MLS group says who can decrypt; `DeviceGroupMembership` (status `active`, mirrored
-  in the Redis set `group:members:<groupId>`) says who the delivery service actually sends to. An
-  **external commit is the ONE join path with no Welcome**, so nothing on the Welcome side ever
-  created that row: `validateCommit` accepted the commit, advanced the epoch and fanned it out,
-  while the joiner stayed invisible to routing - it emitted fine and received NOTHING, not even the
-  history bundle it had just solicited (peer logged `Full history sent: 33 message(s)` three times
-  into the void). Any new way of entering a group must promote the row too. Note the redelivery
-  asymmetry: `activateDeviceMembership` replays the pending-window messages for a Welcomed device,
-  but an external-commit joiner lands at the CURRENT epoch and forward secrecy makes those
-  unreadable - pass `redeliverMissed: false` or ship 50 undecryptable frames plus their pushes.
+- \[ \] **WP-VERIF-1 (P1) - [device] Tauri login end to end (init + save + KeyPackage).** All three
+  were dead from v0.11.0 to v0.11.2 (`invoke` names matching no Rust command). Native has NOT run
+  since. TestFlight/Play is the first real test; nothing here is proven until it does.
 
-#### CROSS-PLATFORM ENHANCEMENTS
+- \[ \] **WP-VERIF-2 (P2) - [device] Decrypted push notification on Android AND iOS.**
 
-**WP-XP METHOD (reuse for every WP-XP):**
+- \[ \] **WP-VERIF-3 (P2) - [device] Login, PIN change, biometric enable/disable on real hardware.**
 
-1. Read native stack first (Android `CanariFirebaseMessagingService.kt` + iOS `canari_push.mm`/NSE + Rust FFI twins `mobile/*_ffi.rs`), design ONCE, port to both OSes.
-2. Implement Android + iOS + backend together; shared logic in Rust FFI, routed through EXISTING outbox/push paths. Update `docs/wiki/services/chat-delivery.md` + Paraglide FR/EN.
-3. Local gates until ZERO warnings: bun run check/lint/format, cargo check (src-tauri + mls-wasm), backend oxlint, AND `:app:compileUniversalReleaseKotlin` (release build is the ONLY real Kotlin compile; nested types go on OUTER class body, never companion).
-4. Commit signed (heredoc), isolate unrelated dirty files, `rm -rf apps/*/dist`, pull --rebase --autostash, push.
-5. Cut release (`gh release create vX.Y.Z --target $(git rev-parse HEAD)`), follow ios/android/appimage/cd runs until ALL green. Source fix -> `gh run rerun`; workflow-YAML fix -> NEW release.
-6. Update SESSION STATE (prune shipped detail!) + memory; flag [device] checks.
+- \[ \] **WP-VERIF-4 (P3) - [device] WP-XP-8 retry engine.** Android `OutboxRetryWorker`
+  (WorkManager, exp backoff 30s+, 3 failures -> persistent flag + nudge) and iOS `BGTaskScheduler`
+  `fr.emse.canari.outboxRetry`. Both fire from `maybeNotifyPendingSync` when an opportunistic drain
+  leaves `remaining > 0`. Never observed waking up on hardware.
 
-Shipped:
-- \[x\] WP-XP-1 Notification quick actions
-- \[x\] WP-XP-2 App-icon unread badge
-- \[x\] WP-XP-3 Rich media notifications (v0.10.1)
-- \[x\] WP-XP-4 Boot/relaunch re-registration
-- \[x\] WP-XP-5 Priority notifications (calls & @mentions) - v0.10.4
-- \[x\] WP-XP-6 Keyboard GIF/sticker parity
-- \[x\] WP-XP-7 Unified rich notif grouping
-- \[x\] WP-XP-8 Shared deferred-retry engine: Android `OutboxRetryWorker` (WorkManager, exp backoff 30s+, 3 failures -> persistent flag + nudge) + iOS `BGTaskScheduler` `fr.emse.canari.outboxRetry` (`BGProcessingTaskRequest`, `requiresNetworkConnectivity=YES`). Both triggered from `maybeNotifyPendingSync`/`CanariMaybeNotifyPendingSync` when opportunistic drain leaves remaining>0. [device] verify Android WorkManager retry + iOS BGTask wake-up.
-
-Todo:
-- \[x\] **WP-Calls-UX call UI overhaul** (P1-P9 implemented; svelte-check 0/0, oxlint 0/0, tests 8/8).
-
-#### POST-v0.11.0 REMEDIATION - COMPLETE
-
-All 15 audit gaps (T1-T15) + T16 + i18n parity closed and gate-verified across 5 lots (mobile
-background push, frontend key chain, prod migration ledger, hygiene, docs). Delegation log and
-verification verdicts: `AGENTS.md`. Durable lessons folded into the gotchas above.
-
-- \[ \] [device] decrypted push notification on Android AND iOS.
-- \[ \] [device] login, PIN change, biometric enable/disable on real hardware.
-
-#### MLS WORKFLOW AUDIT (2026-07-28)
-
-Triggered by "0 appareil(s) connecte(s)" + a login stuck on "PIN changed on another device".
-Evidence came from prod (`ssh canari`, chat-delivery + gateway + nginx logs), not from reading.
-Seven defects found and fixed, all introduced by the v0.11.0 PIN -> deviceKey refactor:
-
-- The encrypt worker's sender still posted `pin` after the reader moved to `deviceKeyB64` -> every
-  off-thread save sealed with `undefined` and died in wasm-bindgen on `undefined.length`. Surfaced
-  as `can't access property "length", e is undefined` at login once the fresh start (which awaits
-  the save) started running. Contracts now shared: `mls-client/mlsWorkerProtocol.ts`.
-
-- Three `invoke('*_avec_clef')` targets that exist in NO Rust command -> native MLS init, save and
-  KeyPackage publication dead on every Tauri build since v0.11.0.
-- Biometric sessions pass `deviceKeyB64 = ''` to every save -> now resolved once at init and
-  cached in `AppState.device_key`.
-- Credential mismatch reported as "PIN changed elsewhere"; fresh start never persisted -> churn.
-- `/settings` <-> `/login` redirect ping-pong (MLS-readiness vs OIDC-session predicates).
-- **The at-rest envelope changed with no reader for the old one** (`399b07aa`): every pre-v0.11.0
-  install was told its PIN had been changed elsewhere. This was the actual lockout the user hit
-  twice; the four above only shaped how it was reported. See the durable gotcha on envelopes.
-
-Escape hatch if a state still refuses to open: the PIN modal's "forgot PIN" (`handlePinReset`)
-wipes server + local MLS state and restarts in first-setup mode, at the cost of local history.
-
-**VERIFIED on web 2026-07-28**, two accounts driven end-to-end in isolated browser contexts:
-login -> PIN -> `Loading/Creating clean state` -> WS connected -> `generateKeyPackage` (50) ->
-`KeyPackage published.` on BOTH; DM created (`Canal E2E etabli.`), messages decrypted in both
-directions; hard reload replays `MLS state loaded from IndexedDB` -> `Loading encrypted state with
-device key` with the SAME device id (no fresh start, no mismatch) - which is the round trip the
-`undefined` device key made impossible; "Appareils connectes" reads 3, not 0; zero console
-error/warning. This also closes the old `register-device` unknown: publication does happen once
-init completes, so it was a downstream effect as suspected. Stale `welcome_request` from the
-churn-era device ids are correctly answered `Group not found - refusing`.
-
-- \[ \] [device] Tauri login end-to-end (init + save + KeyPackage) - all three were broken.
-  Shipped in v0.11.2; native has NEVER run since v0.11.0, so TestFlight/Play is the first test.
-- \[x\] [browser] **Device-reset recovery - PASSES on v0.11.3** (2026-07-28, two isolated contexts,
-  a DM holding 34 messages). Wiped device -> PIN -> fresh device id -> KeyPackage published ->
-  `externalJoin succeeded (base epoch 2)` -> conversation placeholder recreated ->
-  `[HISTORY_REQ] solicit attempt 0` -> `[HISTORY_BUNDLE] 34 messages received`, all 34 decrypted and
-  rendered, then live traffic verified in BOTH directions. Total elapsed: 5 seconds from PIN to full
-  history. The run only works because of the `[MEMBERSHIP_ACTIVE]` promotion in `validateCommit` -
-  see the membership-vs-routing gotcha; before it, the same run recovered ZERO messages.
-- \[ \] [browser] PIN change - not run; it mutates a real account across its other devices.
-- \[ \] **Dead devices are never evicted from `group:members:<groupId>`.** After the churn-era
-  testing that set holds 7 entries for a 2-person DM, 5 of them device ids that will never
-  reconnect. Every message is therefore fanned out to, queued for and pushed at 5 tombstones, and
-  the set only grows. No reaper exists - worth a WP.
-- "Rester connecte" is UNCHECKED by default and that is deliberate (verified in prod + code):
-  `pinStaySignedIn = $state(isDeviceKeyPersistenceEnabled())`, flag `canari_device_key_persist`
-  defaults to `false`, and v0.11.1 changed it from always-checked precisely so it reflects the
-  stored choice. Checking it moves the device key from sessionStorage to localStorage, where it
-  survives a browser restart in readable form. Flip the default only as a deliberate product call.
-
-#### MOBILE AUTH CHAIN AUDIT (2026-07-27) - COMPLETE
-
-Audited the mobile login/PIN/biometric chain against the intended spec after the deviceKey
-migrations. **The crypto chain survived intact** - PBKDF2 derivation, ChaCha20-Poly1305 `mls.bin`,
-AES-GCM messages, keystore alias convention and `pin-change` wiring all self-consistent. The
-breakage was in orchestration. All fixed:
-
-- Recovery link was dead in French (regex over a localized message) -> typed `LoginErrorCode`.
-- PIN change deleted the keystore key `changeDeviceKey` had just written, silently disabling
-  biometrics and raising a "disable biometric unlock" prompt mid-change. Same path in recovery.
-- PIN sheet hid the fingerprint button after a failed biometric login; `biometricLoginImpl` never
-  cleared the session device key, so a retry could reuse a failed key instead of the keystore.
-- PIN policy is a single minimum of 4 characters (`isValidPin`) on every path.
-- Enrolment offer is now a bottom sheet (`BiometricEnrollSheet`); the in-app biometric sheet is
-  raised from `enrollBiometricImpl` via the `biometricPrompt` store, so the post-login offer and
-  the Settings toggle behave identically.
-- Dead code removed (`showBiometricEnrollPrompt`, `applyNewPinLocally`); remaining French comments
-  swept; `docs/wiki/frontend/modules/auth.md` rewritten with the full chain.
-
-Known and deliberate: `push_context.json` keeps `deviceKeyB64` in cleartext app data after
-enrolment - background FCM decryption needs it. Enabling biometrics changes the unlock method,
-not where that copy lives.
-
-#### MULTI-TIER COTISATIONS (Cercle) - COMPLETE
-
-Durable gotchas:
-- `association_products` has `variantKey`/`variantLevel` (NULL = single-tier); `deriveCotisationTag(slug, mode, now?, variant?)` appends `-${variant}` before academic-year suffix.
-- `memberPriceTag` - `amountCentsMember` applies iff buyer holds THAT specific tag. Fulfillment transaction-wraps grant + `revokeSiblingTierTags` (XOR switch).
-- Inbound `GET /api/public/cotisant-status` gated on `X-Api-Key` vs `CERCLE_API_KEY`, throttled 20 req/min. Outbound `dispatchCercleWebhook` (HMAC-SHA256, 3 retries).
-- Remaining manual step: set real `webhookUrl`/`webhookSecret` on prod `balance_topup` product once Cercle provides them.
+- \[ \] **WP-INT-1 (P3) - Cercle webhook credentials.** Set the real `webhookUrl`/`webhookSecret`
+  on the prod `balance_topup` product. Blocked on Cercle providing them.
 
 ---
 
-### SKY (../Sky) - COMPLETE, nothing open.
-### MIGALLERY (../MiGallery) - COMPLETE, nothing open.
-### PORTAIL-ETU (../refonte-portail-etu) - COMPLETE, nothing open.
+### CANARI - DURABLE RULES
+
+One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/`.
+
+#### MLS state and keys
+
+- **An at-rest envelope change needs a reader for the previous format in the SAME commit.** Neither `CanariDBMls_<userId>` (schema v1) nor native `mls.bin` is versioned, so nothing rewrites old blobs; v0.11.0 changed the envelope with no reader and locked every existing install out. Format locked by `mls-core/tests/legacy_state_envelope.rs`.
+- **Two ways a saved state fails to load, two answers.** `BaseMlsService.classifyStateLoadFailure` is the only place that decides: `sealed` (AEAD failure) honours `noFreshStart` so the old PIN can recover; `mismatch` (decrypted, but names another device) must not - no PIN repairs an identity.
+- **After any fresh start, persist the new state BEFORE anything else can fail**, or the new device id and the old blob mismatch again next launch (the churn loop).
+- **PIN policy is one rule everywhere:** `isValidPin` (>= 4 chars, no max, no charset limit) guards setup, change, recovery AND unlock. A PIN accepted at creation but refused at unlock locks its owner out of their own messages.
+- **Who owns the keystore key:** `store_push_context` (login) and `IMlsService.changeDeviceKey` (PIN change/recovery) write alias `mls_device_key_{userId}_{deviceId}`. `applyNewDeviceKeyLocally` must NEVER call `BiometricService.disable` - that deletes the entry just written.
+- **Device key persistence:** `deviceKeyVault.ts` picks storage via `vaultStore()` keyed on `canari_device_key_persist` (default `sessionStorage`, opt-in `localStorage`); `setDeviceKeyPersistence` wipes BOTH stores before re-saving. "Stay signed in" starts UNCHECKED by design - it reflects the stored choice.
+- **Escape hatch when a state still refuses to open:** the PIN modal's "forgot PIN" (`handlePinReset`) wipes server + local MLS state and restarts in first-setup mode, at the cost of local history.
+
+#### MLS membership and routing
+
+- **MLS membership and server routing are different memberships, and only one routes.** The MLS group says who can decrypt; `DeviceGroupMembership` (`status='active'`, mirrored in Redis `group:members:<groupId>`) says who chat-delivery actually sends to. Any new way of entering a group must promote that row - an **external commit is the one join path with no Welcome**, so nothing else creates it.
+- **Redelivery asymmetry:** `activateDeviceMembership` replays the pending window for a Welcomed device, but an external-commit joiner lands at the CURRENT epoch and forward secrecy makes those frames unreadable - pass `redeliverMissed: false` and let the history bundle carry the past.
+- **Dead devices ARE reaped, after 90 days.** `detectStaleDevices` (hourly) keys liveness on `KeyPackage.createdAt`, refreshed by every WS reconnect; past `RETENTION_WINDOW_MS` it does `srem` on the Redis set and resets the row to `pending`, then `cleanupStaleDevices` purges the whole footprint. Until then a churned device id keeps receiving fan-out - that is the designed offline window, not a leak.
+
+#### Contracts that the compiler does not check
+
+- **Never redeclare an `init`/lifecycle override with fewer parameters.** TypeScript accepts it, so the dropped argument is invisible to `bun run check`. Prefer inheriting `BaseMlsService.init` over copying it.
+- **A `postMessage` payload is typed by whoever writes the literal - i.e. by nobody.** All three MLS worker contracts live in `src/lib/mls-client/mlsWorkerProtocol.ts`, imported by both ends. Add new worker messages THERE, never as a local interface.
+- **Tauri command names are unchecked strings on both sides.** An `invoke()` literal matching no `#[tauri::command]` compiles, lints and type-checks, then fails at runtime. Grep both sides on any rename.
+- **NEVER branch on an error message.** `onLoginFailed(msg, code)` carries a typed `LoginErrorCode` (`loginErrors.ts`) because the message is localized: a regex over it ships dead in French.
+- **"Logged in" means two things.** `globalSession.isLoggedIn` = MLS ready; the login page checks the OIDC/refresh session. Page guards test `currentUserId()`; MLS-dependent sections handle MLS absence themselves.
+
+#### Mobile and native
+
+- **iOS push = all-FCM:** ONE transport for both platforms; FCM relays iOS->APNs via the .p8 in the Firebase console. Backend sends every PushToken via `getMessaging().send()`. Firebase App Delegate Proxy must stay enabled. Arch: `docs/wiki/services/chat-delivery.md`.
+- **Firebase 12 data path:** `messaging:didReceiveMessage:` is GONE. FCM data arrives via the `UIApplicationDelegate` swizzle (`CanariInstallRemoteNotificationHook`) + `UNUserNotificationCenter` callbacks, funnelling into `CanariHandleFcmData()`. Hook new iOS push work there.
+- **Platform branches:** use `isIosTauriRuntime()`/`isMobileTauriRuntime()` (`appVersion.ts`). Android-only behaviours (heartbeat, notif suppression, `reloadStateFromDisk`) must be broadened to all-mobile.
+- **iOS pbxproj is hand-maintained** (NOT xcodegen): targets, resources, URL scheme, `NS*UsageDescription`, `FirebaseAppDelegateProxyEnabled`, localized `InfoPlist.strings` variant groups. NSE (`CanariNotifications`) decrypts via Rust FFI with App Group `group.fr.emse.canari`.
+- **iOS keychain** namespace `fr.emse.canari`/`canari_biometric_user`; Android alias `unime_dev` deliberately UNTOUCHED (renaming orphans enrolled keys).
+- **Kotlin nested types go on the OUTER class body, never a companion object**, and the release build (`:app:compileUniversalReleaseKotlin`) is the ONLY real Kotlin compile.
+
+#### Release and CI
+
+- **CI signing:** two NAMED provisioning profiles matching `PROVISIONING_PROFILE_SPECIFIER` exactly (`Canari` app + `CanariNotifications` NSE), team "Les Rootz" `4CLNB8SR6L`, expire 2027-07-11.
+- **Version bump:** `scripts/bump-app-version.sh` must patch the NSE's `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION`; `bump-version.yml` stages an EXPLICIT `git add` list - any new file the script patches must be added there.
+- **Store publish:** iOS `altool` can exit 0 while printing `UPLOAD FAILED` (the workflow greps the transcript). Android Play API rejects `changesNotSentForReview` post-launch. Never add a `branches` filter to a `workflow_run` chained off a release-triggered workflow - it silently drops every run.
+
+#### Cotisations (Cercle)
+
+- `association_products` carries `variantKey`/`variantLevel` (NULL = single-tier); `deriveCotisationTag(slug, mode, now?, variant?)` appends `-${variant}` before the academic-year suffix.
+- `memberPriceTag`: `amountCentsMember` applies iff the buyer holds THAT specific tag. Fulfillment transaction-wraps grant + `revokeSiblingTierTags` (XOR switch).
+- Inbound `GET /api/public/cotisant-status` gated on `X-Api-Key` vs `CERCLE_API_KEY`, 20 req/min. Outbound `dispatchCercleWebhook` is HMAC-SHA256 with 3 retries.
+- Cotisant status is server-authoritative: `/products/all` returns per-product `viewerIsCotisant`/`viewerActiveTier`. No client-side tag derivation.
+
+---
+
+### VERIFIED ON WEB (2026-07-28, v0.11.3)
+
+Two real accounts driven in isolated browser contexts. Login -> PIN -> WS -> `generateKeyPackage`
+(50) -> `KeyPackage published.` on both; DM created, messages decrypted both ways; hard reload
+replays the same device id (no fresh start). **Device-reset recovery**: wiped device -> PIN ->
+fresh device id -> `externalJoin succeeded (base epoch 2)` -> `[HISTORY_REQ] solicit attempt 0` ->
+`[HISTORY_BUNDLE] 34 messages received`, all 34 rendered, live traffic both ways. Five seconds from
+PIN to full history, zero console errors. Works only because of the `[MEMBERSHIP_ACTIVE]` promotion
+in `validateCommit`.
 
 ---
 
 ### SHARED GOTCHAS (do not repeat)
 
-- **Driving several logged-in sessions at once:** `new_page` with `isolatedContext: "<name>"` (chrome-devtools MCP) gives a fully separate cookie jar, IndexedDB and sessionStorage - i.e. a distinct device with its own MLS state and device id. Two contexts + two accounts is the only way to exercise Welcome/epoch/decrypt paths from the outside. No extra MCP server needed. Note `fill()` sets a value without opening autocomplete listboxes; use `type_text` for anything debounced-search driven.
-- **Never assert a wall clock in a test.** `minesweeper/game.test.ts` timed unseeded no-guess generation (rejection sampling with restarts - heavy-tailed) against a 15s budget and drew 31s on a runner, taking CD down. Seed the input so the work is reproducible and let the `it` timeout guard non-termination.
-- Bash-tool commit messages: use heredoc or `git commit -F file`, NOT PowerShell `@'...'@` (Git Bash prefixes subject with `@`).
-- Backend lint: apps call bare `oxlint`/`oxfmt` from local `node_modules/.bin`. If hook fails with `'oxlint' n'est pas reconnu`, run `npm install` in that app dir.
-- Canari pre-commit hook sweeps WHOLE frontend and re-stages; isolate unrelated dirty files before committing.
+- **Driving several logged-in sessions at once:** `new_page` with `isolatedContext: "<name>"` (chrome-devtools MCP) gives a fully separate cookie jar, IndexedDB and sessionStorage - i.e. a distinct device with its own MLS state and device id. Two contexts + two accounts is the only way to exercise Welcome/epoch/decrypt paths from the outside. `fill()` sets a value without firing the input events Svelte tracks; use `type_text` for composers and debounced search.
+- **Never assert a wall clock in a test.** An unseeded generator with rejection sampling drew 31s against a 15s budget on a runner and took CD down. Seed the input; let the `it` timeout guard non-termination.
+- Bash-tool commit messages: use heredoc or `git commit -F file`, NOT PowerShell `@'...'@` (Git Bash prefixes the subject with `@`).
+- Backend lint: apps call bare `oxlint`/`oxfmt` from local `node_modules/.bin`, with repo-level configs (`-c ../../oxfmt.json`, `-c ../../.oxlintrc.nest.json`). If a hook fails with `'oxlint' n'est pas reconnu`, run `npm install` in that app dir.
+- Canari pre-commit hook sweeps the WHOLE frontend and re-stages; isolate unrelated dirty files before committing.
 - Before push: `rm -rf apps/*/dist` then `git pull --rebase --autostash origin main`.
-- Cotisant status is server-authoritative: `/products/all` returns per-product `viewerIsCotisant`/`viewerActiveTier` (no client-side tag derivation).
 - Portail: SPA (`ssr = false`); avatar proxy is portail-side same-origin; `data-export/` holds PII, never commit.
 - Sky UI French must keep accents + straight apostrophes.
-- Commit signing ON globally (SSH): `gpg.format ssh`, `user.signingkey ~/.ssh/id_ed25519.pub`. Pubkey registered as GitHub signing key on DeMASKe. All commits Verified - do NOT disable.
+- Commit signing ON globally (SSH): `gpg.format ssh`, `user.signingkey ~/.ssh/id_ed25519.pub`. All commits Verified - do NOT disable.
