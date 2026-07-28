@@ -1,6 +1,5 @@
 //! Tauri commands for the push context (FCM, VoIP, cache, outbox mirror).
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mls_core::DeviceKeyStore;
 use tauri::Manager;
 
@@ -21,24 +20,13 @@ pub(crate) fn check_push_secret_health(app: tauri::AppHandle) -> serde_json::Val
         if !data_dir.join("push_context.json").exists() {
             return serde_json::json!({"ok": true});
         }
-        // keystore_ok.flag is written by CanariApplication.checkKeystoreHealth() at startup.
+        // keystore_ok.flag is written by the native health check at startup
+        // (Android: CanariApplication.checkKeystoreHealth, iOS: CanariCheckKeystoreHealth).
+        // It probes the push secret, not the device key, but the failure mode it detects -
+        // the platform keystore losing its entries - takes both down together, so the flag
+        // stands in for either. WP-SEC-1 removed the device key from push_context.json, so
+        // there is no longer a JSON field to cross-check here.
         if data_dir.join("keystore_ok.flag").exists() {
-            // The flag can be present while deviceKeyB64 is missing from push_context.json
-            // (e.g. a clear_push_context_key that was not followed by a store_push_context).
-            if let Ok(content) = std::fs::read_to_string(data_dir.join("push_context.json")) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                    let device_key_empty = json
-                        .get("deviceKeyB64")
-                        .and_then(|v| v.as_str())
-                        .map_or(true, |s| s.is_empty());
-                    if device_key_empty {
-                        log::warn!(
-                            "[PushHealth] keystore_ok.flag present but deviceKeyB64 missing/empty in push_context.json"
-                        );
-                        return serde_json::json!({"ok": false, "reason": "no_secret"});
-                    }
-                }
-            }
             return serde_json::json!({"ok": true});
         }
         // pending_push_secret.txt -> migration pending; the FCM service can still decrypt and the
@@ -323,46 +311,26 @@ pub(crate) fn store_push_context(
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
-    // Validate before writing: a malformed key would poison both the keystore and the JSON,
+    // Validate before writing: a malformed key would poison the keystore,
     // and the failure would only surface much later as an undecryptable notification.
     let key_bytes = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64.trim())
         .map_err(|e| format!("invalid device_key_b64: {e}"))?;
 
     let alias = format!("mls_device_key_{user_id}_{device_id}");
     let keystore = PluginDeviceKeyStore::new(app.clone());
-    if let Err(e) = keystore.store_device_key(&key_bytes, &alias) {
-        log::warn!("[PushCtx] keystore mirror failed (non-fatal, push still uses the JSON): {e}");
-    }
-
-    let device_key_b64 = STANDARD.encode(key_bytes);
+    // WP-SEC-1: the keystore is now the ONLY copy of the device key (no JSON fallback).
+    // A failed write means background decrypt is dead — return Err, do not log::warn!.
+    keystore
+        .store_device_key(&key_bytes, &alias)
+        .map_err(|e| format!("keystore write failed (background decrypt will not work): {e}"))?;
 
     let json = serde_json::json!({
         "userId": user_id,
         "deviceId": device_id,
         "baseUrl": base_url,
         "pushToken": push_token.unwrap_or_default(),
-        "deviceKeyB64": device_key_b64
     });
     std::fs::write(data_dir.join("push_context.json"), json.to_string()).map_err(|e| e.to_string())
-}
-
-/// Clears the `deviceKeyB64` field from {app_data_dir}/push_context.json.
-/// Called after enrolling in or disabling biometrics, to invalidate the decryption key held on
-/// the filesystem. No-op (success) when the file does not exist.
-#[tauri::command]
-pub(crate) fn clear_push_context_key(app: tauri::AppHandle) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let path = data_dir.join("push_context.json");
-    if !path.exists() {
-        return Ok(());
-    }
-    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut json: serde_json::Value =
-        serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
-    if let Some(obj) = json.as_object_mut() {
-        obj.insert("deviceKeyB64".to_string(), serde_json::Value::Null);
-    }
-    std::fs::write(&path, json.to_string()).map_err(|e| e.to_string())
 }
 
 /// Reads {app_data_dir}/push_context.json and returns its contents.

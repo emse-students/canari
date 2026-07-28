@@ -35,10 +35,9 @@ use crate::commands::mls::{
     trailer_welcome,
 };
 use crate::commands::push::{
-    check_push_secret_health, clear_push_context_key, get_fcm_token, get_voip_token,
-    load_push_context, read_and_clear_fcm_cache, read_and_clear_outbox_sent,
-    read_and_clear_pending_call_accept, store_channel_key, store_outbox_mirror, store_push_context,
-    store_push_secret,
+    check_push_secret_health, get_fcm_token, get_voip_token, load_push_context,
+    read_and_clear_fcm_cache, read_and_clear_outbox_sent, read_and_clear_pending_call_accept,
+    store_channel_key, store_outbox_mirror, store_push_context, store_push_secret,
 };
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, get_native_flags, load_mls_state, mls_foreground_heartbeat,
@@ -810,7 +809,6 @@ pub fn run() {
             exporter_secret,
             get_fcm_token,
             check_push_secret_health,
-            clear_push_context_key,
             store_push_context,
             load_push_context,
             save_mls_state,

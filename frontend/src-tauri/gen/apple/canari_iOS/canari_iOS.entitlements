@@ -19,5 +19,14 @@
 	<array>
 		<string>group.fr.emse.canari</string>
 	</array>
+	<!-- WP-SEC-1: lets the app write a background-accessible (AfterFirstUnlock)
+	     device key into the shared keychain for the NSE to read. Requires Keychain
+	     Sharing enabled on the fr.emse.canari App ID + regenerated provisioning
+	     profiles for both "Canari" and "CanariNotifications" (team 4CLNB8SR6L),
+	     or codesign fails ("profile doesn't include the ... entitlement"). -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)group.fr.emse.canari</string>
+	</array>
 </dict>
 </plist>

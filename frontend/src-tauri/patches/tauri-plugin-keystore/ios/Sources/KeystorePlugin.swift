@@ -165,7 +165,7 @@ class KeystorePlugin: Plugin {
       throw error!.takeRetainedValue() as Error
     }
 
-    // Delete any existing entry for this alias.
+    // -- Primary item: biometric-gated (.userPresence), for the app process --
     let deleteQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: kKeychainService,
@@ -173,7 +173,6 @@ class KeystorePlugin: Plugin {
     ]
     SecItemDelete(deleteQuery as CFDictionary)
 
-    // Add the new entry.
     var addQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: kKeychainService,
@@ -187,6 +186,38 @@ class KeystorePlugin: Plugin {
       throw NSError(
         domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
     }
+
+    // -- WP-SEC-1: secondary item, background-accessible for the NSE --
+    // No .userPresence (that is exactly what locks the NSE out),
+    // AfterFirstUnlockThisDeviceOnly so it is available once the device
+    // has been unlocked once (covers the "screen locked, push arrives"
+    // case). Shared via the App Group keychain access group so the NSE
+    // can read it from its own process.
+    let bgDeleteQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kKeychainService,
+      kSecAttrAccount as String: "mls_bg_key_\(args.alias)",
+    ]
+    SecItemDelete(bgDeleteQuery as CFDictionary)
+
+    var bgAddQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kKeychainService,
+      kSecAttrAccount as String: "mls_bg_key_\(args.alias)",
+      kSecValueData as String: keyData,
+      kSecAttrAccessGroup as String: "group.fr.emse.canari",
+      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+      // NO kSecAttrAccessControl — that is exactly what blocks the NSE today
+    ]
+
+    let bgStatus = SecItemAdd(bgAddQuery as CFDictionary, nil)
+    guard bgStatus == errSecSuccess else {
+      // The background item is best-effort: if the App Group keychain is not
+      // available (e.g. provisioning profile not yet regenerated), the app
+      // still functions — push just falls back to generic text for the NSE.
+      NSLog("[KeystorePlugin] storeKeyBytes: bg keychain item failed (status=\(bgStatus)), push may show generic fallback")
+    }
+
     invoke.resolve()
   }
 
@@ -228,16 +259,28 @@ class KeystorePlugin: Plugin {
   @objc public func deleteKeyBytes(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(DeleteKeyBytesRequest.self)
 
+    // Delete the primary (biometric-gated) item.
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: kKeychainService,
       kSecAttrAccount as String: "mls_key_\(args.alias)",
     ]
-
     let status = SecItemDelete(query as CFDictionary)
     guard status == errSecSuccess || status == errSecItemNotFound else {
       throw NSError(
         domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
+    }
+
+    // WP-SEC-1: also delete the background-accessible item so revoking a
+    // device cleans up both copies.
+    let bgQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kKeychainService,
+      kSecAttrAccount as String: "mls_bg_key_\(args.alias)",
+    ]
+    let bgStatus = SecItemDelete(bgQuery as CFDictionary)
+    if bgStatus != errSecSuccess && bgStatus != errSecItemNotFound {
+      NSLog("[KeystorePlugin] deleteKeyBytes: bg item delete failed (status=\(bgStatus))")
     }
 
     invoke.resolve()

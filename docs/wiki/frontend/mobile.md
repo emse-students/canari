@@ -64,7 +64,9 @@ save and KeyPackage commands fall back to that cache. Resolving per call would i
 - Budget: ~30 seconds; 2 MB media cap
 
 The NSE shares data with the main app via App Group `group.fr.emse.canari`:
-- `push_context.json` — push secret, device ID, user ID
+- `push_context.json` — device ID, user ID, backend base URL, push token. No key material: the
+  device key comes from the shared keychain item `mls_bg_key_<alias>` (see
+  [auth](modules/auth.md) "Where the key lives")
 - `mls_pending.db` — pending MLS state for background processing
 
 ### CallKit (VoIP pushes)

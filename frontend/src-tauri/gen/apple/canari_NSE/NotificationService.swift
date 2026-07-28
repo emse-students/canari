@@ -1,3 +1,4 @@
+import Security
 import UserNotifications
 
 /// Canari Notification Service Extension.
@@ -223,6 +224,7 @@ class NotificationService: UNNotificationServiceExtension {
   private func decryptProto(
     ctx: PushContext, groupId: String, protoB64: String, state: Data
   ) -> DecryptResult? {
+    guard !ctx.deviceKeyB64.isEmpty else { return nil }
     guard let cipher = Data(base64Encoded: protoB64, options: .ignoreUnknownCharacters),
       !cipher.isEmpty
     else { return nil }
@@ -231,7 +233,7 @@ class NotificationService: UNNotificationServiceExtension {
       cipher.withUnsafeBytes { cipherPtr -> String? in
         guard let raw = canari_native_decrypt_message(
           statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
-          ctx.pin, ctx.userId, ctx.deviceId, groupId,
+          ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId,
           cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count)
         else { return nil }
         defer { canari_free_string(raw) }
@@ -246,12 +248,13 @@ class NotificationService: UNNotificationServiceExtension {
   private func decryptWithCommitCatchup(
     ctx: PushContext, groupId: String, protoB64: String
   ) -> DecryptResult? {
+    guard !ctx.deviceKeyB64.isEmpty else { return nil }
     guard let state = loadMlsState() else { return nil }
 
     let epoch: Int64 = state.withUnsafeBytes { statePtr in
       canari_native_group_epoch(
         statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
-        ctx.pin, ctx.userId, ctx.deviceId, groupId)
+        ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId)
     }
     guard epoch >= 0 else {
       NSLog("[CanariNSE] catchup: epoch unknown group=\(groupId)")
@@ -273,7 +276,7 @@ class NotificationService: UNNotificationServiceExtension {
       cipher.withUnsafeBytes { cipherPtr -> String? in
         guard let raw = canari_native_decrypt_message_with_commits(
           statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
-          ctx.pin, ctx.userId, ctx.deviceId, groupId, commitsJson,
+          ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId, commitsJson,
           cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count)
         else { return nil }
         defer { canari_free_string(raw) }
@@ -461,9 +464,9 @@ class NotificationService: UNNotificationServiceExtension {
 
   // MARK: - Shared App Group state --------------------------------------------
 
-  /// Push context mirrored from push_context.json (pin, ids, backend base url).
+  /// Push context mirrored from push_context.json (device key, ids, backend base url).
   private struct PushContext {
-    let pin: String
+    let deviceKeyB64: String
     let userId: String
     let deviceId: String
     let baseUrl: String
@@ -483,12 +486,37 @@ class NotificationService: UNNotificationServiceExtension {
       let data = try? Data(contentsOf: dir.appendingPathComponent(Self.pushContextFile)),
       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     else { return nil }
-    let pin = json["pin"] as? String ?? ""
     let userId = json["userId"] as? String ?? ""
     let deviceId = json["deviceId"] as? String ?? ""
     let baseUrl = json["baseUrl"] as? String ?? ""
-    guard !pin.isEmpty, !userId.isEmpty, !deviceId.isEmpty, !baseUrl.isEmpty else { return nil }
-    return PushContext(pin: pin, userId: userId, deviceId: deviceId, baseUrl: baseUrl)
+    guard !userId.isEmpty, !deviceId.isEmpty, !baseUrl.isEmpty else { return nil }
+    // WP-SEC-1: the device key is no longer in the JSON; source it from the Keychain.
+    // Ordering constraint: the account name needs userId + deviceId from the JSON, so
+    // parse the JSON first, then hit the Keychain. An empty key means the Keychain is
+    // unavailable — the push falls back to the generic text (acceptable one-push cost).
+    let deviceKeyB64 = Self.retrieveDeviceKey(userId: userId, deviceId: deviceId) ?? ""
+    return PushContext(deviceKeyB64: deviceKeyB64, userId: userId, deviceId: deviceId, baseUrl: baseUrl)
+  }
+
+  /// WP-SEC-1: retrieves the MLS device key from the background-accessible Keychain item
+  /// (AfterFirstUnlockThisDeviceOnly, no .userPresence, shared via group.fr.emse.canari).
+  /// Returns the base64-encoded key, or nil if absent. Mirror of the ObjC
+  /// CanariRetrieveDeviceKey in canari_push.mm.
+  private static func retrieveDeviceKey(userId: String, deviceId: String) -> String? {
+    guard !userId.isEmpty, !deviceId.isEmpty else { return nil }
+    let alias = "mls_device_key_\(userId)_\(deviceId)"
+    let account = "mls_bg_key_\(alias)"
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: "fr.emse.canari",
+      kSecAttrAccount as String: account,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    guard status == errSecSuccess, let data = item as? Data, !data.isEmpty else { return nil }
+    return String(data: data, encoding: .utf8)
   }
 
   /// Push bearer secret, mirrored to the container by the app. Only needed for the

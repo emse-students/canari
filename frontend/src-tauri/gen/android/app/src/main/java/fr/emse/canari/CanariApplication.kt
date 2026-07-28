@@ -29,6 +29,7 @@ class CanariApplication : Application() {
         }
         createNotificationChannels()
         processPendingPushSecret()
+        migrateDeviceKeyFromJson()
         checkKeystoreHealth()
     }
 
@@ -59,6 +60,39 @@ class CanariApplication : Application() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "checkKeystoreHealth: exception: ${e.message}", e)
+        }
+    }
+
+    /**
+     * WP-SEC-1 one-shot migration: existing installs hold the device key only in
+     * push_context.json. Promote it to the Android Keystore, then strip the field
+     * from the JSON. The background readers (MlsContextLoader) never fall back to
+     * the JSON — if the app has not run since the update, one push falls back to
+     * the generic text and the next launch fixes it permanently.
+     */
+    private fun migrateDeviceKeyFromJson() {
+        try {
+            val file = File(MlsContextLoader.tauriDataDir(this), "push_context.json")
+            if (!file.exists()) return
+            val j = org.json.JSONObject(file.readText())
+            val deviceKeyB64 = j.optString("deviceKeyB64", "")
+            if (deviceKeyB64.isEmpty()) return
+            val userId = j.optString("userId", "")
+            val deviceId = j.optString("deviceId", "")
+            if (userId.isEmpty() || deviceId.isEmpty()) return
+
+            val stored = MlsDeviceKeyStore.store(this, userId, deviceId, deviceKeyB64)
+            if (!stored) {
+                Log.w(TAG, "migrateDeviceKeyFromJson: Keystore store failed — keeping JSON field for now")
+                return
+            }
+
+            // Strip the field and rewrite.
+            j.remove("deviceKeyB64")
+            file.writeText(j.toString())
+            Log.i(TAG, "migrateDeviceKeyFromJson: key promoted to Keystore, JSON stripped")
+        } catch (e: Exception) {
+            Log.e(TAG, "migrateDeviceKeyFromJson: exception: ${e.message}", e)
         }
     }
 

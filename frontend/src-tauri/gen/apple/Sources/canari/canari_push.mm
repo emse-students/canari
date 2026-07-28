@@ -52,7 +52,7 @@ static NSLock *g_mlsStateLock = nil;
 static NSLock *g_cacheLock = nil;
 
 @interface CanariPushContext : NSObject
-@property(nonatomic, copy) NSString *pin;
+@property(nonatomic, copy) NSString *deviceKeyB64;
 @property(nonatomic, copy) NSString *userId;
 @property(nonatomic, copy) NSString *deviceId;
 @property(nonatomic, copy) NSString *baseUrl;
@@ -222,6 +222,33 @@ NSString *CanariRetrievePushSecret(void) {
   return secret;
 }
 
+// WP-SEC-1: retrieves the MLS device key from the background-accessible Keychain item
+// (AfterFirstUnlockThisDeviceOnly, no .userPresence, shared via group.fr.emse.canari).
+// Returns the base64-encoded key, or nil if absent. Mirrored by the Swift twin in
+// NotificationService.swift.
+static NSString *_Nullable CanariRetrieveDeviceKey(NSString *userId, NSString *deviceId) {
+  if (userId.length == 0 || deviceId.length == 0) {
+    return nil;
+  }
+  NSString *alias = [NSString stringWithFormat:@"mls_device_key_%@_%@", userId, deviceId];
+  NSString *account = [NSString stringWithFormat:@"mls_bg_key_%@", alias];
+  NSDictionary *query = @{
+    (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,
+    (__bridge id)kSecAttrService : @"fr.emse.canari",
+    (__bridge id)kSecAttrAccount : account,
+    (__bridge id)kSecReturnData : @YES,
+    (__bridge id)kSecMatchLimit : (__bridge id)kSecMatchLimitOne,
+  };
+  CFTypeRef item = nil;
+  if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &item) == errSecSuccess && item != nil) {
+    NSData *data = (__bridge_transfer NSData *)item;
+    if (data.length > 0) {
+      return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    }
+  }
+  return nil;
+}
+
 static CanariPushContext *_Nullable CanariLoadPushContext(void) {
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
@@ -237,15 +264,20 @@ static CanariPushContext *_Nullable CanariLoadPushContext(void) {
     return nil;
   }
   NSDictionary *dict = (NSDictionary *)json;
-  NSString *pin = [dict[@"pin"] isKindOfClass:[NSString class]] ? dict[@"pin"] : @"";
   NSString *userId = [dict[@"userId"] isKindOfClass:[NSString class]] ? dict[@"userId"] : @"";
   NSString *deviceId = [dict[@"deviceId"] isKindOfClass:[NSString class]] ? dict[@"deviceId"] : @"";
   NSString *baseUrl = [dict[@"baseUrl"] isKindOfClass:[NSString class]] ? dict[@"baseUrl"] : @"";
-  if (pin.length == 0 || userId.length == 0 || deviceId.length == 0 || baseUrl.length == 0) {
+  if (userId.length == 0 || deviceId.length == 0 || baseUrl.length == 0) {
     return nil;
   }
+  // WP-SEC-1: the device key is no longer in the JSON; source it from the Keychain.
+  // Ordering constraint: the account name needs userId + deviceId from the JSON, so
+  // parse the JSON first, then hit the Keychain. An empty key means the Keychain is
+  // unavailable — the push falls back to the generic text, but that is the acceptable
+  // one-push cost (see B5 migration).
+  NSString *deviceKeyB64 = CanariRetrieveDeviceKey(userId, deviceId) ?: @"";
   CanariPushContext *ctx = [[CanariPushContext alloc] init];
-  ctx.pin = pin;
+  ctx.deviceKeyB64 = deviceKeyB64;
   ctx.userId = userId;
   ctx.deviceId = deviceId;
   ctx.baseUrl = baseUrl;
@@ -468,6 +500,9 @@ static NSString *_Nullable CanariFetchCommitsFromBackend(NSString *groupId, long
 
 static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *ctx, NSString *groupId,
                                                            NSString *protoB64, NSData *stateBytes) {
+  if (ctx.deviceKeyB64.length == 0) {
+    return nil;
+  }
   NSData *cipher =
       [[NSData alloc] initWithBase64EncodedString:protoB64
                                           options:NSDataBase64DecodingIgnoreUnknownCharacters];
@@ -476,7 +511,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *c
   }
 
   char *jsonPtr = canari_native_decrypt_message(
-      (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.pin.UTF8String,
+      (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
       ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String,
       (const unsigned char *)cipher.bytes, cipher.length);
   if (jsonPtr == nil) {
@@ -528,6 +563,9 @@ static CanariDecryptedMessage *_Nullable CanariTryDecrypt(NSString *queuedMessag
 static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
     CanariPushContext *ctx, NSString *groupId, NSString *commitsJson, NSString *protoB64,
     NSData *stateBytes) {
+  if (ctx.deviceKeyB64.length == 0) {
+    return nil;
+  }
   NSData *cipher =
       [[NSData alloc] initWithBase64EncodedString:protoB64
                                           options:NSDataBase64DecodingIgnoreUnknownCharacters];
@@ -535,7 +573,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
     return nil;
   }
   char *jsonPtr = canari_native_decrypt_message_with_commits(
-      (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.pin.UTF8String,
+      (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
       ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String, commitsJson.UTF8String,
       (const unsigned char *)cipher.bytes, cipher.length);
   if (jsonPtr == nil) {
@@ -559,6 +597,9 @@ static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
   if (ctx == nil) {
     return nil;
   }
+  if (ctx.deviceKeyB64.length == 0) {
+    return nil;
+  }
 
   NSString *protoB64 = inlineProto;
   if (protoB64.length == 0) {
@@ -578,7 +619,7 @@ static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
     NSData *stateBytes = CanariLoadMlsState();
     if (stateBytes != nil) {
       epoch = canari_native_group_epoch((const unsigned char *)stateBytes.bytes, stateBytes.length,
-                                        ctx.pin.UTF8String, ctx.userId.UTF8String,
+                                        ctx.deviceKeyB64.UTF8String, ctx.userId.UTF8String,
                                         ctx.deviceId.UTF8String, groupId.UTF8String);
     }
   } @finally {
@@ -1256,6 +1297,9 @@ static void CanariAppendOutboxSent(NSArray<NSString *> *ids) {
 }
 
 static NSString *_Nullable CanariEncryptQueuedMessage(CanariPushContext *ctx, CanariOutboxEntry *entry) {
+  if (ctx.deviceKeyB64.length == 0) {
+    return nil;
+  }
   if (![g_mlsStateLock tryLock]) {
     NSLog(@"[CanariPush] encryptQueuedMessage: MlsStateLock occupe");
     return nil;
@@ -1270,7 +1314,7 @@ static NSString *_Nullable CanariEncryptQueuedMessage(CanariPushContext *ctx, Ca
     }
     char *jsonPtr = canari_native_send_message_background(
         dir.UTF8String, (const unsigned char *)stateBytes.bytes, stateBytes.length,
-        ctx.pin.UTF8String, ctx.userId.UTF8String, ctx.deviceId.UTF8String, entry.groupId.UTF8String,
+        ctx.deviceKeyB64.UTF8String, ctx.userId.UTF8String, ctx.deviceId.UTF8String, entry.groupId.UTF8String,
         entry.proto.UTF8String);
     if (jsonPtr == nil) {
       return nil;
@@ -1536,6 +1580,10 @@ static void CanariProcessWelcomeRequestBackground(NSString *groupId, NSString *r
     NSLog(@"[CanariPush] processWelcomeRequestBackground: push_context absent");
     return;
   }
+  if (ctx.deviceKeyB64.length == 0) {
+    NSLog(@"[CanariPush] processWelcomeRequestBackground: deviceKeyB64 vide");
+    return;
+  }
   NSString *secret = CanariRetrievePushSecret();
   if (secret == nil) {
     NSLog(@"[CanariPush] processWelcomeRequestBackground: pushSecret absent");
@@ -1576,7 +1624,7 @@ static void CanariProcessWelcomeRequestBackground(NSString *groupId, NSString *r
       }
       char *jsonPtr = canari_native_create_welcome_background(
           dir.UTF8String, (const unsigned char *)stateBytes.bytes, stateBytes.length,
-          ctx.pin.UTF8String, ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String,
+          ctx.deviceKeyB64.UTF8String, ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String,
           keyPackage.UTF8String);
       if (jsonPtr == nil) {
         return;
@@ -1625,6 +1673,10 @@ static void CanariProcessReceivedWelcomeBackground(NSString *groupId, NSString *
     NSLog(@"[CanariPush] processReceivedWelcomeBackground: push_context absent");
     return;
   }
+  if (ctx.deviceKeyB64.length == 0) {
+    NSLog(@"[CanariPush] processReceivedWelcomeBackground: deviceKeyB64 vide");
+    return;
+  }
 
   NSString *welcomeB64 = inlineProto;
   NSString *ratchetTreeB64 = @"";
@@ -1661,7 +1713,7 @@ static void CanariProcessReceivedWelcomeBackground(NSString *groupId, NSString *
     }
     joined = canari_native_process_welcome_background(
                  dir.UTF8String, (const unsigned char *)stateBytes.bytes, stateBytes.length,
-                 ctx.pin.UTF8String, ctx.userId.UTF8String, ctx.deviceId.UTF8String,
+                 ctx.deviceKeyB64.UTF8String, ctx.userId.UTF8String, ctx.deviceId.UTF8String,
                  welcomeB64.UTF8String, ratchetTreeB64.UTF8String) == 1;
   } @finally {
     [g_mlsStateLock unlock];

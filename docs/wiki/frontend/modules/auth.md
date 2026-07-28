@@ -72,12 +72,27 @@ owner out of their own messages.
 | Storage | Written by | Purpose |
 |---|---|---|
 | Device key vault (`utils/deviceKeyVault.ts`) | PIN login | AES-GCM-wrapped key in `sessionStorage`, or `localStorage` when "stay signed in" is on (`canari_device_key_persist`) |
-| Platform keystore, alias `mls_device_key_{userId}_{deviceId}` | `store_push_context` (Tauri) | Biometric unlock and background FCM decryption |
-| `push_context.json` | `store_push_context` (Tauri) | Native background decryption; holds `deviceKeyB64` in cleartext app data by design - enrolling biometrics changes the *unlock method*, not where this copy lives |
+| Platform keystore, alias `mls_device_key_{userId}_{deviceId}` | `store_push_context` (Tauri) | Biometric unlock **and** background FCM/NSE decryption - the only at-rest copy on a device |
+| `push_context.json` | `store_push_context` (Tauri) | `userId`, `deviceId`, `baseUrl`, `pushToken` only. Since WP-SEC-1 it carries **no key material** |
 
 Enrolling biometrics wipes the vault (`clearDeviceKeyAndWrapKey`) and turns "stay signed in" off,
 so the next launch goes through the keystore. A PIN change must **not** delete the keystore entry:
 `IMlsService.changeDeviceKey` has already overwritten it with the new key.
+
+**The background copy is a second keystore entry, not a second file.** A push handler runs with no
+user present, so it cannot satisfy a biometric gate - but it still needs the device key. Each
+platform therefore keeps one entry that is hardware-backed yet usable unattended:
+
+| Platform | Entry | Why it is readable in the background |
+|---|---|---|
+| Android | same alias, `setUserAuthenticationRequired(false)` | Read without an Activity by `MlsDeviceKeyStore` (Context-only). **Never** `setUnlockedDeviceRequired(true)` - that makes the key unusable while the screen is locked, which is exactly when a push arrives |
+| iOS | second item, account `mls_bg_key_<alias>` | `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and **no** `kSecAttrAccessControl`; shared with the NSE through access group `group.fr.emse.canari` |
+
+Enabling biometrics changes the unlock *method*, never where this copy lives. Installs predating
+WP-SEC-1 hold the key in `push_context.json`; a one-shot migration
+(`CanariApplication.migrateDeviceKeyFromJson`, `CanariMigrateDeviceKeyFromJson`) promotes it to the
+keystore at the next app start and strips the field. The background readers have **no** JSON
+fallback, so one push before that first launch shows generic text.
 
 ## Mobile unlock flow (Tauri)
 

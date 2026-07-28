@@ -47,14 +47,18 @@ object MlsContextLoader {
         if (!file.exists()) return null
         return try {
             val j = JSONObject(file.readText())
-            // Retrocompatibilite: ignorer l'ancien champ "pin" s'il existe.
-            // deviceKeyB64 peut etre vide (keystore indisponible) — le push
-            // ne pourra pas dechiffrer, mais c'est mieux que de stocker le PIN.
+            val userId   = j.optString("userId").takeIf   { it.isNotEmpty() } ?: return null
+            val deviceId = j.optString("deviceId").takeIf { it.isNotEmpty() } ?: return null
+            val baseUrl  = j.optString("baseUrl").takeIf  { it.isNotEmpty() } ?: return null
+            // WP-SEC-1: the device key is no longer in the JSON; source it from the Keystore.
+            // An empty key means the keystore is unavailable — the push falls back to the
+            // generic text, but that is the acceptable one-push cost (see B5 migration).
+            val deviceKeyB64 = MlsDeviceKeyStore.retrieve(context, userId, deviceId) ?: ""
             PushContext(
-                userId   = j.optString("userId").takeIf   { it.isNotEmpty() } ?: return null,
-                deviceId = j.optString("deviceId").takeIf { it.isNotEmpty() } ?: return null,
-                baseUrl  = j.optString("baseUrl").takeIf  { it.isNotEmpty() } ?: return null,
-                deviceKeyB64  = j.optString("deviceKeyB64", ""),
+                userId = userId,
+                deviceId = deviceId,
+                baseUrl = baseUrl,
+                deviceKeyB64 = deviceKeyB64,
             )
         } catch (_: Exception) { null }
     }

@@ -90,8 +90,8 @@ export async function enrollBiometricImpl(): Promise<void> {
     try {
       await setDeviceKeyPersistence(false, null);
     } catch {}
-    // Deliberately NOT calling clear_push_context_key: the keystore key stays valid, only the
-    // unlock method changes (fingerprint instead of PIN). deviceKeyB64 in push_context.json
+    // The keystore copy of the device key is deliberately left alone: enrolling changes the
+    // unlock method (fingerprint instead of PIN), never where the background copy lives. It
     // must stay readable or background FCM decryption breaks.
     localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);
     appendLog('[BIOMETRIC] Enrollment OK - device key cleared from session (hardware keystore)');

@@ -10,5 +10,11 @@
 	<array>
 		<string>group.fr.emse.canari</string>
 	</array>
+	<!-- WP-SEC-1: lets the NSE read the background-accessible device key from the
+	     shared keychain. Must match the main app's keychain-access-groups entry. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)group.fr.emse.canari</string>
+	</array>
 </dict>
 </plist>

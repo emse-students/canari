@@ -59,26 +59,12 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
 
 ### CANARI - OPEN WORK PACKAGES
 
-- \[ \] **WP-IOS-1 (P1) - The whole iOS background decrypt path is dead and has been since v0.11.0.**
-  `canari_push.mm` and the NSE parse `json["pin"]` from `push_context.json`; the v0.11.0 rename made
-  `store_push_context` write `deviceKeyB64` and nothing has written `pin` since. Both readers
-  hard-reject on the empty field, so `CanariLoadPushContext` returns nil on EVERY call: every push
-  serves the generic fallback, and quick reply, mark-read, welcome-request and the outbox drain all
-  abort. Android is fine (`MlsContextLoader` reads the right key). Exact edits + the regression guard
-  that was missing: `AGENTS.md` "Pending delegation brief", Part A. **Do this before WP-SEC-1**, which
-  rewrites the same read path.
-
-- \[ \] **WP-SEC-1 (P1) - Move the background-decrypt device key out of cleartext app data.**
-  `push_context.json` stores `deviceKeyB64` in plain app storage because a background FCM/NSE
-  handler decrypts with no user present and so cannot prompt for biometrics. The requirement is
-  real; the plaintext file is not the way to meet it. Full implementation brief (files, line
-  anchors, migration, gates, device checks, traps): `AGENTS.md` "Pending delegation brief", Part B.
-  Two corrections to the original target, established while writing it: **Android must NOT use
-  `setUnlockedDeviceRequired(true)`** - it makes the key unusable while the screen is locked, which
-  is exactly when a push arrives - and Android needs no new key at all, only a Context-only reader,
-  since the existing alias is already `setUserAuthenticationRequired(false)`. iOS does need a new
-  keychain item (App Group access group + `AfterFirstUnlockThisDeviceOnly`, no access control).
-  Enabling biometrics changes the unlock METHOD, never where this copy lives - do not conflate.
+- \[ \] **WP-VERIF-0 (P1) - [device] WP-IOS-1 + WP-SEC-1 shipped unverified.** Code landed
+  2026-07-28 (delegated, verified with corrections - see `AGENTS.md`). Swift/ObjC do not compile
+  off macOS, so the entire iOS half is unproven, and the Android keystore read has never run on
+  hardware. The 5 device checks that gate the verdict, including the upgrade path that is the only
+  test of the one-shot migration: `AGENTS.md` "what is still owed". Check 2 doubles as the first
+  ever proof that iOS background decrypt works at all. **Blocks WP-VERIF-2.**
 
 - \[ \] **WP-VERIF-1 (P1) - [device] Tauri login end to end (init + save + KeyPackage).** All three
   were dead from v0.11.0 to v0.11.2 (`invoke` names matching no Rust command). Native has NOT run
@@ -134,6 +120,8 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 - **PIN policy is one rule everywhere:** `isValidPin` (>= 4 chars, no max, no charset limit) guards setup, change, recovery AND unlock. A PIN accepted at creation but refused at unlock locks its owner out of their own messages.
 - **Who owns the keystore key:** `store_push_context` (login) and `IMlsService.changeDeviceKey` (PIN change/recovery) write alias `mls_device_key_{userId}_{deviceId}`. `applyNewDeviceKeyLocally` must NEVER call `BiometricService.disable` - that deletes the entry just written.
 - **Device key persistence:** `deviceKeyVault.ts` picks storage via `vaultStore()` keyed on `canari_device_key_persist` (default `sessionStorage`, opt-in `localStorage`); `setDeviceKeyPersistence` wipes BOTH stores before re-saving. "Stay signed in" starts UNCHECKED by design - it reflects the stored choice.
+- **The background copy of the device key is a keystore entry, never a file.** `push_context.json` carries `userId`/`deviceId`/`baseUrl`/`pushToken` and no key material. A push handler has no user, so the entry must be hardware-backed yet unattended-readable: Android reuses the alias (`setUserAuthenticationRequired(false)`, read Context-only via `MlsDeviceKeyStore` - **never** `setUnlockedDeviceRequired(true)`, that dies exactly when a push arrives); iOS uses a SECOND item `mls_bg_key_<alias>`, `AfterFirstUnlockThisDeviceOnly`, no `kSecAttrAccessControl`, access group `group.fr.emse.canari`. Table: `docs/wiki/frontend/modules/auth.md`.
+- **Android `Base64.DEFAULT` appends a newline and the Rust `decode_base64_to_32_bytes` does not trim.** Encode anything crossing into the FFI with `NO_WRAP`; `DEFAULT` is only correct for KeystorePlugin's own at-rest IV/CT.
 - **Escape hatch when a state still refuses to open:** the PIN modal's "forgot PIN" (`handlePinReset`) wipes server + local MLS state and restarts in first-setup mode, at the cost of local history.
 
 #### MLS membership and routing
@@ -153,6 +141,7 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 - **Never redeclare an `init`/lifecycle override with fewer parameters.** TypeScript accepts it, so the dropped argument is invisible to `bun run check`. Prefer inheriting `BaseMlsService.init` over copying it.
 - **A `postMessage` payload is typed by whoever writes the literal - i.e. by nobody.** All three MLS worker contracts live in `src/lib/mls-client/mlsWorkerProtocol.ts`, imported by both ends. Add new worker messages THERE, never as a local interface.
 - **Tauri command names are unchecked strings on both sides.** An `invoke()` literal matching no `#[tauri::command]` compiles, lints and type-checks, then fails at runtime. Grep both sides on any rename.
+- **`push_context.json` is a JSON contract across four languages** (Rust writer; ObjC, Swift, Kotlin readers) that no compiler checks - the v0.11.0 `pin` -> `deviceKeyB64` rename killed iOS background decrypt for three releases. `src/lib/mobile/pushContextFields.test.ts` is the only thing that catches drift; change the fields and change it too.
 - **NEVER branch on an error message.** `onLoginFailed(msg, code)` carries a typed `LoginErrorCode` (`loginErrors.ts`) because the message is localized: a regex over it ships dead in French.
 - **"Logged in" means two things.** `globalSession.isLoggedIn` = MLS ready; the login page checks the OIDC/refresh session. Page guards test `currentUserId()`; MLS-dependent sections handle MLS absence themselves.
 
