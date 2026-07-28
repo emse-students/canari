@@ -87,6 +87,13 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
   exists for either (the `channel_messages.reactions` column is unused). Separate from the
   moderation permission, which now works - this is a plain missing feature.
 
+- \[ \] **WP-UI-1 (P3) - Light/dark theme is not reliable.** Reported 2026-07-28: the biometric
+  enrolment card renders dark in light mode, and the community settings modal is barely legible.
+  `SidebarCommunityAdminModal.svelte` is full of one-way Tailwind colours (`bg-white/50`,
+  `bg-amber-100 text-amber-900`, `text-red-600 hover:bg-red-50`,
+  `color-mix(... var(--cn-surface) 60%, white)`) instead of the `app.css` tokens. Sweep both
+  components, then audit the rest for raw `bg-white`/`bg-*-50`/`text-*-900` in a dark-first UI.
+
 - \[ \] **WP-UX-1 (P3) - Revoking a device asks nothing.** "Supprimer l'appareil" fires
   `purgeDeviceFootprint` (KeyPackages, prekeys, push tokens, queued messages, memberships, Redis)
   on a single click, while kicking a community member goes through `showConfirm`. Same confirm
