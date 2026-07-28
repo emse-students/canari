@@ -153,13 +153,18 @@ whose state it is - the migration's own failure is now re-classified so a mismat
 instead of escaping `init` as a raw crypto error. Reporter has also deleted all MLS groups
 server-side, so a fresh start is the intended outcome for them.
 
-Deployed on web (chunk `FPv2_J8W.js`, CD green 2026-07-28). Escape hatch if a state
-still refuses to open: the PIN modal's "forgot PIN" (`handlePinReset`) already wipes server + local
-MLS state and restarts in first-setup mode - at the cost of local history. No new UI needed.
+All deployed on web (CD green 2026-07-28; encrypt-worker payload verified in the live chunk
+`Bm2hAJvd.js`). Escape hatch if a state still refuses to open: the PIN modal's "forgot PIN"
+(`handlePinReset`) already wipes server + local MLS state and restarts in first-setup mode - at the
+cost of local history. No new UI needed.
+
+Reporter's chain, in order observed: legacy envelope migrated -> credential mismatch -> fresh start
+-> save failed on the worker payload drift. Each fix exposed the next; nothing regressed.
 
 Open, NOT yet explained: on web, `generateKeyPackage` reached `prekeys/count` but never issued
-`POST /api/mls/register-device` (20:39:29 prod). Needs the client line `[KP] Publication failed
-(...)` from a session where MLS init succeeds - only reachable now that login completes.
+`POST /api/mls/register-device` (20:39:29 prod). Most likely a downstream effect (init never
+completed, so publication was never reached), but unproven. Needs the client line `[KP] Publication
+failed (...)` from a session where MLS init succeeds.
 
 - \[ \] [device] Tauri login end-to-end (init + save + KeyPackage) - all three were broken.
 - \[ \] [browser] confirm the legacy snapshot migrates on the reporter's own profile (only place
