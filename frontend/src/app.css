@@ -14,6 +14,10 @@
   --color-cn-yellow: var(--cn-yellow);
   --color-cn-yellow-hover: var(--cn-yellow-hover);
   --color-cn-bg: var(--cn-bg);
+  /* Panel/card background. Exposed as a utility (`bg-cn-surface`) so components stop
+     hardcoding `bg-white`, which never flips and turns text-on-surface unreadable in dark. */
+  --color-cn-surface: var(--cn-surface);
+  --color-surface-elevated: var(--surface-elevated);
   --color-cn-border: var(--cn-border);
   --color-text-main: var(--text-main);
   --color-text-muted: var(--text-muted);

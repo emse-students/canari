@@ -85,6 +85,39 @@ const { message, onReply }: Props = $props();
 - Composables with reactive state use the `.svelte.ts` extension.
 - Locale-reactive derived values: `const label = $derived(m.some_key())` — reassigned automatically on locale change.
 
+## Theming (light / dark)
+
+`themeStore.svelte.ts` writes `data-theme="light" | "dark"` on `<html>` from the persisted
+`canari-theme` preference (`dark` | `light` | `system`, default `system`, tracking the OS media
+query live). `app.html` replays the same decision in an inline script before first paint so the
+splash does not flash the wrong colour.
+
+`src/app.css` is the single source of truth. Every colour that must flip is a CSS variable
+redefined under `:root[data-theme='dark']` and exposed to Tailwind through `@theme`:
+
+| Utility                          | Variable            | Role                                  |
+| -------------------------------- | ------------------- | ------------------------------------- |
+| `bg-cn-bg`                       | `--cn-bg`           | App/page background                   |
+| `bg-cn-surface`                  | `--cn-surface`      | Panels, cards, inputs, sheets         |
+| `border-cn-border`               | `--cn-border`       | Borders and dividers                  |
+| `text-text-main` / `text-text-muted` | `--text-main` / `--text-muted` | Body and secondary text   |
+| `text-red-err` / `text-green-ok` | `--red-err` / `--green-ok` | Error and success accents      |
+| `bg-cn-yellow` / `hover:bg-cn-yellow-hover` | `--cn-yellow` | Brand fill                    |
+| `text-cn-ink`                    | fixed `#151b2c`     | Ink **on** the brand yellow           |
+| `text-cn-dark`                   | `--cn-dark`         | Emphasis text — **flips** with theme  |
+
+Rules:
+
+- **Never hardcode a one-way colour** (`bg-white`, `bg-red-50`, `text-amber-900`, a raw hex). It
+  does not flip, so a card keeps its light background while `text-text-main` turns near-white in
+  dark mode — white on white. Reach for a token instead.
+- `text-cn-dark` and `text-cn-ink` are **not** interchangeable: `cn-dark` flips (dark navy → near
+  white), `cn-ink` is fixed. Text sitting on the always-light yellow brand surface needs `cn-ink`.
+- The `dark:` variant is a `@custom-variant` bound to `[data-theme='dark']`, **not** the OS media
+  query — `dark:` pairs work, but a single flipping token is preferred over a two-class pair.
+- Tint with an opacity modifier on a token (`bg-red-err/10`, `bg-cn-yellow/15`) rather than a
+  fixed-palette tint: the tint then tracks the theme too.
+
 ## Auth / token management
 
 - **Access token**: JWT HS256 (15 min), stored in memory only — never localStorage.

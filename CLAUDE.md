@@ -87,12 +87,14 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
   exists for either (the `channel_messages.reactions` column is unused). Separate from the
   moderation permission, which now works - this is a plain missing feature.
 
-- \[ \] **WP-UI-1 (P3) - Light/dark theme is not reliable.** Reported 2026-07-28: the biometric
-  enrolment card renders dark in light mode, and the community settings modal is barely legible.
-  `SidebarCommunityAdminModal.svelte` is full of one-way Tailwind colours (`bg-white/50`,
-  `bg-amber-100 text-amber-900`, `text-red-600 hover:bg-red-50`,
-  `color-mix(... var(--cn-surface) 60%, white)`) instead of the `app.css` tokens. Sweep both
-  components, then audit the rest for raw `bg-white`/`bg-*-50`/`text-*-900` in a dark-first UI.
+- \[ \] **WP-UI-1 (P3) - Sweep the REST of the UI for one-way colours.** The two reported
+  components are done (community settings modal + both biometric sheets, tokens throughout).
+  What remains is the audit: grep the frontend for `bg-white`, `bg-*-50`, `bg-*-100`,
+  `text-*-800/900` and raw hex, convert to `app.css` tokens. Contract + token table:
+  `docs/wiki/frontend/architecture.md` "Theming".
+  Still unexplained: the enrolment sheet reported DARK under a LIGHT theme. The `dark:` variant is
+  correct on web (verified by computed style in both themes), so the suspect is the native
+  runtime - re-check on device during WP-VERIF-3.
 
 - \[ \] **WP-UX-1 (P3) - Revoking a device asks nothing.** "Supprimer l'appareil" fires
   `purgeDeviceFootprint` (KeyPackages, prekeys, push tokens, queued messages, memberships, Redis)
@@ -130,6 +132,10 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 - **A community is soft-deleted, never dropped.** `DELETE workspaces/:id` needs MANAGE_WORKSPACE **only** (a kick or channel archive also accept MANAGE_CHANNEL - this one hits every member at once); it flips `channel_workspaces.archived` + its channels, and every read path filters it (listing, slug, invite preview, invite accept). Recovery = two UPDATEs.
 - **`channel.moderate` = pin or delete SOMEONE ELSE's message, nothing more.** `memberCanModerateMessages` is the only check, shared by delete/pin/closePoll; the author is always allowed; editing is never moderation. `viewerCanModerate` on the workspace listing is a UI hint - the server re-checks.
 - **Dead devices ARE reaped, after 90 days.** `detectStaleDevices` (hourly) keys liveness on `KeyPackage.createdAt`, refreshed by every WS reconnect; past `RETENTION_WINDOW_MS` it does `srem` on the Redis set and resets the row to `pending`, then `cleanupStaleDevices` purges the whole footprint. Until then a churned device id keeps receiving fan-out - that is the designed offline window, not a leak.
+
+#### UI
+
+- **A one-way colour is a dark-mode bug waiting to happen.** `bg-white`, `bg-red-50`, `text-amber-900`, raw hex: they do not flip, while `text-text-main` on top of them does - white on white. Use the `app.css` tokens (`bg-cn-surface`, `bg-cn-bg`, `text-red-err`, `text-green-ok`, `bg-cn-yellow` + `text-cn-ink`) and tint with an opacity modifier on the token. `text-cn-dark` FLIPS, `text-cn-ink` does not - ink is for text on the always-light yellow. Table: `docs/wiki/frontend/architecture.md`.
 
 #### Contracts that the compiler does not check
 

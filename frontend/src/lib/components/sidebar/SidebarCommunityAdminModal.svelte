@@ -188,9 +188,9 @@
   }
 
   function roleBadgeClass(role: CanonicalRole): string {
-    if (role === 'admin') return 'bg-red-500/10 text-red-600 dark:text-red-400';
+    if (role === 'admin') return 'bg-red-err/10 text-red-err';
     if (role === 'moderator') return 'bg-amber-500/10 text-amber-600 dark:text-amber-400';
-    return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+    return 'bg-green-ok/10 text-green-ok';
   }
 
   /** Loads members + their highest role from the workspace listing (server-authoritative). */
@@ -475,7 +475,7 @@
   <div class="flex flex-col md:flex-row min-h-0 border-t border-cn-border/40">
     <!-- Sidebar tabs -->
     <div
-      class="w-full md:w-64 md:flex-shrink-0 bg-[color-mix(in_srgb,var(--cn-surface)_60%,white)] border-b md:border-b-0 md:border-r border-cn-border/40 flex flex-row md:flex-col overflow-x-auto md:overflow-x-visible p-2 md:p-4 gap-1 md:space-y-1"
+      class="w-full md:w-64 md:flex-shrink-0 bg-cn-surface border-b md:border-b-0 md:border-r border-cn-border/40 flex flex-row md:flex-col overflow-x-auto md:overflow-x-visible p-2 md:p-4 gap-1 md:space-y-1"
     >
       <h3
         class="hidden md:block text-xs font-bold uppercase tracking-wider text-text-muted mb-2 px-2"
@@ -487,8 +487,8 @@
         onclick={() => (activeTab = 'overview')}
         class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab ===
         'overview'
-          ? 'bg-amber-100 text-amber-900'
-          : 'text-text-main hover:bg-black/5'}"
+          ? 'bg-cn-yellow/15 text-cn-dark'
+          : 'text-text-main hover:bg-cn-bg'}"
       >
         <Settings size={18} />
         {m.chat_community_overview_tab()}
@@ -498,8 +498,8 @@
           onclick={() => (activeTab = 'roles')}
           class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab ===
           'roles'
-            ? 'bg-amber-100 text-amber-900'
-            : 'text-text-main hover:bg-black/5'}"
+            ? 'bg-cn-yellow/15 text-cn-dark'
+            : 'text-text-main hover:bg-cn-bg'}"
         >
           <Shield size={18} />
           {m.chat_community_roles_tab()}
@@ -509,8 +509,8 @@
         onclick={() => (activeTab = 'members')}
         class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-colors {activeTab ===
         'members'
-          ? 'bg-amber-100 text-amber-900'
-          : 'text-text-main hover:bg-black/5'}"
+          ? 'bg-cn-yellow/15 text-cn-dark'
+          : 'text-text-main hover:bg-cn-bg'}"
       >
         <Users size={18} />
         {m.common_members_label()}
@@ -518,7 +518,7 @@
 
       <div class="hidden md:block mt-auto pt-4 space-y-2">
         <button
-          class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors w-full"
+          class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-err hover:bg-red-err/10 transition-colors w-full"
           onclick={leaveCommunity}
         >
           <LogOut size={18} />
@@ -526,7 +526,7 @@
         </button>
         {#if canManage}
           <button
-            class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors w-full"
+            class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-err hover:bg-red-err/10 transition-colors w-full"
             onclick={deleteCommunity}
           >
             <Trash2 size={18} />
@@ -537,7 +537,7 @@
     </div>
 
     <!-- Main content -->
-    <div class="flex-1 bg-white/50 p-6 overflow-y-auto min-h-[300px]">
+    <div class="flex-1 bg-cn-bg p-6 overflow-y-auto min-h-[300px]">
       {#if activeTab === 'overview'}
         <div class="space-y-6 max-w-2xl">
           <h2 class="text-xl font-bold text-text-main">{m.chat_community_overview_tab()}</h2>
@@ -555,7 +555,7 @@
               </div>
               {#if canManage}
                 <label
-                  class="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center cursor-pointer hover:bg-amber-600 transition-colors shadow"
+                  class="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-cn-yellow text-cn-ink flex items-center justify-center cursor-pointer hover:bg-cn-yellow-hover transition-colors shadow"
                   title={m.chat_community_change_image_title()}
                 >
                   {#if imageUploading}
@@ -575,14 +575,14 @@
             </div>
             <div class="flex-1 space-y-2">
               {#if imageUploadError}
-                <p class="text-xs text-red-600">{imageUploadError}</p>
+                <p class="text-xs text-red-err">{imageUploadError}</p>
               {/if}
               <label class="text-xs font-bold uppercase text-text-muted" for="server-name"
                 >{m.chat_community_name_label()}</label
               >
               <input
                 id="server-name"
-                class="w-full bg-white border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-amber-500/50 read-only:opacity-60 read-only:cursor-not-allowed"
+                class="w-full bg-cn-surface text-text-main border border-cn-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-cn-yellow/50 read-only:opacity-60 read-only:cursor-not-allowed"
                 value={selectedWorkspace ? selectedWorkspace.name : ''}
                 readonly={!canManage}
               />
@@ -590,9 +590,9 @@
           </div>
 
           <div
-            class="border border-cn-border bg-white rounded-xl p-4 shadow-sm text-sm text-text-main flex items-center gap-3"
+            class="border border-cn-border bg-cn-surface rounded-xl p-4 shadow-sm text-sm text-text-main flex items-center gap-3"
           >
-            <ShieldCheck size={24} class="text-green-500" />
+            <ShieldCheck size={24} class="text-green-ok" />
             <div class="flex-1">
               <span class="font-bold block">{m.chat_community_e2e_active_title()}</span>
               <span class="text-xs text-text-muted">{m.chat_community_e2e_description()}</span>
@@ -614,11 +614,11 @@
               {m.common_loading_label()}
             </div>
           {:else if rolesError}
-            <div class="p-3 rounded-xl bg-red-50 text-red-600 text-sm border border-red-200">
+            <div class="p-3 rounded-xl bg-red-err/10 text-red-err text-sm border border-red-err/30">
               {rolesError}
             </div>
           {:else if workspaceRoles.length > 0}
-            <div class="border border-cn-border bg-white rounded-xl p-4 shadow-sm">
+            <div class="border border-cn-border bg-cn-surface rounded-xl p-4 shadow-sm">
               <PermissionGrid
                 roles={workspaceRoles}
                 permissions={roleGridPermissions}
@@ -636,14 +636,14 @@
           <h2 class="text-xl font-bold text-text-main">{m.common_members_label()}</h2>
           <p class="text-sm text-text-muted">{m.chat_community_members_description()}</p>
 
-          <div class="border border-cn-border rounded-xl bg-white overflow-hidden text-sm">
-            <div class="p-4 flex items-center justify-between border-b border-cn-border bg-black/5">
+          <div class="border border-cn-border rounded-xl bg-cn-surface overflow-hidden text-sm">
+            <div class="p-4 flex items-center justify-between border-b border-cn-border bg-cn-bg">
               <span class="font-semibold text-text-main"
                 >{communityMembers.length} {m.chat_community_member_count_label()}</span
               >
             </div>
             {#if canManage}
-              <div class="px-4 py-3 border-b border-cn-border bg-white/70 space-y-2.5">
+              <div class="px-4 py-3 border-b border-cn-border bg-cn-bg/60 space-y-2.5">
                 <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2.5">
                   <UserAutocomplete
                     value={inviteUserId}
@@ -653,14 +653,14 @@
                   />
                   <select
                     bind:value={inviteRole}
-                    class="bg-white border border-cn-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500/40"
+                    class="bg-cn-surface text-text-main border border-cn-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-cn-yellow/40"
                   >
                     <option value="member">{m.chat_role_member()}</option>
                     <option value="moderator">{m.chat_role_moderator()}</option>
                     <option value="admin">{m.chat_role_admin()}</option>
                   </select>
                   <button
-                    class="bg-amber-500 text-white rounded-lg px-3 py-2 text-xs font-bold hover:bg-amber-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="bg-cn-yellow text-cn-ink rounded-lg px-3 py-2 text-xs font-bold hover:bg-cn-yellow-hover transition disabled:opacity-50 disabled:cursor-not-allowed"
                     onclick={handleGenerateInvitation}
                     disabled={inviteLoading}
                   >
@@ -681,7 +681,7 @@
                 {m.chat_community_loading_members()}
               </div>
             {:else if membersError}
-              <div class="p-6 text-center text-red-600">{membersError}</div>
+              <div class="p-6 text-center text-red-err">{membersError}</div>
             {:else if communityMembers.length === 0}
               <div class="p-6 text-center text-text-muted">{m.chat_community_no_members()}</div>
             {:else}
@@ -699,7 +699,7 @@
                       <div class="flex items-center gap-1.5 shrink-0">
                         <div class="relative">
                           <select
-                            class="w-32 bg-white border border-cn-border rounded-lg px-2 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-amber-500/50 disabled:opacity-50"
+                            class="w-32 bg-cn-surface text-text-main border border-cn-border rounded-lg px-2 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-cn-yellow/50 disabled:opacity-50"
                             value={member.role}
                             disabled={memberRoleSaving[member.userId]}
                             onchange={(e) => {
@@ -715,7 +715,7 @@
                           </select>
                           {#if memberRoleSaving[member.userId]}
                             <span class="absolute right-1.5 top-1/2 -translate-y-1/2">
-                              <Loader size={12} class="animate-spin text-amber-500" />
+                              <Loader size={12} class="animate-spin text-cn-yellow" />
                             </span>
                           {/if}
                         </div>
@@ -723,7 +723,7 @@
                           type="button"
                           onclick={() => handleRemoveMember(member.userId)}
                           disabled={memberRemoving[member.userId]}
-                          class="rounded-lg border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs font-bold text-red-600 hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                          class="rounded-lg border border-red-err/20 bg-red-err/5 px-2 py-1.5 text-xs font-bold text-red-err hover:bg-red-err/10 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                           title={m.chat_community_remove_member_title()}
                         >
                           {#if memberRemoving[member.userId]}
@@ -747,7 +747,7 @@
           </div>
 
           {#if canManage}
-            <div class="border border-cn-border rounded-xl bg-white p-4 space-y-3 shadow-sm">
+            <div class="border border-cn-border rounded-xl bg-cn-surface p-4 space-y-3 shadow-sm">
               <p
                 class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
               >
@@ -761,7 +761,7 @@
                     type="text"
                     readonly
                     value={shareLink}
-                    class="flex-1 min-w-0 rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+                    class="flex-1 min-w-0 rounded-xl border border-cn-border bg-cn-surface px-3 py-2 text-sm text-text-main"
                   />
                   <button
                     type="button"
@@ -773,7 +773,7 @@
                   </button>
                 </div>
                 {#if shareCopied}
-                  <p class="text-xs font-semibold text-emerald-600">
+                  <p class="text-xs font-semibold text-green-ok">
                     {m.chat_link_copied_success()}
                   </p>
                 {/if}
@@ -782,13 +782,13 @@
                   type="button"
                   onclick={generateShareLink}
                   disabled={shareLoading}
-                  class="rounded-xl bg-amber-500 px-4 py-2 text-sm font-bold text-white hover:bg-amber-600 disabled:opacity-50"
+                  class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
                 >
                   {shareLoading ? m.common_loading_label() : m.chat_generate_invite_link_button()}
                 </button>
               {/if}
               {#if shareError}
-                <p class="text-xs font-medium text-red-600">{shareError}</p>
+                <p class="text-xs font-medium text-red-err">{shareError}</p>
               {/if}
             </div>
           {/if}
@@ -798,7 +798,7 @@
       <!-- Destructive action reachable on mobile (desktop keeps it in the sidebar). -->
       <div class="md:hidden mt-8 pt-4 border-t border-cn-border/40 space-y-2">
         <button
-          class="flex w-full items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
+          class="flex w-full items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-red-err bg-red-err/10 hover:bg-red-err/20 transition-colors"
           onclick={leaveCommunity}
         >
           <LogOut size={18} />
@@ -806,7 +806,7 @@
         </button>
         {#if canManage}
           <button
-            class="flex w-full items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
+            class="flex w-full items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-red-err bg-red-err/10 hover:bg-red-err/20 transition-colors"
             onclick={deleteCommunity}
           >
             <Trash2 size={18} />

@@ -32,13 +32,13 @@
 
   <!-- Sheet -->
   <div
-    class="fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t border-black/8 dark:border-white/10 bg-white/95 dark:bg-[#1a1f2e]/95 backdrop-blur-2xl shadow-2xl px-6 pt-5 pb-[calc(1.5rem+env(safe-area-inset-bottom))]"
+    class="fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t border-cn-border bg-cn-surface/95 backdrop-blur-2xl shadow-2xl px-6 pt-5 pb-[calc(1.5rem+env(safe-area-inset-bottom))]"
     role="dialog"
     aria-modal="true"
     aria-label={m.auth_biometric_enroll_title()}
   >
     <!-- Drag handle -->
-    <div class="mx-auto mb-5 h-1 w-10 rounded-full bg-black/15 dark:bg-white/20"></div>
+    <div class="mx-auto mb-5 h-1 w-10 rounded-full bg-text-muted/40"></div>
 
     <div class="flex justify-center mb-5">
       <div class="p-5 rounded-full bg-amber-500/10">
@@ -56,7 +56,7 @@
     <button
       type="button"
       onclick={onEnroll}
-      class="w-full py-3.5 bg-cn-yellow text-[#151B2C] rounded-xl font-extrabold text-sm hover:bg-cn-yellow-hover transition-all active:scale-95"
+      class="w-full py-3.5 bg-cn-yellow text-cn-ink rounded-xl font-extrabold text-sm hover:bg-cn-yellow-hover transition-all active:scale-95"
     >
       {m.auth_biometric_enable_btn()}
     </button>
