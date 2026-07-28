@@ -147,28 +147,23 @@ Seven defects found and fixed, all introduced by the v0.11.0 PIN -> deviceKey re
   install was told its PIN had been changed elsewhere. This was the actual lockout the user hit
   twice; the four above only shaped how it was reported. See the durable gotcha on envelopes.
 
-Follow-up `26fa3c87`: the reporter's snapshot DID open, and named `...-mqprwzk1-lvzt` while
-localStorage held the churn-minted `...-ms3ny2qj-gl0p`. Opening the envelope says nothing about
-whose state it is - the migration's own failure is now re-classified so a mismatch fresh-starts
-instead of escaping `init` as a raw crypto error. Reporter has also deleted all MLS groups
-server-side, so a fresh start is the intended outcome for them.
+Escape hatch if a state still refuses to open: the PIN modal's "forgot PIN" (`handlePinReset`)
+wipes server + local MLS state and restarts in first-setup mode, at the cost of local history.
 
-All deployed on web (CD green 2026-07-28; encrypt-worker payload verified in the live chunk
-`Bm2hAJvd.js`). Escape hatch if a state still refuses to open: the PIN modal's "forgot PIN"
-(`handlePinReset`) already wipes server + local MLS state and restarts in first-setup mode - at the
-cost of local history. No new UI needed.
-
-Reporter's chain, in order observed: legacy envelope migrated -> credential mismatch -> fresh start
--> save failed on the worker payload drift. Each fix exposed the next; nothing regressed.
-
-Open, NOT yet explained: on web, `generateKeyPackage` reached `prekeys/count` but never issued
-`POST /api/mls/register-device` (20:39:29 prod). Most likely a downstream effect (init never
-completed, so publication was never reached), but unproven. Needs the client line `[KP] Publication
-failed (...)` from a session where MLS init succeeds.
+**VERIFIED on web 2026-07-28**, two accounts driven end-to-end in isolated browser contexts:
+login -> PIN -> `Loading/Creating clean state` -> WS connected -> `generateKeyPackage` (50) ->
+`KeyPackage published.` on BOTH; DM created (`Canal E2E etabli.`), messages decrypted in both
+directions; hard reload replays `MLS state loaded from IndexedDB` -> `Loading encrypted state with
+device key` with the SAME device id (no fresh start, no mismatch) - which is the round trip the
+`undefined` device key made impossible; "Appareils connectes" reads 3, not 0; zero console
+error/warning. This also closes the old `register-device` unknown: publication does happen once
+init completes, so it was a downstream effect as suspected. Stale `welcome_request` from the
+churn-era device ids are correctly answered `Group not found - refusing`.
 
 - \[ \] [device] Tauri login end-to-end (init + save + KeyPackage) - all three were broken.
-- \[ \] [browser] confirm the legacy snapshot migrates on the reporter's own profile (only place
-  a pre-v0.11.0 blob exists; a fresh Chrome profile cannot reproduce it).
+  Shipped in v0.11.2; native has NEVER run since v0.11.0, so TestFlight/Play is the first test.
+- \[ \] [browser] PIN change + "forgot PIN" - NOT tested: both mutate a real account's credentials
+  across that user's other devices, so they need an explicit go-ahead first.
 
 #### MOBILE AUTH CHAIN AUDIT (2026-07-27) - COMPLETE
 
@@ -211,6 +206,8 @@ Durable gotchas:
 
 ### SHARED GOTCHAS (do not repeat)
 
+- **Driving several logged-in sessions at once:** `new_page` with `isolatedContext: "<name>"` (chrome-devtools MCP) gives a fully separate cookie jar, IndexedDB and sessionStorage - i.e. a distinct device with its own MLS state and device id. Two contexts + two accounts is the only way to exercise Welcome/epoch/decrypt paths from the outside. No extra MCP server needed. Note `fill()` sets a value without opening autocomplete listboxes; use `type_text` for anything debounced-search driven.
+- **Never assert a wall clock in a test.** `minesweeper/game.test.ts` timed unseeded no-guess generation (rejection sampling with restarts - heavy-tailed) against a 15s budget and drew 31s on a runner, taking CD down. Seed the input so the work is reproducible and let the `it` timeout guard non-termination.
 - Bash-tool commit messages: use heredoc or `git commit -F file`, NOT PowerShell `@'...'@` (Git Bash prefixes subject with `@`).
 - Backend lint: apps call bare `oxlint`/`oxfmt` from local `node_modules/.bin`. If hook fails with `'oxlint' n'est pas reconnu`, run `npm install` in that app dir.
 - Canari pre-commit hook sweeps WHOLE frontend and re-stages; isolate unrelated dirty files before committing.
