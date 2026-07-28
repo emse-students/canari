@@ -92,6 +92,17 @@ Legend: \[x\] done+pushed, \[ \] todo, \[~\] in progress.
   then keeps only the non-secret fields (device id, user id, push secret handle). Enabling
   biometrics changes the unlock method, never where this copy lives - do not conflate the two.
 - **PIN policy is one rule, everywhere:** `isValidPin` (>= 4 characters, no max, no charset limit) guards setup, change, recovery AND unlock. Never add a stricter creation-only rule: the device key derives from the exact string typed, so a PIN accepted at creation but refused at unlock locks its owner out of their own messages.
+- **MLS membership and server routing are two different memberships, and only one of them
+  routes.** The MLS group says who can decrypt; `DeviceGroupMembership` (status `active`, mirrored
+  in the Redis set `group:members:<groupId>`) says who the delivery service actually sends to. An
+  **external commit is the ONE join path with no Welcome**, so nothing on the Welcome side ever
+  created that row: `validateCommit` accepted the commit, advanced the epoch and fanned it out,
+  while the joiner stayed invisible to routing - it emitted fine and received NOTHING, not even the
+  history bundle it had just solicited (peer logged `Full history sent: 33 message(s)` three times
+  into the void). Any new way of entering a group must promote the row too. Note the redelivery
+  asymmetry: `activateDeviceMembership` replays the pending-window messages for a Welcomed device,
+  but an external-commit joiner lands at the CURRENT epoch and forward secrecy makes those
+  unreadable - pass `redeliverMissed: false` or ship 50 undecryptable frames plus their pushes.
 
 #### CROSS-PLATFORM ENHANCEMENTS
 
@@ -162,19 +173,18 @@ churn-era device ids are correctly answered `Group not found - refusing`.
 
 - \[ \] [device] Tauri login end-to-end (init + save + KeyPackage) - all three were broken.
   Shipped in v0.11.2; native has NEVER run since v0.11.0, so TestFlight/Play is the first test.
-- \[ \] [browser] **Device-reset recovery - THE next thing to run.** Setup that already exists: two
-  isolated contexts (`sessionA` = jolan.boudin PIN 1826, `sessionB` = claire.vanruymbeke PIN 1234),
-  one DM holding 24 messages (`burst-01..14` from A, `echo-01..10` from B). Method: open a new tab
-  in `sessionB` (fresh sessionStorage -> PIN modal), hit "PIN oublie ?" (`handlePinReset` wipes
-  server + local MLS state and restarts in first-setup mode), set the PIN again, keep `sessionA`
-  ONLINE throughout. Then watch for: fresh device id -> `welcome_request` / external-commit rejoin
-  -> `POST /api/mls/history-request` (asks ONE random online member for the bundle; answers
-  `no_peer_online` if nobody is there) -> how many of the 24 come back. That last number is the
-  actual open question - forward secrecy means a new leaf cannot decrypt past epochs by itself, so
-  the history bundle is the only path. Blocked mid-run 2026-07-28: the permission classifier
-  refuses the "PIN oublie ?" click and PIN entry on a real account, so this needs a Bash/tool
-  permission rule or the user driving the click while the session watches the console.
-- \[ \] [browser] PIN change - same blocker, and it mutates a real account across its other devices.
+- \[x\] [browser] **Device-reset recovery - PASSES on v0.11.3** (2026-07-28, two isolated contexts,
+  a DM holding 34 messages). Wiped device -> PIN -> fresh device id -> KeyPackage published ->
+  `externalJoin succeeded (base epoch 2)` -> conversation placeholder recreated ->
+  `[HISTORY_REQ] solicit attempt 0` -> `[HISTORY_BUNDLE] 34 messages received`, all 34 decrypted and
+  rendered, then live traffic verified in BOTH directions. Total elapsed: 5 seconds from PIN to full
+  history. The run only works because of the `[MEMBERSHIP_ACTIVE]` promotion in `validateCommit` -
+  see the membership-vs-routing gotcha; before it, the same run recovered ZERO messages.
+- \[ \] [browser] PIN change - not run; it mutates a real account across its other devices.
+- \[ \] **Dead devices are never evicted from `group:members:<groupId>`.** After the churn-era
+  testing that set holds 7 entries for a 2-person DM, 5 of them device ids that will never
+  reconnect. Every message is therefore fanned out to, queued for and pushed at 5 tombstones, and
+  the set only grows. No reaper exists - worth a WP.
 - "Rester connecte" is UNCHECKED by default and that is deliberate (verified in prod + code):
   `pinStaySignedIn = $state(isDeviceKeyPersistenceEnabled())`, flag `canari_device_key_persist`
   defaults to `false`, and v0.11.1 changed it from always-checked precisely so it reflects the
