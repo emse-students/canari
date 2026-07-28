@@ -141,7 +141,13 @@ Six defects found and fixed, all introduced by the v0.11.0 PIN -> deviceKey refa
   install was told its PIN had been changed elsewhere. This was the actual lockout the user hit
   twice; the four above only shaped how it was reported. See the durable gotcha on envelopes.
 
-Deployed on web (bundle `app.rlG6uclM.js`, CD green 2026-07-28 ~09:5x). Escape hatch if a state
+Follow-up `26fa3c87`: the reporter's snapshot DID open, and named `...-mqprwzk1-lvzt` while
+localStorage held the churn-minted `...-ms3ny2qj-gl0p`. Opening the envelope says nothing about
+whose state it is - the migration's own failure is now re-classified so a mismatch fresh-starts
+instead of escaping `init` as a raw crypto error. Reporter has also deleted all MLS groups
+server-side, so a fresh start is the intended outcome for them.
+
+Deployed on web (chunk `FPv2_J8W.js`, CD green 2026-07-28). Escape hatch if a state
 still refuses to open: the PIN modal's "forgot PIN" (`handlePinReset`) already wipes server + local
 MLS state and restarts in first-setup mode - at the cost of local history. No new UI needed.
 
