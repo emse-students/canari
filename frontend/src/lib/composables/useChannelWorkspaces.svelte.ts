@@ -2,8 +2,9 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { ChannelService } from '$lib/services/ChannelService';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
-import type { Conversation } from '$lib/types';
+import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
+import { mkChannelInviteSentEnvelope, serializeEnvelope } from '$lib/envelope';
 import {
   hydrateChannelBootstrap,
   isChannelConversationId,
@@ -62,6 +63,17 @@ export interface ChannelWorkspaceContext {
   startDirectConversation?: (targetUserId: string, opts?: { silent?: boolean }) => Promise<void>;
   /** Returns the conversation ID currently visible in the chat panel. */
   getSelectedConversationId?: () => string | null;
+  /**
+   * Appends a message to a conversation (reactive state + IndexedDB). Needed for local echoes of
+   * events MLS cannot replay to their own author - see the invite card in
+   * {@link inviteMemberToChannel}. Optional: background contexts have no messaging layer.
+   */
+  addMessageToChat?: (
+    senderId: string,
+    content: string,
+    contactName: string,
+    options?: AddMessageToChatOptions
+  ) => Promise<void>;
   /** Refetch channel messages from the server (in-memory only). */
   reloadChannelHistory?: (channelConversationId: string) => Promise<void>;
   /** Drops cached channel history so the next open refetches from the API. */
@@ -526,7 +538,9 @@ export function useChannelWorkspaces() {
       (channel) => channel.id === channelConversationId
     );
     const channelDisplayName = currentChannel?.name || channelId;
-    const workspaceDisplayName = currentWorkspace?.name || 'the community';
+    // Left undefined rather than defaulted to a literal: every consumer already falls back to the
+    // channel name, and a hardcoded default would ship an untranslated string into the invite card.
+    const workspaceDisplayName = currentWorkspace?.name || undefined;
 
     try {
       // Map frontend role names to backend role names (capitalized)
@@ -584,6 +598,22 @@ export function useChannelWorkspaces() {
               );
               try {
                 await mlsService.sendMessage(directConvo[1].id, invitationMsg);
+                // MLS never hands a device back its own application message, so the inviter's
+                // copy of the card would never appear on THIS device. Insert it locally; their
+                // other devices build the same envelope from the incoming event.
+                await ctx.addMessageToChat?.(
+                  'system',
+                  serializeEnvelope(
+                    mkChannelInviteSentEnvelope(
+                      channelId,
+                      workspaceDisplayName || channelDisplayName,
+                      workspaceDisplayName,
+                      getName(memberId)
+                    )
+                  ),
+                  directConvo[0],
+                  { isSystem: true }
+                );
               } catch (err) {
                 console.warn('[Channel Invite] Failed to send invitation message:', err);
               }

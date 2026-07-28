@@ -387,6 +387,7 @@
   "msg_modifie_a": "Edited at",
   "msg_channel_invite_description": "You have been invited to join this encrypted community.",
   "msg_channel_invite_description_by": "{inviter} invited you to join this encrypted community.",
+  "msg_channel_invite_sent_description": "You invited {member} to join this encrypted community.",
   "msg_channel_invite_join_button": "Join community",
   "msg_react_with_emoji": "React with {emoji}",
   "msg_reply_label": "Reply",

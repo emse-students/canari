@@ -73,6 +73,24 @@ type MessageEnvelope =
 
 `appMsgToEnvelope()` in `proto/codec.ts` is the canonical decoder (protobuf AppMessage -> MessageEnvelope).
 
+### Channel invitation card
+
+Inviting someone to a community sends a `channel_invitation` system event into the 1:1 MLS DM, and
+BOTH sides render the same `channelInvite` card in that conversation:
+
+| Side | Envelope built by | Copy | Join button |
+|---|---|---|---|
+| Invitee | `mkChannelInviteEnvelope` | "{inviter} vous a invité..." | yes |
+| Inviter | `mkChannelInviteSentEnvelope` | "Vous avez invité {member}..." | no |
+
+`channelInvite.invitedName` is the discriminator: **present = the inviter's copy**, and its presence
+is what suppresses the Join button. Never set it on the invitee's copy.
+
+The inviter's copy is inserted **locally** by `inviteMemberToChannel`, because MLS never hands a
+device back its own application message. The `senderNorm === userId` branch of
+`systemMessageHandler` builds the identical envelope, and only ever runs on the inviter's *other*
+devices. Pinned by `systemMessageHandler.channelInvite.test.ts`.
+
 ## UI features
 
 - **Focus writing mode**: header hides when composer is focused on mobile.

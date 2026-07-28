@@ -534,20 +534,24 @@
         {/if}
       </div>
       <p class="text-xs text-text-muted leading-relaxed">
-        {#if channelInvite.inviterName}
+        {#if channelInvite.invitedName}
+          {m.msg_channel_invite_sent_description({ member: channelInvite.invitedName })}
+        {:else if channelInvite.inviterName}
           {m.msg_channel_invite_description_by({ inviter: channelInvite.inviterName })}
         {:else}
           {m.msg_channel_invite_description()}
         {/if}
       </p>
-      <button
-        onclick={() => onJoinChannel?.(channelInvite.channelId)}
-        type="button"
-        class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-cn-ink hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20"
-      >
-        <Building2 size={12} strokeWidth={3} />
-        {m.msg_channel_invite_join_button()}
-      </button>
+      {#if !channelInvite.invitedName}
+        <button
+          onclick={() => onJoinChannel?.(channelInvite.channelId)}
+          type="button"
+          class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-cn-ink hover:bg-amber-400 active:scale-95 transition-all shadow-sm shadow-amber-500/20"
+        >
+          <Building2 size={12} strokeWidth={3} />
+          {m.msg_channel_invite_join_button()}
+        </button>
+      {/if}
     </div>
   {:else}
     <div

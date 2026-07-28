@@ -43,7 +43,7 @@
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
-  import type { ChatMessage, Conversation } from '$lib/types';
+  import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
   import type { BulkIngestPhase } from '$lib/mls-client';
   import { WifiOff } from '@lucide/svelte';
 
@@ -161,6 +161,12 @@
       startDirectConversation: (targetUserId: string, opts?: { silent?: boolean }) =>
         convs.startNewConversation(targetUserId, convCtx(), opts),
       getSelectedConversationId: () => convs.selectedContact,
+      addMessageToChat: (
+        sid: string,
+        content: string,
+        contactName: string,
+        options?: AddMessageToChatOptions
+      ) => messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       reloadChannelHistory: (channelConversationId: string) =>
         convs.loadHistoryForConversation(channelConversationId, channelConversationId, convCtx()),
       invalidateChannelHistoryCache: (channelConversationId: string) =>

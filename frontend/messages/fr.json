@@ -404,6 +404,7 @@
   "msg_modifie_a": "Modifié à",
   "msg_channel_invite_description": "Vous avez été invité à rejoindre cette communauté chiffrée.",
   "msg_channel_invite_description_by": "{inviter} vous a invité à rejoindre cette communauté chiffrée.",
+  "msg_channel_invite_sent_description": "Vous avez invité {member} à rejoindre cette communauté chiffrée.",
   "msg_channel_invite_join_button": "Rejoindre la communauté",
   "msg_react_with_emoji": "Réagir avec {emoji}",
   "msg_reply_label": "Répondre",

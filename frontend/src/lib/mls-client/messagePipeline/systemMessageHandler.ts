@@ -1,6 +1,10 @@
 import type { Conversation } from '$lib/types';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/incomingDelivery';
-import { serializeEnvelope, mkChannelInviteEnvelope, mkSystemEnvelope } from '$lib/envelope';
+import {
+  serializeEnvelope,
+  mkChannelInviteEnvelope,
+  mkChannelInviteSentEnvelope,
+} from '$lib/envelope';
 import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
@@ -125,16 +129,18 @@ export async function handleSystemEvent(
     if (!channelId) return true;
 
     if (senderNorm === userId) {
-      // L'inviteur voit son propre message (écho MLS)
+      // The inviter's OTHER devices: MLS never returns a message to the device that sent it, so
+      // this branch is only ever reached on a second device. The sending device inserts the same
+      // card locally in `inviteMemberToChannel`.
       const inviteeDisplayName = String(data.inviteeName || data.inviteeId || '');
       await addMessageToChat(
         'system',
         serializeEnvelope(
-          mkSystemEnvelope(
-            m.chat_system_channel_invite_sent({
-              member: inviteeDisplayName,
-              community: workspaceName ?? channelName,
-            })
+          mkChannelInviteSentEnvelope(
+            channelId,
+            workspaceName ?? channelName,
+            workspaceName,
+            inviteeDisplayName
           )
         ),
         convoKey,

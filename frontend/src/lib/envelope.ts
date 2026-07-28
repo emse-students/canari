@@ -37,12 +37,19 @@ export interface MediaEnvelope {
 export interface SystemEnvelope {
   kind: 'system';
   text: string;
-  /** Present when the system event is a channel invitation; enables the Join button in the UI. */
+  /** Present when the system event is a channel invitation; renders the invite card in the UI. */
   channelInvite?: {
     channelId: string;
     channelName: string;
     workspaceName?: string;
     inviterName?: string;
+    /**
+     * Set ONLY on the inviter's own copy of the card, and it is what tells the renderer which
+     * side of the invitation it is on: present means "you invited {invitedName}" with no Join
+     * button, absent means the invitee's card with the Join CTA. Never set it on the invitee's
+     * copy, or their Join button disappears.
+     */
+    invitedName?: string;
   };
   /** Metadata for call lifecycle messages (start → duration update on hangup). */
   callEvent?: {
@@ -172,6 +179,7 @@ export function parseEnvelope(content: string): MessageEnvelope {
                 channelName: ci.channelName,
                 workspaceName: typeof ci.workspaceName === 'string' ? ci.workspaceName : undefined,
                 inviterName: typeof ci.inviterName === 'string' ? ci.inviterName : undefined,
+                invitedName: typeof ci.invitedName === 'string' ? ci.invitedName : undefined,
               }
             : undefined;
         const ce = obj.callEvent as Record<string, unknown> | undefined;
@@ -311,6 +319,30 @@ export function mkChannelInviteEnvelope(
       ? m.chat_system_channel_invite_by({ inviter: inviterName, community: channelName })
       : m.chat_system_channel_invite({ community: channelName }),
     channelInvite: { channelId, channelName, workspaceName, inviterName },
+  };
+}
+
+/**
+ * Build the INVITER's copy of the channel-invite card: same visual card, "you invited X" wording,
+ * no Join button (they are already a member).
+ *
+ * MLS never hands a device back its own application message, so the inviter's own copy has to be
+ * inserted locally at send time; their other devices build the same envelope from the incoming
+ * `channel_invitation` event.
+ */
+export function mkChannelInviteSentEnvelope(
+  channelId: string,
+  channelName: string,
+  workspaceName: string | undefined,
+  invitedName: string
+): SystemEnvelope {
+  return {
+    kind: 'system',
+    text: m.chat_system_channel_invite_sent({
+      member: invitedName,
+      community: workspaceName ?? channelName,
+    }),
+    channelInvite: { channelId, channelName, workspaceName, invitedName },
   };
 }
 
