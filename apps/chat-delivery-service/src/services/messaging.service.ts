@@ -793,7 +793,9 @@ export class MessagingService {
       if (body.senderId) {
         const membership = await this.deviceGroupRepo.findOne({ where: { deviceId, groupId } });
         if (membership?.status !== 'active') {
-          await this.activateDeviceMembership(body.senderId, deviceId, groupId).catch((e) =>
+          await this.activateDeviceMembership(body.senderId, deviceId, groupId, {
+            redeliverMissed: false,
+          }).catch((e) =>
             this.logger.warn(
               `[COMMIT][${traceId}] membership activation failed group=${groupId} device=${deviceId}: ${String(e)}`
             )
@@ -1123,8 +1125,19 @@ export class MessagingService {
    * recipient resolution (`status='active'` filter) EXCLUDES it and it never receives
    * subsequent messages in real time or via push (only through history catch-up).
    * Idempotent: upsert on the unique constraint (deviceId, groupId).
+   *
+   * `redeliverMissed` (default true) replays the messages sent during the pending window so the
+   * device gets the notifications it missed. Callers where the device joined at the CURRENT epoch
+   * with no prior membership (external-commit join) must pass false: forward secrecy means it
+   * cannot decrypt anything sent before its join, so a replay would be up to 50 undecryptable
+   * frames and as many generic pushes. Pre-join content reaches it through the history bundle.
    */
-  async activateDeviceMembership(userId: string, deviceId: string, groupId: string): Promise<void> {
+  async activateDeviceMembership(
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    { redeliverMissed = true }: { redeliverMissed?: boolean } = {}
+  ): Promise<void> {
     // Read prior state BEFORE the upsert: missed-message redelivery (DF2) must only
     // happen on a genuine pending->active transition. activateDeviceMembership is also
     // called idempotently on every Welcome re-processing; re-delivering when the device
@@ -1142,7 +1155,7 @@ export class MessagingService {
     await this.redis.sadd(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
     this.logger.log(`[MEMBERSHIP_ACTIVE] group=${groupId} device=${userId}:${deviceId}`);
 
-    if (!wasAlreadyActive) {
+    if (!wasAlreadyActive && redeliverMissed) {
       // While the device was `pending`, recipient resolution (`status='active'` filter)
       // excluded it: no push notification was dispatched for messages sent during that
       // window. Now that it is active (meaning it processed its Welcome -> it can decrypt),

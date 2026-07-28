@@ -157,6 +157,9 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         { conflictPaths: ['deviceId', 'groupId'] }
       );
       expect(redis.sadd).toHaveBeenCalledWith('group:members:group-1', 'user-2:device-new');
+      // No activation redelivery: the joiner landed at the current epoch and cannot decrypt
+      // anything sent before its commit - those messages come back via the history bundle.
+      expect(redis.xrange).not.toHaveBeenCalled();
     });
 
     it('does not re-promote a device that is already an active member', async () => {
