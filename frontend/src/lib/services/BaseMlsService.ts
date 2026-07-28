@@ -314,7 +314,7 @@ export abstract class BaseMlsService implements IMlsService {
   async endBulkIngest(): Promise<void> {
     const phase = this.bulkIngestPhases.pop();
     if (!phase) {
-      console.warn('[QUEUE] endBulkIngest sans beginBulkIngest correspondant - ignoré');
+      console.warn('[QUEUE] endBulkIngest without a matching beginBulkIngest - ignored');
       return;
     }
     // Replay the exact phase the matching open used: start and end can never disagree.

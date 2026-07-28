@@ -13,7 +13,7 @@ export interface MlsStatePersisterConfig {
 
 /**
  * Coalesced MLS state writer.
- * Routine ratchet advances stay in WASM memory; only PIN-encrypted checkpoints hit disk.
+ * Routine ratchet advances stay in WASM memory; only encrypted checkpoints hit disk.
  */
 export interface MlsStatePersister {
   /** Marks state dirty and flushes encrypted soon (same-tick calls are merged). */
@@ -33,7 +33,7 @@ export interface MlsStatePersister {
 /**
  * Creates a coalesced MLS persistence helper used by the inbound message pipeline.
  * Application-message ratchet updates are kept in WASM memory; commits and explicit
- * flush() write an encrypted checkpoint (Argon2) to IndexedDB.
+ * flush() write a checkpoint to IndexedDB, sealed with the device key.
  */
 export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsStatePersister {
   const { mlsService, deviceKeyB64, userId, log } = config;
@@ -52,7 +52,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
       recordMlsSaveStateMs(performance.now() - saveStarted);
     }
     await saveMlsStateEncrypted(userId, bytes);
-    log?.('[MLS] État MLS persisté (chiffré)');
+    log?.('[MLS] Encrypted state checkpoint persisted.');
   }
 
   async function flushEncryptedInternal(): Promise<void> {
@@ -66,7 +66,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     inFlightEncrypted = runSaveEncrypted()
       .catch((e) => {
         const msg = e instanceof Error ? e.message : String(e);
-        log?.(`[MLS] Échec persistance chiffrée: ${msg}`);
+        log?.(`[MLS] Encrypted state checkpoint failed: ${msg}`);
         throw e;
       })
       .finally(() => {
@@ -102,12 +102,12 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     flushEncrypted: flushEncryptedInternal,
     onBulkIngestStart() {
       bulkIngestDepth += 1;
-      log?.(`[MLS] Persistance différée (bulk ingest depth=${bulkIngestDepth})`);
+      log?.(`[MLS] Disk writes deferred (bulk ingest depth=${bulkIngestDepth})`);
     },
     async onBulkIngestEnd() {
       bulkIngestDepth = Math.max(0, bulkIngestDepth - 1);
       if (bulkIngestDepth > 0) return;
-      log?.('[MLS] Fin bulk ingest - flush chiffré MLS si nécessaire');
+      log?.('[MLS] Bulk ingest done - flushing an encrypted checkpoint if needed.');
       dirtyEncrypted = true;
       await flushEncryptedInternal();
     },

@@ -692,7 +692,7 @@ export function useConversations() {
           (m) => m.toLowerCase() === ctx.userId.toLowerCase()
         );
         if (backInGroup) {
-          ctx.log(`[SYNC] Réinscription serveur réussie pour ${convo.id}.`);
+          ctx.log(`[SYNC] Server re-registration succeeded for ${convo.id}.`);
           membershipCache.set(convo.id, { isMember: true, expiresAt: Date.now() + 30_000 });
           return true;
         }
@@ -938,7 +938,7 @@ export function useConversations() {
     if (ctx.storage) await ctx.storage.deleteConversation(contactKey).catch(() => {});
     conversations.delete(contactKey);
     selectedContact = null;
-    ctx.log(`[DELETE_LOCAL] Conversation locale supprimée : ${contactKey.slice(0, 8)}…`);
+    ctx.log(`[DELETE_LOCAL] Local conversation deleted: ${contactKey.slice(0, 8)}…`);
   }
 
   /** Sends a "memberLeft" broadcast, de-registers from the server, forgets local MLS state, deletes the DB entry, and clears the selection. */

@@ -235,7 +235,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         skipDbSave: true,
       }).catch((e) => console.error(e));
     } else {
-      log(`Canal inconnu reçu: ${channelId}`);
+      log(`Message received for an unknown channel: ${channelId}`);
     }
   }
 }

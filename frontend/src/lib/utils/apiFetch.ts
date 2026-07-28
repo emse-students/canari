@@ -57,7 +57,7 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
       res = await fetch(url, { ...init, headers });
       console.log(`[API] ← ${res.status} ${method} ${logUrl} (retry, ${Date.now() - t0}ms)`);
     } catch {
-      console.warn(`[API] refresh failed on ${method} ${logUrl} - session expirée`);
+      console.warn(`[API] refresh failed on ${method} ${logUrl} - session expired`);
       throw new Error('Session expirée - veuillez vous reconnecter.');
     }
     if (res.status === 401) {

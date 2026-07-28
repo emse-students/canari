@@ -200,7 +200,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
         createdAt: new Date().toISOString(),
       },
     });
-    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('Canal inconnu'));
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('unknown channel'));
   });
 
   it('propagates channel.updated and workspace.updated', async () => {
