@@ -398,7 +398,7 @@ export class TauriMlsService extends BaseMlsService {
       // (credential mismatch, partial corruption, invalid key…).
       // → systematic fresh-start to avoid blocking the user indefinitely.
       // If state == null and error → real crash (no state to blame) → rethrow.
-      const cause = this.classifyStateLoadFailure(e);
+      let cause = this.classifyStateLoadFailure(e);
 
       // "No keystore key and no device key provided" is a recoverable error (the
       // user just needs to enter their PIN).  Do NOT destroy the device
@@ -417,7 +417,15 @@ export class TauriMlsService extends BaseMlsService {
           migrated = true;
           console.log('[MLS] Pre-v0.11.0 mls.bin re-sealed under the device key.');
         } catch (migrationError) {
-          console.warn('[MLS] Not a pre-v0.11.0 snapshot:', String(migrationError).slice(0, 160));
+          // Two very different failures land here: the blob was not a legacy envelope at all
+          // (still `sealed` -> recovery), or it opened and names another device (`mismatch` ->
+          // fresh start). Keeping the original verdict would offer an old-PIN recovery for an
+          // identity no PIN can repair.
+          cause = this.classifyStateLoadFailure(migrationError);
+          console.warn(
+            `[MLS] Legacy migration did not yield a usable state (${cause}):`,
+            String(migrationError).slice(0, 200)
+          );
         }
       }
 

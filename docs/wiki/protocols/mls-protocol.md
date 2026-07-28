@@ -354,6 +354,12 @@ the previous one in the same commit.**
 A blob the PIN does not open falls through to the table below, so a genuine rotation still gets
 its recovery.
 
+**Opening the envelope says nothing about whose state it is.** A snapshot written before an
+interrupted fresh start carries the previous device's credential, so the re-sealed bytes can still
+be rejected - with a `mismatch`, not a `sealed`. The verdict is therefore re-read from the
+migration's own failure and applied by the normal path below. Doing this from inside the first
+`catch` is what let a raw `Credential identity mismatch` escape `init` instead of fresh-starting.
+
 ### The two `classifyStateLoadFailure` verdicts
 
 | Verdict | Meaning | Recovery |

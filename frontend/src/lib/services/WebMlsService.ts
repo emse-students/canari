@@ -568,7 +568,7 @@ export class WebMlsService extends BaseMlsService {
       // (credential mismatch, partial corruption, invalid key…).
       // → systematic fresh-start to avoid blocking the user indefinitely.
       // If state == null and error → real crash (no state to blame) → rethrow.
-      const cause = this.classifyStateLoadFailure(e);
+      let cause = this.classifyStateLoadFailure(e);
 
       // Before treating a sealed state as a PIN rotation, check whether it is simply older than
       // the v0.11.0 envelope change. Those snapshots were never rewritten (the MLS IndexedDB is
@@ -578,12 +578,24 @@ export class WebMlsService extends BaseMlsService {
         const migrated = await migrateLegacyMlsStateBlob(state, opts.legacyPin, deviceKeyB64);
         if (migrated) {
           console.log('[MLS] Pre-v0.11.0 snapshot re-sealed under the device key.');
-          await this.loadStateWithKey(deviceKeyB64, migrated);
-          // Persist immediately: leaving the legacy blob in place would replay this migration on
-          // every launch, and any later failure would surface the same false PIN-rotation error.
-          this.lastKnownState = migrated.slice();
-          await saveMlsState(userId, migrated);
-          return;
+          try {
+            await this.loadStateWithKey(deviceKeyB64, migrated);
+            // Persist immediately: leaving the legacy blob in place would replay this migration
+            // on every launch, and any later failure would resurface the false rotation error.
+            this.lastKnownState = migrated.slice();
+            await saveMlsState(userId, migrated);
+            return;
+          } catch (migrationError) {
+            // Opening the envelope says nothing about WHOSE state it is. A snapshot from before
+            // an interrupted fresh start names the previous device, so re-classify and let the
+            // block below apply the right answer - out here, not from inside this catch, or the
+            // mismatch escapes init and the user sees a raw crypto error instead of recovering.
+            cause = this.classifyStateLoadFailure(migrationError);
+            console.warn(
+              `[MLS] Migrated snapshot rejected (${cause}):`,
+              String(migrationError).slice(0, 200)
+            );
+          }
         }
       }
 
