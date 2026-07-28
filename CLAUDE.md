@@ -82,6 +82,29 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
   `fr.emse.canari.outboxRetry`. Both fire from `maybeNotifyPendingSync` when an opportunistic drain
   leaves `remaining > 0`. Never observed waking up on hardware.
 
+- \[ \] **WP-COM-1 (P2) - A community can never be deleted.** No `DELETE workspaces/:id` exists in
+  `channels.controller.ts` and the admin modal offers only "Quitter la communaute". A community
+  created by mistake is permanent for everyone in it, and its admin leaving orphans it. Needs an
+  endpoint (admin-only, soft-delete + tombstone like groups) and the UI to call it.
+  Left behind by the 2026-07-28 test run: **"QA Canari Test"** on jolan.boudin + claire.vanruymbeke,
+  undeletable until this ships.
+
+- \[ \] **WP-COM-2 (P3) - "Moderer les messages" drives nothing.** The community role matrix
+  advertises the permission per role, but `MainChatPage.svelte` passes `onDelete`/`onEdit`/
+  `onReact`/`onForward` as `undefined` whenever `isSelectedChannel` - so in a channel NOBODY,
+  admin included, can delete or edit a message. Either wire channel moderation to the permission
+  or stop advertising it in the matrix.
+
+- \[ \] **WP-UX-1 (P3) - Revoking a device asks nothing.** "Supprimer l'appareil" fires
+  `purgeDeviceFootprint` (KeyPackages, prekeys, push tokens, queued messages, memberships, Redis)
+  on a single click, while kicking a community member goes through `showConfirm`. Same confirm
+  treatment is due here - the action is irreversible for the revoked device's pending traffic.
+
+- \[ \] **WP-UX-2 (P3) - "Rester connecte" still describes the pre-v0.11.0 model.** Both the
+  settings row and the PIN sheet say the PIN is what gets kept ("Conserve votre PIN", "Votre PIN
+  sera conserve"). Since v0.11.0 it is the 32-byte device key that moves to `localStorage`; the PIN
+  is never stored. Misleading on a security control - fix `fr.json`/`en.json`.
+
 - \[ \] **WP-INT-1 (P3) - Cercle webhook credentials.** Set the real `webhookUrl`/`webhookSecret`
   on the prod `balance_topup` product. Blocked on Cercle providing them.
 
@@ -141,13 +164,32 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 
 ### VERIFIED ON WEB (2026-07-28, v0.11.3)
 
-Two real accounts driven in isolated browser contexts. Login -> PIN -> WS -> `generateKeyPackage`
-(50) -> `KeyPackage published.` on both; DM created, messages decrypted both ways; hard reload
-replays the same device id (no fresh start). **Device-reset recovery**: wiped device -> PIN ->
-fresh device id -> `externalJoin succeeded (base epoch 2)` -> `[HISTORY_REQ] solicit attempt 0` ->
-`[HISTORY_BUNDLE] 34 messages received`, all 34 rendered, live traffic both ways. Five seconds from
-PIN to full history, zero console errors. Works only because of the `[MEMBERSHIP_ACTIVE]` promotion
-in `validateCommit`.
+Two real accounts driven in isolated browser contexts, zero console errors across every run.
+
+- **Login / DM round trip**: PIN -> WS -> `generateKeyPackage` (50) -> `KeyPackage published.` on
+  both; messages decrypted both ways; hard reload replays the same device id (no fresh start).
+- **Device-reset recovery, DM**: wiped device -> PIN -> fresh device id ->
+  `externalJoin succeeded (base epoch 2)` -> `[HISTORY_REQ] solicit attempt 0` ->
+  `[HISTORY_BUNDLE] 34 messages received`, all 34 rendered, live traffic both ways, five seconds
+  from PIN to full history. Works only because of the `[MEMBERSHIP_ACTIVE]` promotion in
+  `validateCommit`.
+- **PIN change**: verifier rotated server-side, MLS state + 37 local messages re-encrypted, same
+  device id. Old PIN correctly refused on the next unlock, new PIN opens, full history intact,
+  send/receive still working after the rotation.
+- **Device revocation**: revoking from "Gestion des appareils" srems the Redis routing set
+  immediately (a 2-person DM went from 7 entries to 2). The current device correctly has no
+  delete button.
+- **Device-reset recovery, community**: after wiping IndexedDB + localStorage, the community, its
+  channel AND the channel's full message history all came back, then live channel traffic in both
+  directions.
+- **Community roles**: a member gets a read-only settings modal (no roles tab, no "Ajouter un
+  canal", no invite/kick), an admin gets everything. `canManage` is the server-authoritative
+  `viewerCanManage` (MANAGE_WORKSPACE), fail-closed. Community-level management is admin-only by
+  design; the role matrix governs CHANNEL permissions - see WP-COM-2 for the one it does not.
+  A role change is NOT pushed live: an open settings modal keeps the old role until reload.
+- **Invitation**: the invitee does receive a visible message in the MLS DM - a `channel_invitation`
+  card with a "Rejoindre la communaute" CTA - and a `memberAdded` system message is posted into the
+  channel. The latter named the invitee "Utilisateur inconnu" until `ce16f804`.
 
 ---
 
