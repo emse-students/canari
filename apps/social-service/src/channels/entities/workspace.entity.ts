@@ -18,6 +18,14 @@ export class Workspace {
   @Column({ nullable: true, type: 'varchar' })
   imageMediaId: string | null;
 
+  /**
+   * Soft-delete tombstone. Every read path filters it out, so an archived workspace is
+   * invisible to members, invites and slug lookups while its row keeps the slug reserved
+   * and its data recoverable.
+   */
+  @Column({ default: false })
+  archived: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 }

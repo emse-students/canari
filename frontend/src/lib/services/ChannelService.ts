@@ -345,6 +345,19 @@ export class ChannelService {
     return res.json();
   }
 
+  /**
+   * Soft-deletes a whole community for every member (admin-only, MANAGE_WORKSPACE).
+   * The server broadcasts `workspace.deleted`, so other connected members clean up
+   * without polling.
+   */
+  async deleteWorkspace(workspaceId: string) {
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/workspaces/${workspaceId}`, {
+      method: 'DELETE',
+    });
+    await this.handleError(res);
+    return res.json();
+  }
+
   async kickFromWorkspace(workspaceId: string, targetUserId: string) {
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(targetUserId)}`,

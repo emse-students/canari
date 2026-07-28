@@ -326,6 +326,17 @@
             convs.selectedContact = null;
         }
       },
+      onDeleteWorkspace: (workspaceDbId: string) => {
+        // Resolve the channel list before the delete purges the workspace from the sidebar.
+        const doomedChannelIds =
+          channels.channelWorkspaces
+            .find((w) => w.workspaceDbId === workspaceDbId)
+            ?.channels.map((c) => c.id) ?? [];
+        void channels.deleteCurrentWorkspace(workspaceDbId, channelsCtx());
+        if (convs.selectedContact && doomedChannelIds.includes(convs.selectedContact)) {
+          convs.selectedContact = null;
+        }
+      },
       onSelectConversation: handleSelectConversation,
       onSelectChannelConversation: (channelId: string) => {
         // Capture unread BEFORE selectConversation resets it: only signal a cross-device read

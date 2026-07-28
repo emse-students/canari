@@ -225,6 +225,20 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
+  it('propagates workspace.deleted so members drop a community an admin removed', async () => {
+    const onWorkspaceDeleted = vi.fn();
+    const deps = baseDeps({ onWorkspaceDeleted });
+    setupMessageHandler(deps as any);
+    const mls = deps.mlsService as any;
+    await mls.onChannelEvent({
+      type: 'workspace.deleted',
+      data: { workspaceId: 'w1', deletedBy: 'admin-1' },
+    });
+    expect(onWorkspaceDeleted).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: 'w1', deletedBy: 'admin-1' })
+    );
+  });
+
   it('Welcome (NoMatchingKeyPackage) → republishes key material + externalJoin-first requestReAdd', async () => {
     const recovery = await import('$lib/utils/chat/recovery');
     vi.mocked(recovery.requestReAdd).mockClear();

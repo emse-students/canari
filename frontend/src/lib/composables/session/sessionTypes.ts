@@ -38,6 +38,7 @@ export interface ChatSessionCallbacks {
   onChannelUpdated?: (event: { channelId: string; name?: string; workspaceId?: string }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
   onWorkspaceUpdated?: (event: { workspaceId: string; imageMediaId?: string }) => void;
+  onWorkspaceDeleted?: (event: { workspaceId: string; deletedBy?: string }) => void;
   onReadReceiptReceived?: (event: {
     conversationKey: string;
     senderId: string;

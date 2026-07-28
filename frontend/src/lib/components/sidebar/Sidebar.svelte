@@ -80,6 +80,8 @@
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
     /** Callback fired when the user leaves a workspace. */
     onLeaveWorkspace?: (workspaceDbId: string) => void;
+    /** Callback fired when an admin deletes a workspace for every member. */
+    onDeleteWorkspace?: (workspaceDbId: string) => void;
     /** Callback fired when the user drags a community to a new position in the rail. */
     onReorderCommunities?: (newOrder: ChannelWorkspace[]) => void;
     /** Callback fired when the user selects a direct or group conversation. */
@@ -120,6 +122,7 @@
     onInviteChannelMember,
     onUpdateWorkspaceImage,
     onLeaveWorkspace,
+    onDeleteWorkspace,
     onReorderCommunities,
     onSelectConversation,
     onSelectChannelConversation,
@@ -619,6 +622,7 @@
   onClose={closeCommunityAdminModal}
   {onUpdateWorkspaceImage}
   {onLeaveWorkspace}
+  {onDeleteWorkspace}
   onInviteCommunityMember={async (memberId, roleName) => {
     const workspace = selectedCommunityWorkspace;
     if (!workspace) {

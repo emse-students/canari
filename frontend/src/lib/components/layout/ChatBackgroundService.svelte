@@ -582,6 +582,32 @@
       onWorkspaceUpdated: (event: { workspaceId: string; imageMediaId?: string }) => {
         globalChannels.handleWorkspaceUpdated(event);
       },
+      onWorkspaceDeleted: (event: { workspaceId: string }) => {
+        if (!event.workspaceId) return;
+        // Capture the channel ids before the purge: clearing the chat panel needs to know
+        // whether the open conversation belonged to the community that just vanished.
+        const doomedChannelIds =
+          globalChannels.channelWorkspaces
+            .find((ws) => ws.workspaceDbId === event.workspaceId)
+            ?.channels.map((ch) => ch.id) ?? [];
+        void globalChannels
+          .handleWorkspaceDeleted(event, {
+            conversations: globalConvs.conversations,
+            deleteConversation: (id: string) =>
+              globalSession.storage?.deleteConversation(id) ?? Promise.resolve(),
+            invalidateChannelHistoryCache: globalConvs.invalidateChannelHistoryCache,
+            log: appendLog,
+          })
+          .then(() => {
+            if (
+              globalConvs.selectedContact &&
+              doomedChannelIds.includes(globalConvs.selectedContact)
+            ) {
+              globalConvs.selectedContact = null;
+              globalConvs.sendError = '';
+            }
+          });
+      },
       onReadReceiptReceived: (e: {
         conversationKey: string;
         senderId: string;

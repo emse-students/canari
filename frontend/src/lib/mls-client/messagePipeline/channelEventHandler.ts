@@ -23,6 +23,7 @@ export interface ChannelEventContext extends Pick<
   | 'onChannelUpdated'
   | 'onChannelDeleted'
   | 'onWorkspaceUpdated'
+  | 'onWorkspaceDeleted'
   | 'log'
 > {
   /** Called when a commit is rejected (desynced epoch) - triggers a re-add request. */
@@ -46,6 +47,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onChannelUpdated,
     onChannelDeleted,
     onWorkspaceUpdated,
+    onWorkspaceDeleted,
     log,
     onOutOfSync,
   } = ctx;
@@ -127,6 +129,15 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onWorkspaceUpdated?.({
       workspaceId: String(data.workspaceId || ''),
       imageMediaId: data.imageMediaId,
+    });
+    return;
+  }
+
+  if (event.type === 'workspace.deleted') {
+    const data = event.data || {};
+    onWorkspaceDeleted?.({
+      workspaceId: String(data.workspaceId || ''),
+      deletedBy: data.deletedBy,
     });
     return;
   }

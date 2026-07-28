@@ -598,6 +598,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       onChannelUpdated: cb.onChannelUpdated,
       onChannelDeleted: cb.onChannelDeleted,
       onWorkspaceUpdated: cb.onWorkspaceUpdated,
+      onWorkspaceDeleted: cb.onWorkspaceDeleted,
       onReadReceiptReceived: cb.onReadReceiptReceived,
       onCallSignal: (senderId: string, groupId: string, callMsg) => {
         void handleCallSignalForChat(

@@ -64,6 +64,7 @@ Channels use server-assisted symmetric encryption (not MLS):
 | POST | `/api/channels/:channelId/members/invite` | Invite user to channel |
 | POST | `/api/channels/:channelId/members/kick` | Kick member (role check) |
 | POST | `/api/channels/:channelId/members/leave` | Leave channel |
+| DELETE | `/api/channels/workspaces/:workspaceId` | Delete a whole community for every member (MANAGE_WORKSPACE **only** - see "Deleting a community") |
 | DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS) |
 | PATCH | `/api/channels/workspaces/:workspaceId/members/:userId/role` | Set a member's workspace role, replacing existing roles (MANAGE_WORKSPACE / MANAGE_ROLES) |
 | GET \| PATCH | `/api/channels/:channelId/access` | Get/set channel visibility (`isPrivate`), `allowedUsers`, and `writePolicy` (MANAGE_CHANNEL to write) |
@@ -92,6 +93,25 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   posting: `everyone` (default), `admins_moderators` (roles with `channel.moderate` or
   `workspace.manage`), or `admins` (`workspace.manage` only). Enforced in `sendMessage` via
   `canWriteToChannel`; used for announcement-style channels. Set from the channel settings "Accès" tab.
+
+#### Deleting a community
+
+`DELETE /api/channels/workspaces/:workspaceId` (`deleteWorkspace`) is the only way a community
+disappears. It is **admin-only**: unlike a kick or a channel archive, MANAGE_CHANNEL is
+deliberately not accepted, because the action hits every member at once.
+
+It is a **soft delete**. `channel_workspaces.archived` (migration 033) flips to true, every
+channel in the workspace is archived alongside it, and nothing is dropped - members, channels,
+messages and the slug all stay in place. Recovering a community deleted by mistake is two
+`UPDATE`s. What actually makes it vanish is that every read path filters `archived`:
+`listWorkspacesForUser`, `getWorkspaceBySlug` (404 on the slug), `getWorkspaceInvitePreview` and
+`acceptWorkspaceInvite` (a link must not resurrect a deleted community).
+
+The audience is snapshotted **before** archiving, then `workspace.deleted`
+(`{ workspaceId, deletedBy }`) is broadcast to it, so connected members purge the community from
+their sidebar and drop its channel conversations without polling. Frontend:
+`handleWorkspaceDeleted` in `useChannelWorkspaces.svelte.ts`, which shares its
+`purgeWorkspaceLocally` helper with the leave and delete UI paths.
 
 The legacy per-channel/per-role override system (`channel_permission_overrides`,
 `channels.usePermissionOverrides`) was removed in migration 032.

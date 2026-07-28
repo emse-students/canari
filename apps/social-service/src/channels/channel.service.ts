@@ -239,7 +239,9 @@ export class ChannelService {
     actorUserId: string,
     opts?: { expiresAt?: string | null; maxUses?: number | null }
   ): Promise<{ token: string }> {
-    const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
+    const workspace = await this.workspaceRepo.findOne({
+      where: { id: workspaceId, archived: false },
+    });
     if (!workspace) throw new NotFoundException('Workspace not found');
     if (!(await this.actorCanInvite(workspaceId, actorUserId))) {
       throw new ForbiddenException('Missing INVITE_USERS permission');
@@ -269,7 +271,9 @@ export class ChannelService {
     if (!invite || !this.inviteIsValid(invite)) {
       return { valid: false, workspaceName: null, workspaceSlug: null, imageMediaId: null };
     }
-    const ws = await this.workspaceRepo.findOne({ where: { id: invite.workspaceId } });
+    const ws = await this.workspaceRepo.findOne({
+      where: { id: invite.workspaceId, archived: false },
+    });
     if (!ws) return { valid: false, workspaceName: null, workspaceSlug: null, imageMediaId: null };
     return {
       valid: true,
@@ -291,7 +295,11 @@ export class ChannelService {
     if (!invite || !this.inviteIsValid(invite)) {
       throw new NotFoundException('Invalid or expired invitation.');
     }
-    const ws = await this.workspaceRepo.findOne({ where: { id: invite.workspaceId } });
+    // Links outlive the community they point at: an invite to a deleted community must not
+    // resurrect it for the joiner.
+    const ws = await this.workspaceRepo.findOne({
+      where: { id: invite.workspaceId, archived: false },
+    });
     if (!ws) throw new NotFoundException('Workspace not found');
 
     const existing = await this.memberRepo.findOne({
@@ -429,7 +437,9 @@ export class ChannelService {
    * can gate admin controls without deriving permissions itself.
    */
   async getWorkspaceBySlug(slug: string, userId?: string) {
-    const ws = await this.workspaceRepo.findOne({ where: { slug } });
+    // `archived: false` rather than a post-lookup check: a deleted community must be a 404
+    // on its own slug, not a readable tombstone.
+    const ws = await this.workspaceRepo.findOne({ where: { slug, archived: false } });
     if (!ws) throw new NotFoundException('Workspace not found');
 
     const channels = await this.channelRepo.find({ where: { workspaceId: ws.id } });
@@ -460,7 +470,11 @@ export class ChannelService {
     if (memberships.length === 0) return [];
 
     const workspaceIds = [...new Set(memberships.map((m) => m.workspaceId))];
-    const workspaces = await this.workspaceRepo.find({ where: { id: In(workspaceIds) } });
+    // Membership rows survive a community deletion (so it stays recoverable); the archived
+    // filter is what actually removes it from every member's sidebar.
+    const workspaces = await this.workspaceRepo.find({
+      where: { id: In(workspaceIds), archived: false },
+    });
 
     // Derive per-workspace management rights server-side so the client can gate admin
     // controls (e.g. "change image", invite) without deriving permissions itself. We
@@ -653,6 +667,56 @@ export class ChannelService {
     );
 
     return { success: true };
+  }
+
+  /**
+   * Soft-deletes an entire community and broadcasts `workspace.deleted` so every member's
+   * client drops it from the sidebar and purges its channels locally.
+   *
+   * Admin-only on purpose: unlike a kick or a channel archive, this is irreversible from the
+   * UI and it acts on everyone at once, so MANAGE_CHANNEL is deliberately NOT enough - only
+   * MANAGE_WORKSPACE. The workspace row, its members, channels and messages all survive; the
+   * `archived` flags are what hide them, which keeps a mistake recoverable with two UPDATEs.
+   */
+  async deleteWorkspace(workspaceId: string, actorUserId: string) {
+    const workspace = await this.workspaceRepo.findOne({
+      where: { id: workspaceId, archived: false },
+    });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+
+    const actorMember = await this.memberRepo.findOne({
+      where: { workspaceId, userId: actorUserId },
+    });
+    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+
+    let hasPerm = false;
+    if (actorMember.roleIds?.length > 0) {
+      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
+      hasPerm = roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE));
+    }
+    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
+
+    // Snapshot the audience BEFORE archiving: the event has to reach every member, and
+    // membership rows are what the broadcast resolves against.
+    const memberIds = await this.getWorkspaceMemberIds(workspaceId);
+
+    // Archive the channels too, so any client holding a stale channel id stops listing them
+    // even if it never sees the workspace event.
+    await this.channelRepo.update({ workspaceId, archived: false }, { archived: true });
+
+    workspace.archived = true;
+    await this.workspaceRepo.save(workspace);
+
+    await this.redis.publishChannelEvent(
+      'workspace.deleted',
+      { workspaceId, deletedBy: actorUserId },
+      memberIds
+    );
+
+    this.logger.log(
+      `[WORKSPACE] delete workspace=${workspaceId} slug="${workspace.slug}" by=${actorUserId.slice(0, 8)} members=${memberIds.length}`
+    );
+    return { success: true, workspaceId };
   }
 
   /** Renames a channel (lowercased) and broadcasts a channel.updated event so connected clients update their sidebar. */

@@ -68,6 +68,16 @@ export interface ChannelWorkspaceContext {
   log: (msg: string) => void;
 }
 
+/**
+ * The subset of {@link ChannelWorkspaceContext} needed to erase a community from local state.
+ * Kept narrow so the background event handler - which has no conversation-selection or
+ * persistence helpers on hand - can call the same purge as the UI paths.
+ */
+export type WorkspacePurgeContext = Pick<
+  ChannelWorkspaceContext,
+  'conversations' | 'deleteConversation' | 'invalidateChannelHistoryCache' | 'log'
+>;
+
 /** Creates and returns the reactive channel/workspace store: sidebar state, API operations (create, rename, delete, invite, leave, image update), and real-time event handlers. */
 export function useChannelWorkspaces() {
   let channelWorkspaces = $state<ChannelSidebarWorkspace[]>([]);
@@ -661,31 +671,63 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /**
+   * Drops a workspace from local state: its channels leave the conversations map and local
+   * storage, the workspace leaves the sidebar, and the selection is cleared if it pointed
+   * inside. Shared by the three ways a community can disappear - leaving it, deleting it, and
+   * receiving the `workspace.deleted` broadcast for someone else's deletion.
+   */
+  async function purgeWorkspaceLocally(workspaceDbId: string, ctx: WorkspacePurgeContext) {
+    const workspace = channelWorkspaces.find((ws) => ws.workspaceDbId === workspaceDbId);
+    if (workspace) {
+      for (const ch of workspace.channels) {
+        ctx.invalidateChannelHistoryCache?.(ch.id);
+        ctx.conversations.delete(ch.id);
+        await ctx.deleteConversation?.(ch.id).catch(() => {});
+      }
+    }
+    channelWorkspaces = channelWorkspaces.filter((ws) => ws.workspaceDbId !== workspaceDbId);
+    const wsChannelIds = workspace?.channels.map((c) => c.id) ?? [];
+    if (wsChannelIds.includes(selectedChannelConversationId)) {
+      selectedChannelConversationId = '';
+    }
+  }
+
   /** Removes the current user from a workspace, purges all of its channels from conversations and the sidebar, then deselects if the active channel was in that workspace. */
   async function leaveCurrentWorkspace(workspaceDbId: string, ctx: ChannelWorkspaceContext) {
     if (!workspaceDbId) return;
     try {
       await service.leaveWorkspace(workspaceDbId);
-      // Remove all channels of the workspace from conversations map
-      const workspace = channelWorkspaces.find((ws) => ws.workspaceDbId === workspaceDbId);
-      if (workspace) {
-        for (const ch of workspace.channels) {
-          ctx.invalidateChannelHistoryCache?.(ch.id);
-          ctx.conversations.delete(ch.id);
-          await ctx.deleteConversation?.(ch.id).catch(() => {});
-        }
-      }
-      // Remove workspace from sidebar
-      channelWorkspaces = channelWorkspaces.filter((ws) => ws.workspaceDbId !== workspaceDbId);
-      // Deselect if current channel was in this workspace
-      const wsChannelIds = workspace?.channels.map((c) => c.id) ?? [];
-      if (wsChannelIds.includes(selectedChannelConversationId)) {
-        selectedChannelConversationId = '';
-      }
+      await purgeWorkspaceLocally(workspaceDbId, ctx);
       ctx.log('You have left the community.');
     } catch (error) {
       ctx.log(toUiActionError(m.channel_action_community_leave(), error));
     }
+  }
+
+  /**
+   * Deletes a whole community (admin-only, server-enforced) and purges it locally. Other
+   * members are cleaned up by the `workspace.deleted` broadcast, so nothing here fans out.
+   */
+  async function deleteCurrentWorkspace(workspaceDbId: string, ctx: ChannelWorkspaceContext) {
+    if (!workspaceDbId) return;
+    try {
+      await service.deleteWorkspace(workspaceDbId);
+      await purgeWorkspaceLocally(workspaceDbId, ctx);
+      ctx.log('Community deleted.');
+    } catch (error) {
+      ctx.log(toUiActionError(m.channel_action_community_delete(), error));
+    }
+  }
+
+  /** Applies a `workspace.deleted` broadcast: an admin deleted a community this user belongs to. */
+  async function handleWorkspaceDeleted(
+    event: { workspaceId: string },
+    ctx: WorkspacePurgeContext
+  ) {
+    if (!event.workspaceId) return;
+    ctx.log(`[Channel Event] community ${event.workspaceId.slice(0, 8)} deleted by an admin`);
+    await purgeWorkspaceLocally(event.workspaceId, ctx);
   }
 
   /** Renames a channel on the server and updates both the sidebar label and the conversation entry optimistically. */
@@ -822,6 +864,8 @@ export function useChannelWorkspaces() {
     leaveCurrentChannel,
     /** Removes the current user from a workspace and purges all its channels locally. */
     leaveCurrentWorkspace,
+    /** Deletes an entire community for every member (admin-only) and purges it locally. */
+    deleteCurrentWorkspace,
     /** Renames a channel on the server and updates the sidebar and conversation entry. */
     renameCurrentChannel,
     /** Permanently deletes a channel and removes it from conversations and the sidebar. */
@@ -832,5 +876,7 @@ export function useChannelWorkspaces() {
     reorderWorkspaces,
     /** Applies an incoming real-time workspace-updated event (cover image change). */
     handleWorkspaceUpdated,
+    /** Applies an incoming real-time workspace-deleted event (an admin deleted the community). */
+    handleWorkspaceDeleted,
   };
 }

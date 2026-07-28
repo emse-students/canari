@@ -4,6 +4,7 @@
     Users,
     Shield,
     Trash2,
+    LogOut,
     ShieldCheck,
     Upload,
     Loader,
@@ -55,6 +56,8 @@
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
     /** Callback fired when the current user leaves the selected workspace. */
     onLeaveWorkspace?: (workspaceDbId: string) => void;
+    /** Callback fired when an admin deletes the selected workspace for every member. */
+    onDeleteWorkspace?: (workspaceDbId: string) => void;
     /** Callback to send a community membership invitation with the given role. Rejects on key-distribution failure. */
     onInviteCommunityMember?: (
       memberId: string,
@@ -69,6 +72,7 @@
     onClose,
     onUpdateWorkspaceImage,
     onLeaveWorkspace,
+    onDeleteWorkspace,
     onInviteCommunityMember,
   }: Props = $props();
 
@@ -410,6 +414,23 @@
     onClose();
   }
 
+  /**
+   * Confirms then deletes the whole community for every member. Only rendered for admins;
+   * the server re-checks MANAGE_WORKSPACE, so hiding the button is convenience, not the gate.
+   */
+  async function deleteCommunity() {
+    if (
+      !(await showConfirm(
+        m.chat_community_delete_confirm({ selectedWorkspace: selectedWorkspace?.name ?? '' }),
+        { danger: true, confirmLabel: m.common_delete_button() }
+      ))
+    ) {
+      return;
+    }
+    onDeleteWorkspace?.(selectedWorkspace?.workspaceDbId ?? '');
+    onClose();
+  }
+
   async function handleImageFileChange(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
@@ -500,9 +521,18 @@
           class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors w-full"
           onclick={leaveCommunity}
         >
-          <Trash2 size={18} />
+          <LogOut size={18} />
           {m.chat_community_leave_button()}
         </button>
+        {#if canManage}
+          <button
+            class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium text-red-600 hover:bg-red-50 transition-colors w-full"
+            onclick={deleteCommunity}
+          >
+            <Trash2 size={18} />
+            {m.chat_community_delete_button()}
+          </button>
+        {/if}
       </div>
     </div>
 
@@ -766,14 +796,23 @@
       {/if}
 
       <!-- Destructive action reachable on mobile (desktop keeps it in the sidebar). -->
-      <div class="md:hidden mt-8 pt-4 border-t border-cn-border/40">
+      <div class="md:hidden mt-8 pt-4 border-t border-cn-border/40 space-y-2">
         <button
           class="flex w-full items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
           onclick={leaveCommunity}
         >
-          <Trash2 size={18} />
+          <LogOut size={18} />
           {m.chat_community_leave_button()}
         </button>
+        {#if canManage}
+          <button
+            class="flex w-full items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 transition-colors"
+            onclick={deleteCommunity}
+          >
+            <Trash2 size={18} />
+            {m.chat_community_delete_button()}
+          </button>
+        {/if}
       </div>
     </div>
   </div>

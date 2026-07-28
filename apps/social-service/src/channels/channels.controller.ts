@@ -289,6 +289,20 @@ export class ChannelsController {
     return this.service.leaveWorkspace(workspaceId, xUserId.trim().toLowerCase());
   }
 
+  /**
+   * Soft-deletes a whole community for every member. Requires MANAGE_WORKSPACE (admin-only).
+   * Declared before `DELETE :channelId` for readability; the two never collide because this
+   * path carries two segments.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Delete('workspaces/:workspaceId')
+  deleteWorkspace(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string
+  ) {
+    return this.service.deleteWorkspace(workspaceId, xUserId.trim().toLowerCase());
+  }
+
   /** Kicks a member from a workspace (removes from all channels). Requires MANAGE_WORKSPACE, MANAGE_CHANNEL, or KICK_MEMBERS permission. */
   @UseGuards(NginxAuthGuard)
   @Delete('workspaces/:workspaceId/members/:userId')
