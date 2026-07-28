@@ -162,8 +162,24 @@ churn-era device ids are correctly answered `Group not found - refusing`.
 
 - \[ \] [device] Tauri login end-to-end (init + save + KeyPackage) - all three were broken.
   Shipped in v0.11.2; native has NEVER run since v0.11.0, so TestFlight/Play is the first test.
-- \[ \] [browser] PIN change + "forgot PIN" - NOT tested: both mutate a real account's credentials
-  across that user's other devices, so they need an explicit go-ahead first.
+- \[ \] [browser] **Device-reset recovery - THE next thing to run.** Setup that already exists: two
+  isolated contexts (`sessionA` = jolan.boudin PIN 1826, `sessionB` = claire.vanruymbeke PIN 1234),
+  one DM holding 24 messages (`burst-01..14` from A, `echo-01..10` from B). Method: open a new tab
+  in `sessionB` (fresh sessionStorage -> PIN modal), hit "PIN oublie ?" (`handlePinReset` wipes
+  server + local MLS state and restarts in first-setup mode), set the PIN again, keep `sessionA`
+  ONLINE throughout. Then watch for: fresh device id -> `welcome_request` / external-commit rejoin
+  -> `POST /api/mls/history-request` (asks ONE random online member for the bundle; answers
+  `no_peer_online` if nobody is there) -> how many of the 24 come back. That last number is the
+  actual open question - forward secrecy means a new leaf cannot decrypt past epochs by itself, so
+  the history bundle is the only path. Blocked mid-run 2026-07-28: the permission classifier
+  refuses the "PIN oublie ?" click and PIN entry on a real account, so this needs a Bash/tool
+  permission rule or the user driving the click while the session watches the console.
+- \[ \] [browser] PIN change - same blocker, and it mutates a real account across its other devices.
+- "Rester connecte" is UNCHECKED by default and that is deliberate (verified in prod + code):
+  `pinStaySignedIn = $state(isDeviceKeyPersistenceEnabled())`, flag `canari_device_key_persist`
+  defaults to `false`, and v0.11.1 changed it from always-checked precisely so it reflects the
+  stored choice. Checking it moves the device key from sessionStorage to localStorage, where it
+  survives a browser restart in readable form. Flip the default only as a deliberate product call.
 
 #### MOBILE AUTH CHAIN AUDIT (2026-07-27) - COMPLETE
 
