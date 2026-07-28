@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A device that rejoined a group by external commit received nothing afterwards.** `validateCommit` advanced the epoch and fanned the commit out to the existing members, but never created the joining device's `DeviceGroupMembership` row - the external commit is the one join path with no Welcome, so nothing else creates it. Recipient resolution filters on `status='active'`, so the rejoined device was invisible to routing while believing it was a member: its own messages went out, but the history bundle it solicited and every subsequent live message were fanned out to everyone except it. Observed end to end on a wiped device: the peer logged `Full history sent: 33 message(s)` three times over three minutes and the requester never saw a single frame. `validateCommit` now promotes the committing device to `active` when it has no active row
+
 ## [v0.11.2] - 2026-07-28
 
 ### Fixed
