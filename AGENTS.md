@@ -57,7 +57,30 @@ mirror deletion. Four defects were found in the verification pass and fixed befo
    `push_context.json` contents in `frontend/mobile.md` and the "Where the key lives" table in
    `frontend/modules/auth.md`.
 
-Also corrected: `MlsDeviceKeyStore.delete` was dead code (`KeystorePlugin.deleteKeyBytes` already
+Two more defects surfaced the moment CI actually compiled the iOS half (`gh workflow run
+ios-release.yml`, which only builds and uploads artifacts - every publish step is gated on
+`workflow_run`). Both were invisible to every gate available on Windows:
+
+5. **`KeystorePlugin.swift` did not compile.** `guard bgStatus == errSecSuccess else { NSLog(...) }`
+   - a `guard` body must not fall through. The Rust prebuild died there, so nothing downstream
+   (NSE, ObjC, archive) was ever compiled either. Rewritten to throw, like the primary item above
+   it: the NSE has no JSON fallback left, so a skipped background item means every push shows
+   generic text with nothing in the log to say why, and the only known cause (an access group
+   missing from the profile) fails at codesign rather than here.
+6. **The key was stored raw and read as UTF-8 - iOS background decrypt would have failed 100% of
+   the time.** `storeKeyBytes` base64-DECODES its argument and writes the raw 32 bytes (that is why
+   `getKeyBytes` base64-encodes on the way back out), but both new background readers ended with
+   `String(data:encoding:.utf8)` / `initWithData:encoding:NSUTF8StringEncoding`. Random key bytes
+   are almost never valid UTF-8, so the reader returned nil, the key came back empty and the guard
+   added in Part A turned every push into the generic fallback. The iOS *migration* had the mirror
+   error, writing the base64 TEXT, so a migrated install would also have disagreed with a
+   freshly-logged-in one. This is the same class as defect 2 and Android was right both times.
+   `pushContextFields.test.ts` gained a second describe block asserting the encoding contract
+   across all five files - the only gate for it off macOS.
+
+Also corrected: three Swift `var`s that are never mutated and two deprecated
+`kSecUseOperationPrompt` uses (the reason already travels on the `LAContext`), all of them warnings
+in the CI log; `MlsDeviceKeyStore.delete` was dead code (`KeystorePlugin.deleteKeyBytes` already
 owns deletion on the same alias and prefs), and the AGENTS.md link to `KeystorePlugin.swift`
 pointed at `gen/apple/` instead of `patches/tauri-plugin-keystore/ios/`.
 
@@ -68,8 +91,14 @@ Face ID prompt at every startup. The `keystore_ok.flag` it now trusts alone prob
 not the device key, but keystore loss takes both down together. Comment corrected to say so.
 
 **Gates re-run after the corrections:** `cargo clippy --all-targets -- -D warnings` clean,
-`bun run test` 16/16 on the rewritten guard. Swift/ObjC do not compile off macOS - that half is
-unverified and must not be believed before TestFlight.
+`bun run test` 607/607 including 25 on the rewritten guard, `bun run check` 0/0. **Android Release
+green on CI**; iOS Release dispatched too - it is the only way to compile Swift/ObjC from here, and
+it is what found defect 5. Compiling is still not running: everything below is owed.
+
+**Rule 6, learned here: dispatch `android-release.yml` and `ios-release.yml` before believing any
+native change.** Both take `workflow_dispatch` and gate every publish step (GitHub Release, Google
+Play, TestFlight) on `workflow_run`, so a manual run is a pure compile check that ships nothing.
+Without it, a Swift syntax error passes every gate this machine has.
 
 **Still owed: every device check below. Nothing here is proven without them** - and check 2 is also
 the first ever proof that iOS background decrypt works at all.
@@ -105,5 +134,8 @@ here (rule 5). Durable rules folded into `CLAUDE.md`.
 - `MlsDeviceKeyStore` encodes the IV/CT with `Base64.DEFAULT` because that is KeystorePlugin's
   at-rest format, but the key it RETURNS with `Base64.NO_WRAP` - `DEFAULT` appends a newline and
   the Rust `decode_base64_to_32_bytes` does not trim. Do not "unify" the two.
+- **The key sits in the keystore as RAW 32 bytes and crosses the FFI as base64.** Writers decode
+  before storing, readers encode after loading, on both platforms and in both migrations. Treating
+  the stored bytes as text (UTF-8) or storing the base64 text instead silently yields no key.
 
 ---

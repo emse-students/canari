@@ -48,7 +48,15 @@ static void CanariMigrateDeviceKeyFromJson(void) {
   // Write the background-accessible Keychain item (mirrors KeystorePlugin.swift's bg item).
   NSString *alias = [NSString stringWithFormat:@"mls_device_key_%@_%@", userId, deviceId];
   NSString *account = [NSString stringWithFormat:@"mls_bg_key_%@", alias];
-  NSData *keyData = [deviceKeyB64 dataUsingEncoding:NSUTF8StringEncoding];
+  // RAW bytes, matching what KeystorePlugin.storeKeyBytes writes at login - it
+  // base64-decodes before hitting the Keychain, and the readers base64-encode on the way
+  // out. Storing the base64 TEXT here would make a migrated install disagree with a
+  // freshly logged-in one, and the readers would hand the FFI a double-encoded key.
+  NSData *keyData = [[NSData alloc] initWithBase64EncodedString:deviceKeyB64 options:0];
+  if (keyData.length != 32) {
+    NSLog(@"[CanariIOS] migrateDeviceKey: deviceKeyB64 is not 32 bytes - keeping JSON field");
+    return;
+  }
 
   NSDictionary *deleteQuery = @{
     (__bridge id)kSecClass : (__bridge id)kSecClassGenericPassword,

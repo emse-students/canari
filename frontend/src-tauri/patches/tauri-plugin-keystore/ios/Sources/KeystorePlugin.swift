@@ -90,8 +90,9 @@ class KeystorePlugin: Plugin {
 
     var query = baseQuery()
     query[kSecReturnData as String] = true
+    // kSecUseOperationPrompt is deprecated since iOS 14 in favour of exactly this:
+    // the reason travels on the LAContext above.
     query[kSecUseAuthenticationContext as String] = context
-    query[kSecUseOperationPrompt as String] = kBiometricReason
 
     var item: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -173,7 +174,7 @@ class KeystorePlugin: Plugin {
     ]
     SecItemDelete(deleteQuery as CFDictionary)
 
-    var addQuery: [String: Any] = [
+    let addQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: kKeychainService,
       kSecAttrAccount as String: "mls_key_\(args.alias)",
@@ -200,7 +201,7 @@ class KeystorePlugin: Plugin {
     ]
     SecItemDelete(bgDeleteQuery as CFDictionary)
 
-    var bgAddQuery: [String: Any] = [
+    let bgAddQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: kKeychainService,
       kSecAttrAccount as String: "mls_bg_key_\(args.alias)",
@@ -212,10 +213,14 @@ class KeystorePlugin: Plugin {
 
     let bgStatus = SecItemAdd(bgAddQuery as CFDictionary, nil)
     guard bgStatus == errSecSuccess else {
-      // The background item is best-effort: if the App Group keychain is not
-      // available (e.g. provisioning profile not yet regenerated), the app
-      // still functions — push just falls back to generic text for the NSE.
-      NSLog("[KeystorePlugin] storeKeyBytes: bg keychain item failed (status=\(bgStatus)), push may show generic fallback")
+      // Hard failure, like the primary item above. The NSE has no JSON fallback to
+      // read the key from any more, so a silently-skipped background item means every
+      // push shows generic text with nothing in the logs to say why. The only known
+      // cause - an access group missing from the profile - fails at codesign, not
+      // here, so a status at this point is a real error worth surfacing.
+      NSLog("[KeystorePlugin] storeKeyBytes: background keychain item failed (status=\(bgStatus))")
+      throw NSError(
+        domain: NSOSStatusErrorDomain, code: Int(bgStatus), userInfo: nil)
     }
 
     invoke.resolve()
@@ -231,13 +236,13 @@ class KeystorePlugin: Plugin {
     context.localizedReason = kBiometricReason
     context.interactionNotAllowed = false
 
-    var query: [String: Any] = [
+    let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: kKeychainService,
       kSecAttrAccount as String: "mls_key_\(args.alias)",
       kSecReturnData as String: true,
+      // No kSecUseOperationPrompt: deprecated since iOS 14, the reason is on the LAContext.
       kSecUseAuthenticationContext as String: context,
-      kSecUseOperationPrompt as String: kBiometricReason,
     ]
 
     var item: CFTypeRef?

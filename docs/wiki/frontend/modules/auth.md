@@ -75,6 +75,11 @@ owner out of their own messages.
 | Platform keystore, alias `mls_device_key_{userId}_{deviceId}` | `store_push_context` (Tauri) | Biometric unlock **and** background FCM/NSE decryption - the only at-rest copy on a device |
 | `push_context.json` | `store_push_context` (Tauri) | `userId`, `deviceId`, `baseUrl`, `pushToken` only. Since WP-SEC-1 it carries **no key material** |
 
+"Stay signed in" moves the **device key** across a restart, never the PIN - the PIN has not been
+persisted anywhere since v0.11.0. The user-facing copy (`auth_pin_stay_signed_in_desc`,
+`profile_stay_signed_in_desc`) must say so: describing the wrong secret on a security control is a
+defect in the control.
+
 Enrolling biometrics wipes the vault (`clearDeviceKeyAndWrapKey`) and turns "stay signed in" off,
 so the next launch goes through the keystore. A PIN change must **not** delete the keystore entry:
 `IMlsService.changeDeviceKey` has already overwritten it with the new key.

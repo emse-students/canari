@@ -243,7 +243,9 @@ static NSString *_Nullable CanariRetrieveDeviceKey(NSString *userId, NSString *d
   if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &item) == errSecSuccess && item != nil) {
     NSData *data = (__bridge_transfer NSData *)item;
     if (data.length > 0) {
-      return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+      // RAW key bytes, not text - storeKeyBytes base64-decodes before writing. See the
+      // Swift twin in NotificationService.retrieveDeviceKey.
+      return [data base64EncodedStringWithOptions:0];
     }
   }
   return nil;

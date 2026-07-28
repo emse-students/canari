@@ -103,6 +103,11 @@ All routes require `X-User-Id` header (injected by Nginx `auth_request`).
 | GET | `/api/mls/devices/:userId/:deviceId/prekeys/count` | Count remaining OTKPs |
 | DELETE | `/api/mls/devices/:userId/:deviceId/prekeys` | Purge all OTKPs for device |
 
+`DELETE /devices/:userId/:deviceId` is a full purge (KeyPackages, prekeys, push tokens,
+memberships, Redis routing entry) and is irreversible for whatever that device still had in
+flight, so `DeviceManagementPanel` gates it behind `showConfirm` - the same treatment a channel
+kick gets. The current device has no delete button at all.
+
 ### Group management
 
 | Method | Path | Description |

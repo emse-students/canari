@@ -15,6 +15,7 @@
   } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
   import type { IMlsService } from '$lib/mls-client';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface DeviceMembership {
@@ -115,8 +116,25 @@
     }
   }
 
+  /** Human-readable label for a device, falling back to its OS when unnamed. */
+  function deviceLabel(device: DeviceInfo): string {
+    return device.deviceName || getDeviceOsLabel(device);
+  }
+
   async function handleRemoveDevice(deviceId: string) {
     if (deviceId === myDeviceId) return;
+    // Deletion is irreversible for the revoked device: deleteDevice purges its
+    // KeyPackages, prekeys, push tokens, memberships and queued messages, so anything
+    // still in flight for it is lost. Confirm before firing, as kicking a member does.
+    const device = devices.find((d) => d.deviceId === deviceId);
+    const confirmed = await showConfirm(
+      m.chat_delete_device_confirm({ name: device ? deviceLabel(device) : deviceId }),
+      { danger: true, confirmLabel: m.common_delete_button() }
+    );
+    if (!confirmed) {
+      console.log(`[DevicePanel] Deletion of ${deviceId.slice(0, 8)}… cancelled by user`);
+      return;
+    }
     console.log(`[DevicePanel] Deleting device ${deviceId.slice(0, 8)}…`);
     try {
       const result = await mlsService.deleteDevice(userId, deviceId);
@@ -262,7 +280,7 @@
                   {:else}
                     <div class="flex flex-wrap items-center gap-2 mb-1">
                       <span class="font-bold text-[0.95rem] text-text-main truncate">
-                        {device.deviceName || getDeviceOsLabel(device)}
+                        {deviceLabel(device)}
                       </span>
                       <span
                         class="text-[0.65rem] px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 font-semibold text-text-muted uppercase tracking-wider"
@@ -282,7 +300,7 @@
                         class="text-[0.7rem] font-mono text-text-muted opacity-80 truncate flex-1"
                         title={device.deviceId}
                       >
-                        Appareil {idx + 1}
+                        {m.chat_device_index_label({ index: idx + 1 })}
                         {#if isMobileOs(device) && device.deviceAppVersion}
                           <span class="ml-2 font-semibold"
                             >{m.chat_device_version_label({
@@ -305,7 +323,7 @@
 
                 {#if !isCurrentDevice}
                   <button
-                    onclick={() => handleRemoveDevice(device.deviceId)}
+                    onclick={() => void handleRemoveDevice(device.deviceId)}
                     class="p-2.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-red-500/15 dark:hover:bg-red-500/20 text-text-muted hover:text-red-600 dark:hover:text-red-400 transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 shrink-0"
                     title={m.chat_delete_device_title()}
                     aria-label={m.chat_delete_device_label()}

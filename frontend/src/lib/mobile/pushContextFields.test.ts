@@ -39,6 +39,14 @@ const CANARI_APPLICATION_KT = resolve(
   here,
   '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariApplication.kt'
 );
+const KEYSTORE_PLUGIN_SWIFT = resolve(
+  here,
+  '../../../src-tauri/patches/tauri-plugin-keystore/ios/Sources/KeystorePlugin.swift'
+);
+const MLS_DEVICE_KEY_STORE_KT = resolve(
+  here,
+  '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/MlsDeviceKeyStore.kt'
+);
 
 /** Unique, sorted capture group 1 of every match of `regex` in `source`. */
 function extractKeys(source: string, regex: RegExp): string[] {
@@ -144,5 +152,77 @@ describe('push_context.json contract (Rust writer vs 3 native readers)', () => {
     ['CanariApplication.kt', () => kotlinAppSource, /migrateDeviceKeyFromJson/],
   ])('%s still runs the one-shot legacy key migration', (_name, source, pattern) => {
     expect(source()).toMatch(pattern);
+  });
+});
+
+/**
+ * Keystore encoding contract.
+ *
+ * The device key crosses the keystore boundary as RAW 32 bytes but crosses the FFI boundary as
+ * base64 text, and five files in three languages have to agree on where the conversion happens.
+ * Nothing checks it: every side compiles whichever it picks. Two variants of this exact mismatch
+ * were caught in review of WP-SEC-1 - Android returning `Base64.DEFAULT` (whose trailing newline
+ * the Rust `decode_base64_to_32_bytes` does not trim), and both iOS readers UTF-8-decoding raw
+ * key bytes, which yields nothing for almost every key. Both fail silently, as a generic push.
+ *
+ * Writers base64-DECODE before storing; readers base64-ENCODE after loading.
+ */
+describe('device key keystore encoding (raw bytes at rest, base64 on the wire)', () => {
+  const keystoreSwift = readFileSync(KEYSTORE_PLUGIN_SWIFT, 'utf8');
+  const deviceKeyStoreKt = readFileSync(MLS_DEVICE_KEY_STORE_KT, 'utf8');
+  const objcSource = readFileSync(CANARI_PUSH_MM, 'utf8');
+  const iosAppSource = readFileSync(CANARI_IOS_MM, 'utf8');
+  const swiftSource = readFileSync(NOTIF_SERVICE_SWIFT, 'utf8');
+
+  const storeKeyBytes = functionBody(keystoreSwift, /@objc public func storeKeyBytes/, /\n {2}}/);
+  const objcRetrieve = functionBody(
+    objcSource,
+    /static NSString \*_Nullable CanariRetrieveDeviceKey/,
+    /\n}/
+  );
+  const swiftRetrieve = functionBody(
+    swiftSource,
+    /private static func retrieveDeviceKey/,
+    /\n {2}}/
+  );
+  const iosMigration = functionBody(
+    iosAppSource,
+    /static void CanariMigrateDeviceKeyFromJson/,
+    /\n}/
+  );
+  const ktStore = functionBody(deviceKeyStoreKt, /fun store\(/, /\n {4}}/);
+  const ktRetrieve = functionBody(deviceKeyStoreKt, /fun retrieve\(/, /\n {4}}/);
+
+  it.each([
+    ['KeystorePlugin.storeKeyBytes (iOS login)', () => storeKeyBytes, /Data\(base64Encoded:/],
+    [
+      'CanariMigrateDeviceKeyFromJson (iOS upgrade)',
+      () => iosMigration,
+      /initWithBase64EncodedString/,
+    ],
+    ['MlsDeviceKeyStore.store (Android)', () => ktStore, /Base64\.decode\(keyB64/],
+  ])('%s decodes base64 into raw bytes before storing', (_name, body, pattern) => {
+    expect(body()).toMatch(pattern);
+  });
+
+  it.each([
+    ['CanariRetrieveDeviceKey', () => objcRetrieve, /base64EncodedStringWithOptions/],
+    ['NotificationService.retrieveDeviceKey', () => swiftRetrieve, /base64EncodedString\(\)/],
+  ])('%s re-encodes the raw bytes as base64', (_name, body, pattern) => {
+    expect(body()).toMatch(pattern);
+  });
+
+  it.each([
+    ['CanariRetrieveDeviceKey', () => objcRetrieve, /NSUTF8StringEncoding/],
+    ['NotificationService.retrieveDeviceKey', () => swiftRetrieve, /String\(data:/],
+    ['CanariMigrateDeviceKeyFromJson', () => iosMigration, /dataUsingEncoding:/],
+  ])('%s does not treat the raw key bytes as UTF-8 text', (_name, body, pattern) => {
+    expect(body()).not.toMatch(pattern);
+  });
+
+  it('MlsDeviceKeyStore.retrieve returns NO_WRAP base64, never DEFAULT', () => {
+    // DEFAULT appends a newline and decode_base64_to_32_bytes does not trim.
+    expect(ktRetrieve).toMatch(/Base64\.encodeToString\(decrypted, Base64\.NO_WRAP\)/);
+    expect(ktRetrieve).not.toMatch(/Base64\.encodeToString\(decrypted, Base64\.DEFAULT\)/);
   });
 });

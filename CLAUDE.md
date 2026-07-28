@@ -65,6 +65,9 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
   hardware. The 5 device checks that gate the verdict, including the upgrade path that is the only
   test of the one-shot migration: `AGENTS.md` "what is still owed". Check 2 doubles as the first
   ever proof that iOS background decrypt works at all. **Blocks WP-VERIF-2.**
+  Both release workflows have since been dispatched as compile checks. Android green; the iOS run
+  found two more defects (a Swift `guard` that fell through, and raw key bytes read back as UTF-8)
+  and is re-running on this commit. Compiling is not running - the checks below are still owed.
 
 - \[ \] **WP-VERIF-1 (P1) - [device] Tauri login end to end (init + save + KeyPackage).** All three
   were dead from v0.11.0 to v0.11.2 (`invoke` names matching no Rust command). Native has NOT run
@@ -122,6 +125,7 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 - **Device key persistence:** `deviceKeyVault.ts` picks storage via `vaultStore()` keyed on `canari_device_key_persist` (default `sessionStorage`, opt-in `localStorage`); `setDeviceKeyPersistence` wipes BOTH stores before re-saving. "Stay signed in" starts UNCHECKED by design - it reflects the stored choice.
 - **The background copy of the device key is a keystore entry, never a file.** `push_context.json` carries `userId`/`deviceId`/`baseUrl`/`pushToken` and no key material. A push handler has no user, so the entry must be hardware-backed yet unattended-readable: Android reuses the alias (`setUserAuthenticationRequired(false)`, read Context-only via `MlsDeviceKeyStore` - **never** `setUnlockedDeviceRequired(true)`, that dies exactly when a push arrives); iOS uses a SECOND item `mls_bg_key_<alias>`, `AfterFirstUnlockThisDeviceOnly`, no `kSecAttrAccessControl`, access group `group.fr.emse.canari`. Table: `docs/wiki/frontend/modules/auth.md`.
 - **Android `Base64.DEFAULT` appends a newline and the Rust `decode_base64_to_32_bytes` does not trim.** Encode anything crossing into the FFI with `NO_WRAP`; `DEFAULT` is only correct for KeystorePlugin's own at-rest IV/CT.
+- **The device key is RAW 32 bytes at rest in the keystore, base64 on the FFI wire.** Writers (`storeKeyBytes`, `MlsDeviceKeyStore.store`, both one-shot migrations) decode before storing; readers (`getKeyBytes`, `CanariRetrieveDeviceKey`, `NotificationService.retrieveDeviceKey`, `MlsDeviceKeyStore.retrieve`) encode after loading. UTF-8 anywhere in that chain silently yields no key. Guarded by `pushContextFields.test.ts`.
 - **Escape hatch when a state still refuses to open:** the PIN modal's "forgot PIN" (`handlePinReset`) wipes server + local MLS state and restarts in first-setup mode, at the cost of local history.
 
 #### MLS membership and routing
@@ -158,6 +162,7 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 
 - **CI signing:** two NAMED provisioning profiles matching `PROVISIONING_PROFILE_SPECIFIER` exactly (`Canari` app + `CanariNotifications` NSE), team "Les Rootz" `4CLNB8SR6L`, expire 2027-07-11.
 - **Version bump:** `scripts/bump-app-version.sh` must patch the NSE's `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION`; `bump-version.yml` stages an EXPLICIT `git add` list - any new file the script patches must be added there.
+- **`android-release.yml` and `ios-release.yml` both take `workflow_dispatch`, and every publish step is gated on `workflow_run`** - so a manual run is a pure compile check that ships nothing. It is the ONLY way to compile Swift/ObjC/Kotlin from Windows; run both before believing any native change.
 - **Store publish:** iOS `altool` can exit 0 while printing `UPLOAD FAILED` (the workflow greps the transcript). Android Play API rejects `changesNotSentForReview` post-launch. Never add a `branches` filter to a `workflow_run` chained off a release-triggered workflow - it silently drops every run.
 
 #### Cotisations (Cercle)

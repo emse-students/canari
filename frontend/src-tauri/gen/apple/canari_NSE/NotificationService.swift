@@ -516,7 +516,10 @@ class NotificationService: UNNotificationServiceExtension {
     var item: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &item)
     guard status == errSecSuccess, let data = item as? Data, !data.isEmpty else { return nil }
-    return String(data: data, encoding: .utf8)
+    // The item holds the RAW 32 key bytes: storeKeyBytes base64-decodes its argument
+    // before writing, and getKeyBytes base64-encodes on the way back out. Decoding this
+    // as UTF-8 would fail on almost every key and silently yield no key at all.
+    return data.base64EncodedString()
   }
 
   /// Push bearer secret, mirrored to the container by the app. Only needed for the
