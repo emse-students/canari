@@ -4,9 +4,6 @@ Default permissions for the plugin
 
 #### This default permission set includes the following:
 
-- `allow-remove`
-- `allow-retrieve`
-- `allow-store`
 - `allow-store-key-bytes`
 - `allow-get-key-bytes`
 - `allow-delete-key-bytes`
@@ -95,84 +92,6 @@ Enables the has_key_bytes command without any pre-configured scope.
 <td>
 
 Denies the has_key_bytes command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`keystore:allow-remove`
-
-</td>
-<td>
-
-Enables the remove command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`keystore:deny-remove`
-
-</td>
-<td>
-
-Denies the remove command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`keystore:allow-retrieve`
-
-</td>
-<td>
-
-Enables the retrieve command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`keystore:deny-retrieve`
-
-</td>
-<td>
-
-Denies the retrieve command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`keystore:allow-store`
-
-</td>
-<td>
-
-Enables the store command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`keystore:deny-store`
-
-</td>
-<td>
-
-Denies the store command without any pre-configured scope.
 
 </td>
 </tr>

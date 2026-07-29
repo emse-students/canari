@@ -3,9 +3,6 @@
 // The *_key_bytes commands were absent until v0.11.4, which is why the JS-side keystore calls
 // silently returned false.
 const COMMANDS: &[&str] = &[
-    "remove",
-    "retrieve",
-    "store",
     "store_key_bytes",
     "get_key_bytes",
     "delete_key_bytes",

@@ -57,17 +57,24 @@ fn main() {
 }
 ```
 
-Afterwards all the plugin's APIs are available through the JavaScript guest bindings:
+> [!IMPORTANT]
+> **This is Canari's fork, not upstream.** The upstream single-secret API (`store`/`retrieve`/`remove`
+> and its npm guest bindings) has been deleted - it had no caller. What remains is the alias-addressed
+> key-bytes API below, invoked directly rather than through JavaScript bindings, because the calls that
+> matter originate in Rust. See `docs/wiki/frontend/modules/auth.md` for how Canari uses it.
 
-```typescript
-import { remove, retrieve, store } from '@impierce/tauri-plugin-keystore';
+| Command | Prompts? | Purpose |
+| --- | :---: | --- |
+| `store_key_bytes` | no | Write a raw 32-byte key (base64) under an alias. Runs during PIN login, where a second prompt would be disruptive |
+| `get_key_bytes` | **yes** | Read it back. The only command that raises a biometric sheet; the request carries the sheet's localized text |
+| `delete_key_bytes` | no | Remove the key. Idempotent |
+| `has_key_bytes` | no | Existence check. Must never prompt - it is what decides whether offering biometric unlock makes sense |
 
-await store('secr3tPa$$w0rd');
-const password = await retrieve();
-await remove();
-```
+On iOS `store_key_bytes` writes a **second** item, `mls_bg_key_<alias>`, with no access control and
+`AfterFirstUnlockThisDeviceOnly`, shared through the App Group so the notification extension can
+decrypt a push while the screen is locked.
 
-The provided functions will fail if the device has no biometrics set up, so you should check the biometric status with the official `tauri-plugin-biometric` before using them:
+`get_key_bytes` will fail if the device has no biometrics set up, so you should check the biometric status with the official `tauri-plugin-biometric` before using it:
 
 ```typescript
 import { checkStatus, type Status } from '@tauri-apps/plugin-biometric';

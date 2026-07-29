@@ -25,24 +25,6 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 pub struct Keystore<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> Keystore<R> {
-    pub fn store(&self, payload: StoreRequest) -> crate::Result<()> {
-        self.0
-            .run_mobile_plugin("store", payload)
-            .map_err(Into::into)
-    }
-
-    pub fn retrieve(&self, payload: RetrieveRequest) -> crate::Result<RetrieveResponse> {
-        self.0
-            .run_mobile_plugin("retrieve", payload)
-            .map_err(Into::into)
-    }
-
-    pub fn remove(&self, payload: RemoveRequest) -> crate::Result<()> {
-        self.0
-            .run_mobile_plugin("remove", payload)
-            .map_err(Into::into)
-    }
-
     /// Store a raw 32-byte key (base64-encoded) in the platform keystore.
     /// Triggers biometric authentication on mobile before writing.
     pub fn store_key_bytes(&self, payload: StoreKeyBytesRequest) -> crate::Result<()> {

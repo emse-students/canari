@@ -14,26 +14,6 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 pub struct Keystore<R: Runtime>(AppHandle<R>);
 
 impl<R: Runtime> Keystore<R> {
-    pub fn store(&self, payload: StoreRequest) -> crate::Result<()> {
-        let entry = keyring::Entry::new("com.impierce.identity-wallet", "tester")?;
-        entry.set_password(&payload.value)?;
-        Ok(())
-    }
-
-    pub fn retrieve(&self, payload: RetrieveRequest) -> crate::Result<RetrieveResponse> {
-        let entry = keyring::Entry::new(&payload.service, &payload.user)?;
-        let password = entry.get_password()?;
-        Ok(RetrieveResponse {
-            value: Some(password),
-        })
-    }
-
-    pub fn remove(&self, payload: RemoveRequest) -> crate::Result<()> {
-        let entry = keyring::Entry::new(&payload.service, &payload.user)?;
-        entry.delete_credential()?;
-        Ok(())
-    }
-
     /// Store a raw key (base64-encoded) in the OS keyring under a namespaced alias.
     pub fn store_key_bytes(&self, payload: StoreKeyBytesRequest) -> crate::Result<()> {
         let entry = keyring::Entry::new("fr.emse.canari", &format!("mls_key_{}", payload.alias))?;

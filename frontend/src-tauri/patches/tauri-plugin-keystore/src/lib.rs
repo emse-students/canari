@@ -36,9 +36,6 @@ impl<R: Runtime, T: Manager<R>> crate::KeystoreExt<R> for T {
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("keystore")
         .invoke_handler(tauri::generate_handler![
-            commands::remove,
-            commands::retrieve,
-            commands::store,
             commands::store_key_bytes,
             commands::get_key_bytes,
             commands::delete_key_bytes,

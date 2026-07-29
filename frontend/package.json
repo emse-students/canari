@@ -38,7 +38,6 @@
     "@fontsource-variable/fredoka": "^5.2.10",
     "@fontsource-variable/nunito": "^5.2.7",
     "@humanspeak/svelte-markdown": "^1.6.0",
-    "@impierce/tauri-plugin-keystore": "^2.1.0-alpha.1",
     "@lucide/svelte": "^1.21.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-biometric": "^2.3.2",

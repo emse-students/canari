@@ -126,8 +126,9 @@ here (rule 5). Durable rules folded into `CLAUDE.md`.
   Part A makes iOS match.
 - `applyNewDeviceKeyLocally` must still never call `BiometricService.disable` - the alias it deletes
   is the one the background reader now depends on.
-- The Android alias `unime_dev` (`KeystorePlugin.kt` L26) is a different, biometric-gated key. Do
-  not touch it - renaming orphans enrolled keys.
+- The Android alias `unime_dev` no longer exists: it belonged to the UniMe legacy `store`/`retrieve`
+  API, which had no caller and was deleted in v0.11.6. An install that predates the deletion may
+  still hold that keystore entry plus a `secure_storage` SharedPreferences blob; both are inert.
 - Do NOT add `.setKeySize(256)` to `generateBiometricProtectedKeyForAlias` yet. It only affects
   newly created aliases, so it would split behaviour between fresh and upgraded installs while the
   migration is still unvalidated. Worth doing once the device checks above pass.

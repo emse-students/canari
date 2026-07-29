@@ -87,7 +87,6 @@ export default defineConfig(async () => ({
   // cannot handle (Failed to fetch dynamically imported module).
   optimizeDeps: {
     include: [
-      '@impierce/tauri-plugin-keystore',
       '@tauri-apps/api/app',
       '@tauri-apps/api/core',
       '@tauri-apps/api/window',

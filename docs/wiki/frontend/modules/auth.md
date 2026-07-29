@@ -172,9 +172,11 @@ to the previous wording, never to an unlock that cannot happen. `reason` is iOS-
 no compiler between them, so `services/keystorePrompt.test.ts` reads the Rust, Kotlin and Swift
 sources and fails when a field is renamed or a literal creeps back into the builder.
 
-The other keystore commands (`store`, `retrieve`, alias `unime_dev`) still hold French literals.
-They are the legacy single-secret API inherited from the UniMe sample and have **no caller** in
-either the JS or the Rust layer, so no user ever sees them.
+The plugin used to carry a second, older API alongside this one - `store`/`retrieve`/`remove`, a
+single secret under the hardcoded alias `unime_dev`, inherited from the UniMe sample it was forked
+from. It had no caller in either the JS or the Rust layer and was deleted in v0.11.6, together with
+the npm guest bindings (`@impierce/tauri-plugin-keystore`) that were its only published entry
+point. The plugin now exposes exactly the four `*_key_bytes` commands.
 
 ### Calling the keystore plugin from JS
 
