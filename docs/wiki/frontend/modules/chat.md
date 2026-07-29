@@ -204,6 +204,10 @@ Android WebView; on devices where it is unavailable the in-app GIF picker still 
 | Route | Description |
 |---|---|
 | `/chat` | Main chat page (conversation list + active chat) |
-| `/chat/[groupId]` | Open a specific conversation directly |
-| `/c/[groupId]` | Short link alias for direct links |
-| `/g/[groupId]` | Group short link |
+| `/communities` | Same page in community mode (channels) |
+| `/c/join/[token]` | Accept a community invite link, then land in the joined channel |
+
+There is **no per-conversation URL**. `/chat/[groupId]`, `/c/[groupId]` and `/g/[groupId]` were
+documented for a while and never existed as routes; opening one renders an empty shell. A
+conversation is opened by publishing its id to `notifNav` (see the deep-link section above), which
+is why a notification tap works from any route while a hand-written URL does not.

@@ -137,14 +137,10 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   `fr.emse.canari.outboxRetry`. Both fire from `maybeNotifyPendingSync` when an opportunistic drain
   leaves `remaining > 0`. Never observed waking up on hardware.
 
-- \[~\] **WP-DEEPLINK-1 (P1) - EVERY deep link lands in the right tab but not the right place.**
-  Confirmed on prod 2026-07-29 (invite link; user reports the same for message notifications and
-  group joins). **FIXED IN CODE, NOT YET VERIFIED ON PROD.** Cause and rules now in DURABLE RULES
-  ("A deep-link target is held until it is DISPLAYED" + the abandon rule). Gates green:
-  vitest 630/630, `bun run check` 0 errors, oxlint/oxfmt clean.
-  Owed: browse-verify all three entry points on prod - invite **link** (fresh load AND in-app
-  navigation, the two observed symptoms), invite **card** Join button, channel/message
-  **notification** tap. Then delete the throwaway `QA Invitation` community.
+- \[ \] **WP-DEEPLINK-1 residual (P3) - one entry point unverified.** The fix shipped and is
+  verified on prod (see VERIFIED ON WEB below). The **OS notification tap** could not be driven
+  from a headless browser; it publishes to `notifNav` exactly like the two link paths that were
+  verified, so re-check it on device during WP-VERIF-3.
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost.** 2026-07-29, prod, channel ->
   DM: the toast said success, the echo persisted on the sender, the outbox drained - and the peer
@@ -248,6 +244,21 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 - Cotisant status is server-authoritative: `/products/all` returns per-product `viewerIsCotisant`/`viewerActiveTier`. No client-side tag derivation.
 
 ---
+
+### VERIFIED ON WEB (2026-07-29, deep links)
+
+Two accounts, isolated contexts, zero console errors on every run. Claire was kicked from
+`QA Invitation` before each run so every one was a genuine first join.
+
+- **Invite link, fresh page load** of `/c/join/<token>`: lands on `/communities` with the community
+  heading AND `#general` open. Was: "Aucun echange selectionne".
+- **Invite link, in-app navigation** (clicking the link preview card in the DM): lands on
+  `QA Invitation`. Was: landed on `MiTV`.
+- **Invite card "Rejoindre la communaute"**: lands in `QA Invitation` / `#general` with both
+  `a ajoute Claire` system messages and live history.
+- Link preview cards now show the centred Canari logo (`favicon.svg`) instead of a lucide glyph.
+- Note: `/c/<groupId>` and `/chat/<groupId>` are NOT routes (the wiki claimed they were); a
+  conversation is only ever opened through `notifNav`.
 
 ### VERIFIED ON WEB (2026-07-28, v0.11.3)
 
