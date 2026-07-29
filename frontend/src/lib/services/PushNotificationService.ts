@@ -21,6 +21,7 @@ import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notif
 import { currentUserId } from '$lib/stores/user';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { showToast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
 
 /** Push gateway platform tag sent to the backend (mirrors the server's PushPlatform). */
 type PushPlatform = 'android' | 'ios';
@@ -185,11 +186,7 @@ export async function startPushService(
     if (!permissionGranted) {
       // Show context before the system dialog (avoids a "cold" permission request).
       // Short delay to let the user read the toast before the dialog opens.
-      showToast(
-        'Enable notifications to be notified of new messages, even when the app is closed.',
-        'info',
-        6000
-      );
+      showToast(m.push_permission_rationale(), 'info', 6000);
       await new Promise((r) => setTimeout(r, 1200));
       const permission = await requestPermission();
       permissionGranted = permission === 'granted';

@@ -756,7 +756,10 @@
       const meta = await channelService.votePoll(channelId, messageId, optionIds);
       setPollMeta(messageId, meta);
     } catch (e) {
-      showToast(`Vote impossible : ${e instanceof Error ? e.message : 'erreur'}`, 'warning');
+      showToast(
+        `${m.channel_poll_vote_error()} : ${e instanceof Error ? e.message : m.common_error_heading()}`,
+        'warning'
+      );
     }
   }
 
@@ -769,7 +772,7 @@
       setPollMeta(messageId, meta);
     } catch (e) {
       showToast(
-        `${m.channel_poll_close_error()} : ${e instanceof Error ? e.message : 'erreur'}`,
+        `${m.channel_poll_close_error()} : ${e instanceof Error ? e.message : m.common_error_heading()}`,
         'warning'
       );
     }

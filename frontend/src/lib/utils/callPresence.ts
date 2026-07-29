@@ -1,6 +1,7 @@
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { showToast } from '$lib/stores/toast.svelte';
+import { m } from '$lib/paraglide/messages';
 
 /** Whether another device of the same user is currently in a call. */
 export interface SiblingCallStatus {
@@ -62,7 +63,7 @@ export async function warnIfSiblingDeviceInCall(deviceId: string): Promise<boole
     if (lastWarnedSiblingDevice === siblingKey) return true;
 
     lastWarnedSiblingDevice = siblingKey;
-    showToast('Un autre appareil est déjà en appel.', 'info');
+    showToast(m.call_sibling_device_busy(), 'info');
     return true;
   } catch {
     return false;

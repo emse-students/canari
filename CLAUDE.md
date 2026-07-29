@@ -120,9 +120,10 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   hardware. The 5 device checks that gate the verdict, including the upgrade path that is the only
   test of the one-shot migration: `AGENTS.md` "what is still owed". Check 2 doubles as the first
   ever proof that iOS background decrypt works at all. **Blocks WP-VERIF-2.**
-  Both release workflows have since been dispatched as compile checks. Android green; the iOS run
-  found two more defects (a Swift `guard` that fell through, and raw key bytes read back as UTF-8)
-  and is re-running on this commit. Compiling is not running - the checks below are still owed.
+  Both release workflows have since been dispatched as compile checks and are now **green on both
+  platforms** (Android run 30472632902, iOS run 30472635247, commit `89f8d230`) - the iOS run had
+  first found two defects (a Swift `guard` that fell through, and raw key bytes read back as UTF-8),
+  both fixed. Compiling is not running - the checks below are still owed.
 
 - \[ \] **WP-VERIF-1 (P1) - [device] Tauri login end to end (init + save + KeyPackage).** All three
   were dead from v0.11.0 to v0.11.2 (`invoke` names matching no Rust command). Native has NOT run
@@ -161,6 +162,14 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   Still unexplained: the enrolment sheet reported DARK under a LIGHT theme. The `dark:` variant is
   correct on web (verified by computed style in both themes), so the suspect is the native
   runtime - re-check on device during WP-VERIF-3.
+
+- \[ \] **WP-I18N-1 (P3) - The keystore plugin's own prompts are hardcoded French.**
+  `KeystorePlugin.kt` and `KeystorePlugin.swift` build their BiometricPrompt / `LAContext` strings
+  as literals ("Deverrouiller Canari", "Annuler", `kBiometricReason`), so an English user gets
+  French on the unlock path. Fixing it means carrying text across the IPC boundary: the
+  `retrieve`/`get_key_bytes` request models have no fields for it, so it touches Rust models +
+  Kotlin + Swift, and the strings must be resolved by the caller (a push handler has no locale
+  context). Note the ONE caller that cannot pass them: the background decrypt path.
 
 - \[ \] **WP-INT-1 (P3) - Cercle webhook credentials.** Set the real `webhookUrl`/`webhookSecret`
   on the prod `balance_topup` product. Blocked on Cercle providing them.
@@ -212,6 +221,8 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 - **A one-way colour is a dark-mode bug waiting to happen.** `bg-white`, `bg-red-50`, `text-amber-900`, `text-red-600`, raw hex: they do not flip, while `text-text-main` on top of them does - white on white. Use the `app.css` tokens (`bg-cn-surface`, `bg-cn-bg`, the `red-err`/`green-ok`/`amber-warn` status triad, `bg-cn-yellow` + `text-cn-ink`) and tint with an opacity modifier on the token. `text-cn-dark` FLIPS, `text-cn-ink`/`cn-scrim`/`cn-tooltip` do not - those three are for surfaces that must stay put in both themes. Table: `docs/wiki/frontend/architecture.md`.
 - **Detect one-way colour per CLASS LIST, never per file:** `bg-white dark:bg-slate-900` is fine, and a plain grep over-reports 4x. `frontend/scripts/find-oneway-colors.mjs` does it right; it must NOT tokenize on `:` or it strips the very `dark:` prefixes it looks for. Black scrims and white at <=20% opacity are the glass idiom, not bugs.
 - **A `@theme` entry is what makes a token exist.** `bg-cn-surface-alt` was used in six components with no `--color-cn-surface-alt` behind it, so Tailwind generated nothing and the class was silently inert. Grep `app.css` before inventing a token name.
+- **A native prompt is user-visible UI you only partly own.** A plugin fills every field you omit from its OWN hardcoded English defaults: `tauri-plugin-biometric` titles the Android prompt from an internal `biometryNameMap` ("Fingerprint Authentication") and labels its button "Cancel", so localizing only the obvious `reason` leaves the two most prominent lines in English. Pass `title`/`subtitle`/`cancelTitle` too - `biometricPromptOptions()`.
+- **Nothing types a string as user-visible, so no compiler enforces Paraglide.** `showToast` takes a `string`; a literal passes lint, `check` and CI, in either language (English ones read as normal code and are the easier miss). `stores/toastLocalization.test.ts` guards that one entry point - a template is accepted only when it interpolates an `m.*()`.
 - **`bun run build` leaves Paraglide output that makes the locale-asserting tests resolve to English** (4 failures in `callSystemMessages.test.ts` / `pinChange.test.ts`). Re-run `bun run paraglide:compile` before `bun run test` after any build.
 
 #### Contracts that the compiler does not check

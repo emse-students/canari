@@ -2181,5 +2181,10 @@
   "auth_device_key_stale_reenter_pin": "Votre clé d'appareil enregistrée n'est plus valide. Entrez votre PIN pour la régénérer.",
   "auth_biometric_enroll_desc": "Déverrouillez Canari avec votre empreinte ou Face ID au lieu de saisir votre code. Votre PIN sera effacé de cet appareil.",
   "auth_biometric_enroll_confirm_title": "Enregistrement de l'empreinte",
-  "auth_biometric_enroll_confirm_desc": "Confirmez avec votre empreinte ou Face ID pour activer le déverrouillage biométrique."
+  "auth_biometric_enroll_confirm_desc": "Confirmez avec votre empreinte ou Face ID pour activer le déverrouillage biométrique.",
+  "auth_biometric_prompt_enable_title": "Activer le déverrouillage biométrique",
+  "auth_biometric_prompt_disable_title": "Désactiver le déverrouillage biométrique",
+  "push_permission_rationale": "Activez les notifications pour être prévenu des nouveaux messages, même lorsque l'application est fermée.",
+  "call_sibling_device_busy": "Un autre appareil est déjà en appel.",
+  "channel_poll_vote_error": "Vote impossible"
 }

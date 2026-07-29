@@ -133,6 +133,26 @@ on the PIN modal. Biometrics become unreachable with nothing logged. That is pre
 happened while `isKeyPresent` invoked a plugin that did not exist (see below), so it now logs its
 failure instead of returning a bare `false`.
 
+### The system biometric prompt
+
+`BiometricService` raises it through `authenticate(reason, options)` from
+`@tauri-apps/plugin-biometric`. Only `reason` is obvious from the signature, and it is **not** the
+whole prompt - the plugin fills the rest from its own English defaults:
+
+| Field | Passed by Canari | Plugin default if omitted | Shown on |
+|---|---|---|---|
+| `title` | `auth_biometric_prompt_{enable,disable}_title` | `"Fingerprint Authentication"` / `"Face Authentication"` (internal `biometryNameMap`) | Android |
+| `subtitle` | `auth_biometric_desc` | none | Android |
+| `reason` | `auth_biometric_prompt_{enable,disable}` | none | Android (as description), iOS (`localizedReason`) |
+| `cancelTitle` | `common_cancel_button` | `"Cancel"` | Android button, iOS `localizedCancelTitle` |
+
+So a prompt whose `reason` is carefully localized still showed an English title and button. Shared
+options live in `biometricPromptOptions()`; the title differs per call site.
+
+The prompts raised by the **keystore** plugin (`retrieve`, `get_key_bytes`) are a separate surface:
+their strings are hardcoded in `KeystorePlugin.kt` / `.swift` and are French only - the plugin
+request models carry no text, so nothing can pass a translation across the IPC boundary yet.
+
 ### Calling the keystore plugin from JS
 
 Two things must line up, and no compiler checks either:

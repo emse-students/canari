@@ -188,7 +188,18 @@ interface ChatMessage {
 - Usage in templates: `{m.key()}` or `m.key({ param })`.
 - Locale-reactive in `<script>`: `const label = $derived(m.some_key())`.
 - Date/number locale: `import { getLocale } from '$lib/paraglide/runtime'` -> `getLocale() === 'en' ? 'en-US' : 'fr-FR'`.
-- User-visible strings must always go through Paraglide — never inline French string literals.
+- User-visible strings must always go through Paraglide — never inline string literals, in either
+  language. English ones are the easier mistake to miss: they look like the rest of the codebase.
+- **Nothing types a string as user-visible**, so the compiler cannot enforce the rule above.
+  `showToast` takes a `string` and a literal passes lint, `check` and CI. `showToast` is guarded by
+  `stores/toastLocalization.test.ts`, which reads the sources and accepts a template only when it
+  interpolates an `m.*()` call; other entry points are on trust.
+- **A native prompt is user-visible UI whose text you do not fully own.** A plugin fills the fields
+  you leave empty from its own hardcoded defaults, which are English: `tauri-plugin-biometric`
+  titles the Android prompt "Fingerprint Authentication" and labels its button "Cancel" unless
+  `title` and `cancelTitle` are passed. Localizing the one string the API makes obvious (`reason`)
+  leaves the two most prominent lines untranslated. See
+  [auth - the system biometric prompt](modules/auth.md).
 
 ## Mobile keyboard detection
 

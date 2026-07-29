@@ -2181,5 +2181,10 @@
   "auth_device_key_stale_reenter_pin": "Your saved device key is no longer valid. Enter your PIN to regenerate it.",
   "auth_biometric_enroll_desc": "Unlock Canari with your fingerprint or Face ID instead of typing your PIN. Your PIN will be erased from this device.",
   "auth_biometric_enroll_confirm_title": "Registering your fingerprint",
-  "auth_biometric_enroll_confirm_desc": "Confirm with your fingerprint or Face ID to enable biometric unlock."
+  "auth_biometric_enroll_confirm_desc": "Confirm with your fingerprint or Face ID to enable biometric unlock.",
+  "auth_biometric_prompt_enable_title": "Enable biometric unlock",
+  "auth_biometric_prompt_disable_title": "Disable biometric unlock",
+  "push_permission_rationale": "Enable notifications to be notified of new messages, even when the app is closed.",
+  "call_sibling_device_busy": "Another device is already in a call.",
+  "channel_poll_vote_error": "Could not vote"
 }

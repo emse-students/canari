@@ -1,4 +1,10 @@
-import { authenticate, BiometryType, checkStatus, type Status } from '@tauri-apps/plugin-biometric';
+import {
+  authenticate,
+  type AuthOptions,
+  BiometryType,
+  checkStatus,
+  type Status,
+} from '@tauri-apps/plugin-biometric';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { m } from '$lib/paraglide/messages';
@@ -23,6 +29,24 @@ const NATIVE_FLAG_KEY = 'biometricConfigured';
  */
 export type BiometricEnrollResult = { enrolled: true } | { enrolled: false; noBiometric: true };
 
+/**
+ * Localized chrome for the system biometric prompt.
+ *
+ * Neither string has a localized default: `tauri-plugin-biometric` falls back to the English
+ * `biometryNameMap` entry ("Fingerprint Authentication") when no `title` is passed, and to a
+ * literal "Cancel" for the negative button. Both are OS-level UI, so an untranslated value is
+ * visible to the user however well the surrounding sheet is localized.
+ *
+ * `title` and `subtitle` are Android-only (iOS shows `reason` alone); `cancelTitle` maps to
+ * `localizedCancelTitle` there, so passing it is worthwhile on both platforms.
+ */
+function biometricPromptOptions(): AuthOptions {
+  return {
+    subtitle: m.auth_biometric_desc(),
+    cancelTitle: m.common_cancel_button(),
+  };
+}
+
 export class BiometricService {
   /**
    * Marks biometric unlock as configured.  The device key is already stored in
@@ -41,7 +65,10 @@ export class BiometricService {
       // Verify the fingerprint / face BEFORE writing the flags. On Android this raises a
       // BiometricPrompt; on iOS it raises Face ID / Touch ID via LAContext.evaluatePolicy().
       // If the user cancels or fails, the promise rejects and the catch below handles it.
-      await authenticate(m.auth_biometric_prompt_enable());
+      await authenticate(m.auth_biometric_prompt_enable(), {
+        ...biometricPromptOptions(),
+        title: m.auth_biometric_prompt_enable_title(),
+      });
 
       localStorage.setItem(CONFIG_FLAG_KEY, 'true');
       if (isTauri()) {
@@ -126,7 +153,10 @@ export class BiometricService {
   static async disable(alias?: string): Promise<void> {
     // Require a biometric authentication before deleting the keystore key. If the user cancels the
     // prompt, authenticate() throws and the disable does not happen — key and flags stay intact.
-    await authenticate(m.auth_biometric_prompt_disable());
+    await authenticate(m.auth_biometric_prompt_disable(), {
+      ...biometricPromptOptions(),
+      title: m.auth_biometric_prompt_disable_title(),
+    });
     if (alias && isTauri()) {
       await invoke(keystoreCommand('deleteKeyBytes'), { payload: { alias } }).catch((e) => {
         console.warn('[BIOMETRIC] deleteKeyBytes failed - keystore entry may survive:', e);
