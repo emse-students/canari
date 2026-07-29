@@ -78,10 +78,17 @@ trail; Canari credits but never displays the balance.
 nothing that POSTs - each action guards itself. `CANARI_INTEGRATION_ENABLED=false` is the local
 switch: it freezes the cotisant snapshot instead of refreshing it, and never opens the gate.
 
-- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link.** CODE COMPLETE, commit
-  `de92e18`. `bun run check` 0 errors, eslint clean, every page renders, 26/26 end-to-end checks
-  pass on a freshly seeded DB (script was scratchpad-only, not committed). **Not pushed, no PR
-  open yet** - that is all that remains.
+- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link.** CODE COMPLETE, 3 commits
+  (`0bf556e` -> `de92e18` -> `7e87b61`), 50 files, +2144/-574. `bun run check` 0 errors, eslint
+  clean, every page renders, 27/27 end-to-end checks pass on a freshly seeded DB against a live
+  HTTP stub of `cotisant-status` (script was scratchpad-only, not committed).
+  **BLOCKED on access, not on code: `origin` is `gitlab.emse.fr/aurel.dautry/le-cercle` (GitLab,
+  NOT GitHub - `gh` is useless here), and the stored GCM credentials get
+  `403 You are not allowed to download code from this project`; SSH is `Permission denied
+  (publickey)`.** So the branch cannot be pushed and the MR cannot be opened from this machine -
+  ask Aurel for Developer access, or add an SSH key to gitlab.emse.fr. The MR description is
+  written and ready to paste (French, scratchpad `MR-DESCRIPTION.md`); once access exists:
+  `git push -u origin audit/security-and-canari-integration -o merge_request.create`.
   Verified by those checks: forged/tampered session refused; non-cotisant -> `/unauthorized`;
   `/api/*` 401 anon and 403 for a non-cercleux; GET on `/events/open` no longer opens a perm;
   unsigned and mis-signed webhooks 401 while a signed one credits exactly once on replay; the
@@ -91,8 +98,9 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   Still owed before merge: run it against a REAL Canari (`CANARI_INTEGRATION_ENABLED=true` has
   never been exercised - the 24 h grace window and the TTL refresh are untested against a live
   `cotisant-status`), and a real OIDC login round trip (the checks mint their own cookies).
-  The Canari half of the alcohol gate is now correct (WP-COT-9/10/11 shipped); the prod runbook
-  is `docs/PROD-TEST-CERCLE.md`.
+  The Canari half of the alcohol gate is now correct (WP-COT-9/10/11 shipped), and the prod runbook
+  that walks both of those through is written: `docs/PROD-TEST-CERCLE.md` (real addresses, which
+  secret wears which name on each side, and six ordered checks V1-V6).
 
 - \[ \] **WP-CERCLE-2 (P3) - No way to correct a mis-keyed consumption.** The ledger is
   append-only and the user declined an `adjustment` kind, so a drink charged twice or to the wrong
