@@ -8,7 +8,7 @@
 - STATE PRUNING: When updating the roadmap, DELETE detailed descriptions of completed tasks. Keep the file small.
 - CLAUDE.md HYGIENE: Actively trim this file. DELETE shipped Work Packages (keep only forward-relevant gotchas), collapse redundant notes, drop stale entries.
 - UPDATE STATE: Update SESSION STATE at the bottom of this file before finishing a Work Package.
-- WORKFLOW CYCLE: Plan -> Ask if uncertain -> Execute (surgical) -> Test -> `git add . && git commit -m "[summary]"` -> Update SESSION STATE"
+- WORKFLOW CYCLE: Plan -> Ask if uncertain -> Execute (surgical) -> Test -> `git add . && git commit -m "[summary]"` -> Update SESSION STATE" -> STOP (compact)
 - DOCUMENTATION: Technical docs live in `docs/wiki/` (English, LLM-oriented, preferred search before code). User-facing guides in `docs/user-guide/` (French). UML diagrams in `docs/diagrams/`. Root-level docs: `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `SECURITY.md`. Delete unused code immediately.
 - CHANGELOG: When adding features, fixing bugs, or making breaking changes, add an entry under `[Unreleased]` in `CHANGELOG.md` (Keep a Changelog format). Move to a version section on release.
 - WIKI IS PREFERRED: Always search `docs/wiki/` before reading source code. Update the relevant wiki page alongside code changes — stale wiki is worse than no wiki. Cross-link freely between pages.
@@ -148,8 +148,19 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   runtime - re-check on device during WP-VERIF-3.
 
 - \[ \] **WP-INT-1 (P3) - Cercle webhook credentials.** Set the real `webhookUrl`/`webhookSecret`
-  on the prod `balance_topup` product. Blocked on the Cercle site going online; the receiving code
-  already exists in `../le-cercle`, so the contract can be checked against it beforehand.
+  on the prod `balance_topup` product. Blocked on the Cercle site going online.
+  **Contract verified 2026-07-29 against `../le-cercle` (code read on both sides, nothing run):**
+  `dispatchCercleWebhook` POSTs `{productId, userId, amountCents, paymentIntentId, timestamp}` with
+  `X-Canari-Signature: sha256=<hex HMAC-SHA256 of the RAW body>`; `verifyWebhookSignature` +
+  `/api/canari/topup` expect exactly that, sign the raw body too, and read the same field names.
+  `userId` IS the OIDC `sub` = `users.uuid` there, so no id mapping. Replays are idempotent on
+  `paymentIntentId`. The two sides agree.
+  Two operational traps for the day it goes live: Canari sets `maxRedirects: 0` and accepts 2xx
+  only, so `webhookUrl` must be the FINAL https URL (an http->https redirect fails every delivery);
+  and the Cercle answers **404** for a user who has never logged into its site, which Canari counts
+  as a failure - after 3 attempts that top-up sits in `webhook_deliveries` as `failed` and needs a
+  manual retry from the admin panel. `CANARI_WEBHOOK_SECRET` (Cercle env) and the product's
+  `webhookSecret` (Canari) are the same string under two names.
 
 - \[ \] **WP-CARTO-1 (P2) - Publish an association map from Canari to the Portail.** Canari can
   already build an association map; add a button that publishes one to the Portail
