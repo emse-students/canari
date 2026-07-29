@@ -95,11 +95,23 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   let rerun = false;
   let backoffTimer: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * Read the queue. A failure here is indistinguishable from an empty queue to every caller, so
+   * it is the one place a queued message can vanish without a trace - hence the log.
+   */
+  async function readQueue(where: string): Promise<OutboxEntry[]> {
+    if (!storage) return [];
+    return storage.getOutboxEntries(deviceKeyB64).catch((e) => {
+      log(`[OUTBOX] ${where}: reading the queue failed, treating it as empty: ${String(e)}`);
+      return [] as OutboxEntry[];
+    });
+  }
+
   /** Rewrite the native background-send mirror from the current queue (Tauri only; best-effort). */
   async function refreshMirror(): Promise<void> {
     if (!storage) return;
-    const entries = await storage.getOutboxEntries(deviceKeyB64).catch(() => [] as OutboxEntry[]);
-    await syncOutboxMirror(entries);
+    // syncOutboxMirror swallows and logs its own failures ([OUTBOX_MIRROR]); it never rejects.
+    await syncOutboxMirror(await readQueue('mirror refresh'));
   }
 
   // Flush opportunistically when connectivity or foreground is regained.
@@ -186,7 +198,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           { media: { ...media, uploadedRef: ref, fileBytes: undefined } },
           deviceKeyB64
         )
-        .catch(() => {});
+        // Losing this write means a crash before the send re-uploads the same file.
+        .catch((e) =>
+          log(`[OUTBOX] ${entry.id.slice(0, 8)}… media ref not persisted: ${String(e)}`)
+        );
     }
     const fullRef: MediaRef = {
       type: mediaKindToType(media.kind),
@@ -219,7 +234,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
   /** Flush a single entry. Returns the outcome so the loop can schedule backoff/chaining. */
   async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
-    if (entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) return 'skip';
+    if (entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… skipped, backing off for ${entry.nextAttemptAt - Date.now()}ms (attempt ${entry.attempts})`
+      );
+      return 'skip';
+    }
 
     // The MLS outbox is for DMs/groups only. A channel entry (server-authoritative, no MLS group)
     // can only have leaked in through a bug: it would loop forever on requestReAdd 500s. Drop it so
@@ -246,8 +266,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
 
     // Group not sendable yet: trigger recovery (external join / welcome_request) and retry later.
+    // Logged because this branch holds a message back indefinitely while reporting nothing: a
+    // conversation stuck here looks, from the outside, exactly like a message that was delivered.
     if (!deps.isGroupHealthy(terminalId)) {
-      await deps.requestReAdd(terminalId).catch(() => {});
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… held: group ${terminalId.slice(0, 8)}… not sendable, requesting re-add`
+      );
+      await deps
+        .requestReAdd(terminalId)
+        .catch((e) =>
+          log(`[OUTBOX] Re-add request for ${terminalId.slice(0, 8)}… failed: ${String(e)}`)
+        );
       return 'retry';
     }
 
@@ -273,7 +302,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       if (mediaContent) updateMessageContent(entry.id, mediaContent);
       await persistSent(terminalId, entry.id);
       patchStatus(entry.id, 'sent');
-      await storage?.deleteOutboxEntry(entry.id).catch(() => {});
+      // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
+      // The receiver deduplicates on messageId, but the retry is worth seeing in a log.
+      await storage
+        ?.deleteOutboxEntry(entry.id)
+        .catch((e) =>
+          log(
+            `[OUTBOX] ${entry.id.slice(0, 8)}… sent but still queued (delete failed): ${String(e)}`
+          )
+        );
       logMlsMetric({
         kind: 'outbox_flush_success',
         conversationId: terminalId,
@@ -296,7 +333,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           },
           deviceKeyB64
         )
-        .catch(() => {});
+        // Losing this write loses the backoff with it, so the entry is retried at full speed.
+        .catch((err) =>
+          log(`[OUTBOX] ${entry.id.slice(0, 8)}… backoff not persisted: ${String(err)}`)
+        );
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`
       );
@@ -338,24 +378,33 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // (silent loss - the "cold send on resume" race). Waiting for idle guarantees the local
       // epoch is up to date. In steady state the queue is already idle -> immediate resolution,
       // no added latency. [[DF1c]]
-      await mlsService.waitForMessageQueueIdle().catch(() => {});
+      await mlsService.waitForMessageQueueIdle().catch((e) =>
+        // The barrier failing does NOT stop the flush - a queue that cannot drain must not block
+        // sending forever. But it means exactly the condition the barrier exists to prevent, so it
+        // is the first thing to look for when a message is accepted locally and never arrives.
+        log(
+          `[OUTBOX] Incoming-queue barrier failed, sending at a possibly stale epoch: ${String(e)}`
+        )
+      );
       do {
         rerun = false;
-        const entries = await storage
-          .getOutboxEntries(deviceKeyB64)
-          .catch(() => [] as OutboxEntry[]);
+        const entries = await readQueue('flush');
         if (entries.length === 0) break;
         logMlsMetric({ kind: 'outbox_pending_count', count: entries.length });
+        log(`[OUTBOX] Flushing ${entries.length} queued entr${entries.length === 1 ? 'y' : 'ies'}`);
         let anySent = false;
         for (const entry of entries) {
           const outcome = await flushOne(entry);
           if (outcome === 'sent') anySent = true;
         }
         // Re-read for backoff scheduling (statuses/attempts changed during the loop).
-        const remaining = await storage
-          .getOutboxEntries(deviceKeyB64)
-          .catch(() => [] as OutboxEntry[]);
-        if (remaining.length > 0) scheduleBackoff(remaining);
+        const remaining = await readQueue('backoff scheduling');
+        if (remaining.length > 0) {
+          log(
+            `[OUTBOX] ${remaining.length} entr${remaining.length === 1 ? 'y' : 'ies'} still queued`
+          );
+          scheduleBackoff(remaining);
+        }
         // Chain another pass if a send unblocked dependents, or a concurrent enqueue arrived.
         if (!anySent) break;
       } while (rerun);
@@ -368,6 +417,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   return {
     async enqueue(entry: OutboxEntry): Promise<void> {
       if (!storage) return;
+      // The first trace of a message on this device: without it there is no way to tell a send that
+      // never reached the queue from one the queue accepted and lost.
+      log(
+        `[OUTBOX] Queued ${entry.id.slice(0, 8)}… (${entry.kind}) for ${entry.conversationId.slice(0, 8)}…`
+      );
       await storage
         .saveOutboxEntry(entry, deviceKeyB64)
         .catch((e) => log(`[OUTBOX] Enqueue failed: ${String(e)}`));
@@ -381,7 +435,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
     async applyPendingStatuses(): Promise<void> {
       if (!storage) return;
-      const entries = await storage.getOutboxEntries(deviceKeyB64).catch(() => [] as OutboxEntry[]);
+      const entries = await readQueue('pending statuses');
       for (const entry of entries) {
         const found = findMessage(entry.id);
         // Only (re)apply 'pending'; do not clobber a live 'sending' transition.

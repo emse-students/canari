@@ -269,22 +269,6 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 
 ---
 
-### VERIFIED ON WEB (v0.11.3 - v0.11.5, two accounts in isolated contexts, zero console errors)
-
-Proven on prod, do not re-test: login/DM round trip; device-reset recovery for a DM **and** a
-community (history bundle included); PIN change (state + local messages re-encrypted, same device
-id, old PIN refused); device revocation (Redis routing set shrinks immediately); community roles
-(member gets a read-only settings modal, admin gets everything, server-authoritative
-`viewerCanManage`); invitation (DM card + `memberAdded` system message); the three deep-link entry
-points (fresh load of `/c/join/<token>`, in-app link preview, invite card CTA) each landing on the
-right community AND `#general`; live removal from a community leaving the remover's own rail
-untouched.
-
-Still NOT exercised on prod, unit-tested only: the `channel` / `public-channel` removal outcomes
-(removal from a single channel rather than a whole community).
-
----
-
 ### SHARED GOTCHAS (do not repeat)
 
 - **Driving several logged-in sessions at once:** `new_page` with `isolatedContext: "<name>"` (chrome-devtools MCP) gives a fully separate cookie jar, IndexedDB and sessionStorage - i.e. a distinct device with its own MLS state and device id. Two contexts + two accounts is the only way to exercise Welcome/epoch/decrypt paths from the outside. `fill()` sets a value without firing the input events Svelte tracks; use `type_text` for composers and debounced search.

@@ -75,7 +75,7 @@ export async function syncOutboxMirror(entries: OutboxEntry[]): Promise<void> {
     await invoke('store_outbox_mirror', { entries: mirror });
   } catch (e) {
     appendLog(
-      `[OUTBOX_MIRROR] Ecriture mirror echouee: ${e instanceof Error ? e.message : String(e)}`
+      `[OUTBOX_MIRROR] Mirror write failed (${mirror.length} entries): ${e instanceof Error ? e.message : String(e)}`
     );
   }
 }

@@ -57,6 +57,42 @@ connection.ts handler:
 
 See [`protocols/mls-protocol.md`](../protocols/mls-protocol.md) for full flow details.
 
+## Outbox (outbound delivery)
+
+`utils/chat/outbox.ts` owns every outbound message. A send is persisted first and transmitted
+second, so the queue - not the network call - is what guarantees delivery. The flusher re-encodes
+the proto against the *current* epoch at send time (epoch changes are transparent), is idempotent
+on the stable `messageId` (a re-send after a crash is deduplicated by the receiver), and never
+sends into a group that is not healthy.
+
+**The barrier before every flush is a correctness device, not an optimisation.**
+`waitForMessageQueueIdle()` lets the *incoming* queue drain first: `fetchPendingMessages` (on
+reconnect or resume) only enqueues the missed frames, and applying them - the commits that advance
+the epoch - is asynchronous. A flush triggered by `online` or `visibilitychange` that skips the
+barrier can send at a stale epoch, which up-to-date peers cannot decrypt. That is a silent loss:
+the sender sees a delivered message and the recipient never receives one.
+
+### Everything the outbox swallows, it logs
+
+The queue is deliberately best-effort at every step - a storage write that fails must not take the
+send down with it - and that makes silence the default failure mode. Each such branch therefore
+logs, because these are the only traces available when a message is accepted locally and never
+arrives (see WP-FWD-1):
+
+| Branch | Why silence there is dangerous |
+|---|---|
+| Reading the queue | A failure is indistinguishable from an empty queue, so the entry is simply never flushed |
+| The idle barrier | Failing it means sending at a possibly stale epoch - the silent loss above |
+| Group not sendable | Holds the message indefinitely while `requestReAdd` recovers; from outside it looks delivered |
+| Backoff skip | Explains a message sitting in the queue with nothing else happening |
+| Delete after send | Leaves a *sent* entry queued, so the next flush sends it again |
+| Backoff not persisted | Loses the attempt count, so the entry retries at full speed |
+| Media ref not persisted | A crash before the send re-uploads the same file |
+
+`enqueue` logs too: it is the first trace of a message on this device, and without it a send that
+never reached the queue cannot be told apart from one the queue accepted and lost. Correlating a
+loss needs `[OUTBOX]` from the sender and `[QUEUE]` from the recipient at the same moment.
+
 ## Message envelope
 
 All messages are serialized as a `MessageEnvelope` union before MLS encryption:
