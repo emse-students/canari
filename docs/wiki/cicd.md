@@ -76,12 +76,39 @@ The `deploy-to-server` job runs on a self-hosted GitHub Actions runner (label `s
 5. Android: upload to Google Play (automatic or manual depending on track)
 ```
 
+## A manual workflow run is the only native compiler available off macOS
+
+`android-release.yml` and `ios-release.yml` both accept `workflow_dispatch`, and **every** publish
+step (GitHub Release, Google Play, TestFlight) is gated on `workflow_run`. A manual run is
+therefore a pure compile check that ships nothing — and it is the only way to compile Swift, ObjC
+or Kotlin from a Windows machine. Dispatch both before believing any native change.
+
+This is not a formality. A Swift `guard` body that falls through, a Kotlin nested type declared in
+a companion object, a plugin command missing from its ACL: none of these are visible to
+`cargo clippy`, `bun run check` or any gate that runs locally. On Android specifically, the release
+build (`:app:compileUniversalReleaseKotlin`) is the first real Kotlin compile — a debug build does
+not exercise it.
+
+## Signing
+
+Two **named** provisioning profiles must exist and match `PROVISIONING_PROFILE_SPECIFIER` exactly:
+one for the `Canari` app, one for the `CanariNotifications` notification-service extension. Team is
+"Les Rootz" (`4CLNB8SR6L`); the profiles expire **2027-07-11**.
+
+## Version bump
+
+`scripts/bump-app-version.sh` must patch the NSE's `MARKETING_VERSION` and
+`CURRENT_PROJECT_VERSION` alongside the app's — an NSE left behind on an older version is rejected
+at upload. `bump-version.yml` stages an **explicit `git add` list**, so any new file the script
+learns to patch has to be added there too, or the bump silently leaves it uncommitted.
+
 ## Notable CI gotchas
 
 - iOS `altool` can exit 0 while output says `UPLOAD FAILED` — the workflow greps for failure markers in the transcript.
 - Android Play API rejects `changesNotSentForReview` post-launch — never include this flag.
 - `workflow_run` triggered off a release-triggered workflow must NOT have a `branches` filter (GitHub silently drops them).
 - Pre-commit hooks sweep the whole frontend and re-stage — isolate unrelated dirty files before committing (`git stash` them).
+- Never assert a wall clock in a test. An unseeded generator with rejection sampling once drew 31s against a 15s budget on a runner and took CD down: seed the input, and let the `it` timeout guard non-termination.
 
 ## See also
 

@@ -38,6 +38,17 @@ The chat-delivery-service is the MLS API layer. It:
 | 24h | Purge orphaned member rows |
 | 24h | Purge stale pending invitations (> 30 days) |
 
+### Dead devices are reaped, but only after 90 days
+
+`detectStaleDevices` (hourly) keys liveness on `KeyPackage.createdAt`, which every WebSocket
+reconnect refreshes. Past `RETENTION_WINDOW_MS` it `srem`s the device from the Redis routing set
+and resets its row to `pending`; `cleanupStaleDevices` then purges the whole footprint.
+
+Until that window elapses, a churned device id keeps receiving fan-out. That is the designed
+offline window - a device that is merely off for a fortnight must still get its messages - not a
+leak. Anything that needs a device to stop receiving *immediately* (a revocation) must act on the
+Redis set directly rather than wait for the reaper.
+
 ## Routes
 
 All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (injected by Nginx) unless noted.

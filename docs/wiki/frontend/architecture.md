@@ -121,6 +121,10 @@ Rules:
   fixed-palette tint: the tint then tracks the theme too.
 - A `-600` shade is not a safe middle ground. `text-red-600` reads fine on a light card and drops
   to roughly 3.9:1 once that card flips; `text-red-err` stays above 7:1 in both.
+- **A `@theme` entry is what makes a token exist.** `bg-cn-surface-alt` was used by six components
+  with no `--color-cn-surface-alt` behind it, so Tailwind generated no rule and the class was
+  silently inert — those badges rendered with no background at all. Check `app.css` before
+  inventing a token name.
 
 ### Finding one-way colours
 
@@ -200,6 +204,9 @@ interface ChatMessage {
   `title` and `cancelTitle` are passed. Localizing the one string the API makes obvious (`reason`)
   leaves the two most prominent lines untranslated. See
   [auth - the system biometric prompt](modules/auth.md).
+- **`bun run build` leaves Paraglide output that resolves to English**, which makes the
+  locale-asserting tests fail (4 of them, in `callSystemMessages.test.ts` and `pinChange.test.ts`).
+  Re-run `bun run paraglide:compile` before `bun run test` after any build.
 
 ## Mobile keyboard detection
 

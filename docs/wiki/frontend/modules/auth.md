@@ -99,6 +99,28 @@ WP-SEC-1 hold the key in `push_context.json`; a one-shot migration
 keystore at the next app start and strips the field. The background readers have **no** JSON
 fallback, so one push before that first launch shows generic text.
 
+### The key is raw bytes at rest and base64 on the wire
+
+The device key is stored as **raw 32 bytes** in both platform keystores, and crosses the Rust FFI
+as **base64**. Writers (`storeKeyBytes`, `MlsDeviceKeyStore.store`, both one-shot migrations) decode
+before storing; readers (`getKeyBytes`, `CanariRetrieveDeviceKey`,
+`NotificationService.retrieveDeviceKey`, `MlsDeviceKeyStore.retrieve`) encode after loading.
+Treating the stored bytes as text anywhere in that chain silently yields no key - random key bytes
+are almost never valid UTF-8, so the reader returns nil and every push falls back to generic text.
+`pushContextFields.test.ts` asserts the contract across all five files.
+
+On Android there is a second encoding trap: **`Base64.DEFAULT` appends a newline**, and the Rust
+`decode_base64_to_32_bytes` does not trim. Anything crossing into the FFI must use `NO_WRAP`;
+`DEFAULT` is correct only for KeystorePlugin's own at-rest IV/ciphertext format. Do not unify the
+two.
+
+### When a state still refuses to open
+
+The PIN modal's "forgot PIN" (`handlePinReset`) wipes the server-side and local MLS state and
+restarts in first-setup mode. It costs the local history and is the last resort, after
+`classifyStateLoadFailure` has ruled out a recoverable `sealed` state - see
+[`protocols/mls-protocol.md`](../../protocols/mls-protocol.md).
+
 ## Mobile unlock flow (Tauri)
 
 Driven by `startLoginFlow()` in `components/layout/ChatBackgroundService.svelte`.

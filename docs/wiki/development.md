@@ -98,6 +98,79 @@ svelte-check  # Type check
 
 The hooks run across the **whole frontend** and re-stage modified files. Isolate unrelated dirty files before committing.
 
+## Contracts the compiler does not check
+
+Canari spans TypeScript, Rust, Kotlin, Swift and ObjC, and the boundaries between them are strings
+and JSON. Every rule below describes a contract that compiles, lints and type-checks while being
+wrong, and each one has already shipped a bug.
+
+### Cross-language boundaries
+
+- **Tauri command names are unchecked strings on both sides.** An `invoke()` literal matching no
+  `#[tauri::command]` passes every gate and fails at runtime. Grep both sides on any rename.
+- **A plugin command needs three things right, not one.** The prefix is the Tauri *plugin* name
+  (`plugin:keystore|…`, from `Builder::new`), **not** the Android class id (`app.tauri.keystore`);
+  the command is the snake_case Rust fn, not the Kotlin/Swift method; and it must appear in the
+  plugin's `build.rs` `COMMANDS` **and** in `permissions/default.toml`, or the IPC boundary refuses
+  it even though the Rust fn exists. Build identifiers with `keystoreCommand()`;
+  `keystoreCommands.test.ts` reads the Rust sources and fails on drift.
+- **`push_context.json` is a JSON contract across four languages** — Rust writes it; ObjC, Swift and
+  Kotlin read it. Nothing checks it: the v0.11.0 `pin` → `deviceKeyB64` rename killed iOS background
+  decrypt for three releases. `src/lib/mobile/pushContextFields.test.ts` is the only guard; change
+  the fields and change it too.
+- **A `postMessage` payload is typed by whoever writes the literal — i.e. by nobody.** All three MLS
+  worker contracts live in `src/lib/mls-client/mlsWorkerProtocol.ts` and are imported by both ends.
+  Add new worker messages there, never as a local interface.
+
+### Silent-degradation traps
+
+- **Never let a capability probe swallow its own failure.** `isKeyPresent` returned `false` on a
+  thrown invoke, making "the plugin does not exist" indistinguishable from "no key here" — a wrong
+  command name silently disabled biometric unlock for three releases. A probe that fails must log.
+- **`getStorage()`'s IndexedDB fallback is a last resort, not a mode.** It announces itself with a
+  `console.warn` inside a WebView, so a permanent degradation looks like a healthy start. Confirm
+  the backend with `[DB] Using SQLite storage (Tauri)`. `canari_<userId>.db` is frontend-only; the
+  native side owns `mls_pending.db`.
+- **A vendored plugin still ships the sample it was forked from.** `tauri-plugin-keystore` carried
+  the UniMe `store`/`retrieve`/`remove` API with zero callers, yet it was registered in
+  `generate_handler!`, in the `build.rs` ACL and in `permissions/default.toml` — reachable over IPC
+  with a real biometric prompt and keystore write behind it. Unused native code is not inert; delete
+  the API you did not fork the crate for.
+
+### Things that look type-safe and are not
+
+- **Never redeclare an `init`/lifecycle override with fewer parameters.** TypeScript accepts it, so
+  the dropped argument is invisible to `bun run check`. Prefer inheriting `BaseMlsService.init` over
+  copying it.
+- **Never branch on an error message.** `onLoginFailed(msg, code)` carries a typed `LoginErrorCode`
+  (`loginErrors.ts`) precisely because the message is localized: a regex over it ships dead in
+  French.
+- **"Logged in" means two things.** `globalSession.isLoggedIn` means MLS is ready; the login page
+  checks the OIDC/refresh session. Page guards test `currentUserId()`, and MLS-dependent sections
+  handle MLS absence themselves.
+- **A migration outlives the schema it was written against.** Branches keyed on `PRAGMA
+  user_version` all run on a brand-new database, which starts at 0 — so the v1→v2 purge kept naming
+  a `salt` column dropped later and threw on every fresh install. In `db/sqliteMigrations.ts` a
+  freshly created DB is stamped at `SCHEMA_VERSION` and skips every historical branch (detected via
+  `sqlite_master` **before** the `CREATE TABLE`s, since `user_version` is 0 for a pre-migration DB
+  too), and column-inspecting statements are built from `PRAGMA table_info`.
+
+## Working in this repo
+
+- Backend apps call bare `oxlint`/`oxfmt` from their local `node_modules/.bin` with repo-level
+  configs (`-c ../../oxfmt.json`, `-c ../../.oxlintrc.nest.json`). A hook failing with
+  `'oxlint' n'est pas reconnu` means `npm install` has not been run in that app directory.
+- Before pushing: `rm -rf apps/*/dist`, then `git pull --rebase --autostash origin main`. A stale
+  `dist/` makes the pre-push hook replay compiled specs.
+- Commit signing is on globally over SSH (`gpg.format ssh`,
+  `user.signingkey ~/.ssh/id_ed25519.pub`). Every commit is Verified — do not disable it.
+- Driving several logged-in sessions at once (chrome-devtools MCP): `new_page` with
+  `isolatedContext: "<name>"` gives a fully separate cookie jar, IndexedDB and sessionStorage —
+  i.e. a distinct device with its own MLS state and device id. Two contexts plus two accounts is
+  the only way to exercise Welcome/epoch/decrypt paths from the outside. Note that `fill()` sets a
+  value without firing the input events Svelte tracks; use `type_text` for composers and debounced
+  search.
+
 ## Scripts
 
 | Script | Purpose |

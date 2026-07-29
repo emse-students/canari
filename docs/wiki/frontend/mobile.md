@@ -81,6 +81,28 @@ IndexedDB. Two rules follow, both enforced in `db/sqliteMigrations.ts` and its t
 - A migration that inspects columns must build its statement from
   `PRAGMA table_info(...)`, so dropping a column can never break the migration that mentions it.
 
+## Rules that hold across both platforms
+
+**Push is all-FCM.** One transport for Android and iOS alike: the backend sends every `PushToken`
+through `getMessaging().send()`, and FCM relays to APNs using the `.p8` key configured in the
+Firebase console. There is no direct-APNs path for messages (VoIP calls are the exception, see
+below), which is why `FirebaseAppDelegateProxyEnabled` must stay enabled. Architecture:
+[`services/chat-delivery.md`](../services/chat-delivery.md).
+
+**Firebase 12 moved the iOS data path.** `messaging:didReceiveMessage:` no longer exists. FCM data
+now arrives through the `UIApplicationDelegate` swizzle (`CanariInstallRemoteNotificationHook`) and
+the `UNUserNotificationCenter` callbacks, both funnelling into `CanariHandleFcmData()`. Hook new
+iOS push work there.
+
+**Branch on the runtime helpers, not on ad-hoc checks:** `isIosTauriRuntime()` and
+`isMobileTauriRuntime()` in `appVersion.ts`. Several behaviours shipped Android-only and had to be
+widened to all-mobile afterwards (heartbeat, notification suppression, `reloadStateFromDisk`) —
+when adding one, decide deliberately which of the two it belongs to.
+
+**Kotlin nested types go on the outer class body, never inside a companion object** — declared
+there they are unreachable by class name, and the failure only appears in the release build, which
+is the [first real Kotlin compile](../cicd.md).
+
 ## iOS specifics
 
 ### Notification Service Extension (NSE)

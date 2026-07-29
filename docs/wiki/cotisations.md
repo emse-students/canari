@@ -291,6 +291,10 @@ Setting both directions up on the real hosts, and the checks that prove the link
 
 ## Permissions
 
+`MANAGE_MEMBERS` is granted **per association**, so a tag revoke must be scoped to
+`issuingAssocId`: deleting on the tag id alone lets a manager of one association strip a tag issued
+by another - a cross-tenant IDOR (WP-COT-9).
+
 - `MANAGE_MEMBERS` - grant/revoke tags (`/tags`, `/cotisants`), read/export the roster, manage the
   staff roster.
 - `MANAGE_PRODUCTS` - enable cotisation, edit the membership product, create boutique products,

@@ -174,109 +174,110 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
 
 ### CANARI - DURABLE RULES
 
-One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/`.
+One line per rule, with the page that carries the reasoning. If a rule needs a paragraph, the
+paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 
-#### MLS state and keys
+#### MLS state and keys -> [mls-protocol](docs/wiki/protocols/mls-protocol.md), [auth](docs/wiki/frontend/modules/auth.md)
 
-- **An at-rest envelope change needs a reader for the previous format in the SAME commit.** Neither `CanariDBMls_<userId>` (schema v1) nor native `mls.bin` is versioned, so nothing rewrites old blobs; v0.11.0 changed the envelope with no reader and locked every existing install out. Format locked by `mls-core/tests/legacy_state_envelope.rs`.
-- **Two ways a saved state fails to load, two answers.** `BaseMlsService.classifyStateLoadFailure` is the only place that decides: `sealed` (AEAD failure) honours `noFreshStart` so the old PIN can recover; `mismatch` (decrypted, but names another device) must not - no PIN repairs an identity.
-- **After any fresh start, persist the new state BEFORE anything else can fail**, or the new device id and the old blob mismatch again next launch (the churn loop).
-- **PIN policy is one rule everywhere:** `isValidPin` (>= 4 chars, no max, no charset limit) guards setup, change, recovery AND unlock. A PIN accepted at creation but refused at unlock locks its owner out of their own messages.
-- **Who owns the keystore key:** `store_push_context` (login) and `IMlsService.changeDeviceKey` (PIN change/recovery) write alias `mls_device_key_{userId}_{deviceId}`. `applyNewDeviceKeyLocally` must NEVER call `BiometricService.disable` - that deletes the entry just written.
-- **Device key persistence:** `deviceKeyVault.ts` picks storage via `vaultStore()` keyed on `canari_device_key_persist` (default `sessionStorage`, opt-in `localStorage`); `setDeviceKeyPersistence` wipes BOTH stores before re-saving. "Stay signed in" starts UNCHECKED by design - it reflects the stored choice.
-- **The background copy of the device key is a keystore entry, never a file.** `push_context.json` carries `userId`/`deviceId`/`baseUrl`/`pushToken` and no key material. A push handler has no user, so the entry must be hardware-backed yet unattended-readable: Android reuses the alias (`setUserAuthenticationRequired(false)`, read Context-only via `MlsDeviceKeyStore` - **never** `setUnlockedDeviceRequired(true)`, that dies exactly when a push arrives); iOS uses a SECOND item `mls_bg_key_<alias>`, `AfterFirstUnlockThisDeviceOnly`, no `kSecAttrAccessControl`, access group `group.fr.emse.canari`. Table: `docs/wiki/frontend/modules/auth.md`.
-- **Android `Base64.DEFAULT` appends a newline and the Rust `decode_base64_to_32_bytes` does not trim.** Encode anything crossing into the FFI with `NO_WRAP`; `DEFAULT` is only correct for KeystorePlugin's own at-rest IV/CT.
-- **The device key is RAW 32 bytes at rest in the keystore, base64 on the FFI wire.** Writers (`storeKeyBytes`, `MlsDeviceKeyStore.store`, both one-shot migrations) decode before storing; readers (`getKeyBytes`, `CanariRetrieveDeviceKey`, `NotificationService.retrieveDeviceKey`, `MlsDeviceKeyStore.retrieve`) encode after loading. UTF-8 anywhere in that chain silently yields no key. Guarded by `pushContextFields.test.ts`.
-- **Escape hatch when a state still refuses to open:** the PIN modal's "forgot PIN" (`handlePinReset`) wipes server + local MLS state and restarts in first-setup mode, at the cost of local history.
+- An at-rest envelope change needs a reader for the previous format in the SAME commit.
+- `classifyStateLoadFailure` alone decides: `sealed` honours `noFreshStart`, `mismatch` must not.
+- After any fresh start, persist the new state BEFORE anything else can fail (or churn loop).
+- `isValidPin` (>= 4 chars) guards setup, change, recovery AND unlock - one rule, or a lockout.
+- `applyNewDeviceKeyLocally` must NEVER call `BiometricService.disable`.
+- The background copy of the device key is a keystore entry, never a file.
+- Raw 32 bytes at rest, base64 on the FFI wire; Android must encode with `NO_WRAP`.
+- Escape hatch: "forgot PIN" wipes state and restarts, at the cost of local history.
 
-#### Community channels
+#### Community channels -> [chat](docs/wiki/frontend/modules/chat.md), [social-service](docs/wiki/services/social-service.md)
 
-- **Never return a `Channel` entity to a client.** It carries `masterSecret`, the HKDF root of every epoch key; nothing strips it (no `ClassSerializerInterceptor`, no `@Exclude`). Project fields explicitly, as `listChannelsForUser` and `getWorkspaceBySlug` do.
-- **A slug is not an authorization.** Every invite link contains one and the preview hands it back before joining, so `getWorkspaceBySlug` gates on membership and filters channels through `canAccessChannel`.
-- **`/c/<groupId>` and `/chat/<groupId>` are NOT routes** (the wiki claimed they were): a conversation is only ever opened by publishing to `notifNav`. A role change is likewise never pushed live - an open settings modal keeps the old role until reload.
-- **A deep-linked selection must outlive the route remount.** `/chat` and `/communities` are separate route components; the route-mode switch in `MainChatPage` clears the selection, and a deep link publishes its selection BEFORE navigating. `selectionBelongsToRoute` keeps only what matches the mode being entered - true exactly for a deep link, never for a tab switch.
-- **A channel target can only be opened on `/communities`.** `chatDeepLinkRoute` decides; `openInvitedChannel` is the one entry point for both the DM invite card and an accepted invite link. Routing a channel to `/chat` lands on a view that structurally cannot show it - that is what made "Rejoindre la communauté" look inert.
-- **A just-accepted invitation is never in the loaded sidebar,** and `openNotificationTarget` refuses a channel it cannot find, so the arrival selects nothing. `ChatBackgroundService` refetches the communities ONCE per pending target to close that gap (guarded, or a revoked channel loops on the endpoint).
-- **A deep-link target is held until it is DISPLAYED, not until it is selected once.** The conversations map is emptied and rebuilt by the IndexedDB restore and pruned by every community refetch, so a target selected while it is filling is dropped moments later and the `useConversations` watchdog nulls it - that is why every deep link landed in the right tab on nothing. `ChatBackgroundService` alone owns the landing (never duplicate it in `MainChatPage`: same singletons), re-asserts a lost selection, and stays idle once `selectedContact === target` and the map has it.
-- **Holding a landing means nothing without a rule for abandoning it** (`landingRecovery`/`landingAfterRefresh`, pinned by `notificationRouting.test.ts`): refetch once for an unknown channel, RETRY when `loadChannelWorkspacesFromBackend` returned false (its in-flight guard dropped the request - a join racing the startup load), abandon when a real refresh still does not know it or a DM is absent from an already-restored map. Without abandon, a revoked channel pins the selection forever.
+- Never return a `Channel` entity to a client: it carries `masterSecret`. Project fields explicitly.
+- A slug is not an authorization - `getWorkspaceBySlug` gates on membership.
+- `/c/<groupId>` and `/chat/<groupId>` are NOT routes; a conversation opens by publishing to `notifNav`.
+- A deep-linked selection must outlive the route remount, and is held until DISPLAYED, not selected.
+- A channel target can only be opened on `/communities`; `openInvitedChannel` is the one entry point.
+- Holding a landing means nothing without a rule for abandoning it.
+- A removal broadcast reaches every REMAINING member too - read `kickedUserId` before acting.
+- A channel bubble is keyed by the SERVER row id, everywhere.
+- Channel reactions are a cleartext server tally; DM reactions are encrypted MLS system messages.
 
-- **A removal broadcast says nothing until you read its payload.** `channel.member.kicked` and `channel.member.removed` go to every REMAINING member as well as the target, so `kickedUserId` decides whether anything local changes - without that check, kicking one person deleted the channel from everyone's sidebar. A community-wide kick carries NO `channelId` (that absence IS the signal; a handler starting with `if (!event.channelId) return` ignored the very person removed), and `isPrivate` distinguishes a real loss from a public channel the user still reads. One decision, `removalOutcome` in `utils/chat/memberRemoval.ts`.
-- **A channel bubble is keyed by the SERVER row id, everywhere.** Live delivery and history load must agree, because delete/pin/poll-vote/reactions all address a message by that id; the AppMessage id inside the ciphertext made a live message unaddressable until the next reload. Safe because a channel send has no optimistic echo - it returns after the POST and lets `channel.message.created` render the bubble.
-- **Channel reactions are a cleartext server tally; DM reactions are encrypted MLS system messages.** Two mechanisms, two stores (`reactionStore.svelte.ts` vs `useMessaging.messageReactions`), picked by `MainChatPage`. The server has to count a channel tally, and one emoji leaks nothing the membership list does not. The emoji is a JSON object KEY, so it - not the userId - is the prototype-pollution vector there.
+#### MLS membership and routing -> [mls-protocol](docs/wiki/protocols/mls-protocol.md), [chat-delivery](docs/wiki/services/chat-delivery.md)
 
-#### MLS membership and routing
+- MLS membership says who can decrypt; `DeviceGroupMembership` says who is actually sent to.
+- An external commit is the one join path with no Welcome - pass `redeliverMissed: false`.
+- The unread badge is derived via `isUnreadForUser`, never stored; recount AFTER the metadata merge.
+- A community is soft-deleted, never dropped; `DELETE workspaces/:id` needs MANAGE_WORKSPACE only.
+- `channel.moderate` = pin or delete SOMEONE ELSE's message, nothing more.
+- Dead devices are reaped after 90 days - until then a churned id keeps receiving fan-out.
 
-- **MLS membership and server routing are different memberships, and only one routes.** The MLS group says who can decrypt; `DeviceGroupMembership` (`status='active'`, mirrored in Redis `group:members:<groupId>`) says who chat-delivery actually sends to. Any new way of entering a group must promote that row - an **external commit is the one join path with no Welcome**, so nothing else creates it.
-- **Redelivery asymmetry:** `activateDeviceMembership` replays the pending window for a Welcomed device, but an external-commit joiner lands at the CURRENT epoch and forward secrecy makes those frames unreadable - pass `redeliverMissed: false` and let the history bundle carry the past.
-- **The unread badge is derived, never stored, and "arrived just now" is NOT evidence of unread.** `ConversationMeta` has no counter, so both recompute sites must go through `isUnreadForUser` (`utils/chat/unread.ts`): a history bundle brings messages that are new to this device yet already read on another, and they prove it via `readBy` - our own receipt, persisted by the PEER, who answers the solicitation and hands it back. The bundle's add-path cannot carry `readBy` (`AddMessageToChatOptions` has no such field), so it over-counts and the recount must happen AFTER the metadata merge, clamped with `Math.min` so an open conversation never regains a badge.
-- **A community is soft-deleted, never dropped.** `DELETE workspaces/:id` needs MANAGE_WORKSPACE **only** (a kick or channel archive also accept MANAGE_CHANNEL - this one hits every member at once); it flips `channel_workspaces.archived` + its channels, and every read path filters it (listing, slug, invite preview, invite accept). Recovery = two UPDATEs.
-- **`channel.moderate` = pin or delete SOMEONE ELSE's message, nothing more.** `memberCanModerateMessages` is the only check, shared by delete/pin/closePoll; the author is always allowed; editing is never moderation. `viewerCanModerate` on the workspace listing is a UI hint - the server re-checks.
-- **Dead devices ARE reaped, after 90 days.** `detectStaleDevices` (hourly) keys liveness on `KeyPackage.createdAt`, refreshed by every WS reconnect; past `RETENTION_WINDOW_MS` it does `srem` on the Redis set and resets the row to `pending`, then `cleanupStaleDevices` purges the whole footprint. Until then a churned device id keeps receiving fan-out - that is the designed offline window, not a leak.
+#### Outbound delivery -> [chat](docs/wiki/frontend/modules/chat.md)
 
-#### UI
+- The outbox is best-effort at every step, so every swallowed branch logs - that is all a loss leaves.
+- `waitForMessageQueueIdle` before a flush is correctness: skipping it sends at a stale epoch.
 
-- **A one-way colour is a dark-mode bug waiting to happen.** `bg-white`, `bg-red-50`, `text-amber-900`, `text-red-600`, raw hex: they do not flip, while `text-text-main` on top of them does - white on white. Use the `app.css` tokens (`bg-cn-surface`, `bg-cn-bg`, the `red-err`/`green-ok`/`amber-warn` status triad, `bg-cn-yellow` + `text-cn-ink`) and tint with an opacity modifier on the token. `text-cn-dark` FLIPS, `text-cn-ink`/`cn-scrim`/`cn-tooltip` do not - those three are for surfaces that must stay put in both themes. Table: `docs/wiki/frontend/architecture.md`.
-- **Detect one-way colour per CLASS LIST, never per file:** `bg-white dark:bg-slate-900` is fine, and a plain grep over-reports 4x. `frontend/scripts/find-oneway-colors.mjs` does it right; it must NOT tokenize on `:` or it strips the very `dark:` prefixes it looks for. Black scrims and white at <=20% opacity are the glass idiom, not bugs.
-- **A `@theme` entry is what makes a token exist.** `bg-cn-surface-alt` was used in six components with no `--color-cn-surface-alt` behind it, so Tailwind generated nothing and the class was silently inert. Grep `app.css` before inventing a token name.
-- **A native prompt is user-visible UI you only partly own.** A plugin fills every field you omit from its OWN hardcoded English defaults: `tauri-plugin-biometric` titles the Android prompt from an internal `biometryNameMap` ("Fingerprint Authentication") and labels its button "Cancel", so localizing only the obvious `reason` leaves the two most prominent lines in English. Pass `title`/`subtitle`/`cancelTitle` too - `biometricPromptOptions()`.
-- **A native process cannot resolve a locale, so prompt text must travel down the call.** The keystore plugin's unlock sheet is built in Kotlin/Swift with no access to Paraglide: `keystoreUnlockPrompt()` assembles it and it rides `initialiser_mls` -> `InitMlsOptions` -> `GetKeyBytesRequest` (flattened on the wire). Each field stays optional with the French literal as the native fallback - a missing translation must degrade to the old wording, never to a failed unlock. `reason` is iOS-only, `title`/`subtitle` Android-only. Guarded by `keystorePrompt.test.ts`. `get_key_bytes` is the ONLY keystore command that prompts, and since v0.11.6 the plugin exposes nothing else but the four `*_key_bytes` commands.
-- **Nothing types a string as user-visible, so no compiler enforces Paraglide.** `showToast` takes a `string`; a literal passes lint, `check` and CI, in either language (English ones read as normal code and are the easier miss). `stores/toastLocalization.test.ts` guards that one entry point - a template is accepted only when it interpolates an `m.*()`.
-- **`bun run build` leaves Paraglide output that makes the locale-asserting tests resolve to English** (4 failures in `callSystemMessages.test.ts` / `pinChange.test.ts`). Re-run `bun run paraglide:compile` before `bun run test` after any build.
+#### UI and i18n -> [frontend/architecture](docs/wiki/frontend/architecture.md)
 
-#### Server-side fetches
+- A one-way colour is a dark-mode bug waiting to happen; use the `app.css` tokens.
+- Detect one-way colour per CLASS LIST (`find-oneway-colors.mjs`), never per file.
+- A `@theme` entry is what makes a token exist - an undefined token is silently inert.
+- A native prompt is UI you only partly own: pass `title`/`subtitle`/`cancelTitle`, not just `reason`.
+- A native process cannot resolve a locale, so prompt text must travel down the call.
+- Nothing types a string as user-visible, so no compiler enforces Paraglide.
+- Re-run `bun run paraglide:compile` before `bun run test` after any build.
 
-- **One predicate decides every outbound fetch of a user-supplied URL:** `isPrivateIpAddress` (`chat-delivery-service/src/utils/url-guard.ts`), consulted before the fetch AND again at connect time by `ssrfSafeDispatcher`. RFC 1918 is not the whole blocklist: `0.0.0.0`/`::` land on loopback under Linux, an IPv4-mapped IPv6 (`::ffff:127.0.0.1`, hex-spelled `::ffff:7f00:1`, NAT64) must be judged on its EMBEDDED IPv4 because that is where the socket goes, `fe80::/10` is not just the `fe80:` hextet, and `URL.hostname` keeps the brackets so `isIP('[::1]')` is 0 and skips the literal check. An address that cannot be classified counts as private.
+#### Server-side fetches -> [chat-delivery](docs/wiki/services/chat-delivery.md)
 
-#### Contracts that the compiler does not check
+- One predicate guards every fetch of a user-supplied URL, before the fetch AND at connect time.
+  RFC 1918 is not the whole blocklist: `0.0.0.0`/`::`, IPv4-mapped IPv6, bracketed literals.
 
-- **Never redeclare an `init`/lifecycle override with fewer parameters.** TypeScript accepts it, so the dropped argument is invisible to `bun run check`. Prefer inheriting `BaseMlsService.init` over copying it.
-- **A `postMessage` payload is typed by whoever writes the literal - i.e. by nobody.** All three MLS worker contracts live in `src/lib/mls-client/mlsWorkerProtocol.ts`, imported by both ends. Add new worker messages THERE, never as a local interface.
-- **Tauri command names are unchecked strings on both sides.** An `invoke()` literal matching no `#[tauri::command]` compiles, lints and type-checks, then fails at runtime. Grep both sides on any rename.
-- **A plugin command needs THREE things right, not one:** the prefix is the Tauri plugin name (`plugin:keystore|…`, from `Builder::new`) and NOT the Android class id (`app.tauri.keystore`); the command is the snake_case Rust fn, not the Kotlin/Swift method; and it must be in the plugin's `build.rs` COMMANDS + `permissions/default.toml`, or the IPC boundary refuses it anyway. Build identifiers with `keystoreCommand()`; `keystoreCommands.test.ts` reads the Rust sources and fails on drift.
-- **A vendored plugin still ships the sample it was forked from.** `tauri-plugin-keystore` carried the UniMe `store`/`retrieve`/`remove` API with zero callers, yet registered in `generate_handler!`, in the `build.rs` ACL and in `permissions/default.toml` - i.e. reachable over IPC with a real biometric prompt and keystore write behind it. Unused native code is not inert; delete the API you did not fork the crate for.
-- **Never let a capability probe swallow its own failure.** `isKeyPresent` returned `false` on a thrown invoke, making "the plugin does not exist" indistinguishable from "no key here" - so a wrong command name silently disabled biometric unlock for three releases. A probe that fails must log.
-- **A migration outlives the schema it was written against.** Branches keyed on `PRAGMA user_version` all run on a brand-new database (it starts at 0), so the v1->v2 purge kept naming a `salt` column dropped later and threw on every fresh install. `db/sqliteMigrations.ts`: a freshly created DB is stamped at `SCHEMA_VERSION` and skips every branch (detected via `sqlite_master` BEFORE the CREATE TABLEs - `user_version` is 0 for a pre-migration DB too), and column-inspecting statements are built from `PRAGMA table_info`.
-- **`getStorage()`'s IndexedDB fallback is a last resort, not a mode.** It is a `console.warn` in a WebView, so a permanent degradation looks like a healthy start; confirm the backend with `[DB] Using SQLite storage (Tauri)`. `canari_<userId>.db` is frontend-only - the native side owns `mls_pending.db`.
-- **`push_context.json` is a JSON contract across four languages** (Rust writer; ObjC, Swift, Kotlin readers) that no compiler checks - the v0.11.0 `pin` -> `deviceKeyB64` rename killed iOS background decrypt for three releases. `src/lib/mobile/pushContextFields.test.ts` is the only thing that catches drift; change the fields and change it too.
-- **NEVER branch on an error message.** `onLoginFailed(msg, code)` carries a typed `LoginErrorCode` (`loginErrors.ts`) because the message is localized: a regex over it ships dead in French.
-- **"Logged in" means two things.** `globalSession.isLoggedIn` = MLS ready; the login page checks the OIDC/refresh session. Page guards test `currentUserId()`; MLS-dependent sections handle MLS absence themselves.
+#### Contracts the compiler does not check -> [development](docs/wiki/development.md)
 
-#### Mobile and native
+- Tauri command names are unchecked strings on both sides.
+- A plugin command needs THREE things right: plugin-name prefix, snake_case fn, `build.rs` + ACL.
+- `push_context.json` is a JSON contract across four languages; only its test catches drift.
+- A `postMessage` payload is typed by nobody - contracts live in `mlsWorkerProtocol.ts`.
+- Never let a capability probe swallow its own failure.
+- `getStorage()`'s IndexedDB fallback is a last resort, not a mode.
+- A vendored plugin still ships the sample it was forked from - delete what you did not fork it for.
+- Never redeclare an `init`/lifecycle override with fewer parameters.
+- NEVER branch on an error message - use the typed `LoginErrorCode`.
+- "Logged in" means two things: MLS ready vs the OIDC session.
+- A migration outlives the schema it was written against.
 
-- **iOS push = all-FCM:** ONE transport for both platforms; FCM relays iOS->APNs via the .p8 in the Firebase console. Backend sends every PushToken via `getMessaging().send()`. Firebase App Delegate Proxy must stay enabled. Arch: `docs/wiki/services/chat-delivery.md`.
-- **Firebase 12 data path:** `messaging:didReceiveMessage:` is GONE. FCM data arrives via the `UIApplicationDelegate` swizzle (`CanariInstallRemoteNotificationHook`) + `UNUserNotificationCenter` callbacks, funnelling into `CanariHandleFcmData()`. Hook new iOS push work there.
-- **Platform branches:** use `isIosTauriRuntime()`/`isMobileTauriRuntime()` (`appVersion.ts`). Android-only behaviours (heartbeat, notif suppression, `reloadStateFromDisk`) must be broadened to all-mobile.
-- **iOS pbxproj is hand-maintained** (NOT xcodegen): targets, resources, URL scheme, `NS*UsageDescription`, `FirebaseAppDelegateProxyEnabled`, localized `InfoPlist.strings` variant groups. NSE (`CanariNotifications`) decrypts via Rust FFI with App Group `group.fr.emse.canari`.
-- **iOS keychain** service `fr.emse.canari`, accounts `mls_key_<alias>` (app) and `mls_bg_key_<alias>` (NSE, access group `group.fr.emse.canari`). The old single-secret account `canari_biometric_user` and the Android alias `unime_dev` went with the UniMe legacy API in v0.11.6.
-- **Kotlin nested types go on the OUTER class body, never a companion object**, and the release build (`:app:compileUniversalReleaseKotlin`) is the ONLY real Kotlin compile.
+#### Mobile and native -> [frontend/mobile](docs/wiki/frontend/mobile.md)
 
-#### Release and CI
+- iOS push = all-FCM, one transport; the App Delegate Proxy must stay enabled.
+- Firebase 12: `didReceiveMessage:` is GONE - hook `CanariHandleFcmData()`.
+- Branch with `isIosTauriRuntime()`/`isMobileTauriRuntime()`, and decide mobile-wide vs Android-only.
+- iOS pbxproj is hand-maintained (NOT xcodegen).
+- iOS keychain service `fr.emse.canari`, accounts `mls_key_<alias>` and `mls_bg_key_<alias>`.
+- Kotlin nested types go on the OUTER class body, never a companion object.
 
-- **CI signing:** two NAMED provisioning profiles matching `PROVISIONING_PROFILE_SPECIFIER` exactly (`Canari` app + `CanariNotifications` NSE), team "Les Rootz" `4CLNB8SR6L`, expire 2027-07-11.
-- **Version bump:** `scripts/bump-app-version.sh` must patch the NSE's `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION`; `bump-version.yml` stages an EXPLICIT `git add` list - any new file the script patches must be added there.
-- **`android-release.yml` and `ios-release.yml` both take `workflow_dispatch`, and every publish step is gated on `workflow_run`** - so a manual run is a pure compile check that ships nothing. It is the ONLY way to compile Swift/ObjC/Kotlin from Windows; run both before believing any native change.
-- **Store publish:** iOS `altool` can exit 0 while printing `UPLOAD FAILED` (the workflow greps the transcript). Android Play API rejects `changesNotSentForReview` post-launch. Never add a `branches` filter to a `workflow_run` chained off a release-triggered workflow - it silently drops every run.
+#### Release and CI -> [cicd](docs/wiki/cicd.md)
 
-#### Cotisations (Cercle)
+- A manual `workflow_dispatch` run of either release workflow is a pure compile check that ships
+  nothing - and the ONLY way to compile Swift/ObjC/Kotlin from Windows. Run both before believing
+  any native change.
+- Two NAMED provisioning profiles, team `4CLNB8SR6L`, expire 2027-07-11.
+- `bump-app-version.sh` must patch the NSE too, and `bump-version.yml` stages an EXPLICIT add list.
+- Never add a `branches` filter to a `workflow_run` chained off a release-triggered workflow.
 
-- `association_products` carries `variantKey`/`variantLevel` (NULL = single-tier); `deriveCotisationTag(slug, mode, now?, variant?)` appends `-${variant}` before the academic-year suffix.
-- **The XOR has ONE implementation, `UserTagService.revokeSiblingTierTags`**, called by both the paid fulfillment and the manual grant. The base tier is a tier like any other, and inactive tiers are swept too (their tags are still held). `memberPriceTag`: `amountCentsMember` applies iff the buyer holds THAT specific tag.
-- **A tag revoke MUST be scoped to `issuingAssocId`.** MANAGE_MEMBERS is per-association, so deleting on the tag id alone is a cross-tenant IDOR (WP-COT-9).
-- **`variantKey` is editable, and the tags follow.** `ProductsService.update` re-derives the granted tag and renames every `user_tags` row holding the old one, in the same transaction - that is how a multi-tier asso converts its auto-provisioned base tier. Deleting the LAST membership tier is refused; deleting any other does NOT migrate its tags, so convert rather than delete when the tier has cotisants.
-- **Named tiers sort before the base tier** in `tierVariantKeys`, so a legacy base-tag holder is not reported as `tier: null` when they also hold a named tier.
-- Inbound `GET /api/public/cotisant-status` gated on `X-Api-Key` vs `CERCLE_API_KEY`, 20 req/min. Outbound `dispatchCercleWebhook` is HMAC-SHA256 with 3 retries.
-- Cotisant status is server-authoritative: `/products/all` returns per-product `viewerIsCotisant`/`viewerActiveTier`. No client-side tag derivation.
+#### Cotisations (Cercle) -> [cotisations](docs/wiki/cotisations.md)
+
+- The XOR has ONE implementation, `UserTagService.revokeSiblingTierTags`.
+- A tag revoke MUST be scoped to `issuingAssocId`, or it is a cross-tenant IDOR.
+- `variantKey` is editable and the tags follow; convert rather than delete a tier with cotisants.
+- Named tiers sort before the base tier, so a legacy base-tag holder is not reported as `tier: null`.
+- Cotisant status is server-authoritative - no client-side tag derivation.
 
 ---
 
-### SHARED GOTCHAS (do not repeat)
+### SHARED GOTCHAS -> [development](docs/wiki/development.md), [cicd](docs/wiki/cicd.md)
 
-- **Driving several logged-in sessions at once:** `new_page` with `isolatedContext: "<name>"` (chrome-devtools MCP) gives a fully separate cookie jar, IndexedDB and sessionStorage - i.e. a distinct device with its own MLS state and device id. Two contexts + two accounts is the only way to exercise Welcome/epoch/decrypt paths from the outside. `fill()` sets a value without firing the input events Svelte tracks; use `type_text` for composers and debounced search.
-- **Never assert a wall clock in a test.** An unseeded generator with rejection sampling drew 31s against a 15s budget on a runner and took CD down. Seed the input; let the `it` timeout guard non-termination.
-- Bash-tool commit messages: use heredoc or `git commit -F file`, NOT PowerShell `@'...'@` (Git Bash prefixes the subject with `@`).
-- Backend lint: apps call bare `oxlint`/`oxfmt` from local `node_modules/.bin`, with repo-level configs (`-c ../../oxfmt.json`, `-c ../../.oxlintrc.nest.json`). If a hook fails with `'oxlint' n'est pas reconnu`, run `npm install` in that app dir.
-- Canari pre-commit hook sweeps the WHOLE frontend and re-stages; isolate unrelated dirty files before committing.
-- Before push: `rm -rf apps/*/dist` then `git pull --rebase --autostash origin main`.
-- Portail: SPA (`ssr = false`); avatar proxy is portail-side same-origin; `data-export/` holds PII, never commit.
+- Bash-tool commit messages: use a heredoc or `git commit -F file`, NOT PowerShell `@'...'@`.
+- Backend lint needs `npm install` in the app dir (bare `oxlint`/`oxfmt` + repo-level configs).
+- The pre-commit hook sweeps the WHOLE frontend and re-stages - isolate unrelated dirty files.
+- Before push: `rm -rf apps/*/dist`, then `git pull --rebase --autostash origin main`.
+- Commit signing is ON globally over SSH - all commits Verified, do NOT disable.
+- Never assert a wall clock in a test; two isolated browser contexts = two devices.
+- Portail: SPA (`ssr = false`); `data-export/` holds PII, never commit.
 - Sky UI French must keep accents + straight apostrophes.
-- Commit signing ON globally (SSH): `gpg.format ssh`, `user.signingkey ~/.ssh/id_ed25519.pub`. All commits Verified - do NOT disable.
