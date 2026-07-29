@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.11.4] - 2026-07-29
+
 ### Added
 - **A community can now be deleted.** There was no delete path at all: no `DELETE workspaces/:id` existed and the community settings modal offered only "Quitter la communaute", so a community created by mistake was permanent for everyone in it and its admin leaving simply orphaned it. `DELETE /api/channels/workspaces/:workspaceId` requires MANAGE_WORKSPACE - deliberately stricter than a kick or a channel archive, which also accept MANAGE_CHANNEL, because this one acts on every member at once. It is a soft delete: `channel_workspaces.archived` (migration 033) and the workspace's channels flip to archived, every read path filters them out (listing, slug lookup, invite preview, invite accept - a link must not resurrect a deleted community), and nothing is dropped, so recovery is two `UPDATE`s. Connected members are cleaned up by a new `workspace.deleted` broadcast rather than by polling
 
