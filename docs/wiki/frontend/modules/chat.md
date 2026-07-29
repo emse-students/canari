@@ -99,18 +99,40 @@ recognise a channel: a just-accepted invitation is never in the loaded sidebar, 
 
 ### Deep-linking into a channel
 
-Three entry points publish a channel target and navigate: the invite card's Join button, an
-accepted invite link, and a tapped channel notification. All three go through `notifNav` +
-`openInvitedChannel`, and all three have to survive the same hazard.
+Every deep link publishes its target to `notifNav` and navigates: the invite card's Join button, an
+accepted invite link, a tapped message or channel notification. All of them have to survive the
+same two hazards.
+
+**The target is held until it is displayed, not until it is selected once.** Selecting it once is
+not enough, because the conversations map is emptied and rebuilt wholesale by the IndexedDB restore
+(`loadExistingConversations`) and pruned on every community refetch, so a target selected while the
+map is still filling is dropped moments later. The selection watchdog in `useConversations` then
+nulls it, which is what made *every* deep link land in the right tab with nothing open. So:
+
+- `ChatBackgroundService` **owns the landing** and is the only place that runs it. It is mounted on
+  every route and reads the same `globalConvs`/`globalChannels` singletons a page would, so a
+  second copy inside `MainChatPage` only released the target early.
+- The effect re-runs on every mutation of the conversations map and **re-asserts** a lost
+  selection, then stays idle once the target is on screen (`selectedContact === id` and the map has
+  it) - otherwise a plain incoming message would re-select it and refetch its history.
+- The watchdog keeps a selection whose key equals `notifNav.pending`: absent from the map means
+  "not there *yet*" while a landing is in progress.
+- `landingRecovery` / `landingAfterRefresh` decide when to stop: refetch the communities once for
+  an unknown channel, retry if that refetch was dropped by the loader's in-flight guard, and
+  abandon (releasing the target) when a real refresh still does not know it, or when a DM is absent
+  from an already-restored map. Abandoning matters as much as holding - it is what lets the
+  watchdog clear a channel whose access was revoked.
+- The landing ends when the user opens another conversation, backs out of the thread, or leaves the
+  target's route.
 
 `/chat` and `/communities` are **separate route components**, each rendering its own
 `MainChatPage`, so moving between them remounts it. Its route-mode switch clears the selection so
 the previous tab's thread does not leak across - but a deep link publishes its selection *before*
-navigating, so an unconditional reset wipes precisely what the link asked for, and the arrival
-shows an empty `/communities`. `selectionBelongsToRoute` is the discriminator: a selection whose
+navigating, so an unconditional reset wipes precisely what the link asked for. Both a pending
+target and an existing selection are checked with `selectionBelongsToRoute`: one whose
 `chatDeepLinkRoute` already matches the incoming mode can only have come from a deep link, since a
-genuine tab switch carries one made under the mode being left. Pinned by
-`notificationRouting.test.ts`.
+genuine tab switch carries one made under the mode being left. Entering the *other* mode ends the
+landing. Pinned by `notificationRouting.test.ts`.
 
 The invite link resolves its landing channel from `getWorkspaceBySlug`, which returns only channels
 the caller may read; it prefers a **public** one, so a fresh joiner lands in the open room rather

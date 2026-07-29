@@ -1,4 +1,9 @@
-import { chatDeepLinkRoute, selectionBelongsToRoute } from './notificationRouting';
+import {
+  chatDeepLinkRoute,
+  landingAfterRefresh,
+  landingRecovery,
+  selectionBelongsToRoute,
+} from './notificationRouting';
 
 describe('chatDeepLinkRoute', () => {
   it('routes channel targets to /communities', () => {
@@ -33,5 +38,52 @@ describe('selectionBelongsToRoute', () => {
   it('treats no selection as nothing to preserve', () => {
     expect(selectionBelongsToRoute(null, 'communities')).toBe(false);
     expect(selectionBelongsToRoute('', 'chat')).toBe(false);
+  });
+});
+
+describe('landingRecovery', () => {
+  it('refreshes the communities for a channel it has never looked up', () => {
+    // A just-accepted invitation is never in the loaded sidebar.
+    expect(
+      landingRecovery({ isChannel: true, alreadyRefreshed: false, conversationsRestored: true })
+    ).toBe('refresh');
+  });
+
+  it('waits instead of refreshing the same channel twice', () => {
+    expect(
+      landingRecovery({ isChannel: true, alreadyRefreshed: true, conversationsRestored: true })
+    ).toBe('wait');
+  });
+
+  it('waits for a DM while the conversations map is still being restored', () => {
+    // Clearing the target here is what left a tapped message notification on an empty /chat:
+    // the map is emptied and rebuilt wholesale by the IndexedDB restore.
+    expect(
+      landingRecovery({ isChannel: false, alreadyRefreshed: false, conversationsRestored: false })
+    ).toBe('wait');
+  });
+
+  it('abandons a DM absent from a settled map', () => {
+    expect(
+      landingRecovery({ isChannel: false, alreadyRefreshed: false, conversationsRestored: true })
+    ).toBe('abandon');
+  });
+});
+
+describe('landingAfterRefresh', () => {
+  it('retries when the refresh never ran', () => {
+    // The communities loader declines while one is already in flight, so a join racing the
+    // startup load would otherwise wait forever for a refresh nobody performed.
+    expect(landingAfterRefresh({ refreshRan: false, targetLoaded: false })).toBe('retry');
+  });
+
+  it('waits for the effect to select a target the refresh brought in', () => {
+    expect(landingAfterRefresh({ refreshRan: true, targetLoaded: true })).toBe('wait');
+  });
+
+  it('abandons a channel still unknown after a real refresh', () => {
+    // Revoked access or a deleted community: holding the target would keep the selection
+    // watchdog off a conversation that is never coming back.
+    expect(landingAfterRefresh({ refreshRan: true, targetLoaded: false })).toBe('abandon');
   });
 });

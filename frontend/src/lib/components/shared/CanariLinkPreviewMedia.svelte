@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Building2, ClipboardList, FileText, User } from '@lucide/svelte';
   import type { CanariLinkPreview } from '$lib/utils/canariLinkPreview';
 
   interface Props {
@@ -8,18 +7,14 @@
   }
 
   let { preview, loading = false }: Props = $props();
-
-  const Icon = $derived(
-    preview?.kind === 'form'
-      ? ClipboardList
-      : preview?.kind === 'association'
-        ? Building2
-        : preview?.kind === 'profile'
-          ? User
-          : FileText
-  );
 </script>
 
+<!--
+  Thumbnail of a link to Canari itself. Falls back to the site logo, centred, when the target has
+  no image of its own: a per-kind glyph was both redundant - the card already spells the kind out
+  in its category badge ("Publication", "Formulaire", "Association") - and unrecognisable, while
+  the logo says at a glance that the link stays in the app.
+-->
 <div
   class="shrink-0 relative overflow-hidden rounded-xl border border-black/5 dark:border-white/10 flex items-center justify-center w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem] bg-gradient-to-br from-cn-ink via-[#1e2848] to-amber-700/70"
 >
@@ -41,15 +36,9 @@
     ></div>
   {:else}
     <img
-      src="/og-canari.png"
+      src="/favicon.svg"
       alt=""
-      class="absolute bottom-0 right-0 w-9 h-9 object-contain opacity-35 pointer-events-none select-none"
-      aria-hidden="true"
-    />
-    <Icon
-      size={28}
-      class="text-amber-300/95 relative z-[1]"
-      strokeWidth={1.75}
+      class="relative z-[1] w-9 h-9 sm:w-10 sm:h-10 object-contain pointer-events-none select-none"
       aria-hidden="true"
     />
   {/if}

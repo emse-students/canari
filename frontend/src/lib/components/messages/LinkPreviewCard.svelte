@@ -146,10 +146,11 @@
             loading="lazy"
           />
         {:else}
+          <!-- No Open Graph image: the site's own favicon stands in for its logo. -->
           <img
             src={faviconUrl}
             alt=""
-            class="w-6 h-6 object-contain opacity-70 group-hover:opacity-100 transition-opacity duration-300"
+            class="w-8 h-8 object-contain opacity-70 group-hover:opacity-100 transition-opacity duration-300"
           />
         {/if}
       </div>

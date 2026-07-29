@@ -18,6 +18,7 @@ import type {
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { chat_system_removed_from_group } from '$lib/paraglide/messages';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
+import { notifNav } from '$lib/stores/notifNav.svelte';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { setChannelReactions } from '$lib/stores/reactionStore.svelte';
 import {
@@ -179,12 +180,19 @@ export function useConversations() {
   /**
    * Clears selection when the map no longer has the key (reload, migration, channel kick).
    * `$effect.root` - this composable is instantiated at module load in `globalChatSingleton`.
+   *
+   * A key absent from the map does NOT always mean the conversation is gone: the map is emptied
+   * and rebuilt wholesale by the IndexedDB restore, and pruned on every community refetch, so a
+   * deep-link target is routinely missing for as long as a network round trip. Clearing then is
+   * what left every deep link in the right tab with nothing open. While the target is still being
+   * landed the selection is kept, and the landing itself decides when to give up.
    */
   $effect.root(() => {
     $effect(() => {
       const key = selectedContact;
       if (!key) return;
       if (!conversations.has(key)) {
+        if (notifNav.pending === key) return;
         selectedContact = null;
         sendError = '';
       }
@@ -561,7 +569,17 @@ export function useConversations() {
     abandonHistoryOverlay(ref);
   }
 
+  /**
+   * Ends a deep-link landing as soon as the user opens something else, so its target stops being
+   * protected from the selection watchdog. The landing itself selects its own target, so a call
+   * naming that target is the landing at work and must not cancel it.
+   */
+  function endLandingUnlessTarget(name: string | null) {
+    if (notifNav.pending && notifNav.pending !== name) notifNav.clear();
+  }
+
   function selectConversation(name: string) {
+    endLandingUnlessTarget(name);
     dismissDrawerHistoryIfAny();
     dismissChannelMembersDrawerIfAny();
     selectedContact = name;
@@ -576,6 +594,7 @@ export function useConversations() {
 
   /** Call this version when you have the ctx available (inside handlers). */
   function selectConversationWithCtx(name: string, ctx: ConversationContext) {
+    endLandingUnlessTarget(name);
     dismissDrawerHistoryIfAny();
     dismissChannelMembersDrawerIfAny();
     selectedContact = name;
@@ -591,6 +610,8 @@ export function useConversations() {
 
   /** Deselects the active conversation and closes the drawer (mobile back-button action). */
   function goBackToMenu() {
+    // Backing out of the thread ends any landing, or the target would be re-selected instantly.
+    endLandingUnlessTarget(null);
     isChannelSettingsModalOpen = false;
     dismissChannelMembersDrawerIfAny();
     if (mobileConvoHistoryClose) {

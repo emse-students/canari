@@ -35,7 +35,6 @@
     globalNotifs as notifs,
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
-  import { openNotificationTarget } from '$lib/utils/chat/openConversationFromId';
   import { openInvitedChannel, selectionBelongsToRoute } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
@@ -122,21 +121,10 @@
     return () => clearTimeout(t);
   });
 
-  // Notification tap → open conversation (also handled globally in ChatBackgroundService).
-  $effect(() => {
-    const id = notifNav.pending;
-    if (!id) return;
-    if (
-      openNotificationTarget(
-        convs,
-        convCtx(),
-        id,
-        (channelId) => (channels.selectedChannelConversationId = channelId)
-      )
-    ) {
-      notifNav.clear();
-    }
-  });
+  // Deep-link landing (notification tap, invite card, invite link) is owned by
+  // ChatBackgroundService: it reads the same globalConvs/globalChannels singletons, is mounted on
+  // every route, and holds the target until it is displayed. A second copy here selected the
+  // target and released it early, which is what let the landing be lost.
 
   // ─── Sync session (local - scoped to /chat, not the global background service) ──
   const sync = useSyncSession();
@@ -551,9 +539,17 @@
       const previous = lastActiveRouteMode;
       lastActiveRouteMode = mode;
       if (previous === null || previous === mode) return;
-      // A selection that already belongs to the mode we are entering was published by a deep link
-      // that navigated us here, and wiping it is what made those land on an empty /communities.
-      // A genuine tab switch never hits this: its selection was made under the mode we are leaving.
+      // A deep link navigated us here and its target is still landing: this is not a tab switch,
+      // and wiping the selection (or the community the sidebar reveals) is what made those land on
+      // an empty /communities. Entering the OTHER mode instead means the user walked away from the
+      // landing, which ends it.
+      const landing = notifNav.pending;
+      if (landing) {
+        if (selectionBelongsToRoute(landing, mode)) return;
+        notifNav.clear();
+      }
+      // Same reasoning for a target already selected: a genuine tab switch never carries a
+      // selection that belongs to the mode being entered.
       if (selectionBelongsToRoute(convs.selectedContact, mode)) return;
       if (readReceiptTimer) {
         clearTimeout(readReceiptTimer);

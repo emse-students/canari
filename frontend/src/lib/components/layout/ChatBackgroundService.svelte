@@ -66,7 +66,12 @@
   import type { CallParticipant } from '$lib/services/CallService';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import { openNotificationTarget } from '$lib/utils/chat/openConversationFromId';
-  import { chatDeepLinkRoute, openInvitedChannel } from '$lib/utils/chat/notificationRouting';
+  import {
+    chatDeepLinkRoute,
+    landingAfterRefresh,
+    landingRecovery,
+    openInvitedChannel,
+  } from '$lib/utils/chat/notificationRouting';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
@@ -166,7 +171,17 @@
    */
   let refreshedWorkspacesForTarget: string | null = null;
 
-  /** Routes to the targeted conversation on a notification tap (works from any route). */
+  /**
+   * Lands the deep-link target: routes to the view that can show it, then selects it.
+   *
+   * Owns the landing for the whole app - `MainChatPage` deliberately does not duplicate it, since
+   * both read the same `globalConvs`/`globalChannels` singletons.
+   *
+   * The target is held until it is actually displayed, and this effect re-runs on every mutation
+   * of the conversations map, so a selection dropped by the IndexedDB restore or by a community
+   * prune is re-asserted instead of being lost. It stays idle once the target is on screen, or a
+   * plain incoming message would re-select it and refetch its history.
+   */
   $effect(() => {
     const id = notifNav.pending;
     if (!id || !globalSession.isLoggedIn) return;
@@ -183,6 +198,9 @@
         void goto(targetRoute);
       }
     }
+    // Already on screen: the landing is done and must stay idle until the target is lost.
+    if (globalConvs.selectedContact === id && globalConvs.conversations.has(id)) return;
+
     if (
       openNotificationTarget(
         globalConvs,
@@ -191,16 +209,36 @@
         (channelId) => (globalChannels.selectedChannelConversationId = channelId)
       )
     ) {
+      return;
+    }
+    const recovery = landingRecovery({
+      isChannel: isChannelConversationId(id),
+      alreadyRefreshed: refreshedWorkspacesForTarget === id,
+      conversationsRestored: globalConvs.conversationsRestored,
+    });
+    if (recovery === 'wait') return;
+    if (recovery === 'abandon') {
+      appendLog(`[notifNav] conversation ${id} not on this device - abandoning`);
       notifNav.clear();
       return;
     }
+
     // Unresolved channel: refetch the communities once, then let this effect re-run on the
     // resulting conversation update and select it.
-    if (isChannelConversationId(id) && refreshedWorkspacesForTarget !== id) {
-      refreshedWorkspacesForTarget = id;
-      appendLog(`[notifNav] channel ${id} unknown - refreshing communities before selecting`);
-      void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx());
-    }
+    refreshedWorkspacesForTarget = id;
+    appendLog(`[notifNav] channel ${id} unknown - refreshing communities before selecting`);
+    void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx()).then((refreshRan) => {
+      if (notifNav.pending !== id) return;
+      const outcome = landingAfterRefresh({
+        refreshRan,
+        targetLoaded: globalConvs.conversations.has(id),
+      });
+      // Our refetch never ran (one was already in flight): allow one more once it settles.
+      if (outcome === 'retry') refreshedWorkspacesForTarget = null;
+      if (outcome !== 'abandon') return;
+      appendLog(`[notifNav] channel ${id} still unknown after refresh - abandoning`);
+      notifNav.clear();
+    });
   });
 
   /** Load MLS group members while a group call is active so all avatars can be shown. */

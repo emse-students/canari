@@ -138,25 +138,13 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   leaves `remaining > 0`. Never observed waking up on hardware.
 
 - \[~\] **WP-DEEPLINK-1 (P1) - EVERY deep link lands in the right tab but not the right place.**
-  Confirmed on prod 2026-07-29 with the invite link, and the user reports the same for message
-  notifications and group joins. **Root cause found, NOT yet fixed:** the selection watchdog in
-  `useConversations.svelte.ts` (~line 183, `$effect.root` -> `if (!conversations.has(key))
-  selectedContact = null`). It fires on every mutation of the conversations map, so a target
-  selected while the map is still being (re)built - exactly what a deep link does, and what the
-  workspace refetch in `ChatBackgroundService` triggers - is silently deselected.
-  Two observed symptoms, one cause:
-  - **Fresh page load** of `/c/join/<token>`: community heading correct (`QA Invitation`), but
-    "Aucun echange selectionne" - the watchdog nulled `selectedContact`, while
-    `selectedChannelConversationId` (a different store it does not touch) survived.
-  - **In-app navigation** to the same link: lands on the WRONG community (`MiTV`). Because the
-    watchdog already nulled `selectedContact`, the route-mode reset in `MainChatPage` then saw
-    `null`, `selectionBelongsToRoute(null, ...)` returned false, and it wiped
-    `selectedChannelConversationId` too.
-  So `selectionBelongsToRoute` (shipped in `1c727edf`) is correct but was defeated upstream - it
-  reads a field the watchdog had already cleared. Fix direction: make the watchdog tolerant while
-  the map is still filling (there is already an `isRestored`-style flag) and/or never clear a key
-  that matches a pending `notifNav` target. Verify all three entry points afterwards: invite link,
-  invite card, channel/message notification tap.
+  Confirmed on prod 2026-07-29 (invite link; user reports the same for message notifications and
+  group joins). **FIXED IN CODE, NOT YET VERIFIED ON PROD.** Cause and rules now in DURABLE RULES
+  ("A deep-link target is held until it is DISPLAYED" + the abandon rule). Gates green:
+  vitest 630/630, `bun run check` 0 errors, oxlint/oxfmt clean.
+  Owed: browse-verify all three entry points on prod - invite **link** (fresh load AND in-app
+  navigation, the two observed symptoms), invite **card** Join button, channel/message
+  **notification** tap. Then delete the throwaway `QA Invitation` community.
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost.** 2026-07-29, prod, channel ->
   DM: the toast said success, the echo persisted on the sender, the outbox drained - and the peer
@@ -203,6 +191,8 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 - **A deep-linked selection must outlive the route remount.** `/chat` and `/communities` are separate route components; the route-mode switch in `MainChatPage` clears the selection, and a deep link publishes its selection BEFORE navigating. `selectionBelongsToRoute` keeps only what matches the mode being entered - true exactly for a deep link, never for a tab switch.
 - **A channel target can only be opened on `/communities`.** `chatDeepLinkRoute` decides; `openInvitedChannel` is the one entry point for both the DM invite card and an accepted invite link. Routing a channel to `/chat` lands on a view that structurally cannot show it - that is what made "Rejoindre la communauté" look inert.
 - **A just-accepted invitation is never in the loaded sidebar,** and `openNotificationTarget` refuses a channel it cannot find, so the arrival selects nothing. `ChatBackgroundService` refetches the communities ONCE per pending target to close that gap (guarded, or a revoked channel loops on the endpoint).
+- **A deep-link target is held until it is DISPLAYED, not until it is selected once.** The conversations map is emptied and rebuilt by the IndexedDB restore and pruned by every community refetch, so a target selected while it is filling is dropped moments later and the `useConversations` watchdog nulls it - that is why every deep link landed in the right tab on nothing. `ChatBackgroundService` alone owns the landing (never duplicate it in `MainChatPage`: same singletons), re-asserts a lost selection, and stays idle once `selectedContact === target` and the map has it.
+- **Holding a landing means nothing without a rule for abandoning it** (`landingRecovery`/`landingAfterRefresh`, pinned by `notificationRouting.test.ts`): refetch once for an unknown channel, RETRY when `loadChannelWorkspacesFromBackend` returned false (its in-flight guard dropped the request - a join racing the startup load), abandon when a real refresh still does not know it or a DM is absent from an already-restored map. Without abandon, a revoked channel pins the selection forever.
 
 - **A channel bubble is keyed by the SERVER row id, everywhere.** Live delivery and history load must agree, because delete/pin/poll-vote/reactions all address a message by that id; the AppMessage id inside the ciphertext made a live message unaddressable until the next reload. Safe because a channel send has no optimistic echo - it returns after the POST and lets `channel.message.created` render the bubble.
 - **Channel reactions are a cleartext server tally; DM reactions are encrypted MLS system messages.** Two mechanisms, two stores (`reactionStore.svelte.ts` vs `useMessaging.messageReactions`), picked by `MainChatPage`. The server has to count a channel tally, and one emoji leaks nothing the membership list does not. The emoji is a JSON object KEY, so it - not the userId - is the prototype-pollution vector there.

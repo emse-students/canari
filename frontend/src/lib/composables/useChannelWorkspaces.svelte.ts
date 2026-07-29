@@ -302,9 +302,16 @@ export function useChannelWorkspaces() {
 
   // ---------- API operations ----------
 
-  /** Fetches all workspaces and their channels from the backend, hydrates channel encryption keys, and prunes stale local channel entries. */
-  async function loadChannelWorkspacesFromBackend(ctx: ChannelWorkspaceContext) {
-    if (isLoadingWorkspaces) return;
+  /**
+   * Fetches all workspaces and their channels from the backend, hydrates channel encryption keys,
+   * and prunes stale local channel entries.
+   *
+   * Resolves to false when it declined because a load was already in flight - callers that refetch
+   * to resolve one specific channel (the deep-link landing) must know their request was dropped,
+   * or a join racing the startup load waits forever for a refresh that never ran.
+   */
+  async function loadChannelWorkspacesFromBackend(ctx: ChannelWorkspaceContext): Promise<boolean> {
+    if (isLoadingWorkspaces) return false;
     isLoadingWorkspaces = true;
     try {
       const backendWorkspaces = await service.listUserWorkspaces();
@@ -379,6 +386,9 @@ export function useChannelWorkspaces() {
     } finally {
       isLoadingWorkspaces = false;
     }
+    // A refresh ran (a failed one still consumed its attempt); only the busy guard above reports
+    // false, so a caller retries exactly when its request was never served.
+    return true;
   }
 
   /** Creates a new workspace with the given name, loads its default channels, then auto-selects the first channel. */
