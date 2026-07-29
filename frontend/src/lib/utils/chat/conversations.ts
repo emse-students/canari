@@ -19,6 +19,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { compareMessageOrder } from './messageOrder';
+import { isUnreadForUser } from './unread';
 import { isChannelConversationId } from './channelCrypto';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -723,8 +724,11 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         );
         const current = ctx.conversations.get(meta.id);
         if (current) {
+          // "Arrived during this replay" is only a PROXY for "not seen yet", and it breaks when
+          // the replay carries a history bundle - hence the readBy check in isUnreadForUser.
+          const meNorm = ctx.userId.toLowerCase();
           const newUnreadCount = refreshedMsgs.filter(
-            (m) => !m.isOwn && m.senderId !== 'system' && !preReplayMsgIds.has(m.id)
+            (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, meNorm)
           ).length;
           ctx.conversations.set(meta.id, {
             ...current,

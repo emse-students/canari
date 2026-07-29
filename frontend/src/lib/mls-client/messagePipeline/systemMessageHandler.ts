@@ -10,6 +10,7 @@ import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { messageTime } from '$lib/utils/chat/messageOrder';
 import { noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
+import { countUnreadForUser } from '$lib/utils/chat/unread';
 import { applyPin } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -523,9 +524,25 @@ export async function handleSystemEvent(
             }
             return next;
           });
-          if (changedIds.size > 0) {
-            conversations.set(convoKey, { ...c, messages: nextMessages });
-            log(`[HISTORY_BUNDLE] merged metadata onto ${changedIds.size} message(s)`);
+          // 3) Recount the unread badge now that the receipts have landed. Step 1 went through
+          //    the add-path, which counts EVERY incoming message as unread because it cannot see
+          //    readBy - the receipts only arrive with the merge above. A message this user already
+          //    acknowledged from another device carries their own id in readBy (the peer persisted
+          //    the receipt and sends it back in the bundle), so it must not raise a badge here.
+          //    Clamped to the current value: an open conversation was already zeroed by the
+          //    add-path and must never regain a badge, and a genuine new member - whose id is in
+          //    no readBy - keeps the full count.
+          const stillUnread = countUnreadForUser(nextMessages, userId.toLowerCase());
+          const nextUnreadCount = Math.min(c.unreadCount ?? 0, stillUnread);
+          if (changedIds.size > 0 || nextUnreadCount !== (c.unreadCount ?? 0)) {
+            conversations.set(convoKey, {
+              ...c,
+              messages: nextMessages,
+              unreadCount: nextUnreadCount,
+            });
+            log(
+              `[HISTORY_BUNDLE] merged metadata onto ${changedIds.size} message(s), unread ${c.unreadCount ?? 0} -> ${nextUnreadCount}`
+            );
             if (storage) {
               for (const msg of nextMessages) {
                 if (!changedIds.has(msg.id)) continue;

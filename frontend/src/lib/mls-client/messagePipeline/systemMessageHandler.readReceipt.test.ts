@@ -80,3 +80,75 @@ describe('handleSystemEvent - history_bundle metadata merge', () => {
     expect(msg.readAt).toBe(5);
   });
 });
+
+/**
+ * The add-path that ingests a bundle cannot see readBy, so it badges the whole history as
+ * unread; the receipts only land in the merge that follows. Each context below is seeded in
+ * its post-add-path state (messages present, badge already counted) to exercise the recount.
+ */
+describe('handleSystemEvent - history_bundle unread recount', () => {
+  function seed(unreadCount: number, messages: Array<Record<string, unknown>>) {
+    const conversations = new Map<string, any>();
+    conversations.set('g1', { id: 'g1', unreadCount, messages });
+    return makeCtx({ conversations, convo: conversations.get('g1'), userId: 'me' });
+  }
+
+  const peerMsg = (id: string) => ({ id, senderId: 'peer', content: id, isOwn: false, readBy: [] });
+
+  it('clears the badge for messages this user already read on another device', async () => {
+    const ctx = seed(3, [peerMsg('m1'), peerMsg('m2'), peerMsg('m3')]);
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        // Our own id comes back in readBy: the peer persisted our receipt and returns it here.
+        // Mixed case asserts the normalisation on the way in.
+        messages: [
+          { id: 'm1', senderId: 'peer', content: 'm1', timestamp: 1, readBy: ['me'] },
+          { id: 'm2', senderId: 'peer', content: 'm2', timestamp: 2, readBy: ['ME'] },
+          { id: 'm3', senderId: 'peer', content: 'm3', timestamp: 3 },
+        ],
+      },
+      ctx as any
+    );
+
+    // Only m3 was never acknowledged.
+    expect((ctx.conversations.get('g1') as any).unreadCount).toBe(1);
+  });
+
+  it('keeps the full count for a genuine new member, whose id is in no readBy', async () => {
+    const ctx = seed(2, [peerMsg('m1'), peerMsg('m2')]);
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        // Somebody else read them; this device never did.
+        messages: [
+          { id: 'm1', senderId: 'peer', content: 'm1', timestamp: 1, readBy: ['other'] },
+          { id: 'm2', senderId: 'peer', content: 'm2', timestamp: 2, readBy: ['other'] },
+        ],
+      },
+      ctx as any
+    );
+
+    expect((ctx.conversations.get('g1') as any).unreadCount).toBe(2);
+  });
+
+  it('never raises the badge of a conversation the add-path already zeroed', async () => {
+    // unreadCount 0 = the conversation was open while the bundle landed.
+    const ctx = seed(0, [peerMsg('m1'), peerMsg('m2')]);
+
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [
+          { id: 'm1', senderId: 'peer', content: 'm1', timestamp: 1 },
+          { id: 'm2', senderId: 'peer', content: 'm2', timestamp: 2 },
+        ],
+      },
+      ctx as any
+    );
+
+    expect((ctx.conversations.get('g1') as any).unreadCount).toBe(0);
+  });
+});
