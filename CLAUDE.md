@@ -82,13 +82,12 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   (`0bf556e` -> `de92e18` -> `7e87b61`), 50 files, +2144/-574. `bun run check` 0 errors, eslint
   clean, every page renders, 27/27 end-to-end checks pass on a freshly seeded DB against a live
   HTTP stub of `cotisant-status` (script was scratchpad-only, not committed).
-  **BLOCKED on access, not on code: `origin` is `gitlab.emse.fr/aurel.dautry/le-cercle` (GitLab,
-  NOT GitHub - `gh` is useless here), and the stored GCM credentials get
-  `403 You are not allowed to download code from this project`; SSH is `Permission denied
-  (publickey)`.** So the branch cannot be pushed and the MR cannot be opened from this machine -
-  ask Aurel for Developer access, or add an SSH key to gitlab.emse.fr. The MR description is
-  written and ready to paste (French, scratchpad `MR-DESCRIPTION.md`); once access exists:
-  `git push -u origin audit/security-and-canari-integration -o merge_request.create`.
+  **MR OPEN, awaiting Aurel's review: `!1`,
+  https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/1** (pushed 2026-07-29 once SSH
+  access existed; `origin` is now the SSH URL - GitLab, NOT GitHub, so `gh` is useless and there is
+  no API token on this machine). The MR body carries a one-line summary only: **git refuses a push
+  option containing newlines**, so the full French description still has to be pasted by hand from
+  scratchpad `MR-DESCRIPTION.md`.
   Verified by those checks: forged/tampered session refused; non-cotisant -> `/unauthorized`;
   `/api/*` 401 anon and 403 for a non-cercleux; GET on `/events/open` no longer opens a perm;
   unsigned and mis-signed webhooks 401 while a signed one credits exactly once on replay; the
