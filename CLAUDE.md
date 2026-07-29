@@ -246,6 +246,23 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 
 ---
 
+### VERIFIED ON WEB (2026-07-29, community removal)
+
+Throwaway community `QA Kick`, two accounts, isolated contexts, zero console errors on either side
+across three runs. Deleted afterwards.
+
+- **Removed from a community, live:** Claire was viewing `#general` when she was removed. The
+  community left her rail, the open channel closed, and the panel fell back to "Aucun echange
+  selectionne" - no reload. A DOM observer caught the toast: "Vous avez ete retire de la
+  communaute QA Kick."
+- **The remover keeps their own view:** the admin's rail still held QA Kick (and MiTV / ERA /
+  Fanfare) through every kick - the `ignore` branch of `removalOutcome`, i.e. the old bug where
+  one person's removal purged the channel for everyone who received the broadcast.
+- Deep-link regression check, three times over: each fresh join through the invite link landed on
+  `QA Kick` / `#general` directly.
+- NOT exercised on prod: the `channel` and `public-channel` outcomes (removal from a single
+  channel rather than the whole community). Unit-tested on both sides only.
+
 ### VERIFIED ON WEB (2026-07-29, deep links)
 
 Two accounts, isolated contexts, zero console errors on every run. Claire was kicked from
