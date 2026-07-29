@@ -5,32 +5,93 @@ import { isIP } from 'node:net';
 import { Agent } from 'undici';
 
 /**
- * Returns true if `ip` is a loopback, link-local, or RFC-1918 private address
- * (IPv4 or IPv6). Used to block server-side requests from being redirected to
- * internal infrastructure (SSRF prevention).
+ * Returns true if `ip` is an IPv4 address a server-side fetch must never reach:
+ * loopback, RFC-1918, link-local, carrier-grade NAT, and the reserved blocks.
+ * Anything unparseable is reported as private - a value we cannot classify is
+ * not a value we should connect to.
+ */
+function isPrivateIpv4(ip: string): boolean {
+  const parts = ip.split('.').map((part) => Number.parseInt(part, 10));
+  if (parts.length !== 4) return true;
+  if (parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)) return true;
+
+  const [a, b, c] = parts;
+  return (
+    // 0.0.0.0/8 "this host": on Linux a connection to 0.0.0.0 lands on loopback,
+    // so it reaches every service bound to the wildcard address.
+    a === 0 ||
+    a === 10 || // RFC 1918
+    a === 127 || // loopback
+    (a === 100 && b >= 64 && b <= 127) || // RFC 6598 carrier-grade NAT
+    (a === 169 && b === 254) || // link-local, incl. the 169.254.169.254 cloud metadata endpoint
+    (a === 172 && b >= 16 && b <= 31) || // RFC 1918
+    (a === 192 && b === 0 && c === 0) || // RFC 6890 protocol assignments
+    (a === 192 && b === 168) || // RFC 1918
+    (a === 198 && b >= 18 && b <= 19) || // RFC 2544 benchmarking
+    a >= 224 // 224.0.0.0/4 multicast and 240.0.0.0/4 reserved, incl. 255.255.255.255
+  );
+}
+
+/**
+ * Extracts the IPv4 address embedded in an IPv4-mapped, IPv4-compatible or NAT64
+ * IPv6 address, in either notation (`::ffff:127.0.0.1` and `::ffff:7f00:1` are the
+ * same address). Returns `null` when `normalized` carries no embedded IPv4.
+ *
+ * This exists because such an address is a full-strength SSRF vector: the socket
+ * ends up on the embedded IPv4, so the embedded IPv4 is what has to be judged.
+ */
+function embeddedIpv4(normalized: string): string | null {
+  const match = /^(?:::ffff:|::|64:ff9b::)(.+)$/.exec(normalized);
+  if (!match) return null;
+
+  const rest = match[1];
+  if (isIP(rest) === 4) return rest;
+
+  const hextets = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(rest);
+  if (!hextets) return null;
+
+  const high = Number.parseInt(hextets[1], 16);
+  const low = Number.parseInt(hextets[2], 16);
+  return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+}
+
+/**
+ * Returns true if `ip` is an IPv6 address a server-side fetch must never reach:
+ * unspecified, loopback, unique-local, link-local, multicast, or any form that
+ * embeds a private IPv4.
+ */
+function isPrivateIpv6(ip: string): boolean {
+  // Drop a zone identifier (`fe80::1%eth0`) before matching on the prefix.
+  const normalized = ip.toLowerCase().split('%')[0];
+
+  const mapped = embeddedIpv4(normalized);
+  if (mapped) return isPrivateIpv4(mapped);
+
+  return (
+    normalized === '::' || // unspecified, the IPv6 counterpart of 0.0.0.0
+    normalized === '::1' || // loopback
+    /^f[cd]/.test(normalized) || // fc00::/7 unique-local
+    /^fe[89ab]/.test(normalized) || // fe80::/10 link-local - NOT just the fe80: hextet
+    normalized.startsWith('ff') // ff00::/8 multicast
+  );
+}
+
+/**
+ * Returns true if `ip` is an address that must not be reachable from a
+ * server-side fetch (IPv4 or IPv6). Used to block link-preview requests from
+ * being pointed at internal infrastructure (SSRF prevention, CWE-918).
  */
 export function isPrivateIpAddress(ip: string): boolean {
-  if (ip.includes(':')) {
-    const normalized = ip.toLowerCase();
-    return (
-      normalized === '::1' ||
-      normalized.startsWith('fc') ||
-      normalized.startsWith('fd') ||
-      normalized.startsWith('fe80:')
-    );
-  }
+  return ip.includes(':') ? isPrivateIpv6(ip) : isPrivateIpv4(ip);
+}
 
-  const parts = ip.split('.').map((part) => Number.parseInt(part, 10));
-  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) return true;
-
-  const [a, b] = parts;
-  return (
-    a === 10 ||
-    a === 127 ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168)
-  );
+/**
+ * Strips the brackets the WHATWG URL parser keeps around an IPv6 host, so the
+ * literal-address check sees `::1` rather than `[::1]`. Without this `isIP` says
+ * "not an address" and the whole literal branch is skipped.
+ */
+function unbracketHost(hostname: string): string {
+  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
 }
 
 /**
@@ -56,7 +117,7 @@ export async function assertSafeExternalUrl(rawUrl: string): Promise<URL> {
     throw new BadRequestException('URL credentials are not allowed');
   }
 
-  const hostname = parsed.hostname.toLowerCase();
+  const hostname = unbracketHost(parsed.hostname.toLowerCase());
   if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
     throw new BadRequestException('Localhost URLs are not allowed');
   }

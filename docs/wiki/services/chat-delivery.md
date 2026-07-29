@@ -462,6 +462,31 @@ parity row.
 | GET | `/api/mls/link-preview` | Fetch safe external URL preview |
 | GET | `/api/mls/gallery-cover/:albumId` | Proxy MiGallery album cover image |
 
+#### Link preview is a user-controlled server-side fetch (SSRF)
+
+`/api/mls/link-preview` takes a URL from a chat message and fetches it from inside the cluster, so
+`utils/url-guard.ts` is what stands between a pasted link and the internal network. Two barriers,
+because one is not enough:
+
+- **`assertSafeExternalUrl`** rejects non-http(s) schemes, embedded credentials, `localhost`, and
+  any host that DNS-resolves to a non-public address. Redirects are handled manually
+  (`redirect: 'manual'`, 3 max) and each hop is re-validated - an allowed host that answers `302
+  http://127.0.0.1/` is the obvious bypass otherwise.
+- **`ssrfSafeDispatcher`** re-checks at connect time through undici's `lookup`, so the IP the
+  socket reaches is the IP that was validated. This closes the DNS-rebinding window: the two
+  resolutions are separate events and an attacker-controlled zone can answer differently.
+
+**Deciding "is this address reachable" is the whole guard, and the address space is wider than
+RFC 1918.** `isPrivateIpAddress` also rejects `0.0.0.0/8` (on Linux a connection to `0.0.0.0`
+lands on loopback), CGNAT, the benchmark/protocol blocks, multicast and reserved space; on IPv6
+the unspecified address, the full `fe80::/10` (not just the `fe80:` hextet) and multicast. Any
+form embedding an IPv4 - `::ffff:127.0.0.1`, its hex spelling `::ffff:7f00:1`, `::127.0.0.1`,
+NAT64 - is judged on the **embedded** address, because that is where the socket lands. A host that
+cannot be parsed counts as private.
+
+One parsing trap: `URL.hostname` keeps the brackets around an IPv6 literal, so `isIP('[::1]')`
+answers "not an address" and skips the literal check entirely. `unbracketHost` strips them first.
+
 ### Distributed locks
 
 | Method | Path | Description |

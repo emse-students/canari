@@ -223,6 +223,10 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 - **Nothing types a string as user-visible, so no compiler enforces Paraglide.** `showToast` takes a `string`; a literal passes lint, `check` and CI, in either language (English ones read as normal code and are the easier miss). `stores/toastLocalization.test.ts` guards that one entry point - a template is accepted only when it interpolates an `m.*()`.
 - **`bun run build` leaves Paraglide output that makes the locale-asserting tests resolve to English** (4 failures in `callSystemMessages.test.ts` / `pinChange.test.ts`). Re-run `bun run paraglide:compile` before `bun run test` after any build.
 
+#### Server-side fetches
+
+- **One predicate decides every outbound fetch of a user-supplied URL:** `isPrivateIpAddress` (`chat-delivery-service/src/utils/url-guard.ts`), consulted before the fetch AND again at connect time by `ssrfSafeDispatcher`. RFC 1918 is not the whole blocklist: `0.0.0.0`/`::` land on loopback under Linux, an IPv4-mapped IPv6 (`::ffff:127.0.0.1`, hex-spelled `::ffff:7f00:1`, NAT64) must be judged on its EMBEDDED IPv4 because that is where the socket goes, `fe80::/10` is not just the `fe80:` hextet, and `URL.hostname` keeps the brackets so `isIP('[::1]')` is 0 and skips the literal check. An address that cannot be classified counts as private.
+
 #### Contracts that the compiler does not check
 
 - **Never redeclare an `init`/lifecycle override with fewer parameters.** TypeScript accepts it, so the dropped argument is invisible to `bun run check`. Prefer inheriting `BaseMlsService.init` over copying it.

@@ -26,14 +26,53 @@ describe('isPrivateIpAddress', () => {
     }
   });
 
+  it('flags the wildcard and reserved IPv4 blocks as private', () => {
+    for (const ip of [
+      // A connection to 0.0.0.0 lands on loopback under Linux, so it reaches
+      // every service bound to the wildcard address.
+      '0.0.0.0',
+      '100.64.0.1', // RFC 6598 carrier-grade NAT
+      '192.0.0.1', // RFC 6890 protocol assignments
+      '198.18.0.1', // RFC 2544 benchmarking
+      '224.0.0.1', // multicast
+      '255.255.255.255', // broadcast
+    ]) {
+      expect(isPrivateIpAddress(ip)).toBe(true);
+    }
+  });
+
+  it('flags an IPv4-mapped IPv6 loopback in either notation', () => {
+    // The socket ends up on the embedded IPv4, so that is what has to be judged.
+    // Both spellings denote 127.0.0.1; DNS hands back either one.
+    for (const ip of [
+      '::ffff:127.0.0.1',
+      '::ffff:7f00:1',
+      '::127.0.0.1',
+      '64:ff9b::127.0.0.1',
+      '::ffff:10.0.0.4',
+      '::ffff:192.168.1.1',
+    ]) {
+      expect(isPrivateIpAddress(ip)).toBe(true);
+    }
+  });
+
+  it('flags the unspecified address and the rest of the link-local IPv6 range', () => {
+    // fe80::/10 spans fe80-febf, not just the fe80: hextet.
+    for (const ip of ['::', 'fe9a::1', 'feb0::1', 'ff02::1', 'fe80::1%eth0']) {
+      expect(isPrivateIpAddress(ip)).toBe(true);
+    }
+  });
+
   it('treats public addresses as non-private', () => {
-    for (const ip of ['1.1.1.1', '8.8.8.8', '93.184.216.34', '2606:4700::1111']) {
+    for (const ip of ['1.1.1.1', '8.8.8.8', '93.184.216.34', '2606:4700::1111', '::ffff:1.1.1.1']) {
       expect(isPrivateIpAddress(ip)).toBe(false);
     }
   });
 
   it('rejects malformed IPv4 defensively (treated as private)', () => {
-    expect(isPrivateIpAddress('999.1.1')).toBe(true);
+    for (const ip of ['999.1.1', '999.1.1.1', '1.1.1.-1', 'not.an.ip.at']) {
+      expect(isPrivateIpAddress(ip)).toBe(true);
+    }
   });
 });
 
@@ -97,6 +136,20 @@ describe('assertSafeExternalUrl', () => {
 
   it('rejects literal private IPs before any DNS lookup', async () => {
     await expect(assertSafeExternalUrl('http://127.0.0.1/x')).rejects.toThrow(BadRequestException);
+  });
+
+  it('rejects a bracketed IPv6 literal before any DNS lookup', async () => {
+    // parsed.hostname keeps the brackets, so without unbracketing isIP() answers
+    // "not an address" and the whole literal branch is skipped.
+    for (const url of ['http://[::1]/x', 'http://[::ffff:127.0.0.1]/x', 'http://[::]/x']) {
+      await expect(assertSafeExternalUrl(url)).rejects.toThrow(BadRequestException);
+    }
+  });
+
+  it('rejects the wildcard address', async () => {
+    await expect(assertSafeExternalUrl('http://0.0.0.0:8080/x')).rejects.toThrow(
+      BadRequestException
+    );
   });
 
   it('accepts a public literal IP and returns the parsed URL', async () => {
