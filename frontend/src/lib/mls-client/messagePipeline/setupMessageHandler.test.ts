@@ -175,16 +175,54 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
-  it('propagates channel.member.kicked', async () => {
+  it('propagates channel.member.kicked with the removed user', async () => {
     const onChannelMemberKicked = vi.fn();
     const deps = baseDeps({ onChannelMemberKicked });
     setupMessageHandler(deps as any);
     await (deps.mlsService as any).onChannelEvent({
       type: 'channel.member.kicked',
-      data: { channelId: 'c2', kickedBy: 'admin' },
+      data: { channelId: 'c2', kickedBy: 'admin', kickedUserId: 'u-bob', isPrivate: true },
+    });
+    // kickedUserId is what tells the receiver the removal is theirs - dropping it made every
+    // member purge the channel on somebody else's kick.
+    expect(onChannelMemberKicked).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channelId: 'c2',
+        kickedBy: 'admin',
+        kickedUserId: 'u-bob',
+        channelIsPrivate: true,
+      })
+    );
+  });
+
+  it('normalises channel.member.removed onto the same callback', async () => {
+    const onChannelMemberKicked = vi.fn();
+    const deps = baseDeps({ onChannelMemberKicked });
+    setupMessageHandler(deps as any);
+    await (deps.mlsService as any).onChannelEvent({
+      type: 'channel.member.removed',
+      data: { channelId: 'c3', removedBy: 'admin', removedUserId: 'u-bob', isPrivate: false },
     });
     expect(onChannelMemberKicked).toHaveBeenCalledWith(
-      expect.objectContaining({ channelId: 'c2', kickedBy: 'admin' })
+      expect.objectContaining({
+        channelId: 'c3',
+        kickedBy: 'admin',
+        kickedUserId: 'u-bob',
+        channelIsPrivate: false,
+      })
+    );
+  });
+
+  it('marks a community-wide removal by the absence of a channel', async () => {
+    const onChannelMemberKicked = vi.fn();
+    const deps = baseDeps({ onChannelMemberKicked });
+    setupMessageHandler(deps as any);
+    await (deps.mlsService as any).onChannelEvent({
+      type: 'channel.member.kicked',
+      data: { workspaceId: 'ws-1', kickedUserId: 'u-bob', kickedBy: 'admin' },
+    });
+    expect(onChannelMemberKicked).toHaveBeenCalledWith(
+      expect.objectContaining({ channelId: '', workspaceId: 'ws-1', kickedUserId: 'u-bob' })
     );
   });
 

@@ -2127,6 +2127,8 @@
   "channel_action_error_network": "{action}: service unavailable, check your connection.",
   "channel_action_error_generic": "{action}: {detail}",
   "channel_action_community_reorder": "Reordering communities",
+  "channel_removed_from_community": "You were removed from the community {community}.",
+  "channel_removed_from_channel": "You were removed from the channel #{channel}.",
   "chat_community_roles_tab": "Roles & permissions",
   "chat_community_roles_description": "Set each role's base permissions. They apply across every channel in the community.",
   "chat_community_remove_member_title": "Remove member",

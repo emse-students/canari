@@ -143,6 +143,33 @@ device back its own application message. The `senderNorm === userId` branch of
 `systemMessageHandler` builds the identical envelope, and only ever runs on the inviter's *other*
 devices. Pinned by `systemMessageHandler.channelInvite.test.ts`.
 
+### Being removed from a channel or a community
+
+Removal is pushed, not polled, so the person removed sees it happen without reloading. The server
+sends `channel.member.kicked` (a channel kick, a community kick, or someone leaving) and
+`channel.member.removed` (the channel settings panel) to **everyone still in the community as
+well as the target**, which makes the payload - not the arrival of the event - the thing that
+decides what happens locally. `channelEventHandler` normalises both onto one callback, and
+[`removalOutcome`](../../../frontend/src/lib/utils/chat/memberRemoval.ts) turns it into one of
+four answers:
+
+| Outcome | When | Local effect |
+|---|---|---|
+| `ignore` | `kickedUserId` is not the local user | none - it is someone else's removal |
+| `community` | no `channelId` (community-wide kick) | purge the whole workspace + toast |
+| `channel` | private channel | drop that channel + toast |
+| `public-channel` | public channel | none - every member still reads it |
+
+The two traps this encodes are worth restating, because both shipped as bugs: acting on a
+broadcast without checking the target made *every* member's client delete a channel when one
+person was kicked from it, and a community kick carries no `channelId` at all, so a handler that
+started with `if (!event.channelId) return` did nothing for the very person being removed.
+
+A purged community goes through `dropCommunityLocally` in `ChatBackgroundService`, shared with
+`workspace.deleted`: it reads the doomed channel ids **before** the purge, because clearing the
+chat panel afterwards needs to know whether what was on screen belonged to the community that
+just vanished.
+
 ### Channel message identity
 
 A channel bubble is keyed by the **server row id**, everywhere. Live delivery

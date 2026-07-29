@@ -115,13 +115,19 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     return;
   }
 
-  if (event.type === 'channel.member.kicked') {
+  // Two server events, one meaning: someone lost access. `channel.member.kicked` covers a kick
+  // from a channel and a removal from the whole community (no channelId then), while
+  // `channel.member.removed` is the channel settings panel taking a user off one channel. They
+  // are normalised here so a single client handler decides what is actually lost.
+  if (event.type === 'channel.member.kicked' || event.type === 'channel.member.removed') {
     const data = event.data || {};
     onChannelMemberKicked?.({
       channelId: String(data.channelId || ''),
       channelName: data.channelName,
       workspaceId: data.workspaceId,
-      kickedBy: data.kickedBy,
+      kickedUserId: String(data.kickedUserId ?? data.removedUserId ?? ''),
+      kickedBy: data.kickedBy ?? data.removedBy,
+      channelIsPrivate: data.isPrivate === true,
     });
     return;
   }

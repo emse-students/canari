@@ -304,6 +304,59 @@ describe('ChannelService security hardening', () => {
     await expect(service.closePoll('ch1', 'm1', 'u1')).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  // ── Member removal broadcasts ─────────────────────────────────────────────
+  // Both events fan out to every remaining member as well as the target, so the payload is the
+  // only thing a client can use to tell whose access changed and whether anything was lost.
+  // No compiler checks this across the two services.
+
+  it('kickFromWorkspace names the removed user and carries no channel', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }]);
+
+    await service.kickFromWorkspace('ws1', 'u-bob', 'u1');
+
+    // The exact payload matters: an absent channelId is what marks the removal as
+    // community-wide on the client, and the target must be in the notify list.
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.member.kicked',
+      { workspaceId: 'ws1', kickedUserId: 'u-bob', kickedBy: 'u1' },
+      expect.arrayContaining(['u-bob'])
+    );
+  });
+
+  it('removeMemberFromChannel reports whether the channel was private', async () => {
+    const { service, channelRepo, memberRepo, roleRepo, redis } = makeService();
+    channelRepo.findOne.mockResolvedValue({
+      id: 'ch1',
+      workspaceId: 'ws1',
+      name: 'staff',
+      isPrivate: true,
+      allowedUsers: ['u-bob'],
+      keyVersion: 1,
+      masterSecret: Buffer.alloc(32).toString('base64'),
+    });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ permissions: ['member.kick'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }]);
+
+    await service.removeMemberFromChannel('ch1', 'u-bob', 'u1');
+
+    // Without isPrivate the target cannot tell a real loss from a public channel they keep.
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.member.removed',
+      expect.objectContaining({
+        channelId: 'ch1',
+        removedUserId: 'u-bob',
+        removedBy: 'u1',
+        isPrivate: true,
+      }),
+      expect.arrayContaining(['u-bob'])
+    );
+  });
+
   // ── Channel moderation (`channel.moderate`) ───────────────────────────────
   // The role matrix advertises this permission as "pin or delete other members' messages".
   // These cases pin down that the matrix and the enforcement agree - the whole point of the

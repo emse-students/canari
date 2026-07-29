@@ -41,11 +41,21 @@ export interface MessageHandlerDeps {
     roleName?: string;
     joinedBy?: string;
   }) => void;
+  /**
+   * A member lost access to a channel or to a whole community. Broadcast to EVERY remaining
+   * member as well as the target, so `kickedUserId` is what decides whether the receiver is the
+   * one being removed - without it a client purges state on someone else's behalf.
+   * An empty `channelId` means the removal was community-wide.
+   */
   onChannelMemberKicked?: (event: {
     channelId: string;
     channelName?: string;
     workspaceId?: string;
+    /** The user being removed. Compare with the local user id before touching any state. */
+    kickedUserId: string;
     kickedBy?: string;
+    /** Channel removals only: a public channel stays readable, so nothing is lost. */
+    channelIsPrivate?: boolean;
   }) => void;
   onChannelUpdated?: (event: { channelId: string; name?: string; workspaceId?: string }) => void;
   onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Being removed from a community was invisible until a reload, and removing one person emptied everybody's sidebar.** Three defects in one event. A community-wide kick (`kickFromWorkspace`) publishes `channel.member.kicked` with a `workspaceId` and no `channelId`, and the client handler opened with `if (!event.channelId) return` - so the one person the event was for did nothing at all with it, and kept a community they no longer belonged to on screen until the next page load. The same handler then acted on the *rest* of the broadcast without ever looking at who was removed: the event goes to every remaining member so their views stay in sync, so kicking one person from a channel deleted that channel from every member's sidebar and IndexedDB. And `channel.member.removed`, which the channel settings panel emits when it takes a user off a single channel, had no client branch at all. Both events are now normalised onto one handler and read through `removalOutcome`, which distinguishes the four real cases: someone else's removal (do nothing), a community-wide removal (purge the workspace, with a toast naming it), the loss of a private channel (purge it, with a toast), and removal from a *public* channel - which costs the user nothing, since a public channel stays readable by every workspace member, so dropping it locally would only be undone by the next reload. That last case is why both channel-scoped events now carry `isPrivate`
+
 ## [v0.11.4] - 2026-07-29
 
 ### Added

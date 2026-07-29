@@ -1519,6 +1519,9 @@ export class ChannelService {
         workspaceId: channel.workspaceId,
         kickedUserId: input.targetUserId,
         kickedBy: input.actorUserId,
+        // Tells the target whether they actually lost access: a public channel stays readable
+        // by every workspace member, so only a private one disappears from their sidebar.
+        isPrivate: channel.isPrivate,
       },
       notifyIds
     );
@@ -1708,6 +1711,8 @@ export class ChannelService {
         workspaceId: channel.workspaceId,
         removedUserId: targetUserId,
         removedBy: actorUserId,
+        // See kickMember: only a private channel is actually lost by the target.
+        isPrivate: channel.isPrivate,
       },
       notifyIds
     );

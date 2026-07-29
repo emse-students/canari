@@ -859,6 +859,22 @@ export function useChannelWorkspaces() {
     await purgeWorkspaceLocally(event.workspaceId, ctx);
   }
 
+  /**
+   * Applies a community-wide `channel.member.kicked` broadcast addressed to this user: an admin
+   * removed them from the workspace. The local effect is the same as the community being deleted
+   * - it is gone from the sidebar and its channels leave the conversations map - which is why
+   * both go through {@link purgeWorkspaceLocally}. The caller must have already checked that the
+   * removed user is the local one.
+   */
+  async function handleRemovedFromWorkspace(
+    event: { workspaceId?: string },
+    ctx: WorkspacePurgeContext
+  ) {
+    if (!event.workspaceId) return;
+    ctx.log(`[Channel Event] removed from community ${event.workspaceId.slice(0, 8)}`);
+    await purgeWorkspaceLocally(event.workspaceId, ctx);
+  }
+
   /** Renames a channel on the server and updates both the sidebar label and the conversation entry optimistically. */
   async function renameCurrentChannel(
     channelConversationId: string,
@@ -1007,6 +1023,8 @@ export function useChannelWorkspaces() {
     handleWorkspaceUpdated,
     /** Applies an incoming real-time workspace-deleted event (an admin deleted the community). */
     handleWorkspaceDeleted,
+    /** Applies an incoming real-time removal of THIS user from a community (admin kick). */
+    handleRemovedFromWorkspace,
     /** Deletes a channel message (own message, or anyone's with `channel.moderate`). */
     deleteChannelMessage,
     /** Toggles the caller's emoji reaction on a channel message. */

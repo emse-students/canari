@@ -235,12 +235,36 @@ push clears the conversation's notification on the user's other devices.
 
 ## Redis events published
 
-The social-service publishes to `chat:channel_events` on:
-- `channel.member.joined`
-- `channel.member.kicked`
-- `channel.message.created`
+The social-service publishes to `chat:channel_events`:
+
+| Event | Emitted by |
+|---|---|
+| `channel.member.joined` | join, invite accept, key distribution |
+| `channel.member.kicked` | `kickMember`, `kickFromWorkspace`, `leaveWorkspace` |
+| `channel.member.removed` | `removeMemberFromChannel` |
+| `channel.key.rotated` | any membership change that invalidates the epoch key |
+| `channel.message.created` / `.deleted` | send, delete |
+| `channel.updated` / `.deleted` | rename, delete |
+| `workspace.updated` / `.deleted` | cover image change, soft delete |
+| `channel.typing`, `channel.pin`, `channel.reaction`, `channel.poll.vote` | live UI signals |
 
 The chat-gateway subscribers fan out these events to all connected devices of the affected users.
+
+### Removal events are fan-out, and the payload is the only discriminator
+
+`channel.member.kicked` and `channel.member.removed` go to **every remaining member as well as
+the person being removed** - the remaining members need them to keep their own view in sync. So
+receiving one means nothing on its own, and two payload fields carry the entire meaning:
+
+- `kickedUserId` / `removedUserId` - the target. A client that acts without comparing it to its
+  own user id purges state on somebody else's behalf.
+- `isPrivate` - on the channel-scoped removals only. A **public** channel stays readable by every
+  workspace member, so removing someone from one merely rotates the epoch key; nothing is lost
+  and the client must not drop it (a reload would bring it straight back).
+
+A community-wide removal (`kickFromWorkspace`) carries **no `channelId`**: that absence is what
+tells the client the whole workspace is gone. Client side: `removalOutcome` in
+`utils/chat/memberRemoval.ts` is the single place that reads these rules.
 
 ## Environment variables
 

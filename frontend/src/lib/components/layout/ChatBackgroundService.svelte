@@ -44,7 +44,10 @@
   import BiometricEnrollSheet from '$lib/components/auth/BiometricEnrollSheet.svelte';
   import { biometricPrompt } from '$lib/stores/biometricPrompt.svelte';
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { removalOutcome } from '$lib/utils/chat/memberRemoval';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
+  import type { WorkspacePurgeContext } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import type { BulkIngestPhase } from '$lib/mls-client';
   import { Phone, PhoneOff, Video } from '@lucide/svelte';
@@ -498,6 +501,35 @@
   }
 
   /**
+   * Erases a community from local state, then clears the chat panel if the conversation on
+   * screen belonged to it. The channel ids have to be read BEFORE the purge, which is exactly
+   * what makes this shared by the two ways a community can vanish under the user: an admin
+   * deleted it, or an admin removed the user from it.
+   * @param workspaceId Server id of the community leaving local state.
+   * @param purge The event-specific handler doing the removal (it owns the log line).
+   */
+  async function dropCommunityLocally(
+    workspaceId: string,
+    purge: (ctx: WorkspacePurgeContext) => Promise<void>
+  ) {
+    const doomedChannelIds =
+      globalChannels.channelWorkspaces
+        .find((ws) => ws.workspaceDbId === workspaceId)
+        ?.channels.map((ch) => ch.id) ?? [];
+    await purge({
+      conversations: globalConvs.conversations,
+      deleteConversation: (id: string) =>
+        globalSession.storage?.deleteConversation(id) ?? Promise.resolve(),
+      invalidateChannelHistoryCache: globalConvs.invalidateChannelHistoryCache,
+      log: appendLog,
+    });
+    if (globalConvs.selectedContact && doomedChannelIds.includes(globalConvs.selectedContact)) {
+      globalConvs.selectedContact = null;
+      globalConvs.sendError = '';
+    }
+  }
+
+  /**
    * Builds the full callback object for globalSession.login() / session callbacks.
    * @param overrides Per-call hooks (e.g. handlePinSubmit step timer).
    */
@@ -587,8 +619,34 @@
         }
       },
       onChannelMemberKicked: (event: any) => {
-        if (!event.channelId) return;
+        const outcome = removalOutcome({
+          localUserId: globalSession.userId,
+          kickedUserId: event.kickedUserId,
+          channelId: event.channelId,
+          channelIsPrivate: event.channelIsPrivate,
+        });
+        if (outcome === 'ignore') return;
+
+        if (outcome === 'community') {
+          const communityName =
+            globalChannels.channelWorkspaces.find((ws) => ws.workspaceDbId === event.workspaceId)
+              ?.name ?? '';
+          void dropCommunityLocally(event.workspaceId, (ctx) =>
+            globalChannels.handleRemovedFromWorkspace(event, ctx)
+          );
+          showToast(m.channel_removed_from_community({ community: communityName }), 'info');
+          return;
+        }
+
+        if (outcome === 'public-channel') {
+          appendLog(
+            `Removed from public channel #${event.channelName || event.channelId} - access retained`
+          );
+          return;
+        }
+
         const channelConversationId = `channel_${event.channelId}`;
+        globalConvs.invalidateChannelHistoryCache(channelConversationId);
         globalConvs.conversations.delete(channelConversationId);
         void globalSession.storage?.deleteConversation(channelConversationId).catch(() => {});
         globalChannels.removeChannelFromWorkspaces(channelConversationId);
@@ -600,6 +658,7 @@
           globalChannels.selectedChannelConversationId = '';
         }
         appendLog(`Removed from channel #${event.channelName || event.channelId}`);
+        showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
       },
       onChannelUpdated: (event: { channelId: string; name?: string }) => {
         if (!event.channelId) return;
@@ -640,29 +699,9 @@
       },
       onWorkspaceDeleted: (event: { workspaceId: string }) => {
         if (!event.workspaceId) return;
-        // Capture the channel ids before the purge: clearing the chat panel needs to know
-        // whether the open conversation belonged to the community that just vanished.
-        const doomedChannelIds =
-          globalChannels.channelWorkspaces
-            .find((ws) => ws.workspaceDbId === event.workspaceId)
-            ?.channels.map((ch) => ch.id) ?? [];
-        void globalChannels
-          .handleWorkspaceDeleted(event, {
-            conversations: globalConvs.conversations,
-            deleteConversation: (id: string) =>
-              globalSession.storage?.deleteConversation(id) ?? Promise.resolve(),
-            invalidateChannelHistoryCache: globalConvs.invalidateChannelHistoryCache,
-            log: appendLog,
-          })
-          .then(() => {
-            if (
-              globalConvs.selectedContact &&
-              doomedChannelIds.includes(globalConvs.selectedContact)
-            ) {
-              globalConvs.selectedContact = null;
-              globalConvs.sendError = '';
-            }
-          });
+        void dropCommunityLocally(event.workspaceId, (ctx) =>
+          globalChannels.handleWorkspaceDeleted(event, ctx)
+        );
       },
       onChannelMessageDeleted: (event: { channelId: string; messageId: string }) => {
         globalChannels.handleChannelMessageDeleted(event, {
