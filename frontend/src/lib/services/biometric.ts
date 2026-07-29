@@ -2,6 +2,7 @@ import { authenticate, BiometryType, checkStatus, type Status } from '@tauri-app
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { m } from '$lib/paraglide/messages';
+import { keystoreCommand } from './keystoreCommands';
 
 /**
  * Flag persisted in localStorage (and mirrored to Tauri native store) that
@@ -97,17 +98,22 @@ export class BiometricService {
   /**
    * Lightweight check: does cipher data exist for the given alias?
    *
-   * Reads SharedPreferences only — no Android Keystore access, no
-   * BiometricPrompt.  Safe to call before showing the biometric button.
+   * Never triggers a biometric prompt — Android reads SharedPreferences only, iOS matches
+   * keychain attributes without decrypting. Safe to call before showing the biometric button,
+   * and it gates whether the unlock flow offers biometrics at all: a false answer sends the
+   * user to the PIN modal, so a broken call here silently disables the fingerprint.
    */
   static async isKeyPresent(alias: string): Promise<boolean> {
     if (!alias || !isTauri()) return false;
     try {
-      const result = await invoke<{ present: boolean }>('plugin:app.tauri.keystore|hasKeyBytes', {
-        alias,
+      const result = await invoke<{ present: boolean }>(keystoreCommand('hasKeyBytes'), {
+        payload: { alias },
       });
       return result.present === true;
-    } catch {
+    } catch (e) {
+      // Logged rather than swallowed: this failure used to be indistinguishable from a genuine
+      // "no key here", which is how a wrong command name went unnoticed for three releases.
+      console.warn('[BIOMETRIC] isKeyPresent failed - treating the key as absent:', e);
       return false;
     }
   }
@@ -122,7 +128,9 @@ export class BiometricService {
     // prompt, authenticate() throws and the disable does not happen — key and flags stay intact.
     await authenticate(m.auth_biometric_prompt_disable());
     if (alias && isTauri()) {
-      await invoke('plugin:app.tauri.keystore|deleteKeyBytes', { alias }).catch(() => {});
+      await invoke(keystoreCommand('deleteKeyBytes'), { payload: { alias } }).catch((e) => {
+        console.warn('[BIOMETRIC] deleteKeyBytes failed - keystore entry may survive:', e);
+      });
     }
     localStorage.removeItem(CONFIG_FLAG_KEY);
     if (isTauri()) {

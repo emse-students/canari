@@ -68,4 +68,13 @@ impl<R: Runtime> Keystore<R> {
             .run_mobile_plugin("deleteKeyBytes", payload)
             .map_err(Into::into)
     }
+
+    /// Report whether a raw key exists for an alias, WITHOUT reading it.
+    /// Never triggers a biometric prompt - it is the pre-check that decides whether
+    /// offering biometric unlock makes sense at all.
+    pub fn has_key_bytes(&self, payload: HasKeyBytesRequest) -> crate::Result<HasKeyBytesResponse> {
+        self.0
+            .run_mobile_plugin("hasKeyBytes", payload)
+            .map_err(Into::into)
+    }
 }

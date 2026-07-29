@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-get-key-bytes"
+description = "Enables the get_key_bytes command without any pre-configured scope."
+commands.allow = ["get_key_bytes"]
+
+[[permission]]
+identifier = "deny-get-key-bytes"
+description = "Denies the get_key_bytes command without any pre-configured scope."
+commands.deny = ["get_key_bytes"]

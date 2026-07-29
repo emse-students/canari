@@ -42,6 +42,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::store_key_bytes,
             commands::get_key_bytes,
             commands::delete_key_bytes,
+            commands::has_key_bytes,
         ])
         .setup(|app, api| {
             #[cfg(mobile)]

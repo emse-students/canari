@@ -131,6 +131,10 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
 - \[ \] **WP-VERIF-2 (P2) - [device] Decrypted push notification on Android AND iOS.**
 
 - \[ \] **WP-VERIF-3 (P2) - [device] Login, PIN change, biometric enable/disable on real hardware.**
+  Now also gates the v0.11.5 keystore fix: after enrolling a fingerprint, a relaunch must open the
+  BiometricBottomSheet (not the PIN modal), and the PIN modal must keep its "use fingerprint"
+  button. Second check on the same launch: the log must say `[DB] Using SQLite storage (Tauri)`,
+  never the IndexedDB fallback. Both were broken for every fresh install before this commit.
 
 - \[ \] **WP-VERIF-4 (P3) - [device] WP-XP-8 retry engine.** Android `OutboxRetryWorker`
   (WorkManager, exp backoff 30s+, 3 failures -> persistent flag + nudge) and iOS `BGTaskScheduler`
@@ -215,6 +219,10 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 - **Never redeclare an `init`/lifecycle override with fewer parameters.** TypeScript accepts it, so the dropped argument is invisible to `bun run check`. Prefer inheriting `BaseMlsService.init` over copying it.
 - **A `postMessage` payload is typed by whoever writes the literal - i.e. by nobody.** All three MLS worker contracts live in `src/lib/mls-client/mlsWorkerProtocol.ts`, imported by both ends. Add new worker messages THERE, never as a local interface.
 - **Tauri command names are unchecked strings on both sides.** An `invoke()` literal matching no `#[tauri::command]` compiles, lints and type-checks, then fails at runtime. Grep both sides on any rename.
+- **A plugin command needs THREE things right, not one:** the prefix is the Tauri plugin name (`plugin:keystore|…`, from `Builder::new`) and NOT the Android class id (`app.tauri.keystore`); the command is the snake_case Rust fn, not the Kotlin/Swift method; and it must be in the plugin's `build.rs` COMMANDS + `permissions/default.toml`, or the IPC boundary refuses it anyway. Build identifiers with `keystoreCommand()`; `keystoreCommands.test.ts` reads the Rust sources and fails on drift.
+- **Never let a capability probe swallow its own failure.** `isKeyPresent` returned `false` on a thrown invoke, making "the plugin does not exist" indistinguishable from "no key here" - so a wrong command name silently disabled biometric unlock for three releases. A probe that fails must log.
+- **A migration outlives the schema it was written against.** Branches keyed on `PRAGMA user_version` all run on a brand-new database (it starts at 0), so the v1->v2 purge kept naming a `salt` column dropped later and threw on every fresh install. `db/sqliteMigrations.ts`: a freshly created DB is stamped at `SCHEMA_VERSION` and skips every branch (detected via `sqlite_master` BEFORE the CREATE TABLEs - `user_version` is 0 for a pre-migration DB too), and column-inspecting statements are built from `PRAGMA table_info`.
+- **`getStorage()`'s IndexedDB fallback is a last resort, not a mode.** It is a `console.warn` in a WebView, so a permanent degradation looks like a healthy start; confirm the backend with `[DB] Using SQLite storage (Tauri)`. `canari_<userId>.db` is frontend-only - the native side owns `mls_pending.db`.
 - **`push_context.json` is a JSON contract across four languages** (Rust writer; ObjC, Swift, Kotlin readers) that no compiler checks - the v0.11.0 `pin` -> `deviceKeyB64` rename killed iOS background decrypt for three releases. `src/lib/mobile/pushContextFields.test.ts` is the only thing that catches drift; change the fields and change it too.
 - **NEVER branch on an error message.** `onLoginFailed(msg, code)` carries a typed `LoginErrorCode` (`loginErrors.ts`) because the message is localized: a regex over it ships dead in French.
 - **"Logged in" means two things.** `globalSession.isLoggedIn` = MLS ready; the login page checks the OIDC/refresh session. Page guards test `currentUserId()`; MLS-dependent sections handle MLS absence themselves.

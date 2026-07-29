@@ -58,3 +58,17 @@ pub struct GetKeyBytesResponse {
 pub struct DeleteKeyBytesRequest {
     pub alias: String,
 }
+
+/// Request asking whether a raw key exists for an alias.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HasKeyBytesRequest {
+    pub alias: String,
+}
+
+/// Response of the existence check. `present` is false when the alias holds nothing.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HasKeyBytesResponse {
+    pub present: bool,
+}

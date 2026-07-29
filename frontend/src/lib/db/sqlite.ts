@@ -14,6 +14,7 @@ import {
   mergeOutboxEntry,
   outboxClearColumns,
 } from './outboxCodec';
+import { SCHEMA_VERSION, isFreshDatabase, legacyBlobPurgeStatement } from './sqliteMigrations';
 
 function rowTimestampMs(raw: unknown): number {
   return readStoredTimestampMs(raw) ?? 0;
@@ -87,10 +88,20 @@ export class SqliteStorage implements IStorage {
     this.dbPath = `sqlite:canari_${userId}.db`;
   }
 
-  /** Open (or create) the SQLite database, enable WAL mode, create tables, and run migrations up to version 5. */
+  /** Open (or create) the SQLite database, enable WAL mode, create tables, and run migrations up to {@link SCHEMA_VERSION}. */
   async init(): Promise<void> {
     const Database = (await import('@tauri-apps/plugin-sql')).default;
     this.db = await Database.load(this.dbPath);
+
+    // Read the schema state BEFORE the CREATE TABLE statements below, while the file still
+    // reflects what was on disk. Afterwards every database looks alike and a brand-new one can no
+    // longer be told apart from a pre-migration-system one - both report user_version = 0.
+    const preExistingTables: string[] = (
+      await this.db.select("SELECT name FROM sqlite_master WHERE type = 'table'")
+    ).map((r: any) => String(r.name));
+    const versionRows: any[] = await this.db.select('PRAGMA user_version');
+    const currentVersion: number = versionRows[0]?.user_version ?? 0;
+    const fresh = isFreshDatabase(preExistingTables, currentVersion);
 
     // WAL mode: non-blocking concurrent reads, critical on mobile.
     await this.db.execute('PRAGMA journal_mode=WAL');
@@ -154,21 +165,23 @@ export class SqliteStorage implements IStorage {
         `);
     await this.db.execute('CREATE INDEX IF NOT EXISTS idx_outbox_conv ON outbox(conversation_id)');
 
-    // Migration v1→v2 : colonnes BLOB → TEXT (base64).
-    // Detect rows whose iv/salt/cipher_text are not valid base64 strings
-    // (stored with the old JSON "[1,2,3]" format) and delete them, as they cannot
-    // be decrypted without the source device's private key.
-    const versionRows: any[] = await this.db.select('PRAGMA user_version');
-    const currentVersion: number = versionRows[0]?.user_version ?? 0;
+    // A database created by the statements above has no history to migrate. Stamp it at the
+    // current version and skip every branch below: they are written against schemas this file
+    // never had, and running them is how "no such column: salt" broke every fresh install.
+    if (fresh) {
+      await this.db.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+      return;
+    }
 
+    // Migration v1->v2: BLOB columns -> TEXT (base64).
+    // Delete rows whose iv/salt/cipher_text are not valid base64 (stored in the old JSON
+    // "[1,2,3]" format): they cannot be decrypted without the source device's private key.
+    // The statement is built from the columns the table actually has, so a column dropped by a
+    // later refactor cannot break a migration that predates the drop.
     if (currentVersion < 2) {
-      await this.db.execute(`
-        DELETE FROM messages
-        WHERE typeof(iv) != 'text'
-           OR iv LIKE '[%'
-           OR salt LIKE '[%'
-           OR cipher_text LIKE '[%'
-      `);
+      const msgCols: any[] = await this.db.select('PRAGMA table_info(messages)');
+      const purge = legacyBlobPurgeStatement(msgCols.map((c) => String(c.name)));
+      if (purge) await this.db.execute(purge);
       await this.db.execute('PRAGMA user_version = 2');
     }
 
@@ -203,7 +216,7 @@ export class SqliteStorage implements IStorage {
       // and re-encrypted with the device key. Conversations (plaintext) are preserved.
       await this.db.execute('DELETE FROM messages');
       await this.db.execute('DELETE FROM outbox');
-      await this.db.execute('PRAGMA user_version = 5');
+      await this.db.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     }
   }
 

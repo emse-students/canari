@@ -52,3 +52,11 @@ pub(crate) async fn delete_key_bytes<R: Runtime>(
 ) -> crate::Result<()> {
     app.keystore().delete_key_bytes(payload)
 }
+
+#[command]
+pub(crate) async fn has_key_bytes<R: Runtime>(
+    app: AppHandle<R>,
+    payload: HasKeyBytesRequest,
+) -> crate::Result<HasKeyBytesResponse> {
+    app.keystore().has_key_bytes(payload)
+}

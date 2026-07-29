@@ -1,3 +1,11 @@
 [default]
 description = "Default permissions for the plugin"
-permissions = ["allow-remove", "allow-retrieve", "allow-store"]
+permissions = [
+  "allow-remove",
+  "allow-retrieve",
+  "allow-store",
+  "allow-store-key-bytes",
+  "allow-get-key-bytes",
+  "allow-delete-key-bytes",
+  "allow-has-key-bytes",
+]

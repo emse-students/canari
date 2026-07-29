@@ -142,6 +142,11 @@ class KeystorePlugin: Plugin {
     let alias: String
   }
 
+  /// Request asking whether a raw key exists for an alias.
+  class HasKeyBytesRequest: Decodable {
+    let alias: String
+  }
+
   /// Stores a raw 32-byte key (base64-encoded) in the iOS Keychain under
   /// the given alias. The key is protected by `.userPresence` access control
   /// (Face ID / Touch ID or device passcode fallback).
@@ -289,6 +294,45 @@ class KeystorePlugin: Plugin {
     }
 
     invoke.resolve()
+  }
+
+  /// Reports whether a raw key exists for an alias, WITHOUT reading it and WITHOUT ever
+  /// showing a Face ID / Touch ID sheet. It is the pre-check that decides whether offering
+  /// biometric unlock makes sense at all, so prompting here would defeat its purpose.
+  ///
+  /// The background item (`mls_bg_key_`) is tested first: it carries no access control, so
+  /// matching it needs no authentication. It is written and deleted in the same operations as
+  /// the primary item, which makes its presence equivalent. The primary item is then tried with
+  /// attributes only and `kSecUseAuthenticationUISkip`, which returns a match without decrypting
+  /// - it covers a device enrolled before the background item existed.
+  @objc public func hasKeyBytes(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(HasKeyBytesRequest.self)
+
+    let bgQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kKeychainService,
+      kSecAttrAccount as String: "mls_bg_key_\(args.alias)",
+      kSecAttrAccessGroup as String: "group.fr.emse.canari",
+      kSecReturnAttributes as String: true,
+    ]
+    if SecItemCopyMatching(bgQuery as CFDictionary, nil) == errSecSuccess {
+      invoke.resolve(["present": true])
+      return
+    }
+
+    let primaryQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: kKeychainService,
+      kSecAttrAccount as String: "mls_key_\(args.alias)",
+      kSecReturnAttributes as String: true,
+      kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+    ]
+    let status = SecItemCopyMatching(primaryQuery as CFDictionary, nil)
+
+    // errSecInteractionNotAllowed means the item IS there but would need a prompt to be read.
+    // For an existence check that is a positive answer, not a failure.
+    let present = status == errSecSuccess || status == errSecInteractionNotAllowed
+    invoke.resolve(["present": present])
   }
 }
 

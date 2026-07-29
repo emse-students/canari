@@ -120,6 +120,37 @@ fails.
 `enrollBiometricImpl` through the `biometricPrompt` store, so the post-login offer and the Settings
 toggle behave identically.
 
+### Two flags gate the biometric branch, and both must answer
+
+`startLoginFlow` offers biometrics only when `BiometricService.isConfigured()` (the user opted in)
+**and** `BiometricService.isKeyPresent(alias)` (a key really exists under
+`mls_device_key_{userId}_{deviceId}`) both say yes. The second check exists so a reinstall - flag
+restored from the native store, keystore empty - does not raise a prompt that could only fail.
+
+A false answer from either is not a soft degradation: `biometricAttempted` stays false, the sheet
+never opens, and `biometricConfigured = biometricAttempted` also hides the "use fingerprint" button
+on the PIN modal. Biometrics become unreachable with nothing logged. That is precisely what
+happened while `isKeyPresent` invoked a plugin that did not exist (see below), so it now logs its
+failure instead of returning a bare `false`.
+
+### Calling the keystore plugin from JS
+
+Two things must line up, and no compiler checks either:
+
+| | Correct | Wrong, and silent |
+|---|---|---|
+| Prefix | `plugin:keystore\|…`, from `Builder::new("keystore")` | `plugin:app.tauri.keystore\|…` - that is the **Android class** id given to `register_android_plugin`, and resolves no plugin |
+| Command | snake_case Rust fn name, e.g. `has_key_bytes` | the Kotlin/Swift method name, e.g. `hasKeyBytes` |
+| ACL | listed in the plugin's `build.rs` COMMANDS **and** granted in `permissions/default.toml` | absent - the IPC boundary refuses the call although the Rust fn exists |
+
+Build the identifier with `keystoreCommand()` from `services/keystoreCommands.ts` rather than
+writing the string; `keystoreCommands.test.ts` reads the Rust sources and fails CI when a name,
+the handler registration, the ACL array or the default permission set drift apart.
+
+`has_key_bytes` never prompts: Android reads SharedPreferences only, iOS matches keychain
+attributes without decrypting (it tests the background item first, which carries no access
+control, then the primary one with `kSecUseAuthenticationUISkip`).
+
 ### Login failure codes
 
 `session/loginErrors.ts` defines `LoginFailure` with a machine-readable `LoginErrorCode`

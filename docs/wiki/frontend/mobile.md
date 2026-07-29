@@ -37,6 +37,11 @@ The Rust side is in `frontend/src-tauri/src/` (Tauri commands) and `frontend/mls
 > `generer_key_packages_et_persister_avec_clef` against Rust commands that had kept their original
 > names - every native MLS init, save and KeyPackage publication failed for as long as it was live.
 > When renaming a command, grep both sides.
+>
+> The same hazard applies to **plugin** commands, with two extra ways to get it wrong: the prefix
+> is the Tauri plugin name (`plugin:keystore|…`), not the Android class id, and the command must
+> also appear in the plugin's `build.rs` ACL array. See
+> [auth - calling the keystore plugin from JS](modules/auth.md).
 
 ### Device key on the biometric path
 
@@ -51,6 +56,30 @@ save and KeyPackage commands fall back to that cache. Resolving per call would i
 - **Epoch caching**: `_epochByGroupId` + `refreshEpochCache()` — Tauri cannot read the WASM group directly, so epoch is cached and refreshed after each queue item, Welcome, and commit.
 - **Queue priority**: `group_reset` control → Welcome queue → application queue.
 - **Filesystem state**: MLS state persisted under `mls_bin_write_lock` (no IndexedDB).
+
+### Local message store
+
+Conversations, messages and the outbox live in `canari_<userId>.db`, opened by `SqliteStorage`
+through `@tauri-apps/plugin-sql`. It is **frontend-only**: the native side owns a different
+database, `mls_pending.db` (queued push payloads), so the two never contend for the same file.
+
+`getStorage()` falls back to `IndexedDbStorage` when `SqliteStorage.init()` throws. That fallback
+is a last resort, not a supported mode - it is a `console.warn` in a WebView, so a permanent
+degradation looks exactly like a healthy start. Check for `[DB] Using SQLite storage (Tauri)` in
+the logs to confirm the real backend.
+
+**A migration outlives the schema it was written against.** Branches are keyed on
+`PRAGMA user_version`, and a brand-new database starts at 0, so every historical branch runs on it.
+The v1 -> v2 purge named a `salt` column that the deviceKeyB64 refactor had removed from
+`CREATE TABLE messages`, and every fresh install threw `no such column: salt` and silently ran on
+IndexedDB. Two rules follow, both enforced in `db/sqliteMigrations.ts` and its tests:
+
+- A database created by the `CREATE TABLE IF NOT EXISTS` statements has nothing to migrate: stamp
+  it at `SCHEMA_VERSION` and skip every branch. `user_version` alone cannot detect this - a
+  pre-migration-system database also reports 0 - so the check reads `sqlite_master` **before** the
+  creation statements run.
+- A migration that inspects columns must build its statement from
+  `PRAGMA table_info(...)`, so dropping a column can never break the migration that mentions it.
 
 ## iOS specifics
 

@@ -62,4 +62,15 @@ impl<R: Runtime> Keystore<R> {
         let _ = entry.delete_credential();
         Ok(())
     }
+
+    /// Report whether a raw key exists for an alias. A missing entry is `present: false`,
+    /// never an error - the caller uses this to decide whether to offer biometric unlock.
+    pub fn has_key_bytes(&self, payload: HasKeyBytesRequest) -> crate::Result<HasKeyBytesResponse> {
+        let entry = keyring::Entry::new("fr.emse.canari", &format!("mls_key_{}", payload.alias))?;
+        match entry.get_password() {
+            Ok(_) => Ok(HasKeyBytesResponse { present: true }),
+            Err(keyring::Error::NoEntry) => Ok(HasKeyBytesResponse { present: false }),
+            Err(e) => Err(e.into()),
+        }
+    }
 }
