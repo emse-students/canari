@@ -7,12 +7,14 @@
     revokeAssociationTag,
     updateAssociation,
     listAssociationProductsForManage,
+    listCotisationTiers,
     createProduct,
     updateProduct,
     deleteProduct,
     type Association,
     type AssociationProduct,
     type CotisantRosterItem,
+    type CotisationTier,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
@@ -88,6 +90,14 @@
   let addUserId = $state('');
   let adding = $state(false);
   let addError = $state('');
+  /**
+   * Tiers offered to a manual add. Fetched from the MANAGE_MEMBERS endpoint rather than reused
+   * from `tierProducts`, which only loads for MANAGE_PRODUCTS holders - roster managers must be
+   * able to pick a forfait without holding the boutique permission.
+   */
+  let cotisationTiers = $state<CotisationTier[]>([]);
+  let addVariantKey = $state('');
+  let tiersLoadedForMembersAssoId: string | null = null;
 
   // ── Export ────────────────────────────────────────────────────────────────
   let exporting = $state(false);
@@ -141,6 +151,14 @@
     if (tiersLoadedForAssoId === asso.id) return;
     tiersLoadedForAssoId = asso.id;
     void loadTierProducts();
+  });
+
+  /** Loads the tier list backing the "add a cotisant" forfait picker. */
+  $effect(() => {
+    if (!asso.cotisationEnabled || !canManageMembers) return;
+    if (tiersLoadedForMembersAssoId === asso.id) return;
+    tiersLoadedForMembersAssoId = asso.id;
+    void loadCotisationTiers();
   });
 
   // Infinite scroll: fetch the next page once the sentinel enters the viewport.
@@ -248,6 +266,22 @@
     }
   }
 
+  /**
+   * Fetches the association's cotisation tiers and preselects one. When the association has no
+   * base tier (a multi-tier setup that dropped it), the empty choice would be rejected by the
+   * server, so the first named tier is selected instead of leaving an invalid default.
+   */
+  async function loadCotisationTiers() {
+    console.log(`[Cotisations] Loading tiers for manual add - asso=${asso.id.slice(0, 8)}`);
+    try {
+      cotisationTiers = await listCotisationTiers(asso.id);
+      const hasBaseTier = cotisationTiers.some((t) => t.variantKey === null);
+      addVariantKey = hasBaseTier ? '' : (cotisationTiers[0]?.variantKey ?? '');
+    } catch (e) {
+      console.error('[Cotisations] Failed to load tiers:', e);
+    }
+  }
+
   function resetAddTierForm() {
     newTierName = '';
     newTierVariantKey = '';
@@ -279,7 +313,7 @@
             : undefined,
       });
       resetAddTierForm();
-      await loadTierProducts();
+      await Promise.all([loadTierProducts(), loadCotisationTiers()]);
     } catch (e) {
       tiersError = e instanceof Error ? e.message : m.asso_cotisations_tier_create_error();
       console.error('[Cotisations] Failed to create tier:', e);
@@ -292,7 +326,13 @@
     expandedTierId = expandedTierId === product.id ? null : product.id;
   }
 
-  /** Saves a tier's editable label/price and upgrade-pricing link (variantKey is immutable once created). */
+  /**
+   * Saves a tier's label, price, upgrade-pricing link and tier identifier.
+   *
+   * `variantKey` is editable so an association that outgrew the auto-provisioned base tier can
+   * convert it into a named forfait: the server re-derives the granted tag and carries the
+   * existing cotisants over to it, so nothing is lost. An empty value means the base tier.
+   */
   async function handleSaveTier(product: AssociationProduct, form: HTMLFormElement) {
     const fd = new FormData(form);
     savingTierId = product.id;
@@ -302,9 +342,11 @@
       const priceRaw = String(fd.get('priceEuros') ?? '').trim();
       const memberPriceTag = String(fd.get('memberPriceTag') ?? '');
       const memberPriceRaw = String(fd.get('memberPriceEuros') ?? '').trim();
+      const variantKey = String(fd.get('variantKey') ?? '').trim() || null;
       if (!name) return;
       const updated = await updateProduct(asso.id, product.id, {
         name,
+        variantKey,
         amountCents: priceRaw ? Math.round(Number(priceRaw) * 100) : null,
         memberPriceTag: memberPriceTag || null,
         amountCentsMember:
@@ -312,6 +354,9 @@
       });
       tierProducts = tierProducts.map((p) => (p.id === product.id ? updated : p));
       expandedTierId = null;
+      // A retag renames the tag on every cotisant of this tier, so both the picker and the
+      // roster's Forfait column are stale until refetched.
+      await Promise.all([loadCotisationTiers(), loadRoster(0, true)]);
     } catch (e) {
       tiersError = e instanceof Error ? e.message : m.asso_cotisations_membership_save_error();
       console.error('[Cotisations] Failed to save tier:', e);
@@ -320,7 +365,11 @@
     }
   }
 
-  /** Deletes an additional tier. The base tier (variantKey null) is never deletable from this UI. */
+  /**
+   * Deletes a tier. Allowed for the base tier too - a multi-tier association typically wants the
+   * auto-provisioned base gone, since holders of its un-suffixed tag report no forfait at all to
+   * consumers like Le Cercle. The server refuses to delete the last remaining tier.
+   */
   async function handleDeleteTier(product: AssociationProduct) {
     if (
       !(await showConfirm(m.asso_cotisations_tier_delete_confirm({ name: product.name }), {
@@ -332,6 +381,7 @@
     try {
       await deleteProduct(asso.id, product.id);
       tierProducts = tierProducts.filter((p) => p.id !== product.id);
+      await loadCotisationTiers();
     } catch (e) {
       tiersError = e instanceof Error ? e.message : m.asso_cotisations_tier_delete_error();
       console.error('[Cotisations] Failed to delete tier:', e);
@@ -360,9 +410,11 @@
     if (!addUserId.trim()) return;
     adding = true;
     addError = '';
-    console.log(`[Cotisations] Granting cotisant - asso=${asso.id.slice(0, 8)}`);
+    console.log(
+      `[Cotisations] Granting cotisant - asso=${asso.id.slice(0, 8)} tier=${addVariantKey || 'base'}`
+    );
     try {
-      await grantCotisant(asso.id, addUserId.trim());
+      await grantCotisant(asso.id, addUserId.trim(), addVariantKey || null);
       addUserId = '';
       await loadRoster(0, true);
     } catch (e) {
@@ -601,7 +653,8 @@
                             : ''}"
                         />
                       </button>
-                      {#if product.variantKey}
+                      <!-- The last tier is not deletable: cotisation would break with none left. -->
+                      {#if tierProducts.length > 1}
                         <button
                           type="button"
                           onclick={() => void handleDeleteTier(product)}
@@ -654,6 +707,24 @@
                             placeholder="10.00"
                             class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
                           />
+                        </div>
+                        <div class="space-y-1 sm:col-span-2">
+                          <label
+                            for="tier-variant-{product.id}"
+                            class="text-xs font-semibold text-text-muted"
+                            >{m.asso_cotisations_tier_variant_key_label()}</label
+                          >
+                          <input
+                            id="tier-variant-{product.id}"
+                            name="variantKey"
+                            type="text"
+                            value={product.variantKey ?? ''}
+                            placeholder={m.asso_cotisations_tier_variant_key_base_placeholder()}
+                            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+                          />
+                          <p class="text-xs text-text-muted">
+                            {m.asso_cotisations_tier_variant_key_change_hint()}
+                          </p>
                         </div>
                         {#if tierProducts.length > 1}
                           <div class="space-y-1 sm:col-span-2">
@@ -959,6 +1030,26 @@
               onSubmit={handleAdd}
             />
           </div>
+          <!-- Only worth a picker when there is a choice to make; a single tier is implicit. -->
+          {#if cotisationTiers.length > 1}
+            <div class="sm:w-56">
+              <label
+                for="add-cotisant-tier"
+                class="text-xs font-semibold text-text-muted block mb-1"
+              >
+                {m.asso_cotisations_add_tier_label()}
+              </label>
+              <select
+                id="add-cotisant-tier"
+                bind:value={addVariantKey}
+                class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2.5 text-sm"
+              >
+                {#each cotisationTiers as tier (tier.tagName)}
+                  <option value={tier.variantKey ?? ''}>{tier.name}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
           <button
             type="submit"
             disabled={adding || !addUserId.trim()}

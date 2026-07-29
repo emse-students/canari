@@ -844,12 +844,16 @@ export class AssociationsController {
     });
   }
 
-  /** Revokes a cotisation tag. Requires MANAGE_MEMBERS flag. */
+  /**
+   * Revokes a cotisation tag. Requires MANAGE_MEMBERS flag.
+   * `:id` is passed on to scope the delete: MANAGE_MEMBERS is per-association, so a tag issued by
+   * another association must stay out of reach even when its id is known.
+   */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Delete(':id/tags/:tagId')
-  revokeTag(@Param('tagId') tagId: string) {
-    return this.userTagService.revoke(tagId);
+  revokeTag(@Param('id') id: string, @Param('tagId') tagId: string) {
+    return this.userTagService.revoke(tagId, id);
   }
 
   /**
@@ -868,8 +872,21 @@ export class AssociationsController {
   }
 
   /**
-   * Manually adds a cotisant: grants the association's canonical cotisation tag to a user
-   * (D10, tag only - no payment recorded). The tag is derived server-side. Requires MANAGE_MEMBERS.
+   * Lists the association's cotisation tiers, so the roster UI can offer them when adding a
+   * cotisant by hand. Requires MANAGE_MEMBERS - deliberately NOT MANAGE_PRODUCTS, since the whole
+   * point is to be callable by whoever manages the roster.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/cotisation-tiers')
+  listCotisationTiers(@Param('id') id: string) {
+    return this.userTagService.listCotisationTiers(id);
+  }
+
+  /**
+   * Manually adds a cotisant: grants one of the association's cotisation tiers to a user
+   * (D10, tag only - no payment recorded). The tag is derived server-side from `variantKey`,
+   * which must name an active tier; omit it for a single-tier association. Requires MANAGE_MEMBERS.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_MEMBERS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
@@ -879,7 +896,7 @@ export class AssociationsController {
     @Headers('x-user-id') grantedBy: string,
     @Body() dto: GrantCotisantDto
   ) {
-    return this.userTagService.grantCotisant(id, dto.userId, grantedBy);
+    return this.userTagService.grantCotisant(id, dto.userId, grantedBy, dto.variantKey ?? null);
   }
 
   /**

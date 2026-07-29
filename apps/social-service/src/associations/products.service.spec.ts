@@ -40,6 +40,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       listByUser: jest.fn(() => Promise.resolve([])),
       grantOrRenew: jest.fn(() => Promise.resolve({})),
       revokeByName: jest.fn(() => Promise.resolve()),
+      revokeSiblingTierTags: jest.fn(() => Promise.resolve()),
     };
     const purchaseRecordService = {
       countPaidByUserAndProduct: jest.fn(() => Promise.resolve(0)),
@@ -481,24 +482,15 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
   });
 
   describe('XOR sibling-tier revoke on fulfillment (WP-COT-2)', () => {
-    it('grants the new tier tag and revokes the sibling tier tag in the same transaction', async () => {
+    it('grants the new tier tag and revokes the other tiers in the same transaction', async () => {
       const { service, assoRepo, userTagService, manager } = makeService();
-      const cercle = asso({ slug: 'cercle', cotisationMode: 'lifetime' });
-      assoRepo.findOne.mockResolvedValue(cercle);
-      manager.findOne.mockResolvedValue(cercle);
+      assoRepo.findOne.mockResolvedValue(asso({ slug: 'cercle', cotisationMode: 'lifetime' }));
       const avecAlcool = product({
         id: 'prod-avec',
         type: 'membership',
         grantedTagName: 'cotisant:cercle-avec-alcool',
         variantKey: 'avec-alcool',
       });
-      const sansAlcool = product({
-        id: 'prod-sans',
-        type: 'membership',
-        grantedTagName: 'cotisant:cercle-sans-alcool',
-        variantKey: 'sans-alcool',
-      });
-      manager.find.mockResolvedValue([avecAlcool, sansAlcool]);
 
       await (service as any).fulfillProductPurchase({
         product: avecAlcool,
@@ -514,14 +506,17 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         expect.objectContaining({ tagName: 'cotisant:cercle-avec-alcool' }),
         manager
       );
-      expect(userTagService.revokeByName).toHaveBeenCalledWith(
+      // The XOR itself lives in UserTagService (one implementation shared with the manual
+      // grant); fulfillment's contract is to invoke it for the bought tier, inside the tx.
+      expect(userTagService.revokeSiblingTierTags).toHaveBeenCalledWith(
+        'asso1',
         'user1',
-        'cotisant:cercle-sans-alcool',
+        'avec-alcool',
         manager
       );
     });
 
-    it('does not attempt a sibling revoke for a single-tier (no variantKey) product', async () => {
+    it('delegates the XOR for a base-tier product too, so a named tier cannot linger', async () => {
       const { service, assoRepo, userTagService, manager } = makeService();
       assoRepo.findOne.mockResolvedValue(asso({ slug: 'bde', cotisationMode: 'lifetime' }));
       const single = product({ type: 'membership', grantedTagName: 'cotisant:bde' });
@@ -536,8 +531,12 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         dispatchWebhook: false,
       });
 
-      expect(userTagService.revokeByName).not.toHaveBeenCalled();
-      expect(manager.find).not.toHaveBeenCalled();
+      expect(userTagService.revokeSiblingTierTags).toHaveBeenCalledWith(
+        'asso1',
+        'user1',
+        null,
+        manager
+      );
     });
   });
 

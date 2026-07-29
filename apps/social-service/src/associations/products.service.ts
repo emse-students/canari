@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, IsNull, Not, Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
 import { firstValueFrom } from 'rxjs';
@@ -206,6 +206,7 @@ export class ProductsService {
       if (!asso.cotisationMode) {
         throw new BadRequestException('Cotisation must be enabled before adding a tier product');
       }
+      await this.assertVariantKeyFree(associationId, dto.variantKey ?? null);
       const derived = deriveCotisationTag(
         asso.slug,
         asso.cotisationMode,
@@ -271,16 +272,117 @@ export class ProductsService {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
     }
 
+    const retagging =
+      product.type === 'membership' &&
+      dto.variantKey !== undefined &&
+      (dto.variantKey ?? null) !== product.variantKey
+        ? await this.planTierRetag(product, dto.variantKey ?? null)
+        : null;
+
     Object.assign(product, dto, { currency: 'eur' });
-    return this.productRepo.save(product);
+    if (!retagging) return this.productRepo.save(product);
+
+    product.grantedTagName = retagging.newTagName;
+    product.tagExpiresAt = retagging.newExpiresAt;
+    // Renaming the tier's tag and the tags already granted under it must be one transaction:
+    // half-applied, every cotisant of this tier silently stops being one.
+    return this.productRepo.manager.transaction(async (manager) => {
+      const saved = await manager.save(AssociationProduct, product);
+      const result: { affected?: number | null } = await manager
+        .createQueryBuilder()
+        .update('user_tags')
+        .set({ tagName: retagging.newTagName, expiresAt: retagging.newExpiresAt })
+        .where('"issuingAssocId" = :assocId AND "tagName" = :oldTag', {
+          assocId: product.associationId,
+          oldTag: retagging.oldTagName,
+        })
+        .execute();
+      this.logger.log(
+        `[COTISATION] retagged tier ${product.id.slice(0, 8)}: "${retagging.oldTagName}" -> "${retagging.newTagName}" (${result.affected ?? 0} cotisant tag(s) migrated)`
+      );
+      return saved;
+    });
   }
 
-  /** Removes a product from the association's boutique. */
+  /**
+   * Prepares a membership tier's move to a different `variantKey`: rejects a collision with a
+   * sibling tier and resolves the old/new derived tag names.
+   *
+   * Retiering exists so an association that outgrew its single base tier can convert the
+   * auto-provisioned base product into a named one (WP-COT-11) instead of being stuck with a tier
+   * that reports `tier: null` to consumers such as Le Cercle. Because the tag is fully derived,
+   * the existing cotisants can be carried over by renaming their tag - nobody loses their
+   * cotisation over an admin re-labelling their forfaits.
+   */
+  private async planTierRetag(
+    product: AssociationProduct,
+    newVariantKey: string | null
+  ): Promise<{ oldTagName: string; newTagName: string; newExpiresAt: Date | null }> {
+    const asso = await this.assoRepo.findOne({ where: { id: product.associationId } });
+    if (!asso?.cotisationMode) {
+      throw new BadRequestException('Cotisation must be enabled to change a tier');
+    }
+    await this.assertVariantKeyFree(product.associationId, newVariantKey, product.id);
+
+    const now = new Date();
+    const oldTag = deriveCotisationTag(asso.slug, asso.cotisationMode, now, product.variantKey);
+    const newTag = deriveCotisationTag(asso.slug, asso.cotisationMode, now, newVariantKey);
+    return {
+      oldTagName: oldTag.tagName,
+      newTagName: newTag.tagName,
+      newExpiresAt: newTag.expiresAt,
+    };
+  }
+
+  /**
+   * Throws when another membership product of the association already claims `variantKey`.
+   * Two tiers sharing a key would derive the same tag, making the forfait a coin flip: the XOR
+   * revoke, the roster label and `cotisant-status` would each pick whichever row they saw first.
+   */
+  private async assertVariantKeyFree(
+    associationId: string,
+    variantKey: string | null,
+    exceptProductId?: string
+  ): Promise<void> {
+    const siblings = await this.productRepo.find({
+      where: { associationId, type: 'membership' },
+    });
+    const clash = siblings.find(
+      (p) => p.id !== exceptProductId && (p.variantKey ?? null) === variantKey
+    );
+    if (clash) {
+      throw new BadRequestException(
+        variantKey
+          ? `Tier "${variantKey}" already exists for this association`
+          : 'This association already has a base tier'
+      );
+    }
+  }
+
+  /**
+   * Removes a product from the association's boutique.
+   *
+   * Refuses to delete the association's LAST membership product while cotisations are enabled:
+   * with no tier left, `deriveCotisationTag` still answers but nothing grants or recognizes the
+   * tag, so the whole cotisation silently stops working. Dropping the now-redundant base tier of
+   * a multi-tier association is exactly what this DOES allow (WP-COT-11).
+   */
   async delete(associationId: string, productId: string): Promise<void> {
     const product = await this.productRepo.findOne({
       where: { id: productId, associationId },
     });
     if (!product) throw new NotFoundException('Product not found');
+    if (product.type === 'membership') {
+      const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+      const remaining = await this.productRepo.count({
+        where: { associationId, type: 'membership' },
+      });
+      if (asso?.cotisationMode && remaining <= 1) {
+        throw new BadRequestException(
+          'Cannot delete the last cotisation tier while cotisations are enabled'
+        );
+      }
+    }
     await this.productRepo.remove(product);
   }
 
@@ -921,41 +1023,6 @@ export class ProductsService {
     return { tagName: product.grantedTagName, expiresAt: product.tagExpiresAt ?? null };
   }
 
-  /**
-   * XOR enforcement for multi-tier cotisations: when a purchased product carries a `variantKey`,
-   * revokes the buyer's tag(s) for the association's OTHER tiers (e.g. buying "avec-alcool"
-   * revokes an existing "sans-alcool" tag), so a cotisant holds exactly one tier at a time. A
-   * no-op for single-tier products (`variantKey` null) or associations without a cotisation mode.
-   * Runs inside the same transaction as the grant so a switch is atomic.
-   */
-  private async revokeSiblingTierTags(
-    manager: EntityManager,
-    product: AssociationProduct,
-    userId: string
-  ): Promise<void> {
-    if (!product.variantKey) return;
-    const asso = await manager.findOne(Association, { where: { id: product.associationId } });
-    if (!asso?.cotisationMode) return;
-
-    const siblings = await manager.find(AssociationProduct, {
-      where: {
-        associationId: product.associationId,
-        type: 'membership',
-        variantKey: Not(IsNull()),
-      },
-    });
-    for (const sibling of siblings) {
-      if (sibling.variantKey === product.variantKey) continue;
-      const siblingTag = deriveCotisationTag(
-        asso.slug,
-        asso.cotisationMode,
-        new Date(),
-        sibling.variantKey
-      );
-      await this.userTagService.revokeByName(userId, siblingTag.tagName, manager);
-    }
-  }
-
   /** Grants tags, optionally dispatches webhooks, and persists the purchase record. */
   private async fulfillProductPurchase(params: {
     product: AssociationProduct;
@@ -995,7 +1062,14 @@ export class ProductsService {
           manager
         );
         this.logger.log(`[SHOP] tag "${grant.tagName}" granted to user=${userId.slice(0, 8)}`);
-        await this.revokeSiblingTierTags(manager, product, userId);
+        // XOR: buying one tier drops the buyer's other tiers, in the same transaction as the
+        // grant so a switch is atomic and never leaves two forfaits held at once.
+        await this.userTagService.revokeSiblingTierTags(
+          product.associationId,
+          userId,
+          product.variantKey,
+          manager
+        );
       });
     }
 

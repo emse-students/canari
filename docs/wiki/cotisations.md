@@ -77,11 +77,27 @@ which `deriveCotisationTag(slug, mode, now, variantKey)` suffixes onto the tag
 ordinal for a future "tier >= N" inclusion check (not used yet, see WP-COT-8).
 
 Admins manage tiers from the Cotisations tab (`EditCotisationsTab.svelte`, WP-COT-6): the
-auto-provisioned base tier (`variantKey: null`) is always listed first and can't be deleted from this
-UI; additional tiers are created with a name, price, and a required `variantKey` (locked/read-only
-after creation - changing it would orphan already-granted tags). Each tier's edit form can also set
-the upgrade-pricing link (`memberPriceTag` + `amountCentsMember`, next section) via a dropdown of
-sibling tiers.
+auto-provisioned base tier (`variantKey: null`) is listed first; additional tiers are created with a
+name, price, and a required `variantKey`. Each tier's edit form can also set the upgrade-pricing link
+(`memberPriceTag` + `amountCentsMember`, next section) via a dropdown of sibling tiers.
+
+**Getting rid of the base tier (WP-COT-11).** Enabling cotisation always provisions a base tier, and
+its un-suffixed tag answers `tier: null` on `cotisant-status` - which a consumer such as Le Cercle
+reads as "no forfait". A multi-tier association therefore has to get rid of it, two ways:
+
+- **Convert it.** `variantKey` is editable on an existing tier. `ProductsService.update` detects the
+  change, re-derives `grantedTagName`/`tagExpiresAt`, and - in the SAME transaction - renames the tag
+  on every `user_tags` row the association issued under the old name. Because the tag is fully
+  derived, nobody loses their cotisation over a re-labelling. A key already used by a sibling tier is
+  refused (`assertVariantKeyFree`): two tiers deriving one tag would make the forfait a coin flip.
+- **Delete it**, once another tier exists. The server refuses to delete the LAST membership product
+  while cotisations are enabled - with no tier left, nothing grants or recognizes the tag and the
+  whole cotisation silently stops working. Note that deleting a tier does NOT delete the tags already
+  granted under it, so its holders stop being recognized: convert rather than delete when the tier
+  has cotisants.
+
+`tierVariantKeys()` returns **named tiers before the base one**, so a user still holding a legacy
+base tag alongside a named tier is reported at the named tier rather than at `tier: null`.
 
 **Upgrade pricing (`memberPriceTag`)**: a tier-upgrade product can set `memberPriceTag` to a sibling
 tier's tag name and `amountCentsMember` to the price delta. The reduced price then applies **iff the
@@ -90,9 +106,12 @@ way plain `amountCentsMember` does when `memberPriceTag` is unset. Example: the 
 sets `memberPriceTag = "cotisant:cercle-sans-alcool"` so a sans-alcool cotisant switching up only
 pays the difference; someone with no cotisation at all pays full price.
 
-**XOR on fulfillment**: granting a tiered product's tag also revokes the buyer's tag(s) for the
-association's *other* tiers, in the same DB transaction (`revokeSiblingTierTags` in
-`products.service.ts`) - a cotisant holds exactly one tier of a given association at a time. Buying a
+**XOR**: granting one tier's tag also revokes the user's tag(s) for the association's *other* tiers,
+in the same DB transaction - a cotisant holds exactly one tier of a given association at a time.
+`UserTagService.revokeSiblingTierTags` is the single implementation, called both by a paid
+fulfillment and by a manual grant, so the two paths cannot drift apart. The base tier participates
+like any other (an association that kept it alongside named tiers must not leave a buyer holding
+both), and inactive tiers are swept too: a tier taken off sale is still held by its cotisants. Buying a
 sibling tier for the first time is allowed even if another tier was already purchased (purchase caps
 are tracked per-product, not per-association), but re-buying the *same* tier while its tag is still
 active is blocked like any other membership renewal check.
@@ -193,13 +212,23 @@ social-service never calls Stripe directly. Online sales require completed Strip
 
 ### C. Manual grant from the Cotisations tab (cash / retroactive)
 
-- `POST /api/associations/:id/cotisants` -> `userTagService.grantCotisant`: grants the canonical tag
-  only, no purchase recorded (D10). Tag + expiry derived server-side. Requires `MANAGE_MEMBERS`.
+- `POST /api/associations/:id/cotisants` -> `userTagService.grantCotisant`: grants a tier's tag only,
+  no purchase recorded (D10). Tag + expiry derived server-side from the optional `variantKey`, which
+  must name one of the association's **active** membership products - an arbitrary key would mint a
+  tag no product grants and no gate checks. Omit it for a single-tier association; an association
+  that dropped its base tier refuses the empty choice rather than granting an orphan base tag. The
+  grant and the XOR sibling revoke share one transaction, exactly like a paid purchase, so a manual
+  add can never leave a user holding two forfaits (WP-COT-10). Requires `MANAGE_MEMBERS`.
+- `GET /api/associations/:id/cotisation-tiers` backs the roster's forfait picker. Gated on
+  `MANAGE_MEMBERS`, deliberately **not** `MANAGE_PRODUCTS`: whoever manages the roster must be able
+  to pick a tier without also being allowed to edit the boutique.
 - `POST /api/associations/:id/products/:productId/grant` -> `grantProductPurchase`: records a
   purchase *and* grants the tag like a real sale (leaves an audit trail in "Achats"). Requires
   `MANAGE_PRODUCTS`.
 - `POST /api/associations/:id/tags` -> raw tag grant with an admin-supplied `tagName`/`expiresAt`
-  (`MANAGE_MEMBERS`); `DELETE /api/associations/:id/tags/:tagId` revokes.
+  (`MANAGE_MEMBERS`); `DELETE /api/associations/:id/tags/:tagId` revokes. The revoke is scoped to
+  `:id`, not to the tag id alone: `MANAGE_MEMBERS` is granted per association, so an unscoped delete
+  let an admin of any association revoke any other association's cotisant (WP-COT-9).
 
 ## Member (reduced) pricing on forms
 
@@ -257,6 +286,9 @@ X-Api-Key: <CERCLE_API_KEY>
   `isBuyerCotisant`/`cotisantStatusFor` rather than a separate tag-derivation path.
 - Always queried live (never cached) - Canari is authoritative for this half of the relationship.
 
+Setting both directions up on the real hosts, and the checks that prove the link works there, are in
+[../PROD-TEST-CERCLE.md](../PROD-TEST-CERCLE.md).
+
 ## Permissions
 
 - `MANAGE_MEMBERS` - grant/revoke tags (`/tags`, `/cotisants`), read/export the roster, manage the
@@ -272,9 +304,10 @@ X-Api-Key: <CERCLE_API_KEY>
 |---|---|---|
 | GET | `/api/associations/:id/tags` | List active tags issued by the association (`MANAGE_MEMBERS`) |
 | POST | `/api/associations/:id/tags` | Manually grant a raw tag (`MANAGE_MEMBERS`) |
-| DELETE | `/api/associations/:id/tags/:tagId` | Revoke a tag |
+| DELETE | `/api/associations/:id/tags/:tagId` | Revoke a tag issued by `:id` (`MANAGE_MEMBERS`) |
 | GET | `/api/associations/:id/cotisants` | Paginated, searchable active roster (`MANAGE_MEMBERS`) |
-| POST | `/api/associations/:id/cotisants` | Grant the canonical tag only, no payment (`MANAGE_MEMBERS`) |
+| POST | `/api/associations/:id/cotisants` | Grant a tier's tag only, no payment (`MANAGE_MEMBERS`) |
+| GET | `/api/associations/:id/cotisation-tiers` | Tiers offered, for the manual-add picker (`MANAGE_MEMBERS`) |
 | GET | `/api/associations/:id/cotisants/export` | Roster as `.xlsx` (`MANAGE_MEMBERS`) |
 | GET | `/api/associations/products/all` | All active products + per-product `viewerIsCotisant`/`viewerActiveTier` (shop) |
 | POST | `/api/associations/:id/products` | Create a product (incl. `type: 'membership'`) (`MANAGE_PRODUCTS`) |
@@ -290,3 +323,4 @@ X-Api-Key: <CERCLE_API_KEY>
 - [frontend/modules/admin.md](frontend/modules/admin.md) - platform admin surfaces, including `/admin/cercle` (Cercle top-ups).
 - [frontend/modules/payments.md](frontend/modules/payments.md) - Stripe Connect and the shop/checkout flow.
 - [../user-guide/membre.md](../user-guide/membre.md) - "Cotiser a une association" (end-user guide).
+- [../PROD-TEST-CERCLE.md](../PROD-TEST-CERCLE.md) - production runbook for the Canari <-> Cercle link.

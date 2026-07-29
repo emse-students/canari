@@ -4,14 +4,32 @@ import { UserTag } from './entities/user-tag.entity';
 
 describe('UserTagService.listCotisants / exportCotisants', () => {
   function makeService() {
-    const repo = {
+    const repo: any = {
       findOne: jest.fn(),
+      delete: jest.fn(() => Promise.resolve({ affected: 1 })),
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       manager: { query: jest.fn() },
     };
+    // A transaction runs against the same mock, so a test can assert what happened inside it.
+    repo.manager.getRepository = jest.fn(() => repo);
+    repo.manager.transaction = jest.fn((cb: (m: unknown) => unknown) => cb(repo.manager));
     const service = new UserTagService(repo as unknown as Repository<UserTag>);
     return { service, repo };
+  }
+
+  /**
+   * Answers the association/product lookups by SQL shape rather than call order, so a test can
+   * describe a tier catalogue without counting how many times the code reads it.
+   */
+  function mockCatalogue(
+    repo: { manager: { query: jest.Mock } },
+    asso: { slug: string; cotisationMode: string | null } | null,
+    tiers: { name: string; variantKey: string | null }[]
+  ) {
+    repo.manager.query.mockImplementation((sql: string) =>
+      Promise.resolve(sql.includes('FROM associations') ? (asso ? [asso] : []) : tiers)
+    );
   }
 
   const row = (overrides: Partial<Record<string, unknown>> = {}) => ({
@@ -261,9 +279,16 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
   });
 
   describe('grantCotisant', () => {
+    const cercleTiers = [
+      { name: 'Avec alcool', variantKey: 'avec-alcool' },
+      { name: 'Sans alcool', variantKey: 'sans-alcool' },
+    ];
+
     it('derives the canonical tag from the association slug/mode and grants it', async () => {
       const { service, repo } = makeService();
-      repo.manager.query.mockResolvedValueOnce([{ slug: 'bde', cotisationMode: 'lifetime' }]);
+      mockCatalogue(repo, { slug: 'bde', cotisationMode: 'lifetime' }, [
+        { name: 'Cotisation', variantKey: null },
+      ]);
       repo.findOne.mockResolvedValue(null);
 
       const tag = await service.grantCotisant('asso1', 'user1', 'admin1');
@@ -293,6 +318,110 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       await expect(service.grantCotisant('missing', 'user1', 'admin1')).rejects.toThrow(
         'Association not found'
       );
+    });
+
+    // WP-COT-10: a manual add used to always grant the base tag, so a multi-tier association
+    // could not assign a forfait by hand and the roster's "Forfait" column stayed blank.
+    it('grants the requested tier tag rather than the base one', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, cercleTiers);
+      repo.findOne.mockResolvedValue(null);
+
+      const tag = await service.grantCotisant('asso1', 'user1', 'admin1', 'avec-alcool');
+
+      expect(tag).toMatchObject({ tagName: 'cotisant:cercle-avec-alcool' });
+    });
+
+    it('revokes the other tiers in the same transaction, so no user holds two forfaits', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, cercleTiers);
+      repo.findOne.mockResolvedValue(null);
+
+      await service.grantCotisant('asso1', 'user1', 'admin1', 'avec-alcool');
+
+      expect(repo.manager.transaction).toHaveBeenCalled();
+      expect(repo.delete).toHaveBeenCalledWith({
+        userId: 'user1',
+        tagName: 'cotisant:cercle-sans-alcool',
+      });
+      expect(repo.delete).not.toHaveBeenCalledWith({
+        userId: 'user1',
+        tagName: 'cotisant:cercle-avec-alcool',
+      });
+    });
+
+    it('rejects a tier the association does not offer', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, cercleTiers);
+
+      await expect(
+        service.grantCotisant('asso1', 'user1', 'admin1', 'avec-champagne')
+      ).rejects.toThrow('Unknown cotisation tier');
+    });
+
+    it('rejects a base-tier grant when the association only has named tiers', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, cercleTiers);
+
+      await expect(service.grantCotisant('asso1', 'user1', 'admin1')).rejects.toThrow(
+        'no base tier'
+      );
+    });
+  });
+
+  // WP-COT-9: MANAGE_MEMBERS is per-association, so the tag id alone must not be enough to reach
+  // a row - an admin of one association could otherwise revoke any other association's cotisant.
+  describe('revoke', () => {
+    it('scopes the delete to the issuing association', async () => {
+      const { service, repo } = makeService();
+
+      await service.revoke('tag1', 'asso1');
+
+      expect(repo.delete).toHaveBeenCalledWith({ id: 'tag1', issuingAssocId: 'asso1' });
+    });
+
+    it('throws 404 when the tag belongs to another association', async () => {
+      const { service, repo } = makeService();
+      repo.delete.mockResolvedValue({ affected: 0 });
+
+      await expect(service.revoke('tag-of-other-asso', 'asso1')).rejects.toThrow('Tag not found');
+    });
+  });
+
+  describe('listCotisationTiers', () => {
+    it('resolves each membership product to the tag it grants', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, [
+        { name: 'Cotisation', variantKey: null },
+        { name: 'Avec alcool', variantKey: 'avec-alcool' },
+      ]);
+
+      expect(await service.listCotisationTiers('asso1')).toEqual([
+        { variantKey: null, name: 'Cotisation', tagName: 'cotisant:cercle' },
+        {
+          variantKey: 'avec-alcool',
+          name: 'Avec alcool',
+          tagName: 'cotisant:cercle-avec-alcool',
+        },
+      ]);
+    });
+
+    it('returns nothing when the association has no cotisation mode', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'bde', cotisationMode: null }, []);
+
+      expect(await service.listCotisationTiers('asso1')).toEqual([]);
+    });
+
+    it('only sees active tiers unless asked for the inactive ones too', async () => {
+      const { service, repo } = makeService();
+      mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, []);
+
+      await service.listCotisationTiers('asso1');
+      expect(repo.manager.query.mock.calls[1][0]).toContain('"isActive" = true');
+
+      await service.listCotisationTiers('asso1', { includeInactive: true });
+      expect(repo.manager.query.mock.calls[3][0]).not.toContain('"isActive" = true');
     });
   });
 });

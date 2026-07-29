@@ -952,14 +952,40 @@ export async function listCotisants(
   );
 }
 
+/** One cotisation tier of an association, as offered by its membership products. */
+export interface CotisationTier {
+  /** Named tier key (e.g. "avec-alcool"), or null for the base, un-suffixed tier. */
+  variantKey: string | null;
+  /** Membership product display name, e.g. "Avec alcool". */
+  name: string;
+  /** Tag this tier grants for the current academic year. */
+  tagName: string;
+}
+
 /**
- * Manually grants the association's canonical cotisation tag to a user (D10: tag only, no
- * purchase/amount recorded). The tag name is derived server-side. Requires MANAGE_MEMBERS.
+ * Lists the association's cotisation tiers so the roster can offer them when adding a cotisant.
+ * Requires MANAGE_MEMBERS (not MANAGE_PRODUCTS) - whoever manages the roster must be able to
+ * pick a forfait without also being allowed to edit the boutique.
  */
-export async function grantCotisant(associationId: string, userId: string): Promise<UserTag> {
+export async function listCotisationTiers(associationId: string): Promise<CotisationTier[]> {
+  return request<CotisationTier[]>(
+    `/api/associations/${encodeURIComponent(associationId)}/cotisation-tiers`
+  );
+}
+
+/**
+ * Manually grants one of the association's cotisation tiers to a user (D10: tag only, no
+ * purchase/amount recorded). The tag name is derived server-side from `variantKey`; omit it for a
+ * single-tier association. Granting a tier revokes the user's other tiers. Requires MANAGE_MEMBERS.
+ */
+export async function grantCotisant(
+  associationId: string,
+  userId: string,
+  variantKey?: string | null
+): Promise<UserTag> {
   return request<UserTag>(`/api/associations/${encodeURIComponent(associationId)}/cotisants`, {
     method: 'POST',
-    body: JSON.stringify({ userId }),
+    body: JSON.stringify({ userId, variantKey: variantKey || undefined }),
   });
 }
 
@@ -1122,6 +1148,7 @@ export type UpdateProductPayload = Omit<
   | 'customAmountMaxCents'
   | 'memberPriceTag'
   | 'requiredTags'
+  | 'variantKey'
 > & {
   maxPurchasesPerUser?: number | null;
   maxPurchasesTotal?: number | null;
@@ -1137,6 +1164,11 @@ export type UpdateProductPayload = Omit<
   memberPriceTag?: string | null;
   /** Pass null to clear the eligibility-gating tag list. */
   requiredTags?: string[] | null;
+  /**
+   * Renames the tier. The server re-derives the granted tag and migrates the cotisants already
+   * holding the old one, so a base tier can be converted into a named forfait. Null = base tier.
+   */
+  variantKey?: string | null;
 };
 
 /** Returns all active products across all associations (login required). */

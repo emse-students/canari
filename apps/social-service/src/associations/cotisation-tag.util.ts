@@ -54,7 +54,14 @@ export function deriveCotisationTag(
  * cotisation tier - `[null]` (the base, un-suffixed tier) when the association has no explicit
  * tiered products yet. Used to enumerate "any tier" tag names for `membersOnly`/generic cotisant
  * gating, so a multi-tier association isn't wrongly gated on just the base tag.
+ *
+ * Named tiers are returned BEFORE the base tier. Callers that stop at the first tag the user
+ * holds (`getCotisantStatusBySlug`) would otherwise report `tier: null` for someone who still
+ * carries a legacy base tag alongside a named one - and a consumer such as Le Cercle reads that
+ * null as "no forfait", refusing a real alcohol cotisant their drink.
  */
 export function tierVariantKeys(products: Array<{ variantKey: string | null }>): (string | null)[] {
-  return products.length > 0 ? [...new Set(products.map((p) => p.variantKey))] : [null];
+  if (products.length === 0) return [null];
+  const keys = [...new Set(products.map((p) => p.variantKey))];
+  return keys.sort((a, b) => (a === null ? 1 : 0) - (b === null ? 1 : 0));
 }

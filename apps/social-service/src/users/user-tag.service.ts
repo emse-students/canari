@@ -30,6 +30,16 @@ export interface CotisantRosterItem {
   tier: string | null;
 }
 
+/** One cotisation tier of an association, resolved to the tag it grants. */
+export interface CotisationTierInfo {
+  /** Named tier key (e.g. `"avec-alcool"`), or null for the base, un-suffixed tier. */
+  variantKey: string | null;
+  /** Membership product display name, e.g. `"Avec alcool"`. */
+  name: string;
+  /** Tag this tier grants for the CURRENT academic year (see `deriveCotisationTag`). */
+  tagName: string;
+}
+
 /** Paginated result of `UserTagService.listCotisants`. */
 export interface CotisantRosterPage {
   items: CotisantRosterItem[];
@@ -128,12 +138,84 @@ export class UserTagService {
   }
 
   /**
-   * Grants (or renews) the association's canonical cotisation tag to a user - the manual
-   * "add a cotisant" action (D10: tag only, no payment recorded). The tag name and expiry are
-   * derived server-side from the association's slug and validity mode (see `deriveCotisationTag`),
-   * so the frontend never needs to know the tag convention.
+   * Lists an association's cotisation tiers (its `membership` products), each resolved to the tag
+   * it currently grants. Returns an empty list when the association has no cotisation mode.
+   * The single source of truth for "which tiers exist", shared by the roster labels, the manual
+   * grant's tier validation, and the XOR sibling revoke.
+   *
+   * Pass `includeInactive` when the answer must cover tiers that are no longer on sale - a
+   * deactivated tier's tag is still held by its cotisants, so the XOR revoke has to see it.
    */
-  async grantCotisant(assocId: string, userId: string, grantedBy: string): Promise<UserTag> {
+  async listCotisationTiers(
+    assocId: string,
+    opts: { includeInactive?: boolean; manager?: EntityManager } = {}
+  ): Promise<CotisationTierInfo[]> {
+    const runner = opts.manager ?? this.repo.manager;
+    const assoRows: { slug: string; cotisationMode: CotisationMode | null }[] = await runner.query(
+      `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
+      [assocId]
+    );
+    const asso = assoRows[0];
+    if (!asso?.cotisationMode) return [];
+    const cotisationMode = asso.cotisationMode;
+
+    const activeClause = opts.includeInactive ? '' : `AND "isActive" = true`;
+    const products: { name: string; variantKey: string | null }[] = await runner.query(
+      `SELECT name, "variantKey" FROM association_products
+       WHERE "associationId" = $1 AND type = 'membership' ${activeClause}
+       ORDER BY "variantKey" ASC NULLS FIRST`,
+      [assocId]
+    );
+    const now = new Date();
+    return products.map((p) => ({
+      variantKey: p.variantKey,
+      name: p.name,
+      tagName: deriveCotisationTag(asso.slug, cotisationMode, now, p.variantKey).tagName,
+    }));
+  }
+
+  /**
+   * XOR enforcement for multi-tier cotisations: revokes the user's tags for every tier of the
+   * association OTHER than `keepVariantKey`, so a cotisant holds exactly one tier at a time.
+   * A no-op for single-tier associations and for associations without a cotisation mode.
+   *
+   * The base tier participates like any other: an association that kept its auto-provisioned base
+   * product alongside named tiers must not leave a buyer holding both, because the base tag
+   * answers `tier: null` and would shadow the named one downstream.
+   *
+   * Pass `manager` to run inside the granting transaction, so a tier switch is atomic.
+   */
+  async revokeSiblingTierTags(
+    assocId: string,
+    userId: string,
+    keepVariantKey: string | null,
+    manager?: EntityManager
+  ): Promise<void> {
+    const tiers = await this.listCotisationTiers(assocId, { includeInactive: true, manager });
+    if (tiers.length < 2) return;
+    for (const tier of tiers) {
+      if (tier.variantKey === keepVariantKey) continue;
+      await this.revokeByName(userId, tier.tagName, manager);
+    }
+  }
+
+  /**
+   * Grants (or renews) one of the association's cotisation tiers to a user - the manual
+   * "add a cotisant" action (D10: tag only, no payment recorded). The tag name and expiry are
+   * derived server-side from the association's slug, validity mode and the chosen tier (see
+   * `deriveCotisationTag`), so the frontend never needs to know the tag convention.
+   *
+   * `variantKey` names the tier and MUST match one of the association's active membership
+   * products; omit it for a single-tier association. The grant and the sibling-tier revoke share
+   * one transaction, so a manual add can never leave a user holding two tiers at once - the same
+   * XOR rule a paid purchase goes through.
+   */
+  async grantCotisant(
+    assocId: string,
+    userId: string,
+    grantedBy: string,
+    variantKey: string | null = null
+  ): Promise<UserTag> {
     const rows: { slug: string; cotisationMode: CotisationMode | null }[] =
       await this.repo.manager.query(
         `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
@@ -144,11 +226,36 @@ export class UserTagService {
     if (!asso.cotisationMode) {
       throw new BadRequestException('Cotisation is not enabled for this association');
     }
-    const { tagName, expiresAt } = deriveCotisationTag(asso.slug, asso.cotisationMode);
-    this.logger.debug(
-      `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tag=${tagName}`
+
+    const tiers = await this.listCotisationTiers(assocId);
+    // Validate the tier against the association's own catalogue. An arbitrary variantKey would
+    // mint a tag that no product grants and no gate checks - a cotisant nobody can see.
+    if (variantKey !== null && !tiers.some((t) => t.variantKey === variantKey)) {
+      throw new BadRequestException(`Unknown cotisation tier "${variantKey}"`);
+    }
+    // The same trap in reverse: an association that dropped its base tier in favour of named ones
+    // has no un-suffixed tag, so defaulting to the base would grant a tag matching nothing.
+    if (variantKey === null && tiers.length > 0 && !tiers.some((t) => t.variantKey === null)) {
+      throw new BadRequestException('This association has no base tier - a tier must be chosen');
+    }
+
+    const { tagName, expiresAt } = deriveCotisationTag(
+      asso.slug,
+      asso.cotisationMode,
+      new Date(),
+      variantKey
     );
-    return this.grantOrRenew({ userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt });
+    this.logger.debug(
+      `[UserTag] grantCotisant assoc=${assocId} user=${userId.slice(0, 8)} tier=${variantKey ?? 'base'} tag=${tagName}`
+    );
+    return this.repo.manager.transaction(async (manager) => {
+      const tag = await this.grantOrRenew(
+        { userId, tagName, issuingAssocId: assocId, grantedBy, expiresAt },
+        manager
+      );
+      await this.revokeSiblingTierTags(assocId, userId, variantKey, manager);
+      return tag;
+    });
   }
 
   /** Returns true when the user has an active (non-expired) tag with the given name. */
@@ -171,11 +278,18 @@ export class UserTagService {
     return tag;
   }
 
-  /** Revokes (deletes) a tag by its primary key. Throws 404 if not found. */
-  async revoke(tagId: string): Promise<void> {
-    const res = await this.repo.delete({ id: tagId });
+  /**
+   * Revokes (deletes) a tag by its primary key, scoped to the association that issued it.
+   * Throws 404 when no such tag belongs to that association.
+   *
+   * The scope is the authorization, not a filter: MANAGE_MEMBERS is granted per association, so
+   * deleting on the id alone would let an admin of ANY association revoke a tag issued by ANY
+   * other one - the caller's `:id` must constrain the row it reaches.
+   */
+  async revoke(tagId: string, issuingAssocId: string): Promise<void> {
+    const res = await this.repo.delete({ id: tagId, issuingAssocId });
     if (!res.affected) throw new NotFoundException('Tag not found');
-    this.logger.log(`[UserTag] Revoked tag ${tagId}`);
+    this.logger.log(`[UserTag] Revoked tag ${tagId} (assoc=${issuingAssocId})`);
   }
 
   /**
@@ -214,28 +328,9 @@ export class UserTagService {
    */
   private async buildTierLabelMap(assocId: string): Promise<Map<string, string>> {
     const map = new Map<string, string>();
-    const assoRows: { slug: string; cotisationMode: CotisationMode | null }[] =
-      await this.repo.manager.query(
-        `SELECT slug, "cotisationMode" FROM associations WHERE id = $1`,
-        [assocId]
-      );
-    const asso = assoRows[0];
-    if (!asso?.cotisationMode) return map;
-
-    const products: { name: string; variantKey: string | null }[] = await this.repo.manager.query(
-      `SELECT name, "variantKey" FROM association_products
-       WHERE "associationId" = $1 AND type = 'membership' AND "isActive" = true`,
-      [assocId]
-    );
-    for (const p of products) {
-      if (!p.variantKey) continue;
-      const { tagName } = deriveCotisationTag(
-        asso.slug,
-        asso.cotisationMode,
-        new Date(),
-        p.variantKey
-      );
-      map.set(tagName, p.name);
+    for (const tier of await this.listCotisationTiers(assocId)) {
+      if (!tier.variantKey) continue;
+      map.set(tier.tagName, tier.name);
     }
     return map;
   }

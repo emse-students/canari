@@ -63,6 +63,7 @@ for **server deployment**:
 | Push / calls / avatars | `FIREBASE_SERVICE_ACCOUNT_JSON`, `CLOUDFLARE_CALLS_API_TOKEN`, `CLOUDFLARE_TURN_KEY_ID`, `MIGALLERY_API_KEY` |
 | iOS calls (CallKit, optional) | `APNS_VOIP_KEY_P8` (APNs .p8 key, raw PEM or base64), `APNS_VOIP_KEY_ID`, `APNS_VOIP_TEAM_ID` (`4CLNB8SR6L`) — direct VoIP push to APNs to ring CallKit when the app is killed; without these, iOS falls back to an FCM banner |
 | External API (Sky) | `EXTERNAL_API_KEY` (key for `/api/external/*`, public profile; must match `CANARI_API_KEY` on Sky's side); `SKY_API_KEY` (key for reading the Sky sponsorship tree displayed on profiles; must match `SKY_API_KEY` on Sky's side) |
+| External API (Le Cercle) | `CERCLE_API_KEY` (key for `/api/public/cotisant-status`, consumed by Le Cercle before it lets a member drink; must match `CANARI_API_KEY` on the Cercle's side). Empty rejects every request. The other half of the link, the `balance_topup` webhook secret, is per-product data in the database, not an environment variable - see [`docs/PROD-TEST-CERCLE.md`](../docs/PROD-TEST-CERCLE.md) |
 
 Optional secret: `SERVICE_ACCOUNT_USER_ID` overrides the Google/Apple verification
 account ID (hides it from non-admins in search, directory, and feed; only sees

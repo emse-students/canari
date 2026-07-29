@@ -668,9 +668,18 @@ export class ListCotisantsQueryDto {
   limit?: number;
 }
 
-/** Body for manually adding a cotisant (grants the association's canonical cotisation tag). */
+/** Body for manually adding a cotisant (grants one of the association's cotisation tiers). */
 export class GrantCotisantDto {
   @IsString()
   @IsNotEmpty()
   userId: string;
+
+  /**
+   * Named tier to grant (e.g. "avec-alcool"); must match one of the association's active
+   * membership products. Omit for a single-tier association, which grants the base tier.
+   */
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  variantKey?: string | null;
 }

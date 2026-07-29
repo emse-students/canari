@@ -91,7 +91,8 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   Still owed before merge: run it against a REAL Canari (`CANARI_INTEGRATION_ENABLED=true` has
   never been exercised - the 24 h grace window and the TTL refresh are untested against a live
   `cotisant-status`), and a real OIDC login round trip (the checks mint their own cookies).
-  **WP-COT-11 must land first or the alcohol gate is wrong for real alcohol cotisants.**
+  The Canari half of the alcohol gate is now correct (WP-COT-9/10/11 shipped); the prod runbook
+  is `docs/PROD-TEST-CERCLE.md`.
 
 - \[ \] **WP-CERCLE-2 (P3) - No way to correct a mis-keyed consumption.** The ledger is
   append-only and the user declined an `adjustment` kind, so a drink charged twice or to the wrong
@@ -105,28 +106,6 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
 ---
 
 ### CANARI - OPEN WORK PACKAGES
-
-- \[ \] **WP-COT-9 (P1) - Cross-tenant tag revocation (IDOR).** `revokeTag`
-  (`associations.controller.ts:851`) takes `:tagId` and ignores `:id`, and
-  `UserTagService.revoke` deletes by primary key with no ownership check - so MANAGE_MEMBERS on
-  ANY association revokes a tag issued by ANY other. Scope the delete to `issuingAssocId`.
-
-- \[ \] **WP-COT-10 (P2) - Manual cotisant add cannot assign a tier.** `grantCotisant`
-  (`user-tag.service.ts:147`) calls `deriveCotisationTag(slug, mode)` with no variant, so a manual
-  add always grants the base tag - never `avec-alcool`/`sans-alcool` - and it skips
-  `revokeSiblingTierTags`, so a manual grant can leave a user holding two tiers at once. This is
-  the bug reported from the UI ("on ne peut pas leur assigner un palier"). Needs an optional
-  `variantKey` on `GrantCotisantDto` + the XOR revoke, and the roster's "Forfait" column then
-  stops being blank for manually-added cotisants.
-
-- \[ \] **WP-COT-11 (P2) - Le Cercle's base tier has no `variantKey`, so `tier` comes back null.**
-  The auto-provisioned base membership product is `variantKey: null` and cannot be deleted from
-  the Cotisations tab, so `/api/public/cotisant-status` answers `tier: null` for anyone holding
-  it - and Le Cercle cannot tell an alcohol cotisant from a non-alcohol one. The Cercle side
-  currently fails closed (null -> `sans-alcool`, `resolveTier` in `src/lib/server/canari/`), which
-  is safe but wrong for a real alcohol cotisant. Fix: let Le Cercle's base product carry an
-  explicit `variantKey`, or stop auto-provisioning a base tier for a multi-tier association.
-  **Blocks the alcohol gate being correct end to end.**
 
 - \[ \] **WP-VERIF-0 (P1) - [device] WP-IOS-1 + WP-SEC-1 shipped unverified.** Code landed
   2026-07-28 (delegated, verified with corrections - see `AGENTS.md`). Swift/ObjC do not compile
@@ -228,7 +207,10 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 #### Cotisations (Cercle)
 
 - `association_products` carries `variantKey`/`variantLevel` (NULL = single-tier); `deriveCotisationTag(slug, mode, now?, variant?)` appends `-${variant}` before the academic-year suffix.
-- `memberPriceTag`: `amountCentsMember` applies iff the buyer holds THAT specific tag. Fulfillment transaction-wraps grant + `revokeSiblingTierTags` (XOR switch).
+- **The XOR has ONE implementation, `UserTagService.revokeSiblingTierTags`**, called by both the paid fulfillment and the manual grant. The base tier is a tier like any other, and inactive tiers are swept too (their tags are still held). `memberPriceTag`: `amountCentsMember` applies iff the buyer holds THAT specific tag.
+- **A tag revoke MUST be scoped to `issuingAssocId`.** MANAGE_MEMBERS is per-association, so deleting on the tag id alone is a cross-tenant IDOR (WP-COT-9).
+- **`variantKey` is editable, and the tags follow.** `ProductsService.update` re-derives the granted tag and renames every `user_tags` row holding the old one, in the same transaction - that is how a multi-tier asso converts its auto-provisioned base tier. Deleting the LAST membership tier is refused; deleting any other does NOT migrate its tags, so convert rather than delete when the tier has cotisants.
+- **Named tiers sort before the base tier** in `tierVariantKeys`, so a legacy base-tag holder is not reported as `tier: null` when they also hold a named tier.
 - Inbound `GET /api/public/cotisant-status` gated on `X-Api-Key` vs `CERCLE_API_KEY`, 20 req/min. Outbound `dispatchCercleWebhook` is HMAC-SHA256 with 3 retries.
 - Cotisant status is server-authoritative: `/products/all` returns per-product `viewerIsCotisant`/`viewerActiveTier`. No client-side tag derivation.
 
