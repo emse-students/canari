@@ -78,28 +78,16 @@ trail; Canari credits but never displays the balance.
 nothing that POSTs - each action guards itself. `CANARI_INTEGRATION_ENABLED=false` is the local
 switch: it freezes the cotisant snapshot instead of refreshing it, and never opens the gate.
 
-- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link.** CODE COMPLETE, 3 commits
-  (`0bf556e` -> `de92e18` -> `7e87b61`), 50 files, +2144/-574. `bun run check` 0 errors, eslint
-  clean, every page renders, 27/27 end-to-end checks pass on a freshly seeded DB against a live
-  HTTP stub of `cotisant-status` (script was scratchpad-only, not committed).
-  **MR OPEN, awaiting Aurel's review: `!1`,
-  https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/1** (pushed 2026-07-29 once SSH
-  access existed; `origin` is now the SSH URL - GitLab, NOT GitHub, so `gh` is useless and there is
-  no API token on this machine). The MR body carries a one-line summary only: **git refuses a push
-  option containing newlines**, so the full French description still has to be pasted by hand from
-  scratchpad `MR-DESCRIPTION.md`.
-  Verified by those checks: forged/tampered session refused; non-cotisant -> `/unauthorized`;
-  `/api/*` 401 anon and 403 for a non-cercleux; GET on `/events/open` no longer opens a perm;
-  unsigned and mis-signed webhooks 401 while a signed one credits exactly once on replay; the
-  charge uses the server price (form said 1, charge was 40) and a sans-alcool tier is refused
-  alcohol; `/gestion` actions 403 for a cotisant; cash top-up traced to its cercleux; zero
-  ledger drift throughout.
-  Still owed before merge: run it against a REAL Canari (`CANARI_INTEGRATION_ENABLED=true` has
-  never been exercised - the 24 h grace window and the TTL refresh are untested against a live
-  `cotisant-status`), and a real OIDC login round trip (the checks mint their own cookies).
-  The Canari half of the alcohol gate is now correct (WP-COT-9/10/11 shipped), and the prod runbook
-  that walks both of those through is written: `docs/PROD-TEST-CERCLE.md` (real addresses, which
-  secret wears which name on each side, and six ordered checks V1-V6).
+- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link.** CODE COMPLETE (3 commits,
+  50 files), 27/27 end-to-end checks green against an HTTP stub of `cotisant-status`.
+  **MR open, awaiting Aurel: https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/1**
+  (GitLab over SSH - `gh` is useless and there is no API token here; **git refuses a push option
+  containing newlines**, so the full French description must be pasted by hand from scratchpad
+  `MR-DESCRIPTION.md`).
+  Still owed before merge, both blocked on the site being online: a run against a REAL Canari
+  (`CANARI_INTEGRATION_ENABLED=true` has never been exercised - 24 h grace window and TTL refresh
+  untested against a live `cotisant-status`) and a real OIDC round trip (the checks mint their own
+  cookies). Runbook: `docs/PROD-TEST-CERCLE.md`, checks V1-V6.
 
 - \[ \] **WP-CERCLE-2 (P3) - No way to correct a mis-keyed consumption.** The ledger is
   append-only and the user declined an `adjustment` kind, so a drink charged twice or to the wrong
@@ -114,16 +102,12 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
 
 ### CANARI - OPEN WORK PACKAGES
 
-- \[ \] **WP-VERIF-0 (P1) - [device] WP-IOS-1 + WP-SEC-1 shipped unverified.** Code landed
-  2026-07-28 (delegated, verified with corrections - see `AGENTS.md`). Swift/ObjC do not compile
-  off macOS, so the entire iOS half is unproven, and the Android keystore read has never run on
-  hardware. The 5 device checks that gate the verdict, including the upgrade path that is the only
-  test of the one-shot migration: `AGENTS.md` "what is still owed". Check 2 doubles as the first
-  ever proof that iOS background decrypt works at all. **Blocks WP-VERIF-2.**
-  Both release workflows have since been dispatched as compile checks and are now **green on both
-  platforms** (Android run 30472632902, iOS run 30472635247, commit `89f8d230`) - the iOS run had
-  first found two defects (a Swift `guard` that fell through, and raw key bytes read back as UTF-8),
-  both fixed. Compiling is not running - the checks below are still owed.
+- \[ \] **WP-VERIF-0 (P1) - [device] WP-IOS-1 + WP-SEC-1 shipped unverified.** Both release
+  workflows compile green on both platforms (`89f8d230`), but compiling is not running: the Android
+  keystore read and the whole iOS half have never executed on hardware. The 5 device checks that
+  gate the verdict - including the upgrade path, the only test of the one-shot migration - are in
+  `AGENTS.md` "what is still owed"; check 2 doubles as the first ever proof that iOS background
+  decrypt works at all. **Blocks WP-VERIF-2.**
 
 - \[ \] **WP-VERIF-1 (P1) - [device] Tauri login end to end (init + save + KeyPackage).** All three
   were dead from v0.11.0 to v0.11.2 (`invoke` names matching no Rust command). Native has NOT run
@@ -163,16 +147,17 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   correct on web (verified by computed style in both themes), so the suspect is the native
   runtime - re-check on device during WP-VERIF-3.
 
-- \[ \] **WP-I18N-1 (P3) - The keystore plugin's own prompts are hardcoded French.**
-  `KeystorePlugin.kt` and `KeystorePlugin.swift` build their BiometricPrompt / `LAContext` strings
-  as literals ("Deverrouiller Canari", "Annuler", `kBiometricReason`), so an English user gets
-  French on the unlock path. Fixing it means carrying text across the IPC boundary: the
-  `retrieve`/`get_key_bytes` request models have no fields for it, so it touches Rust models +
-  Kotlin + Swift, and the strings must be resolved by the caller (a push handler has no locale
-  context). Note the ONE caller that cannot pass them: the background decrypt path.
-
 - \[ \] **WP-INT-1 (P3) - Cercle webhook credentials.** Set the real `webhookUrl`/`webhookSecret`
-  on the prod `balance_topup` product. Blocked on Cercle providing them.
+  on the prod `balance_topup` product. Blocked on the Cercle site going online; the receiving code
+  already exists in `../le-cercle`, so the contract can be checked against it beforehand.
+
+- \[ \] **WP-CARTO-1 (P2) - Publish an association map from Canari to the Portail.** Canari can
+  already build an association map; add a button that publishes one to the Portail
+  (`../refonte-portail-etu`), where it must render on wide screens (PC) ABOVE all the association
+  tiles. Explicitly NOT a static image or PDF: the published map is interactive - clicking an
+  association navigates to that association's page, with a hover animation. Two repos, so the
+  published artefact is a data contract, not a rendering; decide where it is stored and how the
+  Portail (SPA, `ssr = false`) fetches it before writing any UI.
 
 ---
 
@@ -197,6 +182,7 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 
 - **Never return a `Channel` entity to a client.** It carries `masterSecret`, the HKDF root of every epoch key; nothing strips it (no `ClassSerializerInterceptor`, no `@Exclude`). Project fields explicitly, as `listChannelsForUser` and `getWorkspaceBySlug` do.
 - **A slug is not an authorization.** Every invite link contains one and the preview hands it back before joining, so `getWorkspaceBySlug` gates on membership and filters channels through `canAccessChannel`.
+- **`/c/<groupId>` and `/chat/<groupId>` are NOT routes** (the wiki claimed they were): a conversation is only ever opened by publishing to `notifNav`. A role change is likewise never pushed live - an open settings modal keeps the old role until reload.
 - **A deep-linked selection must outlive the route remount.** `/chat` and `/communities` are separate route components; the route-mode switch in `MainChatPage` clears the selection, and a deep link publishes its selection BEFORE navigating. `selectionBelongsToRoute` keeps only what matches the mode being entered - true exactly for a deep link, never for a tab switch.
 - **A channel target can only be opened on `/communities`.** `chatDeepLinkRoute` decides; `openInvitedChannel` is the one entry point for both the DM invite card and an accepted invite link. Routing a channel to `/chat` lands on a view that structurally cannot show it - that is what made "Rejoindre la communauté" look inert.
 - **A just-accepted invitation is never in the loaded sidebar,** and `openNotificationTarget` refuses a channel it cannot find, so the arrival selects nothing. `ChatBackgroundService` refetches the communities ONCE per pending target to close that gap (guarded, or a revoked channel loops on the endpoint).
@@ -222,6 +208,7 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 - **Detect one-way colour per CLASS LIST, never per file:** `bg-white dark:bg-slate-900` is fine, and a plain grep over-reports 4x. `frontend/scripts/find-oneway-colors.mjs` does it right; it must NOT tokenize on `:` or it strips the very `dark:` prefixes it looks for. Black scrims and white at <=20% opacity are the glass idiom, not bugs.
 - **A `@theme` entry is what makes a token exist.** `bg-cn-surface-alt` was used in six components with no `--color-cn-surface-alt` behind it, so Tailwind generated nothing and the class was silently inert. Grep `app.css` before inventing a token name.
 - **A native prompt is user-visible UI you only partly own.** A plugin fills every field you omit from its OWN hardcoded English defaults: `tauri-plugin-biometric` titles the Android prompt from an internal `biometryNameMap` ("Fingerprint Authentication") and labels its button "Cancel", so localizing only the obvious `reason` leaves the two most prominent lines in English. Pass `title`/`subtitle`/`cancelTitle` too - `biometricPromptOptions()`.
+- **A native process cannot resolve a locale, so prompt text must travel down the call.** The keystore plugin's unlock sheet is built in Kotlin/Swift with no access to Paraglide: `keystoreUnlockPrompt()` assembles it and it rides `initialiser_mls` -> `InitMlsOptions` -> `GetKeyBytesRequest` (flattened on the wire). Each field stays optional with the French literal as the native fallback - a missing translation must degrade to the old wording, never to a failed unlock. `reason` is iOS-only, `title`/`subtitle` Android-only. Guarded by `keystorePrompt.test.ts`. `get_key_bytes` is the ONLY keystore command that prompts; `store`/`retrieve` (alias `unime_dev`) are the dead UniMe legacy API.
 - **Nothing types a string as user-visible, so no compiler enforces Paraglide.** `showToast` takes a `string`; a literal passes lint, `check` and CI, in either language (English ones read as normal code and are the easier miss). `stores/toastLocalization.test.ts` guards that one entry point - a template is accepted only when it interpolates an `m.*()`.
 - **`bun run build` leaves Paraglide output that makes the locale-asserting tests resolve to English** (4 failures in `callSystemMessages.test.ts` / `pinChange.test.ts`). Re-run `bun run paraglide:compile` before `bun run test` after any build.
 
@@ -266,66 +253,19 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 
 ---
 
-### VERIFIED ON WEB (2026-07-29, community removal)
+### VERIFIED ON WEB (v0.11.3 - v0.11.5, two accounts in isolated contexts, zero console errors)
 
-Throwaway community `QA Kick`, two accounts, isolated contexts, zero console errors on either side
-across three runs. Deleted afterwards.
+Proven on prod, do not re-test: login/DM round trip; device-reset recovery for a DM **and** a
+community (history bundle included); PIN change (state + local messages re-encrypted, same device
+id, old PIN refused); device revocation (Redis routing set shrinks immediately); community roles
+(member gets a read-only settings modal, admin gets everything, server-authoritative
+`viewerCanManage`); invitation (DM card + `memberAdded` system message); the three deep-link entry
+points (fresh load of `/c/join/<token>`, in-app link preview, invite card CTA) each landing on the
+right community AND `#general`; live removal from a community leaving the remover's own rail
+untouched.
 
-- **Removed from a community, live:** Claire was viewing `#general` when she was removed. The
-  community left her rail, the open channel closed, and the panel fell back to "Aucun echange
-  selectionne" - no reload. A DOM observer caught the toast: "Vous avez ete retire de la
-  communaute QA Kick."
-- **The remover keeps their own view:** the admin's rail still held QA Kick (and MiTV / ERA /
-  Fanfare) through every kick - the `ignore` branch of `removalOutcome`, i.e. the old bug where
-  one person's removal purged the channel for everyone who received the broadcast.
-- Deep-link regression check, three times over: each fresh join through the invite link landed on
-  `QA Kick` / `#general` directly.
-- NOT exercised on prod: the `channel` and `public-channel` outcomes (removal from a single
-  channel rather than the whole community). Unit-tested on both sides only.
-
-### VERIFIED ON WEB (2026-07-29, deep links)
-
-Two accounts, isolated contexts, zero console errors on every run. Claire was kicked from
-`QA Invitation` before each run so every one was a genuine first join.
-
-- **Invite link, fresh page load** of `/c/join/<token>`: lands on `/communities` with the community
-  heading AND `#general` open. Was: "Aucun echange selectionne".
-- **Invite link, in-app navigation** (clicking the link preview card in the DM): lands on
-  `QA Invitation`. Was: landed on `MiTV`.
-- **Invite card "Rejoindre la communaute"**: lands in `QA Invitation` / `#general` with both
-  `a ajoute Claire` system messages and live history.
-- Link preview cards now show the centred Canari logo (`favicon.svg`) instead of a lucide glyph.
-- Note: `/c/<groupId>` and `/chat/<groupId>` are NOT routes (the wiki claimed they were); a
-  conversation is only ever opened through `notifNav`.
-
-### VERIFIED ON WEB (2026-07-28, v0.11.3)
-
-Two real accounts driven in isolated browser contexts, zero console errors across every run.
-
-- **Login / DM round trip**: PIN -> WS -> `generateKeyPackage` (50) -> `KeyPackage published.` on
-  both; messages decrypted both ways; hard reload replays the same device id (no fresh start).
-- **Device-reset recovery, DM**: wiped device -> PIN -> fresh device id ->
-  `externalJoin succeeded (base epoch 2)` -> `[HISTORY_REQ] solicit attempt 0` ->
-  `[HISTORY_BUNDLE] 34 messages received`, all 34 rendered, live traffic both ways, five seconds
-  from PIN to full history. Works only because of the `[MEMBERSHIP_ACTIVE]` promotion in
-  `validateCommit`.
-- **PIN change**: verifier rotated server-side, MLS state + 37 local messages re-encrypted, same
-  device id. Old PIN correctly refused on the next unlock, new PIN opens, full history intact,
-  send/receive still working after the rotation.
-- **Device revocation**: revoking from "Gestion des appareils" srems the Redis routing set
-  immediately (a 2-person DM went from 7 entries to 2). The current device correctly has no
-  delete button.
-- **Device-reset recovery, community**: after wiping IndexedDB + localStorage, the community, its
-  channel AND the channel's full message history all came back, then live channel traffic in both
-  directions.
-- **Community roles**: a member gets a read-only settings modal (no roles tab, no "Ajouter un
-  canal", no invite/kick), an admin gets everything. `canManage` is the server-authoritative
-  `viewerCanManage` (MANAGE_WORKSPACE), fail-closed. Community-level management is admin-only by
-  design; the role matrix governs CHANNEL permissions - see WP-COM-2 for the one it does not.
-  A role change is NOT pushed live: an open settings modal keeps the old role until reload.
-- **Invitation**: the invitee does receive a visible message in the MLS DM - a `channel_invitation`
-  card with a "Rejoindre la communaute" CTA - and a `memberAdded` system message is posted into the
-  channel. The latter named the invitee "Utilisateur inconnu" until `ce16f804`.
+Still NOT exercised on prod, unit-tested only: the `channel` / `public-channel` removal outcomes
+(removal from a single channel rather than a whole community).
 
 ---
 

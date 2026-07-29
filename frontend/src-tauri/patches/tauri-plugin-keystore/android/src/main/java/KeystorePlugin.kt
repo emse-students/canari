@@ -27,6 +27,12 @@ private const val KEY_ALIAS = "unime_dev"
 private const val ANDROID_KEYSTORE = "AndroidKeyStore"
 private const val SHARED_PREFERENCES_NAME = "secure_storage"
 
+/// Fallback wording for the unlock prompt, used only when the caller supplies none.
+/// French because that is what shipped; the localized values arrive in GetKeyBytesRequest.
+private const val DEFAULT_UNLOCK_TITLE = "Déverrouiller Canari"
+private const val DEFAULT_UNLOCK_SUBTITLE = "Confirmez votre identité avec votre empreinte"
+private const val DEFAULT_CANCEL = "Annuler"
+
 @InvokeArg
 class StoreRequest {
     lateinit var value: String
@@ -97,7 +103,7 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle("Activer le déverrouillage biométrique")
             .setSubtitle("Confirmez votre identité pour activer la biométrie sur Canari")
-            .setNegativeButtonText("Annuler")
+            .setNegativeButtonText(DEFAULT_CANCEL)
             .build()
 
         biometricPrompt.authenticate(promptInfo, cryptoObject)
@@ -238,11 +244,12 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
                 }
             })
 
-        // Build the prompt info.
+        // Build the prompt info. Unlike getKeyBytes this command carries no text: it is the
+        // legacy single-secret API (alias `unime_dev`) that nothing in Canari calls any more.
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Déverrouiller Canari")
-            .setSubtitle("Confirmez votre identité avec votre empreinte")
-            .setNegativeButtonText("Annuler")
+            .setTitle(DEFAULT_UNLOCK_TITLE)
+            .setSubtitle(DEFAULT_UNLOCK_SUBTITLE)
+            .setNegativeButtonText(DEFAULT_CANCEL)
             .build()
 
         // Launch the biometric prompt.
@@ -292,9 +299,19 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
         lateinit var keyBytes: String  // base64-encoded 32-byte key
     }
 
+    /// Reading the key raises a BiometricPrompt, so the request also carries its text.
+    ///
+    /// The plugin runs in a native process with no access to the app's message catalogue, so every
+    /// string comes from the caller (JS -> `initialiser_mls` -> `GetKeyBytesRequest`). Each is
+    /// optional and falls back to the French literal that shipped before: a missing translation
+    /// must degrade to the previous wording, never to an unlock that cannot happen.
     @InvokeArg
     class GetKeyBytesRequest {
         lateinit var alias: String
+        var title: String? = null
+        var subtitle: String? = null
+        var cancelTitle: String? = null
+        // `reason` is iOS-only (LAContext.localizedReason); Android has no field for it.
     }
 
     @InvokeArg
@@ -385,9 +402,9 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
             })
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Déverrouiller Canari")
-            .setSubtitle("Confirmez votre identité avec votre empreinte")
-            .setNegativeButtonText("Annuler")
+            .setTitle(args.title ?: DEFAULT_UNLOCK_TITLE)
+            .setSubtitle(args.subtitle ?: DEFAULT_UNLOCK_SUBTITLE)
+            .setNegativeButtonText(args.cancelTitle ?: DEFAULT_CANCEL)
             .build()
 
         // No CryptoObject — biometric is a pure UX gate, not a crypto requirement.

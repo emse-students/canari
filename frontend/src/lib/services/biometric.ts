@@ -47,6 +47,35 @@ function biometricPromptOptions(): AuthOptions {
   };
 }
 
+/** Localized text for the biometric sheet the keystore plugin raises when it reads the device key. */
+export interface KeystorePromptText {
+  title: string;
+  subtitle: string;
+  cancelTitle: string;
+  reason: string;
+}
+
+/**
+ * Text for the unlock sheet raised by the KEYSTORE plugin, not the biometric one.
+ *
+ * Two different plugins own two different prompts. This one appears when `initialiser_mls` runs in
+ * biometric mode and the native side reads `mls_device_key_{userId}_{deviceId}` back, so its
+ * strings have to travel down the IPC chain: the plugin executes in a native process that has no
+ * access to this catalogue and no way to know the active locale. Omitting a field is not neutral -
+ * the native side then falls back to its own French literal.
+ *
+ * `title`/`subtitle` are consumed by Android's `BiometricPrompt`, `reason` by iOS `LAContext`;
+ * `cancelTitle` is used by both.
+ */
+export function keystoreUnlockPrompt(): KeystorePromptText {
+  return {
+    title: m.auth_keystore_prompt_unlock_title(),
+    subtitle: m.auth_biometric_desc(),
+    cancelTitle: m.common_cancel_button(),
+    reason: m.auth_keystore_prompt_unlock_reason(),
+  };
+}
+
 export class BiometricService {
   /**
    * Marks biometric unlock as configured.  The device key is already stored in

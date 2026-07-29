@@ -8,7 +8,7 @@
 use base64::Engine;
 use mls_core::keystore::DeviceKeyStore;
 use tauri::Runtime;
-use tauri_plugin_keystore::KeystoreExt;
+use tauri_plugin_keystore::{BiometricPromptText, KeystoreExt};
 
 /// Implements `DeviceKeyStore` for mobile and desktop by delegating to the
 /// Tauri keystore plugin.
@@ -17,11 +17,26 @@ use tauri_plugin_keystore::KeystoreExt;
 /// thread (it is `Send + Sync`).
 pub struct PluginDeviceKeyStore<R: Runtime> {
     app: tauri::AppHandle<R>,
+    /// Text for the biometric sheet that reading the key raises. Only `retrieve_device_key`
+    /// prompts, so the two store-only call sites leave this empty and the native fallback applies.
+    prompt: BiometricPromptText,
 }
 
 impl<R: Runtime> PluginDeviceKeyStore<R> {
     pub fn new(app: tauri::AppHandle<R>) -> Self {
-        Self { app }
+        Self {
+            app,
+            prompt: BiometricPromptText::default(),
+        }
+    }
+
+    /// Attaches the localized text used by [`DeviceKeyStore::retrieve_device_key`].
+    ///
+    /// The frontend owns the locale, so the strings travel down with the call that needs them
+    /// rather than being resolved here - nothing in this process knows which language to pick.
+    pub fn with_prompt(mut self, prompt: BiometricPromptText) -> Self {
+        self.prompt = prompt;
+        self
     }
 }
 
@@ -43,6 +58,7 @@ impl<R: Runtime> DeviceKeyStore for PluginDeviceKeyStore<R> {
             .keystore()
             .get_key_bytes(tauri_plugin_keystore::GetKeyBytesRequest {
                 alias: alias.to_string(),
+                prompt: self.prompt.clone(),
             })
             .ok()?;
 

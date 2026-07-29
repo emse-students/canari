@@ -8,14 +8,26 @@ use crate::state::{
 use mls_core::{DecryptErrorKind, DeviceKeyStore, MlsManager};
 use std::sync::Mutex;
 
+/// The two situational inputs of [`initialiser_mls`], grouped so the command keeps a workable
+/// arity. Every field is optional and the whole struct defaults, so a frontend that sends nothing
+/// still initialises - neither input is required for a normal login.
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct InitMlsOptions {
+    /// One-shot migration path for `mls.bin` files written before v0.11.0, sealed in the Argon2id
+    /// envelope `[salt (16) || nonce (12) || ciphertext]` keyed on the raw PIN. Nothing ever
+    /// rewrote them, so on the first v0.11.x launch they fail to decrypt exactly like a snapshot
+    /// sealed with another device's key. When it is supplied and the normal load fails, the legacy
+    /// envelope is tried once; on success the snapshot is re-sealed under the device key and
+    /// written back, so the conversion happens at most once per install.
+    pub legacy_pin: Option<String>,
+    /// Localized text for the sheet that biometric mode raises. This is the only command that can
+    /// supply it: the native keystore plugin has no access to the app's message catalogue, and the
+    /// frontend is the only layer that knows the active locale.
+    pub biometric_prompt: Option<tauri_plugin_keystore::BiometricPromptText>,
+}
+
 /// Initialises the MLS manager for this session and caches its at-rest key.
-///
-/// `legacy_pin` is the one-shot migration path for `mls.bin` files written before v0.11.0, which
-/// are sealed in the Argon2id envelope `[salt (16) || nonce (12) || ciphertext]` keyed on the raw
-/// PIN. Nothing ever rewrote them, so on the first v0.11.x launch they fail to decrypt exactly
-/// like a snapshot sealed with another device's key. When it is supplied and the normal load
-/// fails, the legacy envelope is tried once; on success the snapshot is re-sealed under the
-/// device key and written back, so the conversion happens at most once per install.
 #[tauri::command]
 pub(crate) async fn initialiser_mls(
     app: tauri::AppHandle,
@@ -23,12 +35,15 @@ pub(crate) async fn initialiser_mls(
     device_id: String,
     device_key_b64: String,
     encrypted_state: Option<Vec<u8>>,
-    legacy_pin: Option<String>,
+    opts: Option<InitMlsOptions>,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
+    let opts = opts.unwrap_or_default();
+    let legacy_pin = opts.legacy_pin;
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
-    let keystore = PluginDeviceKeyStore::new(app.clone());
+    let keystore = PluginDeviceKeyStore::new(app.clone())
+        .with_prompt(opts.biometric_prompt.unwrap_or_default());
 
     // Empty device_key_b64 → biometric mode: the keystore holds the device key directly.
     // resolve_at_rest_key then takes Path A (retrieve_device_key), which triggers a single

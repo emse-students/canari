@@ -20,9 +20,12 @@ class StoreRequest: Decodable {
 private let kKeychainService = "fr.emse.canari"
 private let kKeychainAccount = "canari_biometric_user"
 
-/// Reason shown in the Face ID / Touch ID system sheet on retrieve. French to
-/// match the app's French-first copy and the Android prompt strings; a per-locale
-/// pass is tracked as a follow-up (see CLAUDE.md iOS WP-iOS-10).
+/// Fallback reason for the Face ID / Touch ID sheet, used only when the caller supplies none.
+///
+/// This process has no access to the app's Paraglide catalogue, so the localized reason travels
+/// down with the request (JS -> `initialiser_mls` -> `GetKeyBytesRequest`). French because that is
+/// what shipped: a missing translation must degrade to the previous wording, never to an unlock
+/// that cannot happen.
 private let kBiometricReason = "Confirmez votre identité pour déverrouiller Canari."
 
 class KeystorePlugin: Plugin {
@@ -132,9 +135,16 @@ class KeystorePlugin: Plugin {
     let keyBytes: String  // base64-encoded
   }
 
-  /// Request to retrieve a raw key by alias.
+  /// Request to retrieve a raw key by alias, plus the localized text for the sheet it raises.
+  ///
+  /// `title` and `subtitle` are Android-only (`BiometricPrompt` has both; `LAContext` has neither)
+  /// but are decoded here so one wire shape serves both platforms.
   class GetKeyBytesRequest: Decodable {
     let alias: String
+    let title: String?
+    let subtitle: String?
+    let cancelTitle: String?
+    let reason: String?
   }
 
   /// Request to delete a raw key by alias.
@@ -238,8 +248,13 @@ class KeystorePlugin: Plugin {
     let args = try invoke.parseArgs(GetKeyBytesRequest.self)
 
     let context = LAContext()
-    context.localizedReason = kBiometricReason
+    context.localizedReason = args.reason ?? kBiometricReason
     context.interactionNotAllowed = false
+    // Left untouched when the caller sends nothing: assigning nil here would not restore the
+    // system default, it would blank the button.
+    if let cancelTitle = args.cancelTitle {
+      context.localizedCancelTitle = cancelTitle
+    }
 
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,

@@ -149,9 +149,32 @@ whole prompt - the plugin fills the rest from its own English defaults:
 So a prompt whose `reason` is carefully localized still showed an English title and button. Shared
 options live in `biometricPromptOptions()`; the title differs per call site.
 
-The prompts raised by the **keystore** plugin (`retrieve`, `get_key_bytes`) are a separate surface:
-their strings are hardcoded in `KeystorePlugin.kt` / `.swift` and are French only - the plugin
-request models carry no text, so nothing can pass a translation across the IPC boundary yet.
+### The keystore unlock sheet is a second prompt, localized differently
+
+The **keystore** plugin raises its own sheet, and only one command does: `get_key_bytes`, when
+biometric mode reads the device key back. It runs in a native process with no access to the
+Paraglide catalogue and no notion of the active locale, so its text cannot be resolved where it is
+displayed - it travels down the call instead:
+
+```
+keystoreUnlockPrompt()            biometric.ts, the only place the strings are assembled
+  -> invoke('initialiser_mls', { opts: { biometricPrompt } })
+  -> InitMlsOptions              commands/mls.rs
+  -> PluginDeviceKeyStore::with_prompt()
+  -> GetKeyBytesRequest          flattened onto the wire: title/subtitle/cancelTitle/reason
+  -> BiometricPrompt (Kotlin)  |  LAContext (Swift)
+```
+
+Every field is optional and each native side falls back to the French literal that shipped before
+(`DEFAULT_UNLOCK_TITLE`, `kBiometricReason`, ...): a translation that fails to arrive must degrade
+to the previous wording, never to an unlock that cannot happen. `reason` is iOS-only -
+`BiometricPrompt` has no equivalent - and `title`/`subtitle` are Android-only. Four languages and
+no compiler between them, so `services/keystorePrompt.test.ts` reads the Rust, Kotlin and Swift
+sources and fails when a field is renamed or a literal creeps back into the builder.
+
+The other keystore commands (`store`, `retrieve`, alias `unime_dev`) still hold French literals.
+They are the legacy single-secret API inherited from the UniMe sample and have **no caller** in
+either the JS or the Rust layer, so no user ever sees them.
 
 ### Calling the keystore plugin from JS
 

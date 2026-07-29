@@ -15,6 +15,7 @@ import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { BaseMlsService } from './BaseMlsService';
+import { keystoreUnlockPrompt } from './biometric';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 interface NativeKeyPackageBatchResult {
@@ -571,6 +572,10 @@ export class TauriMlsService extends BaseMlsService {
    * side may fall back to the pre-v0.11.0 Argon2id envelope, re-seal `mls.bin` under
    * `deviceKeyB64` and persist it. {@link loadStateWithKey} must stay free of it so probing a
    * candidate key (recoverAndRekey) cannot rewrite the stored snapshot as a side effect.
+   *
+   * `biometricPrompt` is sent unconditionally, even though only biometric mode (empty
+   * `deviceKeyB64`) raises a sheet: this is the one command that can carry it, because the native
+   * keystore plugin cannot resolve a locale of its own.
    */
   private async invokeInit(
     deviceKeyB64: string,
@@ -584,7 +589,7 @@ export class TauriMlsService extends BaseMlsService {
       deviceId: this.deviceId,
       deviceKeyB64,
       encryptedState,
-      legacyPin: legacyPin ?? null,
+      opts: { legacyPin: legacyPin ?? null, biometricPrompt: keystoreUnlockPrompt() },
     });
   }
 

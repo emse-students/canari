@@ -2184,6 +2184,8 @@
   "auth_biometric_enroll_confirm_desc": "Confirm with your fingerprint or Face ID to enable biometric unlock.",
   "auth_biometric_prompt_enable_title": "Enable biometric unlock",
   "auth_biometric_prompt_disable_title": "Disable biometric unlock",
+  "auth_keystore_prompt_unlock_title": "Unlock Canari",
+  "auth_keystore_prompt_unlock_reason": "Confirm your identity to unlock Canari.",
   "push_permission_rationale": "Enable notifications to be notified of new messages, even when the app is closed.",
   "call_sibling_device_busy": "Another device is already in a call.",
   "channel_poll_vote_error": "Could not vote"
