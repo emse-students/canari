@@ -135,6 +135,25 @@ distinct emojis per message are capped at 15, mirroring the client's
 `MAX_DISTINCT_MESSAGE_REACTIONS`. An emoji key is dropped when its last reactor leaves, so the
 cap only ever counts live reactions.
 
+#### Reading a community by slug
+
+`GET /workspaces/by-slug/:slug` (`getWorkspaceBySlug`) returns one community with its channels,
+members and roles, plus the server-computed `viewerCanManage` / `viewerCanModerate`. It is
+**members only**, and it must stay that way: a slug is not a secret - it is in every invite link
+and the invite preview returns it before you join - so membership, not knowledge of the slug, is
+the authorization.
+
+Its channels are **projected field by field** (`id`, `workspaceId`, `name`, `visibility`,
+`keyVersion`, `writePolicy`), never returned as entities. `Channel.masterSecret` is the 32-byte
+HKDF root every epoch key of that channel derives from; serializing the entity handed it to the
+caller and made a slug sufficient to decrypt the whole channel history. The list is filtered by
+`canAccessChannel`, the same rule `listChannelsForUser` applies, so a private channel the caller
+may not read is absent rather than merely unusable - which is also what lets the accepted-invite
+page pick a landing channel from it safely.
+
+Any new endpoint returning a `Channel` must project the same way. Nothing in the framework
+strips it: there is no `ClassSerializerInterceptor` and the entity carries no `@Exclude`.
+
 #### Deleting a community
 
 `DELETE /api/channels/workspaces/:workspaceId` (`deleteWorkspace`) is the only way a community

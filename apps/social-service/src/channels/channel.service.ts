@@ -468,38 +468,64 @@ export class ChannelService {
   }
 
   /**
-   * Loads a workspace by its URL slug together with its channels, members, and roles.
-   * When `userId` is provided, computes `viewerCanManage` server-side so the frontend
-   * can gate admin controls without deriving permissions itself.
+   * Loads a workspace by its URL slug together with the channels the caller may read, its
+   * members, and its roles. `viewerCanManage` / `viewerCanModerate` are computed server-side so
+   * the frontend can gate admin controls without deriving permissions itself.
+   *
+   * Members only: a slug is public knowledge (every invite link and its preview hands one out),
+   * so it must not be enough to read a community's roster or channel list from the outside.
    */
-  async getWorkspaceBySlug(slug: string, userId?: string) {
+  async getWorkspaceBySlug(slug: string, userId: string) {
     // `archived: false` rather than a post-lookup check: a deleted community must be a 404
     // on its own slug, not a readable tombstone.
     const ws = await this.workspaceRepo.findOne({ where: { slug, archived: false } });
     if (!ws) throw new NotFoundException('Workspace not found');
 
-    const channels = await this.channelRepo.find({ where: { workspaceId: ws.id } });
+    const normalizedUserId = (userId ?? '').trim().toLowerCase();
     const members = await this.memberRepo.find({ where: { workspaceId: ws.id } });
+    const viewerMember = members.find((m) => m.userId.trim().toLowerCase() === normalizedUserId);
+    if (!viewerMember) throw new ForbiddenException('Not a member of this workspace');
+
     const roles = await this.roleRepo.find({ where: { workspaceId: ws.id } });
+
+    const allChannels = await this.channelRepo.find({
+      where: { workspaceId: ws.id, archived: false },
+    });
+    const channels: Array<{
+      id: string;
+      workspaceId: string;
+      name: string;
+      visibility: 'public' | 'private';
+      keyVersion: number;
+      writePolicy: ChannelWritePolicy;
+    }> = [];
+    for (const ch of allChannels) {
+      if (!(await this.canAccessChannel(ch, viewerMember, normalizedUserId))) continue;
+      // Projected field by field, never the entity: `masterSecret` is the HKDF root every epoch
+      // key of the channel derives from, and serializing the entity handed it to the caller.
+      channels.push({
+        id: ch.id,
+        workspaceId: ch.workspaceId,
+        name: ch.name,
+        visibility: ch.isPrivate ? 'private' : 'public',
+        keyVersion: ch.keyVersion,
+        writePolicy: ch.writePolicy ?? 'everyone',
+      });
+    }
 
     let viewerCanManage = false;
     let viewerCanModerate = false;
-    if (userId) {
-      const viewerMember = members.find(
-        (m) => m.userId.trim().toLowerCase() === userId.trim().toLowerCase()
+    if (viewerMember.roleIds?.length) {
+      const manageRoleIds = new Set(
+        roles
+          .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
+          .map((r) => r.id)
       );
-      if (viewerMember?.roleIds?.length) {
-        const manageRoleIds = new Set(
-          roles
-            .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
-            .map((r) => r.id)
-        );
-        const moderateRoleIds = new Set(
-          roles.filter((r) => this.roleGrantsModeration(r.permissions)).map((r) => r.id)
-        );
-        viewerCanManage = viewerMember.roleIds.some((id) => manageRoleIds.has(id));
-        viewerCanModerate = viewerMember.roleIds.some((id) => moderateRoleIds.has(id));
-      }
+      const moderateRoleIds = new Set(
+        roles.filter((r) => this.roleGrantsModeration(r.permissions)).map((r) => r.id)
+      );
+      viewerCanManage = viewerMember.roleIds.some((id) => manageRoleIds.has(id));
+      viewerCanModerate = viewerMember.roleIds.some((id) => moderateRoleIds.has(id));
     }
 
     return { workspace: { ...ws, viewerCanManage, viewerCanModerate }, channels, members, roles };

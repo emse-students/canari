@@ -12,6 +12,23 @@ export function chatDeepLinkRoute(conversationId: string): '/chat' | '/communiti
 }
 
 /**
+ * Whether an already-selected conversation belongs to the route mode being entered.
+ *
+ * `/chat` and `/communities` are separate route components, so moving between them remounts the
+ * chat page and its mode switch clears the selection carried by the global stores. A selection
+ * that already matches the incoming mode was published by a deep link that navigated us here
+ * (invite card, invite link, channel notification) and must survive; anything else is the
+ * previous tab's thread and must not leak across.
+ */
+export function selectionBelongsToRoute(
+  conversationId: string | null | undefined,
+  mode: 'chat' | 'communities'
+): boolean {
+  if (!conversationId) return false;
+  return chatDeepLinkRoute(conversationId) === (mode === 'communities' ? '/communities' : '/chat');
+}
+
+/**
  * Opens the community channel behind an invitation (the DM card's "Rejoindre la communauté", or an
  * accepted invite link).
  *

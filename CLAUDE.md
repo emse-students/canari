@@ -177,6 +177,9 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 
 #### Community channels
 
+- **Never return a `Channel` entity to a client.** It carries `masterSecret`, the HKDF root of every epoch key; nothing strips it (no `ClassSerializerInterceptor`, no `@Exclude`). Project fields explicitly, as `listChannelsForUser` and `getWorkspaceBySlug` do.
+- **A slug is not an authorization.** Every invite link contains one and the preview hands it back before joining, so `getWorkspaceBySlug` gates on membership and filters channels through `canAccessChannel`.
+- **A deep-linked selection must outlive the route remount.** `/chat` and `/communities` are separate route components; the route-mode switch in `MainChatPage` clears the selection, and a deep link publishes its selection BEFORE navigating. `selectionBelongsToRoute` keeps only what matches the mode being entered - true exactly for a deep link, never for a tab switch.
 - **A channel target can only be opened on `/communities`.** `chatDeepLinkRoute` decides; `openInvitedChannel` is the one entry point for both the DM invite card and an accepted invite link. Routing a channel to `/chat` lands on a view that structurally cannot show it - that is what made "Rejoindre la communauté" look inert.
 - **A just-accepted invitation is never in the loaded sidebar,** and `openNotificationTarget` refuses a channel it cannot find, so the arrival selects nothing. `ChatBackgroundService` refetches the communities ONCE per pending target to close that gap (guarded, or a revoked channel loops on the endpoint).
 

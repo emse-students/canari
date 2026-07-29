@@ -97,6 +97,25 @@ target effect in `ChatBackgroundService`, which refetches the communities **once
 recognise a channel: a just-accepted invitation is never in the loaded sidebar, and
 `openNotificationTarget` refuses a channel it cannot find.
 
+### Deep-linking into a channel
+
+Three entry points publish a channel target and navigate: the invite card's Join button, an
+accepted invite link, and a tapped channel notification. All three go through `notifNav` +
+`openInvitedChannel`, and all three have to survive the same hazard.
+
+`/chat` and `/communities` are **separate route components**, each rendering its own
+`MainChatPage`, so moving between them remounts it. Its route-mode switch clears the selection so
+the previous tab's thread does not leak across - but a deep link publishes its selection *before*
+navigating, so an unconditional reset wipes precisely what the link asked for, and the arrival
+shows an empty `/communities`. `selectionBelongsToRoute` is the discriminator: a selection whose
+`chatDeepLinkRoute` already matches the incoming mode can only have come from a deep link, since a
+genuine tab switch carries one made under the mode being left. Pinned by
+`notificationRouting.test.ts`.
+
+The invite link resolves its landing channel from `getWorkspaceBySlug`, which returns only channels
+the caller may read; it prefers a **public** one, so a fresh joiner lands in the open room rather
+than in whichever private channel happened to sort first.
+
 The inviter's copy is inserted **locally** by `inviteMemberToChannel`, because MLS never hands a
 device back its own application message. The `senderNorm === userId` branch of
 `systemMessageHandler` builds the identical envelope, and only ever runs on the inviter's *other*

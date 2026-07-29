@@ -58,15 +58,20 @@
   }
 
   /**
-   * First channel of a workspace, or null when the lookup fails - a community with no channel the
-   * caller may read is possible, and a failed resolution must not block a successful join.
+   * Landing channel of a workspace, or null when the lookup fails - a community with no channel
+   * the caller may read is possible, and a failed resolution must not block a successful join.
+   *
+   * A public channel is preferred: the endpoint only returns channels the caller may read, but a
+   * fresh joiner belongs in the community's open room rather than in whichever private channel
+   * happens to sort first.
    */
   async function firstChannelOf(slug: string): Promise<string | null> {
     if (!slug) return null;
     try {
       const detail = await channelService.getWorkspaceBySlug(slug);
-      const first = detail?.channels?.[0];
-      const channelId = first?.id ?? first?._id;
+      const channels = detail?.channels ?? [];
+      const target = channels.find((ch) => ch.visibility !== 'private') ?? channels[0];
+      const channelId = target?.id ?? target?._id;
       return channelId ? String(channelId).replace(/^channel_/, '') : null;
     } catch {
       return null;

@@ -829,6 +829,86 @@ describe('ChannelService security hardening', () => {
     expect(memberRepo.save).toHaveBeenCalledWith(member);
   });
 
+  /** Wires the repos so `getWorkspaceBySlug('team')` resolves against one workspace. */
+  function arrangeWorkspaceBySlug(
+    repos: ReturnType<typeof makeService>,
+    members: Array<{ userId: string; roleIds?: string[] }>,
+    channels: Array<Partial<Channel>>
+  ) {
+    repos.workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', slug: 'team', name: 'Team' });
+    repos.memberRepo.find.mockResolvedValue(members.map((m) => ({ workspaceId: 'ws1', ...m })));
+    repos.roleRepo.find.mockResolvedValue([]);
+    repos.channelRepo.find.mockResolvedValue(channels);
+  }
+
+  it('getWorkspaceBySlug never returns a channel masterSecret', async () => {
+    const repos = makeService();
+    arrangeWorkspaceBySlug(
+      repos,
+      [{ userId: 'u1', roleIds: [] }],
+      [
+        {
+          id: 'ch1',
+          workspaceId: 'ws1',
+          name: 'general',
+          isPrivate: false,
+          keyVersion: 3,
+          masterSecret: Buffer.alloc(32).toString('base64'),
+        },
+      ]
+    );
+
+    const result = await repos.service.getWorkspaceBySlug('team', 'u1');
+
+    // The HKDF root of every epoch key: leaking it hands over the whole channel history.
+    expect(JSON.stringify(result)).not.toContain('masterSecret');
+    expect(result.channels).toEqual([
+      {
+        id: 'ch1',
+        workspaceId: 'ws1',
+        name: 'general',
+        visibility: 'public',
+        keyVersion: 3,
+        writePolicy: 'everyone',
+      },
+    ]);
+  });
+
+  it('getWorkspaceBySlug refuses a caller who is not a member', async () => {
+    const repos = makeService();
+    arrangeWorkspaceBySlug(repos, [{ userId: 'u1' }], []);
+
+    // A slug is public knowledge - every invite preview hands one out.
+    await expect(repos.service.getWorkspaceBySlug('team', 'intruder')).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+  });
+
+  it('getWorkspaceBySlug hides a private channel the member may not read', async () => {
+    const repos = makeService();
+    arrangeWorkspaceBySlug(
+      repos,
+      [{ userId: 'u1', roleIds: [] }],
+      [
+        { id: 'ch1', workspaceId: 'ws1', name: 'general', isPrivate: false, keyVersion: 1 },
+        {
+          id: 'ch2',
+          workspaceId: 'ws1',
+          name: 'staff',
+          isPrivate: true,
+          keyVersion: 1,
+          allowedUsers: [],
+        },
+      ]
+    );
+    // canAccessChannel falls back to the MANAGE_WORKSPACE check for a private channel.
+    repos.memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+
+    const result = await repos.service.getWorkspaceBySlug('team', 'u1');
+
+    expect(result.channels.map((c) => c.name)).toEqual(['general']);
+  });
+
   it('listWorkspacesForUser flags viewerCanManage from the MANAGE_WORKSPACE permission', async () => {
     const { service, workspaceRepo, memberRepo, roleRepo } = makeService();
     memberRepo.find.mockResolvedValue([

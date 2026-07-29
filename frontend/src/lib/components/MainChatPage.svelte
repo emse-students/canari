@@ -36,7 +36,7 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { openNotificationTarget } from '$lib/utils/chat/openConversationFromId';
-  import { openInvitedChannel } from '$lib/utils/chat/notificationRouting';
+  import { openInvitedChannel, selectionBelongsToRoute } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
@@ -551,6 +551,10 @@
       const previous = lastActiveRouteMode;
       lastActiveRouteMode = mode;
       if (previous === null || previous === mode) return;
+      // A selection that already belongs to the mode we are entering was published by a deep link
+      // that navigated us here, and wiping it is what made those land on an empty /communities.
+      // A genuine tab switch never hits this: its selection was made under the mode we are leaving.
+      if (selectionBelongsToRoute(convs.selectedContact, mode)) return;
       if (readReceiptTimer) {
         clearTimeout(readReceiptTimer);
         readReceiptTimer = null;

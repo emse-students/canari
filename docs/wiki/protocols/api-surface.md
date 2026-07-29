@@ -261,6 +261,7 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 |---|---|---|
 | POST | `/api/channels/workspaces` | Create workspace |
 | GET | `/api/channels/workspaces/user/me` | List caller's workspaces (each carries `viewerCanManage`: true iff the caller holds MANAGE_WORKSPACE, used to gate admin controls) |
+| GET | `/api/channels/workspaces/by-slug/:slug` | One workspace with its readable channels, members and roles. **Members only**, and channels are projected (never the entity - it carries `masterSecret`) |
 | GET | `/api/channels/workspace/:workspaceId/user/me` | List channels for caller |
 | POST | `/api/channels` | Create channel |
 | POST | `/api/channels/:channelId/messages` | Send encrypted message |
