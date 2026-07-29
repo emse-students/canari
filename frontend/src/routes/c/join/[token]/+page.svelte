@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { channelService } from '$lib/services/ChannelService';
+  import { openInvitedChannel } from '$lib/utils/chat/notificationRouting';
   import { currentUserId } from '$lib/stores/user';
   import { Users, Loader2, AlertCircle } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -40,11 +41,35 @@
     joining = true;
     error = '';
     try {
-      await channelService.acceptInvite(token);
+      const { workspaceSlug } = await channelService.acceptInvite(token);
+      // Land IN the community that was just joined, not on a bare /communities where the sidebar
+      // falls back to whichever community sorts first. Resolving the slug gives its first channel,
+      // which is the deep-link target the notification machinery already knows how to open.
+      const firstChannelId = await firstChannelOf(workspaceSlug);
+      if (firstChannelId) {
+        await openInvitedChannel(firstChannelId);
+        return;
+      }
       await goto('/communities', { replaceState: true });
     } catch (e) {
       error = e instanceof Error ? e.message : m.community_join_error_fallback();
       joining = false;
+    }
+  }
+
+  /**
+   * First channel of a workspace, or null when the lookup fails - a community with no channel the
+   * caller may read is possible, and a failed resolution must not block a successful join.
+   */
+  async function firstChannelOf(slug: string): Promise<string | null> {
+    if (!slug) return null;
+    try {
+      const detail = await channelService.getWorkspaceBySlug(slug);
+      const first = detail?.channels?.[0];
+      const channelId = first?.id ?? first?._id;
+      return channelId ? String(channelId).replace(/^channel_/, '') : null;
+    } catch {
+      return null;
     }
   }
 </script>

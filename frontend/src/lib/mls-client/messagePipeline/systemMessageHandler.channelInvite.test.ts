@@ -41,6 +41,7 @@ const INVITE_DATA = {
   inviterName: 'Alice',
   inviteeId: 'bob',
   inviteeName: 'Bob',
+  workspaceImageMediaId: 'media-42',
 };
 
 /** Pulls the envelope the handler passed to addMessageToChat. */
@@ -90,6 +91,21 @@ describe('handleSystemEvent - channel_invitation', () => {
     const env = insertedEnvelope(ctx);
     expect(env.channelInvite?.channelName).toBe('general');
     expect(env.channelInvite?.workspaceName).toBeUndefined();
+  });
+
+  it('carries the community logo to BOTH cards, and survives its absence', async () => {
+    for (const userId of ['bob', 'alice']) {
+      const ctx = makeCtx({ userId, senderNorm: 'alice' });
+      await handleSystemEvent('channel_invitation', INVITE_DATA, ctx as any);
+      expect(insertedEnvelope(ctx).channelInvite?.workspaceImageMediaId).toBe('media-42');
+    }
+
+    // A community with no cover, or an envelope written before the field existed: the card falls
+    // back to the community initials rather than rendering a broken image.
+    const ctx = makeCtx({ userId: 'bob', senderNorm: 'alice' });
+    const { workspaceImageMediaId: _omitted, ...noImage } = INVITE_DATA;
+    await handleSystemEvent('channel_invitation', noImage, ctx as any);
+    expect(insertedEnvelope(ctx).channelInvite?.workspaceImageMediaId).toBeUndefined();
   });
 
   it('ignores an invitation with no channelId (nothing to join)', async () => {

@@ -36,6 +36,7 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { openNotificationTarget } from '$lib/utils/chat/openConversationFromId';
+  import { openInvitedChannel } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
@@ -612,14 +613,18 @@
     forwardingMessage = message;
   }
 
-  /** Forwards the pending message to the conversation chosen in the modal. */
-  async function doForward(targetKey: string, target: Conversation) {
+  /**
+   * Forwards the pending message to the conversation chosen in the modal. `targetLabel` comes from
+   * the picker rather than `conversation.name`, which for a DM is the peer's raw user id and would
+   * put a 64-char hash in the confirmation toast.
+   */
+  async function doForward(targetKey: string, _target: Conversation, targetLabel: string) {
     const message = forwardingMessage;
     forwardingMessage = null;
     if (!message) return;
     const result = await messaging.forwardMessage(message.content, targetKey, msgCtx());
     if (result.success) {
-      showToast(m.chat_message_forwarded({ name: target.name }), 'info');
+      showToast(m.chat_message_forwarded({ name: targetLabel }), 'info');
     } else {
       showToast(result.error ?? m.chat_forward_error_fallback(), 'error');
     }
@@ -770,11 +775,9 @@
     }
   }
 
-  /** Navigates to the channel community when the user clicks "Rejoindre la communauté". */
+  /** Opens the community behind an invitation card ("Rejoindre la communauté"). */
   function handleJoinChannel(channelId: string) {
-    const channelConversationId = `channel_${channelId}`;
-    notifNav.navigate(channelConversationId);
-    goto('/chat');
+    void openInvitedChannel(channelId);
   }
 
   /** Starts a voice or video call when the conversation is a group or DM (not a channel). */

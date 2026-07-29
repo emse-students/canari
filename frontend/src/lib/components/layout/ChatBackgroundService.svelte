@@ -66,7 +66,8 @@
   import type { CallParticipant } from '$lib/services/CallService';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import { openNotificationTarget } from '$lib/utils/chat/openConversationFromId';
-  import { chatDeepLinkRoute } from '$lib/utils/chat/notificationRouting';
+  import { chatDeepLinkRoute, openInvitedChannel } from '$lib/utils/chat/notificationRouting';
+  import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
@@ -156,6 +157,15 @@
    */
   let lastNavigatedNotifTarget: string | null = null;
 
+  /**
+   * Pending channel target we already refetched the sidebar for. A just-accepted invitation (card
+   * or link) names a channel that is not in the loaded list yet, and `openNotificationTarget`
+   * refuses a channel it cannot find - so without one refresh the arrival selects nothing and the
+   * join looks like it did nothing. Guarded per target so a genuinely unknown channel (revoked
+   * access, deleted community) cannot loop on the endpoint.
+   */
+  let refreshedWorkspacesForTarget: string | null = null;
+
   /** Routes to the targeted conversation on a notification tap (works from any route). */
   $effect(() => {
     const id = notifNav.pending;
@@ -182,6 +192,14 @@
       )
     ) {
       notifNav.clear();
+      return;
+    }
+    // Unresolved channel: refetch the communities once, then let this effect re-run on the
+    // resulting conversation update and select it.
+    if (isChannelConversationId(id) && refreshedWorkspacesForTarget !== id) {
+      refreshedWorkspacesForTarget = id;
+      appendLog(`[notifNav] channel ${id} unknown - refreshing communities before selecting`);
+      void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx());
     }
   });
 
@@ -655,9 +673,7 @@
 
   /** Navigates to the channel community when the user clicks "Rejoindre la communauté". */
   function handleJoinChannel(channelId: string) {
-    const channelConversationId = `channel_${channelId}`;
-    notifNav.navigate(channelConversationId);
-    goto('/chat');
+    void openInvitedChannel(channelId);
   }
 
   // ── Post-login: load channel workspaces ───────────────────────────────────

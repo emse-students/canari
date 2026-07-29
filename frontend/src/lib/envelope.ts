@@ -42,6 +42,8 @@ export interface SystemEnvelope {
     channelId: string;
     channelName: string;
     workspaceName?: string;
+    /** Community cover image, so the card shows the real logo instead of a generic icon. */
+    workspaceImageMediaId?: string;
     inviterName?: string;
     /**
      * Set ONLY on the inviter's own copy of the card, and it is what tells the renderer which
@@ -178,6 +180,10 @@ export function parseEnvelope(content: string): MessageEnvelope {
                 channelId: ci.channelId,
                 channelName: ci.channelName,
                 workspaceName: typeof ci.workspaceName === 'string' ? ci.workspaceName : undefined,
+                workspaceImageMediaId:
+                  typeof ci.workspaceImageMediaId === 'string'
+                    ? ci.workspaceImageMediaId
+                    : undefined,
                 inviterName: typeof ci.inviterName === 'string' ? ci.inviterName : undefined,
                 invitedName: typeof ci.invitedName === 'string' ? ci.invitedName : undefined,
               }
@@ -311,14 +317,15 @@ export function mkChannelInviteEnvelope(
   channelId: string,
   channelName: string,
   workspaceName?: string,
-  inviterName?: string
+  inviterName?: string,
+  workspaceImageMediaId?: string
 ): SystemEnvelope {
   return {
     kind: 'system',
     text: inviterName
       ? m.chat_system_channel_invite_by({ inviter: inviterName, community: channelName })
       : m.chat_system_channel_invite({ community: channelName }),
-    channelInvite: { channelId, channelName, workspaceName, inviterName },
+    channelInvite: { channelId, channelName, workspaceName, workspaceImageMediaId, inviterName },
   };
 }
 
@@ -334,7 +341,8 @@ export function mkChannelInviteSentEnvelope(
   channelId: string,
   channelName: string,
   workspaceName: string | undefined,
-  invitedName: string
+  invitedName: string,
+  workspaceImageMediaId?: string
 ): SystemEnvelope {
   return {
     kind: 'system',
@@ -342,7 +350,7 @@ export function mkChannelInviteSentEnvelope(
       member: invitedName,
       community: workspaceName ?? channelName,
     }),
-    channelInvite: { channelId, channelName, workspaceName, invitedName },
+    channelInvite: { channelId, channelName, workspaceName, workspaceImageMediaId, invitedName },
   };
 }
 

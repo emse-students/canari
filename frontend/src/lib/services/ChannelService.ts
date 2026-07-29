@@ -16,6 +16,18 @@ export interface WorkspaceDto {
   viewerCanModerate?: boolean;
 }
 
+/**
+ * What `GET /workspaces/by-slug/:slug` actually returns: the workspace plus everything hanging off
+ * it. Typed here because the endpoint does NOT return a bare {@link WorkspaceDto}, and the two call
+ * sites were each casting it back to a hand-written shape.
+ */
+export interface WorkspaceDetailDto {
+  workspace: WorkspaceDto;
+  channels: ChannelDto[];
+  members: Array<{ userId: string; roleIds?: string[] }>;
+  roles: Array<{ id: string; name: string; priority?: number; permissions?: string[] }>;
+}
+
 export interface CreateChannelDto {
   workspaceId: string;
   name: string;
@@ -220,12 +232,16 @@ export class ChannelService {
     return res.json() as Promise<WorkspaceDto>;
   }
 
-  async getWorkspaceBySlug(slug: string) {
+  /**
+   * Full detail for one community. Note the shape is NOT a bare {@link WorkspaceDto}: the endpoint
+   * nests the workspace alongside its channels, members and roles.
+   */
+  async getWorkspaceBySlug(slug: string): Promise<WorkspaceDetailDto> {
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/api/channels/workspaces/by-slug/${encodeURIComponent(slug)}`
     );
     await this.handleError(res);
-    return res.json() as Promise<WorkspaceDto>;
+    return res.json() as Promise<WorkspaceDetailDto>;
   }
 
   async listUserWorkspaces() {

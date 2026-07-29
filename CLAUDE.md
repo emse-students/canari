@@ -137,6 +137,15 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   `fr.emse.canari.outboxRetry`. Both fire from `maybeNotifyPendingSync` when an opportunistic drain
   leaves `remaining > 0`. Never observed waking up on hardware.
 
+- \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost.** 2026-07-29, prod, channel ->
+  DM: the toast said success, the echo persisted on the sender, the outbox drained - and the peer
+  never received it, not live and not after a reload. Two later attempts through the same path
+  (including a cold reload, to reproduce the conditions) both delivered, with a read receipt, so it
+  is NOT reproducible. Nothing here is specific to forwarding: `forwardMessage` hands text to the
+  same `sendChatMessage` the composer uses, and a control message sent right after arrived. Suspect
+  the outbox/MLS delivery layer. If it recurs, capture `[OUTBOX]`/`[QUEUE]` on both sides at the
+  moment of loss - that is what is missing to diagnose it.
+
 - \[ \] **WP-UI-1 residual (P3) - one open question, no code left.** The sweep is done (390 -> 31,
   and the 31 are deliberate: switch thumbs, colour-picker handles, always-dark call/lightbox
   chrome, the white plate behind a QR). Detector: `frontend/scripts/find-oneway-colors.mjs`.
@@ -167,6 +176,9 @@ One line per rule. If it needs a paragraph, the paragraph belongs in `docs/wiki/
 - **Escape hatch when a state still refuses to open:** the PIN modal's "forgot PIN" (`handlePinReset`) wipes server + local MLS state and restarts in first-setup mode, at the cost of local history.
 
 #### Community channels
+
+- **A channel target can only be opened on `/communities`.** `chatDeepLinkRoute` decides; `openInvitedChannel` is the one entry point for both the DM invite card and an accepted invite link. Routing a channel to `/chat` lands on a view that structurally cannot show it - that is what made "Rejoindre la communauté" look inert.
+- **A just-accepted invitation is never in the loaded sidebar,** and `openNotificationTarget` refuses a channel it cannot find, so the arrival selects nothing. `ChatBackgroundService` refetches the communities ONCE per pending target to close that gap (guarded, or a revoked channel loops on the endpoint).
 
 - **A channel bubble is keyed by the SERVER row id, everywhere.** Live delivery and history load must agree, because delete/pin/poll-vote/reactions all address a message by that id; the AppMessage id inside the ciphertext made a live message unaddressable until the next reload. Safe because a channel send has no optimistic echo - it returns after the POST and lets `channel.message.created` render the bubble.
 - **Channel reactions are a cleartext server tally; DM reactions are encrypted MLS system messages.** Two mechanisms, two stores (`reactionStore.svelte.ts` vs `useMessaging.messageReactions`), picked by `MainChatPage`. The server has to count a channel tally, and one emoji leaks nothing the membership list does not. The emoji is a JSON object KEY, so it - not the userId - is the prototype-pollution vector there.

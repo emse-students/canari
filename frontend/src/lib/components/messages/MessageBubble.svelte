@@ -1,5 +1,6 @@
 <script lang="ts">
   import { CornerDownRight, Info, Building2 } from '@lucide/svelte';
+  import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
@@ -525,7 +526,16 @@
         : ''}"
     >
       <div class="flex items-center gap-2 text-amber-700 dark:text-amber-400">
-        <Building2 size={15} strokeWidth={2.5} class="flex-shrink-0" />
+        <!-- The community's own logo, falling back to its initials (GroupAvatar) rather than a
+             generic building icon. -->
+        <div class="h-5 w-5 shrink-0 overflow-hidden rounded-md">
+          <GroupAvatar
+            imageMediaId={channelInvite.workspaceImageMediaId ?? null}
+            name={channelInvite.workspaceName || channelInvite.channelName}
+            variant="community"
+            fill
+          />
+        </div>
         <span class="text-xs font-bold truncate">{channelInvite.channelName}</span>
         {#if channelInvite.workspaceName && channelInvite.workspaceName !== channelInvite.channelName}
           <span class="text-xs text-text-muted font-medium truncate"

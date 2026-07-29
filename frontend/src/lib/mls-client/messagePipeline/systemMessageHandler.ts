@@ -125,6 +125,9 @@ export async function handleSystemEvent(
     const channelId = String(data.channelId || '');
     const channelName = String(data.channelName || channelId);
     const workspaceName = data.workspaceName ? String(data.workspaceName) : undefined;
+    const workspaceImageMediaId = data.workspaceImageMediaId
+      ? String(data.workspaceImageMediaId)
+      : undefined;
 
     if (!channelId) return true;
 
@@ -140,7 +143,8 @@ export async function handleSystemEvent(
             channelId,
             workspaceName ?? channelName,
             workspaceName,
-            inviteeDisplayName
+            inviteeDisplayName,
+            workspaceImageMediaId
           )
         ),
         convoKey,
@@ -154,7 +158,8 @@ export async function handleSystemEvent(
           channelId,
           workspaceName ?? channelName,
           workspaceName,
-          inviterDisplayName
+          inviterDisplayName,
+          workspaceImageMediaId
         )
       );
       await addMessageToChat('system', inviteEnvelope, convoKey, { isSystem: true });

@@ -542,6 +542,9 @@ export function useChannelWorkspaces() {
     // Left undefined rather than defaulted to a literal: every consumer already falls back to the
     // channel name, and a hardcoded default would ship an untranslated string into the invite card.
     const workspaceDisplayName = currentWorkspace?.name || undefined;
+    // Travels with the invitation so both cards show the community's real logo; absent means the
+    // card falls back to the community initials, which is also what an old envelope renders.
+    const workspaceImageMediaId = currentWorkspace?.imageMediaId || undefined;
 
     try {
       // Map frontend role names to backend role names (capitalized)
@@ -590,6 +593,7 @@ export function useChannelWorkspaces() {
                     channelId,
                     channelName: channelDisplayName,
                     workspaceName: workspaceDisplayName,
+                    workspaceImageMediaId,
                     inviterId,
                     inviterName: getName(inviterId),
                     inviteeId: memberId,
@@ -609,7 +613,8 @@ export function useChannelWorkspaces() {
                       channelId,
                       workspaceDisplayName || channelDisplayName,
                       workspaceDisplayName,
-                      getName(memberId)
+                      getName(memberId),
+                      workspaceImageMediaId
                     )
                   ),
                   directConvo[0],

@@ -86,6 +86,17 @@ BOTH sides render the same `channelInvite` card in that conversation:
 `channelInvite.invitedName` is the discriminator: **present = the inviter's copy**, and its presence
 is what suppresses the Join button. Never set it on the invitee's copy.
 
+`channelInvite.workspaceImageMediaId` carries the community's cover so the card shows the real logo;
+absent (no cover, or an envelope written before the field existed) it falls back to the community
+initials via `GroupAvatar`.
+
+The Join button routes through `openInvitedChannel`, which is also what an accepted invite **link**
+(`/c/join/[token]`) uses. Both must go to `/communities` - a channel target cannot be displayed by
+`/chat`, and routing there is what once made the button look inert. Selection is left to the pending
+target effect in `ChatBackgroundService`, which refetches the communities **once** when it does not
+recognise a channel: a just-accepted invitation is never in the loaded sidebar, and
+`openNotificationTarget` refuses a channel it cannot find.
+
 The inviter's copy is inserted **locally** by `inviteMemberToChannel`, because MLS never hands a
 device back its own application message. The `senderNorm === userId` branch of
 `systemMessageHandler` builds the identical envelope, and only ever runs on the inviter's *other*

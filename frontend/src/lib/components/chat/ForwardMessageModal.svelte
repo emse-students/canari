@@ -26,8 +26,12 @@
     /** Community workspaces, used to label channel (salon) targets with their community. */
     channelWorkspaces?: WorkspaceLike[];
     onClose: () => void;
-    /** Called with the target conversation key when the user picks a destination. */
-    onSelect: (key: string, conversation: Conversation) => void;
+    /**
+     * Called with the target conversation key when the user picks a destination. `label` is the
+     * name as displayed in this list - the caller must not fall back to `conversation.name`, which
+     * for a DM is the peer's raw user id.
+     */
+    onSelect: (key: string, conversation: Conversation, label: string) => void;
   }
 
   let {
@@ -97,7 +101,7 @@
   });
 
   function pick(cand: Candidate) {
-    onSelect(cand.key, cand.conversation);
+    onSelect(cand.key, cand.conversation, cand.label);
     query = '';
   }
 </script>

@@ -72,7 +72,9 @@
         }}
         title={resolveNames(users)}
         aria-pressed={hasReacted}
-        aria-label={m.msg_reaction_aria_label({ emoji, count: users.length })}
+        aria-label={users.length === 1
+          ? m.msg_reaction_aria_label_one({ emoji })
+          : m.msg_reaction_aria_label({ emoji, count: users.length })}
       >
         <span class="text-[1.1rem] leading-none drop-shadow-sm">{emoji}</span>
         {#if users.length > 1}
