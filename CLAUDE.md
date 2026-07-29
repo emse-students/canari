@@ -137,6 +137,27 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   `fr.emse.canari.outboxRetry`. Both fire from `maybeNotifyPendingSync` when an opportunistic drain
   leaves `remaining > 0`. Never observed waking up on hardware.
 
+- \[~\] **WP-DEEPLINK-1 (P1) - EVERY deep link lands in the right tab but not the right place.**
+  Confirmed on prod 2026-07-29 with the invite link, and the user reports the same for message
+  notifications and group joins. **Root cause found, NOT yet fixed:** the selection watchdog in
+  `useConversations.svelte.ts` (~line 183, `$effect.root` -> `if (!conversations.has(key))
+  selectedContact = null`). It fires on every mutation of the conversations map, so a target
+  selected while the map is still being (re)built - exactly what a deep link does, and what the
+  workspace refetch in `ChatBackgroundService` triggers - is silently deselected.
+  Two observed symptoms, one cause:
+  - **Fresh page load** of `/c/join/<token>`: community heading correct (`QA Invitation`), but
+    "Aucun echange selectionne" - the watchdog nulled `selectedContact`, while
+    `selectedChannelConversationId` (a different store it does not touch) survived.
+  - **In-app navigation** to the same link: lands on the WRONG community (`MiTV`). Because the
+    watchdog already nulled `selectedContact`, the route-mode reset in `MainChatPage` then saw
+    `null`, `selectionBelongsToRoute(null, ...)` returned false, and it wiped
+    `selectedChannelConversationId` too.
+  So `selectionBelongsToRoute` (shipped in `1c727edf`) is correct but was defeated upstream - it
+  reads a field the watchdog had already cleared. Fix direction: make the watchdog tolerant while
+  the map is still filling (there is already an `isRestored`-style flag) and/or never clear a key
+  that matches a pending `notifNav` target. Verify all three entry points afterwards: invite link,
+  invite card, channel/message notification tap.
+
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost.** 2026-07-29, prod, channel ->
   DM: the toast said success, the echo persisted on the sender, the outbox drained - and the peer
   never received it, not live and not after a reload. Two later attempts through the same path
