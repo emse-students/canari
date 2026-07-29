@@ -19,6 +19,7 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { chat_system_removed_from_group } from '$lib/paraglide/messages';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
+import { setChannelReactions } from '$lib/stores/reactionStore.svelte';
 import {
   fetchUniqueGroupMembers,
   removeMemberAndBroadcast,
@@ -368,6 +369,8 @@ export function useConversations() {
 
           // Seed the live poll tally from the server row, keyed by the server id.
           if (msg.poll) setPollMeta(String(msg.id), msg.poll);
+          // Same for reactions: the row carries the authoritative tally.
+          setChannelReactions(String(msg.id), msg.reactions);
 
           loaded.push({
             id: decoded.id,
@@ -430,6 +433,7 @@ export function useConversations() {
       const decoded = await decodeChannelMessageRow(rawId, row, meLower);
       if (!decoded) continue;
       if (row.poll) setPollMeta(String(row.id), row.poll);
+      setChannelReactions(String(row.id), row.reactions);
       decodedAll.push({
         id: decoded.id,
         senderId: decoded.senderId,

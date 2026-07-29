@@ -22,6 +22,7 @@
   } from '$lib/utils/chat/channelCrypto';
   import { channelService } from '$lib/services/ChannelService';
   import { applyLocalVote, setPollMeta } from '$lib/stores/pollStore.svelte';
+  import { channelReactionMap } from '$lib/stores/reactionStore.svelte';
   import { aggregateSharedContent, type SharedContent } from '$lib/utils/chat/sharedContent';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { isMessagePinned, applyPin, setPinnedSet } from '$lib/stores/pinStore.svelte';
@@ -56,6 +57,12 @@
 
   /** True when the currently selected conversation is a channel (not an MLS DM or group). */
   const isSelectedChannel = $derived(isChannelConversationId(convs.selectedContact ?? ''));
+
+  /**
+   * Channel reactions come from their own store, because they are a cleartext server-side tally
+   * rather than the encrypted MLS system messages a DM reaction is made of.
+   */
+  const channelReactions = channelReactionMap();
 
   /**
    * Whether the viewer may delete OTHER members' messages in the open channel - the
@@ -868,12 +875,18 @@
           onGroupDeleteLocally={() => void convs.handleDeleteGroupLocally(convCtx())}
           onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
           onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
-          messageReactions={messaging.messageReactions}
+          messageReactions={isSelectedChannel ? channelReactions : messaging.messageReactions}
           replyingTo={messaging.replyingTo}
           onReply={messaging.handleReply}
-          onForward={isSelectedChannel ? undefined : handleForward}
+          onForward={handleForward}
           onReact={isSelectedChannel
-            ? undefined
+            ? (msgId, emoji) =>
+                void channels.toggleChannelReaction(
+                  convs.selectedContact ?? '',
+                  msgId,
+                  emoji,
+                  channelsCtx()
+                )
             : (msgId, emoji) => void messaging.handleAddReaction(msgId, emoji, msgCtx())}
           canModerate={canModerateSelectedChannel}
           onDelete={isSelectedChannel

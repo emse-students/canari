@@ -7,6 +7,7 @@ import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { setTyping } from '$lib/stores/typingStore.svelte';
 import { applyPin } from '$lib/stores/pinStore.svelte';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
+import { setChannelReactions } from '$lib/stores/reactionStore.svelte';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 
@@ -77,6 +78,15 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const channelId = String(data.channelId || '');
     const messageId = String(data.messageId || '');
     if (channelId && messageId) applyPin(`channel_${channelId}`, messageId, !!data.pinned);
+    return;
+  }
+
+  // Live reaction tally broadcast after any member toggles one. The server sends the whole
+  // map, so it also reconciles the optimistic local toggle.
+  if (event.type === 'channel.reaction') {
+    const data = event.data || {};
+    const messageId = String(data.messageId || '');
+    if (messageId) setChannelReactions(messageId, data.reactions);
     return;
   }
 
@@ -216,7 +226,6 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
     if (convoKey) {
       let content: string | undefined;
-      let appMessageId: string | undefined;
       const channelServerMs = parseServerTimestampMs(data.createdAt);
       try {
         if (data.ciphertext) {
@@ -228,7 +237,6 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             data.keyVersion
           );
           const msg = decodeAppMessage(bytes);
-          appMessageId = msg?.messageId || undefined;
           if (msg) {
             const envelope = appMsgToEnvelope(msg, channelServerMs);
             if (envelope) content = envelope.content;
@@ -244,13 +252,14 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       // will replay it cleanly after a fresh key hydration.
       if (content === undefined) return;
 
-      // Polls are keyed by the server message id (not the AppMessage id) so the
-      // bubble, the vote endpoint and the live vote events all agree on one id.
+      // Keyed by the SERVER row id, exactly like the history load (`decodeChannelMessageRow`).
+      // Every server-side operation on a channel message - delete, pin, poll vote, reaction -
+      // addresses it by that id, and a channel send has no optimistic echo to reconcile
+      // (see `sendChatMessage`), so the AppMessage id would only make the live bubble
+      // unaddressable until the next reload.
+      const renderedId = String(data.messageId || data.id);
       const poll = data.poll as ChannelPollMeta | undefined;
-      const renderedId = poll
-        ? String(data.messageId || data.id)
-        : appMessageId || data.messageId || data.id;
-      if (poll && renderedId) setPollMeta(renderedId, poll);
+      if (poll) setPollMeta(renderedId, poll);
 
       addMessageToChat(sender, content, convoKey, {
         messageId: renderedId,

@@ -155,6 +155,7 @@
   "channel_action_community_leave": "Quitter la communauté",
   "channel_action_community_delete": "Suppression de la communauté",
   "channel_action_message_delete": "Suppression du message",
+  "channel_action_message_react": "Réaction au message",
   "channel_action_community_reorder": "Réorganisation des communautés",
   "channel_action_channel_rename": "Renommage du canal",
   "channel_action_channel_delete": "Suppression du canal",

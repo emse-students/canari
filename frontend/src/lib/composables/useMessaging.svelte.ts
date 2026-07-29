@@ -86,6 +86,24 @@ export interface MessagingContext {
   sendSystemNotification: (title: string, body: string, conversationId?: string) => Promise<void>;
 }
 
+/**
+ * Maps an envelope media type to its protobuf {@link MediaKind}. A file has no dedicated kind,
+ * so anything unrecognised falls through to UNSPECIFIED, which is what the renderer treats as
+ * "generic attachment".
+ */
+function mediaKindFromEnvelope(type: string): number {
+  switch (type) {
+    case 'image':
+      return MediaKind.MEDIA_KIND_IMAGE;
+    case 'video':
+      return MediaKind.MEDIA_KIND_VIDEO;
+    case 'audio':
+      return MediaKind.MEDIA_KIND_AUDIO;
+    default:
+      return MediaKind.MEDIA_KIND_UNSPECIFIED;
+  }
+}
+
 /** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 export function useMessaging() {
   const messageReactions = new SvelteMap<string, MessageReaction[]>();
@@ -568,12 +586,6 @@ export function useMessaging() {
     ctx.setSendError('');
     const channelSvc = isChannel ? new ChannelService() : null;
 
-    const kindMap: Record<string, number> = {
-      image: MediaKind.MEDIA_KIND_IMAGE,
-      video: MediaKind.MEDIA_KIND_VIDEO,
-      audio: MediaKind.MEDIA_KIND_AUDIO,
-      file: MediaKind.MEDIA_KIND_UNSPECIFIED,
-    };
     const mediaTypeFromMime = (mime: string): 'image' | 'video' | 'audio' | 'file' =>
       mime.startsWith('image/')
         ? 'image'
@@ -606,7 +618,7 @@ export function useMessaging() {
             });
             const protoBytes = encodeAppMessage({
               ...mkMedia({
-                kind: kindMap[mediaRef.type] ?? MediaKind.MEDIA_KIND_UNSPECIFIED,
+                kind: mediaKindFromEnvelope(mediaRef.type),
                 mediaId: mediaRef.mediaId,
                 key: fromHex(mediaRef.key),
                 iv: fromHex(mediaRef.iv),
@@ -655,7 +667,7 @@ export function useMessaging() {
               sentAt,
               kind: 'media',
               media: {
-                kind: kindMap[type],
+                kind: mediaKindFromEnvelope(type),
                 mimeType: entry.file.type,
                 size: entry.file.size,
                 fileName: entry.file.name,
@@ -916,7 +928,12 @@ export function useMessaging() {
    * Media: the envelope already carries the encrypted blob reference (mediaId) + the
    * decryption key (CEK/iv). The SAME media envelope is re-sent (no re-upload),
    * giving members of the target conversation access to the same blob via the forwarded key.
-   * The target is always a direct conversation (channels are excluded by the forward selector).
+   *
+   * The target may be a DM, a group OR a community channel; the source may equally be any of
+   * them. Only the transport differs - MLS for the first two, the channel epoch key for the
+   * third - and both directions cross freely, so a channel message can be forwarded into a DM
+   * and vice versa. A channel target re-encrypts under its own key, and the blob stays reachable
+   * because the CEK travels inside the forwarded envelope.
    */
   async function forwardMessage(
     sourceContent: string,
@@ -927,6 +944,51 @@ export function useMessaging() {
     if (!convo) return { success: false, error: 'Conversation introuvable.' };
 
     const env = parseEnvelope(sourceContent);
+
+    // Channels are server-authoritative and always sendable: no MLS group, no outbox, and no
+    // local echo (the `channel.message.created` broadcast is what renders the bubble).
+    if (isChannelConversationId(targetName)) {
+      try {
+        if (env.kind === 'media') {
+          await sendEncryptedChannelMessage(
+            targetName,
+            encodeAppMessage({
+              ...mkMedia({
+                kind: mediaKindFromEnvelope(env.media.type),
+                mediaId: env.media.mediaId,
+                key: fromHex(env.media.key),
+                iv: fromHex(env.media.iv),
+                mimeType: env.media.mimeType,
+                size: env.media.size,
+                fileName: env.media.fileName ?? '',
+                caption: env.caption,
+                ...(env.media.width && env.media.height
+                  ? { width: env.media.width, height: env.media.height }
+                  : {}),
+              }),
+              messageId: crypto.randomUUID(),
+              sentAt: Date.now(),
+            })
+          );
+          return { success: true };
+        }
+        const channelText = env.kind === 'text' ? env.text.trim() : '';
+        if (!channelText) return { success: false, error: 'Nothing to forward.' };
+        return await sendChatMessage(channelText, targetName, null, {
+          userId: ctx.userId,
+          conversation: convo,
+          addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
+            addMessageToChat(sid, content, contactName, ctx, options),
+          log: ctx.log,
+        });
+      } catch (e) {
+        return {
+          success: false,
+          error: `Forward failed: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+    }
+
     const mlsService = ctx.ensureMls();
 
     try {
@@ -935,21 +997,13 @@ export function useMessaging() {
         if (convo.lifecycle !== 'active')
           return { success: false, error: 'Conversation not ready.' };
         const m = env.media;
-        const kindMap: Record<string, number> = {
-          image: MediaKind.MEDIA_KIND_IMAGE,
-          video: MediaKind.MEDIA_KIND_VIDEO,
-          audio: MediaKind.MEDIA_KIND_AUDIO,
-          file: MediaKind.MEDIA_KIND_UNSPECIFIED,
-        };
-        const hexToBytes = (h: string) =>
-          new Uint8Array((h.match(/.{1,2}/g) ?? []).map((b) => parseInt(b, 16)));
         const messageId = crypto.randomUUID();
         const protoBytes = encodeAppMessage({
           ...mkMedia({
-            kind: kindMap[m.type] ?? MediaKind.MEDIA_KIND_UNSPECIFIED,
+            kind: mediaKindFromEnvelope(m.type),
             mediaId: m.mediaId,
-            key: hexToBytes(m.key),
-            iv: hexToBytes(m.iv),
+            key: fromHex(m.key),
+            iv: fromHex(m.iv),
             mimeType: m.mimeType,
             size: m.size,
             fileName: m.fileName ?? '',

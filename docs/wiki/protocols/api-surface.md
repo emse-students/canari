@@ -269,6 +269,7 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | POST | `/api/channels/:channelId/members/kick` | Kick member |
 | POST | `/api/channels/:channelId/members/leave` | Leave channel |
 | POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message |
+| POST | `/api/channels/:channelId/messages/:messageId/reactions` | Toggle the caller's emoji reaction |
 
 ### Forms
 

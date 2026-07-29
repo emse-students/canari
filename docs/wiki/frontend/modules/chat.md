@@ -91,6 +91,36 @@ device back its own application message. The `senderNorm === userId` branch of
 `systemMessageHandler` builds the identical envelope, and only ever runs on the inviter's *other*
 devices. Pinned by `systemMessageHandler.channelInvite.test.ts`.
 
+### Channel message identity
+
+A channel bubble is keyed by the **server row id**, everywhere. Live delivery
+(`channelEventHandler`) and history loading (`decodeChannelMessageRow`) must agree, because every
+server-side operation - delete, pin, poll vote, reaction - addresses a message by that id. The
+AppMessage id carried inside the ciphertext is deliberately NOT used: a channel send has no
+optimistic echo to reconcile (`sendChatMessage` returns straight after the POST and lets the
+`channel.message.created` broadcast render the bubble), so keying on it only made a live message
+unaddressable until the next reload.
+
+### Reactions: two mechanisms
+
+| | DM / group | Community channel |
+|---|---|---|
+| Transport | encrypted MLS system message (`add_reaction`/`remove_reaction`) | `POST .../messages/:id/reactions` |
+| State | `useMessaging.messageReactions` | `stores/reactionStore.svelte.ts` |
+| Server sees | nothing | the tally (cleartext, it does the counting) |
+| Live update | replayed to every member by MLS | `channel.reaction` broadcast |
+
+`MainChatPage` picks the map per conversation type; below that, the component chain is identical,
+so a reaction pill looks and behaves the same on both sides. Toggling is optimistic and rolled
+back by re-applying the same toggle, which is its own inverse.
+
+### Forwarding
+
+`forwardMessage` crosses freely between the two worlds: a channel message can be forwarded into a
+DM and a DM message into a channel. Only the transport differs (MLS group vs channel epoch key);
+a media forward re-sends the same envelope in both cases, so no blob is re-uploaded and the CEK
+travels with it.
+
 ## UI features
 
 - **Focus writing mode**: header hides when composer is focused on mobile.

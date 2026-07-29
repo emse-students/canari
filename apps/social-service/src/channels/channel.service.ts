@@ -45,6 +45,19 @@ import {
   type ChannelWritePolicy,
 } from './dto/channel.dto';
 
+/**
+ * Distinct emoji types allowed on one channel message. Mirrors the client-side
+ * `MAX_DISTINCT_MESSAGE_REACTIONS`; both are enforced, the server being the authority.
+ */
+const MAX_DISTINCT_REACTIONS_PER_MESSAGE = 15;
+
+/**
+ * Byte ceiling for a reaction. A flag-sequence emoji with modifiers runs to a few dozen UTF-16
+ * units, so this is generous for anything renderable and still rejects a payload smuggled in as
+ * a JSON key.
+ */
+const MAX_REACTION_EMOJI_LENGTH = 64;
+
 /** Manages workspaces, channels, roles, members, key distribution, and encrypted messages. */
 @Injectable()
 export class ChannelService {
@@ -2248,6 +2261,88 @@ export class ChannelService {
     return { success: true, channelId, messageId };
   }
 
+  /**
+   * Toggles the caller's emoji reaction on a channel message and broadcasts the new tally.
+   *
+   * Reactions are stored in cleartext (`emoji -> userIds`), unlike the message body: the server
+   * has to count them, and a single emoji leaks nothing the membership list does not already say.
+   * DM reactions take the opposite route - they travel as encrypted MLS system messages - because
+   * there the server is not allowed to know anything at all.
+   *
+   * Reacting is a plain read-access right: no moderation permission, and the author has no say.
+   * A pessimistic write lock serialises concurrent reactors on the same row, exactly as
+   * {@link votePoll} does.
+   */
+  async toggleMessageReaction(
+    channelId: string,
+    messageId: string,
+    userId: string,
+    emoji: string
+  ): Promise<Record<string, string[]>> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
+
+    const key = String(emoji ?? '').trim();
+    if (!key) throw new BadRequestException('An emoji is required');
+    // The emoji is a JSON object KEY, so it is the prototype-pollution vector here (the poll
+    // equivalent is the userId). Bounded too: a reaction is one grapheme cluster, not a payload.
+    if (key.length > MAX_REACTION_EMOJI_LENGTH) {
+      throw new BadRequestException('Invalid reaction');
+    }
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+      throw new BadRequestException('Invalid reaction');
+    }
+
+    let reactions!: Record<string, string[]>;
+    await this.messageRepo.manager.transaction(async (manager) => {
+      const msg = await manager
+        .createQueryBuilder(ChannelMessage, 'm')
+        .where('m.id = :messageId AND m.channelId = :channelId', { messageId, channelId })
+        .setLock('pessimistic_write')
+        .getOne();
+      if (!msg) throw new NotFoundException('Message not found');
+
+      // Null-prototype map: the keys are user-supplied emojis.
+      const next: Record<string, string[]> = Object.assign(
+        Object.create(null),
+        msg.reactions ?? {}
+      );
+      const current = Array.isArray(next[key]) ? next[key] : [];
+
+      if (current.includes(userId)) {
+        const remaining = current.filter((id) => id !== userId);
+        // Drop the key with its last reactor, so the cap counts only live reactions.
+        if (remaining.length === 0) delete next[key];
+        else next[key] = remaining;
+      } else {
+        if (!(key in next) && Object.keys(next).length >= MAX_DISTINCT_REACTIONS_PER_MESSAGE) {
+          throw new BadRequestException('Too many distinct reactions on this message');
+        }
+        next[key] = [...current, userId];
+      }
+
+      msg.reactions = { ...next };
+      await manager.save(msg);
+      reactions = msg.reactions;
+    });
+
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    await this.redis.publishChannelEvent(
+      'channel.reaction',
+      { channelId, messageId, reactions },
+      workspaceMemberIds
+    );
+
+    return reactions;
+  }
+
   /** Returns the IDs of the pinned messages in a channel. Access-controlled by canAccessChannel. */
   async listPinnedMessageIds(channelId: string, userId: string): Promise<string[]> {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
@@ -2328,6 +2423,8 @@ export class ChannelService {
       pinned: m.pinned,
       // Poll state (label-free) so the client can render results on load.
       poll: (m.metadata as { poll?: ChannelPollMeta } | null)?.poll ?? null,
+      // Reaction tally (`emoji -> userIds`), cleartext: the server counts them.
+      reactions: m.reactions ?? {},
     }));
   }
 

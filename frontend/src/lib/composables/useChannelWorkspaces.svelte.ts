@@ -11,6 +11,7 @@ import {
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
 import { currentUserId } from '$lib/stores/userState.svelte';
+import { applyLocalChannelReaction, setChannelReactions } from '$lib/stores/reactionStore.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
@@ -798,6 +799,30 @@ export function useChannelWorkspaces() {
     }
   }
 
+  /**
+   * Toggles the caller's emoji reaction on a channel message. The pill flips immediately, then
+   * the server's authoritative tally replaces it - and the same tally reaches everyone else as a
+   * `channel.reaction` broadcast. On failure the optimistic toggle is rolled back by re-applying
+   * it, since the toggle is its own inverse.
+   */
+  async function toggleChannelReaction(
+    channelConversationId: string,
+    messageId: string,
+    emoji: string,
+    ctx: ChannelWorkspaceContext
+  ) {
+    const userId = currentUserId();
+    if (!channelConversationId || !messageId || !emoji || !userId) return;
+    applyLocalChannelReaction(messageId, userId, emoji);
+    try {
+      const tally = await service.toggleReaction(channelConversationId, messageId, emoji);
+      setChannelReactions(messageId, tally);
+    } catch (error) {
+      applyLocalChannelReaction(messageId, userId, emoji);
+      ctx.log(toUiActionError(m.channel_action_message_react(), error));
+    }
+  }
+
   /** Applies a `channel.message.deleted` broadcast (the author or a moderator removed a message). */
   function handleChannelMessageDeleted(
     event: { channelId: string; messageId: string },
@@ -969,6 +994,8 @@ export function useChannelWorkspaces() {
     handleWorkspaceDeleted,
     /** Deletes a channel message (own message, or anyone's with `channel.moderate`). */
     deleteChannelMessage,
+    /** Toggles the caller's emoji reaction on a channel message. */
+    toggleChannelReaction,
     /** Applies an incoming real-time channel-message-deleted event. */
     handleChannelMessageDeleted,
   };

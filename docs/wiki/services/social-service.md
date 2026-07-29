@@ -71,6 +71,7 @@ Channels use server-assisted symmetric encryption (not MLS):
 | GET \| PUT | `/api/channels/roles/:roleId/permissions` | Get/set a workspace role's base permissions (MANAGE_WORKSPACE / MANAGE_ROLES) |
 | DELETE | `/api/channels/:channelId/messages/:messageId` | Delete a channel message: own always, someone else's with `channel.moderate` |
 | POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message (own always, someone else's with `channel.moderate`) |
+| POST | `/api/channels/:channelId/messages/:messageId/reactions` | Toggle the caller's emoji reaction (`{ emoji }`); returns the new `emoji -> userIds` tally |
 | POST | `/api/channels/:channelId/messages/:messageId/poll/vote` | Vote on a poll (empty = retract) |
 | PATCH | `/api/channels/:channelId/messages/:messageId/poll/close` | Close a poll now (author or moderator); forces the deadline + unpins |
 | GET | `/api/channels/:channelId/notification-level` | Caller's push level for the channel |
@@ -112,6 +113,27 @@ Deletion drops the row (the content is a ciphertext the server cannot read, so t
 worth tombstoning) and broadcasts `channel.message.deleted` (`{ channelId, messageId, deletedBy }`)
 to the workspace, which is how other members' clients replace the bubble with the local
 "deleted message" placeholder.
+
+#### Message reactions
+
+`POST /:channelId/messages/:messageId/reactions` with `{ emoji }` toggles the caller's reaction
+and returns the new tally. Reacting is a plain **read-access** right: no moderation permission,
+and the author has no say over reactions on their own message.
+
+The tally is stored **in cleartext** on `channel_messages.reactions` (migration 034) as
+`emoji -> [userId]`, unlike the message body. That is the deliberate opposite of a DM reaction,
+which travels as an encrypted MLS system message: here the server has to count, and a single
+emoji leaks nothing the membership list does not already state. `GET /:channelId/messages`
+returns `reactions` on every row so a freshly opened channel renders its pills without a second
+call, and `channel.reaction` (`{ channelId, messageId, reactions }`) broadcasts the whole new map
+to the workspace - so it also reconciles the sender's optimistic toggle.
+
+A pessimistic write lock serialises concurrent reactors on one row, exactly as poll voting does.
+Two guards worth keeping: the emoji is a JSON object **key**, so it is the prototype-pollution
+vector (`__proto__`/`constructor`/`prototype` are refused, and the map is null-prototype), and
+distinct emojis per message are capped at 15, mirroring the client's
+`MAX_DISTINCT_MESSAGE_REACTIONS`. An emoji key is dropped when its last reactor leaves, so the
+cap only ever counts live reactions.
 
 #### Deleting a community
 
