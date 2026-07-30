@@ -105,6 +105,41 @@ the first ever proof that iOS background decrypt works at all.
 
 ---
 
+### 2026-07-30 - WP-PUSH-1 (Android push decrypt ladder reorder), delegated
+
+**Agent**: Zoo Code mode.
+**Scope**: Reorder the background MLS decrypt ladder in
+[`CanariFirebaseMessagingService.kt`](frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt)
+so `tryDecryptWithCommitCatchup` runs first when the group is already local; add
+[`isGroupLocal()`](frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt:1833)
+helper; suppress misleading worker/fallback logs for silent pushes; correct
+[`MlsBackgroundWorker.kt`](frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/MlsBackgroundWorker.kt:127)
+success log; add
+[`PushDecryptLadderTest.kt`](frontend/src-tauri/gen/android/app/src/test/java/fr/emse/canari/PushDecryptLadderTest.kt);
+update `CHANGELOG.md` and `docs/wiki/frontend/mobile.md`.
+
+**Verdict: accepted.**
+
+- Implementation matches the spec: local group + decrypt failure triggers catch-up before any
+  Welcome-race retry; non-local group still retries the Welcome race and runs late catch-up only if
+  the group appeared in the meantime; silent failures return without the misleading logs.
+- No JNI/FFI signatures changed; iOS files untouched.
+- New unit test asserts the ladder order and a <3 s finish for the catch-up-first path.
+
+**Gates passed:**
+- `bun run check` (frontend) clean.
+- `bun run test` (frontend) 697/697.
+- `cargo clippy --all-targets -- -D warnings` in `frontend/src-tauri/` clean.
+- Android debug build (`:app:assembleDebug`) green; release build (`:app:assembleRelease`) failed
+  only because the local checkout has no release signing keystore (`storeFile` missing), i.e. not a
+  code defect. Device checks still owed per `docs/wiki/device-verification.md`.
+- `:app:testArm64DebugUnitTest` 4/4.
+
+**Notes:** Local Windows environment defaulted to Java 17; the Android Gradle build requires JDK 21.
+Pointed `JAVA_HOME` at `C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot` for the gradle runs.
+
+---
+
 ## WP-SEC-1 / WP-IOS-1 - what is still owed
 
 Implementation shipped 2026-07-28. The steps are in the commit; only the unverified part is kept
