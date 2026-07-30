@@ -21,15 +21,18 @@ env:
   CHECKOUT_REF: ${{ github.event_name == 'workflow_run' && 'main' || github.sha }}
 
 jobs:
+  # Version-bump commits are non-functional (manifest versions only). Skip CI/tests
+  # and rebuild+deploy core-service + frontend via the workflow_run path below.
   run-ci:
     name: Run CI Checks
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name != 'workflow_run'
     uses: ./.github/workflows/ci.yml
     with:
-      git_ref: ${{ github.event_name == 'workflow_run' && 'main' || '' }}
+      git_ref: ''
 
   run-code-analysis:
     name: Run Code Analysis
+    if: github.event_name != 'workflow_run'
     uses: ./.github/workflows/code-analysis.yml
 
   detect-changed-services:
@@ -389,7 +392,7 @@ jobs:
       always() &&
       (github.event_name == 'workflow_run' || github.ref == 'refs/heads/main') &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
-      needs.run-ci.result == 'success' &&
+      (needs.run-ci.result == 'success' || needs.run-ci.result == 'skipped') &&
       needs.detect-changed-services.result == 'success' &&
       (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
     permissions:

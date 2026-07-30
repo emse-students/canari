@@ -18,28 +18,31 @@ Runs on every push and pull request to `main`:
 
 ### CD (`cd.yml`)
 
-Deploys to the production server on push to `main` (or manual trigger):
+Deploys to the production server on push to `main`, manual trigger, or after a release version bump:
 
-1. Generates `infrastructure/.env` from GitHub Secrets
-2. Builds Docker images and pushes to GHCR (`ghcr.io/emse-students/canari/<service>`)
-3. SSH into production server (self-hosted runner)
-4. `docker compose pull` + `docker compose up -d`
-5. Runs database migrations
-6. Health check verification
+1. Runs CI + CodeQL (skipped on post-release version-bump deploys)
+2. Detects changed services and builds only those Docker images → GHCR
+3. Self-hosted runner on production: sync `.env`, `docker compose pull` + `up -d`
+4. Runs database migrations
+5. Health check verification
 
-### Mobile CD (`ios.yml`, `android.yml`, `appimage.yml`)
+`GITHUB_TOKEN` pushes from the version-bump workflow do **not** trigger `on: push`. CD is chained via `workflow_run` instead (no `branches:` filter — GitHub would silently drop release-triggered parents).
+
+### Mobile CD (`ios-release.yml`, `android-release.yml`, `appimage-release.yml`)
 
 Triggered on release (`vX.Y.Z` tag). Each builds the Tauri app for its platform:
 
 | Workflow | Output |
 |---|---|
-| `ios.yml` | `.ipa` for TestFlight upload (uses `altool`) |
-| `android.yml` | `.aab` for Google Play upload |
-| `appimage.yml` | `.AppImage` for Linux desktop |
+| `ios-release.yml` | `.ipa` for TestFlight upload (uses `altool`) |
+| `android-release.yml` | `.aab` for Google Play upload |
+| `appimage-release.yml` | `.AppImage` for Linux desktop |
 
 ### Version bump (`bump-version.yml`)
 
-Triggered manually to bump `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` across iOS pbxproj (app + NSE targets) and Android manifest. Must stage the explicit file list — any new file the bump script patches must be added to the workflow.
+Triggered on `release: published` (or manually). Bumps versions across `package.json` / `Cargo.toml` / Tauri / iOS pbxproj (app + NSE). Must stage the explicit file list — any new file the bump script patches must be added to the workflow.
+
+After a successful bump push, CD runs in **rebuild-only** mode: skips CI and CodeQL, rebuilds `core-service` + `frontend` (so `/api/version` and the SPA match the release tag), then deploys.
 
 ## GitHub Secrets
 
@@ -69,11 +72,12 @@ The `deploy-to-server` job runs on a self-hosted GitHub Actions runner (label `s
 ## Release workflow
 
 ```
-1. Developer: git tag vX.Y.Z && git push origin vX.Y.Z
-2. CD workflow builds + deploys backend
-3. Mobile workflows build iOS/Android/AppImage artifacts
-4. iOS: altool upload to App Store Connect (manual TestFlight submission after)
-5. Android: upload to Google Play (automatic or manual depending on track)
+1. Developer: gh release create vX.Y.Z --target $(git rev-parse HEAD)
+2. Mobile workflows build iOS/Android/AppImage artifacts
+3. bump-version.yml commits "chore: bump version to X.Y.Z" on main
+4. CD (workflow_run) rebuilds core-service + frontend (no CI) and deploys
+5. iOS: altool upload to App Store Connect (manual TestFlight submission after)
+6. Android: upload to Google Play (automatic or manual depending on track)
 ```
 
 ## A manual workflow run is the only native compiler available off macOS

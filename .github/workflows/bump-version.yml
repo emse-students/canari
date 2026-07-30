@@ -61,4 +61,4 @@ jobs:
           git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
           git push origin HEAD:main
           echo "pushed=true" >> "$GITHUB_OUTPUT"
-          echo "Pushed version bump; CD will run via workflow_run trigger."
+          echo "Pushed version bump; CD will rebuild core-service+frontend (no CI) via workflow_run."
