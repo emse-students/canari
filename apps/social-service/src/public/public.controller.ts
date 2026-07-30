@@ -1,12 +1,14 @@
 import {
   Controller,
   Get,
+  Header,
   Param,
   Query,
   Headers,
   Logger,
   ForbiddenException,
   BadRequestException,
+  NotFoundException,
   UseGuards,
 } from '@nestjs/common';
 import { ThrottlerGuard } from '@nestjs/throttler';
@@ -14,6 +16,7 @@ import * as crypto from 'crypto';
 import { AssociationsService } from '../associations/associations.service';
 import { Association } from '../associations/entities/association.entity';
 import { ProductsService } from '../associations/products.service';
+import { PosterService, type PublishedCarteResponse } from '../associations/poster.service';
 
 /**
  * Public projection of an association/list for the read-only showcase.
@@ -84,7 +87,8 @@ export class PublicController {
 
   constructor(
     private readonly associations: AssociationsService,
-    private readonly products: ProductsService
+    private readonly products: ProductsService,
+    private readonly poster: PosterService
   ) {}
 
   /** Throws ForbiddenException unless the header matches CERCLE_API_KEY (timing-safe). */
@@ -123,6 +127,26 @@ export class PublicController {
   async listMembers(@Param('id') id: string) {
     this.logger.debug(`public listMembers ${id}`);
     return this.associations.listMembersPublic(id);
+  }
+
+  /**
+   * The live "Carte de la Vie Asso", rendered interactively by the portail-etu showcase.
+   *
+   * Returns placement only - each bubble carries an `assoId` the consumer joins against
+   * {@link listAssociations}, so a rename or a new logo shows up with no republish. 404 when no
+   * poster is currently published; the showcase then simply omits the map.
+   *
+   * Cached briefly: the payload can embed a background image, and a published map changes at most
+   * a few times a year, so a short shared cache keeps the showcase cheap without making an
+   * unpublish take noticeably long to appear.
+   */
+  @Get('carte')
+  @Header('Cache-Control', 'public, max-age=300')
+  async getPublishedCarte(): Promise<PublishedCarteResponse> {
+    this.logger.debug('public getPublishedCarte');
+    const carte = await this.poster.getPublished();
+    if (!carte) throw new NotFoundException('No published carte');
+    return carte;
   }
 
   /**

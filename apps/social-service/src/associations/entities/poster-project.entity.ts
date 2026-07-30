@@ -33,6 +33,21 @@ export class PosterProject {
   @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
   layout: Record<string, unknown>;
 
+  /**
+   * The artefact published to the public showcase, or null when this poster is not live.
+   *
+   * Deliberately separate from {@link layout}: it is the normalized, validated geometry document
+   * defined by `published-carte.ts`, so the editor can rev its own layout schema without breaking
+   * the contract portail-etu reads. A partial unique index (migration 035) allows at most one
+   * non-null row, making "one live map at a time" a database invariant.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  publication: Record<string, unknown> | null;
+
+  /** When this poster was last published; null when it is not live. */
+  @Column({ type: 'timestamptz', nullable: true })
+  publishedAt: Date | null;
+
   /** OIDC subject of the creator. */
   @Column({ type: 'varchar', length: 255 })
   @Index()

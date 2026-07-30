@@ -72,6 +72,6 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
   // Category/poster controllers are listed FIRST so their literal `associations/categories`
   // and `associations/poster` routes register before the `associations/:id` matcher.
   controllers: [AssociationCategoriesController, PosterController, AssociationsController],
-  exports: [AssociationsService, ProductsService, UserProfileService],
+  exports: [AssociationsService, ProductsService, UserProfileService, PosterService],
 })
 export class AssociationsModule {}

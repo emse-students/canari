@@ -2,6 +2,8 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, socialUrl } from '$lib/utils/apiUrl';
 import { setAssociationSuperAdmin } from '$lib/stores/userState.svelte';
+// Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
+import type { PublishedCarte } from '$lib/carte/publish';
 
 /**
  * Permission flags for association members (mirrors the backend enum).
@@ -1644,6 +1646,8 @@ export interface PosterProject {
   name: string;
   /** Opaque JSON layout - the editor owns this shape. */
   layout: Record<string, unknown>;
+  /** ISO timestamp of the last publish to the public showcase; null when this poster is offline. */
+  publishedAt: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -1694,5 +1698,27 @@ export async function updatePosterProject(
 export async function deletePosterProject(id: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/associations/poster/${encodeURIComponent(id)}`, {
     method: 'DELETE',
+  });
+}
+
+/**
+ * Publishes a poster to the public showcase (portail-etu), replacing whatever was live - at most
+ * one map is published at a time. The payload is the normalized geometry document built by
+ * {@link buildPublishedCarte}, not the editor layout. Admins / BDE super-admins only.
+ */
+export async function publishPosterProject(
+  id: string,
+  payload: PublishedCarte
+): Promise<PosterProject> {
+  return request<PosterProject>(`/api/associations/poster/${encodeURIComponent(id)}/publish`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Takes a poster offline; the showcase then renders no map. Admins / BDE super-admins only. */
+export async function unpublishPosterProject(id: string): Promise<PosterProject> {
+  return request<PosterProject>(`/api/associations/poster/${encodeURIComponent(id)}/unpublish`, {
+    method: 'POST',
   });
 }

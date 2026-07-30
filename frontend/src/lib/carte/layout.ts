@@ -54,6 +54,17 @@ export const CARD_WIDTH = 400;
  * and the (wrapping) association name sits in a band below, so the unit is taller than it is wide.
  */
 export const CARD_HEIGHT = 430;
+/**
+ * Horizontal center of a unit box; the blob, the logo and the bureau arc are all centered on it.
+ * Lives here rather than in the renderer because the publisher needs the blob's box too (it is the
+ * only part of a unit the published map carries - see `publish.ts`).
+ */
+export const UNIT_CX = CARD_WIDTH / 2;
+/** Vertical center of the colored association blob within its unit box (poster px, scale 1). */
+export const BLOB_CY = 172;
+/** Diameter of the colored association blob (poster px, scale 1). */
+export const BLOB_SIZE = 210;
+
 /** Base (scale 1) width of a free-text decoration box (used for wrapping + resize math). */
 export const TEXT_BASE_WIDTH = 320;
 /** Base (scale 1) font size of a free-text decoration in poster px. */

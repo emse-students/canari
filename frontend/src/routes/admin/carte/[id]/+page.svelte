@@ -7,6 +7,8 @@
     ensureAssociationSuperAdmin,
     getPosterProject,
     updatePosterProject,
+    publishPosterProject,
+    unpublishPosterProject,
     listAssociations,
     listAssociationCategories,
     listMembers,
@@ -30,6 +32,7 @@
   } from '$lib/carte/layout';
   import { CARTE_SHAPES, shapeRadius, LOGO_SHAPES, logoShape } from '$lib/carte/shapes';
   import { exportPosterPdf } from '$lib/carte/export';
+  import { buildPublishedCarte } from '$lib/carte/publish';
   import PosterCanvas from '$lib/components/carte/PosterCanvas.svelte';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import {
@@ -52,6 +55,8 @@
     ZoomIn,
     ZoomOut,
     Pencil,
+    Globe,
+    GlobeLock,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -229,6 +234,9 @@
   let saving = $state(false);
   let saved = $state(false);
   let exporting = $state(false);
+  let publishing = $state(false);
+  /** Whether THIS poster is the one currently live on the showcase (at most one ever is). */
+  const isPublished = $derived(Boolean(project?.publishedAt));
 
   // ── Inline rename ─────────────────────────────────────────────────────────────
   let editingName = $state(false);
@@ -462,6 +470,39 @@
     saveDebugTuning(project.id, debugTuning);
   });
 
+  /**
+   * Publishes this poster to the public showcase (portail-etu), or takes it offline.
+   *
+   * Saves first: publishing a state the editor holds but the server has not persisted would put a
+   * map online that no reopen could reproduce. Publishing replaces whatever was live - the server
+   * allows exactly one published map at a time.
+   */
+  async function handlePublish() {
+    if (!project || publishing) return;
+    publishing = true;
+    error = null;
+    try {
+      if (isPublished) {
+        project = await unpublishPosterProject(project.id);
+      } else {
+        await handleSave();
+        project = await publishPosterProject(
+          project.id,
+          buildPublishedCarte(
+            positioned,
+            decorations,
+            { dataUrl: bgDataUrl, scrimOpacity },
+            titleColor
+          )
+        );
+      }
+    } catch (e) {
+      error = e instanceof Error ? e.message : m.common_save_error();
+    } finally {
+      publishing = false;
+    }
+  }
+
   async function handleExport() {
     if (!posterEl || !project || exporting) return;
     exporting = true;
@@ -547,6 +588,23 @@
             {:else}
               <Save size={16} />
               {saving ? m.carte_saving_label() : m.carte_save_button()}
+            {/if}
+          </button>
+          <button
+            type="button"
+            onclick={handlePublish}
+            disabled={publishing}
+            title={isPublished ? m.carte_unpublish_hint() : m.carte_publish_hint()}
+            class="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50 {isPublished
+              ? 'border-green-600/40 bg-green-600/10 text-green-700 dark:text-green-400 hover:bg-green-600/20'
+              : 'border-cn-border text-text-main hover:bg-cn-bg'}"
+          >
+            {#if isPublished}
+              <GlobeLock size={16} />
+              {publishing ? m.carte_publishing_label() : m.carte_unpublish_button()}
+            {:else}
+              <Globe size={16} />
+              {publishing ? m.carte_publishing_label() : m.carte_publish_button()}
             {/if}
           </button>
           <button

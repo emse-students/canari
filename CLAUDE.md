@@ -162,13 +162,22 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   manual retry from the admin panel. `CANARI_WEBHOOK_SECRET` (Cercle env) and the product's
   `webhookSecret` (Canari) are the same string under two names.
 
-- \[ \] **WP-CARTO-1 (P2) - Publish an association map from Canari to the Portail.** Canari can
-  already build an association map; add a button that publishes one to the Portail
-  (`../refonte-portail-etu`), where it must render on wide screens (PC) ABOVE all the association
-  tiles. Explicitly NOT a static image or PDF: the published map is interactive - clicking an
-  association navigates to that association's page, with a hover animation. Two repos, so the
-  published artefact is a data contract, not a rendering; decide where it is stored and how the
-  Portail (SPA, `ssr = false`) fetches it before writing any UI.
+- \[~\] **WP-CARTO-1 (P2) - Publish an association map from Canari to the Portail.** PAUSED by the
+  user mid-WP. **Canari half is DONE and committed** (gates green: check 0, lint, format,
+  166 backend + 672 frontend tests): migration 035 (`publication` jsonb + `publishedAt` + a partial
+  unique index making "one live map" a DB invariant), `published-carte.ts` server-side validation
+  (+18 specs), `POST poster/:id/publish|unpublish`, public `GET /api/public/carte`,
+  `carte/publish.ts` publisher, Publish/Live button in the editor header, FR+EN i18n.
+  **The contract is designed and written up** - `docs/wiki/carte-vie-asso.md`, "Publishing to the
+  Portail" - read that first on resume, it is the whole design.
+  **Still owed: the Portail half only.** In `../refonte-portail-etu`: add `getPublishedCarte()` to
+  `src/lib/canari.ts` (404 = nothing live, degrade to no map, like `+page.ts` already does for the
+  association list), fetch it in `src/routes/associations/+page.ts`, and render above the tiles on
+  wide screens ONLY. Join each bubble's `assoId` against the `associations` the page already loads
+  to get slug/name/logo/color; drop any that no longer resolve. Each blob is an `<a href>` to
+  `/associations/<slug>` with a hover animation. Render into a box of the payload's `aspectRatio`
+  or the map skews. `logoUrl()`/`initials()`/`generateColor()` in `src/lib/media.ts` already give
+  the logo + fallbacks.
 
 ---
 

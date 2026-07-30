@@ -227,6 +227,54 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
     before the directory; export -> single STANDARD A2 landscape PDF, content fills the page, no white bar,
     no distortion, bg to every edge.
 
+## Publishing to the Portail (WP-CARTO-1)
+
+The poster can also go **online** on the portail-etu showcase, where it renders as an interactive
+map above the association tiles (each blob links to that association's page). Half shipped: the
+Canari side is complete; the Portail renderer is not written yet.
+
+### The published artefact is a data contract, not a rendering
+
+`poster_projects.publication` (migration 035) holds a document that is deliberately NOT the
+editor's `layout`. Three differences, each removing a coupling between the two repos:
+
+| | `layout` (editor) | `publication` (showcase) |
+|---|---|---|
+| Coordinates | poster pixels, against a 1600 px stage | fractions of the frame, plus `aspectRatio` |
+| Silhouettes | shape KEYS into `shapes.ts` | resolved CSS `border-radius` values |
+| Unit | the whole blob + bureau crown + president card | the blob box alone |
+
+A bubble carries `assoId` and nothing else about the association. The showcase joins it against
+`GET /api/public/associations` for the name, logo and brand color, so a rename or a new logo
+reaches the live map **with no republish** - the same rule that makes the editor re-resolve content
+on every open, extended across the repo boundary.
+
+Built by `frontend/src/lib/carte/publish.ts` (`buildPublishedCarte`), typed and re-validated by
+`apps/social-service/src/associations/published-carte.ts` (`sanitizePublishedCarte`).
+
+### Rules
+
+- **At most one map is live**, and that is a database invariant, not a convention: a partial unique
+  index on `(publication IS NOT NULL)` forbids a second published row. `publish()` therefore clears
+  the previous map and sets the new one inside ONE transaction, or it would deadlock against itself.
+- **The payload is re-validated server-side**, field by field, even though the publisher is an
+  admin - it is about to be served to anonymous visitors. Unknown keys are dropped rather than
+  echoed, geometry is clamped, arrays and strings are capped, and the background must be a
+  `data:image/` URL under 6 MB.
+- **A `border-radius` is rejected, never escaped.** The published value is interpolated into a
+  `style` attribute on another origin, so anything outside `[0-9%./ ]` degrades to a circle rather
+  than travelling as-is. Same for colors: hex or null.
+- **A publish saves first.** Publishing editor state the server has not persisted would put a map
+  online that no reopen could reproduce.
+- Publishing is a **button in the editor header**, gated like the rest of the editor
+  (`GlobalAdminOrBdeSuperAdminGuard`). The public read is `GET /api/public/carte`, unauthenticated,
+  404 when nothing is live, `Cache-Control: public, max-age=300`.
+
+### Still owed
+
+The portail-etu half: fetch `/api/public/carte`, join on `assoId`, render the blobs as links to
+`/associations/<slug>` with a hover animation, above the tiles, **on wide screens only**.
+
 ## Reuse map
 
 - `frontend/src/lib/utils/pdfRaster.ts` - rasteriser (as-is).

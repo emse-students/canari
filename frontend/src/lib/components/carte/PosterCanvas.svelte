@@ -9,6 +9,9 @@
     DIRECTORY_WIDTH,
     CARD_WIDTH,
     CARD_HEIGHT,
+    UNIT_CX,
+    BLOB_CY,
+    BLOB_SIZE,
     TEXT_BASE_WIDTH,
     TEXT_BASE_SIZE,
     bureauCrownOffsetWithTuning,
@@ -90,12 +93,7 @@
   // (its own shape, allowed to overflow the blob); the president as a card overlapping the blob
   // bottom; the bureau as cards fanned over the blob's TOP arc; and the association name in a band
   // BELOW the blob (so a long name wraps + shrinks instead of being clipped).
-  /** Horizontal center of the unit box; the blob + logo + bureau arc are centered on it. */
-  const UNIT_CX = CARD_WIDTH / 2;
-  /** Vertical center of the blob within the unit. */
-  const BLOB_CY = 172;
-  /** Diameter of the colored association blob. */
-  const BLOB_SIZE = 210;
+  // UNIT_CX / BLOB_CY / BLOB_SIZE come from `layout.ts`: the publisher shares them.
   /** Base logo size (px); the logo shape scales this by its w/h ratio and may overflow the blob. */
   const LOGO_BASE = 92;
   /** Logo center Y: upper part of the blob, so the association name fits inside below it. */

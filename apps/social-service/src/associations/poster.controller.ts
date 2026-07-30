@@ -55,4 +55,20 @@ export class PosterController {
   remove(@Param('id') id: string) {
     return this.service.remove(id);
   }
+
+  /**
+   * Publishes this poster to the public showcase, replacing whatever was live. The body is the
+   * normalized geometry document built by the editor (see `published-carte.ts`), not the raw
+   * layout - it is re-validated server-side before it can be served anonymously.
+   */
+  @Post(':id/publish')
+  publish(@Param('id') id: string, @Body() payload: unknown) {
+    return this.service.publish(id, payload);
+  }
+
+  /** Takes this poster offline; the public map endpoint then reports nothing published. */
+  @Post(':id/unpublish')
+  unpublish(@Param('id') id: string) {
+    return this.service.unpublish(id);
+  }
 }
