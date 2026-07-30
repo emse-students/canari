@@ -1,4 +1,4 @@
-import type { PosterModel, PosterBubble } from './generator';
+import type { PosterModel, PosterBubble, PosterMemberRef } from './generator';
 import {
   DEFAULT_SHAPE,
   isShapeKey,
@@ -64,6 +64,131 @@ export const UNIT_CX = CARD_WIDTH / 2;
 export const BLOB_CY = 172;
 /** Diameter of the colored association blob (poster px, scale 1). */
 export const BLOB_SIZE = 210;
+
+// ── Unit internals (poster px, scale 1) ─────────────────────────────────────────────────
+// The layers of one association unit, back to front: the colored blob; the hero logo centered on
+// it (its own shape, allowed to overflow); the bureau member cards fanned over the blob's TOP arc;
+// the president card overlapping the blob bottom; and the association name in a band inside the
+// blob below the logo (so a long name wraps + shrinks instead of being clipped).
+//
+// These live here rather than in `PosterCanvas.svelte` because the PUBLISHER needs the exact same
+// numbers: the showcase draws a copy of this unit from resolved geometry instead of re-deriving
+// proportions of its own, so any constant the renderer uses has to be reachable from `publish.ts`.
+
+/** Base logo size (px); the logo shape scales this by its w/h ratio and may overflow the blob. */
+export const LOGO_BASE = 92;
+/** Logo center Y: upper part of the blob, so the association name fits inside below it. */
+export const LOGO_CY = BLOB_CY - 38;
+/** Font size of the initials shown behind a missing logo. */
+export const LOGO_INITIALS_SIZE = 36;
+/** Association-name box top (inside the blob, below the logo). */
+export const NAME_TOP = BLOB_CY + 12;
+/** Horizontal inset of the name box inside the blob (total, both sides). */
+export const NAME_INSET = 56;
+/** President card top: below the logo + name, hanging off the blob's bottom rim. */
+export const PRES_TOP = BLOB_CY + 74;
+/** Max bureau cards fanned over the blob's top arc (6 + the president = 7 members shown). */
+export const MAX_BUREAU = 6;
+/** Base name font size for a bureau card, before the tuning scale. */
+export const BUREAU_NAME_BASE = 8.8;
+/** Base name font size for the president card (a touch larger), before the tuning scale. */
+export const PRES_NAME_BASE = 10.8;
+
+/** Length-based font size (px) for the association name inside the blob, so long names shrink. */
+export function nameFontSize(name: string): number {
+  const n = name.length;
+  if (n <= 10) return 18;
+  if (n <= 16) return 15;
+  if (n <= 22) return 13;
+  if (n <= 30) return 11;
+  return 10;
+}
+
+/** Length- and width-based name font size (px) for a member card (bureau / president), which wraps. */
+export function cardNameFontSize(name: string, cardW: number, base: number): number {
+  const n = name.length;
+  const widthPenalty = cardW <= 70 ? 1.1 : cardW <= 85 ? 0.6 : 0;
+  if (n <= 10) return base - widthPenalty;
+  if (n <= 16) return base - 0.9 - widthPenalty;
+  if (n <= 22) return base - 1.8 - widthPenalty;
+  if (n <= 30) return base - 2.6 - widthPenalty;
+  return base - 3.4 - widthPenalty;
+}
+
+/** Role font size (px) on a member card, derived from its name base. */
+export function cardRoleFontSize(nameBase: number, tuning: CarteDebugTuning): number {
+  return Math.max((nameBase - 2.5) * tuning.memberRoleScale, 6.8);
+}
+
+/**
+ * Picks the members a unit actually shows: the first one is drawn as the president card at the
+ * blob's bottom, the next {@link MAX_BUREAU} fan out over its top arc. An explicit
+ * {@link PositionedBubble.selectedBureau} wins; otherwise the association's admins are used.
+ *
+ * Shared with the publisher so the showcase shows the same faces in the same slots as the poster.
+ */
+export function resolveUnitMembers(
+  bubble: Pick<PositionedBubble, 'selectedBureau'>,
+  members: PosterMemberRef[]
+): { president: PosterMemberRef | null; bureau: PosterMemberRef[] } {
+  const selected = bubble.selectedBureau ? new Set(bubble.selectedBureau) : null;
+  const visible = selected
+    ? members.filter((mem) => selected.has(mem.userId))
+    : members.filter((mem) => mem.isAdmin);
+  return { president: visible[0] ?? null, bureau: visible.slice(1, 1 + MAX_BUREAU) };
+}
+
+// ── Poster title band (poster px) ────────────────────────────────────────────────────────
+
+/** Stage side padding shared by the title and the seed grid, also offered as an alignment guide. */
+export const CONTENT_MARGIN = 48;
+/** Title baseline box top. */
+export const TITLE_TOP = 36;
+/** Title font size. */
+export const TITLE_SIZE = 52;
+
+/** Right edge available to bubbles; the directory column is reserved on the right when shown. */
+export function bubbleLimit(directoryVisible: boolean): number {
+  return directoryVisible ? STAGE_WIDTH - DIRECTORY_WIDTH : STAGE_WIDTH;
+}
+
+/** The title box in poster px. It spans the bubble region, so it shrinks when the directory shows. */
+export function titleRect(directoryVisible: boolean): { x: number; y: number; w: number } {
+  return {
+    x: CONTENT_MARGIN,
+    y: TITLE_TOP,
+    w: bubbleLimit(directoryVisible) - 2 * CONTENT_MARGIN,
+  };
+}
+
+// ── Right-hand directory panel (poster px) ──────────────────────────────────────────────
+// Same reason as the unit internals: the publisher resolves the panel for the showcase.
+
+/** Inset of the directory panel from the frame's top / right / bottom edges. */
+export const DIRECTORY_INSET = 48;
+/** Rounded corner of the directory panel. */
+export const DIRECTORY_RADIUS = 20;
+/** Vertical / horizontal padding inside the directory panel. */
+export const DIRECTORY_PAD_Y = 24;
+export const DIRECTORY_PAD_X = 26;
+/** Directory heading ("Annuaire") font size. */
+export const DIRECTORY_HEADING_SIZE = 24;
+/** Base body font size; the renderer shrinks from here until the whole roster fits the column. */
+export const DIRECTORY_BASE_FONT = 13;
+/** Column count + gutter of the directory's multi-column body. */
+export const DIRECTORY_COLUMNS = 2;
+export const DIRECTORY_COLUMN_GAP = 24;
+
+/** The directory panel's box in poster px. Fixed, so both the renderer and the publisher use it. */
+export function directoryRect(): { x: number; y: number; w: number; h: number } {
+  const w = DIRECTORY_WIDTH - 2 * DIRECTORY_INSET;
+  return {
+    x: STAGE_WIDTH - DIRECTORY_INSET - w,
+    y: DIRECTORY_INSET,
+    w,
+    h: STAGE_HEIGHT - 2 * DIRECTORY_INSET,
+  };
+}
 
 /** Base (scale 1) width of a free-text decoration box (used for wrapping + resize math). */
 export const TEXT_BASE_WIDTH = 320;

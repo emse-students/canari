@@ -488,12 +488,18 @@
         await handleSave();
         project = await publishPosterProject(
           project.id,
-          buildPublishedCarte(
-            positioned,
+          buildPublishedCarte({
+            bubbles: positioned,
+            content,
+            model: model ?? { zones: [], totalAssos: 0 },
             decorations,
-            { dataUrl: bgDataUrl, scrimOpacity },
-            titleColor
-          )
+            background: { dataUrl: bgDataUrl, scrimOpacity },
+            style: theme,
+            title: project.name,
+            directoryVisible,
+            directoryHeading: m.carte_directory_heading(),
+            tuning: debugTuning,
+          })
         );
       }
     } catch (e) {

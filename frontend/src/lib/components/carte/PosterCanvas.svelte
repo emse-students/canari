@@ -6,7 +6,18 @@
     DEFAULT_CARTE_DEBUG_TUNING,
     STAGE_WIDTH,
     STAGE_HEIGHT,
-    DIRECTORY_WIDTH,
+    CONTENT_MARGIN,
+    TITLE_SIZE,
+    bubbleLimit,
+    titleRect,
+    DIRECTORY_RADIUS,
+    DIRECTORY_PAD_X,
+    DIRECTORY_PAD_Y,
+    DIRECTORY_HEADING_SIZE,
+    DIRECTORY_BASE_FONT,
+    DIRECTORY_COLUMNS,
+    DIRECTORY_COLUMN_GAP,
+    directoryRect,
     CARD_WIDTH,
     CARD_HEIGHT,
     UNIT_CX,
@@ -14,7 +25,19 @@
     BLOB_SIZE,
     TEXT_BASE_WIDTH,
     TEXT_BASE_SIZE,
+    LOGO_BASE,
+    LOGO_CY,
+    LOGO_INITIALS_SIZE,
+    NAME_TOP,
+    NAME_INSET,
+    PRES_TOP,
+    BUREAU_NAME_BASE,
+    PRES_NAME_BASE,
     bureauCrownOffsetWithTuning,
+    nameFontSize,
+    cardNameFontSize,
+    cardRoleFontSize,
+    resolveUnitMembers,
     type CarteDebugTuning,
     type PositionedBubble,
     type Decoration,
@@ -85,48 +108,15 @@
   const MAX_SCALE = 2.6;
   /** How close (poster px) an edge/center must be to a guide before it snaps. */
   const SNAP_THRESHOLD = 8;
-  /** Stage side padding shared by the title, offered as an alignment guide. */
-  const CONTENT_MARGIN = 48;
 
-  // ── Blob-unit geometry (poster px, at scale 1) ──────────────────────────────────────────
-  // The unit layers, from back to front: a colored blob (silhouette); the hero logo centered on it
-  // (its own shape, allowed to overflow the blob); the president as a card overlapping the blob
-  // bottom; the bureau as cards fanned over the blob's TOP arc; and the association name in a band
-  // BELOW the blob (so a long name wraps + shrinks instead of being clipped).
-  // UNIT_CX / BLOB_CY / BLOB_SIZE come from `layout.ts`: the publisher shares them.
-  /** Base logo size (px); the logo shape scales this by its w/h ratio and may overflow the blob. */
-  const LOGO_BASE = 92;
-  /** Logo center Y: upper part of the blob, so the association name fits inside below it. */
-  const LOGO_CY = BLOB_CY - 38;
-  /** Association-name box top (inside the blob, below the logo). */
-  const NAME_TOP = BLOB_CY + 12;
+  // ── Blob-unit geometry ──────────────────────────────────────────────────────────────────
+  // The unit's whole geometry (layer offsets, font ladders, which members appear in which slot)
+  // lives in `layout.ts`, because the PUBLISHER resolves the exact same numbers for the portail
+  // showcase - see `publish.ts`. Only the two tuning-derived card widths are local.
   /** Bureau member-card width. */
   const CARD_W = $derived(debugTuning.bureauCardWidth);
   /** President member-card width (a touch larger; sits at the blob bottom). */
   const PRES_CARD_W = $derived(debugTuning.presidentCardWidth);
-  /** President card top: below the logo + name, hanging off the blob's bottom rim. */
-  const PRES_TOP = BLOB_CY + 74;
-  /** Max bureau cards fanned over the blob's top arc before it gets too crowded. (Limit to 6 + 1 president = 7 max members). */
-  const MAX_BUREAU = 6;
-  /** Length-based font size (px) for the association name below the blob, so long names shrink. */
-  function nameFontSize(name: string): number {
-    const n = name.length;
-    if (n <= 10) return 18;
-    if (n <= 16) return 15;
-    if (n <= 22) return 13;
-    if (n <= 30) return 11;
-    return 10;
-  }
-  /** Length- and width-based name font size (px) for a member card (bureau / president), which wraps. */
-  function cardNameFontSize(name: string, cardW: number, base: number): number {
-    const n = name.length;
-    const widthPenalty = cardW <= 70 ? 1.1 : cardW <= 85 ? 0.6 : 0;
-    if (n <= 10) return base - widthPenalty;
-    if (n <= 16) return base - 0.9 - widthPenalty;
-    if (n <= 22) return base - 1.8 - widthPenalty;
-    if (n <= 30) return base - 2.6 - widthPenalty;
-    return base - 3.4 - widthPenalty;
-  }
 
   /** The stage element, used to convert client pointer coords into poster coords. */
   let stageEl = $state<HTMLElement>();
@@ -138,7 +128,9 @@
   });
 
   /** Right edge available to bubbles (the directory column is reserved on the right when shown). */
-  const bubbleLimitX = $derived(directoryVisible ? STAGE_WIDTH - DIRECTORY_WIDTH : STAGE_WIDTH);
+  const bubbleLimitX = $derived(bubbleLimit(directoryVisible));
+  /** The title box (poster px); it spans the bubble region, so it follows the directory toggle. */
+  const title0 = $derived(titleRect(directoryVisible));
 
   /** Which layer a gesture is acting on, so a change routes to the right callback. */
   type DragTarget = 'bubble' | 'decoration';
@@ -408,8 +400,8 @@
   ];
 
   // ── Adaptive directory font ─────────────────────────────────────────────────────────────
-  /** Base directory font size (px); item text uses em so it scales with this. */
-  const DIR_BASE_FONT = 13;
+  /** The directory panel box (poster px), shared with the publisher. */
+  const dirRect = directoryRect();
   /** The directory body (fixed-height, clipped) and its multi-column content, for auto-fitting. */
   let dirBodyEl = $state<HTMLElement>();
   let dirContentEl = $state<HTMLElement>();
@@ -429,10 +421,10 @@
     if (!visible || !body || !contentNode || zones.length === 0) return;
     const raf = requestAnimationFrame(() => {
       const avail = body.clientHeight;
-      let font = DIR_BASE_FONT;
+      let font = DIRECTORY_BASE_FONT;
       contentNode.style.fontSize = `${font}px`;
       // Step down until it fits or we hit a readable floor.
-      while (contentNode.scrollHeight > avail && font > DIR_BASE_FONT * 0.5) {
+      while (contentNode.scrollHeight > avail && font > DIRECTORY_BASE_FONT * 0.5) {
         font -= 0.5;
         contentNode.style.fontSize = `${font}px`;
       }
@@ -448,7 +440,7 @@
     cardW,
     nameBase * debugTuning.memberNameScale
   )}
-  {@const memberRoleSize = Math.max((nameBase - 2.5) * debugTuning.memberRoleScale, 6.8)}
+  {@const memberRoleSize = cardRoleFontSize(nameBase, debugTuning)}
   <div
     style:width="{cardW}px"
     style:background={theme.polaroidBg}
@@ -545,15 +537,15 @@
   >
     <div
       style:position="absolute"
-      style:top="36px"
-      style:left="{CONTENT_MARGIN}px"
-      style:width="{bubbleLimitX - 2 * CONTENT_MARGIN}px"
+      style:top="{title0.y}px"
+      style:left="{title0.x}px"
+      style:width="{title0.w}px"
       style:pointer-events="none"
     >
       <h1
         data-pdf-text
         style:font-family="'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif"
-        style:font-size="52px"
+        style:font-size="{TITLE_SIZE}px"
         style:font-weight="700"
         style:margin="0"
         style:color={theme.titleColor}
@@ -573,12 +565,9 @@
       {#if data}
         {@const color = bubble.colorOverride ?? data.color}
         {@const selected = editable && selectedId === bubble.assoId}
-        {@const selectedSet = bubble.selectedBureau ? new Set(bubble.selectedBureau) : null}
-        {@const visibleMembers = selectedSet
-          ? data.members.filter((m) => selectedSet.has(m.userId))
-          : data.members.filter((m) => m.isAdmin)}
-        {@const displayPresident = visibleMembers[0]}
-        {@const bureau = visibleMembers.slice(1, 1 + MAX_BUREAU)}
+        {@const shown = resolveUnitMembers(bubble, data.members)}
+        {@const displayPresident = shown.president}
+        {@const bureau = shown.bureau}
         {@const ls = logoShape(bubble.logoShape)}
         {@const lw = LOGO_BASE * ls.w}
         {@const lh = LOGO_BASE * ls.h}
@@ -631,7 +620,7 @@
             style:justify-content="center"
             style:color
             style:font-weight="800"
-            style:font-size="36px"
+            style:font-size="{LOGO_INITIALS_SIZE}px"
             style:box-shadow="0 4px 14px rgba(0,0,0,0.2)"
           >
             <span>{getInitials(data.name)}</span>
@@ -652,7 +641,7 @@
             {@const px = UNIT_CX + offset.x - CARD_W / 2}
             {@const py = debugTuning.bureauCrownCy + offset.y - CARD_W / 2}
             <div style:position="absolute" style:left="{px}px" style:top="{py}px">
-              {@render memberCard(member, CARD_W, color, 8.8)}
+              {@render memberCard(member, CARD_W, color, BUREAU_NAME_BASE)}
             </div>
           {/each}
 
@@ -663,7 +652,7 @@
               style:left="{UNIT_CX - PRES_CARD_W / 2}px"
               style:top="{PRES_TOP}px"
             >
-              {@render memberCard(displayPresident, PRES_CARD_W, color, 10.8)}
+              {@render memberCard(displayPresident, PRES_CARD_W, color, PRES_NAME_BASE)}
             </div>
           {/if}
 
@@ -671,7 +660,7 @@
           <div
             style:position="absolute"
             style:left="{UNIT_CX - (BLOB_SIZE - 56) / 2}px"
-            style:width="{BLOB_SIZE - 56}px"
+            style:width="{BLOB_SIZE - NAME_INSET}px"
             style:top="{NAME_TOP}px"
             style:text-align="center"
           >
@@ -808,22 +797,23 @@
     <!-- Member directory: a fixed right-hand column listing every member grouped by association. -->
     <aside
       style:position="absolute"
-      style:top="48px"
-      style:right="48px"
-      style:bottom="48px"
-      style:width="{DIRECTORY_WIDTH - 96}px"
+      style:left="{dirRect.x}px"
+      style:top="{dirRect.y}px"
+      style:width="{dirRect.w}px"
+      style:height="{dirRect.h}px"
       style:display="flex"
       style:flex-direction="column"
       style:overflow="hidden"
       style:background={theme.directoryBg}
-      style:border-radius="20px"
-      style:padding="24px 26px"
+      style:border-radius="{DIRECTORY_RADIUS}px"
+      style:padding="{DIRECTORY_PAD_Y}px {DIRECTORY_PAD_X}px"
+      style:box-sizing="border-box"
       style:box-shadow="0 10px 30px rgba(0,0,0,0.14)"
     >
       <h2
         data-pdf-text
         style:font-family="'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif"
-        style:font-size="24px"
+        style:font-size="{DIRECTORY_HEADING_SIZE}px"
         style:font-weight="800"
         style:margin="0 0 14px"
         style:flex="0 0 auto"
@@ -835,7 +825,7 @@
       <div bind:this={dirBodyEl} style="flex:1 1 auto;min-height:0;overflow:hidden;">
         <div
           bind:this={dirContentEl}
-          style="columns:2;column-gap:24px;font-size:{DIR_BASE_FONT}px;"
+          style="columns:{DIRECTORY_COLUMNS};column-gap:{DIRECTORY_COLUMN_GAP}px;font-size:{DIRECTORY_BASE_FONT}px;"
         >
           {#each model.zones as zone (zone.categoryId ?? 'none')}
             {#if zone.bubbles.length > 0}

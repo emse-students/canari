@@ -233,24 +233,52 @@ The poster can also go **online** on the portail-etu showcase, where it renders 
 map above the association tiles (each blob links to that association's page). Both halves are
 shipped: the publisher here, the renderer in `../refonte-portail-etu`.
 
-### The published artefact is a data contract, not a rendering
+### The published artefact is a RESOLVED POSTER (v2)
 
 `poster_projects.publication` (migration 035) holds a document that is deliberately NOT the
-editor's `layout`. Three differences, each removing a coupling between the two repos:
+editor's `layout` - and, since v2, not an approximation of the poster either. **Everything the
+poster draws is computed at publish time**: box positions, font sizes, the bureau crown ellipse,
+the length-based name shrinking, the author's debug tuning. The showcase draws those numbers and
+decides nothing.
 
-| | `layout` (editor) | `publication` (showcase) |
+| | `layout` (editor) | `publication` v2 (showcase) |
 |---|---|---|
-| Coordinates | poster pixels, against a 1600 px stage | fractions of the frame, plus `aspectRatio` |
+| Coordinates | poster px, 1600 px stage | poster px + the `stage` dims, so the consumer scales once |
 | Silhouettes | shape KEYS into `shapes.ts` | resolved CSS `border-radius` values |
-| Unit | the whole blob + bureau crown + president card | the blob box alone |
+| Unit | blob + bureau crown + president card + name band | the same, every sub-box resolved |
+| Members | re-resolved live on every open | frozen: `cards[]` per unit + the directory lines |
+| Palette | `CARTE_STYLE` | a resolved `style` block |
+| Directory | rendered from the model | a resolved panel: rect, heading, zones, rosters |
 
-A bubble carries `assoId` and nothing else about the association. The showcase joins it against
-`GET /api/public/associations` for the name, logo and brand color, so a rename or a new logo
-reaches the live map **with no republish** - the same rule that makes the editor re-resolve content
-on every open, extended across the repo boundary.
+**Why v1 was replaced.** v1 published fractions of the frame and the blob box alone - so the
+showcase had to invent everything it was not given (where the logo sits inside a blob, how big a
+name is) and could only ever be a lookalike. The user's verdict was blunt and correct: only blobs,
+logos and names showed up, in the wrong fonts and sizes. Publishing poster pixels plus the stage
+dims costs one multiplication on the consumer and makes the copy exact.
+
+**What still joins live:** a unit carries `assoId`, so the name, logo, brand color and contact
+email come from `GET /api/public/associations`. A rename or a new logo reaches the live map with no
+republish. `colorFallback` carries what the poster printed, for an association that has no color of
+its own (Canari seeds one from the id; the showcase seeds from the name, so this had to travel).
+
+**What is frozen, on purpose:** which member sits in which crown slot is an authoring decision
+(`selectedBureau`), and so is the roster order, so member names, roles and initials travel in the
+payload. **A roster change therefore needs a republish** - the same way a printed poster does.
+
+**One measurement is duplicated, deliberately:** the directory shrinks its font until the roster
+fits its fixed panel. That is a DOM measurement, not a constant, so both sides run the same loop -
+and they agree because both measure the same poster pixels (a CSS transform does not change
+`clientHeight`) in the same fonts.
 
 Built by `frontend/src/lib/carte/publish.ts` (`buildPublishedCarte`), typed and re-validated by
-`apps/social-service/src/associations/published-carte.ts` (`sanitizePublishedCarte`).
+`apps/social-service/src/associations/published-carte.ts` (`sanitizePublishedCarte`). The unit's
+geometry lives in `frontend/src/lib/carte/layout.ts` - **not** in `PosterCanvas.svelte` - precisely
+because the publisher needs the same numbers the renderer uses.
+
+**No v1 reader exists, and that is a decision.** A stored v1 document cannot be upgraded server-side
+(the members and geometry it lacks only exist in the editor, next to live data), so both sides refuse
+it: `sanitizePublishedCarte` returns null without `units`, and the showcase omits the map and logs
+why. The poster itself lives in `layout`, untouched - one republish is the whole migration.
 
 ### Rules
 
@@ -272,21 +300,24 @@ Built by `frontend/src/lib/carte/publish.ts` (`buildPublishedCarte`), typed and 
 
 ### The consumer side
 
-In `../refonte-portail-etu`: `getPublishedCarte()` in `src/lib/canari.ts`, fetched by
-`src/routes/associations/+page.ts` and drawn by `src/lib/components/CarteVieAsso.svelte`, above the
-tiles and on wide screens only. Documented there in `docs/wiki/architecture.md`.
+In `../refonte-portail-etu`: `getPublishedCarte()` in `src/lib/canari.ts` (which also gates the
+schema version), fetched by `src/routes/associations/+page.ts` and drawn by
+`src/lib/components/CarteVieAsso.svelte`, above the tiles and on wide screens only. Documented there
+in `docs/wiki/architecture.md`.
 
-Two things to know before changing the contract:
+Three things to know before changing the contract:
 
-- **The showcase measures the frame's rendered width and derives every pixel size from it.** A
-  fraction of the frame width is what `w` and `size` mean, so a change of unit here is a silent
-  visual break there, not a type error.
-- **`LogoShape.w`/`h` do NOT travel.** Both catalog entries are currently 1x1, so the consumer draws
-  the logo chip square; adding a rectangular logo shape means adding its ratio to the payload, or the
-  portal will render it square anyway.
+- **The showcase draws a `stage.w x stage.h` box and scales it once.** Every published number is used
+  verbatim, so a change of unit here is a silent visual break there, not a type error.
+- **It self-hosts Canari's fonts** (`@fontsource-variable/nunito` + `/fredoka`, same versions). Text
+  set in another family measures differently, so a font change here needs the same bump there.
+- **Only the card CHROME is mirrored rather than published** - padding, corner radii, shadows, the
+  photo inset. Those are cosmetic constants copied from `PosterCanvas.svelte`; anything the author can
+  move or tune travels instead. Redesigning the member card means updating both.
 
-Not consumed on purpose: `titleColor`. The poster's own text labels already carry its title, so the
-showcase draws no heading of its own over the map.
+Avatars are not in the payload: the showcase already proxies MiGallery at
+`/api/users/:id/avatar`, so only `userId` travels. That also keeps a publication small enough to
+serve from one row.
 
 ## Reuse map
 

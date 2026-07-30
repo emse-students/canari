@@ -1,135 +1,436 @@
 /**
  * Builds the artefact Canari publishes to the portail-etu showcase from the editor's live state.
  *
- * The published document is NOT the editor's layout. Three deliberate differences, each removing a
- * coupling between the two repos:
+ * The published document is a **resolved poster**, not the editor's layout and not a rendering: it
+ * carries every box and every font size the poster draws, already computed, so the showcase can
+ * reproduce the map exactly instead of re-deriving proportions of its own.
  *
- * 1. **Normalized geometry.** Everything is a fraction of the poster frame, so the showcase renders
- *    into a box of any width as long as it honours `aspectRatio`. The stage constants stay here.
- * 2. **Resolved silhouettes.** Shape keys are looked up here and travel as plain CSS
- *    `border-radius` values, so the showcase needs no copy of the shape catalog.
- * 3. **Blob box, not unit box.** A unit on the poster is the blob plus a bureau crown and president
- *    card; the showcase renders only the blob, so that is what gets published.
+ * Three properties make that work:
  *
- * Content is deliberately absent: a bubble carries `assoId` and nothing else about the association,
- * because the showcase joins it against the public association list. A rename, a new logo or a
- * changed brand color therefore reaches the published map with no republish - the same rule that
- * makes the editor re-resolve content on every open.
+ * 1. **One coordinate space.** Everything below is in POSTER pixels against the published
+ *    {@link PublishedCarte.stage}. The showcase renders a `stage.w x stage.h` box scaled once
+ *    (`frameWidth / stage.w`), so every number here is used verbatim - no unit conversion, hence no
+ *    class of "the portal drew it 8% too small" bug. It also makes the directory's shrink-to-fit
+ *    measure the same pixels on both sides.
+ * 2. **Resolved geometry.** Shape keys, the bureau crown ellipse, the length-based font ladders and
+ *    the author's debug tuning are all applied HERE. The showcase needs no copy of the catalogs and
+ *    no copy of the layout math, so a tuning change reaches the live map by republishing alone.
+ * 3. **Association content stays live, people are a snapshot.** A unit carries `assoId` only, so a
+ *    rename, a new logo or a new brand color needs no republish (`colorFallback` covers an
+ *    association that has no color of its own). Members are the opposite: WHICH member appears in
+ *    which crown slot is an authoring decision, so the displayed cards and the directory lines are
+ *    frozen at publish time - a roster change needs a republish, by design.
  *
- * The server re-validates everything built here (`published-carte.ts`) before serving it publicly.
+ * The server re-validates every field of this (`published-carte.ts`) before serving it publicly.
  */
 
+import type { CarteStyle } from './theme';
+import type { PosterBubble, PosterModel } from './generator';
+import { getInitials } from '$lib/utils/avatar';
 import {
   STAGE_WIDTH,
   STAGE_HEIGHT,
   UNIT_CX,
   BLOB_CY,
   BLOB_SIZE,
+  CARD_WIDTH,
+  CARD_HEIGHT,
+  LOGO_BASE,
+  LOGO_CY,
+  LOGO_INITIALS_SIZE,
+  NAME_TOP,
+  NAME_INSET,
+  PRES_TOP,
+  BUREAU_NAME_BASE,
+  PRES_NAME_BASE,
   TEXT_BASE_WIDTH,
   TEXT_BASE_SIZE,
+  TITLE_SIZE,
+  DIRECTORY_RADIUS,
+  DIRECTORY_PAD_X,
+  DIRECTORY_PAD_Y,
+  DIRECTORY_HEADING_SIZE,
+  DIRECTORY_BASE_FONT,
+  DIRECTORY_COLUMNS,
+  DIRECTORY_COLUMN_GAP,
+  directoryRect,
+  titleRect,
+  bureauCrownOffsetWithTuning,
+  nameFontSize,
+  cardNameFontSize,
+  cardRoleFontSize,
+  resolveUnitMembers,
+  type CarteDebugTuning,
   type PositionedBubble,
   type Decoration,
 } from './layout';
 import { shapeRadius, logoShape } from './shapes';
 
-/** One association blob on the published map. Placement only; the consumer joins the content. */
-export interface PublishedCarteBubble {
-  /** Association id; the consumer's join key into `GET /api/public/associations`. */
-  assoId: string;
-  /** Blob left edge, as a fraction of the frame width. */
-  x: number;
-  /** Blob top edge, as a fraction of the frame height. */
-  y: number;
-  /** Blob diameter, as a fraction of the frame width. */
+/** The poster frame every coordinate in this document is expressed against (poster px). */
+export interface PublishedCarteStage {
   w: number;
-  /** Stacking order; higher renders on top. */
-  z: number;
-  /** Author's color override (hex), or null to use the association's live brand color. */
-  color: string | null;
-  /** Blob silhouette as a CSS `border-radius`, already resolved from the shape catalog. */
-  radius: string;
-  /** Logo frame as a CSS `border-radius`, already resolved from the logo-shape catalog. */
-  logoRadius: string;
+  h: number;
 }
 
-/** A free-text label on the published map. */
+/** The poster's resolved palette, so a restyle in Canari needs no showcase deploy. */
+export interface PublishedCarteStyle {
+  /** Page background, painted under the optional background image. */
+  pageBg: string;
+  /** Scrim drawn over the background image. */
+  scrimColor: string;
+  /** Member-card background + caption color. */
+  cardBg: string;
+  cardTextColor: string;
+  /** Directory panel background + its primary / secondary text colors. */
+  directoryBg: string;
+  directoryTextColor: string;
+  directoryMutedColor: string;
+}
+
+/** A positioned run of text: the poster title, or one of the author's free-text labels. */
 export interface PublishedCarteText {
-  /** Left edge, as a fraction of the frame width. */
+  /** Box left edge / top edge, in poster px. */
   x: number;
-  /** Top edge, as a fraction of the frame height. */
   y: number;
-  /** Box width, as a fraction of the frame width. */
+  /** Box width, in poster px. Text wraps inside it. */
   w: number;
+  /** Stacking order; higher renders on top. Always 0 for the title (it sits under the units). */
+  z: number;
+  /** Font size in poster px. */
+  size: number;
+  /** CSS font weight (the poster uses 500 / 700 / 800). */
+  weight: number;
+  content: string;
+  /** Text color. */
+  color: string;
+  align: 'left' | 'center' | 'right';
+}
+
+/** A member card (president or bureau) drawn on a unit: square photo + name + optional role. */
+export interface PublishedCarteCard {
+  /** Avatar join key; the showcase fetches the photo through its own same-origin proxy. */
+  userId: string;
+  name: string;
+  /** Role line under the name, or '' when the member has none. */
+  role: string;
+  /** Initials shown while / if the photo does not load. Resolved here so both sides agree. */
+  initials: string;
+  /** Card box, in poster px relative to the unit's top-left (before the unit scale). */
+  x: number;
+  y: number;
+  w: number;
+  /** Name / role font sizes, in poster px. */
+  nameSize: number;
+  roleSize: number;
+}
+
+/** One association unit: the blob, its logo, its name band and the member cards around it. */
+export interface PublishedCarteUnit {
+  /** Association id; the showcase's join key into `GET /api/public/associations`. */
+  assoId: string;
+  /** Unit top-left on the stage, in poster px. */
+  x: number;
+  y: number;
+  /** Unit box at scale 1, in poster px. This is the link's hit area once scaled. */
+  w: number;
+  h: number;
+  /** Author's unit scale. Everything inside is at scale 1, so the whole box scales as one. */
+  scale: number;
   /** Stacking order; higher renders on top. */
   z: number;
-  /** Font size, as a fraction of the frame width. */
-  size: number;
-  content: string;
-  /** Text color (hex). */
-  color: string;
-  bold: boolean;
-  align: 'left' | 'center' | 'right';
+  /** Author's color override, or null to use the association's live brand color. */
+  color: string | null;
+  /** Color the poster resolved, used when the association carries none of its own. */
+  colorFallback: string;
+  /** The colored silhouette, unit-relative poster px. */
+  blob: { x: number; y: number; size: number; radius: string };
+  /** The hero logo frame (may overflow the blob), unit-relative poster px. */
+  logo: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    radius: string;
+    /** Font size + text of the initials shown when the association has no logo. */
+    initialsSize: number;
+    initials: string;
+  };
+  /** The association-name band inside the blob, unit-relative poster px. */
+  name: {
+    x: number;
+    y: number;
+    w: number;
+    size: number;
+    /** Font size of the contact-email line under the name (the address itself is joined live). */
+    emailSize: number;
+  };
+  /** President + bureau cards, in render order (bureau first, then the president in front). */
+  cards: PublishedCarteCard[];
+}
+
+/** One association's line in the directory: the color dot + name are joined, the roster is frozen. */
+export interface PublishedCarteDirectoryAsso {
+  /** Join key for the displayed name and color dot. */
+  assoId: string;
+  /** The roster as the poster prints it: "Name (Role) - Name - ...", alphabetical. */
+  line: string;
+}
+
+/** A category section of the directory. */
+export interface PublishedCarteDirectoryZone {
+  label: string;
+  assos: PublishedCarteDirectoryAsso[];
+}
+
+/** The right-hand member directory ("annuaire"), resolved. */
+export interface PublishedCarteDirectory {
+  /** Panel box on the stage, in poster px (border-box: the padding is inside it). */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  radius: number;
+  padX: number;
+  padY: number;
+  heading: string;
+  headingSize: number;
+  /**
+   * Base body font size in poster px. The renderer shrinks DOWN from here until the roster fits
+   * the fixed panel - a measurement, not a constant, which is why it is not resolved here: both
+   * sides run the same loop over the same poster pixels and land on the same size.
+   */
+  fontSize: number;
+  columns: number;
+  columnGap: number;
+  zones: PublishedCarteDirectoryZone[];
 }
 
 /** The full publication payload sent to `POST /api/associations/poster/:id/publish`. */
 export interface PublishedCarte {
   /** Frame width / height; the consumer must render into a box of this ratio or the map skews. */
   aspectRatio: number;
+  stage: PublishedCarteStage;
   background: { dataUrl: string | null; scrimOpacity: number };
-  /** Poster title color (hex), or null to let the consumer pick. */
-  titleColor: string | null;
-  bubbles: PublishedCarteBubble[];
+  style: PublishedCarteStyle;
+  /** The poster's own title band, or null when the project has no name. */
+  title: PublishedCarteText | null;
+  units: PublishedCarteUnit[];
   texts: PublishedCarteText[];
+  /** The member directory, or null when the author hid it. */
+  directory: PublishedCarteDirectory | null;
 }
 
-/** Rounds to 5 decimals: enough precision for a 1600px frame, without a wall of float noise. */
-function frac(value: number): number {
-  return Math.round(value * 1e5) / 1e5;
+/** Rounds a poster-pixel value to 2 decimals: sub-pixel accuracy without a wall of float noise. */
+function px(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** Resolves one member into the card the poster draws, at a given box and font base. */
+function toCard(
+  member: { userId: string; name: string; role: string },
+  box: { x: number; y: number; w: number },
+  nameBase: number,
+  tuning: CarteDebugTuning
+): PublishedCarteCard {
+  return {
+    userId: member.userId,
+    name: member.name,
+    role: member.role,
+    initials: getInitials(member.name),
+    x: px(box.x),
+    y: px(box.y),
+    w: px(box.w),
+    nameSize: px(cardNameFontSize(member.name, box.w, nameBase * tuning.memberNameScale)),
+    roleSize: px(cardRoleFontSize(nameBase, tuning)),
+  };
+}
+
+/**
+ * Resolves one association unit: the blob, the logo frame, the name band and the member cards,
+ * with the crown ellipse and the font ladders already applied.
+ */
+function toUnit(
+  bubble: PositionedBubble,
+  data: PosterBubble,
+  tuning: CarteDebugTuning
+): PublishedCarteUnit {
+  const shown = resolveUnitMembers(bubble, data.members);
+  const ls = logoShape(bubble.logoShape);
+  const lw = LOGO_BASE * ls.w;
+  const lh = LOGO_BASE * ls.h;
+  const bureauW = tuning.bureauCardWidth;
+  const presW = tuning.presidentCardWidth;
+  const nameW = BLOB_SIZE - NAME_INSET;
+  const assoNameSize = nameFontSize(data.name) * tuning.associationNameScale;
+
+  // Bureau first, then the president: the poster draws them in that order so the president's card
+  // sits in front of the crown, and the showcase renders the array as it comes.
+  const cards = shown.bureau.map((member, i) => {
+    const offset = bureauCrownOffsetWithTuning(i, shown.bureau.length, tuning);
+    return toCard(
+      member,
+      {
+        x: UNIT_CX + offset.x - bureauW / 2,
+        y: tuning.bureauCrownCy + offset.y - bureauW / 2,
+        w: bureauW,
+      },
+      BUREAU_NAME_BASE,
+      tuning
+    );
+  });
+  if (shown.president) {
+    cards.push(
+      toCard(
+        shown.president,
+        { x: UNIT_CX - presW / 2, y: PRES_TOP, w: presW },
+        PRES_NAME_BASE,
+        tuning
+      )
+    );
+  }
+
+  return {
+    assoId: bubble.assoId,
+    x: px(bubble.x),
+    y: px(bubble.y),
+    w: CARD_WIDTH,
+    h: CARD_HEIGHT,
+    scale: bubble.scale,
+    z: bubble.z,
+    color: bubble.colorOverride,
+    colorFallback: data.color,
+    blob: {
+      x: px(UNIT_CX - BLOB_SIZE / 2),
+      y: px(BLOB_CY - BLOB_SIZE / 2),
+      size: BLOB_SIZE,
+      radius: shapeRadius(bubble.shape),
+    },
+    logo: {
+      x: px(UNIT_CX - lw / 2),
+      y: px(LOGO_CY - lh / 2),
+      w: px(lw),
+      h: px(lh),
+      radius: ls.radius,
+      initialsSize: LOGO_INITIALS_SIZE,
+      initials: getInitials(data.name),
+    },
+    name: {
+      x: px(UNIT_CX - nameW / 2),
+      y: NAME_TOP,
+      w: nameW,
+      size: px(assoNameSize),
+      emailSize: px(Math.max(5, nameFontSize(data.name) * 0.35 * tuning.associationNameScale)),
+    },
+    cards,
+  };
+}
+
+/** Formats one association's roster exactly as the directory prints it. */
+function directoryLine(asso: PosterBubble): string {
+  return [...asso.members]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((mem) => (mem.role ? `${mem.name} (${mem.role})` : mem.name))
+    .join(' - ');
 }
 
 /**
  * Converts the editor's live state into the published document.
  *
- * @param bubbles - Hand-placed association units, in poster pixel coordinates.
- * @param decorations - Free-form decorations; only text labels are published.
- * @param background - The editor's background image + scrim.
- * @param titleColor - The author's title color override, when set.
+ * @param params.bubbles - Hand-placed association units, in poster pixel coordinates.
+ * @param params.content - Resolved association content, keyed by association id.
+ * @param params.model - The zoned model, which is what the directory lists.
+ * @param params.decorations - Free-form decorations; only text labels are published.
+ * @param params.background - The editor's background image + scrim.
+ * @param params.style - The poster style, with the author's title color already applied.
+ * @param params.title - The project name, drawn as the poster's title.
+ * @param params.directoryVisible - Whether the author shows the right-hand directory.
+ * @param params.directoryHeading - Localized directory heading, resolved by the caller.
+ * @param params.tuning - The author's geometry tuning for this project.
  */
-export function buildPublishedCarte(
-  bubbles: PositionedBubble[],
-  decorations: Decoration[],
-  background: { dataUrl: string | null; scrimOpacity: number },
-  titleColor: string | null
-): PublishedCarte {
+export function buildPublishedCarte(params: {
+  bubbles: PositionedBubble[];
+  content: Record<string, PosterBubble>;
+  model: PosterModel;
+  decorations: Decoration[];
+  background: { dataUrl: string | null; scrimOpacity: number };
+  style: CarteStyle;
+  title: string;
+  directoryVisible: boolean;
+  directoryHeading: string;
+  tuning: CarteDebugTuning;
+}): PublishedCarte {
+  const { style, tuning } = params;
+  const t = titleRect(params.directoryVisible);
+  const dir = directoryRect();
+
   return {
-    aspectRatio: frac(STAGE_WIDTH / STAGE_HEIGHT),
-    background: { dataUrl: background.dataUrl, scrimOpacity: background.scrimOpacity },
-    titleColor,
-    // The blob sits centered inside its unit box, so its own top-left is the unit's origin plus
-    // the (scaled) offset of the blob within the unit.
-    bubbles: bubbles.map((b) => ({
-      assoId: b.assoId,
-      x: frac((b.x + (UNIT_CX - BLOB_SIZE / 2) * b.scale) / STAGE_WIDTH),
-      y: frac((b.y + (BLOB_CY - BLOB_SIZE / 2) * b.scale) / STAGE_HEIGHT),
-      w: frac((BLOB_SIZE * b.scale) / STAGE_WIDTH),
-      z: b.z,
-      color: b.colorOverride,
-      radius: shapeRadius(b.shape),
-      logoRadius: logoShape(b.logoShape).radius,
-    })),
-    texts: decorations
+    aspectRatio: Math.round((STAGE_WIDTH / STAGE_HEIGHT) * 1e5) / 1e5,
+    stage: { w: STAGE_WIDTH, h: STAGE_HEIGHT },
+    background: { ...params.background },
+    style: {
+      pageBg: style.pageBg,
+      scrimColor: style.scrimColor,
+      cardBg: style.polaroidBg,
+      cardTextColor: style.polaroidTextColor,
+      directoryBg: style.directoryBg,
+      directoryTextColor: style.directoryTextColor,
+      directoryMutedColor: style.directoryMutedColor,
+    },
+    // The title sits under everything (the units carry z >= 1), like the editor's title band.
+    title: params.title.trim()
+      ? {
+          x: t.x,
+          y: t.y,
+          w: t.w,
+          z: 0,
+          size: TITLE_SIZE,
+          weight: 700,
+          content: params.title,
+          color: style.titleColor,
+          align: 'left',
+        }
+      : null,
+    units: params.bubbles
+      .filter((bubble) => params.content[bubble.assoId])
+      .map((bubble) => toUnit(bubble, params.content[bubble.assoId], tuning)),
+    texts: params.decorations
       .filter((d): d is Extract<Decoration, { kind: 'text' }> => d.kind === 'text')
       .filter((d) => d.content.trim().length > 0)
       .map((d) => ({
-        x: frac(d.x / STAGE_WIDTH),
-        y: frac(d.y / STAGE_HEIGHT),
-        w: frac((TEXT_BASE_WIDTH * d.scale) / STAGE_WIDTH),
+        x: px(d.x),
+        y: px(d.y),
+        w: px(TEXT_BASE_WIDTH * d.scale),
         z: d.z,
-        size: frac((TEXT_BASE_SIZE * d.scale) / STAGE_WIDTH),
+        size: px(TEXT_BASE_SIZE * d.scale),
+        weight: d.bold ? 800 : 500,
         content: d.content,
         color: d.color,
-        bold: d.bold,
         align: d.align,
       })),
+    directory: params.directoryVisible
+      ? {
+          x: dir.x,
+          y: dir.y,
+          w: dir.w,
+          h: dir.h,
+          radius: DIRECTORY_RADIUS,
+          padX: DIRECTORY_PAD_X,
+          padY: DIRECTORY_PAD_Y,
+          heading: params.directoryHeading,
+          headingSize: DIRECTORY_HEADING_SIZE,
+          fontSize: DIRECTORY_BASE_FONT,
+          columns: DIRECTORY_COLUMNS,
+          columnGap: DIRECTORY_COLUMN_GAP,
+          zones: params.model.zones
+            .filter((zone) => zone.bubbles.length > 0)
+            .map((zone) => ({
+              label: zone.label,
+              assos: zone.bubbles.map((asso) => ({
+                assoId: asso.assoId,
+                line: directoryLine(asso),
+              })),
+            })),
+        }
+      : null,
   };
 }
