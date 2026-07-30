@@ -425,6 +425,27 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     }
     if (storageSettled.status === 'rejected') throw storageSettled.reason;
 
+    // Biometric mode derived no key: init() passed an empty one and the native side resolved the
+    // real key from the platform keystore, behind the single prompt this login already raised.
+    // Pull it into the session now, BEFORE anything below reads ctx.getDeviceKey().
+    //
+    // This is not cosmetic. `deviceKeyB64` seals more than mls.bin, which Rust handles on its own:
+    // locally stored messages are AES-256-GCM blobs encrypted *in the frontend*, so a session left
+    // with an empty key cannot decrypt a single stored row (importDeviceKey rejects a zero-length
+    // key) and cannot write a new one either - silently, because every persistence call site
+    // swallows its error. That is a whole biometric session of history quietly not being saved.
+    //
+    // The local `deviceKeyB64` deliberately stays empty: it means "a key the caller supplied", and
+    // it is what gates the device-key vault write and store_push_context further down. Biometric
+    // mode must keep both skipped - the keystore is the only place this key belongs at rest.
+    if (isBiometric) {
+      const sessionKey = await mlsService.resolveSessionDeviceKey();
+      if (!sessionKey || !isValidDeviceKeyB64(sessionKey)) {
+        throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
+      }
+      ctx.setDeviceKey(sessionKey);
+    }
+
     ctx.setStorage(storageSettled.value);
     ctx.setMyDeviceId(mlsService.getDeviceId());
     cb.log(`MLS identity initialised (device: ${ctx.getMyDeviceId()})`);

@@ -124,6 +124,62 @@ Nothing in the log says the key was found, because from Rust's point of view it 
 readers are covered now; the test captures the flag rather than matching the literal, so adding a
 `DEFAULT` encode beside a `NO_WRAP` one still fails.
 
+### Biometric mode must hand the key back to the frontend
+
+`deviceKeyB64` seals two different things in two different layers. `mls.bin` is sealed in Rust,
+which resolves the key itself; **local messages are AES-256-GCM blobs encrypted in the frontend**
+(`db/sqlite.ts`, via `encryption.ts`). Biometric mode calls `init()` with an empty key on purpose -
+that empty string is what selects `load_encrypted_with_keystore(pin: None)` - so Rust ends the login
+holding the key and the WebView holding nothing.
+
+That asymmetry made every biometric session lose its history writes. `importDeviceKey('')` rejects
+(AES-GCM has no zero-length key), so **every stored row failed to decrypt and every new row failed
+to be written**, and both persistence call sites swallow their error
+(`saveMessages(...).catch(() => {})`). The visible half was a wall of `Failed to decrypt SQLite row`
+on the second launch; the silent half was that nothing received during that session was ever saved.
+The conversation *list* survived, which is what made it look cosmetic - conversation metadata rows
+are plaintext.
+
+`initialiser_mls` already caches the resolved key in `AppState.device_key`, so that saves arriving
+later with an empty `device_key_b64` still work (`session_at_rest_key`). `recuperer_cle_session_mls`
+returns that cached copy, and `loginImpl` pulls it into the session with `ctx.setDeviceKey` right
+after `init()` succeeds and **before** anything reads `ctx.getDeviceKey()`. Reading the keystore
+again instead would raise a second BiometricPrompt in the middle of a successful login;
+`sessionDeviceKey.test.ts` pins the command to the cache for that reason.
+
+Two invariants around it:
+
+- The **local** `deviceKeyB64` in `loginImpl` stays empty. It means "a key the caller supplied", and
+  it gates the device-key vault write and `store_push_context`. Biometric mode must keep both
+  skipped - the keystore is where this key belongs at rest.
+- A `null` answer **fails the login** (`LoginFailure('keystore_empty')` -> PIN modal) instead of
+  continuing. Continuing is a whole session that persists nothing, with nothing in the log; the PIN
+  path derives a working key and loses no data.
+
+`TauriMlsService` also fills its own `_deviceKeyB64` from that answer, because
+`reloadStateFromDisk` skips on a missing key - and skipping it on every resume is how a background
+engine's advance to `mls.bin` gets clobbered by the next save (lost-update -> `SecretReuse`).
+
+### The login guard cannot tell a caller's flag from a concurrent login
+
+`loginImpl` refuses to run when `isLoginInProgress` is already set. `startLoginFlow` sets that same
+flag before any `await`, for a different reason - `+layout.ts` must not fire `fetchUserProfile`
+while a login is pending. Both read and write one variable, so **every entry point that calls into
+`loginImpl` has to release the flag first**. The web branch and `nativeStorageLogin` did; the
+biometric branch did not, and so the automatic biometric attempt of every cold launch was swallowed:
+
+```
+[BIOMETRIC] Biometric login attempt (keystore key path)...
+[BIOMETRIC] Authenticating for userId=... via device keystore...
+[LOGIN] Call ignored, a login already owns the flow (loggedIn=false, reconnecting=false, loginInProgress=true)
+```
+
+The sheet appeared, no OS prompt ever did, and the flow fell through to the PIN modal - where
+tapping "use biometrics" worked, because the fall-through had cleared the flag on the way. That is
+the whole "biometrics only work on the second try" report, and it is deterministic, not a race.
+Re-entrancy is guarded separately by the component-local `_loginInProgress`, which is why releasing
+the shared flag here is safe.
+
 ### When a state still refuses to open
 
 The PIN modal's "forgot PIN" (`handlePinReset`) wipes the server-side and local MLS state and

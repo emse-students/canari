@@ -114,9 +114,19 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   Already banked from the Android run of 2026-07-29 (log on the user's desktop): SQLite storage on
   every launch, never the IndexedDB fallback; and the post-enrolment relaunch does raise the
   biometric path, so the `89f8d230` `isKeyPresent` fix holds. One bug found there and fixed in
-  v0.11.5 (the `Base64.DEFAULT` newline) - check G is its re-run. Check G.3 is the swallowed first
-  tap, still unexplained; v0.11.5 makes the guard name the flag it returned on, so capture that
-  window even when the unlock succeeds.
+  v0.11.5 (the `Base64.DEFAULT` newline) - check G is its re-run.
+  **Android run of 2026-07-30 (v0.11.5): check G.2 PASSED** (`Skipping PIN verification - using
+  device keystore...`, so the newline fix holds), and it closed G.3 plus found a second bug. Both
+  are FIXED in code and both need a device re-run - see checks G.3 and G.4, now written as
+  verdicts rather than questions:
+  - G.3, the swallowed first tap, was never a race. `startLoginFlow` raised `isLoginInProgress`
+    for the `+layout.ts` guard and did not release it before `biometricLogin`, so `loginImpl`
+    refused its own caller on every cold launch. The web branch already released it; the
+    biometric one now does too.
+  - A biometric session ran with an EMPTY device key in the WebView (Rust resolves the key for
+    `mls.bin`, but local messages are encrypted in JS), so it could read no stored row - the wall
+    of `Failed to decrypt SQLite row` - and, silently, persisted nothing it received. New
+    `recuperer_cle_session_mls` hands the natively-cached key back, no second prompt.
 
 - \[ \] **WP-CARTO-3 (P3) - republish the carte once the card fix is deployed.** Member cards are now
   sized per name (a surname was breaking mid-word) and the payload gained `photo`, so the live map
@@ -175,6 +185,9 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - Raw 32 bytes at rest, base64 on the FFI wire; Android must encode with `NO_WRAP`.
 - Android has TWO readers per keystore alias (`MlsDeviceKeyStore` bg, `KeystorePlugin` fg) - fix both.
 - Escape hatch: "forgot PIN" wipes state and restarts, at the cost of local history.
+- Rust's copy of the device key seals `mls.bin` only - local messages are encrypted in the
+  FRONTEND, so biometric mode must pull the key back (`recuperer_cle_session_mls`) or persist nothing.
+- `isLoginInProgress` is one flag with two owners: every entry point must release it before `loginImpl`.
 
 #### Community channels -> [chat](docs/wiki/frontend/modules/chat.md), [social-service](docs/wiki/services/social-service.md)
 

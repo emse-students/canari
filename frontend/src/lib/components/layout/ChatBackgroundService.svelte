@@ -884,6 +884,14 @@
               if (biometricCancelled) {
                 showBiometricSheet = false;
               } else {
+                // Same handover as the web branch below, and for the same reason: this function
+                // raised isLoginInProgress for the +layout.ts guard, and loginImpl refuses to run
+                // when that flag is set - it cannot tell our flag from a real concurrent login.
+                // Left set, the automatic biometric attempt of every cold launch was swallowed
+                // ("[LOGIN] Call ignored, a login already owns the flow"): the sheet appeared, no
+                // OS prompt ever did, and the flow fell through to the PIN modal - where the same
+                // tap on "use biometrics" worked, because line ~918 had cleared the flag by then.
+                globalSession.isLoginInProgress = false;
                 await globalSession.biometricLogin({
                   ...sessionCb(),
                   onLoginFailed: onSavedPinFailed,

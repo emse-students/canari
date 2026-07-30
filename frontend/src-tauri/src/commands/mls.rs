@@ -146,6 +146,31 @@ fn session_at_rest_key(
     .ok_or_else(|| "no device key for this session - MLS not initialized".to_string())
 }
 
+/// Returns the at-rest key [`initialiser_mls`] cached for this session, base64-encoded, or `None`
+/// when no session has been initialised yet.
+///
+/// Biometric mode is the only caller. There the frontend calls `initialiser_mls` with an empty
+/// `device_key_b64` and never learns the key - but the key seals more than `mls.bin`: locally
+/// stored messages are AES-256-GCM blobs encrypted **in JS** (`db/sqlite.ts`) under that same key.
+/// Without it every stored row fails to decrypt and every new row fails to be written, silently,
+/// for the whole session.
+///
+/// Handing the cached copy back costs no second prompt, which reading the keystore again would.
+/// It is also not a new exposure: on the PIN and vault paths `deriveDeviceKeyB64` produces this
+/// exact key in the WebView to begin with - biometric mode was the one path where the frontend
+/// was missing something it needs.
+#[tauri::command]
+pub(crate) async fn recuperer_cle_session_mls(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    use base64::Engine;
+    let cached = *state
+        .device_key
+        .lock()
+        .map_err(|_| "Failed to lock device key".to_string())?;
+    Ok(cached.map(|key| base64::engine::general_purpose::STANDARD.encode(key)))
+}
+
 #[tauri::command]
 pub(crate) async fn sauvegarder_mls(
     device_key_b64: String,

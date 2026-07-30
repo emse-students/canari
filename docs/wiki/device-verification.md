@@ -143,15 +143,28 @@ On the login of check E, confirm in the app log:
    - `[BIOMETRIC] Authenticating for userId=… via device keystore...`
    - `[BIOMETRIC] Skipping PIN verification - using device keystore...` &larr; the fix. Its absence
      with the two lines above present is exactly the v0.11.4 failure.
-3. **The swallowed first tap.** On 2026-07-29 the first biometric attempt of a cold launch logged the
-   first two lines and then nothing, and a second tap 3 s later worked. v0.11.5 makes the guard name
-   the flag it returned on: grep `[LOGIN] Call ignored, a login already owns the flow`. **Capture
-   this window even if the unlock succeeds** - the flag values are the whole answer, and the fix is
-   probably already sketched in `loginImpl`'s guard comment (an explicit PIN submit clears the flag
-   first so a user action is never swallowed; the biometric entry point does not).
-4. **The PIN modal keeps its "use biometrics" button** when biometrics are enrolled. It derives that
+3. **The swallowed first tap - DIAGNOSED on 2026-07-30, fix in v0.11.6.** The v0.11.5 log named the
+   flag: `[LOGIN] Call ignored, a login already owns the flow (loggedIn=false, reconnecting=false,
+   loginInProgress=true)`. `startLoginFlow` set that flag itself for the `+layout.ts` guard and
+   never released it before calling `biometricLogin`, so the automatic attempt was refused by
+   `loginImpl` every cold launch - deterministic, not a race. It now releases it like the web
+   branch does.
+   **Verdict:** the cold-launch attempt reaches `[BIOMETRIC] Skipping PIN verification - using
+   device keystore...` and the OS prompt appears **without** the PIN modal being shown first. The
+   `Call ignored` line must not appear at all.
+
+4. **The biometric session must persist its messages** (v0.11.6, same log). A biometric session
+   used to run with an empty device key in the WebView, so nothing it received was written to
+   SQLite and nothing already stored could be read.
+   - Unlock with biometrics, receive a message, kill the app, unlock again: **the message must
+     still be there**.
+   - `Failed to decrypt SQLite row ...` must not appear. A wall of it right after
+     `Initialising MLS (biometric keystore path)...` is the exact failure.
+   - There must be **no second biometric prompt** during the login: the key comes from the native
+     session cache, not from a fresh keystore read.
+5. **The PIN modal keeps its "use biometrics" button** when biometrics are enrolled. It derives that
    button from the same flag as the sheet, so if the sheet stops opening the button vanishes too.
-5. **Disable** biometric unlock, relaunch, confirm the PIN is required and the keystore entry is
+6. **Disable** biometric unlock, relaunch, confirm the PIN is required and the keystore entry is
    really gone (the biometric sheet must not appear at all).
 
 ## H. Deep link from an OS notification tap

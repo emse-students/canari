@@ -946,6 +946,14 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async reloadStateFromDisk(): Promise<void> {}
 
+  /**
+   * Default null: every path but the Tauri biometric one derives the device key in the frontend
+   * and hands it to {@link init}, so there is nothing to ask back for.
+   */
+  async resolveSessionDeviceKey(): Promise<string | null> {
+    return null;
+  }
+
   // ── Platform-specific (abstract) ──────────────────────────────────────────
 
   abstract saveState(deviceKeyB64: string): Promise<Uint8Array>;

@@ -103,6 +103,14 @@ export interface IMlsService {
    */
   reloadStateFromDisk(): Promise<void>;
   /**
+   * Returns the at-rest key this session actually initialised with, base64-encoded, or `null`
+   * where the caller already holds it. Only the Tauri biometric path answers: it calls
+   * {@link init} with an empty key and lets the native side resolve it from the platform
+   * keystore, so the frontend - which encrypts every locally stored message with that same key -
+   * ends up without it unless it asks.
+   */
+  resolveSessionDeviceKey(): Promise<string | null>;
+  /**
    * Re-encrypts the in-memory MLS state with a new device key and persists it.
    * Must be called after the user successfully changes their PIN on the server,
    * so the stored state remains decryptable on the next login.

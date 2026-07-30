@@ -560,6 +560,25 @@ export class TauriMlsService extends BaseMlsService {
     }
   }
 
+  /**
+   * Reads back the at-rest key `initialiser_mls` cached natively for this session.
+   *
+   * Biometric mode calls {@link invokeInit} with an empty string, so `_deviceKeyB64` stays empty
+   * and the frontend holds no key - yet the frontend is the only layer that encrypts locally
+   * stored messages. Rust resolved it from the keystore behind the one BiometricPrompt of the
+   * login and cached it, so this costs no second prompt.
+   *
+   * Also fills `_deviceKeyB64` when it is empty: {@link reloadStateFromDisk} skips on a missing
+   * key, and skipping it on every resume is how a background engine's advance to `mls.bin` gets
+   * clobbered by the next save (lost-update -> SecretReuse).
+   */
+  override async resolveSessionDeviceKey(): Promise<string | null> {
+    const keyB64 = await invoke<string | null>('recuperer_cle_session_mls');
+    if (!keyB64) return null;
+    if (!this._deviceKeyB64) this._deviceKeyB64 = keyB64;
+    return keyB64;
+  }
+
   /** Native decrypt + client init for a given device key/state; throws on wrong key (no fresh-start). */
   protected async loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void> {
     await this.invokeInit(deviceKeyB64, state);

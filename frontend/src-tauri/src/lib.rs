@@ -30,9 +30,9 @@ use crate::commands::mls::{
     exporter_ratchet_tree, exporter_secret, generer_key_package, generer_key_packages,
     generer_key_packages_et_persister, initialiser_mls, key_package_a_clef_privee, lister_groupes,
     obtenir_epoch, oublier_groupe, recevoir_message, recevoir_message_bytes,
-    recevoir_messages_batch, rejoindre_par_commit_externe, retirer_membres,
-    retirer_membres_par_appareil, sauvegarder_mls, sauvegarder_mls_et_persister, supprimer_groupe,
-    trailer_welcome,
+    recevoir_messages_batch, recuperer_cle_session_mls, rejoindre_par_commit_externe,
+    retirer_membres, retirer_membres_par_appareil, sauvegarder_mls, sauvegarder_mls_et_persister,
+    supprimer_groupe, trailer_welcome,
 };
 use crate::commands::push::{
     check_push_secret_health, get_fcm_token, get_voip_token, load_push_context,
@@ -781,6 +781,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             initialiser_mls,
+            recuperer_cle_session_mls,
             sauvegarder_mls,
             sauvegarder_mls_et_persister,
             creer_groupe,
