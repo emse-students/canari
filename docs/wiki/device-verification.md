@@ -9,7 +9,8 @@ This file is the single ordered pass that closes them. It replaces the checks th
 across `AGENTS.md` and individual Work Packages.
 
 **Build under test: v0.11.5.** Android from Play (production) or the release-asset APK, iOS from
-TestFlight. Both were published by CI on 2026-07-30.
+TestFlight. Both were published by CI on 2026-07-30. Check G alone has since been re-run on
+**v0.11.6** (the two biometric fixes), and passed on Android - see below.
 
 ## What each check closes
 
@@ -143,25 +144,24 @@ On the login of check E, confirm in the app log:
    - `[BIOMETRIC] Authenticating for userId=… via device keystore...`
    - `[BIOMETRIC] Skipping PIN verification - using device keystore...` &larr; the fix. Its absence
      with the two lines above present is exactly the v0.11.4 failure.
-3. **The swallowed first tap - DIAGNOSED on 2026-07-30, fix in v0.11.6.** The v0.11.5 log named the
-   flag: `[LOGIN] Call ignored, a login already owns the flow (loggedIn=false, reconnecting=false,
-   loginInProgress=true)`. `startLoginFlow` set that flag itself for the `+layout.ts` guard and
-   never released it before calling `biometricLogin`, so the automatic attempt was refused by
-   `loginImpl` every cold launch - deterministic, not a race. It now releases it like the web
-   branch does.
-   **Verdict:** the cold-launch attempt reaches `[BIOMETRIC] Skipping PIN verification - using
-   device keystore...` and the OS prompt appears **without** the PIN modal being shown first. The
-   `Call ignored` line must not appear at all.
+3. **The swallowed first tap - PASSED on Android, v0.11.6, 2026-07-30.** `startLoginFlow` raised
+   `isLoginInProgress` for the `+layout.ts` guard and never released it before `biometricLogin`,
+   so `loginImpl` refused the automatic attempt of every cold launch - deterministic, not a race.
+   It now releases it like the web branch does.
+   **Result:** two cold launches (16:34:47, 16:37:54) each went
+   `[BIOMETRIC] Biometric login attempt` -> `Authenticating for userId=... via device keystore...`
+   -> `Skipping PIN verification - using device keystore...`, OS prompt raised, no PIN modal.
+   `[LOGIN] Call ignored, a login already owns the flow` appears **nowhere** in the log.
 
-4. **The biometric session must persist its messages** (v0.11.6, same log). A biometric session
-   used to run with an empty device key in the WebView, so nothing it received was written to
-   SQLite and nothing already stored could be read.
-   - Unlock with biometrics, receive a message, kill the app, unlock again: **the message must
-     still be there**.
-   - `Failed to decrypt SQLite row ...` must not appear. A wall of it right after
-     `Initialising MLS (biometric keystore path)...` is the exact failure.
-   - There must be **no second biometric prompt** during the login: the key comes from the native
-     session cache, not from a fresh keystore read.
+4. **The biometric session must persist its messages - PASSED on Android, v0.11.6, 2026-07-30.**
+   A biometric session used to run with an empty device key in the WebView, so nothing it received
+   was written to SQLite and nothing already stored could be read.
+   **Result:** zero `Failed to decrypt SQLite row` across both biometric sessions, one biometric
+   prompt per login, and `MLS state loaded from mls.bin (native).` naming the right backend. The
+   decisive line is `[HISTORY_BUNDLE] Full history sent: 51 message(s)`: the bundle is built by
+   reading the local store back with the device key, and it carries **51** where the session had
+   started from a 50-message bundle - so the message received under biometrics was both written
+   and read back. `[FCM_CACHE] Injection done: 1/1` confirms the same for the push cache.
 5. **The PIN modal keeps its "use biometrics" button** when biometrics are enrolled. It derives that
    button from the same flag as the sheet, so if the sheet stops opening the button vanishes too.
 6. **Disable** biometric unlock, relaunch, confirm the PIN is required and the keystore entry is

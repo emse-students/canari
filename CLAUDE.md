@@ -115,23 +115,47 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   every launch, never the IndexedDB fallback; and the post-enrolment relaunch does raise the
   biometric path, so the `89f8d230` `isKeyPresent` fix holds. One bug found there and fixed in
   v0.11.5 (the `Base64.DEFAULT` newline) - check G is its re-run.
-  **Android run of 2026-07-30 (v0.11.5): check G.2 PASSED** (`Skipping PIN verification - using
-  device keystore...`, so the newline fix holds), and it closed G.3 plus found a second bug. Both
-  are FIXED in code and both need a device re-run - see checks G.3 and G.4, now written as
-  verdicts rather than questions:
-  - G.3, the swallowed first tap, was never a race. `startLoginFlow` raised `isLoginInProgress`
-    for the `+layout.ts` guard and did not release it before `biometricLogin`, so `loginImpl`
-    refused its own caller on every cold launch. The web branch already released it; the
-    biometric one now does too.
-  - A biometric session ran with an EMPTY device key in the WebView (Rust resolves the key for
-    `mls.bin`, but local messages are encrypted in JS), so it could read no stored row - the wall
-    of `Failed to decrypt SQLite row` - and, silently, persisted nothing it received. New
-    `recuperer_cle_session_mls` hands the natively-cached key back, no second prompt.
+  **Check G is CLOSED on Android: G.2 passed on v0.11.5, G.3 and G.4 on v0.11.6 (2026-07-30).**
+  Two cold biometric launches, no `Call ignored`, no PIN modal, no `Failed to decrypt SQLite row`,
+  one prompt per login - and a 51-message history bundle served out of the local store where the
+  session had started from 50, which is the proof the biometric session both writes and reads.
+  Everything else in the runbook (A-F, H-J) is still owed, and ALL of it is still owed on iOS.
 
 - \[ \] **WP-CARTO-3 (P3) - republish the carte once the card fix is deployed.** Member cards are now
   sized per name (a surname was breaking mid-word) and the payload gained `photo`, so the live map
   keeps its old sizes until a republish from `/admin/carte/<id>`. Deploy order does NOT matter this
   time: the Portail reads a card with no `photo` as `w - 12`, which is exactly what it was.
+
+- \[ \] **WP-PUSH-1 (P2) - a push notification takes 12 s because the retry ladder is in the wrong
+  order.** Android log 2026-07-30, 16:36:34 -> 16:36:46. A silent push carries a commit; the
+  background is read-only and never applies it, so the NEXT message push cannot decrypt. Android
+  then burns 3 x `tryDecrypt retry N/3 (group-join race)` (9.6 s of identical failures, and the
+  label is wrong - no join was in flight) before `tryDecryptWithCommitCatchup`, which succeeds
+  first try. The catch-up must run FIRST when the group is already local (a join race is only
+  possible when it is not). Same log, two smaller lies to fix while there: a silent commit push
+  logs `Decryption failed -> MlsBackgroundWorker enqueued` + `Fallback notification: ...` before
+  discovering it shows nothing, and `nativeProcessBackgroundTasks -> success` is logged for a
+  worker that did not apply the commit it was enqueued for. iOS is already correct here (the NSE
+  goes straight to catch-up), so this aligns Android on iOS.
+
+- \[ \] **WP-PUSH-2 (P3) - iOS NSE parity gaps, both directions.** The NSE never writes the FCM
+  cache the Android service writes (`canari_push.mm` does, but only in the app process), so a push
+  decrypted while the app is KILLED is not pre-injected on the next launch - latency only, the
+  pending queue still carries it and push decrypt acks nothing. Conversely the NSE has no
+  welcome-race retry at all, so the first message of a brand-new conversation can show the generic
+  fallback where Android retries. Verified by reading both sides on 2026-07-30, nothing run.
+
+- \[ \] **WP-HIST-1 (P3) - a history bundle is served only while the app is open, by design.**
+  `notifyHistoryRequest` is online-only with no durable FCM wake (the comment says so), so a peer
+  that asks while this device is killed simply waits. Making it background is NOT cheap: the bundle
+  is built from `storage.getMessages(groupId, deviceKeyB64)` - rows encrypted in JS - and sending
+  it is an MLS write. `welcome_request_pending` proves the write half is possible; the read half
+  would need the JS at-rest format reimplemented natively. Decide whether it is worth that.
+
+- \[ \] **WP-NET-1 (P3) - a transient network error empties the communities list for the session.**
+  `useChannelWorkspaces` catches everything into one `Failed to load communities/channels` log line
+  and still returns `true` ("a refresh ran"), so no caller retries. Seen 2026-07-30 16:38:08 when
+  one request died after 7.2 s in a window where four others took 2-7 s.
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
