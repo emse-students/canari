@@ -50,6 +50,8 @@
     isUploading?: boolean;
     /** When true, the composer is read-only (MLS catch-up in progress). */
     interactionLocked?: boolean;
+    /** When set, only users whose IDs are in this list appear in @mention suggestions. */
+    allowedUserIds?: string[];
   }
 
   let {
@@ -68,6 +70,7 @@
     onRemovePendingFile,
     isUploading = false,
     interactionLocked = false,
+    allowedUserIds,
   }: Props = $props();
 
   let mentionComposer = $state<MentionComposerInput | null>(null);
@@ -607,6 +610,7 @@
       <MentionComposerInput
         bind:this={mentionComposer}
         value={messageText}
+        {allowedUserIds}
         onchange={handleMessageChange}
         class="flex-1 min-w-0"
         editorClass="chat-composer-textarea"

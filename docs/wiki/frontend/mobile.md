@@ -164,6 +164,18 @@ Android has no equivalent restriction.
 - Shows notifications: MessagingStyle for messages, CallStyle for calls
 - Quick actions: Reply (text input) and Mark as Read (broadcast to `CanariNotificationActionReceiver`)
 
+#### Background MLS decrypt ladder
+
+When an encrypted MLS message push arrives:
+
+1. Try a direct decrypt (`tryDecrypt`).
+2. If that fails and the group is already local (`isGroupLocal` → epoch ≥ 0), run in-memory commit catch-up (`tryDecryptWithCommitCatchup`) immediately.
+3. If the group is **not** local, retry a few times to give a concurrent Welcome push time to join the group (`WELCOME_RACE_RETRIES × WELCOME_RACE_RETRY_DELAY_MS`).
+4. If the group becomes local during that race, try commit catch-up as a last resort before falling back to the worker.
+5. If everything fails, enqueue `MlsBackgroundWorker` and show the generic fallback notification (unless the push is silent, in which case it returns quietly).
+
+This order matters because a silent commit push advances the epoch but cannot persist state while the app is closed; the next message push therefore looks like an epoch gap on a group that is already joined. Running catch-up first for local groups avoids the old ~9.6 s retry loop.
+
 ### Background execution
 
 - **WorkManager** (`OutboxRetryWorker`): exponential backoff retry for unsent outbox messages

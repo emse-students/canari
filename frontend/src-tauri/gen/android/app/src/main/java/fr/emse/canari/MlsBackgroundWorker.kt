@@ -123,7 +123,7 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             Log.d(TAG, "doWork: MLS state=${stateBytes.size} bytes, filesDir=$filesDir")
             val success = nativeProcessBackgroundTasks(filesDir, stateBytes, "", ctx.userId, ctx.deviceId)
             if (success) {
-                Log.d(TAG, "doWork: nativeProcessBackgroundTasks -> success")
+                Log.d(TAG, "doWork: background cleanup completed")
                 Result.success()
             } else {
                 Log.w(TAG, "doWork: nativeProcessBackgroundTasks -> false, retry")

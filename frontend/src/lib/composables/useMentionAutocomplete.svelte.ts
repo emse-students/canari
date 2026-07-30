@@ -18,6 +18,8 @@ export function useMentionAutocomplete(opts: {
   getCursor?: () => number;
   setCursor?: (pos: number) => void;
   focus?: () => void;
+  /** When set, only users whose IDs are in this list appear in suggestions. */
+  allowedUserIds?: string[];
 }) {
   let query = $state('');
   let suggestions = $state<MentionUser[]>([]);
@@ -42,7 +44,12 @@ export function useMentionAutocomplete(opts: {
     try {
       const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(q)}`);
       if (res.ok) {
-        const data: MentionUser[] = await res.json();
+        let data: MentionUser[] = await res.json();
+        const allowed = opts.allowedUserIds;
+        if (allowed && allowed.length > 0) {
+          const allowedSet = new Set(allowed.map((id) => id.toLowerCase()));
+          data = data.filter((u) => allowedSet.has(u.id.toLowerCase()));
+        }
         suggestions = data.slice(0, 6);
         open = suggestions.length > 0;
         selectedIdx = -1;

@@ -26,6 +26,8 @@
     minHeight?: string;
     class?: string;
     editorClass?: string;
+    /** When set, only users whose IDs are in this list appear in @mention suggestions. */
+    allowedUserIds?: string[];
     onchange?: (text: string) => void;
     onkeydown?: (e: KeyboardEvent) => void;
     onpaste?: (e: ClipboardEvent) => void;
@@ -43,6 +45,7 @@
     minHeight = '44px',
     class: className = '',
     editorClass = '',
+    allowedUserIds,
     onchange,
     onkeydown,
     onpaste,
@@ -71,6 +74,9 @@
       if (editorEl) setPlainTextSelection(editorEl, pos, pos);
     },
     focus: () => editorEl?.focus(),
+    get allowedUserIds() {
+      return allowedUserIds;
+    },
   });
 
   const renderOptions = $derived({ markdownPreview });

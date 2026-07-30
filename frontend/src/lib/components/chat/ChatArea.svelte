@@ -118,6 +118,8 @@
     authToken?: string;
     /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
     onJoinChannel?: (channelId: string) => void;
+    /** When set, only users whose IDs are in this list appear in @mention suggestions. */
+    allowedUserIds?: string[];
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
     /** Files staged for sending but not yet uploaded. */
@@ -169,6 +171,7 @@
     isHidden = false,
     groupMembers = [],
     pendingInvites = [],
+    allowedUserIds,
     sendError = '',
     onGroupRename,
     onGroupSetImage,
@@ -983,6 +986,7 @@
       <div class="absolute inset-x-0 bottom-0 z-20 pointer-events-none">
         <ChatComposer
           {messageText}
+          {allowedUserIds}
           {onMessageChange}
           {onTyping}
           {onSendGif}

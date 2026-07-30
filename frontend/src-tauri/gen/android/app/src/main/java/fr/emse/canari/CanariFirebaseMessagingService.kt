@@ -974,29 +974,38 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "thread: groupId=$groupId senderName=$senderName silent=$silent inlineProto=${inlineProto != null}")
 
             var decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
-            // Welcome/message race: the concurrent Welcome push may be joining the group (or
-            // holding MlsStateLock) when this message arrives. We retry briefly so the 1st message
-            // of a new conversation produces a real notification instead of a generic fallback,
-            // rather than showing then correcting the notification.
-            var raceAttempt = 0
-            while (!silent && decrypted == null && !queuedMessageId.isNullOrEmpty() && raceAttempt < WELCOME_RACE_RETRIES) {
-                raceAttempt++
-                try {
-                    Thread.sleep(WELCOME_RACE_RETRY_DELAY_MS)
-                } catch (e: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    break
+            if (decrypted == null && !queuedMessageId.isNullOrEmpty()) {
+                val groupLocal = isGroupLocal(groupId)
+                Log.d(TAG, "tryDecrypt failed group=${groupId.take(8)} local=$groupLocal")
+                if (groupLocal) {
+                    // The group exists locally: the only plausible reason for a direct failure is an
+                    // epoch gap (a commit arrived while the app was closed). Catch-up FIRST, before
+                    // any expensive Welcome-race loop that cannot help a group that is already joined.
+                    decrypted = tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
+                } else {
+                    // Welcome/message race: the concurrent Welcome push may be joining the group (or
+                    // holding MlsStateLock) when this message arrives. We retry briefly so the 1st
+                    // message of a new conversation produces a real notification instead of a generic
+                    // fallback, rather than showing then correcting the notification.
+                    var raceAttempt = 0
+                    while (decrypted == null && raceAttempt < WELCOME_RACE_RETRIES) {
+                        raceAttempt++
+                        try {
+                            Thread.sleep(WELCOME_RACE_RETRY_DELAY_MS)
+                        } catch (e: InterruptedException) {
+                            Thread.currentThread().interrupt()
+                            break
+                        }
+                        Log.d(TAG, "tryDecrypt retry $raceAttempt/$WELCOME_RACE_RETRIES (group-join race) group=${groupId.take(8)}")
+                        decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
+                    }
+                    // The group may have appeared during the race (Welcome processed on another thread).
+                    // Last-resort catch-up before falling back to the worker.
+                    if (decrypted == null && isGroupLocal(groupId)) {
+                        Log.d(TAG, "group appeared during welcome-race, attempting catch-up group=${groupId.take(8)}")
+                        decrypted = tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
+                    }
                 }
-                Log.d(TAG, "tryDecrypt retry $raceAttempt/$WELCOME_RACE_RETRIES (group-join race) group=$groupId")
-                decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
-            }
-            // Epoch gap: direct decryption failed. A common cause on a never-opened mobile is that a
-            // device added to the group advanced the epoch (commit) that this device never applied in
-            // the background (push decoding is read-only). We attempt an IN-MEMORY commit catch-up
-            // (read-only, mls.bin unchanged) to produce a real notification instead of the generic
-            // fallback.
-            if (!silent && decrypted == null && !queuedMessageId.isNullOrEmpty()) {
-                decrypted = tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
             }
 
             // Call signaling over MLS (WP-XP-5). Invite -> ring (fallback for pre-WP-XP-5 callers
@@ -1013,6 +1022,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (decrypted?.type == "call_control") {
                 if (decrypted.callEnded) cancelIncomingCallNotification(this, decrypted.callId ?: "")
                 Log.d(TAG, "call_control: suppressed (ended=${decrypted.callEnded})")
+                return@runWithWakeLock
+            }
+
+            if (decrypted == null && silent) {
+                // Silent push: no notification must be shown. Do not log the misleading worker/fallback
+                // messages that are only meaningful for visible pushes.
+                Log.d(TAG, "Silent push decryption failed group=${groupId.take(8)} -> returning silently")
                 return@runWithWakeLock
             }
 
@@ -1823,6 +1839,34 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } finally {
             MlsStateLock.LOCK.unlock()
         }
+    }
+
+    /**
+     * Returns true if [groupId] already exists in the local MLS state. Loads push_context + mls.bin,
+     * acquires MlsStateLock for up to 5 s, and asks nativeGroupEpochWithKey; an epoch >= 0 means the
+     * group is joined locally. A join race can only happen when this returns false.
+     */
+    private fun isGroupLocal(groupId: String): Boolean {
+        if (groupId.isEmpty()) return false
+        val ctx = MlsContextLoader.loadPushContext(this) ?: return false
+        return withMlsStateLock(5) {
+            val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock false
+            if (ctx.deviceKeyB64.isEmpty()) {
+                Log.w(TAG, "isGroupLocal: device key absent group=${groupId.take(8)}")
+                return@withMlsStateLock false
+            }
+            try {
+                val epoch = nativeGroupEpochWithKey(stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId)
+                Log.d(TAG, "isGroupLocal: epoch=$epoch group=${groupId.take(8)}")
+                epoch >= 0
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "isGroupLocal: native library not loaded: ${e.message}")
+                false
+            } catch (e: Exception) {
+                Log.e(TAG, "isGroupLocal: exception: ${e.message}")
+                false
+            }
+        } ?: false
     }
 
     /** Parses the JSON from nativeDecryptMessageWithCommitsWithKey into a DecryptedMessage (mirror of decryptProto). */

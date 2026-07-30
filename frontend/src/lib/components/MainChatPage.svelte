@@ -79,6 +79,9 @@
         false)
   );
 
+  /** Member user IDs of the currently selected channel, for scoping @mention suggestions. */
+  let selectedChannelMemberIds = $state<string[]>([]);
+
   /** True while MLS unlock / queue catch-up is running. */
   const isSyncing = $derived(session.isMessagingInitializing || messaging.isMessageCatchupActive);
 
@@ -103,6 +106,15 @@
 
   /** Explicit derived binding so ChatArea re-renders when the open conversation mutates. */
   const activeConversation = $derived(convs.currentConvo);
+
+  /** User IDs allowed in @mention suggestions for the active chat/channel, or undefined for unrestricted (e.g. posts). */
+  const composerAllowedUserIds = $derived(
+    isSelectedChannel
+      ? selectedChannelMemberIds
+      : convs.groupMembers.length > 0
+        ? convs.groupMembers
+        : undefined
+  );
 
   /**
    * Debounced WS-disconnect banner: only shown after the socket has been down for a
@@ -388,6 +400,29 @@
     const convo = convs.conversations.get(contact);
     if (!convo?.id) return;
     void convs.loadGroupMembers(convo.id, convCtx());
+  });
+
+  // ─── Load channel members when selected channel changes ───────────────────
+  $effect(() => {
+    const contact = convs.selectedContact;
+    if (!contact || !session.isLoggedIn || !isSelectedChannel) {
+      selectedChannelMemberIds = [];
+      return;
+    }
+    let cancelled = false;
+    channelService
+      .listMembers(contact)
+      .then((members) => {
+        if (cancelled) return;
+        selectedChannelMemberIds = members.map((m) => m.userId);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        selectedChannelMemberIds = [];
+      });
+    return () => {
+      cancelled = true;
+    };
   });
 
   // ─── Read receipts (debounced 2 s) ────────────────────────────────────────
@@ -874,6 +909,7 @@
           isCatchingUpMessages={messaging.isMessageCatchupActive}
           groupMembers={convs.groupMembers}
           pendingInvites={convs.pendingGroupInvites}
+          allowedUserIds={composerAllowedUserIds}
           sendError={convs.sendError}
           onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
           onGroupSetImage={(mediaId) => void convs.handleSetGroupImage(mediaId, convCtx())}
