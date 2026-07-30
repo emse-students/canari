@@ -119,7 +119,8 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   **Android run 2026-07-29 (log on the user's desktop) cleared two checks and found one bug.**
   PASSED: `[DB] Using SQLite storage (Tauri)` on every launch, never the IndexedDB fallback; and the
   post-enrolment relaunch DOES raise the biometric path (`[BIOMETRIC] Biometric login attempt`), so
-  the v0.11.5 `isKeyPresent` fix holds. FAILED and now fixed in v0.11.6: the fingerprint was
+  the `89f8d230` `isKeyPresent` fix holds - that build came from a `workflow_dispatch` artifact, not
+  a release, so it was still unreleased then. FAILED and now fixed in v0.11.5: the fingerprint was
   accepted and the login still demanded the PIN (`Base64.DEFAULT` newline on the FFI wire - see
   DURABLE RULES). **Re-run needed to confirm the fix**, plus the still-untested parts: PIN change,
   disable, and the PIN modal keeping its "use biometrics" button.
@@ -128,7 +129,7 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   `Skipping PIN verification`, so `loginImpl` returned at its `isLoggedIn || isReconnecting ||
   isLoginInProgress` guard. A second attempt 3 s later ran normally. Something holds one of those
   three flags at that point in a cold launch; a user tap that silently does nothing is the symptom.
-  v0.11.6 makes the guard NAME the flag it returned on (`[LOGIN] Call ignored, a login already owns
+  v0.11.5 makes the guard NAME the flag it returned on (`[LOGIN] Call ignored, a login already owns
   the flow (loggedIn=.., reconnecting=.., loginInProgress=..)`), so the re-run answers this instead
   of reposing it. Grep that line before theorising. Note the fix is probably already sketched in
   `loginImpl`'s own guard comment: an explicit PIN submit clears the flag first (`handlePinSubmit`)
