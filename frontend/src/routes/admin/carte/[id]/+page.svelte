@@ -18,8 +18,6 @@
   import { CARTE_STYLE, DEFAULT_SCRIM_OPACITY } from '$lib/carte/theme';
   import { buildPosterModel, type PosterModel, type PosterLayout } from '$lib/carte/generator';
   import {
-    DEFAULT_CARTE_DEBUG_TUNING,
-    type CarteDebugTuning,
     mergeBubbleLayout,
     seedBubbleLayout,
     indexBubbleContent,
@@ -72,87 +70,9 @@
   let directoryVisible = $state(true);
   /** Poster title color (persisted override of the theme default). */
   let titleColor = $state(CARTE_STYLE.titleColor);
-  /** Runtime debug tuning for the poster geometry/text sizes. */
-  let debugTuning = $state<CarteDebugTuning>({ ...DEFAULT_CARTE_DEBUG_TUNING });
   // Single fixed poster style (the theme picker was dropped); the bg image, if any, replaces it.
   // Only the title color is author-overridable, so the theme is derived from it.
   const theme = $derived({ ...CARTE_STYLE, titleColor });
-
-  const DEBUG_STORAGE_PREFIX = 'canari_carte_debug_tuning:';
-
-  function cloneDefaultDebugTuning(): CarteDebugTuning {
-    return { ...DEFAULT_CARTE_DEBUG_TUNING };
-  }
-
-  function debugStorageKey(projectId: string): string {
-    return `${DEBUG_STORAGE_PREFIX}${projectId}`;
-  }
-
-  function sanitizeDebugTuning(raw: unknown): CarteDebugTuning {
-    const fallback = cloneDefaultDebugTuning();
-    if (!raw || typeof raw !== 'object') return fallback;
-    const record = raw as Record<string, unknown>;
-    return {
-      bureauCrownCy:
-        typeof record.bureauCrownCy === 'number' ? record.bureauCrownCy : fallback.bureauCrownCy,
-      bureauCrownRx:
-        typeof record.bureauCrownRx === 'number' ? record.bureauCrownRx : fallback.bureauCrownRx,
-      bureauCrownRy:
-        typeof record.bureauCrownRy === 'number' ? record.bureauCrownRy : fallback.bureauCrownRy,
-      bureauCrownAngle1:
-        typeof record.bureauCrownAngle1 === 'number'
-          ? record.bureauCrownAngle1
-          : fallback.bureauCrownAngle1,
-      bureauCrownAngle2:
-        typeof record.bureauCrownAngle2 === 'number'
-          ? record.bureauCrownAngle2
-          : fallback.bureauCrownAngle2,
-      bureauCrownAngle3:
-        typeof record.bureauCrownAngle3 === 'number'
-          ? record.bureauCrownAngle3
-          : fallback.bureauCrownAngle3,
-      bureauCardWidth:
-        typeof record.bureauCardWidth === 'number'
-          ? record.bureauCardWidth
-          : fallback.bureauCardWidth,
-      presidentCardWidth:
-        typeof record.presidentCardWidth === 'number'
-          ? record.presidentCardWidth
-          : fallback.presidentCardWidth,
-      associationNameScale:
-        typeof record.associationNameScale === 'number'
-          ? record.associationNameScale
-          : fallback.associationNameScale,
-      memberNameScale:
-        typeof record.memberNameScale === 'number'
-          ? record.memberNameScale
-          : fallback.memberNameScale,
-      memberRoleScale:
-        typeof record.memberRoleScale === 'number'
-          ? record.memberRoleScale
-          : fallback.memberRoleScale,
-    };
-  }
-
-  function loadDebugTuning(projectId: string): CarteDebugTuning {
-    if (typeof localStorage === 'undefined') return cloneDefaultDebugTuning();
-    try {
-      const stored = localStorage.getItem(debugStorageKey(projectId));
-      if (!stored) return cloneDefaultDebugTuning();
-      return sanitizeDebugTuning(JSON.parse(stored));
-    } catch {
-      return cloneDefaultDebugTuning();
-    }
-  }
-
-  function saveDebugTuning(projectId: string, tuning: CarteDebugTuning) {
-    if (typeof localStorage === 'undefined') return;
-    try {
-      localStorage.setItem(debugStorageKey(projectId), JSON.stringify(tuning));
-    } catch {
-      // Ignore storage failures in the debug panel.
-    }
-  }
 
   // ── Freeform bubble placement (persisted as layout.bubbles) ───────────────────
   let positioned = $state<PositionedBubble[]>([]);
@@ -263,7 +183,6 @@
       directoryVisible = layout.directoryVisible !== false;
       titleColor =
         typeof layout.titleColor === 'string' ? layout.titleColor : CARTE_STYLE.titleColor;
-      debugTuning = loadDebugTuning(proj.id);
       decorations = sanitizeDecorations(layout.decorations);
 
       // Resolve rosters (for president detection); tolerate per-asso failures.
@@ -395,12 +314,6 @@
     return () => clearTimeout(autosaveTimer);
   });
 
-  $effect(() => {
-    void debugTuning;
-    if (!project) return;
-    saveDebugTuning(project.id, debugTuning);
-  });
-
   /**
    * Publishes this poster to the public showcase (portail-etu), or takes it offline.
    *
@@ -429,7 +342,6 @@
             title: project.name,
             directoryVisible,
             directoryHeading: m.carte_directory_heading(),
-            tuning: debugTuning,
           })
         );
       }
@@ -615,7 +527,6 @@
                   {theme}
                   {background}
                   {directoryVisible}
-                  {debugTuning}
                   editable
                   {viewScale}
                   {selectedId}

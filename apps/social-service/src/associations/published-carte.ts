@@ -81,7 +81,10 @@ export interface PublishedCarteCard {
   /** Card box, in poster px relative to the unit's top-left (before the unit scale). */
   x: number;
   y: number;
+  /** Card width; wider than its peers' when the name holds a word that cannot be broken. */
   w: number;
+  /** Photo side; published rather than derived from `w`, so a widened card keeps the same face size. */
+  photo: number;
   nameSize: number;
   roleSize: number;
 }
@@ -281,7 +284,8 @@ function toCard(raw: unknown): PublishedCarteCard | null {
     initials: text(r.initials, 4),
     x: coord(r.x),
     y: coord(r.y),
-    w: len(r.w, 60),
+    w: len(r.w, 64),
+    photo: len(r.photo, 52),
     nameSize: len(r.nameSize, 9, MAX_FONT),
     roleSize: len(r.roleSize, 7, MAX_FONT),
   };

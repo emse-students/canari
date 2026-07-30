@@ -57,6 +57,7 @@ function unit(overrides: Record<string, unknown> = {}) {
         x: 163,
         y: 246,
         w: 73,
+        photo: 61,
         nameSize: 8.9,
         roleSize: 7.5,
       },
@@ -81,7 +82,13 @@ describe('sanitizePublishedCarte', () => {
       colorFallback: 'hsl(210, 70%, 50%)',
     });
     expect(out?.units[0].blob).toEqual({ x: 95, y: 67, size: 210, radius: '50%' });
-    expect(out?.units[0].cards[0]).toMatchObject({ userId: 'u1', initials: 'CV', nameSize: 8.9 });
+    expect(out?.units[0].cards[0]).toMatchObject({
+      userId: 'u1',
+      initials: 'CV',
+      w: 73,
+      photo: 61,
+      nameSize: 8.9,
+    });
     expect(out?.title).toMatchObject({ content: 'Carte 2026', size: 52, weight: 700 });
   });
 

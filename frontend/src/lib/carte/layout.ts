@@ -89,35 +89,131 @@ export const NAME_INSET = 56;
 export const PRES_TOP = BLOB_CY + 74;
 /** Max bureau cards fanned over the blob's top arc (6 + the president = 7 members shown). */
 export const MAX_BUREAU = 6;
-/** Base name font size for a bureau card, before the tuning scale. */
-export const BUREAU_NAME_BASE = 8.8;
-/** Base name font size for the president card (a touch larger), before the tuning scale. */
-export const PRES_NAME_BASE = 10.8;
 
 /** Length-based font size (px) for the association name inside the blob, so long names shrink. */
-export function nameFontSize(name: string): number {
+export function assoNameFontSize(name: string): number {
   const n = name.length;
-  if (n <= 10) return 18;
-  if (n <= 16) return 15;
-  if (n <= 22) return 13;
-  if (n <= 30) return 11;
-  return 10;
+  if (n <= 10) return 20.7;
+  if (n <= 16) return 17.25;
+  if (n <= 22) return 14.95;
+  if (n <= 30) return 12.65;
+  return 11.5;
 }
 
-/** Length- and width-based name font size (px) for a member card (bureau / president), which wraps. */
-export function cardNameFontSize(name: string, cardW: number, base: number): number {
-  const n = name.length;
-  const widthPenalty = cardW <= 70 ? 1.1 : cardW <= 85 ? 0.6 : 0;
-  if (n <= 10) return base - widthPenalty;
-  if (n <= 16) return base - 0.9 - widthPenalty;
-  if (n <= 22) return base - 1.8 - widthPenalty;
-  if (n <= 30) return base - 2.6 - widthPenalty;
-  return base - 3.4 - widthPenalty;
+/** Font size (px) of the contact-email line under the association name. */
+export function assoEmailFontSize(name: string): number {
+  return Math.max(5, assoNameFontSize(name) * 0.35);
 }
 
-/** Role font size (px) on a member card, derived from its name base. */
-export function cardRoleFontSize(nameBase: number, tuning: CarteDebugTuning): number {
-  return Math.max((nameBase - 2.5) * tuning.memberRoleScale, 6.8);
+// ── Member cards (poster px, scale 1) ───────────────────────────────────────────────────
+
+/** Which slot a member card occupies: the crown over the blob, or the president at its bottom. */
+export type MemberSlot = 'bureau' | 'president';
+
+/** Base card width for each slot, before any widening. */
+export const BUREAU_CARD_WIDTH = 64;
+export const PRES_CARD_WIDTH = 73;
+/** Padding inside a card, summed over both sides: the text box is the card minus this. */
+export const CARD_PAD_X = 12;
+/** Name font size (px) a short name gets, per slot. Every longer name steps down from here. */
+const BUREAU_NAME_BASE = 6.4;
+const PRES_NAME_BASE = 8.6;
+/** Role size, as a fraction of the resolved name size, and its readable floor (px). */
+const ROLE_RATIO = 0.88;
+const MIN_ROLE_SIZE = 6;
+/** Smallest name font (px) a card shrinks to for an over-wide word before it widens instead. */
+const MIN_NAME_SIZE = 6.2;
+/** Most a card may widen past its base width (x base) to fit a word that cannot be broken. */
+const MAX_CARD_GROWTH = 1.4;
+/**
+ * Usable fraction of the text box. The estimate below is not exact, and the evidence that it must
+ * err on the safe side is a real name: "Elliot WAGHEMACKER" broke in two at a size a 3% optimistic
+ * estimate called a fit.
+ */
+const FIT_MARGIN = 0.95;
+
+/** Step down the name size as a full name gets longer, because it then needs more lines. */
+function nameLengthPenalty(length: number): number {
+  if (length <= 10) return 0;
+  if (length <= 16) return 0.9;
+  if (length <= 22) return 1.8;
+  if (length <= 30) return 2.6;
+  return 3.4;
+}
+
+/**
+ * Rough advance width of a string in em at font-weight 700 Nunito, by character class. Deliberately
+ * crude and slightly pessimistic: the caller only needs to know whether a word overflows its card,
+ * and over-estimating costs a hair of font size while under-estimating breaks the word in two.
+ */
+function textWidthEm(text: string): number {
+  let em = 0;
+  for (const ch of text) {
+    if ('IiJjlt1.,:;\'"|!'.includes(ch)) em += 0.34;
+    else if ('MWmw'.includes(ch)) em += 0.95;
+    else if (ch !== ch.toLowerCase()) em += 0.75;
+    else em += 0.58;
+  }
+  return em;
+}
+
+/** Width (em) of the widest run that cannot be broken: names wrap on spaces and hyphens only. */
+function widestWordEm(name: string): number {
+  let widest = 1;
+  for (const word of name.split(/[\s-]+/)) widest = Math.max(widest, textWidthEm(word));
+  return widest;
+}
+
+/** A member card's resolved box and text sizes; one call describes the whole card. */
+export interface MemberCardMetrics {
+  /** Card width. Grown past the slot's base width only for a name that cannot wrap into it. */
+  w: number;
+  /** The slot's base width: what the card is anchored on vertically, so widening moves nothing. */
+  base: number;
+  /** Photo side. Pinned to the BASE width, so a widened card keeps the same face size as its peers. */
+  photo: number;
+  /** Name / role font sizes. */
+  nameSize: number;
+  roleSize: number;
+}
+
+/**
+ * Sizes one member card so the member's name actually fits it.
+ *
+ * Three steps, in order, because they answer different problems: a long full name wraps over more
+ * lines (so it starts smaller), a single long surname cannot wrap at all (so it shrinks until it
+ * fits one line), and past a floor shrinking further would be unreadable (so the card widens
+ * instead). Cards are centered on their slot, so the extra width grows symmetrically.
+ *
+ * Shared with the publisher, which resolves these numbers into the published map - see `publish.ts`.
+ */
+export function memberCardMetrics(name: string, slot: MemberSlot): MemberCardMetrics {
+  const isPresident = slot === 'president';
+  const baseW = isPresident ? PRES_CARD_WIDTH : BUREAU_CARD_WIDTH;
+  const textBox = (baseW - CARD_PAD_X) * FIT_MARGIN;
+
+  let nameSize = (isPresident ? PRES_NAME_BASE : BUREAU_NAME_BASE) - nameLengthPenalty(name.length);
+  const widest = widestWordEm(name);
+  // Shrink to the size that fits the widest unbreakable word, but never below the floor - and never
+  // UP, since the length ladder above may already have gone lower than the floor for a long name.
+  const fitted = textBox / widest;
+  if (fitted < nameSize) nameSize = Math.max(fitted, Math.min(nameSize, MIN_NAME_SIZE));
+
+  const needed = (widest * nameSize) / FIT_MARGIN + CARD_PAD_X;
+  return {
+    w: round2(Math.min(baseW * MAX_CARD_GROWTH, Math.max(baseW, needed))),
+    base: baseW,
+    photo: baseW - CARD_PAD_X,
+    nameSize: round2(nameSize),
+    // The role labels the name and is never larger than it, with a floor so a card shrunk by a long
+    // name does not also print an illegible role.
+    roleSize: round2(Math.min(nameSize, Math.max(MIN_ROLE_SIZE, nameSize * ROLE_RATIO))),
+  };
+}
+
+/** Rounds to 2 decimals: sub-pixel accuracy without a wall of float noise in the payload. */
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 /**
@@ -195,69 +291,32 @@ export const TEXT_BASE_WIDTH = 320;
 /** Base (scale 1) font size of a free-text decoration in poster px. */
 export const TEXT_BASE_SIZE = 34;
 
-/** Runtime tuning knobs exposed in the carte debug panel. */
-export interface CarteDebugTuning {
-  bureauCrownCy: number;
-  bureauCrownRx: number;
-  bureauCrownRy: number;
-  bureauCrownAngle1: number;
-  bureauCrownAngle2: number;
-  bureauCrownAngle3: number;
-  bureauCardWidth: number;
-  presidentCardWidth: number;
-  associationNameScale: number;
-  memberNameScale: number;
-  memberRoleScale: number;
-}
+// ── Bureau crown (poster px) ────────────────────────────────────────────────────────────
+// The ellipse the bureau cards are fanned over, hand-tuned against the printed poster. These were
+// live sliders in a debug panel while the composition was being found; the panel is gone and the
+// values are final, so they are plain constants - the publisher resolves them for the showcase.
 
-/** Default values used when no debug tuning is active. */
-export const DEFAULT_CARTE_DEBUG_TUNING: CarteDebugTuning = {
-  bureauCrownCy: 147,
-  bureauCrownRx: 119,
-  bureauCrownRy: 147,
-  bureauCrownAngle1: -0.85,
-  bureauCrownAngle2: -0.11,
-  bureauCrownAngle3: 0.57,
-  bureauCardWidth: 64,
-  presidentCardWidth: 73,
-  associationNameScale: 1.15,
-  memberNameScale: 0.88,
-  memberRoleScale: 0.9,
-};
-
-/** Crown center Y for bureau cards: same center as the previous circle. */
-export const BUREAU_CROWN_CY = DEFAULT_CARTE_DEBUG_TUNING.bureauCrownCy;
-/** Ellipse horizontal radius for bureau cards (narrower than the vertical radius). */
-export const BUREAU_CROWN_RX = DEFAULT_CARTE_DEBUG_TUNING.bureauCrownRx;
-/** Ellipse vertical radius for bureau cards: same size as the previous circle radius. */
-export const BUREAU_CROWN_RY = DEFAULT_CARTE_DEBUG_TUNING.bureauCrownRy;
+/** Crown center Y within the unit box. */
+export const BUREAU_CROWN_CY = 147;
+/** Ellipse horizontal radius (narrower than the vertical one, so the crown hugs the blob). */
+export const BUREAU_CROWN_RX = 119;
+/** Ellipse vertical radius. */
+export const BUREAU_CROWN_RY = 147;
+/** Angle (rad) of each slot level, from the lowest pair to the highest. */
+const CROWN_ANGLES = [-0.85, -0.11, 0.57];
 
 /**
- * Returns the crown offset for a bureau card along the top half of an ellipse.
- * Slots start near the sides and move upward, while the center remains empty for the president.
+ * Crown offset for the bureau card at `index`, along the top half of an ellipse. Slots are filled
+ * in mirrored pairs from the bottom up, leaving the center free for the president card below.
  */
-export function bureauCrownOffset(index: number, total: number): { x: number; y: number } {
-  return bureauCrownOffsetWithTuning(index, total, DEFAULT_CARTE_DEBUG_TUNING);
-}
-
-/** Crown offset helper that accepts runtime tuning. */
-export function bureauCrownOffsetWithTuning(
-  index: number,
-  total: number, // not used anymore but kept for signature compatibility
-  tuning: CarteDebugTuning
-): { x: number; y: number } {
-  const level = Math.floor(index / 2); // 0, 1, 2
+export function bureauCrownOffset(index: number): { x: number; y: number } {
+  const level = Math.min(Math.floor(index / 2), CROWN_ANGLES.length - 1);
   const side = index % 2 === 0 ? -1 : 1;
-
-  let baseAngle = tuning.bureauCrownAngle1 || -0.1;
-  if (level === 1) baseAngle = tuning.bureauCrownAngle2 || 0.6;
-  if (level >= 2) baseAngle = tuning.bureauCrownAngle3 || 1.2;
-
+  const baseAngle = CROWN_ANGLES[level];
   const angle = side < 0 ? Math.PI - baseAngle : baseAngle;
-
   return {
-    x: tuning.bureauCrownRx * Math.cos(angle),
-    y: -tuning.bureauCrownRy * Math.sin(angle),
+    x: BUREAU_CROWN_RX * Math.cos(angle),
+    y: -BUREAU_CROWN_RY * Math.sin(angle),
   };
 }
 

@@ -238,7 +238,7 @@ shipped: the publisher here, the renderer in `../refonte-portail-etu`.
 `poster_projects.publication` (migration 035) holds a document that is deliberately NOT the
 editor's `layout` - and, since v2, not an approximation of the poster either. **Everything the
 poster draws is computed at publish time**: box positions, font sizes, the bureau crown ellipse,
-the length-based name shrinking, the author's debug tuning. The showcase draws those numbers and
+the length-based name shrinking, the per-card widening. The showcase draws those numbers and
 decides nothing.
 
 | | `layout` (editor) | `publication` v2 (showcase) |
@@ -269,6 +269,18 @@ payload. **A roster change therefore needs a republish** - the same way a printe
 fits its fixed panel. That is a DOM measurement, not a constant, so both sides run the same loop -
 and they agree because both measure the same poster pixels (a CSS transform does not change
 `clientHeight`) in the same fonts.
+
+**A member card is sized by its name, and both dimensions travel.** `memberCardMetrics` in
+`layout.ts` answers three different problems in order, which is why it is one function and not a
+constant: a long FULL name wraps over more lines, so it starts smaller (the length ladder); a single
+long surname cannot wrap at all, so the font shrinks until that word fits one line; and past a
+readable floor, shrinking further is worse than a wider plate, so the CARD widens instead (up to
+1.4x, centered on its slot, so it grows symmetrically and nothing else moves). The word width is an
+estimate - a per-character-class table for bold Nunito, deliberately pessimistic, since
+over-estimating costs a hair of font size while under-estimating breaks a name in two
+("WAGHEMACKE / R"). Consequence for the contract: **`photo` is published next to `w`**. A widened
+card keeps the same face size as its neighbours, so deriving the photo from the card width - which
+the showcase used to do - would enlarge exactly the one member whose name is long.
 
 Built by `frontend/src/lib/carte/publish.ts` (`buildPublishedCarte`), typed and re-validated by
 `apps/social-service/src/associations/published-carte.ts` (`sanitizePublishedCarte`). The unit's
@@ -311,9 +323,10 @@ Three things to know before changing the contract:
   verbatim, so a change of unit here is a silent visual break there, not a type error.
 - **It self-hosts Canari's fonts** (`@fontsource-variable/nunito` + `/fredoka`, same versions). Text
   set in another family measures differently, so a font change here needs the same bump there.
-- **Only the card CHROME is mirrored rather than published** - padding, corner radii, shadows, the
-  photo inset. Those are cosmetic constants copied from `PosterCanvas.svelte`; anything the author can
-  move or tune travels instead. Redesigning the member card means updating both.
+- **Only the card CHROME is mirrored rather than published** - padding, corner radii, shadows.
+  Those are cosmetic constants copied from `PosterCanvas.svelte`; every dimension that a name can
+  change (`w`, `photo`, `nameSize`, `roleSize`) travels instead. Redesigning the member card means
+  updating both.
 
 Avatars are not in the payload: the showcase already proxies MiGallery at
 `/api/users/:id/avatar`, so only `userId` travels. That also keeps a publication small enough to

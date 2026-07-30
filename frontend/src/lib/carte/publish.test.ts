@@ -1,7 +1,6 @@
 import { buildPublishedCarte } from './publish';
 import { CARTE_STYLE } from './theme';
 import {
-  DEFAULT_CARTE_DEBUG_TUNING,
   UNIT_CX,
   BLOB_CY,
   BLOB_SIZE,
@@ -10,7 +9,6 @@ import {
   PRES_TOP,
   MAX_BUREAU,
   STAGE_WIDTH,
-  type CarteDebugTuning,
   type PositionedBubble,
   type Decoration,
 } from './layout';
@@ -71,7 +69,6 @@ function build(
     decorations?: Decoration[];
     title?: string;
     directoryVisible?: boolean;
-    tuning?: CarteDebugTuning;
   } = {}
 ) {
   const data = options.content ?? { a1: content() };
@@ -85,7 +82,6 @@ function build(
     title: options.title ?? 'Carte 2026',
     directoryVisible: options.directoryVisible ?? true,
     directoryHeading: 'Annuaire des membres',
-    tuning: options.tuning ?? DEFAULT_CARTE_DEBUG_TUNING,
   });
 }
 
@@ -147,17 +143,26 @@ describe('buildPublishedCarte', () => {
     expect(out.units[0].cards.map((c) => c.userId)).toEqual(['u3', 'u2']);
   });
 
-  it('applies the geometry tuning, so a tuned poster publishes as tuned', () => {
-    const base = build();
-    const tuned = build({
-      tuning: {
-        ...DEFAULT_CARTE_DEBUG_TUNING,
-        associationNameScale: DEFAULT_CARTE_DEBUG_TUNING.associationNameScale * 2,
-        presidentCardWidth: 100,
-      },
-    });
-    expect(tuned.units[0].name.size).toBeCloseTo(base.units[0].name.size * 2, 5);
-    expect(tuned.units[0].cards.at(-1)?.w).toBe(100);
+  it('shrinks a name to fit its card, then widens the card when shrinking is not enough', () => {
+    // One member each, so `cards[0]` is the president card under test.
+    const card = (name: string) =>
+      build({ content: { a1: content({ members: [member('u-pres', name, 'President')] }) } })
+        .units[0].cards[0];
+    const short = card('Bob Petit');
+    const long = card('Elliot WAGHEMACKER');
+    const unbreakable = card('Jean SCHWARTZENBERGERMANN');
+
+    // A name that still wraps into the base card only costs font size...
+    expect(long.w).toBe(short.w);
+    expect(long.nameSize).toBeLessThan(short.nameSize);
+    // ...while a word too wide even at the floor size widens the card instead of breaking mid-word.
+    expect(unbreakable.w).toBeGreaterThan(short.w);
+    // The photo never follows the card's width: one member's face must not dwarf its neighbours'.
+    expect(unbreakable.photo).toBe(short.photo);
+    // Whatever its width, a card stays centered on its slot.
+    expect(unbreakable.x + unbreakable.w / 2).toBe(UNIT_CX);
+    // And the role line never outgrows the name it labels.
+    expect(unbreakable.roleSize).toBeLessThanOrEqual(unbreakable.nameSize);
   });
 
   it('drops a bubble whose association no longer resolves', () => {

@@ -118,6 +118,11 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   tap, still unexplained; v0.11.5 makes the guard name the flag it returned on, so capture that
   window even when the unlock succeeds.
 
+- \[ \] **WP-CARTO-3 (P3) - republish the carte once the card fix is deployed.** Member cards are now
+  sized per name (a surname was breaking mid-word) and the payload gained `photo`, so the live map
+  keeps its old sizes until a republish from `/admin/carte/<id>`. Deploy order does NOT matter this
+  time: the Portail reads a card with no `photo` as `w - 12`, which is exactly what it was.
+
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
   outbox drained - and the peer never received it, not live and not after a reload. Two later
@@ -253,6 +258,9 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - The showcase decides nothing: what it is not told, it cannot copy - it can only approximate.
 - Association identity joins live; the displayed members are a snapshot, so a roster edit republishes.
 - The two repos must agree on the FONTS, or every measured box is wrong.
+- What must fit a card is the longest WORD, not the name: shrink to it, then widen the card.
+- A card's `photo` is published, never derived from its width - widening must not grow the face.
+- A debug slider whose panel is gone still ships: fold it back into constants, or it rots as plumbing.
 
 #### Cotisations (Cercle) -> [cotisations](docs/wiki/cotisations.md)
 

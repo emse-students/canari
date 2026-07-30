@@ -3,7 +3,6 @@
   import type { CarteStyle } from '$lib/carte/theme';
   import type { PosterModel, PosterBubble, PosterMemberRef } from '$lib/carte/generator';
   import {
-    DEFAULT_CARTE_DEBUG_TUNING,
     STAGE_WIDTH,
     STAGE_HEIGHT,
     CONTENT_MARGIN,
@@ -31,14 +30,14 @@
     NAME_TOP,
     NAME_INSET,
     PRES_TOP,
-    BUREAU_NAME_BASE,
-    PRES_NAME_BASE,
-    bureauCrownOffsetWithTuning,
-    nameFontSize,
-    cardNameFontSize,
-    cardRoleFontSize,
+    CARD_PAD_X,
+    BUREAU_CROWN_CY,
+    bureauCrownOffset,
+    assoNameFontSize,
+    assoEmailFontSize,
+    memberCardMetrics,
     resolveUnitMembers,
-    type CarteDebugTuning,
+    type MemberCardMetrics,
     type PositionedBubble,
     type Decoration,
   } from '$lib/carte/layout';
@@ -65,8 +64,6 @@
     editable?: boolean;
     /** On-screen preview scale, so pointer deltas convert back to poster px. */
     viewScale?: number;
-    /** Optional runtime tuning for geometry and text sizing. */
-    debugTuning?: CarteDebugTuning;
     /** Currently selected bubble (shows outline + resize handles). */
     selectedId?: string | null;
     /** Currently selected decoration (shows outline + resize handles). */
@@ -92,7 +89,6 @@
     title,
     background,
     directoryVisible,
-    debugTuning = DEFAULT_CARTE_DEBUG_TUNING,
     editable = false,
     viewScale = 1,
     selectedId = null,
@@ -109,14 +105,9 @@
   /** How close (poster px) an edge/center must be to a guide before it snaps. */
   const SNAP_THRESHOLD = 8;
 
-  // ── Blob-unit geometry ──────────────────────────────────────────────────────────────────
-  // The unit's whole geometry (layer offsets, font ladders, which members appear in which slot)
-  // lives in `layout.ts`, because the PUBLISHER resolves the exact same numbers for the portail
-  // showcase - see `publish.ts`. Only the two tuning-derived card widths are local.
-  /** Bureau member-card width. */
-  const CARD_W = $derived(debugTuning.bureauCardWidth);
-  /** President member-card width (a touch larger; sits at the blob bottom). */
-  const PRES_CARD_W = $derived(debugTuning.presidentCardWidth);
+  // The unit's whole geometry (layer offsets, card sizing, which members appear in which slot) lives
+  // in `layout.ts`, because the PUBLISHER resolves the exact same numbers for the portail showcase -
+  // see `publish.ts`. Nothing about a unit is computed here.
 
   /** The stage element, used to convert client pointer coords into poster coords. */
   let stageEl = $state<HTMLElement>();
@@ -433,25 +424,22 @@
   });
 </script>
 
-<!-- A member card (bureau / president): square photo + full name (wraps, never truncated) + role. -->
-{#snippet memberCard(person: PosterMemberRef, cardW: number, color: string, nameBase: number)}
-  {@const memberNameSize = cardNameFontSize(
-    person.name,
-    cardW,
-    nameBase * debugTuning.memberNameScale
-  )}
-  {@const memberRoleSize = cardRoleFontSize(nameBase, debugTuning)}
+<!-- A member card (bureau / president): square photo + full name (wraps, never truncated) + role.
+     The box comes from `memberCardMetrics`, so a name that cannot be broken widens the card. -->
+{#snippet memberCard(person: PosterMemberRef, card: MemberCardMetrics, color: string)}
   <div
-    style:width="{cardW}px"
+    style:width="{card.w}px"
     style:background={theme.polaroidBg}
     style:border-radius="9px"
-    style:padding="6px 6px 7px"
+    style:padding="6px {CARD_PAD_X / 2}px 7px"
+    style:box-sizing="border-box"
     style:box-shadow="0 4px 11px rgba(0,0,0,0.22)"
   >
     <div
       style:position="relative"
-      style:width="{cardW - 12}px"
-      style:height="{cardW - 12}px"
+      style:width="{card.photo}px"
+      style:height="{card.photo}px"
+      style:margin="0 auto"
       style:border-radius="7px"
       style:overflow="hidden"
       style:background={color}
@@ -474,7 +462,7 @@
     <p
       data-pdf-text
       style:margin="4px 0 0"
-      style:font-size="{memberNameSize}px"
+      style:font-size="{card.nameSize}px"
       style:font-weight="700"
       style:text-align="center"
       style:line-height="1.1"
@@ -487,7 +475,7 @@
       <p
         data-pdf-text
         style:margin="1px 0 0"
-        style:font-size="{memberRoleSize}px"
+        style:font-size="{card.roleSize}px"
         style:font-weight="600"
         style:text-align="center"
         style:line-height="1.05"
@@ -637,29 +625,33 @@
 
           <!-- Bureau member-cards fanned over the blob's top arc, drawn AFTER so they sit IN FRONT. -->
           {#each bureau as member, i (member.userId)}
-            {@const offset = bureauCrownOffsetWithTuning(i, bureau.length, debugTuning)}
-            {@const px = UNIT_CX + offset.x - CARD_W / 2}
-            {@const py = debugTuning.bureauCrownCy + offset.y - CARD_W / 2}
+            {@const card = memberCardMetrics(member.name, 'bureau')}
+            {@const offset = bureauCrownOffset(i)}
+            <!-- Centered on its crown slot horizontally, anchored on the BASE width vertically, so
+                 a widened card grows sideways without leaving the ellipse. -->
+            {@const px = UNIT_CX + offset.x - card.w / 2}
+            {@const py = BUREAU_CROWN_CY + offset.y - card.base / 2}
             <div style:position="absolute" style:left="{px}px" style:top="{py}px">
-              {@render memberCard(member, CARD_W, color, BUREAU_NAME_BASE)}
+              {@render memberCard(member, card, color)}
             </div>
           {/each}
 
           <!-- President always a card (photo + full name + role), at the blob bottom, in front. -->
           {#if displayPresident}
+            {@const presCard = memberCardMetrics(displayPresident.name, 'president')}
             <div
               style:position="absolute"
-              style:left="{UNIT_CX - PRES_CARD_W / 2}px"
+              style:left="{UNIT_CX - presCard.w / 2}px"
               style:top="{PRES_TOP}px"
             >
-              {@render memberCard(displayPresident, PRES_CARD_W, color, PRES_NAME_BASE)}
+              {@render memberCard(displayPresident, presCard, color)}
             </div>
           {/if}
 
           <!-- Association name INSIDE the blob (below the logo), white; wraps + shrinks to fit. -->
           <div
             style:position="absolute"
-            style:left="{UNIT_CX - (BLOB_SIZE - 56) / 2}px"
+            style:left="{UNIT_CX - (BLOB_SIZE - NAME_INSET) / 2}px"
             style:width="{BLOB_SIZE - NAME_INSET}px"
             style:top="{NAME_TOP}px"
             style:text-align="center"
@@ -667,7 +659,7 @@
             <p
               data-pdf-text
               style:margin="0"
-              style:font-size="{nameFontSize(data.name) * debugTuning.associationNameScale}px"
+              style:font-size="{assoNameFontSize(data.name)}px"
               style:font-weight="800"
               style:line-height="1.1"
               style:color="#ffffff"
@@ -679,10 +671,7 @@
               <p
                 data-pdf-text
                 style:margin="2px 0 0"
-                style:font-size="{Math.max(
-                  5,
-                  nameFontSize(data.name) * 0.35 * debugTuning.associationNameScale
-                )}px"
+                style:font-size="{assoEmailFontSize(data.name)}px"
                 style:font-weight="600"
                 style:color="rgba(255, 255, 255, 0.85)"
                 style="word-break:break-all;"

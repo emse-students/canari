@@ -13,8 +13,8 @@
  *    class of "the portal drew it 8% too small" bug. It also makes the directory's shrink-to-fit
  *    measure the same pixels on both sides.
  * 2. **Resolved geometry.** Shape keys, the bureau crown ellipse, the length-based font ladders and
- *    the author's debug tuning are all applied HERE. The showcase needs no copy of the catalogs and
- *    no copy of the layout math, so a tuning change reaches the live map by republishing alone.
+ *    the per-card widening are all applied HERE. The showcase needs no copy of the catalogs and no
+ *    copy of the layout math, so a geometry change reaches the live map by republishing alone.
  * 3. **Association content stays live, people are a snapshot.** A unit carries `assoId` only, so a
  *    rename, a new logo or a new brand color needs no republish (`colorFallback` covers an
  *    association that has no color of its own). Members are the opposite: WHICH member appears in
@@ -41,8 +41,8 @@ import {
   NAME_TOP,
   NAME_INSET,
   PRES_TOP,
-  BUREAU_NAME_BASE,
-  PRES_NAME_BASE,
+  BUREAU_CROWN_CY,
+  BUREAU_CARD_WIDTH,
   TEXT_BASE_WIDTH,
   TEXT_BASE_SIZE,
   TITLE_SIZE,
@@ -55,12 +55,12 @@ import {
   DIRECTORY_COLUMN_GAP,
   directoryRect,
   titleRect,
-  bureauCrownOffsetWithTuning,
-  nameFontSize,
-  cardNameFontSize,
-  cardRoleFontSize,
+  bureauCrownOffset,
+  assoNameFontSize,
+  assoEmailFontSize,
+  memberCardMetrics,
   resolveUnitMembers,
-  type CarteDebugTuning,
+  type MemberSlot,
   type PositionedBubble,
   type Decoration,
 } from './layout';
@@ -118,7 +118,13 @@ export interface PublishedCarteCard {
   /** Card box, in poster px relative to the unit's top-left (before the unit scale). */
   x: number;
   y: number;
+  /** Card width. Wider than its peers' when the name holds a word that cannot be broken. */
   w: number;
+  /**
+   * Photo side, in poster px. Published rather than derived from `w`, because a widened card keeps
+   * the same face size as the cards around it - deriving it would enlarge one member's photo.
+   */
+  photo: number;
   /** Name / role font sizes, in poster px. */
   nameSize: number;
   roleSize: number;
@@ -225,68 +231,54 @@ function px(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-/** Resolves one member into the card the poster draws, at a given box and font base. */
+/**
+ * Resolves one member into the card the poster draws: `memberCardMetrics` sizes it (a name holding
+ * an unbreakable word widens the card), and the slot decides where that box is anchored.
+ */
 function toCard(
   member: { userId: string; name: string; role: string },
-  box: { x: number; y: number; w: number },
-  nameBase: number,
-  tuning: CarteDebugTuning
+  slot: MemberSlot,
+  anchor: { cx: number; y: number }
 ): PublishedCarteCard {
+  const card = memberCardMetrics(member.name, slot);
   return {
     userId: member.userId,
     name: member.name,
     role: member.role,
     initials: getInitials(member.name),
-    x: px(box.x),
-    y: px(box.y),
-    w: px(box.w),
-    nameSize: px(cardNameFontSize(member.name, box.w, nameBase * tuning.memberNameScale)),
-    roleSize: px(cardRoleFontSize(nameBase, tuning)),
+    // Centered on its anchor, so widening grows the card sideways instead of shifting it.
+    x: px(anchor.cx - card.w / 2),
+    y: px(anchor.y),
+    w: card.w,
+    photo: card.photo,
+    nameSize: card.nameSize,
+    roleSize: card.roleSize,
   };
 }
 
 /**
  * Resolves one association unit: the blob, the logo frame, the name band and the member cards,
- * with the crown ellipse and the font ladders already applied.
+ * with the crown ellipse and the card sizing already applied.
  */
-function toUnit(
-  bubble: PositionedBubble,
-  data: PosterBubble,
-  tuning: CarteDebugTuning
-): PublishedCarteUnit {
+function toUnit(bubble: PositionedBubble, data: PosterBubble): PublishedCarteUnit {
   const shown = resolveUnitMembers(bubble, data.members);
   const ls = logoShape(bubble.logoShape);
   const lw = LOGO_BASE * ls.w;
   const lh = LOGO_BASE * ls.h;
-  const bureauW = tuning.bureauCardWidth;
-  const presW = tuning.presidentCardWidth;
   const nameW = BLOB_SIZE - NAME_INSET;
-  const assoNameSize = nameFontSize(data.name) * tuning.associationNameScale;
 
   // Bureau first, then the president: the poster draws them in that order so the president's card
   // sits in front of the crown, and the showcase renders the array as it comes.
   const cards = shown.bureau.map((member, i) => {
-    const offset = bureauCrownOffsetWithTuning(i, shown.bureau.length, tuning);
-    return toCard(
-      member,
-      {
-        x: UNIT_CX + offset.x - bureauW / 2,
-        y: tuning.bureauCrownCy + offset.y - bureauW / 2,
-        w: bureauW,
-      },
-      BUREAU_NAME_BASE,
-      tuning
-    );
+    const offset = bureauCrownOffset(i);
+    return toCard(member, 'bureau', {
+      cx: UNIT_CX + offset.x,
+      // Anchored on the base width, like the editor: a widened card must not leave the ellipse.
+      y: BUREAU_CROWN_CY + offset.y - BUREAU_CARD_WIDTH / 2,
+    });
   });
   if (shown.president) {
-    cards.push(
-      toCard(
-        shown.president,
-        { x: UNIT_CX - presW / 2, y: PRES_TOP, w: presW },
-        PRES_NAME_BASE,
-        tuning
-      )
-    );
+    cards.push(toCard(shown.president, 'president', { cx: UNIT_CX, y: PRES_TOP }));
   }
 
   return {
@@ -318,8 +310,8 @@ function toUnit(
       x: px(UNIT_CX - nameW / 2),
       y: NAME_TOP,
       w: nameW,
-      size: px(assoNameSize),
-      emailSize: px(Math.max(5, nameFontSize(data.name) * 0.35 * tuning.associationNameScale)),
+      size: px(assoNameFontSize(data.name)),
+      emailSize: px(assoEmailFontSize(data.name)),
     },
     cards,
   };
@@ -345,7 +337,6 @@ function directoryLine(asso: PosterBubble): string {
  * @param params.title - The project name, drawn as the poster's title.
  * @param params.directoryVisible - Whether the author shows the right-hand directory.
  * @param params.directoryHeading - Localized directory heading, resolved by the caller.
- * @param params.tuning - The author's geometry tuning for this project.
  */
 export function buildPublishedCarte(params: {
   bubbles: PositionedBubble[];
@@ -357,9 +348,8 @@ export function buildPublishedCarte(params: {
   title: string;
   directoryVisible: boolean;
   directoryHeading: string;
-  tuning: CarteDebugTuning;
 }): PublishedCarte {
-  const { style, tuning } = params;
+  const { style } = params;
   const t = titleRect(params.directoryVisible);
   const dir = directoryRect();
 
@@ -392,7 +382,7 @@ export function buildPublishedCarte(params: {
       : null,
     units: params.bubbles
       .filter((bubble) => params.content[bubble.assoId])
-      .map((bubble) => toUnit(bubble, params.content[bubble.assoId], tuning)),
+      .map((bubble) => toUnit(bubble, params.content[bubble.assoId])),
     texts: params.decorations
       .filter((d): d is Extract<Decoration, { kind: 'text' }> => d.kind === 'text')
       .filter((d) => d.content.trim().length > 0)
