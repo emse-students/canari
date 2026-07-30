@@ -93,73 +93,45 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   append-only and the user declined an `adjustment` kind, so a drink charged twice or to the wrong
   account cannot be undone. Revisit once the bar has used it for a term.
 
-- \[ \] **WP-CERCLE-3 (P3) - Dev secrets are in the working `.env`.** `SESSION_SECRET` and
-  `CANARI_WEBHOOK_SECRET` there are throwaway placeholders. Generate real ones for prod
-  (`openssl rand -base64 48`); rotating `SESSION_SECRET` is also the only way to revoke every
-  session at once.
+- \[~\] **WP-CERCLE-3 (P3) - Dev secrets are in the working `.env`.** The two real values ARE
+  generated (2026-07-30), in the session scratchpad `CERCLE-PROD-SECRETS.md` with the posting
+  procedure - outside every repo on purpose. All that is left is putting them in the prod env and
+  deleting that file. Rotating `SESSION_SECRET` is also the only way to revoke every session at once;
+  `CANARI_WEBHOOK_SECRET` must equal the Canari product's `webhookSecret` exactly (see WP-INT-1).
 
 ---
 
 ### CANARI - OPEN WORK PACKAGES
 
-- \[ \] **WP-VERIF-0 (P1) - [device] WP-IOS-1 + WP-SEC-1 shipped unverified.** Both release
-  workflows compile green on both platforms (`89f8d230`), but compiling is not running: the Android
-  keystore read and the whole iOS half have never executed on hardware. The 5 device checks that
-  gate the verdict - including the upgrade path, the only test of the one-shot migration - are in
-  `AGENTS.md` "what is still owed"; check 2 doubles as the first ever proof that iOS background
-  decrypt works at all. **Blocks WP-VERIF-2.**
+- \[~\] **WP-VERIF-0..4 + the DEEPLINK-1 and UI-1 residuals (P1 to P3) - [device] one single pass.**
+  Everything native is verified by COMPILING, which proves nothing about running. The ordered
+  cross-platform runbook is **[device-verification](docs/wiki/device-verification.md)**: checks A-J,
+  which WP each one closes, the exact log line that is the verdict for each, and why check A must
+  come first (it needs v0.11.3 - the last release without WP-SEC-1 - installed and logged in BEFORE
+  v0.11.5 lands over it, and it is the only test of the one-shot migration). Do not re-derive the
+  checks here; extend that file instead. Build under test: **v0.11.5**, published to both stores by
+  CI on 2026-07-30.
+  Already banked from the Android run of 2026-07-29 (log on the user's desktop): SQLite storage on
+  every launch, never the IndexedDB fallback; and the post-enrolment relaunch does raise the
+  biometric path, so the `89f8d230` `isKeyPresent` fix holds. One bug found there and fixed in
+  v0.11.5 (the `Base64.DEFAULT` newline) - check G is its re-run. Check G.3 is the swallowed first
+  tap, still unexplained; v0.11.5 makes the guard name the flag it returned on, so capture that
+  window even when the unlock succeeds.
 
-- \[ \] **WP-VERIF-1 (P1) - [device] Tauri login end to end (init + save + KeyPackage).** All three
-  were dead from v0.11.0 to v0.11.2 (`invoke` names matching no Rust command). Native has NOT run
-  since. TestFlight/Play is the first real test; nothing here is proven until it does.
-
-- \[ \] **WP-VERIF-2 (P2) - [device] Decrypted push notification on Android AND iOS.**
-
-- \[~\] **WP-VERIF-3 (P2) - [device] Login, PIN change, biometric enable/disable on real hardware.**
-  **Android run 2026-07-29 (log on the user's desktop) cleared two checks and found one bug.**
-  PASSED: `[DB] Using SQLite storage (Tauri)` on every launch, never the IndexedDB fallback; and the
-  post-enrolment relaunch DOES raise the biometric path (`[BIOMETRIC] Biometric login attempt`), so
-  the `89f8d230` `isKeyPresent` fix holds - that build came from a `workflow_dispatch` artifact, not
-  a release, so it was still unreleased then. FAILED and now fixed in v0.11.5: the fingerprint was
-  accepted and the login still demanded the PIN (`Base64.DEFAULT` newline on the FFI wire - see
-  DURABLE RULES). **Re-run needed to confirm the fix**, plus the still-untested parts: PIN change,
-  disable, and the PIN modal keeping its "use biometrics" button.
-  Also seen in that log, unexplained and NOT fixed: the FIRST biometric attempt (23:12:03) logged
-  `Biometric login attempt` + `Authenticating for userId=...` and then nothing - it never reached
-  `Skipping PIN verification`, so `loginImpl` returned at its `isLoggedIn || isReconnecting ||
-  isLoginInProgress` guard. A second attempt 3 s later ran normally. Something holds one of those
-  three flags at that point in a cold launch; a user tap that silently does nothing is the symptom.
-  v0.11.5 makes the guard NAME the flag it returned on (`[LOGIN] Call ignored, a login already owns
-  the flow (loggedIn=.., reconnecting=.., loginInProgress=..)`), so the re-run answers this instead
-  of reposing it. Grep that line before theorising. Note the fix is probably already sketched in
-  `loginImpl`'s own guard comment: an explicit PIN submit clears the flag first (`handlePinSubmit`)
-  precisely so a user action is never swallowed, and the biometric entry point does not.
-
-- \[ \] **WP-VERIF-4 (P3) - [device] WP-XP-8 retry engine.** Android `OutboxRetryWorker`
-  (WorkManager, exp backoff 30s+, 3 failures -> persistent flag + nudge) and iOS `BGTaskScheduler`
-  `fr.emse.canari.outboxRetry`. Both fire from `maybeNotifyPendingSync` when an opportunistic drain
-  leaves `remaining > 0`. Never observed waking up on hardware.
-
-- \[ \] **WP-DEEPLINK-1 residual (P3) - one entry point unverified.** The fix shipped and is
-  verified on prod (see VERIFIED ON WEB below). The **OS notification tap** could not be driven
-  from a headless browser; it publishes to `notifNav` exactly like the two link paths that were
-  verified, so re-check it on device during WP-VERIF-3.
-
-- \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost.** 2026-07-29, prod, channel ->
-  DM: the toast said success, the echo persisted on the sender, the outbox drained - and the peer
-  never received it, not live and not after a reload. Two later attempts through the same path
-  (including a cold reload, to reproduce the conditions) both delivered, with a read receipt, so it
-  is NOT reproducible. Nothing here is specific to forwarding: `forwardMessage` hands text to the
-  same `sendChatMessage` the composer uses, and a control message sent right after arrived. Suspect
-  the outbox/MLS delivery layer. If it recurs, capture `[OUTBOX]`/`[QUEUE]` on both sides at the
-  moment of loss - that is what is missing to diagnose it.
+- \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
+  2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
+  outbox drained - and the peer never received it, not live and not after a reload. Two later
+  attempts through the same path both delivered, so it is NOT reproducible. Nothing is specific to
+  forwarding: `forwardMessage` hands text to the same `sendChatMessage` the composer uses. The
+  instrumentation it needs already shipped (`ca8e3ef0` made every swallowed outbox branch log), so
+  the decision taken 2026-07-30 is to WAIT for a recurrence rather than audit the delivery layer
+  blind - touching a queue that works, with no repro, risks more than it fixes. If it recurs,
+  capture `[OUTBOX]`/`[QUEUE]` on both sides at the moment of loss.
 
 - \[ \] **WP-UI-1 residual (P3) - one open question, no code left.** The sweep is done (390 -> 31,
   and the 31 are deliberate: switch thumbs, colour-picker handles, always-dark call/lightbox
-  chrome, the white plate behind a QR). Detector: `frontend/scripts/find-oneway-colors.mjs`.
-  Still unexplained: the enrolment sheet reported DARK under a LIGHT theme. The `dark:` variant is
-  correct on web (verified by computed style in both themes), so the suspect is the native
-  runtime - re-check on device during WP-VERIF-3.
+  chrome, the white plate behind a QR). Detector: `frontend/scripts/find-oneway-colors.mjs`. The one
+  open question (the enrolment sheet reporting DARK under a LIGHT theme) is check I of the runbook.
 
 - \[ \] **WP-INT-1 (P3) - Cercle webhook credentials.** Set the real `webhookUrl`/`webhookSecret`
   on the prod `balance_topup` product. Blocked on the Cercle site going online.
@@ -175,23 +147,10 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   as a failure - after 3 attempts that top-up sits in `webhook_deliveries` as `failed` and needs a
   manual retry from the admin panel. `CANARI_WEBHOOK_SECRET` (Cercle env) and the product's
   `webhookSecret` (Canari) are the same string under two names.
-
-- \[~\] **WP-CARTO-1 (P2) - Publish an association map from Canari to the Portail.** PAUSED by the
-  user mid-WP. **Canari half is DONE and committed** (gates green: check 0, lint, format,
-  166 backend + 672 frontend tests): migration 035 (`publication` jsonb + `publishedAt` + a partial
-  unique index making "one live map" a DB invariant), `published-carte.ts` server-side validation
-  (+18 specs), `POST poster/:id/publish|unpublish`, public `GET /api/public/carte`,
-  `carte/publish.ts` publisher, Publish/Live button in the editor header, FR+EN i18n.
-  **The contract is designed and written up** - `docs/wiki/carte-vie-asso.md`, "Publishing to the
-  Portail" - read that first on resume, it is the whole design.
-  **Still owed: the Portail half only.** In `../refonte-portail-etu`: add `getPublishedCarte()` to
-  `src/lib/canari.ts` (404 = nothing live, degrade to no map, like `+page.ts` already does for the
-  association list), fetch it in `src/routes/associations/+page.ts`, and render above the tiles on
-  wide screens ONLY. Join each bubble's `assoId` against the `associations` the page already loads
-  to get slug/name/logo/color; drop any that no longer resolve. Each blob is an `<a href>` to
-  `/associations/<slug>` with a hover animation. Render into a box of the payload's `aspectRatio`
-  or the map skews. `logoUrl()`/`initials()`/`generateColor()` in `src/lib/media.ts` already give
-  the logo + fallbacks.
+  **The secret itself is already generated** (2026-07-30), together with the Cercle's
+  `SESSION_SECRET`, in the session scratchpad `CERCLE-PROD-SECRETS.md` - deliberately outside every
+  repo, with the posting procedure and these two traps repeated. That file closes WP-CERCLE-3 as
+  well; delete it once both values are in place.
 
 ---
 

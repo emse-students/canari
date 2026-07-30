@@ -230,8 +230,8 @@ Avatars come from `/api/users/:id/avatar` (same-origin -> snapdom inlines them).
 ## Publishing to the Portail (WP-CARTO-1)
 
 The poster can also go **online** on the portail-etu showcase, where it renders as an interactive
-map above the association tiles (each blob links to that association's page). Half shipped: the
-Canari side is complete; the Portail renderer is not written yet.
+map above the association tiles (each blob links to that association's page). Both halves are
+shipped: the publisher here, the renderer in `../refonte-portail-etu`.
 
 ### The published artefact is a data contract, not a rendering
 
@@ -270,10 +270,23 @@ Built by `frontend/src/lib/carte/publish.ts` (`buildPublishedCarte`), typed and 
   (`GlobalAdminOrBdeSuperAdminGuard`). The public read is `GET /api/public/carte`, unauthenticated,
   404 when nothing is live, `Cache-Control: public, max-age=300`.
 
-### Still owed
+### The consumer side
 
-The portail-etu half: fetch `/api/public/carte`, join on `assoId`, render the blobs as links to
-`/associations/<slug>` with a hover animation, above the tiles, **on wide screens only**.
+In `../refonte-portail-etu`: `getPublishedCarte()` in `src/lib/canari.ts`, fetched by
+`src/routes/associations/+page.ts` and drawn by `src/lib/components/CarteVieAsso.svelte`, above the
+tiles and on wide screens only. Documented there in `docs/wiki/architecture.md`.
+
+Two things to know before changing the contract:
+
+- **The showcase measures the frame's rendered width and derives every pixel size from it.** A
+  fraction of the frame width is what `w` and `size` mean, so a change of unit here is a silent
+  visual break there, not a type error.
+- **`LogoShape.w`/`h` do NOT travel.** Both catalog entries are currently 1x1, so the consumer draws
+  the logo chip square; adding a rectangular logo shape means adding its ratio to the payload, or the
+  portal will render it square anyway.
+
+Not consumed on purpose: `titleColor`. The poster's own text labels already carry its title, so the
+showcase draws no heading of its own over the map.
 
 ## Reuse map
 

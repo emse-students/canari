@@ -111,14 +111,12 @@ Implementation shipped 2026-07-28. The steps are in the commit; only the unverif
 here (rule 5). Durable rules folded into `CLAUDE.md`.
 
 
-**B7. Device checks that gate the verdict.** Nothing below is proven without them.
-
-1. Android, app killed, screen locked: an incoming DM shows decrypted text.
-2. iOS, app killed, screen locked: same. This is also the first ever proof of Part A.
-3. Both: change the PIN, then repeat 1-2 (`store_push_context` rewrote the same alias).
-4. Both: fresh install + login, then repeat 1-2.
-5. Upgrade path: install the CURRENT store build, log in, install the new build over it WITHOUT
-   logging in again, launch once, kill, then repeat 1-2. This is the only test of B5.
+**B7. Device checks that gate the verdict.** Nothing here is proven without them. They now live in
+`docs/wiki/device-verification.md` as checks A-E of one ordered cross-platform pass, with the exact
+log line that is the verdict for each - do not maintain a second copy here. Two things that list
+knows and this one did not: the upgrade path must run FIRST (once a clean install of the new build
+exists there is nothing left to migrate), and the build to upgrade FROM is **v0.11.3**, the last
+release without WP-SEC-1.
 
 **B8. Traps.**
 
@@ -127,7 +125,7 @@ here (rule 5). Durable rules folded into `CLAUDE.md`.
 - `applyNewDeviceKeyLocally` must still never call `BiometricService.disable` - the alias it deletes
   is the one the background reader now depends on.
 - The Android alias `unime_dev` no longer exists: it belonged to the UniMe legacy `store`/`retrieve`
-  API, which had no caller and was deleted in v0.11.6. An install that predates the deletion may
+  API, which had no caller and was deleted in v0.11.5. An install that predates the deletion may
   still hold that keystore entry plus a `secure_storage` SharedPreferences blob; both are inert.
 - Do NOT add `.setKeySize(256)` to `generateBiometricProtectedKeyForAlias` yet. It only affects
   newly created aliases, so it would split behaviour between fresh and upgraded installs while the

@@ -61,6 +61,7 @@
 
 - [Development workflow](development.md) — Local setup, Makefile, Docker Compose, pre-commit hooks
 - [CI/CD pipeline](cicd.md) — GitHub Actions, mobile builds, releases, self-hosted runner
+- [Device verification runbook](device-verification.md) — The ordered Android + iOS pass: what compiling never proves, and the log line that is the verdict for each check
 - [Server migration & bootstrap](../infrastructure/MIGRATION.md) — Bare-metal setup, secrets, data restore, SSH backup
 
 ---
