@@ -35,6 +35,26 @@ class NotificationService: UNNotificationServiceExtension {
   /// Cap the decrypted preview length, matching the 200-char clamp the in-app path uses.
   private static let maxPreviewLength = 200
 
+  /// FCM message cache file: the app reads it at boot via `read_and_clear_fcm_cache`
+  /// to pre-inject messages that were decrypted while the app was killed. Written
+  /// to the host app's Tauri `app_data_dir` so both platforms share the same path.
+  /// Android twin: `CanariFirebaseMessagingService.writeFcmCache`.
+  private static let fcmCacheFileName = "fcm_message_cache.ndjson"
+
+  /// Maximum number of entries kept in `fcm_message_cache.ndjson`.
+  private static let maxFcmCacheEntries = 50
+
+  /// Welcome-race retry constants. Mirror of Android `WELCOME_RACE_RETRIES` /
+  /// `WELCOME_RACE_RETRY_DELAY_MS`: when a message push arrives before the concurrent
+  /// Welcome push has finished joining the group, retry briefly before falling back.
+  private static let welcomeRaceRetries = 3
+  private static let welcomeRaceRetryDelayMs = 1_800
+
+  /// Serializes NSE writes to `fcm_message_cache.ndjson`. The NSE runs in a separate
+  /// process from the app, so it does not need to share the app's lock, but its own
+  /// concurrent invocations must serialize writes to avoid torn NDJSON.
+  private static let fcmCacheLock = NSLock()
+
   private var contentHandler: ((UNNotificationContent) -> Void)?
   private var bestAttemptContent: UNMutableNotificationContent?
 
@@ -109,14 +129,8 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     var decrypted: DecryptResult?
-    if !protoB64.isEmpty, let state = loadMlsState() {
-      decrypted = decryptProto(ctx: ctx, groupId: groupId, protoB64: protoB64, state: state)
-      // Epoch gap (a device added to the group advanced an epoch this device never
-      // applied): retry with an in-memory, read-only commit catch-up. Mirror of the
-      // in-app CanariTryDecryptWithCommitCatchup path.
-      if decrypted == nil, !groupId.isEmpty, !queuedMessageId.isEmpty {
-        decrypted = decryptWithCommitCatchup(ctx: ctx, groupId: groupId, protoB64: protoB64)
-      }
+    if !protoB64.isEmpty {
+      decrypted = runDecryptLadder(ctx: ctx, groupId: groupId, protoB64: protoB64)
     }
 
     // Call signaling over MLS (WP-XP-5, killed-app path). Only pre-WP-XP-5 callers send these
@@ -136,9 +150,64 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     let body = decrypted?.text ?? Self.fallbackText(senderName: senderName)
+
+    // Cache decrypted messages so the app can pre-inject them at boot. Do not cache
+    // call signaling or empty fallback bodies. Android twin: writeFcmCache after the
+    // call branches.
+    if let msg = decrypted, msg.type != "call_invite", msg.type != "call_control" {
+      writeFcmCache(groupId: groupId, senderId: senderId, senderName: senderName, result: msg)
+    }
+
     applyMessageContent(
       content: content, senderName: senderName, groupName: groupName, body: body,
       groupId: groupId, senderId: senderId, ctx: ctx, media: decrypted)
+  }
+
+  /// Runs the decrypt ladder matching Android (WP-PUSH-2):
+  /// 1. direct decrypt;
+  /// 2. if the group is already local, in-memory commit catch-up;
+  /// 3. if the group is not local, retry the Welcome race up to 3 times, then a final
+  ///    catch-up if the group appeared in the meantime.
+  private func runDecryptLadder(ctx: PushContext, groupId: String, protoB64: String) -> DecryptResult? {
+    guard let state = loadMlsState() else {
+      NSLog("[CanariNSE] decrypt ladder: MLS state absent group=\(groupId.prefix(8))")
+      return nil
+    }
+
+    var decrypted = decryptProto(ctx: ctx, groupId: groupId, protoB64: protoB64, state: state)
+    guard decrypted == nil, !groupId.isEmpty else { return decrypted }
+
+    let local = isGroupLocal(groupId: groupId, ctx: ctx)
+    NSLog("[CanariNSE] direct decrypt failed group=\(groupId.prefix(8)) local=\(local)")
+
+    if local {
+      decrypted = decryptWithCommitCatchup(ctx: ctx, groupId: groupId, protoB64: protoB64)
+      return decrypted
+    }
+
+    // Welcome/message race: the concurrent Welcome push may be joining the group when
+    // this message arrives. Retry briefly so the first message of a new conversation
+    // produces a real notification instead of a generic fallback.
+    var raceAttempt = 0
+    while decrypted == nil && raceAttempt < Self.welcomeRaceRetries {
+      raceAttempt += 1
+      let delay = Double(Self.welcomeRaceRetryDelayMs) / 1000.0
+      NSLog("[CanariNSE] welcome-race retry \(raceAttempt)/\(Self.welcomeRaceRetries) sleep=\(delay)s group=\(groupId.prefix(8))")
+      Thread.sleep(forTimeInterval: delay)
+      decrypted = decryptProto(ctx: ctx, groupId: groupId, protoB64: protoB64, state: state)
+      if decrypted == nil {
+        NSLog("[CanariNSE] welcome-race retry \(raceAttempt)/\(Self.welcomeRaceRetries) still failed group=\(groupId.prefix(8))")
+      }
+    }
+
+    // The group may have appeared during the race (Welcome processed by the app or
+    // another extension invocation). Last-resort catch-up before falling back.
+    if decrypted == nil && isGroupLocal(groupId: groupId, ctx: ctx) {
+      NSLog("[CanariNSE] group appeared during welcome-race, attempting catch-up group=\(groupId.prefix(8))")
+      decrypted = decryptWithCommitCatchup(ctx: ctx, groupId: groupId, protoB64: protoB64)
+    }
+
+    return decrypted
   }
 
   /// Ringing banner for a legacy (non-silent) MLS call invite: ringtone-class sound +
@@ -202,6 +271,9 @@ class NotificationService: UNNotificationServiceExtension {
   /// Parsed decrypt result: the preview text plus the media reference/CEK for a thumbnail (WP-XP-3).
   private struct DecryptResult {
     let text: String
+    let messageId: String
+    let sentAt: Int64
+    let replyTo: String?
     let mediaKind: String?
     let mediaId: String?
     let mediaKey: String?
@@ -284,6 +356,81 @@ class NotificationService: UNNotificationServiceExtension {
       }
     }
     return Self.parseDecrypted(json)
+  }
+
+  /// Returns true if the group already exists in the persisted MLS state (epoch >= 0).
+  /// Loads `mls.bin` read-only and never persists state.
+  private func isGroupLocal(groupId: String, ctx: PushContext) -> Bool {
+    guard !groupId.isEmpty, !ctx.deviceKeyB64.isEmpty else { return false }
+    guard let state = loadMlsState() else { return false }
+    let epoch: Int64 = state.withUnsafeBytes { statePtr in
+      canari_native_group_epoch(
+        statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
+        ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId)
+    }
+    NSLog("[CanariNSE] isGroupLocal: epoch=\(epoch) group=\(groupId.prefix(8))")
+    return epoch >= 0
+  }
+
+  /// Writes a decrypted message entry to `fcm_message_cache.ndjson` in the host app's
+  /// Tauri `app_data_dir`, bounded to `maxFcmCacheEntries`. The app reads this file at
+  /// boot via `read_and_clear_fcm_cache` to pre-inject messages already decrypted while
+  /// killed. Android twin: `CanariFirebaseMessagingService.writeFcmCache`.
+  private func writeFcmCache(
+    groupId: String, senderId: String, senderName: String, result: DecryptResult
+  ) {
+    guard !result.messageId.isEmpty else {
+      NSLog("[CanariNSE] writeFcmCache: messageId empty -> entry ignored")
+      return
+    }
+    guard let dir = hostAppDataDir() else {
+      NSLog("[CanariNSE] writeFcmCache: host app data dir unavailable")
+      return
+    }
+
+    var entry: [String: Any] = [
+      "groupId": groupId,
+      "messageId": result.messageId,
+      "senderId": senderId,
+      "senderName": senderName,
+      "content": result.text,
+      "timestamp": result.sentAt,
+      "type": result.type,
+    ]
+    if let replyTo = result.replyTo, !replyTo.isEmpty {
+      entry["replyTo"] = replyTo
+    }
+    if let mediaKind = result.mediaKind, !mediaKind.isEmpty {
+      entry["mediaKind"] = mediaKind
+    }
+
+    guard let entryData = try? JSONSerialization.data(withJSONObject: entry, options: []),
+      let entryLine = String(data: entryData, encoding: .utf8)
+    else {
+      NSLog("[CanariNSE] writeFcmCache: JSON encoding failed")
+      return
+    }
+
+    let fileUrl = dir.appendingPathComponent(Self.fcmCacheFileName)
+    Self.fcmCacheLock.lock()
+    defer { Self.fcmCacheLock.unlock() }
+    do {
+      var lines: [String] = []
+      if let data = try? Data(contentsOf: fileUrl),
+        let text = String(data: data, encoding: .utf8)
+      {
+        lines = text.components(separatedBy: "\n").filter { !$0.isEmpty }
+      }
+      while lines.count >= Self.maxFcmCacheEntries {
+        lines.removeFirst()
+      }
+      lines.append(entryLine)
+      let body = lines.joined(separator: "\n").appending("\n")
+      try body.write(to: fileUrl, atomically: true, encoding: .utf8)
+      NSLog("[CanariNSE] writeFcmCache: messageId=\(result.messageId.prefix(8)) groupId=\(groupId.prefix(8))")
+    } catch {
+      NSLog("[CanariNSE] writeFcmCache: failed: \(error.localizedDescription)")
+    }
   }
 
   /// Fills the notification with the resolved title/subtitle/body + attachment, then delivers.
@@ -476,6 +623,17 @@ class NotificationService: UNNotificationServiceExtension {
     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId)
   }
 
+  /// Returns the host app's Tauri `app_data_dir` (Application Support/fr.emse.canari).
+  /// This is where `read_and_clear_fcm_cache` expects `fcm_message_cache.ndjson`.
+  /// Mirror of ObjC `CanariTauriDataDir` in canari_push.mm.
+  private func hostAppDataDir() -> URL? {
+    let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+    guard let base = paths.first else { return nil }
+    let dir = base.appendingPathComponent("fr.emse.canari")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
+  }
+
   private func loadMlsState() -> Data? {
     guard let dir = Self.appGroupDir() else { return nil }
     return try? Data(contentsOf: dir.appendingPathComponent(Self.mlsBinFile))
@@ -663,8 +821,17 @@ class NotificationService: UNNotificationServiceExtension {
       text = String(text.prefix(maxPreviewLength))
     }
     let nonEmpty: (String) -> String? = { (dict[$0] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+    let sentAt: Int64
+    if let raw = dict["sentAt"] as? NSNumber {
+      sentAt = raw.int64Value
+    } else if let raw = dict["sentAt"] as? String, let v = Int64(raw) {
+      sentAt = v
+    } else {
+      sentAt = Int64(Date().timeIntervalSince1970 * 1000)
+    }
     return DecryptResult(
-      text: text, mediaKind: nonEmpty("mediaKind"), mediaId: nonEmpty("mediaId"),
+      text: text, messageId: nonEmpty("messageId") ?? "",
+      sentAt: sentAt, replyTo: nonEmpty("replyTo"), mediaKind: nonEmpty("mediaKind"), mediaId: nonEmpty("mediaId"),
       mediaKey: nonEmpty("mediaKey"), mediaIv: nonEmpty("mediaIv"), mimeType: nonEmpty("mimeType"),
       type: type, callId: nonEmpty("callId"), callEnded: (dict["callEnded"] as? Bool) ?? false,
       hasVideo: (dict["hasVideo"] as? Bool) ?? false)

@@ -140,6 +140,48 @@ Pointed `JAVA_HOME` at `C:\Program Files\Eclipse Adoptium\jdk-21.0.11.10-hotspot
 
 ---
 
+## WP-PUSH-2 (iOS NSE parity: FCM cache + Welcome-race ladder), 2026-07-30
+
+**Agent**: Zoo Code mode.
+**Scope**: Bring the iOS Notification Service Extension to parity with Android
+[`CanariFirebaseMessagingService`](frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt)
+on two points:
+1. Write bounded `fcm_message_cache.ndjson` entries to the host app's Tauri `app_data_dir`
+   from [`NotificationService.swift`](frontend/src-tauri/gen/apple/canari_NSE/NotificationService.swift)
+   after a successful message decrypt.
+2. Run the same background MLS decrypt ladder: direct decrypt, catch-up-first when the group is
+   already local (via new [`isGroupLocal`](frontend/src-tauri/gen/apple/canari_NSE/NotificationService.swift:336)),
+   then up to 3 × 1.8 s Welcome-race retries when it is not, then a final late catch-up.
+Also added TS contract guard [`fcmCacheFields.test.ts`](frontend/src/lib/mobile/fcmCacheFields.test.ts),
+updated `CHANGELOG.md` and `docs/wiki/frontend/mobile.md`.
+
+**Verdict: accepted.**
+
+- Implementation matches the spec: the NSE writes the cache to the same `app_data_dir` path the
+  Rust `read_and_clear_fcm_cache` reads, capped at 50 entries with an `NSLock`; the ladder uses
+  `Thread.sleep(forTimeInterval:)` and logs each retry; no `mls.bin` write or Welcome processing
+  from the NSE; no FFI signatures changed.
+- The new `fcmCacheFields.test.ts` asserts field parity between Android/iOS cache writers and the
+  TS consumer; 5/5 pass.
+- `replyTo` was added to `DecryptResult` so the iOS cache entry can carry the same optional fields
+  as Android.
+
+**Gates passed:**
+- `bun run check` (frontend) clean.
+- `bun run test` (frontend) 702/702 (up from 697; 5 new contract tests).
+- `cargo clippy --all-targets -- -D warnings` in `frontend/src-tauri/` clean.
+- Android debug build (`:app:assembleDebug`) and unit tests (`:app:testArm64DebugUnitTest`) green;
+  no Kotlin files were modified.
+
+**Still owed:**
+- iOS compile check via `.github/workflows/ios-release.yml` `workflow_dispatch`. It was not
+  dispatched from this Windows environment because the step requires `gh` CLI authentication state
+  that is not guaranteed here; it must be run before any verdict that depends on Swift/ObjC
+  compilation, per AGENTS.md rule 6 learned in WP-SEC-1/WP-IOS-1.
+- Device checks from `docs/wiki/device-verification.md` (killed-app message display, FCM cache
+  pre-injection, first-message-of-new-conversation race).
+
+
 ## WP-SEC-1 / WP-IOS-1 - what is still owed
 
 Implementation shipped 2026-07-28. The steps are in the commit; only the unverified part is kept
@@ -173,3 +215,45 @@ release without WP-SEC-1.
   the stored bytes as text (UTF-8) or storing the base64 text instead silently yields no key.
 
 ---
+
+## WP-PUSH-2 (iOS NSE parity: FCM cache + Welcome-race ladder), 2026-07-30
+
+**Agent**: Zoo Code mode.
+**Scope**: Bring the iOS Notification Service Extension to parity with Android
+[`CanariFirebaseMessagingService`](frontend/src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt)
+on two points:
+1. Write bounded `fcm_message_cache.ndjson` entries to the host app's Tauri `app_data_dir`
+   from [`NotificationService.swift`](frontend/src-tauri/gen/apple/canari_NSE/NotificationService.swift)
+   after a successful message decrypt.
+2. Run the same background MLS decrypt ladder: direct decrypt, catch-up-first when the group is
+   already local (via new [`isGroupLocal`](frontend/src-tauri/gen/apple/canari_NSE/NotificationService.swift:336)),
+   then up to 3 × 1.8 s Welcome-race retries when it is not, then a final late catch-up.
+Also added TS contract guard [`fcmCacheFields.test.ts`](frontend/src/lib/mobile/fcmCacheFields.test.ts),
+updated `CHANGELOG.md` and `docs/wiki/frontend/mobile.md`.
+
+**Verdict: accepted.**
+
+- Implementation matches the spec: the NSE writes the cache to the same `app_data_dir` path the
+  Rust `read_and_clear_fcm_cache` reads, capped at 50 entries with an `NSLock`; the ladder uses
+  `Thread.sleep(forTimeInterval:)` and logs each retry; no `mls.bin` write or Welcome processing
+  from the NSE; no FFI signatures changed.
+- The new `fcmCacheFields.test.ts` asserts field parity between Android/iOS cache writers and the
+  TS consumer; 5/5 pass.
+- `replyTo` was added to `DecryptResult` so the iOS cache entry can carry the same optional fields
+  as Android.
+
+**Gates passed:**
+- `bun run check` (frontend) clean.
+- `bun run test` (frontend) 702/702 (up from 697; 5 new contract tests).
+- `cargo clippy --all-targets -- -D warnings` in `frontend/src-tauri/` clean.
+- Android debug build (`:app:assembleDebug`) and unit tests (`:app:testArm64DebugUnitTest`) green;
+  no Kotlin files were modified.
+
+**Still owed:**
+- iOS compile check via `.github/workflows/ios-release.yml` `workflow_dispatch`. It was not
+  dispatched from this Windows environment because the step requires `gh` CLI authentication state
+  that is not guaranteed here; it must be run before any verdict that depends on Swift/ObjC
+  compilation, per AGENTS.md rule 6 learned in WP-SEC-1/WP-IOS-1.
+- Device checks from `docs/wiki/device-verification.md` (killed-app message display, FCM cache
+  pre-injection, first-message-of-new-conversation race).
+

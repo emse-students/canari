@@ -14,7 +14,14 @@ import type { IStorage, StoredMessage } from '$lib/db';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
-/** Shape of one entry in fcm_message_cache.ndjson (written by Kotlin/Rust). */
+/**
+ * Shape of one entry in fcm_message_cache.ndjson (written by Android Kotlin and the
+ * iOS Notification Service Extension). Both writers must produce the same fields so
+ * the TypeScript consumer does not need to distinguish platforms.
+ *
+ * replyTo is written as the platform's native object (JSONObject on Android,
+ * [String: Any] on iOS), so the JSON must match the TS-side reply-to contract.
+ */
 interface FcmCacheEntry {
   groupId: string;
   messageId: string;

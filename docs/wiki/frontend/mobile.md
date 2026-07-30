@@ -112,13 +112,19 @@ is the [first real Kotlin compile](../cicd.md).
 - Decrypts MLS ciphertext via Rust FFI (`canari_native_decrypt_message`)
 - Decrypts media thumbnails via Rust FFI (`canari_native_decrypt_media`)
 - Builds visible notification content (title, body, attachment, category, badge)
+- Writes decrypted messages to `fcm_message_cache.ndjson` in the host app's Tauri `app_data_dir` so the app can pre-inject them at boot
+- Runs the same background MLS decrypt ladder as Android (direct decrypt → catch-up-first for local groups → Welcome-race retry for non-local groups)
 - Budget: ~30 seconds; 2 MB media cap
 
 The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 - `push_context.json` — device ID, user ID, backend base URL, push token. No key material: the
   device key comes from the shared keychain item `mls_bg_key_<alias>` (see
   [auth](modules/auth.md) "Where the key lives")
-- `mls_pending.db` — pending MLS state for background processing
+- `mls.bin` — read-only mirror of the persisted MLS state; the NSE never writes it
+- `channel_keys.json` — read-only mirror for community/channel message decryption
+- `push_secret.txt` — read-only mirror of the PushSecret for backend fetch paths
+
+The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
 
 ### CallKit (VoIP pushes)
 
@@ -166,15 +172,24 @@ Android has no equivalent restriction.
 
 #### Background MLS decrypt ladder
 
-When an encrypted MLS message push arrives:
+Both Android and the iOS NSE run the same ladder when an encrypted MLS message push arrives:
 
-1. Try a direct decrypt (`tryDecrypt`).
-2. If that fails and the group is already local (`isGroupLocal` → epoch ≥ 0), run in-memory commit catch-up (`tryDecryptWithCommitCatchup`) immediately.
-3. If the group is **not** local, retry a few times to give a concurrent Welcome push time to join the group (`WELCOME_RACE_RETRIES × WELCOME_RACE_RETRY_DELAY_MS`).
-4. If the group becomes local during that race, try commit catch-up as a last resort before falling back to the worker.
-5. If everything fails, enqueue `MlsBackgroundWorker` and show the generic fallback notification (unless the push is silent, in which case it returns quietly).
+1. Try a direct decrypt (`tryDecrypt` / `decryptProto`).
+2. If that fails and the group is already local (`isGroupLocal` → epoch ≥ 0), run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately.
+3. If the group is **not** local, retry a few times to give a concurrent Welcome push time to join the group (`WELCOME_RACE_RETRIES × WELCOME_RACE_RETRY_DELAY_MS` = 3 × 1.8 s on Android, mirrored by `welcomeRaceRetries × welcomeRaceRetryDelayMs` in the NSE).
+4. If the group becomes local during that race, try commit catch-up as a last resort before falling back.
+5. If everything fails, Android enqueues `MlsBackgroundWorker` and shows the generic fallback notification (unless the push is silent, in which case it returns quietly). The iOS NSE cannot enqueue work from the extension, so it shows the fallback directly.
 
 This order matters because a silent commit push advances the epoch but cannot persist state while the app is closed; the next message push therefore looks like an epoch gap on a group that is already joined. Running catch-up first for local groups avoids the old ~9.6 s retry loop.
+
+### FCM message cache
+
+Both platforms write decrypted message previews to `{app_data_dir}/fcm_message_cache.ndjson` after a successful decrypt:
+
+- Android: `CanariFirebaseMessagingService.writeFcmCache`
+- iOS NSE: `NotificationService.writeFcmCache`
+
+The file is bounded to 50 entries and read at boot by `read_and_clear_fcm_cache` (Rust) so the app can pre-inject messages into the local store before the full MLS sync finishes. Both writers must produce the same JSON fields (`groupId`, `messageId`, `senderId`, `senderName`, `content`, `timestamp`, `type`, plus optional `replyTo` and `mediaKind`).
 
 ### Background execution
 
