@@ -280,22 +280,18 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
     // Start MLS state load immediately - pure I/O, doesn't need the token.
     const { loadMlsState } = await import('$lib/utils/hex');
+    // loadMlsState already picks the backend for the runtime: `load_mls_state` (mls.bin) under
+    // Tauri, IndexedDB on the web. So the source is decided by the runtime, not by which call
+    // answered - the log used to report "IndexedDB" on a mobile launch that had just read mls.bin,
+    // which is a misleading thing to hand someone reading a log to debug local storage. The
+    // Tauri-only retry that used to sit here invoked the very same command loadMlsState had just
+    // failed on, and could not answer where that one had not.
     const mlsStatePromise = (async (): Promise<
-      { bytes: Uint8Array; source: string } | undefined
+      { bytes: Uint8Array; source: 'native' | 'indexeddb' } | undefined
     > => {
       const loaded = await loadMlsState(ctx.getUserId());
-      if (loaded) return { bytes: loaded, source: 'indexeddb' };
-      if (isTauriRuntime()) {
-        try {
-          const { invoke } = await import('@tauri-apps/api/core');
-          const fallback = await invoke<number[] | null>('load_mls_state');
-          if (fallback && fallback.length > 0)
-            return { bytes: new Uint8Array(fallback), source: 'native' };
-        } catch {
-          // Non-blocking.
-        }
-      }
-      return undefined;
+      if (!loaded) return undefined;
+      return { bytes: loaded, source: isTauriRuntime() ? 'native' : 'indexeddb' };
     })();
 
     let accessToken: string;
@@ -326,7 +322,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     if (mlsStateResult) {
       cb.log(
         mlsStateResult.source === 'native'
-          ? 'MLS state restored from native backup (mls.bin).'
+          ? 'MLS state loaded from mls.bin (native).'
           : 'MLS state loaded from IndexedDB.'
       );
     }
