@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listAssociations, listMyAssociations, type Association } from '$lib/associations/api';
+  import {
+    listAssociations,
+    listMyAssociations,
+    AssociationPermissionFlag,
+    hasPermissionFlag,
+    type Association,
+  } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -13,7 +19,14 @@
   let error = $state('');
   let showArchived = $state(false);
   let isLoggedIn = $derived(!!currentUserId());
-  let isAdmin = $derived(isGlobalAdmin());
+  /** Associations are created by global admins or BDE members holding MANAGE_ASSO. */
+  const canCreate = $derived(
+    isGlobalAdmin() ||
+      myAssociations.some(
+        (a) =>
+          a.isBDE && hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.MANAGE_ASSO)
+      )
+  );
 
   onMount(async () => {
     try {
@@ -65,7 +78,7 @@
       >
         {m.assoc_list_global_calendar()}
       </a>
-      {#if isAdmin}
+      {#if canCreate}
         <a
           href="/associations/new"
           class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-5 py-2 text-sm font-bold text-cn-dark shadow-sm transition-all hover:bg-cn-yellow-hover"

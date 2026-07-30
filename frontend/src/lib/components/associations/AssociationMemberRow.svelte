@@ -9,18 +9,11 @@
   import { Trash2, ChevronDown } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
-  /** Human-readable labels for each permission flag, reactive across locale changes. */
-  const FLAG_LABELS = $derived<{ flag: AssociationPermissionFlag; label: string }[]>([
-    { flag: AssociationPermissionFlag.POST_AS_ASSO, label: m.asso_flag_post_as() },
-    { flag: AssociationPermissionFlag.PROPOSE_EVENT, label: m.asso_flag_propose_event() },
-    { flag: AssociationPermissionFlag.MANAGE_MEMBERS, label: m.asso_flag_manage_members() },
-    { flag: AssociationPermissionFlag.MANAGE_DOCUMENTS, label: m.asso_flag_manage_documents() },
-    { flag: AssociationPermissionFlag.MANAGE_FORMS, label: m.asso_flag_manage_forms() },
-    { flag: AssociationPermissionFlag.MANAGE_PRODUCTS, label: m.asso_flag_manage_products() },
-    { flag: AssociationPermissionFlag.MANAGE_STRIPE_CONNECT, label: m.asso_flag_manage_stripe() },
-    { flag: AssociationPermissionFlag.VALIDATE_EVENTS, label: m.asso_flag_validate_events() },
-    { flag: AssociationPermissionFlag.MANAGE_ASSO, label: m.asso_flag_manage_asso() },
-    { flag: AssociationPermissionFlag.MODERATE, label: m.asso_flag_moderate() },
+  /** BDE-only flags that are inert in non-BDE associations. */
+  const BDE_ONLY_FLAGS = new Set([
+    AssociationPermissionFlag.VALIDATE_EVENTS,
+    AssociationPermissionFlag.MANAGE_ASSO,
+    AssociationPermissionFlag.MODERATE,
   ]);
 
   interface Props {
@@ -28,11 +21,36 @@
     displayName: string;
     /** When true, shows role editor and remove (association admins). */
     manage?: boolean;
+    /** When false, BDE-only flags (VALIDATE_EVENTS, MANAGE_ASSO, MODERATE) are hidden. */
+    isBDE?: boolean;
     onRoleChange?: (userId: string, role: string, permissions: number) => void | Promise<void>;
     onRemove?: (userId: string) => void | Promise<void>;
   }
 
-  let { member, displayName, manage = false, onRoleChange, onRemove }: Props = $props();
+  let {
+    member,
+    displayName,
+    manage = false,
+    isBDE = false,
+    onRoleChange,
+    onRemove,
+  }: Props = $props();
+
+  /** Human-readable labels for each applicable permission flag, reactive across locale changes. */
+  const FLAG_LABELS = $derived<{ flag: AssociationPermissionFlag; label: string }[]>(
+    [
+      { flag: AssociationPermissionFlag.POST_AS_ASSO, label: m.asso_flag_post_as() },
+      { flag: AssociationPermissionFlag.PROPOSE_EVENT, label: m.asso_flag_propose_event() },
+      { flag: AssociationPermissionFlag.MANAGE_MEMBERS, label: m.asso_flag_manage_members() },
+      { flag: AssociationPermissionFlag.MANAGE_DOCUMENTS, label: m.asso_flag_manage_documents() },
+      { flag: AssociationPermissionFlag.MANAGE_FORMS, label: m.asso_flag_manage_forms() },
+      { flag: AssociationPermissionFlag.MANAGE_PRODUCTS, label: m.asso_flag_manage_products() },
+      { flag: AssociationPermissionFlag.MANAGE_STRIPE_CONNECT, label: m.asso_flag_manage_stripe() },
+      { flag: AssociationPermissionFlag.VALIDATE_EVENTS, label: m.asso_flag_validate_events() },
+      { flag: AssociationPermissionFlag.MANAGE_ASSO, label: m.asso_flag_manage_asso() },
+      { flag: AssociationPermissionFlag.MODERATE, label: m.asso_flag_moderate() },
+    ].filter(({ flag }) => isBDE || !BDE_ONLY_FLAGS.has(flag))
+  );
 
   /** Resolved bitmask: prefer explicit permissions, fall back to isAdmin heuristic. */
   const effectivePermissions = $derived(

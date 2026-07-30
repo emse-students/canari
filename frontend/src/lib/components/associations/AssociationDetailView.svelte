@@ -372,6 +372,7 @@
               displayName={resolvedMemberNames[member.userId] ??
                 member.displayName ??
                 getUserDisplayNameSync(member.userId)}
+              isBDE={asso?.isBDE ?? false}
             />
           {/each}
         </div>

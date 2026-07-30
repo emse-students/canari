@@ -176,6 +176,7 @@
               member.displayName ??
               getUserDisplayNameSync(member.userId)}
             manage={true}
+            isBDE={asso.isBDE}
             onRoleChange={handleChangeRole}
             onRemove={handleRemoveMember}
           />

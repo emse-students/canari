@@ -121,11 +121,6 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   session had started from 50, which is the proof the biometric session both writes and reads.
   Everything else in the runbook (A-F, H-J) is still owed, and ALL of it is still owed on iOS.
 
-- \[ \] **WP-CARTO-3 (P3) - republish the carte once the card fix is deployed.** Member cards are now
-  sized per name (a surname was breaking mid-word) and the payload gained `photo`, so the live map
-  keeps its old sizes until a republish from `/admin/carte/<id>`. Deploy order does NOT matter this
-  time: the Portail reads a card with no `photo` as `w - 12`, which is exactly what it was.
-
 - \[ \] **WP-PUSH-1 (P2) - a push notification takes 12 s because the retry ladder is in the wrong
   order.** Android log 2026-07-30, 16:36:34 -> 16:36:46. A silent push carries a commit; the
   background is read-only and never applies it, so the NEXT message push cannot decrypt. Android
