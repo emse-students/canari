@@ -128,7 +128,11 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   `Skipping PIN verification`, so `loginImpl` returned at its `isLoggedIn || isReconnecting ||
   isLoginInProgress` guard. A second attempt 3 s later ran normally. Something holds one of those
   three flags at that point in a cold launch; a user tap that silently does nothing is the symptom.
-  Capture the same window again on the re-run before theorising.
+  v0.11.6 makes the guard NAME the flag it returned on (`[LOGIN] Call ignored, a login already owns
+  the flow (loggedIn=.., reconnecting=.., loginInProgress=..)`), so the re-run answers this instead
+  of reposing it. Grep that line before theorising. Note the fix is probably already sketched in
+  `loginImpl`'s own guard comment: an explicit PIN submit clears the flag first (`handlePinSubmit`)
+  precisely so a user action is never swallowed, and the biometric entry point does not.
 
 - \[ \] **WP-VERIF-4 (P3) - [device] WP-XP-8 retry engine.** Android `OutboxRetryWorker`
   (WorkManager, exp backoff 30s+, 3 failures -> persistent flag + nudge) and iOS `BGTaskScheduler`

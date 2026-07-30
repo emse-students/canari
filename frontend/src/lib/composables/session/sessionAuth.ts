@@ -244,7 +244,17 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
   // Returning silently here is intentional: the in-flight login owns the flow and will
   // resolve the caller's UI. An explicit PIN submit must clear this flag before calling
   // (see handlePinSubmit) so a user action is never swallowed by a background login.
-  if (ctx.isLoggedIn() || ctx.isReconnecting() || ctx.getIsLoginInProgress()) return;
+  if (ctx.isLoggedIn() || ctx.isReconnecting() || ctx.getIsLoginInProgress()) {
+    // Name the flag that won. A swallowed user tap is otherwise indistinguishable in a log from a
+    // tap that never reached loginImpl at all: on Android 2026-07-29 the FIRST biometric attempt of
+    // a cold launch returned here and only a second tap 3 s later went through, with no way to tell
+    // which of the three was still set - which is the whole reason that bug is still open.
+    cb.log(
+      `[LOGIN] Call ignored, a login already owns the flow (loggedIn=${ctx.isLoggedIn()}, ` +
+        `reconnecting=${ctx.isReconnecting()}, loginInProgress=${ctx.getIsLoginInProgress()})`
+    );
+    return;
+  }
   ctx.setIsLoginInProgress(true);
 
   ctx.setLoginError('');
