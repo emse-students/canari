@@ -221,7 +221,7 @@ export const DEFAULT_CARTE_DEBUG_TUNING: CarteDebugTuning = {
   bureauCardWidth: 64,
   presidentCardWidth: 73,
   associationNameScale: 1.15,
-  memberNameScale: 0.94,
+  memberNameScale: 0.88,
   memberRoleScale: 0.9,
 };
 

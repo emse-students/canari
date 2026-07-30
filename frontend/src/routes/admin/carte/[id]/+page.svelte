@@ -79,67 +79,6 @@
   const theme = $derived({ ...CARTE_STYLE, titleColor });
 
   const DEBUG_STORAGE_PREFIX = 'canari_carte_debug_tuning:';
-  const DEBUG_CONTROLS = [
-    { key: 'bureauCrownCy', label: 'Couronne - centre Y', min: 60, max: 180, step: 1 },
-    { key: 'bureauCrownRx', label: 'Couronne - rayon X', min: 60, max: 200, step: 1 },
-    { key: 'bureauCrownRy', label: 'Couronne - rayon Y', min: 120, max: 240, step: 1 },
-    {
-      key: 'bureauCrownAngle1',
-      label: 'Couronne - angle 1 (bas)',
-      min: -1.5,
-      max: 1.5,
-      step: 0.01,
-    },
-    {
-      key: 'bureauCrownAngle2',
-      label: 'Couronne - angle 2 (milieu)',
-      min: -1.5,
-      max: 1.5,
-      step: 0.01,
-    },
-    {
-      key: 'bureauCrownAngle3',
-      label: 'Couronne - angle 3 (haut)',
-      min: -1.5,
-      max: 1.5,
-      step: 0.01,
-    },
-    { key: 'bureauCardWidth', label: 'Carte bureau - largeur', min: 48, max: 90, step: 1 },
-    {
-      key: 'presidentCardWidth',
-      label: 'Carte président - largeur',
-      min: 60,
-      max: 120,
-      step: 1,
-    },
-    {
-      key: 'associationNameScale',
-      label: 'Nom association - échelle',
-      min: 0.5,
-      max: 1.15,
-      step: 0.01,
-    },
-    {
-      key: 'memberNameScale',
-      label: 'Nom membre - échelle',
-      min: 0.5,
-      max: 1.15,
-      step: 0.01,
-    },
-    {
-      key: 'memberRoleScale',
-      label: 'Rôle membre - échelle',
-      min: 0.5,
-      max: 1.15,
-      step: 0.01,
-    },
-  ] as const satisfies ReadonlyArray<{
-    key: keyof CarteDebugTuning;
-    label: string;
-    min: number;
-    max: number;
-    step: number;
-  }>;
 
   function cloneDefaultDebugTuning(): CarteDebugTuning {
     return { ...DEFAULT_CARTE_DEBUG_TUNING };
@@ -213,14 +152,6 @@
     } catch {
       // Ignore storage failures in the debug panel.
     }
-  }
-
-  function setDebugTuningValue(key: keyof CarteDebugTuning, value: number) {
-    debugTuning = { ...debugTuning, [key]: value };
-  }
-
-  function formatDebugValue(value: number): string {
-    return Number.isInteger(value) ? String(value) : value.toFixed(2);
   }
 
   // ── Freeform bubble placement (persisted as layout.bubbles) ───────────────────

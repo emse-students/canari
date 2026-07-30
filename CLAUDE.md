@@ -118,20 +118,6 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   tap, still unexplained; v0.11.5 makes the guard name the flag it returned on, so capture that
   window even when the unlock succeeds.
 
-- \[ \] **WP-CARTO-2 (P2) - the carte v2 needs a deploy IN ORDER, then one republish.** Shipped
-  2026-07-30 (`8972b161` here, `6c44e6b` on the Portail): the publication is now the poster fully
-  resolved (photos, annuaire, Canari fonts) and the Portail refuses a v1 payload rather than drawing
-  half of it. Consequences, in this order:
-  1. **Canari must reach prod first** (release or manual deploy of frontend + social-service). Until
-     it does, the editor still publishes v1.
-  2. **Then republish the carte from `/admin/carte/<id>`.** That single click IS the migration - the
-     poster lives in `layout`, untouched; only the derived `publication` is stale.
-  3. The Portail can deploy at any time. **Between a Portail deploy and step 2 the map is simply
-     absent** from `/associations` (logged in the server console, tiles unaffected) - by design, not
-     a regression.
-  A roster change now needs a republish too (the displayed faces are a snapshot; the association's
-  name/logo/color/email still join live). Details: [carte-vie-asso](docs/wiki/carte-vie-asso.md).
-
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
   outbox drained - and the peer never received it, not live and not after a reload. Two later
