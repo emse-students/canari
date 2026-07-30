@@ -97,6 +97,10 @@ export class PostsService {
   /** Anonymize association-authored posts loaded as TypeORM entities. */
   private async toPublicPostFromEntity(post: Post): Promise<Record<string, unknown>> {
     const raw: any = { ...(post as any) };
+    // Backward compatibility: expose both `media` (canonical) and `images` (legacy clients).
+    if (Array.isArray(raw.media)) {
+      raw.images = raw.media;
+    }
     if (!raw.associationId) {
       return raw;
     }
@@ -155,6 +159,14 @@ export class PostsService {
     if (mentionedIds.length > 0) {
       data.mentions = mentionedIds;
     }
+
+    // Normalize media field: accept `media` (new) or `images` (legacy) from the client.
+    if (Array.isArray(data.media)) {
+      // already normalized
+    } else if (Array.isArray(data.images)) {
+      data.media = data.images;
+    }
+    delete data.images;
 
     const post = this.postRepo.create(data);
     const saved = await this.postRepo.save(post);
@@ -605,6 +617,7 @@ export class PostsService {
     userId: string,
     data: {
       markdown: string;
+      media?: any[];
       images?: any[];
       polls?: any[];
       attachedFormId?: string | null;
@@ -621,7 +634,11 @@ export class PostsService {
 
     post.markdown = data.markdown;
 
-    if (data.images !== undefined) post.images = data.images;
+    if (data.media !== undefined) {
+      post.media = data.media;
+    } else if (data.images !== undefined) {
+      post.media = data.images;
+    }
 
     if (data.polls !== undefined) {
       post.polls = data.polls.map((poll: any) => ({

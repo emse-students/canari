@@ -29,8 +29,8 @@ export class Post {
   @Column({ type: 'uuid', nullable: true })
   attachedFormId: string;
 
-  @Column('jsonb', { default: [] })
-  images: any[];
+  @Column('jsonb', { name: 'images', default: [] })
+  media: any[];
 
   @Column('jsonb', { default: [] })
   polls: any[];

@@ -3,7 +3,10 @@ import { socialUrl } from '$lib/utils/apiUrl';
 import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
 
-export type PostImageRef = Omit<MediaRef, 'type'> & { caption?: string };
+export type PostMediaRef = MediaRef & { caption?: string };
+
+/** @deprecated Use `PostMediaRef` instead. */
+export type PostImageRef = PostMediaRef;
 
 export interface PollOption {
   id: string;
@@ -41,7 +44,7 @@ export interface PostComment {
   likes: string[];
   createdAt: string;
   /** Encrypted media attached to this comment (GIF, screenshot, etc.). */
-  media?: PostImageRef;
+  media?: PostMediaRef;
 }
 
 /** Display payload for posts published as an association (author identity hidden). */
@@ -71,7 +74,9 @@ export interface PostEntity {
   markdown: string;
   mentions: string[];
   links: Array<{ url: string }>;
-  images: PostImageRef[];
+  media: PostMediaRef[];
+  /** @deprecated Use `media` instead. Kept for backward compatibility. */
+  images: PostMediaRef[];
   polls: Poll[];
   forms?: PostForm[];
   attachedFormId?: string;
@@ -113,7 +118,9 @@ export async function getMyScheduledPosts(): Promise<ScheduledPost[]> {
 export interface CreatePostPayload {
   markdown: string;
   scheduledAt?: string;
-  images?: PostImageRef[];
+  media?: PostMediaRef[];
+  /** @deprecated Use `media` instead. */
+  images?: PostMediaRef[];
   polls?: Array<{
     question: string;
     options: Array<{ label: string }>;
@@ -129,7 +136,9 @@ export interface CreatePostPayload {
 /** Payload for PATCH /api/posts/:id. All fields except markdown are optional. */
 export interface UpdatePostPayload {
   markdown: string;
-  images?: PostImageRef[];
+  media?: PostMediaRef[];
+  /** @deprecated Use `media` instead. */
+  images?: PostMediaRef[];
   polls?: Array<{
     /** Existing poll ID - pass it to preserve vote history when options are unchanged. */
     id?: string;

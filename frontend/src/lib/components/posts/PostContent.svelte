@@ -1,6 +1,7 @@
 <script lang="ts">
-  import PostImage from './PostImage.svelte';
-  import type { PostEntity } from '$lib/posts/api';
+  import PostMedia from './PostMedia.svelte';
+  import type { PostEntity, PostMediaRef } from '$lib/posts/api';
+  import type { MediaType } from '$lib/media';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
   import PostMentionLink from './PostMentionLink.svelte';
@@ -17,7 +18,7 @@
   interface Props {
     /** The post whose markdown content and images are rendered. */
     post: PostEntity;
-    /** Bearer token forwarded to PostImage for downloading and decrypting images. */
+    /** Bearer token forwarded to PostMedia for downloading and decrypting attachments. */
     authToken?: string;
     /** When true, always show the full markdown (no truncation). */
     fullContent?: boolean;
@@ -32,8 +33,24 @@
   const MAX_CHARS = 400;
   let expanded = $state(false);
 
-  // Gallery lightbox
+  // Gallery lightbox (only for image/video media)
   let lightboxIndex = $state<number | null>(null);
+
+  const postMedia = $derived<PostMediaRef[]>(post.media ?? post.images ?? []);
+  const lightboxMedia = $derived<PostMediaRef[]>(
+    postMedia.filter(
+      (m) =>
+        (m.type ?? mediaTypeFromMime(m.mimeType)) === 'image' ||
+        (m.type ?? mediaTypeFromMime(m.mimeType)) === 'video'
+    )
+  );
+
+  function mediaTypeFromMime(mimeType: string): MediaType {
+    if (mimeType.startsWith('video/')) return 'video';
+    if (mimeType.startsWith('audio/')) return 'audio';
+    if (mimeType.startsWith('image/')) return 'image';
+    return 'file';
+  }
 
   function openLightbox(i: number) {
     lightboxIndex = i;
@@ -43,14 +60,14 @@
     lightboxIndex = null;
   }
 
-  function prevImage() {
-    if (lightboxIndex === null || !post.images) return;
-    lightboxIndex = (lightboxIndex - 1 + post.images.length) % post.images.length;
+  function prevMedia() {
+    if (lightboxIndex === null || lightboxMedia.length === 0) return;
+    lightboxIndex = (lightboxIndex - 1 + lightboxMedia.length) % lightboxMedia.length;
   }
 
-  function nextImage() {
-    if (lightboxIndex === null || !post.images) return;
-    lightboxIndex = (lightboxIndex + 1) % post.images.length;
+  function nextMedia() {
+    if (lightboxIndex === null || lightboxMedia.length === 0) return;
+    lightboxIndex = (lightboxIndex + 1) % lightboxMedia.length;
   }
 
   const renderers = { link: PostMentionLink, code: PostCodeBlock, codespan: PostCodespan };
@@ -91,35 +108,43 @@
   </div>
 {/if}
 
-{#if post.images && post.images.length > 0 && authToken}
+{#if postMedia.length > 0 && authToken}
   <div class="w-full mt-1">
-    {#if post.images.length === 1}
+    {#if postMedia.length === 1}
+      {@const media = postMedia[0]}
       <div>
         <div
           class="relative w-full bg-black/5 dark:bg-white/5 overflow-hidden"
-          style={mediaAspectStyle(post.images[0].width, post.images[0].height)}
+          style={mediaAspectStyle(media.width, media.height)}
         >
-          <!-- Single image: PostImage handles its own lightbox -->
-          <PostImage media={post.images[0]} {authToken} />
+          <!-- Single attachment: PostMedia handles its own lightbox/download -->
+          <PostMedia {media} {authToken} />
         </div>
-        {#if post.images[0].caption}
-          <p class="px-4 pt-2 pb-1 text-xs text-text-muted italic">{post.images[0].caption}</p>
+        {#if media.caption}
+          <p class="px-4 pt-2 pb-1 text-xs text-text-muted italic">{media.caption}</p>
         {/if}
       </div>
     {:else}
-      <!-- Multi-image gallery: centralized lightbox with navigation -->
+      <!-- Multi-media gallery: centralized lightbox with navigation for image/video -->
       <div class="grid grid-cols-2 gap-0.5 sm:gap-1 bg-white/20 dark:bg-black/20">
-        {#each post.images as img, i (img.mediaId)}
+        {#each postMedia as media, i (media.mediaId)}
+          {@const isLightboxable =
+            (media.type ?? mediaTypeFromMime(media.mimeType)) === 'image' ||
+            (media.type ?? mediaTypeFromMime(media.mimeType)) === 'video'}
           <div
             class="relative w-full overflow-hidden bg-black/5 dark:bg-white/5"
-            style={mediaAspectStyle(img.width, img.height, GALLERY_MEDIA_ASPECT)}
+            style={mediaAspectStyle(media.width, media.height, GALLERY_MEDIA_ASPECT)}
           >
-            <PostImage media={img} {authToken} onOpen={() => openLightbox(i)} />
-            {#if img.caption}
+            <PostMedia
+              {media}
+              {authToken}
+              onOpen={isLightboxable ? () => openLightbox(i) : undefined}
+            />
+            {#if media.caption}
               <p
                 class="absolute bottom-0 left-0 right-0 bg-black/50 px-2 py-1 text-[0.65rem] text-white/90 truncate pointer-events-none"
               >
-                {img.caption}
+                {media.caption}
               </p>
             {/if}
           </div>
@@ -130,19 +155,19 @@
 {/if}
 
 <!-- Gallery lightbox with navigation -->
-{#if lightboxIndex !== null && post.images && post.images[lightboxIndex]}
+{#if lightboxIndex !== null && lightboxMedia[lightboxIndex]}
   <MediaLightbox
     open={lightboxIndex !== null}
     onClose={closeLightbox}
     ariaLabel={m.post_gallery_label()}
-    showPrev={post.images.length > 1}
-    showNext={post.images.length > 1}
-    onPrev={prevImage}
-    onNext={nextImage}
-    dotCount={post.images.length}
+    showPrev={lightboxMedia.length > 1}
+    showNext={lightboxMedia.length > 1}
+    onPrev={prevMedia}
+    onNext={nextMedia}
+    dotCount={lightboxMedia.length}
     dotIndex={lightboxIndex}
     onDotSelect={(i) => (lightboxIndex = i)}
   >
-    <PostImage media={post.images[lightboxIndex]} {authToken} galleryMode />
+    <PostMedia media={lightboxMedia[lightboxIndex]} {authToken} galleryMode />
   </MediaLightbox>
 {/if}

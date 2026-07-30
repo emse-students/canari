@@ -279,7 +279,7 @@
   /** Posts a new comment (or reply) and appends it to the local comments array. media is an optional encrypted GIF/image ref. */
   async function handleAddComment(
     parentId?: string,
-    media?: import('$lib/posts/api').PostImageRef
+    media?: import('$lib/posts/api').PostMediaRef
   ) {
     const text = commentText.trim();
     if (!text && !media) return;

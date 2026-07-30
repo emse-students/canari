@@ -18,7 +18,12 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-export class PostImageDto {
+export class PostMediaDto {
+  @IsString()
+  @IsNotEmpty()
+  @IsIn(['image', 'video', 'audio', 'file'])
+  type: string;
+
   @IsString()
   @IsNotEmpty()
   mediaId: string;
@@ -176,8 +181,15 @@ export class CreatePostDto {
   @IsArray()
   @IsOptional()
   @ValidateNested({ each: true })
-  @Type(() => PostImageDto)
-  images?: PostImageDto[];
+  @Type(() => PostMediaDto)
+  media?: PostMediaDto[];
+
+  /** @deprecated Use `media` instead. Kept for backward-compatibility with older clients. */
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => PostMediaDto)
+  images?: PostMediaDto[];
 
   @IsString()
   @IsOptional()
@@ -314,8 +326,15 @@ export class UpdatePostDto {
   @IsArray()
   @IsOptional()
   @ValidateNested({ each: true })
-  @Type(() => PostImageDto)
-  images?: PostImageDto[];
+  @Type(() => PostMediaDto)
+  media?: PostMediaDto[];
+
+  /** @deprecated Use `media` instead. Kept for backward-compatibility with older clients. */
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => PostMediaDto)
+  images?: PostMediaDto[];
 
   @IsArray()
   @IsOptional()

@@ -1,6 +1,9 @@
 <script lang="ts">
   import {
     Image,
+    FileText,
+    Film,
+    Music,
     ChartColumn,
     CalendarCheck,
     ClipboardList,
@@ -18,7 +21,7 @@
   import {
     updatePost,
     type PostEntity,
-    type PostImageRef,
+    type PostMediaRef,
     type UpdatePostPayload,
   } from '$lib/posts/api';
   import { getForms, type Form } from '$lib/forms/api';
@@ -36,7 +39,7 @@
   import { m } from '$lib/paraglide/messages';
   import PollSection from './PollSection.svelte';
   import FormSection from './FormSection.svelte';
-  import PostImage from './PostImage.svelte';
+  import PostMedia from './PostMedia.svelte';
   import Button from '$lib/components/ui/Button.svelte';
 
   /**
@@ -61,13 +64,14 @@
   // --- Text ---
   let markdown = $state(untrack(() => post.markdown ?? ''));
 
-  // --- Images ---
-  // Existing images already uploaded: show with PostImage, removable.
-  let existingImages = $state<PostImageRef[]>(untrack(() => [...(post.images ?? [])]));
+  // --- Media ---
+  // Existing media already uploaded: show with PostMedia, removable.
+  let existingMedia = $state<PostMediaRef[]>(untrack(() => [...(post.media ?? post.images ?? [])]));
   // New files chosen locally (not yet uploaded).
   let newFiles = $state<File[]>([]);
   let newFilePreviews = $state<string[]>([]);
-  let newImageCaptions = $state<string[]>([]);
+  let newFileThumbIcons = $state<boolean[]>([]);
+  let newMediaCaptions = $state<string[]>([]);
 
   // --- Polls ---
   const _initialPoll = untrack(() => post.polls?.[0]);
@@ -120,7 +124,7 @@
   });
 
   const mediaService = new MediaService();
-  const imageInputId = 'edit-post-images-input';
+  const mediaInputId = 'edit-post-media-input';
 
   onMount(async () => {
     if (!currentAuthToken) {
@@ -163,28 +167,49 @@
     return `${date} ${time} - ${ev.title}`;
   }
 
+  /** Returns true for files whose preview should show a generic icon instead of an object URL. */
+  function needsThumbIcon(file: File): boolean {
+    return (
+      !file.type.startsWith('image/') &&
+      !file.type.startsWith('video/') &&
+      !file.type.startsWith('audio/')
+    );
+  }
+
   /** Appends newly picked files to the new-files list. */
   function onPickFiles(event: Event) {
     const input = event.target as HTMLInputElement;
-    const files = Array.from(input.files ?? []).filter((f) => f.type.startsWith('image/'));
+    const files = Array.from(input.files ?? []);
     newFiles = [...newFiles, ...files];
-    newFilePreviews = [...newFilePreviews, ...files.map((f) => URL.createObjectURL(f))];
-    newImageCaptions = [...newImageCaptions, ...files.map(() => '')];
+    newFilePreviews = [
+      ...newFilePreviews,
+      ...files.map((f) => (needsThumbIcon(f) ? '' : URL.createObjectURL(f))),
+    ];
+    newFileThumbIcons = [...newFileThumbIcons, ...files.map((f) => needsThumbIcon(f))];
+    newMediaCaptions = [...newMediaCaptions, ...files.map(() => '')];
     // Reset input so the same file can be picked again.
     input.value = '';
   }
 
-  /** Removes an existing image (already uploaded) by index. */
-  function removeExistingImage(i: number) {
-    existingImages = existingImages.filter((_, idx) => idx !== i);
+  /** Removes an existing media item (already uploaded) by index. */
+  function removeExistingMedia(i: number) {
+    existingMedia = existingMedia.filter((_, idx) => idx !== i);
   }
 
-  /** Removes a newly picked (not yet uploaded) image by index. */
+  /** Removes a newly picked (not yet uploaded) file by index. */
   function removeNewFile(i: number) {
-    URL.revokeObjectURL(newFilePreviews[i]);
+    if (newFilePreviews[i]) URL.revokeObjectURL(newFilePreviews[i]);
     newFiles = newFiles.filter((_, idx) => idx !== i);
     newFilePreviews = newFilePreviews.filter((_, idx) => idx !== i);
-    newImageCaptions = newImageCaptions.filter((_, idx) => idx !== i);
+    newFileThumbIcons = newFileThumbIcons.filter((_, idx) => idx !== i);
+    newMediaCaptions = newMediaCaptions.filter((_, idx) => idx !== i);
+  }
+
+  /** Icon matching the media type for generic file previews. */
+  function fileTypeIcon(file: File) {
+    if (file.type.startsWith('video/')) return Film;
+    if (file.type.startsWith('audio/')) return Music;
+    return FileText;
   }
 
   async function submitEdit() {
@@ -192,36 +217,40 @@
     errorMessage = '';
     try {
       markdown = trimComposerText(markdown);
-      if (!markdown.trim() && existingImages.length === 0 && newFiles.length === 0) {
-        throw new Error('Post content or an image is required.');
+      if (!markdown.trim() && existingMedia.length === 0 && newFiles.length === 0) {
+        throw new Error('Post content or a media attachment is required.');
       }
 
       if (newFiles.length > 0 && !currentAuthToken) {
         try {
           currentAuthToken = await getToken();
         } catch {
-          throw new Error('Failed to obtain an auth token for image upload.');
+          throw new Error('Failed to obtain an auth token for media upload.');
         }
       }
 
-      // Upload new images and get their refs.
-      const uploadedRefs: PostImageRef[] = [];
+      // Upload new media files and get their refs.
+      const uploadedRefs: PostMediaRef[] = [];
       for (let i = 0; i < newFiles.length; i++) {
-        const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
-        const compressed = await compressImage(newFiles[i], maxWidth, maxHeight, quality);
-        const ref = await mediaService.encryptAndUpload(compressed.file, currentAuthToken, {
-          width: compressed.width,
-          height: compressed.height,
-        });
-        const caption = newImageCaptions[i]?.trim();
+        const file = newFiles[i];
+        let uploadFile = file;
+        let dims: { width: number; height: number } | undefined;
+        if (file.type.startsWith('image/')) {
+          const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
+          const compressed = await compressImage(file, maxWidth, maxHeight, quality);
+          uploadFile = compressed.file;
+          dims = { width: compressed.width, height: compressed.height };
+        }
+        const ref = await mediaService.encryptAndUpload(uploadFile, currentAuthToken, dims);
+        const caption = newMediaCaptions[i]?.trim();
         uploadedRefs.push({ ...ref, ...(caption ? { caption } : {}) });
       }
 
-      const allImages = [...existingImages, ...uploadedRefs];
+      const allMedia = [...existingMedia, ...uploadedRefs];
 
       const payload: UpdatePostPayload = {
         markdown,
-        images: allImages,
+        media: allMedia,
         scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : null,
         attachedFormId: includeForm && selectedFormId ? selectedFormId : null,
         linkedCalendarEventId: selectedLinkedCalendarEventId || null,
@@ -367,15 +396,15 @@
         editorClass="custom-scrollbar min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main"
       />
 
-      <!-- Existing images + newly added images. -->
-      {#if existingImages.length > 0 || newFilePreviews.length > 0}
+      <!-- Existing media + newly added media. -->
+      {#if existingMedia.length > 0 || newFiles.length > 0}
         <div
           class="flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-3 pb-3 pt-2 custom-scrollbar"
           transition:slide={{ duration: 200 }}
           role="list"
         >
-          <!-- Images existantes (déjà uploadées) -->
-          {#each existingImages as img, i (img.mediaId)}
+          <!-- Existing media (already uploaded) -->
+          {#each existingMedia as mediaItem, i (mediaItem.mediaId)}
             <div
               class="flex w-[100px] shrink-0 snap-start flex-col gap-2 sm:w-[120px]"
               role="listitem"
@@ -383,10 +412,10 @@
               <div
                 class="relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 dark:border-white/10 shadow-sm group"
               >
-                <PostImage media={img} authToken={currentAuthToken} />
+                <PostMedia media={mediaItem} authToken={currentAuthToken} />
                 <button
                   type="button"
-                  onclick={() => removeExistingImage(i)}
+                  onclick={() => removeExistingMedia(i)}
                   class="absolute right-1.5 top-1.5 rounded-full bg-black/60 p-1.5 text-white shadow-sm backdrop-blur-md transition-all hover:bg-red-500 hover:scale-110 active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-red-400 opacity-0 group-hover:opacity-100 focus:opacity-100"
                   aria-label={m.post_edit_remove_image_aria()}
                   title="Supprimer"
@@ -394,19 +423,20 @@
                   <X size={14} strokeWidth={2.5} />
                 </button>
               </div>
-              {#if img.caption}
+              {#if mediaItem.caption}
                 <p
                   class="w-full rounded-lg px-2.5 py-1.5 text-[0.7rem] font-semibold text-text-muted truncate"
-                  title={img.caption}
+                  title={mediaItem.caption}
                 >
-                  {img.caption}
+                  {mediaItem.caption}
                 </p>
               {/if}
             </div>
           {/each}
 
-          <!-- New images (local, not yet uploaded). -->
-          {#each newFilePreviews as src, i (src)}
+          <!-- New files (local, not yet uploaded). -->
+          {#each newFiles as file, i (file.name + i)}
+            {@const Icon = fileTypeIcon(file)}
             <div
               class="flex w-[100px] shrink-0 snap-start flex-col gap-2 sm:w-[120px]"
               role="listitem"
@@ -414,11 +444,24 @@
               <div
                 class="relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 dark:border-white/10 shadow-sm group"
               >
-                <img
-                  {src}
-                  alt="Aperçu"
-                  class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                />
+                {#if newFileThumbIcons[i]}
+                  <div
+                    class="h-full w-full flex flex-col items-center justify-center bg-black/5 dark:bg-white/5 text-text-muted gap-1.5"
+                  >
+                    <Icon size={28} strokeWidth={1.5} />
+                    <span
+                      class="text-[0.55rem] uppercase tracking-wider font-bold px-2 truncate w-full text-center"
+                    >
+                      {file.type.split('/')[1] ?? 'file'}
+                    </span>
+                  </div>
+                {:else}
+                  <img
+                    src={newFilePreviews[i]}
+                    alt="Aperçu"
+                    class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  />
+                {/if}
                 <button
                   type="button"
                   onclick={() => removeNewFile(i)}
@@ -431,7 +474,7 @@
               </div>
               <input
                 type="text"
-                bind:value={newImageCaptions[i]}
+                bind:value={newMediaCaptions[i]}
                 placeholder={m.post_edit_caption_placeholder()}
                 maxlength="120"
                 class="w-full rounded-lg border border-black/10 dark:border-white/10 bg-white/70 dark:bg-black/40 px-2.5 py-1.5 text-[0.7rem] font-semibold text-text-main placeholder:text-text-muted/60 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all shadow-inner"
@@ -490,22 +533,30 @@
       <div
         class="custom-scrollbar flex flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] bg-white/50 dark:bg-black/20 p-1.5 shadow-inner border border-black/5 dark:border-white/5 w-full sm:w-auto"
       >
-        <!-- Add photos. -->
+        <!-- Add media. -->
         <label
-          for={imageInputId}
-          title="Photos"
+          for={mediaInputId}
+          title="Médias"
           class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
           {newFiles.length > 0
             ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm'
             : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
-          <Image size={18} strokeWidth={newFiles.length > 0 ? 2.5 : 2} />
-          <span class="hidden text-xs sm:inline">Photos</span>
+          {#if newFiles.length > 0 && newFiles.every((f) => f.type.startsWith('image/'))}
+            <Image size={18} strokeWidth={2.5} />
+          {:else if newFiles.length > 0 && newFiles.every((f) => f.type.startsWith('video/'))}
+            <Film size={18} strokeWidth={2.5} />
+          {:else if newFiles.length > 0 && newFiles.every((f) => f.type.startsWith('audio/'))}
+            <Music size={18} strokeWidth={2.5} />
+          {:else}
+            <FileText size={18} strokeWidth={newFiles.length > 0 ? 2.5 : 2} />
+          {/if}
+          <span class="hidden text-xs sm:inline">Médias</span>
         </label>
         <input
-          id={imageInputId}
+          id={mediaInputId}
           type="file"
-          accept="image/*"
+          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.rtf,.zip,.epub"
           multiple
           onchange={onPickFiles}
           class="sr-only"
@@ -588,7 +639,7 @@
           type="button"
           class="min-w-[9rem] px-7 py-3 text-sm !font-extrabold shadow-md shadow-amber-500/20 active:translate-y-0"
           disabled={saving ||
-            (!markdown.trim() && existingImages.length === 0 && newFiles.length === 0)}
+            (!markdown.trim() && existingMedia.length === 0 && newFiles.length === 0)}
           loading={saving}
           onclick={submitEdit}
         >

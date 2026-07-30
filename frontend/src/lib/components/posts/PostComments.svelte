@@ -13,7 +13,7 @@
   } from '@lucide/svelte';
   import { tick, onMount } from 'svelte';
   import GifPickerModal from '$lib/components/chat/GifPickerModal.svelte';
-  import type { PostComment, PostImageRef } from '$lib/posts/api';
+  import type { PostComment, PostMediaRef } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import PostImage from './PostImage.svelte';
   import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
@@ -56,8 +56,8 @@
     onToggleComments: () => void;
     /** Called on each keystroke to sync the comment input value to the parent's state. */
     onCommentTextChange: (text: string) => Promise<void>;
-    /** Called when the user submits a comment (or reply if parentId is provided). media is an optional encrypted GIF/image. */
-    onAddComment: (parentId?: string, media?: PostImageRef) => Promise<void>;
+    /** Called when the user submits a comment (or reply if parentId is provided). media is an optional encrypted GIF/image/file. */
+    onAddComment: (parentId?: string, media?: PostMediaRef) => Promise<void>;
     /** Called when the user toggles a like on a comment. */
     onLikeComment: (commentId: string) => void;
     /** Called when the user saves an inline edit. */
@@ -95,7 +95,7 @@
   }: Props = $props();
 
   const mediaService = new MediaService();
-  let pendingMedia = $state<PostImageRef | null>(null);
+  let pendingMedia = $state<PostMediaRef | null>(null);
   let pendingPreviewUrl = $state<string | null>(null);
   let uploadingMedia = $state(false);
   let showGifPicker = $state(false);
@@ -132,7 +132,7 @@
       const ref = await mediaService.encryptAndUpload(uploadFile, authToken, dims);
       const { type: _type, ...mediaFields } = ref;
       clearPendingMedia();
-      pendingMedia = mediaFields as PostImageRef;
+      pendingMedia = mediaFields as PostMediaRef;
       pendingPreviewUrl = URL.createObjectURL(uploadFile);
     } catch (err) {
       console.error('Failed to upload comment media', err);
@@ -143,10 +143,10 @@
 
   async function handleCommentPaste(e: ClipboardEvent) {
     const items = Array.from(e.clipboardData?.items ?? []);
-    const imageItem = items.find((item) => item.kind === 'file' && item.type.startsWith('image/'));
-    if (!imageItem) return;
+    const fileItem = items.find((item) => item.kind === 'file');
+    if (!fileItem) return;
     e.preventDefault();
-    const file = imageItem.getAsFile();
+    const file = fileItem.getAsFile();
     if (file) await stageMediaFile(file);
   }
 

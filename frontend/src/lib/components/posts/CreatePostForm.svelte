@@ -1,6 +1,9 @@
 <script lang="ts">
   import {
     Image,
+    FileText,
+    Film,
+    Music,
     ChartColumn,
     CalendarCheck,
     ClipboardList,
@@ -59,11 +62,12 @@
 
   let { onPostCreated }: Props = $props();
 
-  // --- Text & images ---
+  // --- Text & media ---
   let markdown = $state('');
   let selectedFiles = $state<File[]>([]);
   let filePreviews = $state<string[]>([]);
-  let imageCaptions = $state<string[]>([]);
+  let fileThumbIcons = $state<boolean[]>([]);
+  let mediaCaptions = $state<string[]>([]);
 
   // --- Optional sections ---
   let includePoll = $state(false);
@@ -108,7 +112,7 @@
     return {
       version: 1,
       markdown,
-      imageCaptions: [...imageCaptions],
+      imageCaptions: [...mediaCaptions],
       includePoll,
       pollQuestion,
       pollOptionsRaw,
@@ -124,7 +128,7 @@
 
   function applyComposerDraft(draft: PostComposerDraft) {
     markdown = draft.markdown;
-    imageCaptions = draft.imageCaptions ?? [];
+    mediaCaptions = draft.imageCaptions ?? [];
     includePoll = draft.includePoll;
     pollQuestion = draft.pollQuestion;
     pollOptionsRaw = draft.pollOptionsRaw;
@@ -203,7 +207,7 @@
   }
 
   const mediaService = new MediaService();
-  const imageInputId = 'create-post-images-input';
+  const mediaInputId = 'create-post-media-input';
 
   onMount(async () => {
     const saved = loadPostComposerDraft();
@@ -242,22 +246,40 @@
     }
   });
 
-  /** Replace the current image selection with a new set of files. Revokes stale object URLs. */
-  function onPickFiles(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const files = Array.from(input.files ?? []).filter((f) => f.type.startsWith('image/'));
-    filePreviews.forEach((url) => URL.revokeObjectURL(url));
-    selectedFiles = files;
-    filePreviews = files.map((f) => URL.createObjectURL(f));
-    imageCaptions = files.map(() => '');
+  /** Returns true for files whose preview should show a generic icon instead of an object URL. */
+  function needsThumbIcon(file: File): boolean {
+    return (
+      !file.type.startsWith('image/') &&
+      !file.type.startsWith('video/') &&
+      !file.type.startsWith('audio/')
+    );
   }
 
-  /** Remove a single image from the selection by index. */
+  /** Replace the current media selection with a new set of files. Revokes stale object URLs. */
+  function onPickFiles(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    filePreviews.forEach((url) => URL.revokeObjectURL(url));
+    selectedFiles = files;
+    filePreviews = files.map((f) => (needsThumbIcon(f) ? '' : URL.createObjectURL(f)));
+    fileThumbIcons = files.map((f) => needsThumbIcon(f));
+    mediaCaptions = files.map(() => '');
+  }
+
+  /** Remove a single media file from the selection by index. */
   function removeFile(i: number) {
-    URL.revokeObjectURL(filePreviews[i]);
+    if (filePreviews[i]) URL.revokeObjectURL(filePreviews[i]);
     selectedFiles = selectedFiles.filter((_, idx) => idx !== i);
     filePreviews = filePreviews.filter((_, idx) => idx !== i);
-    imageCaptions = imageCaptions.filter((_, idx) => idx !== i);
+    fileThumbIcons = fileThumbIcons.filter((_, idx) => idx !== i);
+    mediaCaptions = mediaCaptions.filter((_, idx) => idx !== i);
+  }
+
+  /** Icon matching the media type for generic file previews. */
+  function fileTypeIcon(file: File) {
+    if (file.type.startsWith('video/')) return Film;
+    if (file.type.startsWith('audio/')) return Music;
+    return FileText;
   }
 
   /** Upload images, assemble the payload, call createPost, then reset the form. */
@@ -278,22 +300,26 @@
         }
       }
 
-      // Compress then encrypt-upload each image; collect the resulting refs.
-      const images = [];
+      // Compress images, upload other files as-is; collect the resulting refs.
+      const media = [];
       for (let i = 0; i < selectedFiles.length; i++) {
-        const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
-        const compressed = await compressImage(selectedFiles[i], maxWidth, maxHeight, quality);
-        const ref = await mediaService.encryptAndUpload(compressed.file, authToken, {
-          width: compressed.width,
-          height: compressed.height,
-        });
-        const caption = imageCaptions[i]?.trim();
-        images.push({ ...ref, ...(caption ? { caption } : {}) });
+        const file = selectedFiles[i];
+        let uploadFile = file;
+        let dims: { width: number; height: number } | undefined;
+        if (file.type.startsWith('image/')) {
+          const { maxWidth, maxHeight, quality } = IMAGE_COMPRESS_PRESETS.post;
+          const compressed = await compressImage(file, maxWidth, maxHeight, quality);
+          uploadFile = compressed.file;
+          dims = { width: compressed.width, height: compressed.height };
+        }
+        const ref = await mediaService.encryptAndUpload(uploadFile, authToken, dims);
+        const caption = mediaCaptions[i]?.trim();
+        media.push({ ...ref, ...(caption ? { caption } : {}) });
       }
 
       const payload: CreatePostPayload = {
         markdown,
-        images,
+        media,
         ...(scheduledAt ? { scheduledAt: new Date(scheduledAt).toISOString() } : {}),
       };
 
@@ -331,7 +357,8 @@
       filePreviews.forEach((url) => URL.revokeObjectURL(url));
       selectedFiles = [];
       filePreviews = [];
-      imageCaptions = [];
+      fileThumbIcons = [];
+      mediaCaptions = [];
       includePoll = false;
       pollQuestion = '';
       pollOptionsRaw = 'Oui\nNon';
@@ -540,14 +567,15 @@
         editorClass="custom-scrollbar min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main"
       />
 
-      <!-- Aperçu des images & Légendes -->
-      {#if filePreviews.length > 0}
+      <!-- Aperçu des médias & Légendes -->
+      {#if selectedFiles.length > 0}
         <div
           class="flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-3 pb-3 pt-2 custom-scrollbar"
           transition:slide={{ duration: 200 }}
           role="list"
         >
-          {#each filePreviews as src, i (src)}
+          {#each selectedFiles as file, i (file.name + i)}
+            {@const Icon = fileTypeIcon(file)}
             <div
               class="flex w-[100px] shrink-0 snap-start flex-col gap-2 sm:w-[120px]"
               role="listitem"
@@ -556,11 +584,26 @@
               <div
                 class="relative aspect-square w-full overflow-hidden rounded-2xl border border-black/10 dark:border-white/10 shadow-sm group"
               >
-                <img
-                  {src}
-                  alt={m.post_create_image_preview_alt()}
-                  class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-                />
+                {#if fileThumbIcons[i]}
+                  <div
+                    class="h-full w-full flex flex-col items-center justify-center bg-black/5 dark:bg-white/5 text-text-muted gap-1.5"
+                  >
+                    <Icon size={28} strokeWidth={1.5} />
+                    <span
+                      class="text-[0.55rem] uppercase tracking-wider font-bold px-2 truncate w-full text-center"
+                    >
+                      {file.type.split('/')[1] ?? 'file'}
+                    </span>
+                  </div>
+                {:else}
+                  <img
+                    src={filePreviews[i]}
+                    alt={file.type.startsWith('image/')
+                      ? m.post_create_image_preview_alt()
+                      : m.post_create_media_preview_alt()}
+                    class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  />
+                {/if}
                 <button
                   type="button"
                   onclick={() => removeFile(i)}
@@ -574,7 +617,7 @@
               <!-- Input Légende -->
               <input
                 type="text"
-                bind:value={imageCaptions[i]}
+                bind:value={mediaCaptions[i]}
                 placeholder={m.post_create_caption_placeholder()}
                 maxlength="120"
                 class="w-full rounded-lg border border-black/10 dark:border-white/10 bg-white/70 dark:bg-black/40 px-2.5 py-1.5 text-[0.7rem] font-semibold text-text-main placeholder:text-text-muted/60 outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all shadow-inner"
@@ -630,22 +673,30 @@
       <div
         class="custom-scrollbar flex flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] bg-white/50 dark:bg-black/20 p-1.5 shadow-inner border border-black/5 dark:border-white/5 w-full sm:w-auto"
       >
-        <!-- Ajouter des photos -->
+        <!-- Ajouter des médias -->
         <label
-          for={imageInputId}
+          for={mediaInputId}
           title={m.post_create_photos_label()}
           class="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-text-muted transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 shrink-0
           {selectedFiles.length > 0
             ? 'bg-amber-500/15 font-bold text-amber-600 dark:text-amber-400 shadow-sm'
             : 'hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main'}"
         >
-          <Image size={18} strokeWidth={selectedFiles.length > 0 ? 2.5 : 2} />
+          {#if selectedFiles.length > 0 && selectedFiles.every((f) => f.type.startsWith('image/'))}
+            <Image size={18} strokeWidth={2.5} />
+          {:else if selectedFiles.length > 0 && selectedFiles.every( (f) => f.type.startsWith('video/') )}
+            <Film size={18} strokeWidth={2.5} />
+          {:else if selectedFiles.length > 0 && selectedFiles.every( (f) => f.type.startsWith('audio/') )}
+            <Music size={18} strokeWidth={2.5} />
+          {:else}
+            <FileText size={18} strokeWidth={selectedFiles.length > 0 ? 2.5 : 2} />
+          {/if}
           <span class="hidden text-xs sm:inline">{m.post_create_photos_label()}</span>
         </label>
         <input
-          id={imageInputId}
+          id={mediaInputId}
           type="file"
-          accept="image/*"
+          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.rtf,.zip,.epub"
           multiple
           onchange={onPickFiles}
           class="sr-only"
