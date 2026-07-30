@@ -114,6 +114,16 @@ On Android there is a second encoding trap: **`Base64.DEFAULT` appends a newline
 `DEFAULT` is correct only for KeystorePlugin's own at-rest IV/ciphertext format. Do not unify the
 two.
 
+Android has **two readers over the same alias and the same SharedPreferences**: `MlsDeviceKeyStore`
+(background, Context-only) and `KeystorePlugin.getKeyBytes` (foreground, behind the BiometricPrompt).
+The `NO_WRAP` fix landed on the first and was asserted only there, so the newline survived in the
+second until v0.11.6. Its failure mode is the cruel one: the BiometricPrompt appears, the fingerprint
+is *accepted*, the key decrypts - and then Rust rejects the string, `retrieve_device_key` returns
+`None`, and `resolve_at_rest_key` reports "No keystore key" so the user is sent to the PIN modal.
+Nothing in the log says the key was found, because from Rust's point of view it never was. Both
+readers are covered now; the test captures the flag rather than matching the literal, so adding a
+`DEFAULT` encode beside a `NO_WRAP` one still fails.
+
 ### When a state still refuses to open
 
 The PIN modal's "forgot PIN" (`handlePinReset`) wipes the server-side and local MLS state and
@@ -164,12 +174,25 @@ whole prompt - the plugin fills the rest from its own English defaults:
 | Field | Passed by Canari | Plugin default if omitted | Shown on |
 |---|---|---|---|
 | `title` | `auth_biometric_prompt_{enable,disable}_title` | `"Fingerprint Authentication"` / `"Face Authentication"` (internal `biometryNameMap`) | Android |
-| `subtitle` | `auth_biometric_desc` | none | Android |
-| `reason` | `auth_biometric_prompt_{enable,disable}` | none | Android (as description), iOS (`localizedReason`) |
+| `subtitle` | *deliberately not passed* | none | Android |
+| `reason` | `auth_biometric_desc` | none | Android (as description), iOS (`localizedReason`) |
 | `cancelTitle` | `common_cancel_button` | `"Cancel"` | Android button, iOS `localizedCancelTitle` |
 
 So a prompt whose `reason` is carefully localized still showed an English title and button. Shared
 options live in `biometricPromptOptions()`; the title differs per call site.
+
+**Passing every field the API accepts is not the same as filling the prompt well.** Android stacks
+`title`, `subtitle` and description and then adds its own "touch the sensor" hint underneath, so
+supplying all three put four lines on screen saying the same thing three ways. The `subtitle` was
+dropped in v0.11.6: the title names the action, `reason` asks for the confirmation, and the OS names
+the gesture. `reason` is also the *whole* prompt on iOS, so it has to stand alone - which is why it
+is the generic `auth_biometric_desc` - a bare "confirm your identity to continue" - rather than a
+restatement of the title, and why `auth_biometric_prompt_{enable,disable}` were deleted.
+
+Wording across these strings names no modality. There is no Face ID on Android and no fingerprint on
+a Face-ID-only iPhone, so a string offering "fingerprint or Face ID" was wrong on every device for
+one half of its text; the catalogue now says "biometrics" and lets the OS prompt name the actual
+sensor. The one exception is `auth_biometric_no_fingerprint_android`, Android-only by construction.
 
 ### The keystore unlock sheet is a second prompt, localized differently
 

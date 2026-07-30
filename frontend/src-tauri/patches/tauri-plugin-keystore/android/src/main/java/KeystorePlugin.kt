@@ -25,7 +25,7 @@ private const val ANDROID_KEYSTORE = "AndroidKeyStore"
 /// Fallback wording for the unlock prompt, used only when the caller supplies none.
 /// French because that is what shipped; the localized values arrive in GetKeyBytesRequest.
 private const val DEFAULT_UNLOCK_TITLE = "Déverrouiller Canari"
-private const val DEFAULT_UNLOCK_SUBTITLE = "Confirmez votre identité avec votre empreinte"
+private const val DEFAULT_UNLOCK_SUBTITLE = "Confirmez votre identité pour continuer"
 private const val DEFAULT_CANCEL = "Annuler"
 
 @TauriPlugin
@@ -114,9 +114,14 @@ class KeystorePlugin(private val activity: Activity) : Plugin(activity) {
                         // Cipher init + decrypt after successful biometric UX gate.
                         val cipher = getDecryptionCipherForAlias(args.alias, iv)
                         val decryptedBytes = cipher.doFinal(ciphertext)
-                        val keyB64 = Base64.encodeToString(
-                            decryptedBytes, Base64.DEFAULT
-                        )
+                        // NO_WRAP, not DEFAULT: this value crosses the FFI to
+                        // PluginDeviceKeyStore::retrieve_device_key, whose STANDARD base64
+                        // engine rejects the trailing newline DEFAULT appends. The decode then
+                        // fails, retrieve_device_key returns None, and the login reports an
+                        // empty keystore immediately after a SUCCESSFUL fingerprint. Same
+                        // reasoning as MlsDeviceKeyStore.retrieve on the background side;
+                        // DEFAULT stays correct for the IV/CT because those never leave Kotlin.
+                        val keyB64 = Base64.encodeToString(decryptedBytes, Base64.NO_WRAP)
 
                         val ret = JSObject()
                         ret.put("keyBytes", keyB64)

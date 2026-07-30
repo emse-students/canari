@@ -30,19 +30,18 @@ const NATIVE_FLAG_KEY = 'biometricConfigured';
 export type BiometricEnrollResult = { enrolled: true } | { enrolled: false; noBiometric: true };
 
 /**
- * Localized chrome for the system biometric prompt.
+ * Localized chrome shared by the enable and disable system prompts.
  *
- * Neither string has a localized default: `tauri-plugin-biometric` falls back to the English
- * `biometryNameMap` entry ("Fingerprint Authentication") when no `title` is passed, and to a
- * literal "Cancel" for the negative button. Both are OS-level UI, so an untranslated value is
- * visible to the user however well the surrounding sheet is localized.
+ * `cancelTitle` has no localized default - the plugin falls back to a literal "Cancel" - and it is
+ * OS-level UI, so an untranslated value is visible however well the surrounding sheet is localized.
  *
- * `title` and `subtitle` are Android-only (iOS shows `reason` alone); `cancelTitle` maps to
- * `localizedCancelTitle` there, so passing it is worthwhile on both platforms.
+ * No `subtitle`: Android stacks title, subtitle and description above its own "touch the sensor"
+ * hint, which put four lines on screen saying the same thing three ways. The title names the
+ * action and `reason` (the description on Android, the whole prompt on iOS) asks for the
+ * confirmation - a subtitle between them had nothing left to add.
  */
 function biometricPromptOptions(): AuthOptions {
   return {
-    subtitle: m.auth_biometric_desc(),
     cancelTitle: m.common_cancel_button(),
   };
 }
@@ -94,7 +93,7 @@ export class BiometricService {
       // Verify the fingerprint / face BEFORE writing the flags. On Android this raises a
       // BiometricPrompt; on iOS it raises Face ID / Touch ID via LAContext.evaluatePolicy().
       // If the user cancels or fails, the promise rejects and the catch below handles it.
-      await authenticate(m.auth_biometric_prompt_enable(), {
+      await authenticate(m.auth_biometric_desc(), {
         ...biometricPromptOptions(),
         title: m.auth_biometric_prompt_enable_title(),
       });
@@ -182,7 +181,7 @@ export class BiometricService {
   static async disable(alias?: string): Promise<void> {
     // Require a biometric authentication before deleting the keystore key. If the user cancels the
     // prompt, authenticate() throws and the disable does not happen — key and flags stay intact.
-    await authenticate(m.auth_biometric_prompt_disable(), {
+    await authenticate(m.auth_biometric_desc(), {
       ...biometricPromptOptions(),
       title: m.auth_biometric_prompt_disable_title(),
     });

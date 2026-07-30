@@ -115,11 +115,20 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
 
 - \[ \] **WP-VERIF-2 (P2) - [device] Decrypted push notification on Android AND iOS.**
 
-- \[ \] **WP-VERIF-3 (P2) - [device] Login, PIN change, biometric enable/disable on real hardware.**
-  Now also gates the v0.11.5 keystore fix: after enrolling a fingerprint, a relaunch must open the
-  BiometricBottomSheet (not the PIN modal), and the PIN modal must keep its "use fingerprint"
-  button. Second check on the same launch: the log must say `[DB] Using SQLite storage (Tauri)`,
-  never the IndexedDB fallback. Both were broken for every fresh install before this commit.
+- \[~\] **WP-VERIF-3 (P2) - [device] Login, PIN change, biometric enable/disable on real hardware.**
+  **Android run 2026-07-29 (log on the user's desktop) cleared two checks and found one bug.**
+  PASSED: `[DB] Using SQLite storage (Tauri)` on every launch, never the IndexedDB fallback; and the
+  post-enrolment relaunch DOES raise the biometric path (`[BIOMETRIC] Biometric login attempt`), so
+  the v0.11.5 `isKeyPresent` fix holds. FAILED and now fixed in v0.11.6: the fingerprint was
+  accepted and the login still demanded the PIN (`Base64.DEFAULT` newline on the FFI wire - see
+  DURABLE RULES). **Re-run needed to confirm the fix**, plus the still-untested parts: PIN change,
+  disable, and the PIN modal keeping its "use biometrics" button.
+  Also seen in that log, unexplained and NOT fixed: the FIRST biometric attempt (23:12:03) logged
+  `Biometric login attempt` + `Authenticating for userId=...` and then nothing - it never reached
+  `Skipping PIN verification`, so `loginImpl` returned at its `isLoggedIn || isReconnecting ||
+  isLoginInProgress` guard. A second attempt 3 s later ran normally. Something holds one of those
+  three flags at that point in a cold launch; a user tap that silently does nothing is the symptom.
+  Capture the same window again on the re-run before theorising.
 
 - \[ \] **WP-VERIF-4 (P3) - [device] WP-XP-8 retry engine.** Android `OutboxRetryWorker`
   (WorkManager, exp backoff 30s+, 3 failures -> persistent flag + nudge) and iOS `BGTaskScheduler`
@@ -195,6 +204,7 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - `applyNewDeviceKeyLocally` must NEVER call `BiometricService.disable`.
 - The background copy of the device key is a keystore entry, never a file.
 - Raw 32 bytes at rest, base64 on the FFI wire; Android must encode with `NO_WRAP`.
+- Android has TWO readers per keystore alias (`MlsDeviceKeyStore` bg, `KeystorePlugin` fg) - fix both.
 - Escape hatch: "forgot PIN" wipes state and restarts, at the cost of local history.
 
 #### Community channels -> [chat](docs/wiki/frontend/modules/chat.md), [social-service](docs/wiki/services/social-service.md)
@@ -228,7 +238,9 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - A one-way colour is a dark-mode bug waiting to happen; use the `app.css` tokens.
 - Detect one-way colour per CLASS LIST (`find-oneway-colors.mjs`), never per file.
 - A `@theme` entry is what makes a token exist - an undefined token is silently inert.
-- A native prompt is UI you only partly own: pass `title`/`subtitle`/`cancelTitle`, not just `reason`.
+- A native prompt is UI you only partly own: `reason` alone leaves the plugin's English defaults up.
+- But Android stacks title+subtitle+description and adds its own hint - four fields, four lines.
+- No user-facing string names a sensor ("empreinte ou Face ID" is wrong on every device, half the time).
 - A native process cannot resolve a locale, so prompt text must travel down the call.
 - Nothing types a string as user-visible, so no compiler enforces Paraglide.
 - Re-run `bun run paraglide:compile` before `bun run test` after any build.

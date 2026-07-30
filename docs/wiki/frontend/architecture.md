@@ -204,6 +204,10 @@ interface ChatMessage {
   `title` and `cancelTitle` are passed. Localizing the one string the API makes obvious (`reason`)
   leaves the two most prominent lines untranslated. See
   [auth - the system biometric prompt](modules/auth.md).
+- **Filling every field a native prompt accepts is not the same as filling it well.** Android stacks
+  `title`, `subtitle` and description and then adds its own gesture hint, so a prompt that supplies
+  all three shows four lines. Decide what each line adds before passing it, and remember the OS gets
+  the last one for free.
 - **`bun run build` leaves Paraglide output that resolves to English**, which makes the
   locale-asserting tests fail (4 of them, in `callSystemMessages.test.ts` and `pinChange.test.ts`).
   Re-run `bun run paraglide:compile` before `bun run test` after any build.

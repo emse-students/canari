@@ -47,6 +47,10 @@ const MLS_DEVICE_KEY_STORE_KT = resolve(
   here,
   '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/MlsDeviceKeyStore.kt'
 );
+const KEYSTORE_PLUGIN_KT = resolve(
+  here,
+  '../../../src-tauri/patches/tauri-plugin-keystore/android/src/main/java/KeystorePlugin.kt'
+);
 
 /** Unique, sorted capture group 1 of every match of `regex` in `source`. */
 function extractKeys(source: string, regex: RegExp): string[] {
@@ -166,9 +170,17 @@ describe('push_context.json contract (Rust writer vs 3 native readers)', () => {
  * key bytes, which yields nothing for almost every key. Both fail silently, as a generic push.
  *
  * Writers base64-DECODE before storing; readers base64-ENCODE after loading.
+ *
+ * Android has TWO readers over the same alias and the same SharedPreferences: `MlsDeviceKeyStore`
+ * (background, Context-only) and `KeystorePlugin.getKeyBytes` (foreground, behind the
+ * BiometricPrompt). Only the first was asserted here, so the `Base64.DEFAULT` newline survived in
+ * the second until v0.11.5 - a successful fingerprint decrypted the key, Rust rejected the string,
+ * and the login reported an empty keystore. Both readers are covered now: a fix to one of these
+ * twins that is not applied to the other is the shape this file exists to catch.
  */
 describe('device key keystore encoding (raw bytes at rest, base64 on the wire)', () => {
   const keystoreSwift = readFileSync(KEYSTORE_PLUGIN_SWIFT, 'utf8');
+  const keystoreKt = readFileSync(KEYSTORE_PLUGIN_KT, 'utf8');
   const deviceKeyStoreKt = readFileSync(MLS_DEVICE_KEY_STORE_KT, 'utf8');
   const objcSource = readFileSync(CANARI_PUSH_MM, 'utf8');
   const iosAppSource = readFileSync(CANARI_IOS_MM, 'utf8');
@@ -192,6 +204,8 @@ describe('device key keystore encoding (raw bytes at rest, base64 on the wire)',
   );
   const ktStore = functionBody(deviceKeyStoreKt, /fun store\(/, /\n {4}}/);
   const ktRetrieve = functionBody(deviceKeyStoreKt, /fun retrieve\(/, /\n {4}}/);
+  const ktPluginStore = functionBody(keystoreKt, /fun storeKeyBytes\(/, /\n {4}}/);
+  const ktPluginGet = functionBody(keystoreKt, /fun getKeyBytes\(/, /\n {4}}/);
 
   it.each([
     ['KeystorePlugin.storeKeyBytes (iOS login)', () => storeKeyBytes, /Data\(base64Encoded:/],
@@ -201,6 +215,11 @@ describe('device key keystore encoding (raw bytes at rest, base64 on the wire)',
       /initWithBase64EncodedString/,
     ],
     ['MlsDeviceKeyStore.store (Android)', () => ktStore, /Base64\.decode\(keyB64/],
+    [
+      'KeystorePlugin.storeKeyBytes (Android login)',
+      () => ktPluginStore,
+      /Base64\.decode\(args\.keyBytes/,
+    ],
   ])('%s decodes base64 into raw bytes before storing', (_name, body, pattern) => {
     expect(body()).toMatch(pattern);
   });
@@ -220,9 +239,17 @@ describe('device key keystore encoding (raw bytes at rest, base64 on the wire)',
     expect(body()).not.toMatch(pattern);
   });
 
-  it('MlsDeviceKeyStore.retrieve returns NO_WRAP base64, never DEFAULT', () => {
-    // DEFAULT appends a newline and decode_base64_to_32_bytes does not trim.
-    expect(ktRetrieve).toMatch(/Base64\.encodeToString\(decrypted, Base64\.NO_WRAP\)/);
-    expect(ktRetrieve).not.toMatch(/Base64\.encodeToString\(decrypted, Base64\.DEFAULT\)/);
+  // DEFAULT appends a newline and decode_base64_to_32_bytes does not trim. Both Android readers
+  // hand their result to Rust, so both must use NO_WRAP - the assertion is per reader because
+  // fixing one twin and leaving the other is precisely how this shipped twice.
+  it.each([
+    ['MlsDeviceKeyStore.retrieve (background)', () => ktRetrieve, 'decrypted'],
+    ['KeystorePlugin.getKeyBytes (foreground)', () => ktPluginGet, 'decryptedBytes'],
+  ])('%s returns NO_WRAP base64, never DEFAULT', (_name, body, variable) => {
+    // Captures the flag rather than asserting NO_WRAP is present: matching the literal would
+    // still pass if a second, DEFAULT-flagged encode of the same value were added beside it.
+    const encode = new RegExp(`Base64\\.encodeToString\\(${variable}, Base64\\.(\\w+)\\)`);
+    expect(body()).toMatch(encode);
+    expect(body().match(encode)?.[1]).toBe('NO_WRAP');
   });
 });
