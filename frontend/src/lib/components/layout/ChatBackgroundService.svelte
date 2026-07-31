@@ -232,12 +232,19 @@
     appendLog(`[notifNav] channel ${id} unknown - refreshing communities before selecting`);
     void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx()).then((refreshRan) => {
       if (notifNav.pending !== id) return;
+      const loadError = globalChannels.workspacesLoadError;
       const outcome = landingAfterRefresh({
         refreshRan,
         targetLoaded: globalConvs.conversations.has(id),
+        refreshFailed: loadError !== null,
       });
-      // Our refetch never ran (one was already in flight): allow one more once it settles.
-      if (outcome === 'retry') refreshedWorkspacesForTarget = null;
+      // Our refetch never ran, or ran and failed: allow one more once it settles. On a failure the
+      // online/foreground listener reloads on its own, and this effect re-runs on the result.
+      if (outcome === 'retry') {
+        refreshedWorkspacesForTarget = null;
+        if (loadError)
+          appendLog(`[notifNav] channel ${id} refresh failed (${loadError}) - holding`);
+      }
       if (outcome !== 'abandon') return;
       appendLog(`[notifNav] channel ${id} still unknown after refresh - abandoning`);
       notifNav.clear();
@@ -757,8 +764,39 @@
   $effect(() => {
     if (!globalSession.isLoggedIn) return;
     untrack(() => {
-      void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx());
+      void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx()).then((refreshRan) => {
+        if (refreshRan && globalChannels.workspacesLoadError !== null) {
+          appendLog(
+            `[WORKSPACE-LOAD] post-login community load failed: ${globalChannels.workspacesLoadError}`
+          );
+          // No blocking UI: the online/foreground listener will retry automatically.
+        }
+      });
     });
+  });
+
+  // ── Online / foreground resume: retry a failed workspace load ─────────────
+  onMount(() => {
+    function handleOnline() {
+      if (!globalSession.isLoggedIn) return;
+      if (globalChannels.isLoadingWorkspaces) return;
+      if (globalChannels.workspacesLoadError === null) return;
+      appendLog('[WORKSPACE-LOAD] online event - retrying community load');
+      void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx());
+    }
+
+    function handleVisibility() {
+      if (document.visibilityState !== 'visible') return;
+      handleOnline();
+    }
+
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
   });
 
   // ── Post-login: propose biometric enrollment on mobile ────────────────────

@@ -158,6 +158,14 @@ nulls it, which is what made *every* deep link land in the right tab with nothin
   abandon (releasing the target) when a real refresh still does not know it, or when a DM is absent
   from an already-restored map. Abandoning matters as much as holding - it is what lets the
   watchdog clear a channel whose access was revoked.
+- `loadChannelWorkspacesFromBackend` retries transient failures internally: up to 3 attempts with
+  backoffs of 1 s, 3 s and 7 s. It keeps the existing sidebar list on every failure and exposes the
+  final error in `globalChannels.workspacesLoadError`. Auth failures (401/403) are not retried.
+  `ChatBackgroundService` listens for `online` and `visibilitychange`: when the user is logged in and
+  `workspacesLoadError` is set, it retries the load automatically, so a notification or deep link
+  that arrived offline eventually lands once the connection returns. The landing itself reads that
+  error through `landingAfterRefresh({ refreshFailed })`: a refetch that failed returns `retry`, not
+  `abandon`, because the list the target would have been in was never fetched.
 - The landing ends when the user opens another conversation, backs out of the thread, or leaves the
   target's route.
 

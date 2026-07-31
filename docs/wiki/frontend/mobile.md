@@ -112,7 +112,7 @@ is the [first real Kotlin compile](../cicd.md).
 - Decrypts MLS ciphertext via Rust FFI (`canari_native_decrypt_message`)
 - Decrypts media thumbnails via Rust FFI (`canari_native_decrypt_media`)
 - Builds visible notification content (title, body, attachment, category, badge)
-- Writes decrypted messages to `fcm_message_cache.ndjson` in the host app's Tauri `app_data_dir` so the app can pre-inject them at boot
+- Writes decrypted messages to `fcm_message_cache.ndjson` in the App Group container, which the app drains into its own `app_data_dir` and pre-injects at boot (see "FCM message cache")
 - Runs the same background MLS decrypt ladder as Android (direct decrypt → catch-up-first for local groups → Welcome-race retry for non-local groups)
 - Budget: ~30 seconds; 2 MB media cap
 
@@ -184,12 +184,14 @@ This order matters because a silent commit push advances the epoch but cannot pe
 
 ### FCM message cache
 
-Both platforms write decrypted message previews to `{app_data_dir}/fcm_message_cache.ndjson` after a successful decrypt:
+Both platforms write decrypted message previews to `fcm_message_cache.ndjson` after a successful decrypt:
 
-- Android: `CanariFirebaseMessagingService.writeFcmCache`
-- iOS NSE: `NotificationService.writeFcmCache`
+- Android: `CanariFirebaseMessagingService.writeFcmCache` → `{app_data_dir}` directly. The FCM service runs in the app's own process, so it shares that directory.
+- iOS NSE: `NotificationService.writeFcmCache` → the **App Group container**, then `CanariDrainAppGroupFcmCache` (called from `canari_ios_bootstrap` and on `didBecomeActive`) moves the entries into `{app_data_dir}`.
 
-The file is bounded to 50 entries and read at boot by `read_and_clear_fcm_cache` (Rust) so the app can pre-inject messages into the local store before the full MLS sync finishes. Both writers must produce the same JSON fields (`groupId`, `messageId`, `senderId`, `senderName`, `content`, `timestamp`, `type`, plus optional `replyTo` and `mediaKind`).
+That extra hop is not optional: an app extension has its own data container, so `app_data_dir` resolved inside the NSE is a directory the app can never read. The App Group is the only storage the two processes share — the same reason `mls.bin` is mirrored there. The NSE also writes with `completeFileProtectionUntilFirstUserAuthentication`, because it runs on a locked device where the default protection class cannot be written.
+
+The file is bounded to 50 entries and read at boot by `read_and_clear_fcm_cache` (Rust) so the app can pre-inject messages into the local store before the full MLS sync finishes. Both writers must produce the same JSON fields (`groupId`, `messageId`, `senderId`, `senderName`, `content`, `timestamp`, `type`, plus optional `replyTo` and `mediaKind`). `fcmCacheFields.test.ts` pins the fields **and** both halves of the iOS path - off macOS it is the only gate on either.
 
 ### Background execution
 

@@ -1,4 +1,5 @@
 import { tick } from 'svelte';
+import { SvelteSet } from 'svelte/reactivity';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { formatMentionToken } from '$lib/utils/mentions';
@@ -47,7 +48,7 @@ export function useMentionAutocomplete(opts: {
         let data: MentionUser[] = await res.json();
         const allowed = opts.allowedUserIds;
         if (allowed && allowed.length > 0) {
-          const allowedSet = new Set(allowed.map((id) => id.toLowerCase()));
+          const allowedSet = new SvelteSet(allowed.map((id) => id.toLowerCase()));
           data = data.filter((u) => allowedSet.has(u.id.toLowerCase()));
         }
         suggestions = data.slice(0, 6);

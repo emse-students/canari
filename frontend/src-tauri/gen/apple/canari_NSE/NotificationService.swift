@@ -35,10 +35,17 @@ class NotificationService: UNNotificationServiceExtension {
   /// Cap the decrypted preview length, matching the 200-char clamp the in-app path uses.
   private static let maxPreviewLength = 200
 
-  /// FCM message cache file: the app reads it at boot via `read_and_clear_fcm_cache`
-  /// to pre-inject messages that were decrypted while the app was killed. Written
-  /// to the host app's Tauri `app_data_dir` so both platforms share the same path.
-  /// Android twin: `CanariFirebaseMessagingService.writeFcmCache`.
+  /// FCM message cache file: the app pre-injects these entries at boot via
+  /// `read_and_clear_fcm_cache`, so a message decrypted while the app was killed shows up
+  /// without waiting for the full MLS sync. Android twin:
+  /// `CanariFirebaseMessagingService.writeFcmCache`.
+  ///
+  /// Written into the **App Group container**, not the extension's own Application Support:
+  /// an app extension has its own data container, so the `app_data_dir` path the Android
+  /// service and `read_and_clear_fcm_cache` share resolves, inside this process, to a
+  /// directory the app can never read. The App Group is the only storage the two processes
+  /// have in common - it is already where `mls.bin` is read from. `CanariDrainAppGroupFcmCache`
+  /// moves the entries into the app's own file on the next activation.
   private static let fcmCacheFileName = "fcm_message_cache.ndjson"
 
   /// Maximum number of entries kept in `fcm_message_cache.ndjson`.
@@ -373,9 +380,9 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   /// Writes a decrypted message entry to `fcm_message_cache.ndjson` in the host app's
-  /// Tauri `app_data_dir`, bounded to `maxFcmCacheEntries`. The app reads this file at
-  /// boot via `read_and_clear_fcm_cache` to pre-inject messages already decrypted while
-  /// killed. Android twin: `CanariFirebaseMessagingService.writeFcmCache`.
+  /// App Group container, bounded to `maxFcmCacheEntries`. The app drains it into its own
+  /// `app_data_dir` copy on the next activation, and `read_and_clear_fcm_cache` pre-injects
+  /// it at boot. Android twin: `CanariFirebaseMessagingService.writeFcmCache`.
   private func writeFcmCache(
     groupId: String, senderId: String, senderName: String, result: DecryptResult
   ) {
@@ -383,8 +390,8 @@ class NotificationService: UNNotificationServiceExtension {
       NSLog("[CanariNSE] writeFcmCache: messageId empty -> entry ignored")
       return
     }
-    guard let dir = hostAppDataDir() else {
-      NSLog("[CanariNSE] writeFcmCache: host app data dir unavailable")
+    guard let dir = Self.appGroupDir() else {
+      NSLog("[CanariNSE] writeFcmCache: App Group container unavailable")
       return
     }
 
@@ -426,7 +433,10 @@ class NotificationService: UNNotificationServiceExtension {
       }
       lines.append(entryLine)
       let body = lines.joined(separator: "\n").appending("\n")
-      try body.write(to: fileUrl, atomically: true, encoding: .utf8)
+      // Same protection class as the app's mirror: the NSE runs on a locked device, where a
+      // file created with the default class cannot be written at all.
+      try Data(body.utf8).write(
+        to: fileUrl, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
       NSLog("[CanariNSE] writeFcmCache: messageId=\(result.messageId.prefix(8)) groupId=\(groupId.prefix(8))")
     } catch {
       NSLog("[CanariNSE] writeFcmCache: failed: \(error.localizedDescription)")
@@ -621,17 +631,6 @@ class NotificationService: UNNotificationServiceExtension {
 
   private static func appGroupDir() -> URL? {
     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId)
-  }
-
-  /// Returns the host app's Tauri `app_data_dir` (Application Support/fr.emse.canari).
-  /// This is where `read_and_clear_fcm_cache` expects `fcm_message_cache.ndjson`.
-  /// Mirror of ObjC `CanariTauriDataDir` in canari_push.mm.
-  private func hostAppDataDir() -> URL? {
-    let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-    guard let base = paths.first else { return nil }
-    let dir = base.appendingPathComponent("fr.emse.canari")
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    return dir
   }
 
   private func loadMlsState() -> Data? {

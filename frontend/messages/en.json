@@ -2118,6 +2118,7 @@
   "chat_preview_poll": "[Poll]",
   "chat_preview_gif": "[GIF]",
   "chat_preview_link": "[Link]",
+  "channel_action_community_load": "Loading communities",
   "channel_action_community_create": "Community creation",
   "channel_action_channel_create": "Channel creation",
   "channel_action_channel_invite": "Channel invitation",

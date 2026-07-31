@@ -121,36 +121,22 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   session had started from 50, which is the proof the biometric session both writes and reads.
   Everything else in the runbook (A-F, H-J) is still owed, and ALL of it is still owed on iOS.
 
-- \[ \] **WP-PUSH-1 (P2) - a push notification takes 12 s because the retry ladder is in the wrong
-  order.** Android log 2026-07-30, 16:36:34 -> 16:36:46. A silent push carries a commit; the
-  background is read-only and never applies it, so the NEXT message push cannot decrypt. Android
-  then burns 3 x `tryDecrypt retry N/3 (group-join race)` (9.6 s of identical failures, and the
-  label is wrong - no join was in flight) before `tryDecryptWithCommitCatchup`, which succeeds
-  first try. The catch-up must run FIRST when the group is already local (a join race is only
-  possible when it is not). Same log, two smaller lies to fix while there: a silent commit push
-  logs `Decryption failed -> MlsBackgroundWorker enqueued` + `Fallback notification: ...` before
-  discovering it shows nothing, and `nativeProcessBackgroundTasks -> success` is logged for a
-  worker that did not apply the commit it was enqueued for. iOS is already correct here (the NSE
-  goes straight to catch-up), so this aligns Android on iOS.
+- \[~\] **WP-PUSH-1/2, HIST-1, NET-1 - CODE COMPLETE, unreleased, and the iOS half has never been
+  compiled.** All four shipped between 2026-07-30 and 2026-07-31 (stories in `CHANGELOG.md`,
+  rules below). What is left is verification, and it splits in two:
+  - **iOS compile.** WP-PUSH-2 rewrote `NotificationService.swift`, `canari_push.mm/.h` and
+    `canari_ios.mm`. Nothing on Windows compiles Swift or ObjC, and the last time that gap was
+    trusted it hid a `guard` that could not compile plus a key stored as UTF-8. Dispatch
+    `ios-release.yml` (and `android-release.yml` for the Kotlin) BEFORE believing any of it.
+    Both need the commits pushed first.
+  - **Device.** The runbook gains nothing new: WP-PUSH-1 shows up as check B, the iOS cache hop
+    as check C, the rest is the pass already owed below.
+  Option A for history (a real background FCM wake) stays unbuilt on purpose - see the rule below.
 
-- \[ \] **WP-PUSH-2 (P3) - iOS NSE parity gaps, both directions.** The NSE never writes the FCM
-  cache the Android service writes (`canari_push.mm` does, but only in the app process), so a push
-  decrypted while the app is KILLED is not pre-injected on the next launch - latency only, the
-  pending queue still carries it and push decrypt acks nothing. Conversely the NSE has no
-  welcome-race retry at all, so the first message of a brand-new conversation can show the generic
-  fallback where Android retries. Verified by reading both sides on 2026-07-30, nothing run.
-
-- \[ \] **WP-HIST-1 (P3) - a history bundle is served only while the app is open, by design.**
-  `notifyHistoryRequest` is online-only with no durable FCM wake (the comment says so), so a peer
-  that asks while this device is killed simply waits. Making it background is NOT cheap: the bundle
-  is built from `storage.getMessages(groupId, deviceKeyB64)` - rows encrypted in JS - and sending
-  it is an MLS write. `welcome_request_pending` proves the write half is possible; the read half
-  would need the JS at-rest format reimplemented natively. Decide whether it is worth that.
-
-- \[ \] **WP-NET-1 (P3) - a transient network error empties the communities list for the session.**
-  `useChannelWorkspaces` catches everything into one `Failed to load communities/channels` log line
-  and still returns `true` ("a refresh ran"), so no caller retries. Seen 2026-07-30 16:38:08 when
-  one request died after 7.2 s in a window where four others took 2-7 s.
+- \[ \] **WP-FMT-1 (P3) - French dev-facing strings elsewhere in native code.** The iOS ObjC/Rust
+  sweep is done (2026-07-31). Not audited: the Kotlin under `gen/android`, and French code comments
+  anywhere outside `docs/user-guide/`. User-visible notification text is deliberately French on both
+  platforms and must stay that way - a native process cannot resolve a locale.
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
@@ -215,7 +201,10 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - `/c/<groupId>` and `/chat/<groupId>` are NOT routes; a conversation opens by publishing to `notifNav`.
 - A deep-linked selection must outlive the route remount, and is held until DISPLAYED, not selected.
 - A channel target can only be opened on `/communities`; `openInvitedChannel` is the one entry point.
-- Holding a landing means nothing without a rule for abandoning it.
+- Holding a landing means nothing without a rule for abandoning it - but a refetch that FAILED
+  proves nothing about its target, so it holds and retries; only a refetch that SUCCEEDED abandons.
+- "A refresh ran" and "the list is current" are two different facts; a loader that conflates them
+  empties the sidebar on one dropped request. Fail loudly in state, never by returning stale truth.
 - A removal broadcast reaches every REMAINING member too - read `kickedUserId` before acting.
 - A channel bubble is keyed by the SERVER row id, everywhere.
 - Channel reactions are a cleartext server tally; DM reactions are encrypted MLS system messages.
@@ -256,6 +245,8 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - Tauri command names are unchecked strings on both sides.
 - A plugin command needs THREE things right: plugin-name prefix, snake_case fn, `build.rs` + ACL.
 - `push_context.json` is a JSON contract across four languages; only its test catches drift.
+- Pin the cross-process PATHS too, not just the field names: off macOS, `fcmCacheFields.test.ts` is
+  the only thing standing between a Swift writer and a directory nothing ever reads.
 - A `postMessage` payload is typed by nobody - contracts live in `mlsWorkerProtocol.ts`.
 - Never let a capability probe swallow its own failure.
 - `getStorage()`'s IndexedDB fallback is a last resort, not a mode.
@@ -273,6 +264,15 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - iOS pbxproj is hand-maintained (NOT xcodegen).
 - iOS keychain service `fr.emse.canari`, accounts `mls_key_<alias>` and `mls_bg_key_<alias>`.
 - Kotlin nested types go on the OUTER class body, never a companion object.
+- An app extension has its OWN data container: `app_data_dir` inside the NSE is not the app's. The
+  App Group is the only shared storage, so a cross-process file needs a hop, and a path that is
+  right in the app process is silently wrong in the extension.
+- The NSE runs on a locked device - write with `...UntilFirstUserAuthentication` or not at all.
+- Catch up commits BEFORE the join race: a Welcome race is only possible on a group that is not
+  local yet, so on a local group the race is pure latency.
+- Background decrypt applies no commit, so a silent commit push leaves the next message unreadable -
+  that is the epoch gap, not a bug to retry through.
+- Only user-VISIBLE native strings stay French; everything read while debugging is English.
 
 #### Release and CI -> [cicd](docs/wiki/cicd.md)
 

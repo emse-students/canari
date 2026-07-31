@@ -250,7 +250,7 @@ pub(crate) fn read_and_clear_outbox_sent(app: tauri::AppHandle) -> Vec<String> {
         .map(|l| l.to_string())
         .collect();
     log::info!(
-        "[OUTBOX_MIRROR] {} envoi(s) background a reconcilier",
+        "[OUTBOX_MIRROR] {} background send(s) to reconcile",
         ids.len()
     );
     ids

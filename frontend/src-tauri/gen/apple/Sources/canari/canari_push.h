@@ -3,32 +3,37 @@
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
 
-/// Repertoire Tauri `app_data_dir` (Application Support/fr.emse.canari).
+/// Tauri `app_data_dir` (Application Support/fr.emse.canari) of the CALLING process.
 FOUNDATION_EXPORT NSString *_Nullable CanariTauriDataDir(void);
 
-/// Lit le push secret (Keychain, fallback pending_push_secret.txt).
+/// Reads the push secret (Keychain, falling back to pending_push_secret.txt).
 FOUNDATION_EXPORT NSString *_Nullable CanariRetrievePushSecret(void);
 
-/// Initialise le handler push (FCM delegate + UNUserNotificationCenter).
+/// Installs the push handler (FCM delegate + UNUserNotificationCenter).
 void CanariPushSetup(void);
 
-/// Retire les notifications de messages au premier plan.
+/// Dismisses message notifications when the app comes to the foreground.
 void CanariPushCancelMessageNotifications(void);
 
-/// Enregistre le handler BGProcessingTask (nettoyage MLS en arriere-plan).
-/// A appeler AVANT la fin du lancement (depuis canari_ios_bootstrap, avant start_app).
+/// Registers the BGProcessingTask handler (background MLS cleanup).
+/// Must be called BEFORE launch completes (from canari_ios_bootstrap, before start_app).
 void CanariRegisterBackgroundTasks(void);
 
-/// Planifie une fenetre de nettoyage en arriere-plan. A appeler a l'entree en arriere-plan.
+/// Schedules a background cleanup window. Call it when entering the background.
 void CanariScheduleBackgroundCleanupTask(void);
 
-/// WP-XP-8 : planifie un retry automatique du drain d'outbox en arriere-plan (BGProcessingTask).
-/// Appele depuis CanariMaybeNotifyPendingSync quand le drain opportuniste echoue.
+/// WP-XP-8: schedules an automatic background retry of the outbox drain (BGProcessingTask).
+/// Called from CanariMaybeNotifyPendingSync when the opportunistic drain fails.
 void CanariScheduleOutboxRetryTask(void);
 
-/// Recopie les entrees de dechiffrement push (mls.bin, push_context.json, channel_keys.json,
-/// push_secret.txt) dans le conteneur App Group `group.fr.emse.canari` pour la Notification
-/// Service Extension. A appeler aux transitions premier plan/arriere-plan.
+/// Copies the push decrypt inputs (mls.bin, push_context.json, channel_keys.json,
+/// push_secret.txt) into the `group.fr.emse.canari` App Group container for the Notification
+/// Service Extension. Call it on both foreground/background transitions.
 void CanariMirrorPushStateToAppGroup(void);
+
+/// Carries the FCM cache entries the Notification Service Extension wrote into the App Group
+/// container over to the app's own file, the only one `read_and_clear_fcm_cache` reads. Call it
+/// at the same transitions as the mirror above.
+void CanariDrainAppGroupFcmCache(void);
 
 #endif

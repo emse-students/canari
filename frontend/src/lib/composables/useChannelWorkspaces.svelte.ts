@@ -93,13 +93,117 @@ export type WorkspacePurgeContext = Pick<
   'conversations' | 'deleteConversation' | 'invalidateChannelHistoryCache' | 'log'
 >;
 
+/** Back-off delays in ms for workspace list retries after transient failures. */
+const WORKSPACE_LOAD_RETRY_DELAYS = [1_000, 3_000, 7_000];
+
 /** Creates and returns the reactive channel/workspace store: sidebar state, API operations (create, rename, delete, invite, leave, image update), and real-time event handlers. */
 export function useChannelWorkspaces() {
   let channelWorkspaces = $state<ChannelSidebarWorkspace[]>([]);
   let selectedChannelConversationId = $state('');
   let isLoadingWorkspaces = false;
+  let workspacesLoadError = $state<string | null>(null);
 
   const service = new ChannelService();
+
+  /**
+   * Decides whether a workspace-load failure is worth retrying.
+   *
+   * Retryable: low-level network errors (a failed `fetch` throws a TypeError with no status at
+   * all) and HTTP 5xx - which also covers the Bad Gateway body ChannelService turns into a
+   * message, since `parseApiError` still reads the 502 out of it. Anything else, including a
+   * malformed payload, is a client-side fact that a second identical request cannot change.
+   */
+  function isRetryableLoadError(error: unknown): boolean {
+    const raw = error instanceof Error ? error.message : String(error);
+    const hay = raw.toLowerCase();
+
+    if (error instanceof TypeError) return true;
+    if (
+      hay.includes('fetch') ||
+      hay.includes('network') ||
+      hay.includes('timeout') ||
+      hay.includes('abort') ||
+      hay.includes('err_internet_disconnected')
+    ) {
+      return true;
+    }
+
+    const status = parseApiError(raw).status;
+    return status !== undefined && status >= 500;
+  }
+
+  /**
+   * Performs a single attempt to fetch and merge the workspace/channel list.
+   * Mutates `channelWorkspaces` on success; on failure the existing list is left untouched.
+   */
+  async function executeWorkspaceLoadAttempt(ctx: ChannelWorkspaceContext): Promise<void> {
+    const backendWorkspaces = await service.listUserWorkspaces();
+    const validChannelConversationIds: string[] = [];
+    const validWorkspaceSlugs = new SvelteSet<string>();
+
+    for (const workspace of backendWorkspaces) {
+      const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
+      const workspaceId = sidebarWorkspace.workspaceDbId;
+      if (!workspaceId) continue;
+      validWorkspaceSlugs.add(sidebarWorkspace.id);
+
+      const channels = await service.listChannels(workspaceId);
+      for (const channel of channels as ChannelDto[]) {
+        const actualId = channel.id || channel._id;
+        if (!actualId) continue;
+
+        if (channel.keyBootstrap) {
+          await hydrateChannelBootstrap(actualId, channel.keyBootstrap).catch((error) => {
+            ctx.log(
+              `[CHANNEL-KEY] Echec hydratation pour #${channel.name}: ${error instanceof Error ? error.message : String(error)}`
+            );
+          });
+        }
+
+        const channelConversationId = `channel_${actualId}`;
+        if (!validChannelConversationIds.includes(channelConversationId)) {
+          validChannelConversationIds.push(channelConversationId);
+        }
+        addChannelToWorkspace(sidebarWorkspace.id, {
+          id: channelConversationId,
+          name: channel.name,
+          isPrivate: channel.visibility === 'private',
+        });
+
+        const existing = ctx.conversations.get(channelConversationId);
+        ctx.conversations.set(channelConversationId, {
+          contactName: channelConversationId,
+          name: channel.name,
+          id: channelConversationId,
+          messages: existing?.messages ?? [],
+          lifecycle: 'active',
+          mlsStateHex: null,
+          ...(existing?.unreadCount !== undefined ? { unreadCount: existing.unreadCount } : {}),
+        });
+      }
+    }
+
+    const selectedChannel = ctx.getSelectedConversationId?.();
+    if (selectedChannel && isChannelConversationId(selectedChannel) && ctx.reloadChannelHistory) {
+      await ctx.reloadChannelHistory(selectedChannel);
+    }
+
+    const staleLocalChannelIds = Array.from(ctx.conversations.keys()).filter(
+      (id) => isChannelConversationId(id) && !validChannelConversationIds.includes(id)
+    );
+    for (const staleId of staleLocalChannelIds) {
+      ctx.invalidateChannelHistoryCache?.(staleId);
+      ctx.conversations.delete(staleId);
+      removeChannelFromWorkspaces(staleId);
+      if (selectedChannelConversationId === staleId) {
+        selectedChannelConversationId = '';
+      }
+      await ctx.deleteConversation?.(staleId).catch(() => {});
+    }
+
+    // Prune workspaces that no longer exist on the server.
+    channelWorkspaces = channelWorkspaces.filter((ws) => validWorkspaceSlugs.has(ws.id));
+  }
 
   /**
    * Extracts an HTTP status code and a human-readable detail from a raw API error body.
@@ -309,86 +413,53 @@ export function useChannelWorkspaces() {
    * Resolves to false when it declined because a load was already in flight - callers that refetch
    * to resolve one specific channel (the deep-link landing) must know their request was dropped,
    * or a join racing the startup load waits forever for a refresh that never ran.
+   *
+   * An attempt that ran and failed still resolves to true, but leaves `workspacesLoadError` set:
+   * "a refresh ran" and "the list is current" are two different facts, and a caller that treats the
+   * first as the second empties the sidebar on one dropped request. The list itself is never
+   * cleared by a failure - it is replaced only by a response that actually arrived.
    */
   async function loadChannelWorkspacesFromBackend(ctx: ChannelWorkspaceContext): Promise<boolean> {
     if (isLoadingWorkspaces) return false;
     isLoadingWorkspaces = true;
+    workspacesLoadError = null;
+
     try {
-      const backendWorkspaces = await service.listUserWorkspaces();
-      const validChannelConversationIds: string[] = [];
-      const validWorkspaceSlugs = new SvelteSet<string>();
+      for (let attempt = 0; attempt <= WORKSPACE_LOAD_RETRY_DELAYS.length; attempt++) {
+        try {
+          await executeWorkspaceLoadAttempt(ctx);
+          workspacesLoadError = null;
+          ctx.log(`[WORKSPACE-LOAD] communities/channels loaded (attempt ${attempt + 1})`);
+          return true;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const attemptCount = WORKSPACE_LOAD_RETRY_DELAYS.length + 1;
+          ctx.log(`[WORKSPACE-LOAD] attempt ${attempt + 1}/${attemptCount} failed: ${message}`);
 
-      for (const workspace of backendWorkspaces) {
-        const sidebarWorkspace = upsertWorkspaceFromDto(workspace);
-        const workspaceId = sidebarWorkspace.workspaceDbId;
-        if (!workspaceId) continue;
-        validWorkspaceSlugs.add(sidebarWorkspace.id);
+          const status = parseApiError(message).status;
+          // 401/403 are not transient: retrying them hammers the backend and the session still
+          // needs refreshing, so they exit on the first attempt like any non-retryable error.
+          const isFatal = status === 401 || status === 403 || !isRetryableLoadError(error);
+          const isLastAttempt = attempt === WORKSPACE_LOAD_RETRY_DELAYS.length;
 
-        const channels = await service.listChannels(workspaceId);
-        for (const channel of channels as ChannelDto[]) {
-          const actualId = channel.id || channel._id;
-          if (!actualId) continue;
-
-          if (channel.keyBootstrap) {
-            await hydrateChannelBootstrap(actualId, channel.keyBootstrap).catch((error) => {
-              ctx.log(
-                `[CHANNEL-KEY] Echec hydratation pour #${channel.name}: ${error instanceof Error ? error.message : String(error)}`
-              );
-            });
+          if (isFatal || isLastAttempt) {
+            workspacesLoadError = toUiActionError(m.channel_action_community_load(), error, false);
+            ctx.log(
+              `[WORKSPACE-LOAD] giving up (${isFatal ? 'non-retryable' : 'retries exhausted'}) - existing community list preserved: ${workspacesLoadError}`
+            );
+            return true;
           }
 
-          const channelConversationId = `channel_${actualId}`;
-          if (!validChannelConversationIds.includes(channelConversationId)) {
-            validChannelConversationIds.push(channelConversationId);
-          }
-          addChannelToWorkspace(sidebarWorkspace.id, {
-            id: channelConversationId,
-            name: channel.name,
-            isPrivate: channel.visibility === 'private',
-          });
-
-          const existing = ctx.conversations.get(channelConversationId);
-          ctx.conversations.set(channelConversationId, {
-            contactName: channelConversationId,
-            name: channel.name,
-            id: channelConversationId,
-            messages: existing?.messages ?? [],
-            lifecycle: 'active',
-            mlsStateHex: null,
-            ...(existing?.unreadCount !== undefined ? { unreadCount: existing.unreadCount } : {}),
-          });
+          const delay = WORKSPACE_LOAD_RETRY_DELAYS[attempt];
+          ctx.log(`[WORKSPACE-LOAD] retryable failure - next attempt in ${delay}ms`);
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
-
-      const selectedChannel = ctx.getSelectedConversationId?.();
-      if (selectedChannel && isChannelConversationId(selectedChannel) && ctx.reloadChannelHistory) {
-        await ctx.reloadChannelHistory(selectedChannel);
-      }
-
-      const staleLocalChannelIds = Array.from(ctx.conversations.keys()).filter(
-        (id) => isChannelConversationId(id) && !validChannelConversationIds.includes(id)
-      );
-      for (const staleId of staleLocalChannelIds) {
-        ctx.invalidateChannelHistoryCache?.(staleId);
-        ctx.conversations.delete(staleId);
-        removeChannelFromWorkspaces(staleId);
-        if (selectedChannelConversationId === staleId) {
-          selectedChannelConversationId = '';
-        }
-        await ctx.deleteConversation?.(staleId).catch(() => {});
-      }
-
-      // Prune workspaces that no longer exist on the server.
-      channelWorkspaces = channelWorkspaces.filter((ws) => validWorkspaceSlugs.has(ws.id));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      ctx.log(`Failed to load communities/channels: ${message}`);
+      // Unreachable: the final attempt always returns from the catch above.
+      return true;
     } finally {
       isLoadingWorkspaces = false;
     }
-    // A refresh ran (a failed one still consumed its attempt); only the busy guard above reports
-    // false, so a caller retries exactly when its request was never served.
-    return true;
   }
 
   /** Creates a new workspace with the given name, loads its default channels, then auto-selects the first channel. */
@@ -977,6 +1048,14 @@ export function useChannelWorkspaces() {
     },
     set channelWorkspaces(v) {
       channelWorkspaces = v;
+    },
+    /** True while the workspace/channel list is being fetched. */
+    get isLoadingWorkspaces() {
+      return isLoadingWorkspaces;
+    },
+    /** User-facing error message if the last workspace load failed, or null. */
+    get workspacesLoadError() {
+      return workspacesLoadError;
     },
     /** Conversation ID of the channel currently highlighted in the sidebar. */
     get selectedChannelConversationId() {

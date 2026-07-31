@@ -6,7 +6,7 @@ from a Windows machine, so that is what the mobile work has been gated on - and 
 Work Packages sit open with correct-looking code that has never executed on hardware.
 
 This file is the single ordered pass that closes them. It replaces the checks that were scattered
-across `AGENTS.md` and individual Work Packages.
+across individual Work Packages and the delegation log that used to live in `AGENTS.md`.
 
 **Build under test: v0.11.5.** Android from Play (production) or the release-asset APK, iOS from
 TestFlight. Both were published by CI on 2026-07-30. Check G alone has since been re-run on
@@ -202,6 +202,26 @@ down long enough to exhaust the backoff.
 failure here is inconclusive rather than a defect.
 
 ---
+
+## Traps that outlived the work that found them
+
+Kept because each one costs a full device pass to rediscover.
+
+- **Do NOT add `.setKeySize(256)` to `generateBiometricProtectedKeyForAlias` yet.** It only affects
+  newly created aliases, so it would split behaviour between fresh and upgraded installs while the
+  migration in check A is still unvalidated. Worth doing once A-E pass.
+- **The Android alias `unime_dev` no longer exists.** It belonged to the UniMe legacy
+  `store`/`retrieve` API, which had no caller and was deleted in v0.11.5. An install predating the
+  deletion may still hold that keystore entry plus a `secure_storage` SharedPreferences blob; both
+  are inert. Seeing them is not a failure.
+- **An empty `deviceKeyB64` is not "no context".** Both platforms separate the two; a check that
+  conflates them reads a missing key as a missing login.
+- **`MlsDeviceKeyStore` uses two Base64 flavours on purpose:** `DEFAULT` for the IV/CT (that is
+  KeystorePlugin's at-rest format) and `NO_WRAP` for the key it RETURNS, because `DEFAULT` appends
+  a newline and the Rust `decode_base64_to_32_bytes` does not trim. Do not "unify" them.
+- **The key sits in the keystore as RAW 32 bytes and crosses the FFI as base64.** Writers decode
+  before storing, readers encode after loading, on both platforms and in both migrations. Treating
+  the stored bytes as text yields no key, silently.
 
 ## Recording the results
 

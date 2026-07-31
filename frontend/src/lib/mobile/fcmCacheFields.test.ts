@@ -104,6 +104,31 @@ describe('fcm_message_cache.ndjson contract (Android + iOS writers vs Rust reade
     expect(rustSource).toMatch(/fcm_message_cache\.ndjson/);
   });
 
+  it('the iOS writer targets the App Group, and the app drains it into its own container', () => {
+    // An app extension has its own data container: `applicationSupportDirectory` inside the NSE
+    // is NOT the app's `app_data_dir`, so writing there produces a file nothing ever reads. The
+    // App Group is the only storage the two processes share, and something on the app side has
+    // to carry the entries over. Neither half is checkable from anywhere but this test off macOS.
+    const nseWrite = functionBody(
+      swiftSource,
+      /private func writeFcmCache\(/,
+      /\n  }\n\n  \/\/ MARK: - Backend fetches/
+    );
+    expect(nseWrite).toContain('appGroupDir()');
+    expect(nseWrite).not.toContain('applicationSupportDirectory');
+
+    const pushMm = readFileSync(
+      resolve(here, '../../../src-tauri/gen/apple/Sources/canari/canari_push.mm'),
+      'utf8'
+    );
+    expect(pushMm).toMatch(/void CanariDrainAppGroupFcmCache\(void\)/);
+    const iosMm = readFileSync(
+      resolve(here, '../../../src-tauri/gen/apple/Sources/canari/canari_ios.mm'),
+      'utf8'
+    );
+    expect(iosMm).toContain('CanariDrainAppGroupFcmCache()');
+  });
+
   it('the TypeScript consumer expects the same field set', () => {
     const tsSource = readFileSync(FCM_CACHE_TS, 'utf8');
     const block = functionBody(tsSource, /interface FcmCacheEntry/, /}\s*\n\n/);

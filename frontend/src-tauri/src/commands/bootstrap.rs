@@ -89,7 +89,7 @@ pub(crate) async fn bootstrap_dead_conversation(
 
     if claim_resp.status() == 409 {
         log::warn!(
-            "[BOOTSTRAP] Race condition detectee pour group={} - un autre device a deja bootstrappe.",
+            "[BOOTSTRAP] Race detected for group={} - another device has already bootstrapped.",
             conversation_id
         );
         return Ok(BootstrapOutcome::Conflict);
@@ -195,7 +195,7 @@ pub(crate) async fn bootstrap_dead_conversation(
 
     if all_key_packages.is_empty() {
         log::warn!(
-            "[BOOTSTRAP] Aucun KeyPackage valide pour group={} - bootstrap annule.",
+            "[BOOTSTRAP] No valid KeyPackage for group={} - bootstrap cancelled.",
             conversation_id
         );
         return Ok(BootstrapOutcome::NoMembers);
@@ -217,7 +217,7 @@ pub(crate) async fn bootstrap_dead_conversation(
             .map_err(|e| e.to_string())?;
         if !skipped.is_empty() {
             log::warn!(
-                "[BOOTSTRAP] {} KeyPackage(s) invalide(s) ignore(s) pour group={} (indices {:?}) - device(s) non re-invite(s). [[C5]]",
+                "[BOOTSTRAP] {} invalid KeyPackage(s) skipped for group={} (indices {:?}) - those device(s) were not re-invited. [[C5]]",
                 skipped.len(),
                 conversation_id,
                 skipped
@@ -263,7 +263,7 @@ pub(crate) async fn bootstrap_dead_conversation(
     write_mls_state_blob(&app, &enc)?;
 
     log::info!(
-        "[BOOTSTRAP] Groupe {} re-bootstrappe avec succes ({} devices).",
+        "[BOOTSTRAP] Group {} re-bootstrapped successfully ({} devices).",
         conversation_id,
         added_device_ids.len()
     );

@@ -101,7 +101,7 @@ static void CanariMigrateDeviceKeyFromJson(void) {
 static void CanariProcessPendingPushSecret(void) {
   NSString *secret = CanariRetrievePushSecret();
   if (secret != nil) {
-    NSLog(@"[CanariIOS] processPendingPushSecret: Keychain pret");
+    NSLog(@"[CanariIOS] processPendingPushSecret: Keychain ready");
   }
 }
 
@@ -117,10 +117,10 @@ static void CanariCheckKeystoreHealth(void) {
   NSString *flagPath = [dir stringByAppendingPathComponent:@"keystore_ok.flag"];
   if (CanariRetrievePushSecret() != nil) {
     [@"ok" writeToFile:flagPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    NSLog(@"[CanariIOS] checkKeystoreHealth: Keychain operationnel");
+    NSLog(@"[CanariIOS] checkKeystoreHealth: Keychain healthy");
   } else {
     [[NSFileManager defaultManager] removeItemAtPath:flagPath error:nil];
-    NSLog(@"[CanariIOS] checkKeystoreHealth: Keychain perdu");
+    NSLog(@"[CanariIOS] checkKeystoreHealth: Keychain lost");
   }
 }
 
@@ -143,13 +143,13 @@ static void CanariSetupFirebaseIfAvailable(void) {
   NSString *plistPath =
       [[NSBundle mainBundle] pathForResource:@"GoogleService-Info" ofType:@"plist"];
   if (plistPath == nil) {
-    NSLog(@"[CanariIOS] GoogleService-Info.plist absent - Firebase desactive");
+    NSLog(@"[CanariIOS] GoogleService-Info.plist missing - Firebase disabled");
     return;
   }
   [FIRApp configure];
-  NSLog(@"[CanariIOS] Firebase initialise");
+  NSLog(@"[CanariIOS] Firebase initialised");
 #else
-  NSLog(@"[CanariIOS] Firebase SDK absent (pod install requis pour push FCM)");
+  NSLog(@"[CanariIOS] Firebase SDK missing (pod install required for FCM push)");
 #endif
 }
 
@@ -160,6 +160,11 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariMigrateDeviceKeyFromJson();
   CanariCheckKeystoreHealth();
   CanariPushCancelMessageNotifications();
+  // Pick up whatever the NSE decrypted while we were killed or backgrounded. It writes into the
+  // App Group because an extension cannot reach the app's data container; this is the hop that
+  // puts those entries where read_and_clear_fcm_cache will find them, and it must happen before
+  // the frontend asks for the cache at login.
+  CanariDrainAppGroupFcmCache();
   // Refresh the App Group mirror so the NSE decrypts against the state as of the app's last
   // active moment (the foreground advances mls.bin; there is no Rust write hook to mirror on).
   CanariMirrorPushStateToAppGroup();
@@ -211,6 +216,9 @@ void canari_ios_bootstrap(void) {
               }];
   CanariProcessPendingPushSecret();
   CanariCheckKeystoreHealth();
+  // Cold start: drain before the WebView exists, so the very first read_and_clear_fcm_cache of
+  // this launch already sees the pushes handled while the app was killed.
+  CanariDrainAppGroupFcmCache();
   // Start the keyboard media bridge (WP-XP-6). The WKWebView is not yet created at this point
   // (Tauri/wry creates it inside ffi::start_app() which runs after us), so we pass nil and the
   // bridge will find the WebView lazily on the first UIApplicationDidBecomeActiveNotification.

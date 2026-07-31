@@ -302,7 +302,7 @@ void CanariMirrorPushStateToAppGroup(void) {
   NSURL *container = [[NSFileManager defaultManager]
       containerURLForSecurityApplicationGroupIdentifier:kAppGroupId];
   if (container == nil) {
-    NSLog(@"[CanariPush] mirror: App Group indisponible (entitlement manquant ?)");
+    NSLog(@"[CanariPush] mirror: App Group unavailable (missing entitlement?)");
     return;
   }
   NSString *src = CanariTauriDataDir();
@@ -321,7 +321,7 @@ void CanariMirrorPushStateToAppGroup(void) {
     }
     NSError *err = nil;
     if (![data writeToURL:[container URLByAppendingPathComponent:name] options:opts error:&err]) {
-      NSLog(@"[CanariPush] mirror %@ echoue: %@", name, err.localizedDescription);
+      NSLog(@"[CanariPush] mirror %@ failed: %@", name, err.localizedDescription);
     }
   }
   // The push secret lives in the Keychain (app-only). Copy it into the container so the NSE
@@ -334,7 +334,7 @@ void CanariMirrorPushStateToAppGroup(void) {
            options:opts
              error:nil];
   }
-  NSLog(@"[CanariPush] mirror App Group termine");
+  NSLog(@"[CanariPush] mirror to App Group done");
 }
 
 static NSString *CanariBuildFallbackText(NSString *senderName) {
@@ -635,7 +635,7 @@ static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
   // 2) Fetch the ordered commits since our epoch (outside the lock: HTTP).
   NSString *commitsJson = CanariFetchCommitsFromBackend(groupId, epoch, ctx);
   if (commitsJson.length == 0 || [commitsJson isEqualToString:@"[]"]) {
-    NSLog(@"[CanariPush] catchup: aucun commit a rattraper (epoch=%lld)", epoch);
+    NSLog(@"[CanariPush] catchup: no commit to catch up on (epoch=%lld)", epoch);
     return nil;
   }
 
@@ -704,6 +704,57 @@ static void CanariWriteFcmCache(NSString *groupId, NSString *senderId, NSString 
     NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
     [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
     NSLog(@"[CanariPush] writeFcmCache messageId=%@", [msg.messageId substringToIndex:MIN((NSUInteger)8, msg.messageId.length)]);
+  } @finally {
+    [g_cacheLock unlock];
+  }
+}
+
+/**
+ * Moves the entries the Notification Service Extension wrote into the App Group container over
+ * to the app's own `fcm_message_cache.ndjson`, which is the only file `read_and_clear_fcm_cache`
+ * looks at. An app extension has its own data container, so this hop is what makes a push
+ * decrypted while the app was killed visible to the app at all.
+ */
+void CanariDrainAppGroupFcmCache(void) {
+  NSURL *container = [[NSFileManager defaultManager]
+      containerURLForSecurityApplicationGroupIdentifier:kAppGroupId];
+  NSString *dst = CanariTauriDataDir();
+  if (container == nil || dst == nil) {
+    return;
+  }
+  NSURL *srcUrl = [container URLByAppendingPathComponent:kFcmCacheFileName];
+  NSString *incoming = [NSString stringWithContentsOfURL:srcUrl
+                                                encoding:NSUTF8StringEncoding
+                                                   error:nil];
+  if (incoming.length == 0) {
+    return;
+  }
+  // Delete first: an NSE invocation racing this drain would otherwise have its entry read and
+  // then deleted anyway. Losing one costs latency only - the message is still in the pending
+  // queue, since a push decrypt acknowledges nothing.
+  [[NSFileManager defaultManager] removeItemAtURL:srcUrl error:nil];
+
+  NSString *path = [dst stringByAppendingPathComponent:kFcmCacheFileName];
+  [g_cacheLock lock];
+  @try {
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    NSString *existing = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    for (NSString *line in [existing componentsSeparatedByString:@"\n"]) {
+      if (line.length > 0) {
+        [lines addObject:line];
+      }
+    }
+    for (NSString *line in [incoming componentsSeparatedByString:@"\n"]) {
+      if (line.length > 0) {
+        [lines addObject:line];
+      }
+    }
+    while (lines.count > kMaxFcmCacheEntries) {
+      [lines removeObjectAtIndex:0];
+    }
+    NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
+    [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSLog(@"[CanariPush] drainAppGroupFcmCache: %lu entry/entries carried over", (unsigned long)lines.count);
   } @finally {
     [g_cacheLock unlock];
   }
@@ -1103,7 +1154,7 @@ static void CanariSubmitBackgroundCleanupRequest(void) {
   request.requiresExternalPower = NO;
   NSError *error = nil;
   if (![[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error]) {
-    NSLog(@"[CanariPush] BGTask submit echoue: %@", error.localizedDescription);
+    NSLog(@"[CanariPush] BGTask submit failed: %@", error.localizedDescription);
   } else {
     NSLog(@"[CanariPush] BGTask cleanup planifie");
   }
@@ -1123,7 +1174,7 @@ static void CanariRegisterBackgroundCleanupHandler(void) {
                         // window immediately so cleanup keeps recurring.
                         CanariSubmitBackgroundCleanupRequest();
                         task.expirationHandler = ^{
-                          NSLog(@"[CanariPush] BGTask expire avant la fin du cleanup");
+                          NSLog(@"[CanariPush] BGTask expired before the cleanup finished");
                         };
                         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
                           CanariRunBackgroundCleanup();
@@ -1149,7 +1200,7 @@ static void CanariSubmitOutboxRetryRequest(void) {
   request.requiresExternalPower = NO;
   NSError *error = nil;
   if (![[BGTaskScheduler sharedScheduler] submitTaskRequest:request error:&error]) {
-    NSLog(@"[CanariPush] BGTask outboxRetry submit echoue: %@", error.localizedDescription);
+    NSLog(@"[CanariPush] BGTask outboxRetry submit failed: %@", error.localizedDescription);
   } else {
     NSLog(@"[CanariPush] BGTask outboxRetry planifie");
   }
@@ -1165,7 +1216,7 @@ static void CanariRegisterOutboxRetryHandler(void) {
                       launchHandler:^(__kindof BGTask *task) {
                         CanariSubmitOutboxRetryRequest();
                         task.expirationHandler = ^{
-                          NSLog(@"[CanariPush] BGTask outboxRetry expire avant la fin du drain");
+                          NSLog(@"[CanariPush] BGTask outboxRetry expired before the drain finished");
                         };
                         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
                           CanariPushContext *ctx = CanariLoadPushContext();
@@ -1401,7 +1452,7 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
  */
 static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text) {
   if (groupId.length == 0 || text.length == 0) {
-    NSLog(@"[CanariPush] handleQuickReplyAction: groupId/text manquant");
+    NSLog(@"[CanariPush] handleQuickReplyAction: groupId/text missing");
     return;
   }
   CanariPushContext *ctx = CanariLoadPushContext();
@@ -1413,7 +1464,7 @@ static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text) {
   long long sentAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
   char *protoPtr = canari_native_build_text_message_proto(messageId.UTF8String, sentAt, text.UTF8String);
   if (protoPtr == nil) {
-    NSLog(@"[CanariPush] handleQuickReplyAction: nativeBuildTextMessageProto echoue");
+    NSLog(@"[CanariPush] handleQuickReplyAction: nativeBuildTextMessageProto failed");
     return;
   }
   NSString *protoB64 = [NSString stringWithUTF8String:protoPtr];
@@ -1459,13 +1510,13 @@ static void CanariHandleMarkReadAction(NSString *groupId) {
 
   NSArray<NSString *> *messageIds = CanariReadCachedMessageIdsForGroup(groupId);
   if (messageIds.count == 0) {
-    NSLog(@"[CanariPush] handleMarkReadAction: aucun messageId en cache group=%@ - notif effacee, pas de recu",
+    NSLog(@"[CanariPush] handleMarkReadAction: no cached messageId group=%@ - notification cleared, no receipt",
           groupId);
     return;
   }
   CanariPushContext *ctx = CanariLoadPushContext();
   if (ctx == nil) {
-    NSLog(@"[CanariPush] handleMarkReadAction: push_context.json absent -> abort recu");
+    NSLog(@"[CanariPush] handleMarkReadAction: push_context.json missing -> receipt aborted");
     return;
   }
   NSData *idsData = [NSJSONSerialization dataWithJSONObject:messageIds options:0 error:nil];
@@ -1475,7 +1526,7 @@ static void CanariHandleMarkReadAction(NSString *groupId) {
   NSString *idsJson = [[NSString alloc] initWithData:idsData encoding:NSUTF8StringEncoding];
   char *protoPtr = canari_native_build_read_receipt_proto(idsJson.UTF8String);
   if (protoPtr == nil) {
-    NSLog(@"[CanariPush] handleMarkReadAction: nativeBuildReadReceiptProto echoue");
+    NSLog(@"[CanariPush] handleMarkReadAction: nativeBuildReadReceiptProto failed");
     return;
   }
   NSString *protoB64 = [NSString stringWithUTF8String:protoPtr];
@@ -1644,7 +1695,7 @@ static void CanariProcessWelcomeRequestBackground(NSString *groupId, NSString *r
     }
 
     if (result == nil || ![result[@"ok"] boolValue]) {
-      NSLog(@"[CanariPush] processWelcomeRequestBackground: create welcome echoue");
+      NSLog(@"[CanariPush] processWelcomeRequestBackground: create welcome failed");
       return;
     }
 
@@ -1729,7 +1780,7 @@ static void CanariProcessReceivedWelcomeBackground(NSString *groupId, NSString *
     }
     CanariRunBackgroundCleanup();
   } else {
-    NSLog(@"[CanariPush] processReceivedWelcomeBackground: echec join %@", groupId);
+    NSLog(@"[CanariPush] processReceivedWelcomeBackground: join failed %@", groupId);
   }
 
   int remaining = CanariDrainOutboxBackground(ctx);
@@ -2200,7 +2251,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
           CanariCancelConversationNotification(groupId);
         });
       } else {
-        NSLog(@"[CanariPush] message silencieux - pas de notification");
+        NSLog(@"[CanariPush] silent message - no notification");
       }
       return;
     }
@@ -2236,7 +2287,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     if (body.length == 0) {
       if (queuedMessageId.length > 0) {
         CanariRunBackgroundCleanup();
-        NSLog(@"[CanariPush] dechiffrement echoue - cleanup pending db");
+        NSLog(@"[CanariPush] decrypt failed - cleanup pending db");
       }
       body = CanariBuildFallbackText(senderName);
     } else {
@@ -2305,7 +2356,7 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
   NSString *nonce = [data[@"nonce"] isKindOfClass:[NSString class]] ? data[@"nonce"] : @"";
   NSString *senderId = [data[@"senderId"] isKindOfClass:[NSString class]] ? data[@"senderId"] : @"";
   if (channelId.length == 0) {
-    NSLog(@"[CanariPush] handleChannelMessage: channelId manquant - abort");
+    NSLog(@"[CanariPush] handleChannelMessage: channelId missing - abort");
     return;
   }
   // The app addresses channels as `channel_<uuid>`; use it for the deep link + stable notif id.
@@ -2340,7 +2391,7 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
         }
       }
     } else {
-      NSLog(@"[CanariPush] handleChannelMessage: pas de cle/ciphertext - notification generique "
+      NSLog(@"[CanariPush] handleChannelMessage: no key/ciphertext - generic notification "
             @"channel=%@",
             channelId);
     }
@@ -2381,7 +2432,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
   // (no voipToken yet) receives it via FCM instead. Foreground rings in-app via WS -> skip.
   if ([msgType isEqualToString:@"call_ring"]) {
     if (canari_ios_is_in_foreground()) {
-      NSLog(@"[CanariPush] call_ring en foreground - overlay in-app sonne deja");
+      NSLog(@"[CanariPush] call_ring in foreground - the in-app overlay is already ringing");
       return;
     }
     NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
@@ -2425,7 +2476,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
         [data[@"queuedMessageId"] isKindOfClass:[NSString class]] ? data[@"queuedMessageId"] : nil;
     NSString *inlineProto = [data[@"proto"] isKindOfClass:[NSString class]] ? data[@"proto"] : @"";
     if (groupId.length == 0) {
-      NSLog(@"[CanariPush] isWelcome: groupId manquant");
+      NSLog(@"[CanariPush] isWelcome: groupId missing");
       return;
     }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -2728,7 +2779,7 @@ void CanariPushSetup(void) {
   [[FIRMessaging messaging] tokenWithCompletion:^(NSString *_Nullable token,
                                                   NSError *_Nullable error) {
     if (error != nil) {
-      NSLog(@"[CanariPush] fetch FCM token au lancement echoue: %@", error.localizedDescription);
+      NSLog(@"[CanariPush] fetching the FCM token at launch failed: %@", error.localizedDescription);
       return;
     }
     CanariPersistFcmToken(token);

@@ -148,6 +148,7 @@
   "channel_action_community_create": "Création de la communauté",
   "channel_action_channel_create": "Création du canal",
   "channel_action_channel_invite": "Invitation dans le canal",
+  "channel_action_community_load": "Chargement des communautés",
   "channel_action_role_update": "Mise à jour du rôle",
   "channel_action_channel_leave": "Quitter le canal",
   "channel_action_community_leave": "Quitter la communauté",

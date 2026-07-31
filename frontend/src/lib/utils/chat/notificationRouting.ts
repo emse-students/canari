@@ -51,14 +51,18 @@ export function landingRecovery(input: {
  * What the landing must do once the community refetch it asked for has settled.
  *
  * A refetch that never ran (one was already in flight) has to be retried, or a join racing the
- * startup load waits forever for a refresh nobody performed.
+ * startup load waits forever for a refresh nobody performed. A refetch that ran and FAILED is the
+ * same case: the list the target would have been in was never fetched, so it proves nothing about
+ * the target and abandoning would lose a legitimate channel to one dropped request.
  */
 export function landingAfterRefresh(input: {
   refreshRan: boolean;
   targetLoaded: boolean;
+  refreshFailed?: boolean;
 }): 'retry' | 'wait' | 'abandon' {
   if (!input.refreshRan) return 'retry';
-  return input.targetLoaded ? 'wait' : 'abandon';
+  if (input.targetLoaded) return 'wait';
+  return input.refreshFailed ? 'retry' : 'abandon';
 }
 
 /**

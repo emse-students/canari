@@ -81,6 +81,14 @@ describe('landingAfterRefresh', () => {
     expect(landingAfterRefresh({ refreshRan: true, targetLoaded: true })).toBe('wait');
   });
 
+  it('retries instead of abandoning when the refresh itself failed', () => {
+    // The list was never fetched, so its silence says nothing about the target. Abandoning here
+    // would lose a legitimate channel to one dropped request.
+    expect(
+      landingAfterRefresh({ refreshRan: true, targetLoaded: false, refreshFailed: true })
+    ).toBe('retry');
+  });
+
   it('abandons a channel still unknown after a real refresh', () => {
     // Revoked access or a deleted community: holding the target would keep the selection
     // watchdog off a conversation that is never coming back.
