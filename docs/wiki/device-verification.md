@@ -17,7 +17,6 @@ hop as well. Check G already passed on Android on **v0.11.6** and is not re-owed
 
 | Check | Closes |
 |---|---|
-| A | WP-VERIF-0 (upgrade path - the only test of the one-shot migration) |
 | B, C | WP-VERIF-0 (background decrypt), WP-VERIF-2 |
 | D, E | WP-VERIF-0 (PIN change, fresh install) |
 | F | WP-VERIF-1 |
@@ -36,32 +35,17 @@ hop as well. Check G already passed on Android on **v0.11.6** and is not re-owed
 - **Screen genuinely locked, app genuinely killed** for B/C. A backgrounded app is a different code
   path and passing it proves nothing about the one under test.
 
-## Order matters
+## The upgrade path is no longer tested
 
-**Do check A first.** It requires the pre-WP-SEC-1 build installed and logged in *before* v0.11.7
-lands over it. Once you install v0.11.7 onto a clean or already-migrated app, that opportunity is
-gone until you deliberately downgrade again.
+There used to be a check A: install the last pre-WP-SEC-1 build, log in, then land the new build over
+it to watch the one-shot device-key migration promote a cleartext `push_context.json` key into the
+keystore. It was **dropped on 2026-07-31** by decision - every install worth testing has long since
+migrated, and staging the check now means deliberately downgrading to a release from two weeks ago.
+The migration code still runs and still logs
+`CanariApp: migrateDeviceKeyFromJson: key promoted to Keystore, JSON stripped`; nobody is going to
+make it happen on purpose again. Start at check B.
 
 ---
-
-## A. Upgrade path: the one-shot device-key migration
-
-**Proves** that an existing install whose device key lives in cleartext `push_context.json` promotes
-that key into the platform keystore on first launch of the new build, and strips the JSON field -
-without the user logging in again. This is the only test of it, on either platform.
-
-1. Install **v0.11.3** (the last release *without* WP-SEC-1 - v0.11.4 already contains it). Android:
-   the `v0.11.3` release-asset APK. iOS: the v0.11.3 TestFlight build.
-2. Log in fully. Send and receive one message so the state is real.
-3. Install v0.11.7 **over it**, without logging in again.
-4. Launch once, then kill the app.
-5. Run check B (Android) / C (iOS).
-
-**Verdict, Android:** `CanariApp: migrateDeviceKeyFromJson: key promoted to Keystore, JSON stripped`.
-The failure twin is `migrateDeviceKeyFromJson: Keystore store failed - keeping JSON field for now`,
-which is a deliberate degrade rather than a crash: the key stays readable, so the app still works and
-the migration retries next launch. Either line answers the check; silence means the migration path
-never ran and is the interesting result.
 
 ## B. Android: decrypted push, app killed, screen locked
 
@@ -115,7 +99,8 @@ alias being written in a format its reader does not accept.
 
 **Proves** the same chain on a device with no migration history - the path every new user takes.
 
-1. Uninstall completely. Install v0.11.7. Log in.
+1. Uninstall completely. Install v0.11.7. Log in. This is now the FIRST install-path check, since
+   the upgrade path above was dropped.
 2. Repeat B and C.
 
 ## F. Login end to end: init, save, KeyPackage
@@ -208,9 +193,9 @@ failure here is inconclusive rather than a defect.
 
 Kept because each one costs a full device pass to rediscover.
 
-- **Do NOT add `.setKeySize(256)` to `generateBiometricProtectedKeyForAlias` yet.** It only affects
-  newly created aliases, so it would split behaviour between fresh and upgraded installs while the
-  migration in check A is still unvalidated. Worth doing once A-E pass.
+- **Adding `.setKeySize(256)` to `generateBiometricProtectedKeyForAlias` only affects NEW aliases.**
+  It therefore splits behaviour between fresh and upgraded installs. It was held back while the
+  upgrade path was still unvalidated; now that that check is retired, do it once B-E pass.
 - **The Android alias `unime_dev` no longer exists.** It belonged to the UniMe legacy
   `store`/`retrieve` API, which had no caller and was deleted in v0.11.5. An install predating the
   deletion may still hold that keystore entry plus a `secure_storage` SharedPreferences blob; both

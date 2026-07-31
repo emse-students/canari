@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+"""Android build / deploy / logcat GUI for Canari.
+
+Built for the device-verification runbook (docs/wiki/device-verification.md): the logcat
+whitelist below is the set of tags whose lines are the verdict of a check, so a check can
+never fail merely because its tag was filtered out.
+
+The UI is French on purpose - it is a personal dev tool. Comments and console output are
+English, per the project language rule.
+"""
 import tkinter as tk
 from tkinter import ttk, scrolledtext, filedialog, messagebox
 import subprocess
@@ -8,140 +17,160 @@ import datetime
 import sys
 import re
 import os
+import glob
 from typing import Optional
 
-# === CONFIGURATION PAR DÉFAUT ===
-# Chemins relatifs au répertoire du script (adaptable)
+# === DEFAULT CONFIGURATION ===
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PROJECT_DIR = os.path.join(SCRIPT_DIR, "frontend")
-DEFAULT_APK_PATH = r"src-tauri\gen\android\app\build\outputs\apk\universal\debug\app-universal-debug.apk"
 DEFAULT_PACKAGE_NAME = "fr.emse.canari"
 DEFAULT_ACTIVITY_NAME = f"{DEFAULT_PACKAGE_NAME}/.MainActivity"
 
-# Stockage de la configuration (au démarrage)
+# Where `bun tauri android build` drops its APKs, one directory per ABI flavour.
+APK_SEARCH_GLOB = r"src-tauri\gen\android\app\build\outputs\apk\*\debug\*.apk"
+
+# Device ABI -> the APK flavours it can run, best first. `universal` runs anywhere.
+# Neither "the hardcoded universal path" (what this script used to do - it installs whatever
+# an older build happened to leave there) nor "the newest APK" is right: the outputs directory
+# keeps x86_64 and arm builds from previous runs, and the newest of those is regularly the one
+# an arm64 phone cannot execute.
+ABI_TO_FLAVOURS: dict[str, list[str]] = {
+    "arm64-v8a": ["arm64", "universal"],
+    "armeabi-v7a": ["arm", "universal"],
+    "x86_64": ["x86_64", "universal"],
+    "x86": ["x86", "universal"],
+}
+DEFAULT_FLAVOURS = ["arm64", "universal"]  # the build targets aarch64
+
 PROJECT_DIR = DEFAULT_PROJECT_DIR
-APK_PATH = DEFAULT_APK_PATH
 PACKAGE_NAME = DEFAULT_PACKAGE_NAME
 ACTIVITY_NAME = DEFAULT_ACTIVITY_NAME
-DETECTED_DEVICES: dict[str, str] = {}  # {device_id: device_name}
-ANDROID_HOME: str = ""  # Sera configuré au démarrage
+ANDROID_HOME: str = ""
+
+SYSTEM_SOURCE = "Système"
+
+# Keep the text widgets bounded: an hour of logcat is millions of characters and Tk gets
+# slower with every line it holds.
+MAX_LINES_PER_WIDGET = 8000
+# Lines drained per UI tick. Draining the whole queue freezes the UI during a burst.
+MAX_LINES_PER_TICK = 400
+
+# No console window flashing on every adb call (Windows only).
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
+
+def _run(cmd: list[str], timeout: Optional[int] = None) -> subprocess.CompletedProcess[str]:
+    """Runs a command capturing text output, without popping a console window."""
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        creationflags=_NO_WINDOW,
+    )
+
 
 def find_android_sdk() -> Optional[str]:
-    """Cherche le SDK Android aux emplacements standards."""
+    """Looks for the Android SDK in the usual places. Explicit env vars win."""
     possible_paths = [
-        os.path.expanduser("~\\AppData\\Local\\Android\\Sdk"),  # Android Studio par défaut
-        "C:\\Android\\Sdk",  # Installation manuelle
-        os.environ.get("ANDROID_HOME", ""),  # Variable d'environnement
+        os.environ.get("ANDROID_HOME", ""),
+        os.environ.get("ANDROID_SDK_ROOT", ""),
+        os.path.expanduser("~\\AppData\\Local\\Android\\Sdk"),  # Android Studio default
+        "C:\\Android\\Sdk",  # manual install
     ]
 
     for path in possible_paths:
         if path and os.path.isdir(path):
-            # Vérifier qu'il contient les outils essentiels ou les nouveaux CLI
-            essentials = [
-                os.path.join(path, "tools"),
-                os.path.join(path, "platform-tools"),
-                os.path.join(path, "cmdline-tools"),
-                os.path.join(path, "platforms"),
-                os.path.join(path, "build-tools"),
-            ]
-            for e in essentials:
-                if os.path.isdir(e):
-                    return path
+            essentials = ["tools", "platform-tools", "cmdline-tools", "platforms", "build-tools"]
+            if any(os.path.isdir(os.path.join(path, e)) for e in essentials):
+                return path
 
     return None
 
+
 def setup_android_environment() -> str:
-    """Configure ANDROID_HOME et retourne le chemin du SDK."""
+    """Sets ANDROID_HOME and returns the SDK path, or "" when none was found."""
     global ANDROID_HOME
 
-    # Étape 1 : Chercher automatiquement
     found_sdk = find_android_sdk()
     if found_sdk:
         ANDROID_HOME = found_sdk
-        print(f"[OK] Android SDK trouve: {ANDROID_HOME}")
+        print(f"[OK] Android SDK found: {ANDROID_HOME}")
         return ANDROID_HOME
 
-    # Étape 2 : Afficher un message d'erreur informatif
-    print("[ERROR] Android SDK non trouve!")
-    print("[INFO] Emplacements attendus:")
-    print("  - C:\\Users\\<username>\\AppData\\Local\\Android\\Sdk (Android Studio)")
-    print("  - C:\\Android\\Sdk (installation manuelle)")
-    print("[INFO] Configurez ANDROID_HOME manuellement ou installez Android Studio.")
+    print("[ERROR] Android SDK not found.")
+    print("[INFO] Expected locations:")
+    print("  - %LOCALAPPDATA%\\Android\\Sdk (Android Studio)")
+    print("  - C:\\Android\\Sdk (manual install)")
+    print("[INFO] Set ANDROID_HOME manually, or install Android Studio.")
 
     return ""
 
+
 def download_android_cli_tools() -> bool:
-    """Télécharge et extrait les Android CLI Tools automatiquement."""
+    """Downloads and extracts the Android command-line tools."""
     import zipfile
     import shutil
     from urllib.request import urlopen
 
-    print("[INFO] Telechargement des Android CLI Tools…")
+    print("[INFO] Downloading the Android CLI tools...")
 
-    # URL officielle des CLI Tools (Windows 64-bit)
     cli_tools_url = "https://dl.google.com/android/repository/commandlinetools-win-10406996_latest.zip"
 
     sdk_base = os.path.expanduser("~\\AppData\\Local\\Android\\Sdk")
     cmdline_tools_path = os.path.join(sdk_base, "cmdline-tools")
     latest_path = os.path.join(cmdline_tools_path, "latest")
 
-    # Créer les répertoires
     os.makedirs(cmdline_tools_path, exist_ok=True)
-
     zip_path = os.path.join(sdk_base, "cmdlinetools.zip")
 
     try:
-        # Télécharger
-        print(f"[INFO] Telechargement depuis: {cli_tools_url}")
+        print(f"[INFO] Source: {cli_tools_url}")
         with urlopen(cli_tools_url) as response:
-            total_size = int(response.headers.get('content-length', 0))
+            total_size = int(response.headers.get("content-length", 0))
             downloaded = 0
-            chunk_size = 8192
 
-            with open(zip_path, 'wb') as f:
+            with open(zip_path, "wb") as f:
                 while True:
-                    chunk = response.read(chunk_size)
+                    chunk = response.read(8192)
                     if not chunk:
                         break
                     f.write(chunk)
                     downloaded += len(chunk)
                     if total_size > 0:
-                        percent = (downloaded / total_size) * 100
-                        print(f"[INFO] Progres: {percent:.1f}%", end='\r')
+                        print(f"[INFO] Progress: {(downloaded / total_size) * 100:.1f}%", end="\r")
 
-        print("[OK] Telechargement complete")
+        print("[OK] Download finished          ")
 
-        # Extraire
-        print("[INFO] Extraction des fichiers…")
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        print("[INFO] Extracting...")
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(cmdline_tools_path)
 
-        # Renommer cmdline-tools -> latest
+        # The archive extracts as `cmdline-tools/`; sdkmanager expects it at `latest/`.
         extracted_path = os.path.join(cmdline_tools_path, "cmdline-tools")
         if os.path.exists(extracted_path):
             if os.path.exists(latest_path):
                 shutil.rmtree(latest_path)
             shutil.move(extracted_path, latest_path)
 
-        # Nettoyer le zip
         os.remove(zip_path)
 
-        print(f"[OK] Android CLI Tools extrait dans: {latest_path}")
+        print(f"[OK] Android CLI tools extracted to: {latest_path}")
         return True
 
     except Exception as e:
-        print(f"[ERROR] Echec du telechargement des CLI Tools: {e}")
+        print(f"[ERROR] CLI tools download failed: {e}")
         if os.path.exists(zip_path):
             os.remove(zip_path)
         return False
 
+
 def install_android_sdk() -> bool:
-    """Tente d'installer le SDK Android via sdkmanager si disponible."""
-    import shutil
+    """Installs the Android SDK packages through sdkmanager, fetching it first if needed."""
+    print("[INFO] Installing the Android SDK...")
 
-    print("[INFO] Tentative d'installation du SDK Android…")
-
-    # Chercher sdkmanager dans les emplacements standards
     possible_sdkmanager_paths = [
         os.path.expanduser("~\\AppData\\Local\\Android\\Sdk\\cmdline-tools\\latest\\bin\\sdkmanager.bat"),
         "C:\\Android\\Sdk\\cmdline-tools\\latest\\bin\\sdkmanager.bat",
@@ -153,168 +182,220 @@ def install_android_sdk() -> bool:
             sdkmanager_path = path
             break
 
-    # Si sdkmanager n'existe pas, télécharger les CLI Tools
     if not sdkmanager_path:
-        print("[INFO] sdkmanager non trouve. Telechargement des Android CLI Tools…")
+        print("[INFO] sdkmanager not found, fetching the CLI tools first.")
         if not download_android_cli_tools():
-            print("[ERROR] Impossible de telecharger les CLI Tools")
             return False
 
-        # Vérifier que sdkmanager existe maintenant
-        sdkmanager_path = os.path.expanduser("~\\AppData\\Local\\Android\\Sdk\\cmdline-tools\\latest\\bin\\sdkmanager.bat")
+        sdkmanager_path = os.path.expanduser(
+            "~\\AppData\\Local\\Android\\Sdk\\cmdline-tools\\latest\\bin\\sdkmanager.bat"
+        )
         if not os.path.isfile(sdkmanager_path):
-            print("[ERROR] sdkmanager toujours introuvable apres le telechargement")
+            print("[ERROR] sdkmanager still missing after the download.")
             return False
 
     try:
-        print(f"[INFO] Utilisation de sdkmanager: {sdkmanager_path}")
+        print(f"[INFO] Using sdkmanager: {sdkmanager_path}")
 
-        # Définir ANDROID_HOME pour sdkmanager
         android_home = os.path.dirname(os.path.dirname(os.path.dirname(sdkmanager_path)))
         env = os.environ.copy()
         env["ANDROID_HOME"] = android_home
-
         print(f"[INFO] ANDROID_HOME={android_home}")
 
-        # Accepter les licenses automatiquement (requis par sdkmanager)
-        print("[INFO] Acceptation des licenses Android…")
+        print("[INFO] Accepting the Android licences...")
         licenses_result = subprocess.run(
             [sdkmanager_path, "--licenses"],
-            input="y\n" * 10,  # Répond "y" à chaque prompt de license
+            input="y\n" * 20,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
-            env=env
+            env=env,
+            creationflags=_NO_WINDOW,
         )
-        print("[OK] Licenses acceptees")
+        if licenses_result.returncode == 0:
+            print("[OK] Licences accepted")
+        else:
+            # Reporting success here regardless is how a licence refusal used to turn into a
+            # confusing package failure three steps later.
+            print(f"[WARN] sdkmanager --licenses exited with {licenses_result.returncode}")
+            if licenses_result.stderr:
+                print(f"       {licenses_result.stderr[:300]}")
 
-        # Installer les packages essentiels
         packages = [
             "platforms;android-34",
             "build-tools;34.0.0",
             "ndk;26.1.10909125",
         ]
 
+        failed: list[str] = []
         for package in packages:
-            print(f"[INFO] Installation de {package}…")
-
+            print(f"[INFO] Installing {package}...")
             result = subprocess.run(
                 [sdkmanager_path, package],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=600,
-                env=env
+                env=env,
+                creationflags=_NO_WINDOW,
             )
 
             if result.returncode != 0:
-                print(f"[WARN] Echec de l'installation de {package}")
+                failed.append(package)
+                print(f"[WARN] {package} failed")
                 if result.stderr:
-                    print(f"       Erreur: {result.stderr[:200]}")
+                    print(f"       {result.stderr[:200]}")
             else:
-                print(f"[OK] {package} installe")
+                print(f"[OK] {package} installed")
 
-        print("[OK] Installation du SDK Android completee")
+        if failed:
+            print(f"[ERROR] SDK install incomplete, {len(failed)} package(s) failed: {', '.join(failed)}")
+            return False
+
+        print("[OK] Android SDK install complete")
         return True
 
     except subprocess.TimeoutExpired:
-        print("[ERROR] Installation du SDK Android timeout (> 10 minutes)")
+        print("[ERROR] Android SDK install timed out (> 10 minutes)")
         return False
     except Exception as e:
-        print(f"[ERROR] Erreur lors de l'installation du SDK Android: {e}")
+        print(f"[ERROR] Android SDK install failed: {e}")
         return False
 
+
 def strip_ansi(text: str) -> str:
-    """Supprime les codes d'échappement ANSI de la chaîne."""
-    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-    return ansi_escape.sub('', text)
+    """Removes ANSI escape sequences."""
+    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+    return ansi_escape.sub("", text)
+
 
 def detect_devices() -> dict[str, str]:
-    """Détecte les appareils Android connectés via ADB. Retourne {device_id: device_model}."""
-    devices = {}
+    """Lists connected devices as {device_id: label}. Labels are unique even for twin models."""
+    devices: dict[str, str] = {}
     try:
-        # Étape 1 : Démarrer le serveur ADB (important sur Windows)
-        print("[INFO] Demarrage du serveur ADB…")
-        start_result = subprocess.run(
-            ['adb', 'start-server'],
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            timeout=10
-        )
+        # Starting the server explicitly keeps its startup noise out of `devices -l` output.
+        print("[INFO] Starting the ADB server...")
+        _run(["adb", "start-server"], timeout=15)
 
-        # Étape 2 : Lister les appareils (avec timeout plus long)
-        print("[INFO] Detection des appareils…")
-        result = subprocess.run(
-            ['adb', 'devices', '-l'],
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            timeout=30  # 30 secondes pour la première détection
-        )
+        print("[INFO] Detecting devices...")
+        result = _run(["adb", "devices", "-l"], timeout=30)
 
-        lines = result.stdout.strip().split('\n')[1:]  # Saute la première ligne "List of devices attached"
-        for line in lines:
+        raw: list[tuple[str, str]] = []
+        for line in result.stdout.strip().split("\n")[1:]:  # skip "List of devices attached"
             line = line.strip()
             if not line:
                 continue
-            # Détecte les appareils (status = "device", pas "offline" ou "unauthorized")
-            if 'device' in line and 'offline' not in line and 'unauthorized' not in line:
-                parts = line.split()
+            parts = line.split()
+            # The state is its own column. Substring-matching "device" on the whole line also
+            # matched ids and model names, and mis-read half the states.
+            if len(parts) < 2 or parts[1] != "device":
                 if len(parts) >= 2:
-                    device_id = parts[0]
-                    # Extrait le modèle de l'appareil (model:)
-                    model = "Appareil"
-                    for part in parts:
-                        if part.startswith('model:'):
-                            model = part[6:]  # Retire "model:"
-                            break
-                    devices[device_id] = model or device_id
-                    print(f"  [OK] {model} ({device_id})")
+                    print(f"  [SKIP] {parts[0]} is '{parts[1]}'")
+                continue
+
+            device_id = parts[0]
+            model = device_id
+            for part in parts[2:]:
+                if part.startswith("model:"):
+                    model = part[len("model:"):] or device_id
+                    break
+            raw.append((device_id, model))
+
+        # Two phones of the same model would otherwise share a label - and a shared label means
+        # one tab, one colour and two devices' logs mixed into it with no way to tell them apart.
+        model_counts: dict[str, int] = {}
+        for _, model in raw:
+            model_counts[model] = model_counts.get(model, 0) + 1
+
+        for device_id, model in raw:
+            label = model if model_counts[model] == 1 else f"{model} ({device_id[-4:]})"
+            devices[device_id] = label
+            print(f"  [OK] {label} ({device_id})")
 
         if not devices:
-            print("[WARN] Aucun appareil detecte (verifiez les connexions USB et les autorisations)")
+            print("[WARN] No device detected (check the USB cable, USB debugging, and the ADB prompt)")
 
     except subprocess.TimeoutExpired:
-        print("[TIMEOUT] Detection ADB (serveur lent a demarrer). Reessayez…")
+        print("[TIMEOUT] ADB detection timed out. Try again.")
     except FileNotFoundError:
-        print("[ERROR] ADB non trouve. Installez le SDK Platform-Tools Android.")
+        print("[ERROR] adb not found. Install the Android platform-tools and put them on PATH.")
     except Exception as e:
-        print(f"[ERROR] Erreur lors de la detection des appareils: {e}")
+        print(f"[ERROR] Device detection failed: {e}")
 
     return devices
 
-# Lignes logcat à supprimer entièrement (polling heartbeat, bruit récurrent)
+
+def device_abi(device_id: str) -> Optional[str]:
+    """Reads the device's primary ABI, or None when it cannot be asked."""
+    try:
+        result = _run(["adb", "-s", device_id, "shell", "getprop", "ro.product.cpu.abi"], timeout=15)
+        abi = result.stdout.strip()
+        return abi or None
+    except Exception:
+        return None
+
+
+def find_apk(project_dir: str, abi: Optional[str] = None) -> Optional[str]:
+    """Returns the debug APK to install: the newest one of a flavour the device can run.
+
+    Falls back to the arm64/universal order when the ABI is unknown, since the build targets
+    aarch64. Returns None when no compatible APK exists - installing an incompatible one is a
+    failure five minutes later, at `am start`, with an error that names nothing useful.
+    """
+    matches = glob.glob(os.path.join(project_dir, APK_SEARCH_GLOB))
+    if not matches:
+        return None
+
+    flavours = ABI_TO_FLAVOURS.get(abi or "", DEFAULT_FLAVOURS)
+    for flavour in flavours:
+        # The flavour is the directory two levels above the file: .../apk/<flavour>/debug/x.apk
+        candidates = [m for m in matches if os.path.basename(os.path.dirname(os.path.dirname(m))) == flavour]
+        if candidates:
+            return max(candidates, key=os.path.getmtime)
+    return None
+
+
+# Logcat lines dropped outright: recurring noise with no diagnostic value.
 _MUTE_RE: list[re.Pattern[str]] = [
-    re.compile(r'\[API\] [→←].*/api/presence'),
-    # Ajouter ici d'autres patterns bruyants si besoin
+    re.compile(r"\[API\] [→←].*/api/presence"),
+    re.compile(r"^-+ beginning of "),  # logcat's own buffer separators
 ]
 
 _LOGCAT_LINE_RE = re.compile(
-    r'\d{2}-\d{2} (\d{2}:\d{2}:\d{2})\.\d{3}\s+\d+\s+\d+\s+\w+\s+([^:]+):\s+(.*)'
+    r"\d{2}-\d{2} (\d{2}:\d{2}:\d{2})\.\d{3}\s+\d+\s+\d+\s+\w+\s+([^:]+):\s+(.*)"
 )
-_TAURI_MSG_RE = re.compile(r'Msg:\s+(.*)')
-_UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE)
-_HEX_RE = re.compile(r'\b[0-9a-f]{16,}\b', re.IGNORECASE)
+_TAURI_MSG_RE = re.compile(r"Msg:\s+(.*)")
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+_HEX_RE = re.compile(r"\b[0-9a-f]{16,}\b", re.IGNORECASE)
+
 
 def truncate_ids(text: str) -> str:
-    """Réduit les UUIDs et longs hex (≥16 chars) à leurs 8 premiers caractères + '…'."""
-    text = _UUID_RE.sub(lambda m: m.group()[:8] + '…', text)
-    text = _HEX_RE.sub(lambda m: m.group()[:8] + '…', text)
+    """Shortens UUIDs and long hex runs to their first 8 characters."""
+    text = _UUID_RE.sub(lambda m: m.group()[:8] + "…", text)
+    text = _HEX_RE.sub(lambda m: m.group()[:8] + "…", text)
     return text
 
+
 def parse_logcat_line(raw: str) -> Optional[str]:
-    """Extrait timestamp + message utile ; retourne None pour supprimer la ligne."""
+    """Extracts timestamp + useful message. Returns None for a line that should be dropped."""
     line = strip_ansi(raw.strip())
     if not line:
         return None
 
+    for pattern in _MUTE_RE:
+        if pattern.search(line):
+            return None
+
     m = _LOGCAT_LINE_RE.match(line)
     if not m:
-        return line  # ligne non reconnue : garder telle quelle
+        return line  # unrecognized shape: keep it verbatim rather than lose it
 
     time_str, tag, msg = m.group(1), m.group(2).strip(), m.group(3)
 
-    if 'Tauri/Console' in tag:
+    if "Tauri/Console" in tag:
         tm = _TAURI_MSG_RE.search(msg)
         if tm:
             msg = tm.group(1)
@@ -327,6 +408,33 @@ def parse_logcat_line(raw: str) -> Optional[str]:
 
     return f"{time_str} {truncate_ids(msg)}"
 
+
+# Logcat whitelist. `*:S` silences everything, so a tag missing HERE is a check that can never
+# pass: its verdict line simply never arrives. Keep this in sync with the TAG constants in
+# gen/android/.../*.kt and with docs/wiki/device-verification.md.
+LOGCAT_TAGS = [
+    "mines_app_lib:D",       # Rust side of the Tauri app ([MLS], [FCM], [PushCtx], [BOOTSTRAP]...)
+    "CanariRust:D",          # OpenMLS engine over JNI, when it tags separately
+    "CanariFCM:D",           # CanariFirebaseMessagingService - checks B and D verdicts
+    "CanariWorker:D",        # MlsBackgroundWorker (WorkManager)
+    "CanariApp:D",           # CanariApplication: init, push secret, device-key migration
+    "CanariBoot:D",          # CanariBootReceiver: work rescheduled after a reboot
+    "CanariNotifAction:D",   # Notification action buttons (reply, mark as read)
+    "CanariOutboxRetry:D",   # OutboxRetryWorker - check J verdict
+    "MlsDeviceKeyStore:D",   # Keystore reads/writes - check B verdict ("retrieve: success alias=")
+    "PushSecretKeystore:D",  # Push secret at rest, and its migration out of SharedPreferences
+    "KeyboardMedia:D",       # Keyboard media bridge (GIF/sticker paste)
+    "fr.emse.canari:D",      # Tauri log plugin, tagged with the package name
+    "chromium:I",            # console.log() from the WebView when the Tauri plugin misses it
+    "Tauri/Console:V",       # WebView console through the Tauri plugin
+    "MainActivity:D",        # FCM token sync at startup
+    "FirebaseMessaging:W",   # FCM SDK (token and connection errors)
+    "WM-WorkerWrapper:W",    # WorkManager internals (retry / failure)
+    "AndroidRuntime:E",      # crashes (panics, exceptions)
+    "System.err:W",
+]
+
+
 class TauriManagerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root: tk.Tk = root
@@ -334,38 +442,44 @@ class TauriManagerApp:
         self.root.geometry("1600x900")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # File d'attente pour la communication entre les threads et l'interface graphique
+        # (source_key, timestamp, message) - source_key is a device id or SYSTEM_SOURCE.
         self.log_queue: queue.Queue[tuple[str, str, str]] = queue.Queue()
-        self.logcat_processes: list[subprocess.Popen[str]] = []
-        self.current_processes: list[subprocess.Popen[str]] = []  # Processus en cours (compilation, deployment)
 
-        # Configuration
-        self.devices: dict[str, str] = {}  # {device_id: device_model}
-        self.selected_device_ids: list[str] = []  # IDs des appareils sélectionnés
-        self.device_buttons: dict[str, ttk.Button] = {}  # Boutons des appareils pour MAJ dynamique
+        # One logcat per device id. A flat list let a second logcat start on a device that
+        # already had one - both readers stayed alive and every line was logged twice.
+        self.logcat_processes: dict[str, subprocess.Popen[str]] = {}
+        self.process_lock = threading.Lock()
+        self.current_processes: list[subprocess.Popen[str]] = []
 
-        # Masque la fenêtre principale et affiche d'abord la fenêtre de configuration
+        self.devices: dict[str, str] = {}  # {device_id: label}
+        self.device_buttons: dict[str, ttk.Button] = {}
+        self.device_text_areas: dict[str, scrolledtext.ScrolledText] = {}
+
         self.root.withdraw()
         self.show_config_window()
 
+    # === CONFIG WINDOW ===
     def show_config_window(self) -> None:
-        """Fenêtre de configuration initiale."""
+        """Initial configuration window: project path, SDK, device detection."""
         global ANDROID_HOME
 
         config_win = tk.Toplevel(self.root)
         config_win.title("Configuration initiale")
-        config_win.geometry("600x450")
+        config_win.geometry("640x480")
         config_win.transient(self.root)
         config_win.grab_set()
 
-        ttk.Label(config_win, text="Chemin du projet frontend :", font=("Segoe UI", 10)).pack(pady=(10, 5), padx=10, anchor=tk.W)
+        ttk.Label(config_win, text="Chemin du projet frontend :", font=("Segoe UI", 10)).pack(
+            pady=(10, 5), padx=10, anchor=tk.W
+        )
 
         path_frame = ttk.Frame(config_win)
         path_frame.pack(pady=5, padx=10, fill=tk.X)
 
         path_var = tk.StringVar(value=PROJECT_DIR)
-        path_entry = ttk.Entry(path_frame, textvariable=path_var, width=50)
-        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        ttk.Entry(path_frame, textvariable=path_var, width=50).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5)
+        )
 
         def browse_path():
             selected = filedialog.askdirectory(title="Selectionnez le repertoire frontend", initialdir=PROJECT_DIR)
@@ -374,20 +488,23 @@ class TauriManagerApp:
 
         ttk.Button(path_frame, text="Parcourir…", command=browse_path).pack(side=tk.LEFT)
 
-        # --- Section Android SDK ---
-        ttk.Label(config_win, text="Android SDK :", font=("Segoe UI", 10, "bold")).pack(pady=(15, 5), padx=10, anchor=tk.W)
+        # --- Android SDK ---
+        ttk.Label(config_win, text="Android SDK :", font=("Segoe UI", 10, "bold")).pack(
+            pady=(15, 5), padx=10, anchor=tk.W
+        )
 
         android_frame = ttk.Frame(config_win)
         android_frame.pack(pady=5, padx=10, fill=tk.X)
 
         android_var = tk.StringVar(value=ANDROID_HOME or "(non detecte)")
-        android_entry = ttk.Entry(android_frame, textvariable=android_var, width=50)
-        android_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        ttk.Entry(android_frame, textvariable=android_var, width=50).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5)
+        )
 
         def browse_android():
             selected = filedialog.askdirectory(
                 title="Selectionnez le repertoire Android SDK",
-                initialdir=os.path.expanduser("~\\AppData\\Local\\Android")
+                initialdir=os.path.expanduser("~\\AppData\\Local\\Android"),
             )
             if selected:
                 android_var.set(selected)
@@ -398,54 +515,58 @@ class TauriManagerApp:
         sdk_status_label.pack(pady=2, padx=10, anchor=tk.W)
 
         def check_android_sdk():
+            """Runs on the main thread only - it touches widgets."""
             sdk_path = android_var.get()
             if sdk_path and sdk_path != "(non detecte)":
                 if os.path.isdir(sdk_path):
-                    sdk_status_label.config(text="[OK] SDK Android valide", foreground="green")
+                    sdk_status_label.config(text="SDK Android valide", foreground="green")
                 else:
-                    sdk_status_label.config(text="[ERREUR] Repertoire invalide", foreground="red")
+                    sdk_status_label.config(text="Repertoire invalide", foreground="red")
+                return
+
+            found = find_android_sdk()
+            if found:
+                android_var.set(found)
+                sdk_status_label.config(text="SDK Android detecte automatiquement", foreground="green")
             else:
-                found = find_android_sdk()
-                if found:
-                    android_var.set(found)
-                    sdk_status_label.config(text="[OK] SDK Android detecte automatiquement", foreground="green")
-                else:
-                    sdk_status_label.config(
-                        text="[WARN] Android SDK non trouve. Installez Android Studio ou configurez manuellement.",
-                        foreground="orange"
-                    )
+                sdk_status_label.config(
+                    text="SDK Android introuvable. Installez Android Studio ou indiquez le chemin.",
+                    foreground="orange",
+                )
 
         def install_sdk_button():
-            sdk_status_label.config(text="[INFO] Installation en cours… (peut prendre 5-10 minutes)", foreground="blue")
-            config_win.update()
+            sdk_status_label.config(text="Installation en cours… (5 a 10 minutes)", foreground="blue")
 
             def install_task():
-                result = install_android_sdk()
-                if result:
-                    found = find_android_sdk()
+                ok = install_android_sdk()
+                found = find_android_sdk() if ok else None
+
+                def update_ui():
+                    # Widgets and Tk variables are touched on the main thread only. Setting them
+                    # from the worker is what made this window hang or die at random.
                     if found:
                         android_var.set(found)
-                def update_ui():
-                    if result:
+                    if ok:
                         sdk_status_label.config(
-                            text="[OK] SDK Android installe! Redemarrez l'application.",
-                            foreground="green"
+                            text="SDK Android installe. Redemarrez l'application.", foreground="green"
                         )
                     else:
                         sdk_status_label.config(
-                            text="[ERROR] Installation du SDK echouee. Voir console pour details.",
-                            foreground="red"
+                            text="Installation echouee - voir la console pour le detail.", foreground="red"
                         )
-                config_win.after(100, update_ui)
+
+                config_win.after(0, update_ui)
 
             threading.Thread(target=install_task, daemon=True).start()
 
         sdk_buttons_frame = ttk.Frame(config_win)
         sdk_buttons_frame.pack(pady=5, padx=10, fill=tk.X)
-        ttk.Button(sdk_buttons_frame, text="Verifier SDK Android", command=check_android_sdk).pack(side=tk.LEFT, padx=5)
-        ttk.Button(sdk_buttons_frame, text="Installer SDK Android", command=install_sdk_button).pack(side=tk.LEFT, padx=5)
+        ttk.Button(sdk_buttons_frame, text="Verifier le SDK", command=check_android_sdk).pack(side=tk.LEFT, padx=5)
+        ttk.Button(sdk_buttons_frame, text="Installer le SDK", command=install_sdk_button).pack(side=tk.LEFT, padx=5)
 
-        ttk.Label(config_win, text="Appareils detectes :", font=("Segoe UI", 10)).pack(pady=(10, 5), padx=10, anchor=tk.W)
+        ttk.Label(config_win, text="Appareils detectes :", font=("Segoe UI", 10)).pack(
+            pady=(10, 5), padx=10, anchor=tk.W
+        )
 
         device_frame = ttk.Frame(config_win)
         device_frame.pack(pady=5, padx=10, fill=tk.BOTH, expand=True)
@@ -460,28 +581,43 @@ class TauriManagerApp:
         status_label = ttk.Label(config_win, text="", foreground="gray")
         status_label.pack(pady=5, padx=10, anchor=tk.W)
 
+        detecting = threading.Event()
+
         def detect_and_refresh():
+            """Detects in a worker thread, updates the widgets on the main thread."""
+            if detecting.is_set():
+                return
+            detecting.set()
             device_listbox.delete(0, tk.END)
-            status_label.config(text="[INFO] Detection en cours (peut prendre 10-30 secondes)…", foreground="blue")
-            config_win.update()
+            status_label.config(text="Detection en cours (10 a 30 secondes)…", foreground="blue")
 
-            detected = detect_devices()
+            def worker():
+                detected = detect_devices()
 
-            if detected:
-                for dev_id, dev_name in detected.items():
-                    device_listbox.insert(tk.END, f"OK {dev_name} ({dev_id})")
-                status_label.config(text=f"[OK] {len(detected)} appareil(s) detecte(s)", foreground="green")
-            else:
-                device_listbox.insert(tk.END, "[WARN] Aucun appareil detecte")
-                status_label.config(
-                    text="[INFO] Verifiez: USB, Developer Mode, USB Debugging, autorisations ADB",
-                    foreground="orange"
-                )
+                def update_ui():
+                    detecting.clear()
+                    device_listbox.delete(0, tk.END)
+                    if detected:
+                        for dev_id, dev_name in detected.items():
+                            device_listbox.insert(tk.END, f"{dev_name}  -  {dev_id}")
+                        status_label.config(
+                            text=f"{len(detected)} appareil(s) detecte(s)", foreground="green"
+                        )
+                    else:
+                        device_listbox.insert(tk.END, "Aucun appareil detecte")
+                        status_label.config(
+                            text="Verifiez : cable USB, mode developpeur, debogage USB, autorisation ADB",
+                            foreground="orange",
+                        )
+
+                config_win.after(0, update_ui)
+
+            threading.Thread(target=worker, daemon=True).start()
 
         button_frame = ttk.Frame(config_win)
         button_frame.pack(pady=10, padx=10, fill=tk.X)
 
-        ttk.Button(button_frame, text="Detecter appareils", command=detect_and_refresh).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Detecter les appareils", command=detect_and_refresh).pack(side=tk.LEFT, padx=5)
 
         def confirm():
             global PROJECT_DIR, ANDROID_HOME
@@ -499,229 +635,334 @@ class TauriManagerApp:
             ANDROID_HOME = android_path if android_path and android_path != "(non detecte)" else ""
 
             self.devices = detect_devices()
-            self.selected_device_ids = list(self.devices.keys())
 
-            if not self.selected_device_ids:
-                result = messagebox.askyesno(
+            if not self.devices:
+                keep_going = messagebox.askyesno(
                     "Aucun appareil",
-                    "Aucun appareil detecte.\nContinuer quand meme pour compiler uniquement ?"
+                    "Aucun appareil detecte.\nContinuer quand meme, pour compiler uniquement ?",
                 )
-                if not result:
+                if not keep_going:
                     return
 
             config_win.destroy()
-            # Montrer la fenêtre principale et initialiser l'UI
             self.root.deiconify()
             self.setup_ui()
             self.root.after(100, self.process_log_queue)
 
         ttk.Button(button_frame, text="Confirmer et continuer", command=confirm).pack(side=tk.RIGHT, padx=5)
 
-        # Verifications initiales (en arriere-plan)
-        def initial_checks():
-            check_android_sdk()
-            detect_and_refresh()
-        threading.Thread(target=initial_checks, daemon=True).start()
+        # Initial checks. The SDK check touches widgets, so it stays on the main thread; only
+        # the device scan (which shells out to adb) goes to a worker.
+        config_win.after(0, check_android_sdk)
+        config_win.after(50, detect_and_refresh)
 
-        # Assure que la fenêtre est bien visible ; sinon affiche une fenêtre de secours
         def ensure_visible():
             try:
-                # Bring to front and check mapping
                 config_win.lift()
                 config_win.focus_force()
                 if not config_win.winfo_ismapped():
-                    print("[WARN] La fenêtre de configuration n'est pas visible, affichage de secours.")
-                    try:
-                        config_win.deiconify()
-                    except Exception:
-                        pass
-                    try:
-                        self.root.deiconify()
-                    except Exception:
-                        pass
-                else:
-                    # ensure focused
-                    config_win.focus_force()
+                    print("[WARN] Config window not mapped, forcing it visible.")
+                    config_win.deiconify()
             except Exception as e:
-                print(f"[ERROR] Erreur lors de la vérification de visibilité: {e}")
+                print(f"[ERROR] Visibility check failed: {e}")
 
         config_win.after(2000, ensure_visible)
+
+    # === MAIN UI ===
     def setup_ui(self) -> None:
-        # --- Cadre des Contrôles ---
-        control_frame = ttk.LabelFrame(self.root, text="Actions", padding=(10, 5))
-        control_frame.pack(fill=tk.X, padx=10, pady=5)
+        self.control_frame = ttk.LabelFrame(self.root, text="Actions", padding=(10, 5))
+        self.control_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        ttk.Button(control_frame, text="1. Compiler (Bun)", command=self.run_build).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.control_frame, text="1. Compiler (Bun)", command=self.run_build).pack(side=tk.LEFT, padx=5)
 
-        # Boutons dynamiques pour chaque appareil détecté
+        # Anchor for the per-device buttons, so refresh can insert them in the right place.
+        self.device_button_anchor = ttk.Frame(self.control_frame)
+        self.device_button_anchor.pack(side=tk.LEFT)
+
+        self.deploy_all_button = ttk.Button(
+            self.control_frame, text="Tout installer & lancer", command=self.deploy_all
+        )
+        self.deploy_all_button.pack(side=tk.LEFT, padx=5)
+
+        # A clean install WIPES the app data. Most runbook checks need the state that the
+        # previous check left behind, so reinstalling over the top is the default.
+        self.clean_install_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            self.control_frame,
+            text="Install propre (efface les donnees)",
+            variable=self.clean_install_var,
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Separator(self.control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+
+        ttk.Button(self.control_frame, text="Lancer Logcat", command=self.start_all_logcats).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.control_frame, text="Arreter Logcat", command=self.stop_all_logcats).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.control_frame, text="Forcer l'arret de l'app", command=self.force_stop_all).pack(
+            side=tk.LEFT, padx=5
+        )
+
+        ttk.Separator(self.control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+
+        ttk.Button(self.control_frame, text="Detecter les appareils", command=self.refresh_devices).pack(
+            side=tk.LEFT, padx=5
+        )
+        ttk.Button(self.control_frame, text="Interrompre la compilation", command=self.stop_all_processes).pack(
+            side=tk.LEFT, padx=5
+        )
+
+        ttk.Button(self.control_frame, text="Effacer", command=self.clear_displays).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(self.control_frame, text="Enregistrer les logs…", command=self.save_logs).pack(
+            side=tk.RIGHT, padx=5
+        )
+
+        # --- Log tabs ---
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        self.text_system: scrolledtext.ScrolledText = scrolledtext.ScrolledText(
+            self.notebook, wrap=tk.WORD, bg="#1e1e1e", fg="#ce9178", font=("Consolas", 10)
+        )
+        self.notebook.add(self.text_system, text="Systeme (compilation / infos)")
+
+        self.text_combined: scrolledtext.ScrolledText = scrolledtext.ScrolledText(
+            self.notebook, wrap=tk.WORD, bg="#1e1e1e", fg="#d4d4d4", font=("Consolas", 10)
+        )
+        self.notebook.add(self.text_combined, text="Logs combines")
+        self.text_combined.tag_config(SYSTEM_SOURCE, foreground="#ce9178")
+
+        for device_id in self.devices:
+            self.ensure_device_tab(device_id)
+
+        self.rebuild_device_buttons()
+
+    _DEVICE_COLORS = ["#569cd6", "#4ec9b0", "#dcdcaa", "#c586c0", "#9cdcfe"]
+
+    def ensure_device_tab(self, device_id: str) -> scrolledtext.ScrolledText:
+        """Returns the text area for a device, creating its tab on first use.
+
+        Creating tabs on demand is what lets a third device - or one plugged in after startup -
+        have somewhere to log. The old fixed two-pane layout silently dropped everything else.
+        """
+        existing = self.device_text_areas.get(device_id)
+        if existing is not None:
+            return existing
+
+        label = self.devices.get(device_id, device_id)
+        color = self._DEVICE_COLORS[len(self.device_text_areas) % len(self._DEVICE_COLORS)]
+
+        text_area = scrolledtext.ScrolledText(
+            self.notebook, wrap=tk.WORD, bg="#1e1e1e", fg=color, font=("Consolas", 9)
+        )
+        # Insert device tabs before the combined tab so it stays last.
+        self.notebook.insert(self.notebook.index("end") - 1, text_area, text=label)
+        self.device_text_areas[device_id] = text_area
+        self.text_combined.tag_config(device_id, foreground=color)
+        return text_area
+
+    def rebuild_device_buttons(self) -> None:
+        """Rebuilds the per-device deploy buttons after a detection pass."""
+        for btn in self.device_buttons.values():
+            btn.destroy()
+        self.device_buttons.clear()
+
         for device_id, device_name in self.devices.items():
             btn = ttk.Button(
-                control_frame,
-                text=f"2. Installer & Lancer ({device_name})",
-                command=lambda did=device_id, dname=device_name: self.run_deploy(did, dname)
+                self.device_button_anchor,
+                text=f"2. Installer & lancer ({device_name})",
+                command=lambda did=device_id: self.run_deploy(did),
             )
             btn.pack(side=tk.LEFT, padx=5)
             self.device_buttons[device_id] = btn
 
-        if self.selected_device_ids:
-            ttk.Button(control_frame, text="Tout Installer & Lancer", command=self.deploy_all).pack(side=tk.LEFT, padx=5)
+        state = tk.NORMAL if self.devices else tk.DISABLED
+        self.deploy_all_button.config(state=state)
 
-        ttk.Separator(control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
-
-        ttk.Button(control_frame, text="Lancer Logcat", command=self.start_all_logcats).pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="Arrêter Logcat", command=self.stop_all_logcats).pack(side=tk.LEFT, padx=5)
-
-        ttk.Separator(control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
-
-        ttk.Button(control_frame, text="🔄 Détecter appareils", command=self.refresh_devices).pack(side=tk.LEFT, padx=5)
-
-        # Bouton Stop avec style rouge
-        stop_button = ttk.Button(control_frame, text="⏹️ STOP", command=self.stop_all_processes)
-        stop_button.pack(side=tk.LEFT, padx=5)
-
-        ttk.Button(control_frame, text="Effacer les affichages", command=self.clear_displays).pack(side=tk.RIGHT, padx=5)
-
-        # --- Cadre des Logs (Onglets) ---
-        notebook = ttk.Notebook(self.root)
-        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        # Onglet Système toujours présent
-        self.text_system: scrolledtext.ScrolledText = scrolledtext.ScrolledText(notebook, wrap=tk.WORD, bg="#1e1e1e", fg="#ce9178", font=("Consolas", 10))
-        notebook.add(self.text_system, text="⚙️ Système (Compilation/Infos)")
-
-        # Onglets dynamiques pour chaque appareil
-        self.device_text_areas: dict[str, scrolledtext.ScrolledText] = {}
-        if len(self.devices) == 1:
-            # Un seul appareil : affichage full-width
-            device_id, device_name = list(self.devices.items())[0]
-            text_area = scrolledtext.ScrolledText(notebook, wrap=tk.WORD, bg="#1e1e1e", fg="#569cd6", font=("Consolas", 9))
-            notebook.add(text_area, text=f"📱 {device_name}")
-            self.device_text_areas[device_name] = text_area
-        elif len(self.devices) >= 2:
-            # Deux appareils ou plus : affichage côte à côte
-            monitoring_frame = ttk.Frame(notebook)
-            notebook.add(monitoring_frame, text="📱 Suivi Temps Réel")
-
-            paned: ttk.PanedWindow = ttk.PanedWindow(monitoring_frame, orient=tk.HORIZONTAL)
-            paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-            for idx, (device_id, device_name) in enumerate(list(self.devices.items())[:2]):  # Max 2 appareils côte à côte
-                color = "#569cd6" if idx == 0 else "#4ec9b0"
-                device_frame: ttk.LabelFrame = ttk.LabelFrame(paned, text=f"📱 {device_name}", padding=5)
-                paned.add(device_frame)  # type: ignore
-                text_area: scrolledtext.ScrolledText = scrolledtext.ScrolledText(device_frame, wrap=tk.WORD, bg="#1e1e1e", fg=color, font=("Consolas", 9))
-                text_area.pack(fill=tk.BOTH, expand=True)
-                self.device_text_areas[device_name] = text_area
-
-        # Onglet combiné
-        self.text_combined: scrolledtext.ScrolledText = scrolledtext.ScrolledText(notebook, wrap=tk.WORD, bg="#1e1e1e", fg="#d4d4d4", font=("Consolas", 10))
-        notebook.add(self.text_combined, text="📋 Logs Combinés")
-
-        # Configuration des tags de couleurs
-        for device_id, device_name in self.devices.items():
-            self.text_combined.tag_config(device_name, foreground="#569cd6")
-        self.text_combined.tag_config("Système", foreground="#ce9178")
-
-    # === LOGIQUE D'AFFICHAGE ===
-    def refresh_devices(self) -> None:
-        """Détecte les appareils et met à jour l'interface."""
-        self.log("Système", "🔄 Détection des appareils…")
-        new_devices = detect_devices()
-        if new_devices == self.devices:
-            self.log("Système", "Aucun changement détecté.")
-            return
-
-        self.devices = new_devices
-        self.selected_device_ids = list(self.devices.keys())
-        self.log("Système", f"✅ {len(self.devices)} appareil(s) détecté(s)")
-        for dev_id, dev_name in self.devices.items():
-            self.log("Système", f"  - {dev_name} ({dev_id})")
+    # === LOGGING ===
+    def label_for(self, source: str) -> str:
+        """Human-readable name for a log source key."""
+        if source == SYSTEM_SOURCE:
+            return SYSTEM_SOURCE
+        return self.devices.get(source, source)
 
     def log(self, source: str, message: str) -> None:
-        """Ajoute un message à la file d'attente pour être affiché par le thread principal."""
+        """Queues a message for the UI thread. `source` is a device id or SYSTEM_SOURCE."""
         timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        cleaned_message = strip_ansi(message.rstrip('\n').rstrip('\r'))
+        cleaned_message = strip_ansi(message.rstrip("\n").rstrip("\r"))
         self.log_queue.put((source, timestamp, cleaned_message))
 
+    @staticmethod
+    def _trim(widget: scrolledtext.ScrolledText) -> None:
+        """Drops the oldest lines once a widget exceeds MAX_LINES_PER_WIDGET."""
+        line_count = int(widget.index("end-1c").split(".")[0])
+        if line_count > MAX_LINES_PER_WIDGET:
+            widget.delete("1.0", f"{line_count - MAX_LINES_PER_WIDGET}.0")
+
     def process_log_queue(self) -> None:
-        """Traite les messages en attente pour mettre à jour l'UI de manière thread-safe."""
-        while not self.log_queue.empty():
+        """Drains queued messages into the widgets. Runs on the UI thread."""
+        touched: set[scrolledtext.ScrolledText] = set()
+        drained = 0
+
+        while drained < MAX_LINES_PER_TICK:
             try:
-                source: str
-                timestamp: str
-                message: str
                 source, timestamp, message = self.log_queue.get_nowait()
-                formatted_msg = f"[{timestamp}] {message}\n" if message else "\n"
-                combined_msg = f"[{timestamp}] [{source}] {message}\n" if message else "\n"
-
-                # Insertion dans l'onglet approprié
-                if source == "Système":
-                    self.text_system.insert(tk.END, formatted_msg)
-                    self.text_system.see(tk.END)
-                elif source in self.device_text_areas:
-                    self.device_text_areas[source].insert(tk.END, formatted_msg)
-                    self.device_text_areas[source].see(tk.END)
-
-                # Insertion dans l'onglet Combiné avec couleurs
-                self.text_combined.insert(tk.END, combined_msg, source)
-                self.text_combined.see(tk.END)
-
             except queue.Empty:
                 break
+            drained += 1
 
-        # Replanifie la fonction dans 100ms
-        self.root.after(100, self.process_log_queue)
+            formatted_msg = f"[{timestamp}] {message}\n" if message else "\n"
+            combined_msg = f"[{timestamp}] [{self.label_for(source)}] {message}\n" if message else "\n"
+
+            if source == SYSTEM_SOURCE:
+                self.text_system.insert(tk.END, formatted_msg)
+                touched.add(self.text_system)
+            else:
+                area = self.device_text_areas.get(source)
+                if area is None:
+                    area = self.ensure_device_tab(source)
+                area.insert(tk.END, formatted_msg)
+                touched.add(area)
+
+            self.text_combined.insert(tk.END, combined_msg, source)
+            touched.add(self.text_combined)
+
+        for widget in touched:
+            self._trim(widget)
+            widget.see(tk.END)
+
+        # Come back immediately when there is still a backlog, so a burst drains fast without
+        # the UI ever blocking on it.
+        self.root.after(10 if drained >= MAX_LINES_PER_TICK else 100, self.process_log_queue)
 
     def clear_displays(self) -> None:
-        self.text_combined.delete('1.0', tk.END)
-        self.text_system.delete('1.0', tk.END)
+        self.text_combined.delete("1.0", tk.END)
+        self.text_system.delete("1.0", tk.END)
         for text_area in self.device_text_areas.values():
-            text_area.delete('1.0', tk.END)
-        self.log("Système", "Affichages effacés.")
+            text_area.delete("1.0", tk.END)
+        self.log(SYSTEM_SOURCE, "Affichages effaces.")
 
+    def save_logs(self) -> None:
+        """Writes the combined tab to a file - the runbook wants the log lines, not a summary."""
+        default_name = f"canari-logcat-{datetime.datetime.now():%Y%m%d-%H%M%S}.log"
+        path = filedialog.asksaveasfilename(
+            title="Enregistrer les logs combines",
+            defaultextension=".log",
+            initialfile=default_name,
+            filetypes=[("Fichier log", "*.log"), ("Tous les fichiers", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.text_combined.get("1.0", tk.END))
+            self.log(SYSTEM_SOURCE, f"Logs enregistres : {path}")
+        except Exception as e:
+            self.log(SYSTEM_SOURCE, f"Echec de l'enregistrement : {e}")
+
+    # === DEVICES ===
+    def refresh_devices(self) -> None:
+        """Re-detects devices and updates the buttons and tabs to match."""
+        self.log(SYSTEM_SOURCE, "Detection des appareils…")
+
+        def worker():
+            new_devices = detect_devices()
+
+            def update_ui():
+                added = [d for d in new_devices if d not in self.devices]
+                removed = [d for d in self.devices if d not in new_devices]
+
+                if not added and not removed:
+                    self.log(SYSTEM_SOURCE, f"Aucun changement ({len(new_devices)} appareil(s)).")
+                    return
+
+                for device_id in removed:
+                    self.log(SYSTEM_SOURCE, f"Deconnecte : {self.devices[device_id]} ({device_id})")
+                    self.stop_logcat_for_device(device_id, quiet=True)
+
+                self.devices = new_devices
+
+                for device_id in added:
+                    self.log(SYSTEM_SOURCE, f"Connecte : {self.devices[device_id]} ({device_id})")
+                    self.ensure_device_tab(device_id)
+
+                self.rebuild_device_buttons()
+                self.log(SYSTEM_SOURCE, f"{len(self.devices)} appareil(s) connecte(s).")
+
+            self.root.after(0, update_ui)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def force_stop_all(self) -> None:
+        """`am force-stop` on every device - how the runbook means "kill the app"."""
+        if not self.devices:
+            self.log(SYSTEM_SOURCE, "Aucun appareil connecte.")
+            return
+
+        def task():
+            for device_id, device_name in list(self.devices.items()):
+                try:
+                    _run(["adb", "-s", device_id, "shell", "am", "force-stop", PACKAGE_NAME], timeout=15)
+                    self.log(SYSTEM_SOURCE, f"{PACKAGE_NAME} arrete sur {device_name}.")
+                except Exception as e:
+                    self.log(SYSTEM_SOURCE, f"Echec de l'arret sur {device_name} : {e}")
+
+        threading.Thread(target=task, daemon=True).start()
+
+    # === PROCESS CONTROL ===
     def stop_all_processes(self) -> None:
-        """Interrompt tous les processus en cours (Ctrl-C)."""
-        self.log("Système", "⏹️ Interruption de tous les processus…")
+        """Interrupts builds and deploys. Logcat has its own button and is left alone."""
+        with self.process_lock:
+            running = [p for p in self.current_processes if p.poll() is None]
 
-        # Interruption des processus courants
-        killed_count = 0
-        for p in self.current_processes:
+        if not running:
+            self.log(SYSTEM_SOURCE, "Aucune compilation ou installation en cours.")
+            return
+
+        self.log(SYSTEM_SOURCE, f"Interruption de {len(running)} processus…")
+        for p in running:
             try:
-                p.terminate()  # Envoie SIGTERM (equivalent à Ctrl-C)
-                killed_count += 1
+                p.terminate()
             except Exception as e:
-                self.log("Système", f"Erreur lors de l'arrêt du processus: {str(e)}")
+                self.log(SYSTEM_SOURCE, f"Echec de l'interruption : {e}")
 
-        # Donne 2 secondes aux processus pour se terminer gracieusement
-        if killed_count > 0:
-            self.root.after(2000, self._force_kill_remaining)
-
-        self.log("Système", f"{killed_count} processus signalés pour interruption.")
+        self.root.after(2000, self._force_kill_remaining)
 
     def _force_kill_remaining(self) -> None:
-        """Force l'arrêt des processus qui n'ont pas répondu à SIGTERM."""
-        for p in self.current_processes:
+        """Kills whatever ignored the terminate."""
+        with self.process_lock:
+            survivors = [p for p in self.current_processes if p.poll() is None]
+        for p in survivors:
             try:
-                if p.poll() is None:  # Processus encore actif
-                    p.kill()
+                p.kill()
             except Exception:
                 pass
-        self.current_processes.clear()
+        if survivors:
+            self.log(SYSTEM_SOURCE, f"{len(survivors)} processus tue(s) de force.")
 
-    # === COMMANDES SYSTEME (Threads) ===
-    def execute_command(self, cmd: str, source_name: str, success_msg: Optional[str] = None, cwd: Optional[str] = None) -> None:
-        """Exécute une commande système et redirige la sortie."""
+    def _track(self, process: subprocess.Popen[str]) -> None:
+        with self.process_lock:
+            self.current_processes.append(process)
+
+    def _untrack(self, process: subprocess.Popen[str]) -> None:
+        with self.process_lock:
+            if process in self.current_processes:
+                self.current_processes.remove(process)
+
+    # === COMMANDS (worker threads) ===
+    def execute_command(
+        self, cmd: str, source_name: str, success_msg: Optional[str] = None, cwd: Optional[str] = None
+    ) -> bool:
+        """Runs a shell command, streaming its output. Returns True on exit code 0."""
         if cwd is None:
             cwd = PROJECT_DIR
 
-        self.log("Système", f"Exécution : {cmd}")
+        self.log(SYSTEM_SOURCE, f"> {cmd}")
+        process = None
         try:
-            # Préparer l'environnement avec ANDROID_HOME
             env = os.environ.copy()
             if ANDROID_HOME:
                 env["ANDROID_HOME"] = ANDROID_HOME
 
-            # shell=True requis pour que Windows trouve "bun" et "adb" correctement
+            # shell=True so Windows resolves "bun" and "adb" through PATHEXT.
             process = subprocess.Popen(
                 cmd,
                 cwd=cwd,
@@ -729,13 +970,12 @@ class TauriManagerApp:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                encoding='utf-8',
-                errors='replace',
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
                 env=env,
             )
-            # Track le processus pour pouvoir l'interrompre
-            self.current_processes.append(process)
+            self._track(process)
 
             if process.stdout:
                 for line in process.stdout:
@@ -743,23 +983,31 @@ class TauriManagerApp:
 
             process.wait()
 
-            # Retire le processus de la liste
-            if process in self.current_processes:
-                self.current_processes.remove(process)
-
-            if process.returncode == 0 and success_msg:
-                self.log("Système", f"Succès : {success_msg}")
-            elif process.returncode not in (0, -15, -9):  # -15=SIGTERM, -9=SIGKILL
-                self.log("Système", f"ERREUR (Code {process.returncode}) : {cmd}")
+            if process.returncode == 0:
+                if success_msg:
+                    self.log(SYSTEM_SOURCE, success_msg)
+                return True
+            if process.returncode in (-15, -9):  # SIGTERM / SIGKILL: we asked for it
+                self.log(SYSTEM_SOURCE, "Processus interrompu.")
+                return False
+            self.log(SYSTEM_SOURCE, f"ECHEC (code {process.returncode}) : {cmd}")
+            return False
         except Exception as e:
-            self.log("Système", f"Exception lors de l'exécution: {str(e)}")
+            self.log(SYSTEM_SOURCE, f"Exception : {e}")
+            return False
+        finally:
+            if process is not None:
+                self._untrack(process)
 
-    def execute_command_list(self, cmd: list[str], source_name: str, success_msg: Optional[str] = None, cwd: Optional[str] = None) -> None:
-        """Exécute une commande via une liste d'args (shell=False) - évite les problèmes de quoting Windows."""
+    def execute_command_list(
+        self, cmd: list[str], source_name: str, success_msg: Optional[str] = None, cwd: Optional[str] = None
+    ) -> bool:
+        """Same, with an argv list (shell=False) - avoids Windows quoting problems."""
         if cwd is None:
             cwd = PROJECT_DIR
 
-        self.log("Système", f"Exécution : {' '.join(cmd)}")
+        self.log(SYSTEM_SOURCE, f"> {' '.join(cmd)}")
+        process = None
         try:
             process = subprocess.Popen(
                 cmd,
@@ -767,11 +1015,12 @@ class TauriManagerApp:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                encoding='utf-8',
-                errors='replace',
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
+                creationflags=_NO_WINDOW,
             )
-            self.current_processes.append(process)
+            self._track(process)
 
             if process.stdout:
                 for line in process.stdout:
@@ -779,178 +1028,238 @@ class TauriManagerApp:
 
             process.wait()
 
-            if process in self.current_processes:
-                self.current_processes.remove(process)
-
-            if process.returncode == 0 and success_msg:
-                self.log("Système", f"Succès : {success_msg}")
-            elif process.returncode not in (0, -15, -9):
-                self.log("Système", f"ERREUR (Code {process.returncode}) : {' '.join(cmd)}")
+            if process.returncode == 0:
+                if success_msg:
+                    self.log(SYSTEM_SOURCE, success_msg)
+                return True
+            if process.returncode in (-15, -9):
+                self.log(SYSTEM_SOURCE, "Processus interrompu.")
+                return False
+            self.log(SYSTEM_SOURCE, f"ECHEC (code {process.returncode}) : {' '.join(cmd)}")
+            return False
         except Exception as e:
-            self.log("Système", f"Exception lors de l'exécution: {str(e)}")
+            self.log(SYSTEM_SOURCE, f"Exception : {e}")
+            return False
+        finally:
+            if process is not None:
+                self._untrack(process)
 
     def run_build(self) -> None:
-        self.log("Système", "--- NETTOYAGE DU BUILD ---")
-
         def build_task() -> None:
-            # Nettoie d'abord
+            self.log(SYSTEM_SOURCE, "--- NETTOYAGE ---")
             cargo_manifest = os.path.join(PROJECT_DIR, "src-tauri", "Cargo.toml")
-            cmd_clean = f"cargo clean --manifest-path {cargo_manifest}"
-            self.execute_command(cmd_clean, "Système", None)
+            self.execute_command(f'cargo clean --manifest-path "{cargo_manifest}"', SYSTEM_SOURCE)
 
-            # Puis compile (--target arm64 uniquement : plus rapide + évite les bugs Gradle 9.1 universal)
-            self.log("Système", "--- DÉMARRAGE DE LA COMPILATION ---")
-            self.execute_command(
+            # aarch64 only: faster, and it avoids the Gradle 9.1 universal-APK bug.
+            self.log(SYSTEM_SOURCE, "--- COMPILATION (debug, aarch64) ---")
+            ok = self.execute_command(
                 "bun tauri android build --target aarch64 --debug",
-                "Système",
-                "Compilation terminée avec succès (Mode DEBUG).",
-                cwd=PROJECT_DIR
+                SYSTEM_SOURCE,
+                "Compilation terminee (mode DEBUG).",
+                cwd=PROJECT_DIR,
             )
-            # Après la compilation, certaines étapes Android essaient de créer
-            # des liens symboliques qui échouent sur Windows. Si la librairie
-            # native existe mais n'a pas été liée/copied in jniLibs, on la
-            # recopie manuellement pour permettre l'assemblage/deploiement.
-            try:
-                import shutil
+            if not ok:
+                self.log(SYSTEM_SOURCE, "Compilation echouee - installation annulee.")
+                return
 
-                so_src = os.path.join(PROJECT_DIR, "src-tauri", "target", "aarch64-linux-android", "debug", "libmines_app_lib.so")
-                so_dst_dir = os.path.join(PROJECT_DIR, "src-tauri", "gen", "android", "app", "src", "main", "jniLibs", "arm64-v8a")
-                so_dst = os.path.join(so_dst_dir, "libmines_app_lib.so")
+            self._ensure_native_lib_present()
 
-                if os.path.isfile(so_src) and not os.path.isfile(so_dst):
-                    os.makedirs(so_dst_dir, exist_ok=True)
-                    shutil.copy2(so_src, so_dst)
-                    self.log("Système", f"Fallback: copie de la librairie native vers {so_dst}")
-                else:
-                    if not os.path.isfile(so_src):
-                        self.log("Système", "Aucune librairie native .so trouvee (")
-                    else:
-                        self.log("Système", "La librairie native est deja presente en jniLibs")
-            except Exception as e:
-                self.log("Système", f"Erreur lors de la copie fallback .so : {e}")
+            apk = find_apk(PROJECT_DIR)
+            if apk:
+                self.log(SYSTEM_SOURCE, f"APK produit : {apk}")
+            else:
+                self.log(SYSTEM_SOURCE, "Aucun APK trouve dans les sorties de build.")
 
         threading.Thread(target=build_task, daemon=True).start()
 
-    def run_deploy(self, device_id: str, device_name: str) -> None:
-        self.log("Système", f"--- DÉPLOIEMENT SUR {device_name} ---")
+    def _ensure_native_lib_present(self) -> None:
+        """Copies the Rust .so into jniLibs when the build could not link it.
+
+        Some Android build steps create symlinks, which fail on Windows without developer
+        mode - the .so is built but never lands in jniLibs, and the APK assembles without it.
+        """
+        try:
+            import shutil
+
+            so_src = os.path.join(
+                PROJECT_DIR, "src-tauri", "target", "aarch64-linux-android", "debug", "libmines_app_lib.so"
+            )
+            so_dst_dir = os.path.join(
+                PROJECT_DIR, "src-tauri", "gen", "android", "app", "src", "main", "jniLibs", "arm64-v8a"
+            )
+            so_dst = os.path.join(so_dst_dir, "libmines_app_lib.so")
+
+            if not os.path.isfile(so_src):
+                self.log(SYSTEM_SOURCE, "Librairie native .so introuvable dans target/ - build incomplet ?")
+                return
+
+            if os.path.isfile(so_dst) and os.path.getmtime(so_dst) >= os.path.getmtime(so_src):
+                self.log(SYSTEM_SOURCE, "Librairie native deja a jour dans jniLibs.")
+                return
+
+            os.makedirs(so_dst_dir, exist_ok=True)
+            shutil.copy2(so_src, so_dst)
+            self.log(SYSTEM_SOURCE, f"Librairie native copiee vers {so_dst}")
+        except Exception as e:
+            self.log(SYSTEM_SOURCE, f"Echec de la copie de la librairie native : {e}")
+
+    def run_deploy(self, device_id: str) -> None:
+        device_name = self.devices.get(device_id, device_id)
+        clean = self.clean_install_var.get()
+        self.log(SYSTEM_SOURCE, f"--- DEPLOIEMENT SUR {device_name} ---")
+
         def task() -> None:
-            # Désinstallation préalable
-            self.log("Système", f"Désinstallation de {PACKAGE_NAME}…")
-            result = subprocess.run(
-                ['adb', '-s', device_id, 'uninstall', PACKAGE_NAME],
-                cwd=PROJECT_DIR,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-            )
-            if 'Success' in result.stdout:
-                self.log("Système", f"  → {PACKAGE_NAME} désinstallé.")
-            else:
-                self.log("Système", f"  → Non installé, on continue.")
+            abi = device_abi(device_id)
+            apk_full = find_apk(PROJECT_DIR, abi)
+            if not apk_full:
+                self.log(
+                    SYSTEM_SOURCE,
+                    f"Aucun APK debug compatible {abi or 'arm64-v8a'} pour {device_name}. Compilez d'abord.",
+                )
+                return
+            self.log(SYSTEM_SOURCE, f"ABI {abi or 'inconnue'} -> {os.path.relpath(apk_full, PROJECT_DIR)}")
 
-            # Installation fraîche
-            apk_full = os.path.join(PROJECT_DIR, APK_PATH)
-            self.execute_command_list(
-                ['adb', '-s', device_id, 'install', apk_full],
-                "Système", f"APK installé sur {device_name}"
-            )
+            if clean:
+                self.log(SYSTEM_SOURCE, f"Desinstallation de {PACKAGE_NAME} (les donnees seront perdues)…")
+                result = _run(["adb", "-s", device_id, "uninstall", PACKAGE_NAME], timeout=60)
+                if "Success" in result.stdout:
+                    self.log(SYSTEM_SOURCE, "Desinstalle.")
+                else:
+                    # Distinguish "was not installed" from "adb could not talk to the device":
+                    # the second one used to be reported as the first.
+                    detail = (result.stdout + result.stderr).strip().splitlines()
+                    reason = detail[-1] if detail else "raison inconnue"
+                    self.log(SYSTEM_SOURCE, f"Rien a desinstaller ({reason}).")
 
-            # Lancement
-            self.execute_command_list(
-                ['adb', '-s', device_id, 'shell', 'am', 'start', '-n', ACTIVITY_NAME],
-                "Système", f"Application lancée sur {device_name}"
-            )
+            # -r reinstalls while keeping the data; -d allows a downgrade.
+            install_args = ["adb", "-s", device_id, "install", "-r", "-d", apk_full]
+            if clean:
+                install_args = ["adb", "-s", device_id, "install", apk_full]
 
-            # Démarre automatiquement le logcat pour cet appareil
-            self.start_logcat_for_device(device_id, device_name)
+            self.log(SYSTEM_SOURCE, f"Installation de {os.path.basename(apk_full)}…")
+            if not self.execute_command_list(install_args, SYSTEM_SOURCE, f"APK installe sur {device_name}"):
+                self.log(SYSTEM_SOURCE, "Installation echouee - lancement annule.")
+                return
+
+            # Logcat starts BEFORE the app, so the launch itself is captured.
+            self.start_logcat_for_device(device_id)
+
+            if not self.execute_command_list(
+                ["adb", "-s", device_id, "shell", "am", "start", "-n", ACTIVITY_NAME],
+                SYSTEM_SOURCE,
+                f"Application lancee sur {device_name}",
+            ):
+                self.log(SYSTEM_SOURCE, "Lancement echoue.")
 
         threading.Thread(target=task, daemon=True).start()
 
     def deploy_all(self) -> None:
-        for device_id, device_name in self.devices.items():
-            self.run_deploy(device_id, device_name)
+        for device_id in list(self.devices):
+            self.run_deploy(device_id)
 
     # === LOGCAT ===
-    def start_logcat_for_device(self, device_id: str, device_name: str) -> None:
-        # 1. Nettoyer les anciens logs
-        subprocess.run(['adb', '-s', device_id, 'logcat', '-c'], cwd=PROJECT_DIR)
-        self.log("Système", f"Anciens logs effacés pour {device_name}.")
+    def start_logcat_for_device(self, device_id: str) -> None:
+        """Starts (or restarts) the logcat reader for one device.
 
-        # 2. Lancer la lecture continue
-        # shell=False + liste d'args : évite que cmd.exe sur Windows mange les guillemets
-        # des filtres logcat (bug silencieux avec shell=True sur Windows).
-        # *:S = silence tout par défaut, puis on sélectionne tag par tag.
-        # mines_app_lib:D      → logs Rust de l'app Tauri ([FCM], [Path], [PushCtx], [MLS]…).
-        #                        tauri-plugin-log route log::* vers android_logger, qui tague
-        #                        avec record.module_path() = nom de la lib crate (Cargo.toml
-        #                        [lib] name = "mines_app_lib"). SANS ce tag, get_fcm_token et
-        #                        les diagnostics de chemin app_data_dir sont invisibles.
-        # CanariFCM:D          → CanariFirebaseMessagingService (notifications)
-        # CanariWorker:D       → MlsBackgroundWorker (WorkManager)
-        # CanariApp:D          → CanariApplication (init, push secret)
-        # fr.emse.canari:D     → logs runtime Android du package
-        # chromium:I           → console.log() JS si le plugin Tauri les rate
-        # Tauri/Console:V      → logs console JS via le plugin Tauri
-        # MainActivity:D       → Sync token FCM au démarrage (addOnSuccessListener)
-        # FirebaseMessaging:W  → SDK FCM Android (erreurs token, connexion)
-        cmd = [
-            'adb', '-s', device_id, 'logcat',
-            '*:S',                      # Silence total par défaut
-            'mines_app_lib:D',          # Logs Rust de l'app Tauri (FCM, app_data_dir, push)
-            'CanariRust:D',             # Moteur OpenMLS (Rust via JNI), si tag dédié
-            'CanariFCM:D',              # CanariFirebaseMessagingService (notifications)
-            'CanariWorker:D',           # MlsBackgroundWorker (WorkManager)
-            'CanariApp:D',              # CanariApplication (init, push secret)
-            'fr.emse.canari:D',         # Logs du plugin log de Tauri
-            'chromium:I',               # console.log() JS si le plugin Tauri les rate
-            'Tauri/Console:V',          # Logs Tauri internes
-            'MainActivity:D',           # Sync token FCM au démarrage (addOnSuccessListener)
-            'FirebaseMessaging:W',      # SDK FCM Android (erreurs token, connexion)
-            'WM-WorkerWrapper:W',       # WorkManager internals (retry/failure)
-            'AndroidRuntime:E',         # Crashs (Panic/Exceptions)
-            'System.err:W',
-        ]
-        self.log("Système", f"Démarrage Logcat pour {device_name}: {' '.join(cmd)}")
+        Any logcat already running on this device is stopped first. Without that, deploying
+        twice - or deploying after pressing "Lancer Logcat" - left two readers alive on the
+        same device and every line appeared twice.
+        """
+        device_name = self.devices.get(device_id, device_id)
+        self.stop_logcat_for_device(device_id, quiet=True)
 
-        process = subprocess.Popen(
-            cmd,
-            cwd=PROJECT_DIR,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            bufsize=1,
-        )
-        self.logcat_processes.append(process)
+        try:
+            _run(["adb", "-s", device_id, "logcat", "-c"], timeout=15)
+        except Exception as e:
+            self.log(SYSTEM_SOURCE, f"Impossible d'effacer le buffer logcat de {device_name} : {e}")
+
+        # shell=False + argv list: cmd.exe eats the quotes around logcat filters otherwise,
+        # and the filters are then silently ignored. `*:S` silences everything not whitelisted.
+        cmd = ["adb", "-s", device_id, "logcat", "*:S", *LOGCAT_TAGS]
+
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=PROJECT_DIR,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=_NO_WINDOW,
+            )
+        except Exception as e:
+            self.log(SYSTEM_SOURCE, f"Echec du demarrage de logcat sur {device_name} : {e}")
+            return
+
+        with self.process_lock:
+            self.logcat_processes[device_id] = process
+
+        self.log(SYSTEM_SOURCE, f"Logcat demarre sur {device_name} ({len(LOGCAT_TAGS)} tags).")
 
         def read_output() -> None:
-            if process.stdout:
-                for line in process.stdout:
-                    parsed = parse_logcat_line(line)
-                    if parsed is not None:
-                        self.log(device_name, parsed)
+            if not process.stdout:
+                return
+            for line in process.stdout:
+                # A reader whose process has been replaced must stop writing, or a restart
+                # brings the duplicates back through the thread that was left behind.
+                with self.process_lock:
+                    if self.logcat_processes.get(device_id) is not process:
+                        return
+                parsed = parse_logcat_line(line)
+                if parsed is not None:
+                    self.log(device_id, parsed)
 
         threading.Thread(target=read_output, daemon=True).start()
 
+    def stop_logcat_for_device(self, device_id: str, quiet: bool = False) -> bool:
+        """Stops the logcat of one device. Returns True if one was running."""
+        with self.process_lock:
+            process = self.logcat_processes.pop(device_id, None)
+        if process is None:
+            return False
+        try:
+            process.kill()
+        except Exception:
+            pass
+        if not quiet:
+            self.log(SYSTEM_SOURCE, f"Logcat arrete sur {self.label_for(device_id)}.")
+        return True
+
     def start_all_logcats(self) -> None:
-        self.stop_all_logcats()
-        for device_id, device_name in self.devices.items():
-            self.start_logcat_for_device(device_id, device_name)
+        if not self.devices:
+            self.log(SYSTEM_SOURCE, "Aucun appareil connecte.")
+            return
+        for device_id in list(self.devices):
+            self.start_logcat_for_device(device_id)
 
     def stop_all_logcats(self) -> None:
-        for p in self.logcat_processes:
-            p.kill()
-        self.logcat_processes.clear()
-        self.log("Système", "Tous les processus Logcat ont été arrêtés.")
+        with self.process_lock:
+            device_ids = list(self.logcat_processes)
+        stopped = sum(1 for device_id in device_ids if self.stop_logcat_for_device(device_id, quiet=True))
+        if stopped:
+            self.log(SYSTEM_SOURCE, f"{stopped} logcat(s) arrete(s).")
+        else:
+            self.log(SYSTEM_SOURCE, "Aucun logcat en cours.")
 
     def on_closing(self) -> None:
-        """Exécuté quand on ferme la fenêtre pour tuer les processus ADB restants."""
-        self.stop_all_logcats()
+        """Kills every child process on exit, builds included."""
+        with self.process_lock:
+            processes = list(self.logcat_processes.values()) + list(self.current_processes)
+            self.logcat_processes.clear()
+            self.current_processes.clear()
+        for p in processes:
+            try:
+                p.kill()
+            except Exception:
+                pass
         self.root.destroy()
         sys.exit()
 
+
 if __name__ == "__main__":
+    setup_android_environment()
     root = tk.Tk()
     app = TauriManagerApp(root)
     root.mainloop()

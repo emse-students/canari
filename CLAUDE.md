@@ -106,11 +106,11 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
 
 - \[~\] **WP-VERIF-0..4 + the DEEPLINK-1 and UI-1 residuals (P1 to P3) - [device] one single pass.**
   Everything native is verified by COMPILING, which proves nothing about running. The ordered
-  cross-platform runbook is **[device-verification](docs/wiki/device-verification.md)**: checks A-J,
-  which WP each one closes, the exact log line that is the verdict for each, and why check A must
-  come first (it needs v0.11.3 - the last release without WP-SEC-1 - installed and logged in BEFORE
-  the build under test lands over it, and it is the only test of the one-shot migration). Do not
-  re-derive the checks here; extend that file instead. Build under test: **v0.11.7**, on TestFlight
+  cross-platform runbook is **[device-verification](docs/wiki/device-verification.md)**: checks B-J,
+  which WP each one closes, and the exact log line that is the verdict for each. Do not re-derive
+  the checks here; extend that file instead. Check A (the upgrade path) was RETIRED 2026-07-31: it
+  needed a deliberate downgrade to a pre-WP-SEC-1 build, and every install worth testing has
+  migrated. Build under test: **v0.11.7**, on TestFlight
   and Play production since 2026-07-31 - the first build carrying WP-PUSH-1/2, HIST-1 and NET-1.
   Its native half is COMPILED, and checked the honest way: the iOS log shows
   `SwiftCompile normal arm64 .../NotificationService.swift` and a `canari_push.o`, so neither was
@@ -123,7 +123,9 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   Two cold biometric launches, no `Call ignored`, no PIN modal, no `Failed to decrypt SQLite row`,
   one prompt per login - and a 51-message history bundle served out of the local store where the
   session had started from 50, which is the proof the biometric session both writes and reads.
-  Everything else in the runbook (A-F, H-J) is still owed, and ALL of it is still owed on iOS.
+  Everything else in the runbook (B-F, H-J) is still owed, and ALL of it is still owed on iOS.
+  **Android capture tool: `test_adb.py`** at the repo root (tkinter GUI: build, install, per-device
+  logcat with the runbook's tags already whitelisted).
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
