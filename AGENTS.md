@@ -24,6 +24,45 @@ It is a **separate timeline** from `CLAUDE.md`. Do not duplicate SESSION STATE h
 
 ## Timeline
 
+### 2026-07-31 - WP-HIST-1 Option C (history request timeout/retry + pending-offline UI), delegated
+
+**Agent**: Zoo Code mode.
+**Scope**: Frontend-only mitigation for `BaseMlsService.sendHistoryRequest` getting no online
+responder. Added [`historyRequestPendingStore`](frontend/src/lib/stores/historyRequestPending.svelte.ts)
+with a 30 s request window, `pending` -> `pending-offline` state machine, bounded retries with
+backoff [30 s, 2 min, 5 min], and online/foreground resume retries. Wired it into
+[`historySolicit.ts`](frontend/src/lib/utils/chat/historySolicit.ts), cleared it on logout in
+[`sessionAuth.ts`](frontend/src/lib/composables/session/sessionAuth.ts), and exposed the
+`pending-offline` banner in [`ChatArea.svelte`](frontend/src/lib/components/chat/ChatArea.svelte) /
+[`MainChatPage.svelte`](frontend/src/lib/components/MainChatPage.svelte). Added Paraglide strings
+(`chat_history_request_pending_offline`) and tests (`historyRequestPending.test.ts`,
+`historySolicit.test.ts` updates). Updated `CHANGELOG.md` and
+`docs/wiki/protocols/mls-protocol.md`.
+
+**Verdict: accepted with corrections.** The design matches the spec: per-group state, no protocol
+or native changes, budget preserved across re-solicits, cleanup on logout/bundle arrival. Two
+defects were found in the verification pass and fixed before the final commit:
+
+1. **Unit tests for the new store were structurally wrong and failed 3/8.** The retry mock was a
+   no-op, so the timeout/retry ladder never advanced past the first retry in tests. Rewritten to
+   re-enter `historyRequestPendingStore.start()` from the mock, matching the real production loop
+   in `historySolicit.ts`.
+2. **`historySolicit.test.ts` had new tests outside the `describe('solicitHistory')` block.** A
+   malformed edit left a stray `});` placement, so the new offline/timeout tests ran without
+   `vi.useFakeTimers()` and failed with "timers APIs are not mocked". Restored proper describe
+   nesting and adjusted the tests to isolate the single request window.
+
+A third issue surfaced during the pre-commit hook: `oxvelte` flagged the internal `Map` in
+`historyRequestPending.svelte.ts` as preferring `SvelteMap`. Changed to `SvelteMap` to keep the
+lint gate clean.
+
+**Gates passed:**
+- `bun run check` (frontend) clean.
+- `bun run test` (frontend) 713/713.
+- `cargo clippy --all-targets -- -D warnings` in `frontend/src-tauri/` clean (also resynced
+  `Cargo.lock` to the existing `mls-core` 0.11.6 version).
+- Android debug build (`:app:assembleDebug`) and unit tests (`:app:testArm64DebugUnitTest`) green.
+
 ### 2026-07-28 - WP-IOS-1 + WP-SEC-1 (device key out of cleartext), delegated
 
 **Agent**: Zoo Code mode, from the brief this file carried.

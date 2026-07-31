@@ -25,7 +25,7 @@ export const RETRY_DELAYS_MS = [30_000, 120_000, 300_000];
 const MAX_RETRIES = 3;
 
 /** In-memory registry of in-flight history request windows, keyed by MLS group id. */
-const entries = new Map<string, PendingEntry>();
+const entries = new SvelteMap<string, PendingEntry>();
 
 /**
  * Reactive map exposing the current phase for each group that is awaiting a history bundle.
