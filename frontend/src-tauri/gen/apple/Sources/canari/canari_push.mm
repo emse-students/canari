@@ -628,7 +628,7 @@ static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
     [g_mlsStateLock unlock];
   }
   if (epoch < 0) {
-    NSLog(@"[CanariPush] catchup: epoch inconnu group=%@", groupId);
+    NSLog(@"[CanariPush] catchup: unknown epoch group=%@", groupId);
     return nil;
   }
 
@@ -656,24 +656,12 @@ static CanariDecryptedMessage *_Nullable CanariTryDecryptWithCommitCatchup(
   return result;
 }
 
-static void CanariWriteFcmCache(NSString *groupId, NSString *senderId, NSString *senderName,
-                                CanariDecryptedMessage *msg) {
-  if (msg.messageId.length == 0) {
-    return;
-  }
-  NSMutableDictionary *entry = [@{
-    @"groupId" : groupId ?: @"",
-    @"messageId" : msg.messageId,
-    @"senderId" : senderId ?: @"",
-    @"senderName" : senderName ?: @"",
-    @"content" : msg.text ?: @"",
-    @"timestamp" : @(msg.sentAt),
-    @"type" : msg.type ?: @"text",
-  } mutableCopy];
-  if (msg.mediaKind.length > 0) {
-    entry[@"mediaKind"] = msg.mediaKind;
-  }
-
+/**
+ * Appends one entry to the app's `fcm_message_cache.ndjson`, bounded to kMaxFcmCacheEntries.
+ * Two callers write it: a push decrypted while the app was dead, and a notification quick reply
+ * this device SENT while the app was dead (CanariWriteSentMessageToCache).
+ */
+static void CanariAppendFcmCacheEntry(NSDictionary *entry, NSString *messageId) {
   NSData *entryData = [NSJSONSerialization dataWithJSONObject:entry options:0 error:nil];
   if (entryData == nil) {
     return;
@@ -703,10 +691,56 @@ static void CanariWriteFcmCache(NSString *groupId, NSString *senderId, NSString 
     [lines addObject:entryLine];
     NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
     [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    NSLog(@"[CanariPush] writeFcmCache messageId=%@", [msg.messageId substringToIndex:MIN((NSUInteger)8, msg.messageId.length)]);
+    NSLog(@"[CanariPush] writeFcmCache messageId=%@", [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)]);
   } @finally {
     [g_cacheLock unlock];
   }
+}
+
+static void CanariWriteFcmCache(NSString *groupId, NSString *senderId, NSString *senderName,
+                                CanariDecryptedMessage *msg) {
+  if (msg.messageId.length == 0) {
+    return;
+  }
+  NSMutableDictionary *entry = [@{
+    @"groupId" : groupId ?: @"",
+    @"messageId" : msg.messageId,
+    @"senderId" : senderId ?: @"",
+    @"senderName" : senderName ?: @"",
+    @"content" : msg.text ?: @"",
+    @"timestamp" : @(msg.sentAt),
+    @"type" : msg.type ?: @"text",
+  } mutableCopy];
+  if (msg.mediaKind.length > 0) {
+    entry[@"mediaKind"] = msg.mediaKind;
+  }
+  CanariAppendFcmCacheEntry(entry, msg.messageId);
+}
+
+/**
+ * Records a message this device SENT from a notification quick reply, so the app injects it into
+ * the conversation at next open. The reply is built and delivered entirely natively: it never
+ * becomes a TypeScript outbox entry, and `reconcileOutboxSent` only deletes entries - so without
+ * this, a reply the peers received leaves no trace at all on the device that sent it. `senderId`
+ * is OUR user id, which is what makes the injection path treat the row as our own message
+ * (`mapStoredMessagesToChatMessages` derives isOwn from it) rather than a phantom unread.
+ * Android twin: writeSentMessageToCache in CanariFirebaseMessagingService.kt.
+ */
+static void CanariWriteSentMessageToCache(NSString *groupId, NSString *selfUserId,
+                                          NSString *messageId, NSString *text, long long sentAt) {
+  if (messageId.length == 0 || selfUserId.length == 0) {
+    NSLog(@"[CanariPush] writeSentMessageToCache: missing messageId/userId -> entry ignored");
+    return;
+  }
+  CanariAppendFcmCacheEntry(@{
+    @"groupId" : groupId ?: @"",
+    @"messageId" : messageId,
+    @"senderId" : selfUserId,
+    @"senderName" : @"",
+    @"content" : text ?: @"",
+    @"timestamp" : @(sentAt),
+    @"type" : @"text",
+  }, messageId);
 }
 
 /**
@@ -1225,7 +1259,7 @@ static void CanariRegisterOutboxRetryHandler(void) {
                             if (remaining > 0) {
                               CanariMaybeNotifyPendingSync(remaining);
                             }
-                            NSLog(@"[CanariPush] BGTask outboxRetry: %d restant(s)", remaining);
+                            NSLog(@"[CanariPush] BGTask outboxRetry: %d remaining", remaining);
                           }
                           [task setTaskCompletedWithSuccess:YES];
                         });
@@ -1362,7 +1396,7 @@ static NSString *_Nullable CanariEncryptQueuedMessage(CanariPushContext *ctx, Ca
     NSString *dir = CanariTauriDataDir();
     NSData *stateBytes = CanariLoadMlsState();
     if (dir == nil || stateBytes == nil) {
-      NSLog(@"[CanariPush] encryptQueuedMessage: etat MLS absent");
+      NSLog(@"[CanariPush] encryptQueuedMessage: MLS state absent");
       return nil;
     }
     char *jsonPtr = canari_native_send_message_background(
@@ -1413,7 +1447,7 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
   }
   NSString *secret = CanariRetrievePushSecret();
   if (secret == nil) {
-    NSLog(@"[CanariPush] drainOutboxBackground: pushSecret absent (%lu restants)",
+    NSLog(@"[CanariPush] drainOutboxBackground: pushSecret absent (%lu remaining)",
           (unsigned long)entries.count);
     return (int)entries.count;
   }
@@ -1437,7 +1471,7 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
     CanariAppendOutboxSent(sentIds);
   }
   CanariRewriteOutboxMirror(remaining);
-  NSLog(@"[CanariPush] drainOutboxBackground: %lu envoye(s), %lu restant(s)",
+  NSLog(@"[CanariPush] drainOutboxBackground: %lu sent, %lu remaining",
         (unsigned long)sentIds.count, (unsigned long)remaining.count);
   return (int)remaining.count;
 }
@@ -1487,9 +1521,16 @@ static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text) {
 
   int remaining = CanariDrainOutboxBackground(ctx);
   if (remaining == 0) {
+    // Delivered: record it locally BEFORE clearing the notification, so the one visible trace of
+    // the reply is never dropped before the durable one exists.
+    CanariWriteSentMessageToCache(groupId, ctx.userId, messageId, text, sentAt);
     CanariCancelConversationNotification(groupId);
   } else {
-    NSLog(@"[CanariPush] handleQuickReplyAction: reply still queued (remaining=%d) - notification left as-is",
+    // Not delivered: NO cache entry, or the app would show as sent a message that never left.
+    // The notification stays up, which is the only retry affordance - `store_outbox_mirror`
+    // rewrites outbox_pending.ndjson from the TypeScript queue, so this entry is wiped by the
+    // next foreground outbox mutation rather than flushed (WP-NOTIF-1).
+    NSLog(@"[CanariPush] handleQuickReplyAction: reply still queued (remaining=%d) - notification left as-is, entry NOT persisted",
           remaining);
   }
 }
@@ -1622,7 +1663,7 @@ static NSString *_Nullable CanariFetchAvatar(CanariPushContext *ctx, NSString *u
     return nil;
   }
   [resp writeToFile:cachePath atomically:YES];
-  NSLog(@"[CanariPush] fetchAvatar: mis en cache %@", userId);
+  NSLog(@"[CanariPush] fetchAvatar: cached %@", userId);
   return cachePath;
 }
 
@@ -2461,7 +2502,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
     NSString *requesterDev =
         [data[@"requesterDeviceId"] isKindOfClass:[NSString class]] ? data[@"requesterDeviceId"] : @"";
     if (groupId.length == 0 || requesterUser.length == 0 || requesterDev.length == 0) {
-      NSLog(@"[CanariPush] welcome_request_pending: champs manquants");
+      NSLog(@"[CanariPush] welcome_request_pending: missing fields");
       return;
     }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{

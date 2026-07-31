@@ -93,12 +93,12 @@ export async function reconcileOutboxSent(storage: IStorage): Promise<void> {
     sentIds = await invoke<string[]>('read_and_clear_outbox_sent');
   } catch (e) {
     appendLog(
-      `[OUTBOX_MIRROR] Lecture outbox_sent echouee: ${e instanceof Error ? e.message : String(e)}`
+      `[OUTBOX_MIRROR] outbox_sent read failed: ${e instanceof Error ? e.message : String(e)}`
     );
     return;
   }
   if (!sentIds.length) return;
-  appendLog(`[OUTBOX_MIRROR] ${sentIds.length} message(s) envoye(s) en arriere-plan a reconcilier`);
+  appendLog(`[OUTBOX_MIRROR] ${sentIds.length} message(s) sent in the background to reconcile`);
   for (const id of sentIds) {
     await storage.deleteOutboxEntry(id).catch(() => {});
   }

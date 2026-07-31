@@ -66,6 +66,12 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
      * `outbox_pending.ndjson` mirror the TS composer writes to, and drains it immediately.
      * Clears the local notification only once actually delivered (drain returns 0 remaining) -
      * a queued-but-undelivered reply must keep the notification so the user can retry from the app.
+     *
+     * A delivered reply is also written to `fcm_message_cache.ndjson` under OUR user id, because
+     * nothing else records it locally: the proto is built natively and never becomes a TypeScript
+     * outbox entry, and `reconcileOutboxSent` only deletes entries. Peers received the message,
+     * the sender's own conversation showed no trace of it, and the two are indistinguishable from
+     * the app - which is exactly the "the reply does not work" report.
      */
     private fun handleReply(context: Context, intent: Intent, groupId: String) {
         val text = RemoteInput.getResultsFromIntent(intent)
@@ -98,9 +104,20 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
 
         val remaining = CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx)
         if (remaining == 0) {
+            // Delivered: record it locally BEFORE clearing the notification, so the one visible
+            // trace of the reply is never dropped before the durable one exists.
+            CanariFirebaseMessagingService.writeSentMessageToCache(
+                context, groupId, pushCtx.userId, messageId, text, sentAt
+            )
             CanariFirebaseMessagingService.cancelConversationNotification(context, groupId)
         } else {
-            Log.w(TAG, "handleReply: reply still queued (remaining=$remaining) - notification left as-is")
+            // Not delivered: NO cache entry, or the app would show as sent a message that never
+            // left. The notification stays up, which is the only retry affordance - and it has to
+            // be, because `store_outbox_mirror` REWRITES outbox_pending.ndjson from the TypeScript
+            // queue, so this entry is wiped by the next foreground outbox mutation rather than
+            // flushed. Adopting an unknown mirror entry back into the TS outbox is the real fix
+            // (WP-NOTIF-1) and is not attempted here.
+            Log.w(TAG, "handleReply: reply still queued (remaining=$remaining) - notification left as-is, entry NOT persisted")
         }
     }
 

@@ -123,9 +123,54 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   Two cold biometric launches, no `Call ignored`, no PIN modal, no `Failed to decrypt SQLite row`,
   one prompt per login - and a 51-message history bundle served out of the local store where the
   session had started from 50, which is the proof the biometric session both writes and reads.
-  Everything else in the runbook (B-F, H-J) is still owed, and ALL of it is still owed on iOS.
+  **Checks I and J are CLOSED on Android too (2026-07-31, v0.11.7, log on the user's desktop).**
+  That run also exercised B-H incidentally and the user reports everything working except the two
+  notification defects now tracked as WP-NOTIF-1. **ANDROID IS DONE; the whole runbook is still
+  owed on iOS.** Anomalies the log itself showed, all filed below: WP-NOTIF-1 (the quick reply
+  leaves no local trace), `GET /api/users/system` 404, and two French dev log lines in
+  `outboxMirror.ts`.
   **Android capture tool: `test_adb.py`** at the repo root (tkinter GUI: build, install, per-device
   logcat with the runbook's tags already whitelisted).
+
+- \[ \] **WP-EDIT-1 (P1) - A message edit is not saved.** 2026-07-31, prod, BROWSER: edited a
+  message, refreshed the page, the old body was back - and the user believes it never reached the
+  other devices either. So the edit is applied optimistically in the UI and lost by both the local
+  store and the outbound path. Reported, not yet reproduced or diagnosed. First questions: does the
+  `edit` control event reach the outbox at all (`[OUTBOX] Queued ... (control)`), and does the local
+  store persist the new body or only the `isEdited` flag - `StoredMessage` carries `isEdited` but
+  NOT `editedAt`, which is a hint that the edit path was written around the flag.
+
+- \[~\] **WP-NOTIF-1 (P2) - Notification quick actions.** (a) and (b) are CODE COMPLETE, NOT
+  COMPILED (native: Kotlin + ObjC), and unverified on device; (c) is what is left to build.
+  (a) *"Repondre" left no local trace.* It always DID send (`handleReply: queued`,
+  `sendQueuedMessagePush: HTTP 201`, `1 sent, 0 remaining`) but the reply is built natively and
+  never becomes an outbox entry, and `reconcileOutboxSent` only DELETES entries - so the sender's
+  own conversation showed nothing. FIXED both platforms by writing the delivered reply to
+  `fcm_message_cache.ndjson` under OUR user id (`writeSentMessageToCache` /
+  `CanariWriteSentMessageToCache`).
+  (b) *Our own avatar was blank in the thread.* FIXED: `selfPerson` now gets `fetchAvatar`, via a
+  new `MlsContextLoader.loadUserId` (no Keystore hop). Android only - iOS has no self Person.
+  (c) *STILL OPEN: an UNDELIVERED quick reply is silently dropped.* It lives only in
+  `outbox_pending.ndjson`, and `store_outbox_mirror` REWRITES that file from the TS queue, so the
+  next foreground outbox mutation wipes it instead of flushing it. The notification is left up as
+  the retry affordance, deliberately. The real fix is adopting an unknown mirror entry back into
+  the TS outbox at boot - the symmetric twin of `read_and_clear_outbox_sent`.
+  **Both native halves need a `workflow_dispatch` compile run before they are believed** (grep the
+  logs for `CompileC ...canari_push.o` and the Kotlin task), and check that a quick reply now shows
+  up in the sender's own conversation after the app reopens.
+
+- \[ \] **WP-DEV-PANEL-1 (P2) - The device panel does not identify the current device.** On Windows
+  the current device is not highlighted, so nothing tells the user which row is the machine they
+  are on - and deleting every row is allowed, leaving "0 appareils connectes" with no warning.
+  Decide whether self-deletion is refused outright or confirmed loudly.
+
+- \[ \] **WP-AGENDA-1 (P3) - No edit/delete on the global agenda.** The buttons exist only inside
+  the owning association, so a sys admin (or a BDE member holding the permission) has to find which
+  association filed an event before they can touch it. Same permission check, second surface.
+
+- \[ \] **WP-PDF-1 (P3) - Three defects in the event PDF export.** The second association's logo is
+  missing when an event has two; the background image is not cropped, so it leaves bands down the
+  sides; and the sheet has rounded corners - a page of paper is a rectangle.
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the

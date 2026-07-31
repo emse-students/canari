@@ -64,6 +64,21 @@ object MlsContextLoader {
     }
 
     /**
+     * Reads just the `userId` field of push_context.json.
+     *
+     * Deliberately NOT [loadPushContext]: that one also resolves the device key from the Keystore,
+     * which is the expensive half and is pointless for a caller that only needs to know who we are
+     * (the notification's self avatar). Returns null when the file is absent or the field is empty.
+     */
+    fun loadUserId(context: Context): String? {
+        val file = File(tauriDataDir(context), "push_context.json")
+        if (!file.exists()) return null
+        return try {
+            JSONObject(file.readText()).optString("userId").takeIf { it.isNotEmpty() }
+        } catch (_: Exception) { null }
+    }
+
+    /**
      * Loads the binary MLS state from mls.bin in the Tauri directory (app_data_dir).
      * Returns null if the file is absent or unreadable.
      */

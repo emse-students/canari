@@ -16,6 +16,13 @@ function shouldSkipRetry(userId: string): boolean {
 }
 
 /**
+ * The sentinel senderId the chat gives its own system messages (`addMessageToChat('system', ...)`,
+ * `isSystem: m.senderId === 'system'`). It is not a user id, so resolving it can only ever be a
+ * request that 404s - `GET /api/users/system` was doing exactly that on every chat open.
+ */
+const SYSTEM_SENDER_ID = 'system';
+
+/**
  * Format a user display name with priority: firstName+lastName > displayName > id
  * Returns the parts joined with a space.
  */
@@ -103,6 +110,10 @@ export function getUserDisplayNameSync(userId: string, fallback?: string): strin
 
 export async function resolveUserDisplayName(userId: string): Promise<string | null> {
   const normalized = normalizeUserId(userId);
+
+  // Not a user: no name to resolve, and a fetch could only 404. Null, not the "unknown user"
+  // label - a system message is rendered from its event, never from a sender name.
+  if (normalized === SYSTEM_SENDER_ID) return null;
 
   const cached = displayNameCache.get(normalized);
   if (cached) return cached;

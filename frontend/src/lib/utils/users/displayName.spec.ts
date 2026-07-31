@@ -136,6 +136,19 @@ describe('resolveDisplayNames', () => {
     expect(getName('user-8')).toBe('Alice');
   });
 
+  it('never fetches the "system" sentinel - it is not a user', async () => {
+    // The chat gives its own system messages senderId 'system', so every chat open used to issue
+    // a GET /api/users/system that could only 404.
+    const mod = await import('./displayName');
+
+    const getName = await mod.resolveDisplayNames(['system']);
+
+    expect(userStore.fetchUserProfile).not.toHaveBeenCalled();
+    // Unresolved, so the caller keeps the id it passed - not the "unknown user" label, which
+    // would end up baked into stored system-message text.
+    expect(getName('system')).toBe('system');
+  });
+
   it('labels a profile that genuinely carries no name', async () => {
     // Distinct from the regression above: here the fetch DID happen and the profile simply has
     // no first/last/display name. The label is the right answer - a raw UUID in the middle of a

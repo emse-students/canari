@@ -170,6 +170,8 @@ Android has no equivalent restriction.
 - Shows notifications: MessagingStyle for messages, CallStyle for calls
 - Quick actions: Reply (text input) and Mark as Read (broadcast to `CanariNotificationActionReceiver`)
 
+MessagingStyle takes two `Person`s and **both** need an icon. The sender's comes from `fetchAvatar(senderId)`; ours comes from `fetchAvatar(loadUserId())` - Android attributes the inline reply to the self `Person` while the reply is in flight, so an iconless self is a blank face on the only message in that thread the user actually wrote. `MlsContextLoader.loadUserId` reads just the `userId` field of `push_context.json`, deliberately not `loadPushContext`, whose expensive half is a Keystore round trip this caller has no use for. iOS shows a single attachment image rather than a thread, so it has no self `Person` and nothing to fix there.
+
 #### Background MLS decrypt ladder
 
 Both Android and the iOS NSE run the same ladder when an encrypted MLS message push arrives:
@@ -192,6 +194,10 @@ Both platforms write decrypted message previews to `fcm_message_cache.ndjson` af
 That extra hop is not optional: an app extension has its own data container, so `app_data_dir` resolved inside the NSE is a directory the app can never read. The App Group is the only storage the two processes share — the same reason `mls.bin` is mirrored there. The NSE also writes with `completeFileProtectionUntilFirstUserAuthentication`, because it runs on a locked device where the default protection class cannot be written.
 
 The file is bounded to 50 entries and read at boot by `read_and_clear_fcm_cache` (Rust) so the app can pre-inject messages into the local store before the full MLS sync finishes. Both writers must produce the same JSON fields (`groupId`, `messageId`, `senderId`, `senderName`, `content`, `timestamp`, `type`, plus optional `replyTo` and `mediaKind`). `fcmCacheFields.test.ts` pins the fields **and** both halves of the iOS path - off macOS it is the only gate on either.
+
+**The cache also carries OUTGOING messages, not only received ones.** A notification quick reply is built and delivered entirely natively (`writeSentMessageToCache` on Android, `CanariWriteSentMessageToCache` on iOS), so it never becomes a TypeScript outbox entry - and `reconcileOutboxSent` only *deletes* entries. Without an entry here, a reply the peers received would leave no trace whatsoever on the device that sent it, which from the app is indistinguishable from a reply that was never sent. The entry carries OUR user id as `senderId`, which is all the injection path needs: `mapStoredMessagesToChatMessages` derives `isOwn` from it, so the row renders as our own message and raises no phantom unread. It is written only once the drain reports the reply delivered - an undelivered reply must not appear as sent.
+
+Note the asymmetry that leaves: an undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_outbox_mirror` **rewrites** that file from the TypeScript queue, so the next foreground outbox mutation wipes it rather than flushing it. The notification is deliberately left up as the retry affordance. Adopting an unknown mirror entry back into the TS outbox is the real fix and is still open (WP-NOTIF-1).
 
 ### Background execution
 

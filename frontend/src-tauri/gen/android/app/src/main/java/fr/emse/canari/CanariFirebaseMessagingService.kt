@@ -245,6 +245,78 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             refreshBadgeSummary(context)
         }
 
+        /**
+         * Appends one entry to `fcm_message_cache.ndjson`, the cross-process file the app drains at
+         * boot (`consumeFcmCache`). Bounded to [MAX_FCM_CACHE_ENTRIES] lines (read, truncate,
+         * rewrite) so a long-closed app that received many pushes cannot grow it without limit.
+         * Lives on the companion because two callers write it: the push path (an incoming message
+         * decrypted while the app is dead) and the notification quick reply (an OUTGOING message
+         * sent while the app is dead - see [CanariNotificationActionReceiver.handleReply]).
+         */
+        internal fun appendFcmCacheEntry(
+            context: Context,
+            entry: JSONObject,
+            messageId: String,
+            groupId: String,
+        ) {
+            try {
+                val file = File(MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }, "fcm_message_cache.ndjson")
+                CACHE_LOCK.lock()
+                try {
+                    val existing = if (file.exists())
+                        file.readLines().filter { it.isNotBlank() }
+                    else emptyList()
+                    val kept = if (existing.size >= MAX_FCM_CACHE_ENTRIES)
+                        existing.drop(existing.size - MAX_FCM_CACHE_ENTRIES + 1)
+                    else existing
+                    file.writeText((kept + entry.toString()).joinToString("\n") + "\n")
+                } finally {
+                    CACHE_LOCK.unlock()
+                }
+                Log.d(TAG, "writeFcmCache: ✓ messageId=${messageId.take(8)} groupId=${groupId.take(8)}")
+            } catch (e: Exception) {
+                Log.w(TAG, "writeFcmCache: failed: ${e.message}")
+            }
+        }
+
+        /**
+         * Records a message this device SENT from a notification quick reply into the same cache,
+         * so the app injects it into the conversation at next open.
+         *
+         * A quick reply is built and delivered entirely natively: it never becomes a TypeScript
+         * outbox entry, and `reconcileOutboxSent` only DELETES entries. Without this, a reply that
+         * peers received left no trace whatsoever on the device that sent it - which reads, from
+         * the app, exactly like a reply that was never sent. `senderId` is OUR user id, which is
+         * all the injection path needs to treat the row as our own (`mapStoredMessagesToChatMessages`
+         * derives `isOwn` from it, so it also does not raise a phantom unread).
+         *
+         * `senderName` is deliberately left empty: it only ever labels a conversation the app has
+         * never seen, and for a reply the conversation necessarily exists already.
+         */
+        internal fun writeSentMessageToCache(
+            context: Context,
+            groupId: String,
+            selfUserId: String,
+            messageId: String,
+            text: String,
+            sentAt: Long,
+        ) {
+            if (messageId.isEmpty() || selfUserId.isEmpty()) {
+                Log.w(TAG, "writeSentMessageToCache: missing messageId/userId -> entry ignored")
+                return
+            }
+            val entry = JSONObject().apply {
+                put("groupId",    groupId)
+                put("messageId",  messageId)
+                put("senderId",   selfUserId)
+                put("senderName", "")
+                put("content",    text)
+                put("timestamp",  sentAt)
+                put("type",       "text")
+            }
+            appendFcmCacheEntry(context, entry, messageId, groupId)
+        }
+
         /** Stable ring-notification ID for a callId (distinct range, no counter collision). */
         private fun callNotifId(callId: String): Int =
             CALL_NOTIF_ID_BASE + (callId.hashCode() and 0xFFFF)
@@ -1977,36 +2049,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.w(TAG, "writeFcmCache: messageId empty -> entry ignored")
             return
         }
-        try {
-            val entry = JSONObject().apply {
-                put("groupId",    groupId)
-                put("messageId",  msg.messageId)
-                put("senderId",   senderId)
-                put("senderName", senderName)
-                put("content",    msg.text)
-                put("timestamp",  msg.sentAt)
-                put("type",       msg.type)
-                msg.replyTo?.let { put("replyTo", it) }
-                msg.mediaKind?.let { put("mediaKind", it) }
-            }
-            val file = File(MlsContextLoader.tauriDataDir(this).also { it.mkdirs() }, "fcm_message_cache.ndjson")
-            CACHE_LOCK.lock()
-            try {
-                // Keep at most MAX_FCM_CACHE_ENTRIES lines: read, truncate, rewrite.
-                val existing = if (file.exists())
-                    file.readLines().filter { it.isNotBlank() }
-                else emptyList()
-                val kept = if (existing.size >= MAX_FCM_CACHE_ENTRIES)
-                    existing.drop(existing.size - MAX_FCM_CACHE_ENTRIES + 1)
-                else existing
-                file.writeText((kept + entry.toString()).joinToString("\n") + "\n")
-            } finally {
-                CACHE_LOCK.unlock()
-            }
-            Log.d(TAG, "writeFcmCache: ✓ messageId=${msg.messageId.take(8)} groupId=${groupId.take(8)}")
-        } catch (e: Exception) {
-            Log.w(TAG, "writeFcmCache: failed: ${e.message}")
+        val entry = JSONObject().apply {
+            put("groupId",    groupId)
+            put("messageId",  msg.messageId)
+            put("senderId",   senderId)
+            put("senderName", senderName)
+            put("content",    msg.text)
+            put("timestamp",  msg.sentAt)
+            put("type",       msg.type)
+            msg.replyTo?.let { put("replyTo", it) }
+            msg.mediaKind?.let { put("mediaKind", it) }
         }
+        appendFcmCacheEntry(this, entry, msg.messageId, groupId)
     }
 
     // --- Avatar ----------------------------------------------------------------
@@ -2239,7 +2293,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setName(senderName.ifEmpty { "Canari" })
             .setIcon(IconCompat.createWithBitmap(largeIcon))
             .build()
-        val selfPerson = Person.Builder().setName("Moi").build()
+        // Our own Person carries our avatar too: Android attributes the inline reply to it while
+        // the reply is in flight, so leaving it iconless is a blank face on the only message in
+        // that thread the user actually wrote. Same 24h file cache as the sender's avatar, so this
+        // costs one request a day at most, and an unresolvable avatar simply stays iconless.
+        val selfAvatar = MlsContextLoader.loadUserId(this)?.let { fetchAvatar(it) }
+        val selfPerson = Person.Builder()
+            .setName("Moi")
+            .apply { selfAvatar?.let { setIcon(IconCompat.createWithBitmap(it)) } }
+            .build()
 
         val existingNotif = try {
             manager.activeNotifications.firstOrNull { it.id == notifId }?.notification

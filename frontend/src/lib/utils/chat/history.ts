@@ -582,7 +582,7 @@ export async function replayConversationHistory(params: {
     }
 
     if (mlsUpdated) {
-      log(`[OK] ${addedMsg} msg rattrapes pour ${contactName}.`);
+      log(`[OK] ${addedMsg} message(s) caught up for ${contactName}.`);
     }
 
     // Stale-behind: replay hit an epoch gap for a locally-held group and our epoch did NOT
