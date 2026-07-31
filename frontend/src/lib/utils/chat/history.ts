@@ -143,6 +143,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       serverTimestamp: m.serverTimestamp,
       ...(m.isDeleted ? { isDeleted: true } : {}),
       ...(m.isEdited ? { isEdited: true } : {}),
+      ...(m.editedAt ? { editedAt: toValidDate(m.editedAt) } : {}),
       ...(m.isFcmPreview ? { isFcmPreview: true } : {}),
     } satisfies ChatMessage;
   });
@@ -511,6 +512,9 @@ export async function replayConversationHistory(params: {
               : {}),
           ...(prev?.isDeleted || pm.isDeleted ? { isDeleted: true } : {}),
           ...(prev?.isEdited || pm.isEdited ? { isEdited: true } : {}),
+          // Same preservation as `content` above: the edit time lives only in the DB row, so a
+          // replay that rewrites the row without it silently drops the edit time.
+          ...(prev?.editedAt ? { editedAt: prev.editedAt } : {}),
           ...((pm.reactions ?? []).length > 0 ? { reactions: pm.reactions } : {}),
           ...(pm.serverTimestamp != null ? { serverTimestamp: pm.serverTimestamp } : {}),
           ...(pm.readAt != null ? { readAt: pm.readAt } : {}),
@@ -568,6 +572,7 @@ export async function replayConversationHistory(params: {
               ...(updatesById.get(m.id) ?? m),
               isEdited: true,
               content: edit.content,
+              editedAt: edit.editedAt.getTime(),
             });
           }
         }

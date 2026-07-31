@@ -132,14 +132,6 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   **Android capture tool: `test_adb.py`** at the repo root (tkinter GUI: build, install, per-device
   logcat with the runbook's tags already whitelisted).
 
-- \[ \] **WP-EDIT-1 (P1) - A message edit is not saved.** 2026-07-31, prod, BROWSER: edited a
-  message, refreshed the page, the old body was back - and the user believes it never reached the
-  other devices either. So the edit is applied optimistically in the UI and lost by both the local
-  store and the outbound path. Reported, not yet reproduced or diagnosed. First questions: does the
-  `edit` control event reach the outbox at all (`[OUTBOX] Queued ... (control)`), and does the local
-  store persist the new body or only the `isEdited` flag - `StoredMessage` carries `isEdited` but
-  NOT `editedAt`, which is a hint that the edit path was written around the flag.
-
 - \[~\] **WP-NOTIF-1 (P2) - Notification quick actions.** (a) and (b) are CODE COMPLETE, NOT
   COMPILED (native: Kotlin + ObjC), and unverified on device; (c) is what is left to build.
   (a) *"Repondre" left no local trace.* It always DID send (`handleReply: queued`,
@@ -258,6 +250,9 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 #### Outbound delivery -> [chat](docs/wiki/frontend/modules/chat.md)
 
 - The outbox is best-effort at every step, so every swallowed branch logs - that is all a loss leaves.
+- MLS gives no echo of your OWN message, so the sender's optimistic update is the only writer it
+  gets: apply it in memory AND persist it (`persistLocalMutation`), or it dies at the next load.
+- A field absent from `db/messagePayload.ts` does not survive a reload, whichever backend is used.
 - `waitForMessageQueueIdle` before a flush is correctness: skipping it sends at a stale epoch.
 - A history request is online-only. The requester can retry and SAY it is waiting (v0.11.7); only
   a real background wake could answer it, and that is unbuilt on purpose.

@@ -233,6 +233,8 @@
   "chat_message_placeholder": "Écrire…",
   "chat_send_message_label": "Envoyer le message",
   "chat_send_error": "Échec de l'envoi : {reason}",
+  "chat_send_sync_in_progress": "Synchronisation en cours - réessayez dans un instant.",
+  "chat_send_session_establishing": "Session sécurisée en cours d'établissement. Réessayez dans un instant.",
   "chat_channel_members_title": "Membres du canal",
   "chat_admins_count_label": "Administrateurs - {admins}",
   "chat_members_count_label": "Membres - {regulars}",

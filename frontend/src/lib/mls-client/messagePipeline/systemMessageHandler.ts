@@ -425,6 +425,7 @@ export async function handleSystemEvent(
                 readBy: [],
                 reactions: messageReactions.get(editedMsg.id),
                 isEdited: true,
+                editedAt: editedAt.getTime(),
               },
               deviceKeyB64
             );

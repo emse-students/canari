@@ -46,6 +46,12 @@ export interface StoredMessage {
   isDeleted?: boolean;
   /** Set to true when the message body has been edited by the sender. */
   isEdited?: boolean;
+  /**
+   * Unix ms of the last edit, carried by the `edit_message` event. Optional and absent from rows
+   * written before it existed: `isEdited` alone still renders the "edited" marker, and the info
+   * tooltip simply omits the time rather than inventing one.
+   */
+  editedAt?: number;
   /** True when stored from FCM notification preview (plain text). */
   isFcmPreview?: boolean;
 }

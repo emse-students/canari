@@ -13,6 +13,7 @@ import {
   mergeOutboxEntry,
   outboxClearColumns,
 } from './outboxCodec';
+import { fromMessagePayload, toMessagePayload } from './messagePayload';
 
 // ---------------------------------------------------------------------------
 // IndexedDB implementation (Web / PWA)
@@ -258,17 +259,7 @@ export class IndexedDbStorage implements IStorage {
     const db = this.ensureDb();
     const encryptedMessages = await Promise.all(
       msgs.map(async (msg) => {
-        const payload: Record<string, unknown> = {
-          senderId: msg.senderId.trim().toLowerCase(),
-          content: msg.content,
-        };
-        if (msg.readBy && msg.readBy.length > 0) payload.readBy = msg.readBy;
-        if (msg.reactions && msg.reactions.length > 0) payload.reactions = msg.reactions;
-        if (msg.readAt) payload.readAt = msg.readAt;
-        if (msg.serverTimestamp) payload.serverTimestamp = msg.serverTimestamp;
-        if (msg.isDeleted) payload.isDeleted = true;
-        if (msg.isEdited) payload.isEdited = true;
-        const encrypted = await encryptData(payload, deviceKeyB64);
+        const encrypted = await encryptData(toMessagePayload(msg), deviceKeyB64);
         return {
           id: msg.id,
           conversationId: msg.conversationId,
@@ -307,25 +298,16 @@ export class IndexedDbStorage implements IStorage {
     const results: StoredMessage[] = [];
     for (const row of rows) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const payload = (await decryptData(row.cipherText, row.iv, deviceKeyB64)) as any;
-        results.push({
-          id: row.id,
-          conversationId: row.conversationId,
-          timestamp: row.timestamp,
-          senderId: payload.senderId,
-          content: payload.content,
-          readBy: Array.isArray(payload.readBy) ? payload.readBy : undefined,
-          reactions: Array.isArray(payload.reactions) ? payload.reactions : undefined,
-          readAt:
-            typeof payload.readAt === 'number' && payload.readAt > 0 ? payload.readAt : undefined,
-          serverTimestamp:
-            typeof payload.serverTimestamp === 'number' && payload.serverTimestamp > 0
-              ? payload.serverTimestamp
-              : undefined,
-          isDeleted: payload.isDeleted === true ? true : undefined,
-          isEdited: payload.isEdited === true ? true : undefined,
-        });
+        const payload = (await decryptData(row.cipherText, row.iv, deviceKeyB64)) as Record<
+          string,
+          unknown
+        >;
+        results.push(
+          fromMessagePayload(
+            { id: row.id, conversationId: row.conversationId, timestamp: row.timestamp },
+            payload
+          )
+        );
       } catch {
         console.warn('Failed to decrypt message', row.id);
       }
@@ -370,25 +352,16 @@ export class IndexedDbStorage implements IStorage {
     const results: StoredMessage[] = [];
     for (const row of page) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const payload = (await decryptData(row.cipherText, row.iv, deviceKeyB64)) as any;
-        results.push({
-          id: row.id,
-          conversationId: row.conversationId,
-          timestamp: row.timestamp,
-          senderId: payload.senderId,
-          content: payload.content,
-          readBy: Array.isArray(payload.readBy) ? payload.readBy : undefined,
-          reactions: Array.isArray(payload.reactions) ? payload.reactions : undefined,
-          readAt:
-            typeof payload.readAt === 'number' && payload.readAt > 0 ? payload.readAt : undefined,
-          serverTimestamp:
-            typeof payload.serverTimestamp === 'number' && payload.serverTimestamp > 0
-              ? payload.serverTimestamp
-              : undefined,
-          isDeleted: payload.isDeleted === true ? true : undefined,
-          isEdited: payload.isEdited === true ? true : undefined,
-        });
+        const payload = (await decryptData(row.cipherText, row.iv, deviceKeyB64)) as Record<
+          string,
+          unknown
+        >;
+        results.push(
+          fromMessagePayload(
+            { id: row.id, conversationId: row.conversationId, timestamp: row.timestamp },
+            payload
+          )
+        );
       } catch {
         console.warn('Failed to decrypt message', row.id);
       }

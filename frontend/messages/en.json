@@ -212,6 +212,8 @@
   "chat_message_placeholder": "Write…",
   "chat_send_message_label": "Send message",
   "chat_send_error": "Send failed: {reason}",
+  "chat_send_sync_in_progress": "Sync in progress - please try again in a moment.",
+  "chat_send_session_establishing": "Secure session being established. Please try again in a moment.",
   "chat_channel_members_title": "Channel members",
   "chat_admins_count_label": "Administrators - {admins}",
   "chat_members_count_label": "Members - {regulars}",

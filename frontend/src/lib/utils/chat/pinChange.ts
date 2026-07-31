@@ -15,6 +15,7 @@
  */
 import { decryptData } from '$lib/encryption';
 import { getStorage, type IStorage, type StoredMessage } from '$lib/db';
+import { fromMessagePayload } from '$lib/db/messagePayload';
 import { clearDeviceKeyAndWrapKey, saveDeviceKey } from '$lib/utils/deviceKeyVault';
 import { BiometricService } from '$lib/services/biometric';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -91,27 +92,12 @@ export async function reencryptLocalMessages(
         string,
         unknown
       >;
-      decrypted.push({
-        id: row.id,
-        conversationId: row.conversationId,
-        timestamp: row.timestamp,
-        senderId: payload.senderId as string,
-        content: payload.content as string,
-        readBy: Array.isArray(payload.readBy) ? (payload.readBy as string[]) : undefined,
-        reactions: Array.isArray(payload.reactions)
-          ? (payload.reactions as Array<{ emoji: string; userId: string }>)
-          : undefined,
-        readAt:
-          typeof payload.readAt === 'number' && payload.readAt > 0
-            ? (payload.readAt as number)
-            : undefined,
-        serverTimestamp:
-          typeof payload.serverTimestamp === 'number' && payload.serverTimestamp > 0
-            ? (payload.serverTimestamp as number)
-            : undefined,
-        isDeleted: payload.isDeleted === true ? true : undefined,
-        isEdited: payload.isEdited === true ? true : undefined,
-      });
+      decrypted.push(
+        fromMessagePayload(
+          { id: row.id, conversationId: row.conversationId, timestamp: row.timestamp },
+          payload
+        )
+      );
     } catch {
       console.warn('[DEVICEKEY_CHANGE] Failed to decrypt message', row.id);
     }

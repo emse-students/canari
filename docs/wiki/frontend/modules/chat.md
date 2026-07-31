@@ -237,6 +237,28 @@ unaddressable until the next reload.
 so a reaction pill looks and behaves the same on both sides. Toggling is optimistic and rolled
 back by re-applying the same toggle, which is its own inverse.
 
+### A control event is applied twice, on two different devices
+
+Every message mutation - reaction, edit, delete, pin, read receipt - travels as a **control event**
+in the durable outbox (`enqueueControlEvent`), and lands on peers through `systemMessageHandler`,
+which applies it to the conversation AND writes it to the encrypted store.
+
+The sender's device never runs that handler: **MLS gives no echo of your own message**. So the
+issuing device has exactly one code path - the optimistic update in `useMessaging` - and that path
+owns *both* halves. Updating `ctx.conversations` alone makes the mutation look applied until the
+next load, at which point the store answers with the pre-mutation row and the change appears to
+have been rejected. That was WP-EDIT-1: an edit that reverted on refresh while every peer showed
+it correctly.
+
+`persistLocalMutation` is the one place that writes a locally-applied mutation. It is best-effort
+and logs on failure - the control event is already durable in the outbox, so a failed write costs
+a stale local row, never a lost mutation for the group.
+
+The at-rest projection of a message is shared by both storage backends
+(`db/messagePayload.ts`): a field that is not in `toMessagePayload`/`fromMessagePayload` does not
+survive a reload, whichever backend is in use. `editedAt` was missing from both for exactly as long
+as it existed on the in-memory type.
+
 ### Forwarding
 
 `forwardMessage` crosses freely between the two worlds: a channel message can be forwarded into a

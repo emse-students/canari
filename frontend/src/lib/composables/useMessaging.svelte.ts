@@ -37,7 +37,7 @@ import {
   toggleMessageReaction,
 } from '$lib/utils/chat/messageReactions';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-import { chat_system_message_deleted } from '$lib/paraglide/messages';
+import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { MediaService } from '$lib/media';
 import { getPreviewText, mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
@@ -570,13 +570,13 @@ export function useMessaging() {
     // automatically once the group becomes sendable.
     if (filesToSend.length > 0 && !isChannel) {
       if (isMessageCatchupActive) {
-        ctx.log('[SEND] Abort media: synchronisation MLS en cours');
-        ctx.setSendError('Sync in progress - please try again in a moment.');
+        ctx.log('[SEND] Abort media: MLS catch-up in progress');
+        ctx.setSendError(m.chat_send_sync_in_progress());
         return;
       }
       const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
       if (!stillMember || convo.lifecycle !== 'active') {
-        ctx.setSendError('Secure session being established. Please try again in a moment.');
+        ctx.setSendError(m.chat_send_session_establishing());
         return;
       }
     }
@@ -772,6 +772,46 @@ export function useMessaging() {
 
   // ── Reactions / edit / delete ─────────────────────────────────────────────
 
+  /**
+   * Writes a locally-applied mutation (reaction, edit, delete) back to the encrypted store.
+   *
+   * The sender never receives an MLS echo of their own control event, so this is the ONLY thing
+   * that makes the mutation survive a reload on the device that issued it - the peers get theirs
+   * from `systemMessageHandler`. Without it the optimistic in-memory update is dropped on the next
+   * load and the pre-edit body comes back.
+   *
+   * Best-effort by design: the control event is already durable in the outbox, so a failed write
+   * costs a stale local row, never a lost mutation for the group.
+   */
+  async function persistLocalMutation(
+    msg: ChatMessage,
+    conversationKey: string,
+    ctx: MessagingContext
+  ): Promise<void> {
+    if (!ctx.storage) return;
+    try {
+      await ctx.storage.saveMessage(
+        {
+          id: msg.id,
+          conversationId: conversationKey,
+          senderId: msg.senderId,
+          content: msg.content,
+          timestamp: msg.timestamp.getTime(),
+          readBy: msg.readBy,
+          reactions: messageReactions.get(msg.id),
+          isDeleted: msg.isDeleted,
+          isEdited: msg.isEdited,
+          ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
+        },
+        ctx.deviceKeyB64
+      );
+    } catch (e) {
+      ctx.log(
+        `[DB] Failed to persist local mutation on ${msg.id}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
   /** Toggles an emoji reaction on a message: adds it if absent, removes it if the user already used that emoji. Updates state optimistically in memory and DB before sending the MLS message. */
   async function handleAddReaction(messageId: string, emoji: string, ctx: MessagingContext) {
     if (!ctx.selectedContact) return;
@@ -799,28 +839,7 @@ export function useMessaging() {
       const nextMsgs = [...convo.messages];
       nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
       ctx.conversations.set(conversationKey, { ...convo, messages: nextMsgs });
-
-      if (ctx.storage) {
-        try {
-          const target = nextMsgs[msgIdx];
-          await ctx.storage.saveMessage(
-            {
-              id: target.id,
-              conversationId: conversationKey,
-              senderId: target.senderId,
-              content: target.content,
-              timestamp: target.timestamp.getTime(),
-              readBy: target.readBy,
-              reactions: updated,
-              isDeleted: target.isDeleted,
-              isEdited: target.isEdited,
-            },
-            ctx.deviceKeyB64
-          );
-        } catch (e) {
-          console.warn('[DB] Failed to persist reaction locally:', e);
-        }
-      }
+      await persistLocalMutation(nextMsgs[msgIdx], conversationKey, ctx);
     }
 
     const reactionDeps = {
@@ -858,6 +877,7 @@ export function useMessaging() {
     if (idx !== -1) {
       msgs[idx] = { ...msgs[idx], isDeleted: true, content: chat_system_message_deleted() };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
+      await persistLocalMutation(msgs[idx], ctx.selectedContact, ctx);
     }
   }
 
@@ -888,6 +908,7 @@ export function useMessaging() {
         readBy: [],
       };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
+      await persistLocalMutation(msgs[idx], ctx.selectedContact, ctx);
     }
   }
 
