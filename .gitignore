@@ -111,3 +111,7 @@ google-services.json
 
 # Aider
 .aider*
+
+# Python (test_adb.py tooling)
+__pycache__/
+*.py[cod]
