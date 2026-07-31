@@ -484,7 +484,7 @@ class TauriManagerApp:
         )
 
         def browse_path():
-            selected = filedialog.askdirectory(title="Selectionnez le repertoire frontend", initialdir=PROJECT_DIR)
+            selected = filedialog.askdirectory(title="Sélectionnez le répertoire frontend", initialdir=PROJECT_DIR)
             if selected:
                 path_var.set(selected)
 
@@ -498,14 +498,14 @@ class TauriManagerApp:
         android_frame = ttk.Frame(config_win)
         android_frame.pack(pady=5, padx=10, fill=tk.X)
 
-        android_var = tk.StringVar(value=ANDROID_HOME or "(non detecte)")
+        android_var = tk.StringVar(value=ANDROID_HOME or "(non détecté)")
         ttk.Entry(android_frame, textvariable=android_var, width=50).pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5)
         )
 
         def browse_android():
             selected = filedialog.askdirectory(
-                title="Selectionnez le repertoire Android SDK",
+                title="Sélectionnez le répertoire Android SDK",
                 initialdir=os.path.expanduser("~\\AppData\\Local\\Android"),
             )
             if selected:
@@ -519,17 +519,17 @@ class TauriManagerApp:
         def check_android_sdk():
             """Runs on the main thread only - it touches widgets."""
             sdk_path = android_var.get()
-            if sdk_path and sdk_path != "(non detecte)":
+            if sdk_path and sdk_path != "(non détecté)":
                 if os.path.isdir(sdk_path):
                     sdk_status_label.config(text="SDK Android valide", foreground="green")
                 else:
-                    sdk_status_label.config(text="Repertoire invalide", foreground="red")
+                    sdk_status_label.config(text="Répertoire invalide", foreground="red")
                 return
 
             found = find_android_sdk()
             if found:
                 android_var.set(found)
-                sdk_status_label.config(text="SDK Android detecte automatiquement", foreground="green")
+                sdk_status_label.config(text="SDK Android détecté automatiquement", foreground="green")
             else:
                 sdk_status_label.config(
                     text="SDK Android introuvable. Installez Android Studio ou indiquez le chemin.",
@@ -537,7 +537,7 @@ class TauriManagerApp:
                 )
 
         def install_sdk_button():
-            sdk_status_label.config(text="Installation en cours… (5 a 10 minutes)", foreground="blue")
+            sdk_status_label.config(text="Installation en cours… (5 à 10 minutes)", foreground="blue")
 
             def install_task():
                 ok = install_android_sdk()
@@ -550,11 +550,11 @@ class TauriManagerApp:
                         android_var.set(found)
                     if ok:
                         sdk_status_label.config(
-                            text="SDK Android installe. Redemarrez l'application.", foreground="green"
+                            text="SDK Android installé. Redémarrez l'application.", foreground="green"
                         )
                     else:
                         sdk_status_label.config(
-                            text="Installation echouee - voir la console pour le detail.", foreground="red"
+                            text="Installation échouée - voir la console pour le détail.", foreground="red"
                         )
 
                 config_win.after(0, update_ui)
@@ -563,10 +563,10 @@ class TauriManagerApp:
 
         sdk_buttons_frame = ttk.Frame(config_win)
         sdk_buttons_frame.pack(pady=5, padx=10, fill=tk.X)
-        ttk.Button(sdk_buttons_frame, text="Verifier le SDK", command=check_android_sdk).pack(side=tk.LEFT, padx=5)
+        ttk.Button(sdk_buttons_frame, text="Vérifier le SDK", command=check_android_sdk).pack(side=tk.LEFT, padx=5)
         ttk.Button(sdk_buttons_frame, text="Installer le SDK", command=install_sdk_button).pack(side=tk.LEFT, padx=5)
 
-        ttk.Label(config_win, text="Appareils detectes :", font=("Segoe UI", 10)).pack(
+        ttk.Label(config_win, text="Appareils détectés :", font=("Segoe UI", 10)).pack(
             pady=(10, 5), padx=10, anchor=tk.W
         )
 
@@ -591,7 +591,7 @@ class TauriManagerApp:
                 return
             detecting.set()
             device_listbox.delete(0, tk.END)
-            status_label.config(text="Detection en cours (10 a 30 secondes)…", foreground="blue")
+            status_label.config(text="Détection en cours (10 à 30 secondes)…", foreground="blue")
 
             def worker():
                 detected = detect_devices()
@@ -603,12 +603,12 @@ class TauriManagerApp:
                         for dev_id, dev_name in detected.items():
                             device_listbox.insert(tk.END, f"{dev_name}  -  {dev_id}")
                         status_label.config(
-                            text=f"{len(detected)} appareil(s) detecte(s)", foreground="green"
+                            text=f"{len(detected)} appareil(s) détecté(s)", foreground="green"
                         )
                     else:
-                        device_listbox.insert(tk.END, "Aucun appareil detecte")
+                        device_listbox.insert(tk.END, "Aucun appareil détecté")
                         status_label.config(
-                            text="Verifiez : cable USB, mode developpeur, debogage USB, autorisation ADB",
+                            text="Vérifiez : câble USB, mode développeur, débogage USB, autorisation ADB",
                             foreground="orange",
                         )
 
@@ -619,29 +619,29 @@ class TauriManagerApp:
         button_frame = ttk.Frame(config_win)
         button_frame.pack(pady=10, padx=10, fill=tk.X)
 
-        ttk.Button(button_frame, text="Detecter les appareils", command=detect_and_refresh).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Détecter les appareils", command=detect_and_refresh).pack(side=tk.LEFT, padx=5)
 
         def confirm():
             global PROJECT_DIR, ANDROID_HOME
             project_path = path_var.get()
             if not os.path.isdir(project_path):
-                messagebox.showerror("Erreur", f"Repertoire invalide : {project_path}")
+                messagebox.showerror("Erreur", f"Répertoire invalide : {project_path}")
                 return
 
             android_path = android_var.get()
-            if android_path and android_path != "(non detecte)" and not os.path.isdir(android_path):
+            if android_path and android_path != "(non détecté)" and not os.path.isdir(android_path):
                 messagebox.showerror("Erreur", f"Android SDK invalide : {android_path}")
                 return
 
             PROJECT_DIR = project_path
-            ANDROID_HOME = android_path if android_path and android_path != "(non detecte)" else ""
+            ANDROID_HOME = android_path if android_path and android_path != "(non détecté)" else ""
 
             self.devices = detect_devices()
 
             if not self.devices:
                 keep_going = messagebox.askyesno(
                     "Aucun appareil",
-                    "Aucun appareil detecte.\nContinuer quand meme, pour compiler uniquement ?",
+                    "Aucun appareil détecté.\nContinuer quand même, pour compiler uniquement ?",
                 )
                 if not keep_going:
                     return
@@ -680,21 +680,21 @@ class TauriManagerApp:
         self.clean_install_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             self.control_frame,
-            text="Install propre (efface les donnees)",
+            text="Install propre (efface les données)",
             variable=self.clean_install_var,
         ).pack(side=tk.LEFT, padx=5)
 
         ttk.Separator(self.control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
         ttk.Button(self.control_frame, text="Lancer Logcat", command=self.start_all_logcats).pack(side=tk.LEFT, padx=5)
-        ttk.Button(self.control_frame, text="Arreter Logcat", command=self.stop_all_logcats).pack(side=tk.LEFT, padx=5)
-        ttk.Button(self.control_frame, text="Forcer l'arret de l'app", command=self.force_stop_all).pack(
+        ttk.Button(self.control_frame, text="Arrêter Logcat", command=self.stop_all_logcats).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.control_frame, text="Forcer l'arrêt de l'app", command=self.force_stop_all).pack(
             side=tk.LEFT, padx=5
         )
 
         ttk.Separator(self.control_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
-        ttk.Button(self.control_frame, text="Detecter les appareils", command=self.refresh_devices).pack(
+        ttk.Button(self.control_frame, text="Détecter les appareils", command=self.refresh_devices).pack(
             side=tk.LEFT, padx=5
         )
         ttk.Button(self.control_frame, text="Interrompre la compilation", command=self.stop_all_processes).pack(
@@ -713,12 +713,12 @@ class TauriManagerApp:
         self.text_system: scrolledtext.ScrolledText = scrolledtext.ScrolledText(
             self.notebook, wrap=tk.WORD, bg="#1e1e1e", fg="#ce9178", font=("Consolas", 10)
         )
-        self.notebook.add(self.text_system, text="Systeme (compilation / infos)")
+        self.notebook.add(self.text_system, text="Système (compilation / infos)")
 
         self.text_combined: scrolledtext.ScrolledText = scrolledtext.ScrolledText(
             self.notebook, wrap=tk.WORD, bg="#1e1e1e", fg="#d4d4d4", font=("Consolas", 10)
         )
-        self.notebook.add(self.text_combined, text="Logs combines")
+        self.notebook.add(self.text_combined, text="Logs combinés")
         self.text_combined.tag_config(SYSTEM_SOURCE, foreground="#ce9178")
 
         for device_id in self.devices:
@@ -829,13 +829,13 @@ class TauriManagerApp:
         self.text_system.delete("1.0", tk.END)
         for text_area in self.device_text_areas.values():
             text_area.delete("1.0", tk.END)
-        self.log(SYSTEM_SOURCE, "Affichages effaces.")
+        self.log(SYSTEM_SOURCE, "Affichages effacés.")
 
     def save_logs(self) -> None:
         """Writes the combined tab to a file - the runbook wants the log lines, not a summary."""
         default_name = f"canari-logcat-{datetime.datetime.now():%Y%m%d-%H%M%S}.log"
         path = filedialog.asksaveasfilename(
-            title="Enregistrer les logs combines",
+            title="Enregistrer les logs combinés",
             defaultextension=".log",
             initialfile=default_name,
             filetypes=[("Fichier log", "*.log"), ("Tous les fichiers", "*.*")],
@@ -845,14 +845,14 @@ class TauriManagerApp:
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.text_combined.get("1.0", tk.END))
-            self.log(SYSTEM_SOURCE, f"Logs enregistres : {path}")
+            self.log(SYSTEM_SOURCE, f"Logs enregistrés : {path}")
         except Exception as e:
-            self.log(SYSTEM_SOURCE, f"Echec de l'enregistrement : {e}")
+            self.log(SYSTEM_SOURCE, f"Échec de l'enregistrement : {e}")
 
     # === DEVICES ===
     def refresh_devices(self) -> None:
         """Re-detects devices and updates the buttons and tabs to match."""
-        self.log(SYSTEM_SOURCE, "Detection des appareils…")
+        self.log(SYSTEM_SOURCE, "Détection des appareils…")
 
         def worker():
             new_devices = detect_devices()
@@ -866,17 +866,17 @@ class TauriManagerApp:
                     return
 
                 for device_id in removed:
-                    self.log(SYSTEM_SOURCE, f"Deconnecte : {self.devices[device_id]} ({device_id})")
+                    self.log(SYSTEM_SOURCE, f"Déconnecté : {self.devices[device_id]} ({device_id})")
                     self.stop_logcat_for_device(device_id, quiet=True)
 
                 self.devices = new_devices
 
                 for device_id in added:
-                    self.log(SYSTEM_SOURCE, f"Connecte : {self.devices[device_id]} ({device_id})")
+                    self.log(SYSTEM_SOURCE, f"Connecté : {self.devices[device_id]} ({device_id})")
                     self.ensure_device_tab(device_id)
 
                 self.rebuild_device_buttons()
-                self.log(SYSTEM_SOURCE, f"{len(self.devices)} appareil(s) connecte(s).")
+                self.log(SYSTEM_SOURCE, f"{len(self.devices)} appareil(s) connecté(s).")
 
             self.root.after(0, update_ui)
 
@@ -885,16 +885,16 @@ class TauriManagerApp:
     def force_stop_all(self) -> None:
         """`am force-stop` on every device - how the runbook means "kill the app"."""
         if not self.devices:
-            self.log(SYSTEM_SOURCE, "Aucun appareil connecte.")
+            self.log(SYSTEM_SOURCE, "Aucun appareil connecté.")
             return
 
         def task():
             for device_id, device_name in list(self.devices.items()):
                 try:
                     _run(["adb", "-s", device_id, "shell", "am", "force-stop", PACKAGE_NAME], timeout=15)
-                    self.log(SYSTEM_SOURCE, f"{PACKAGE_NAME} arrete sur {device_name}.")
+                    self.log(SYSTEM_SOURCE, f"{PACKAGE_NAME} arrêté sur {device_name}.")
                 except Exception as e:
-                    self.log(SYSTEM_SOURCE, f"Echec de l'arret sur {device_name} : {e}")
+                    self.log(SYSTEM_SOURCE, f"Échec de l'arrêt sur {device_name} : {e}")
 
         threading.Thread(target=task, daemon=True).start()
 
@@ -913,7 +913,7 @@ class TauriManagerApp:
             try:
                 p.terminate()
             except Exception as e:
-                self.log(SYSTEM_SOURCE, f"Echec de l'interruption : {e}")
+                self.log(SYSTEM_SOURCE, f"Échec de l'interruption : {e}")
 
         self.root.after(2000, self._force_kill_remaining)
 
@@ -927,7 +927,7 @@ class TauriManagerApp:
             except Exception:
                 pass
         if survivors:
-            self.log(SYSTEM_SOURCE, f"{len(survivors)} processus tue(s) de force.")
+            self.log(SYSTEM_SOURCE, f"{len(survivors)} processus tué(s) de force.")
 
     def _track(self, process: subprocess.Popen[str]) -> None:
         with self.process_lock:
@@ -981,7 +981,7 @@ class TauriManagerApp:
             if process.returncode in (-15, -9):  # SIGTERM / SIGKILL: we asked for it
                 self.log(SYSTEM_SOURCE, "Processus interrompu.")
                 return False
-            self.log(SYSTEM_SOURCE, f"ECHEC (code {process.returncode}) : {cmd}")
+            self.log(SYSTEM_SOURCE, f"ÉCHEC (code {process.returncode}) : {cmd}")
             return False
         except Exception as e:
             self.log(SYSTEM_SOURCE, f"Exception : {e}")
@@ -1026,7 +1026,7 @@ class TauriManagerApp:
             if process.returncode in (-15, -9):
                 self.log(SYSTEM_SOURCE, "Processus interrompu.")
                 return False
-            self.log(SYSTEM_SOURCE, f"ECHEC (code {process.returncode}) : {' '.join(cmd)}")
+            self.log(SYSTEM_SOURCE, f"ÉCHEC (code {process.returncode}) : {' '.join(cmd)}")
             return False
         except Exception as e:
             self.log(SYSTEM_SOURCE, f"Exception : {e}")
@@ -1046,11 +1046,11 @@ class TauriManagerApp:
             ok = self.execute_command(
                 "bun tauri android build --target aarch64 --debug",
                 SYSTEM_SOURCE,
-                "Compilation terminee (mode DEBUG).",
+                "Compilation terminée (mode DEBUG).",
                 cwd=PROJECT_DIR,
             )
             if not ok:
-                self.log(SYSTEM_SOURCE, "Compilation echouee - installation annulee.")
+                self.log(SYSTEM_SOURCE, "Compilation échouée - installation annulée.")
                 return
 
             self._ensure_native_lib_present()
@@ -1059,7 +1059,7 @@ class TauriManagerApp:
             if apk:
                 self.log(SYSTEM_SOURCE, f"APK produit : {apk}")
             else:
-                self.log(SYSTEM_SOURCE, "Aucun APK trouve dans les sorties de build.")
+                self.log(SYSTEM_SOURCE, "Aucun APK trouvé dans les sorties de build.")
 
         threading.Thread(target=build_task, daemon=True).start()
 
@@ -1085,19 +1085,19 @@ class TauriManagerApp:
                 return
 
             if os.path.isfile(so_dst) and os.path.getmtime(so_dst) >= os.path.getmtime(so_src):
-                self.log(SYSTEM_SOURCE, "Librairie native deja a jour dans jniLibs.")
+                self.log(SYSTEM_SOURCE, "Librairie native déjà à jour dans jniLibs.")
                 return
 
             os.makedirs(so_dst_dir, exist_ok=True)
             shutil.copy2(so_src, so_dst)
-            self.log(SYSTEM_SOURCE, f"Librairie native copiee vers {so_dst}")
+            self.log(SYSTEM_SOURCE, f"Librairie native copiée vers {so_dst}")
         except Exception as e:
-            self.log(SYSTEM_SOURCE, f"Echec de la copie de la librairie native : {e}")
+            self.log(SYSTEM_SOURCE, f"Échec de la copie de la librairie native : {e}")
 
     def run_deploy(self, device_id: str) -> None:
         device_name = self.devices.get(device_id, device_id)
         clean = self.clean_install_var.get()
-        self.log(SYSTEM_SOURCE, f"--- DEPLOIEMENT SUR {device_name} ---")
+        self.log(SYSTEM_SOURCE, f"--- DÉPLOIEMENT SUR {device_name} ---")
 
         def task() -> None:
             abi = device_abi(device_id)
@@ -1111,16 +1111,16 @@ class TauriManagerApp:
             self.log(SYSTEM_SOURCE, f"ABI {abi or 'inconnue'} -> {os.path.relpath(apk_full, PROJECT_DIR)}")
 
             if clean:
-                self.log(SYSTEM_SOURCE, f"Desinstallation de {PACKAGE_NAME} (les donnees seront perdues)…")
+                self.log(SYSTEM_SOURCE, f"Désinstallation de {PACKAGE_NAME} (les données seront perdues)…")
                 result = _run(["adb", "-s", device_id, "uninstall", PACKAGE_NAME], timeout=60)
                 if "Success" in result.stdout:
-                    self.log(SYSTEM_SOURCE, "Desinstalle.")
+                    self.log(SYSTEM_SOURCE, "Désinstallé.")
                 else:
                     # Distinguish "was not installed" from "adb could not talk to the device":
                     # the second one used to be reported as the first.
                     detail = (result.stdout + result.stderr).strip().splitlines()
                     reason = detail[-1] if detail else "raison inconnue"
-                    self.log(SYSTEM_SOURCE, f"Rien a desinstaller ({reason}).")
+                    self.log(SYSTEM_SOURCE, f"Rien à désinstaller ({reason}).")
 
             # -r reinstalls while keeping the data; -d allows a downgrade.
             install_args = ["adb", "-s", device_id, "install", "-r", "-d", apk_full]
@@ -1128,8 +1128,8 @@ class TauriManagerApp:
                 install_args = ["adb", "-s", device_id, "install", apk_full]
 
             self.log(SYSTEM_SOURCE, f"Installation de {os.path.basename(apk_full)}…")
-            if not self.execute_command_list(install_args, SYSTEM_SOURCE, f"APK installe sur {device_name}"):
-                self.log(SYSTEM_SOURCE, "Installation echouee - lancement annule.")
+            if not self.execute_command_list(install_args, SYSTEM_SOURCE, f"APK installé sur {device_name}"):
+                self.log(SYSTEM_SOURCE, "Installation échouée - lancement annulé.")
                 return
 
             # Logcat starts BEFORE the app, so the launch itself is captured.
@@ -1138,9 +1138,9 @@ class TauriManagerApp:
             if not self.execute_command_list(
                 ["adb", "-s", device_id, "shell", "am", "start", "-n", ACTIVITY_NAME],
                 SYSTEM_SOURCE,
-                f"Application lancee sur {device_name}",
+                f"Application lancée sur {device_name}",
             ):
-                self.log(SYSTEM_SOURCE, "Lancement echoue.")
+                self.log(SYSTEM_SOURCE, "Lancement échoué.")
 
         threading.Thread(target=task, daemon=True).start()
 
@@ -1181,13 +1181,13 @@ class TauriManagerApp:
                 creationflags=_NO_WINDOW,
             )
         except Exception as e:
-            self.log(SYSTEM_SOURCE, f"Echec du demarrage de logcat sur {device_name} : {e}")
+            self.log(SYSTEM_SOURCE, f"Échec du démarrage de logcat sur {device_name} : {e}")
             return
 
         with self.process_lock:
             self.logcat_processes[device_id] = process
 
-        self.log(SYSTEM_SOURCE, f"Logcat demarre sur {device_name} ({len(LOGCAT_TAGS)} tags).")
+        self.log(SYSTEM_SOURCE, f"Logcat démarré sur {device_name} ({len(LOGCAT_TAGS)} tags).")
 
         def read_output() -> None:
             if not process.stdout:
@@ -1215,12 +1215,12 @@ class TauriManagerApp:
         except Exception:
             pass
         if not quiet:
-            self.log(SYSTEM_SOURCE, f"Logcat arrete sur {self.label_for(device_id)}.")
+            self.log(SYSTEM_SOURCE, f"Logcat arrêté sur {self.label_for(device_id)}.")
         return True
 
     def start_all_logcats(self) -> None:
         if not self.devices:
-            self.log(SYSTEM_SOURCE, "Aucun appareil connecte.")
+            self.log(SYSTEM_SOURCE, "Aucun appareil connecté.")
             return
         for device_id in list(self.devices):
             self.start_logcat_for_device(device_id)
@@ -1230,7 +1230,7 @@ class TauriManagerApp:
             device_ids = list(self.logcat_processes)
         stopped = sum(1 for device_id in device_ids if self.stop_logcat_for_device(device_id, quiet=True))
         if stopped:
-            self.log(SYSTEM_SOURCE, f"{stopped} logcat(s) arrete(s).")
+            self.log(SYSTEM_SOURCE, f"{stopped} logcat(s) arrêté(s).")
         else:
             self.log(SYSTEM_SOURCE, "Aucun logcat en cours.")
 
