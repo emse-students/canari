@@ -73,7 +73,7 @@ export interface PendingMediaFile {
   height?: number;
 }
 
-/** Presets par contexte - qualité plus haute, resize moins agressif. */
+/** Per-context presets - higher quality, less aggressive resize. */
 export const IMAGE_COMPRESS_PRESETS = {
   chat: { maxWidth: 2560, maxHeight: 2560, quality: 0.92 },
   post: { maxWidth: 2048, maxHeight: 2048, quality: 0.92 },

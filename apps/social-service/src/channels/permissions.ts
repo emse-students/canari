@@ -32,7 +32,7 @@ export const DEFAULT_ADMIN_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.MANAGE_WORKSPACE,
 ];
 
-/** Permissions du rôle Modérateur (priority 50). */
+/** Permissions of the Moderateur role (priority 50). */
 export const DEFAULT_MODERATOR_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.ACCESS_CHANNEL,
   CHANNEL_PERMISSIONS.SEND_MESSAGES,
@@ -41,7 +41,7 @@ export const DEFAULT_MODERATOR_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.KICK_MEMBERS,
 ];
 
-/** Permissions du rôle Membre (priority 10). */
+/** Permissions of the Membre role (priority 10). */
 export const DEFAULT_MEMBER_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.ACCESS_CHANNEL,
   CHANNEL_PERMISSIONS.SEND_MESSAGES,

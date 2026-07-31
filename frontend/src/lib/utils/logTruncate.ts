@@ -7,7 +7,7 @@
 /** Canonical UUID (8-4-4-4-12), case-insensitive. */
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
-/** Suite hexadécimale d'au moins 16 caractères (userId 64-hex, clés, hashes SHA-256…). */
+/** Hex run of at least 16 characters (64-hex userId, keys, SHA-256 hashes...). */
 const LONG_HEX_RE = /\b[0-9a-f]{16,}\b/gi;
 
 let installed = false;

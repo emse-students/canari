@@ -20,7 +20,7 @@ export interface AppPlace {
   mobileNav: boolean;
 }
 
-// Ordre mobile : Feed | Communautés | Discussions | Notifs | Tableau de bord
+// Mobile order: Feed | Communities | Chats | Notifications | Dashboard
 // The desktop sidebar shows all places (mobileNav ignored).
 export const APP_PLACES: AppPlace[] = [
   {

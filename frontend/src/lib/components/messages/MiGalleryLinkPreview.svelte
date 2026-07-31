@@ -11,9 +11,9 @@
   }
 
   interface Props {
-    /** URL de l'album MiGallery (utilisée comme href du lien). */
+    /** MiGallery album URL (used as the link href). */
     url: string;
-    /** Données de preview récupérées via l'API MiGallery (og-preview / link-preview). */
+    /** Preview data fetched from the MiGallery API (og-preview / link-preview). */
     preview: ExternalPreviewPayload | null;
     /** Whether the data is currently loading. */
     isLoading: boolean;

@@ -26,7 +26,7 @@
  *  become "ghost" entries in the browser history.  Calling `history.go(-n)`
  *  after SvelteKit has already pushed the new route would move the history
  *  pointer backwards and cause SvelteKit to navigate back - exactly the bug
- *  "la première action ramène à la page précédente".
+ *  "the first back gesture lands on the previous page".
  *
  *  Instead, `onPopState` detects ghost entries by their `{ canariOverlay: N }`
  *  state object: when the JS stack is empty but the state is ours, the entry
@@ -169,7 +169,7 @@ export function abandonHistoryOverlay(close: () => void): void {
  * ⚠️  Do NOT call `history.go(-count)` here.  That call is asynchronous and
  * fires AFTER SvelteKit has already pushed the new route, which moves the
  * history pointer backwards and causes SvelteKit to navigate back - the bug
- * known as "la première navigation ramène à la page précédente".
+ * known as "the first back gesture lands on the previous page".
  */
 export function drainHistoryOverlayStack(): void {
   while (stack.length > 0) {

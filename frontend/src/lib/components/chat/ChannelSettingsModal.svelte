@@ -662,7 +662,7 @@
 </Modal>
 
 <style>
-  /* Scrollbar discrète pour le menu et le contenu */
+  /* Discreet scrollbar for the menu and the content */
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
     height: 6px;

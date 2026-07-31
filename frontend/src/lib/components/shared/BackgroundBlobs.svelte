@@ -20,8 +20,8 @@
   .blob {
     position: absolute;
     border-radius: 50%;
-    /* L'optimisation majeure : On remplace filter: blur() par un dégradé radial.
-      L'effet visuel est le même (un halo de couleur), mais le coût GPU est nul.
+    /* The main optimization: a radial gradient replaces filter: blur().
+      Same visual result (a colour halo) at no GPU cost.
     */
     background: radial-gradient(circle, var(--blob-color) 0%, transparent 70%);
     transform: scale(1.08);
@@ -82,7 +82,7 @@
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.72' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
   }
 
-  /* Thème sombre simplifié grâce à la variable --blob-color */
+  /* Dark theme kept simple by the --blob-color variable */
   :global(:root[data-theme='dark']) .blob {
     opacity: 0.2;
     mix-blend-mode: screen;

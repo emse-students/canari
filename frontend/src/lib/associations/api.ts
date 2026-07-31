@@ -504,7 +504,7 @@ export async function getCalendarEventLinkedToPost(postId: string): Promise<{
   );
 }
 
-/** Public - événement d'agenda pointant vers ce formulaire. */
+/** Public - the calendar event pointing at this form, if any. */
 export async function getCalendarEventLinkedToForm(formId: string): Promise<{
   linkedEvent: AssociationCalendarEvent | null;
 }> {

@@ -804,7 +804,7 @@
     background: rgba(255, 255, 255, 0.15);
   }
 
-  /* Pour cacher la petite icône calendrier native sur Webkit et avoir juste l'icône personnalisée Lucide */
+  /* Hide Webkit's native calendar icon so only the custom Lucide one shows */
   input[type='datetime-local']::-webkit-calendar-picker-indicator {
     cursor: pointer;
     opacity: 0;

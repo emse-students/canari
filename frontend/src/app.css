@@ -729,9 +729,9 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   }
 }
 
-/* ── Accessibilité : skip-to-content ────────────────────────────────────────
-   Lien visible uniquement au focus clavier, positionné avant le contenu
-   principal pour permettre de sauter la navigation répétitive (WCAG 2.4.1). */
+/* ── Accessibility: skip-to-content ─────────────────────────────────────────
+   Visible on keyboard focus only, placed before the main content so the
+   repetitive navigation can be skipped (WCAG 2.4.1). */
 .skip-link {
   position: absolute;
   top: -100%;
@@ -753,9 +753,9 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   outline-offset: 2px;
 }
 
-/* ── Accessibilité : prefers-reduced-motion ─────────────────────────────────
-   Coupe toutes les animations/transitions pour les utilisateurs ayant activé
-   la réduction de mouvement dans leur OS (WCAG 2.3.3). */
+/* ── Accessibility: prefers-reduced-motion ──────────────────────────────────
+   Drops every animation/transition for users who asked their OS to reduce
+   motion (WCAG 2.3.3). */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -14,7 +14,7 @@
 export type MembershipStatus = 'pending' | 'active';
 
 /**
- * Résultat typé du traitement d'un message MLS entrant.
+ * Typed outcome of processing an incoming MLS message.
  *
  * Replaces the ambiguous `Uint8Array | null` return of `processIncomingMessage`.
  * Produced by interpreting the WASM output plus the deduplication flags.

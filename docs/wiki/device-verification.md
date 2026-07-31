@@ -8,9 +8,10 @@ Work Packages sit open with correct-looking code that has never executed on hard
 This file is the single ordered pass that closes them. It replaces the checks that were scattered
 across individual Work Packages and the delegation log that used to live in `AGENTS.md`.
 
-**Build under test: v0.11.5.** Android from Play (production) or the release-asset APK, iOS from
-TestFlight. Both were published by CI on 2026-07-30. Check G alone has since been re-run on
-**v0.11.6** (the two biometric fixes), and passed on Android - see below.
+**Build under test: v0.11.7** (released 2026-07-31). Android from Play (production) or the
+release-asset APK, iOS from TestFlight. It is the first build carrying WP-PUSH-1/2, HIST-1 and
+NET-1, so checks B and C now cover the Android catch-up-first ladder and the iOS App Group cache
+hop as well. Check G already passed on Android on **v0.11.6** and is not re-owed - see below.
 
 ## What each check closes
 
@@ -37,8 +38,8 @@ TestFlight. Both were published by CI on 2026-07-30. Check G alone has since bee
 
 ## Order matters
 
-**Do check A first.** It requires the pre-WP-SEC-1 build installed and logged in *before* v0.11.5
-lands over it. Once you install v0.11.5 onto a clean or already-migrated app, that opportunity is
+**Do check A first.** It requires the pre-WP-SEC-1 build installed and logged in *before* v0.11.7
+lands over it. Once you install v0.11.7 onto a clean or already-migrated app, that opportunity is
 gone until you deliberately downgrade again.
 
 ---
@@ -52,7 +53,7 @@ without the user logging in again. This is the only test of it, on either platfo
 1. Install **v0.11.3** (the last release *without* WP-SEC-1 - v0.11.4 already contains it). Android:
    the `v0.11.3` release-asset APK. iOS: the v0.11.3 TestFlight build.
 2. Log in fully. Send and receive one message so the state is real.
-3. Install v0.11.5 **over it**, without logging in again.
+3. Install v0.11.7 **over it**, without logging in again.
 4. Launch once, then kill the app.
 5. Run check B (Android) / C (iOS).
 
@@ -114,7 +115,7 @@ alias being written in a format its reader does not accept.
 
 **Proves** the same chain on a device with no migration history - the path every new user takes.
 
-1. Uninstall completely. Install v0.11.5. Log in.
+1. Uninstall completely. Install v0.11.7. Log in.
 2. Repeat B and C.
 
 ## F. Login end to end: init, save, KeyPackage

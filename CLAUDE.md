@@ -108,9 +108,9 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   cross-platform runbook is **[device-verification](docs/wiki/device-verification.md)**: checks A-J,
   which WP each one closes, the exact log line that is the verdict for each, and why check A must
   come first (it needs v0.11.3 - the last release without WP-SEC-1 - installed and logged in BEFORE
-  v0.11.5 lands over it, and it is the only test of the one-shot migration). Do not re-derive the
-  checks here; extend that file instead. Build under test: **v0.11.5**, published to both stores by
-  CI on 2026-07-30.
+  the build under test lands over it, and it is the only test of the one-shot migration). Do not
+  re-derive the checks here; extend that file instead. Build under test: **v0.11.7**, released
+  2026-07-31 - it is the first build carrying WP-PUSH-1/2, HIST-1 and NET-1.
   Already banked from the Android run of 2026-07-29 (log on the user's desktop): SQLite storage on
   every launch, never the IndexedDB fallback; and the post-enrolment relaunch does raise the
   biometric path, so the `89f8d230` `isKeyPresent` fix holds. One bug found there and fixed in
@@ -121,22 +121,15 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   session had started from 50, which is the proof the biometric session both writes and reads.
   Everything else in the runbook (A-F, H-J) is still owed, and ALL of it is still owed on iOS.
 
-- \[~\] **WP-PUSH-1/2, HIST-1, NET-1 - CODE COMPLETE, unreleased, and the iOS half has never been
-  compiled.** All four shipped between 2026-07-30 and 2026-07-31 (stories in `CHANGELOG.md`,
-  rules below). What is left is verification, and it splits in two:
-  - **iOS compile.** WP-PUSH-2 rewrote `NotificationService.swift`, `canari_push.mm/.h` and
-    `canari_ios.mm`. Nothing on Windows compiles Swift or ObjC, and the last time that gap was
-    trusted it hid a `guard` that could not compile plus a key stored as UTF-8. Dispatch
-    `ios-release.yml` (and `android-release.yml` for the Kotlin) BEFORE believing any of it.
-    Both need the commits pushed first.
-  - **Device.** The runbook gains nothing new: WP-PUSH-1 shows up as check B, the iOS cache hop
-    as check C, the rest is the pass already owed below.
+- \[~\] **WP-PUSH-1/2, HIST-1, NET-1 - COMPILED and RELEASED in v0.11.7; only the device pass is
+  owed.** All four shipped between 2026-07-30 and 2026-07-31 (stories in `CHANGELOG.md`, rules
+  below). The compile half is CLOSED: `ios-release.yml` and `android-release.yml` both ran green on
+  2026-07-31, and the iOS log was checked for the two files that matter rather than trusting the
+  exit code - `SwiftCompile normal arm64 .../NotificationService.swift` and a `canari_push.o`, so
+  neither was silently absent from the pbxproj. What is left is the device pass, and the runbook
+  gains nothing new for it: WP-PUSH-1 is check B, the iOS App Group cache hop is check C, the rest
+  is the pass already owed above.
   Option A for history (a real background FCM wake) stays unbuilt on purpose - see the rule below.
-
-- \[ \] **WP-FMT-1 (P3) - French dev-facing strings elsewhere in native code.** The iOS ObjC/Rust
-  sweep is done (2026-07-31). Not audited: the Kotlin under `gen/android`, and French code comments
-  anywhere outside `docs/user-guide/`. User-visible notification text is deliberately French on both
-  platforms and must stay that way - a native process cannot resolve a locale.
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
@@ -279,6 +272,9 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - A manual `workflow_dispatch` run of either release workflow is a pure compile check that ships
   nothing - and the ONLY way to compile Swift/ObjC/Kotlin from Windows. Run both before believing
   any native change.
+- A green run is not proof YOUR file compiled - the iOS pbxproj is hand-maintained, so a source
+  missing from it is skipped, not failed. Grep the log for `SwiftCompile ...<file>.swift` /
+  `CompileC ...<file>.o`.
 - Two NAMED provisioning profiles, team `4CLNB8SR6L`, expire 2027-07-11.
 - `bump-app-version.sh` must patch the NSE too, and `bump-version.yml` stages an EXPLICIT add list.
 - Never add a `branches` filter to a `workflow_run` chained off a release-triggered workflow.
