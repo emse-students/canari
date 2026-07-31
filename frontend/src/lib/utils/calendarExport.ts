@@ -242,15 +242,27 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
   if (!url) return null;
   try {
     const resp = await fetch(url);
-    if (!resp.ok) return null;
+    // A logo that fails to inline is simply absent from the PDF, with nothing on screen saying so -
+    // the export "succeeds" and one association silently loses its watermark. Log every failure:
+    // it is the only way to tell a logo that could not be fetched from one that was never set.
+    if (!resp.ok) {
+      console.warn(`[CalendarExport] Logo fetch failed (HTTP ${resp.status}): ${url}`);
+      return null;
+    }
     const blob = await resp.blob();
     return new Promise<string | null>((resolve) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => resolve(null);
+      reader.onerror = () => {
+        console.warn(`[CalendarExport] Logo could not be read as a data URL: ${url}`);
+        resolve(null);
+      };
       reader.readAsDataURL(blob);
     });
-  } catch {
+  } catch (e) {
+    console.warn(
+      `[CalendarExport] Logo fetch threw for ${url}: ${e instanceof Error ? e.message : String(e)}`
+    );
     return null;
   }
 }
@@ -425,10 +437,21 @@ function buildCalendarHtml(
     opts.scrimOpacity > 0
       ? `<div style="position:absolute;inset:0;background:${opts.scrimColor};opacity:${(opts.scrimOpacity / 100).toFixed(2)};"></div>`
       : '';
-  // Full-page background image behind everything.
-  // Height is patched in JS after DOM insertion for the export path.
+  // Full-page background image behind everything, CROPPED to the sheet.
+  //
+  // This was an <img> with object-fit:cover in a div that had a width but no height - the height
+  // was patched in JS after insertion, on the export path only. So the preview never got one, the
+  // image fell back to its intrinsic ratio, and neither view was reliably cropped: the sheet showed
+  // bands wherever the photo's aspect did not match A4. A CSS background on a box pinned to the
+  // container (inset:0) is the same visual with none of that: cover crops against a box that always
+  // has the sheet's exact dimensions, in both the preview and the export, and there is nothing left
+  // to patch afterwards. It also survives rasterisation more predictably than object-fit, which the
+  // DOM-to-SVG serialiser has to reproduce on an inline replaced element.
+  //
+  // The image layer carries the opacity and the scrim is its SIBLING, not its child: the scrim is a
+  // legibility device over the photo and must not be faded along with it.
   const fullBgHtml = opts.bgDataUrl
-    ? `<div data-full-bg style="position:absolute;top:0;left:0;width:100%;pointer-events:none;"><img src="${opts.bgDataUrl}" style="width:100%;height:100%;object-fit:cover;opacity:${bgOpacityVal};" />${scrimLayer}</div>`
+    ? `<div data-full-bg style="position:absolute;inset:0;overflow:hidden;pointer-events:none;"><div style="position:absolute;inset:0;background-image:url('${opts.bgDataUrl}');background-size:cover;background-position:center;background-repeat:no-repeat;opacity:${bgOpacityVal};"></div>${scrimLayer}</div>`
     : '';
 
   const faviconHtml = faviconUrl
@@ -471,7 +494,9 @@ export function buildPreviewInnerHtml(
   const body = buildCalendarHtml(events, year, month, opts, 'direct', '/favicon.png');
   // Wrapper mirrors the export container exactly (width, background, font-family) so the two render
   // identically. box-sizing/margin/padding resets are inlined since there is no iframe stylesheet.
-  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;height:${CALENDAR_CONTAINER_HEIGHT}px;background:${opts.pageBg};font-family:'Nunito Variable','Nunito','Segoe UI',sans-serif;color:#111;border-radius:12px;overflow:hidden;box-sizing:border-box;">${body}</div>`;
+  // Square corners, like the export: the preview's job is to show the sheet that will print, so a
+  // decorative radius belongs to the page chrome around it, never to the sheet itself.
+  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;height:${CALENDAR_CONTAINER_HEIGHT}px;background:${opts.pageBg};font-family:'Nunito Variable','Nunito','Segoe UI',sans-serif;color:#111;overflow:hidden;box-sizing:border-box;">${body}</div>`;
 }
 
 /**
@@ -521,18 +546,13 @@ export async function exportCalendarMonth(
     color: '#111111',
     fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", sans-serif',
     boxSizing: 'border-box',
-    borderRadius: '12px',
+    // No radius: this box IS the sheet, and a sheet of paper has square corners. A radius here
+    // rasterises as four transparent notches at the page edge of the PDF.
     overflow: 'hidden',
   });
 
   container.innerHTML = innerHtml;
   document.body.appendChild(container);
-
-  // Patch background div height now that the container has a real rendered height.
-  if (opts.bgDataUrl) {
-    const bgEl = container.querySelector<HTMLElement>('[data-full-bg]');
-    if (bgEl) bgEl.style.height = container.offsetHeight + 'px';
-  }
 
   try {
     await exportSearchablePdf(container, {

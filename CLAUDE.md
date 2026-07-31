@@ -163,9 +163,16 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   the owning association, so a sys admin (or a BDE member holding the permission) has to find which
   association filed an event before they can touch it. Same permission check, second surface.
 
-- \[ \] **WP-PDF-1 (P3) - Three defects in the event PDF export.** The second association's logo is
-  missing when an event has two; the background image is not cropped, so it leaves bands down the
-  sides; and the sheet has rounded corners - a page of paper is a rectangle.
+- \[~\] **WP-PDF-1 (P3) - Only the missing second logo is left.** The rounded corners and the
+  uncropped background are FIXED (`frontend/src/lib/utils/calendarExport.ts` - the sheet is the
+  export container, and the background is now a `background-size:cover` box at `inset:0` instead of
+  an `<img>` whose height was JS-patched on the export path only). The second logo could NOT be
+  reproduced from the code: the backend relation is `eager: true`, so `coOwners[].logoUrl` IS
+  populated, and `splitLogoWatermark` composes n bands correctly. The remaining candidate is
+  `fetchDataUrl` returning null, which used to be silent and now logs
+  `[CalendarExport] Logo fetch failed (HTTP <n>): <url>`. **Next step needs the console**: that line
+  means the logo exists but could not be inlined; NO line means the second association simply has no
+  `logoUrl` set, which would make the export correct and the request a different feature.
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
