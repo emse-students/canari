@@ -82,8 +82,9 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   50 files), 27/27 end-to-end checks green against an HTTP stub of `cotisant-status`.
   **MR open, awaiting Aurel: https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/1**
   (GitLab over SSH - `gh` is useless and there is no API token here; **git refuses a push option
-  containing newlines**, so the full French description must be pasted by hand from scratchpad
-  `MR-DESCRIPTION.md`).
+  containing newlines**, so the full French description must be pasted by hand from
+  `...\Temp\claude\c--Users-jolan-Documents-Programmation-canari\2df0218a-c456-4153-8f17-1a97db43e51b\scratchpad\MR-DESCRIPTION.md`,
+  also a TEMP path).
   Still owed before merge, both blocked on the site being online: a run against a REAL Canari
   (`CANARI_INTEGRATION_ENABLED=true` has never been exercised - 24 h grace window and TTL refresh
   untested against a live `cotisant-status`) and a real OIDC round trip (the checks mint their own
@@ -109,8 +110,11 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   which WP each one closes, the exact log line that is the verdict for each, and why check A must
   come first (it needs v0.11.3 - the last release without WP-SEC-1 - installed and logged in BEFORE
   the build under test lands over it, and it is the only test of the one-shot migration). Do not
-  re-derive the checks here; extend that file instead. Build under test: **v0.11.7**, released
-  2026-07-31 - it is the first build carrying WP-PUSH-1/2, HIST-1 and NET-1.
+  re-derive the checks here; extend that file instead. Build under test: **v0.11.7**, on TestFlight
+  and Play production since 2026-07-31 - the first build carrying WP-PUSH-1/2, HIST-1 and NET-1.
+  Its native half is COMPILED, and checked the honest way: the iOS log shows
+  `SwiftCompile normal arm64 .../NotificationService.swift` and a `canari_push.o`, so neither was
+  silently missing from the hand-maintained pbxproj. Compiling still proves nothing about running.
   Already banked from the Android run of 2026-07-29 (log on the user's desktop): SQLite storage on
   every launch, never the IndexedDB fallback; and the post-enrolment relaunch does raise the
   biometric path, so the `89f8d230` `isKeyPresent` fix holds. One bug found there and fixed in
@@ -120,16 +124,6 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   one prompt per login - and a 51-message history bundle served out of the local store where the
   session had started from 50, which is the proof the biometric session both writes and reads.
   Everything else in the runbook (A-F, H-J) is still owed, and ALL of it is still owed on iOS.
-
-- \[~\] **WP-PUSH-1/2, HIST-1, NET-1 - COMPILED and RELEASED in v0.11.7; only the device pass is
-  owed.** All four shipped between 2026-07-30 and 2026-07-31 (stories in `CHANGELOG.md`, rules
-  below). The compile half is CLOSED: `ios-release.yml` and `android-release.yml` both ran green on
-  2026-07-31, and the iOS log was checked for the two files that matter rather than trusting the
-  exit code - `SwiftCompile normal arm64 .../NotificationService.swift` and a `canari_push.o`, so
-  neither was silently absent from the pbxproj. What is left is the device pass, and the runbook
-  gains nothing new for it: WP-PUSH-1 is check B, the iOS App Group cache hop is check C, the rest
-  is the pass already owed above.
-  Option A for history (a real background FCM wake) stays unbuilt on purpose - see the rule below.
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
@@ -161,9 +155,12 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   manual retry from the admin panel. `CANARI_WEBHOOK_SECRET` (Cercle env) and the product's
   `webhookSecret` (Canari) are the same string under two names.
   **The secret itself is already generated** (2026-07-30), together with the Cercle's
-  `SESSION_SECRET`, in the session scratchpad `CERCLE-PROD-SECRETS.md` - deliberately outside every
-  repo, with the posting procedure and these two traps repeated. That file closes WP-CERCLE-3 as
-  well; delete it once both values are in place.
+  `SESSION_SECRET`, at
+  `%LOCALAPPDATA%\Temp\claude\c--Users-jolan-Documents-Programmation-canari\9451e6ef-4c01-4c18-8203-df740c9d9476\scratchpad\CERCLE-PROD-SECRETS.md`
+  - deliberately outside every repo, with the posting procedure and these two traps repeated. That
+  file closes WP-CERCLE-3 as well; delete it once both values are in place. It sits in a TEMP
+  directory: one cleanup and both secrets have to be regenerated (which is harmless as long as
+  neither has been posted yet - they are only paired, never derived).
 
 ---
 
@@ -215,6 +212,8 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 
 - The outbox is best-effort at every step, so every swallowed branch logs - that is all a loss leaves.
 - `waitForMessageQueueIdle` before a flush is correctness: skipping it sends at a stale epoch.
+- A history request is online-only. The requester can retry and SAY it is waiting (v0.11.7); only
+  a real background wake could answer it, and that is unbuilt on purpose.
 
 #### UI and i18n -> [frontend/architecture](docs/wiki/frontend/architecture.md)
 

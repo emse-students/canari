@@ -8,8 +8,8 @@ Work Packages sit open with correct-looking code that has never executed on hard
 This file is the single ordered pass that closes them. It replaces the checks that were scattered
 across individual Work Packages and the delegation log that used to live in `AGENTS.md`.
 
-**Build under test: v0.11.7** (released 2026-07-31). Android from Play (production) or the
-release-asset APK, iOS from TestFlight. It is the first build carrying WP-PUSH-1/2, HIST-1 and
+**Build under test: v0.11.7** (on Play production and TestFlight since 2026-07-31). Android from
+Play or the release-asset APK, iOS from TestFlight. It is the first build carrying WP-PUSH-1/2, HIST-1 and
 NET-1, so checks B and C now cover the Android catch-up-first ladder and the iOS App Group cache
 hop as well. Check G already passed on Android on **v0.11.6** and is not re-owed - see below.
 
