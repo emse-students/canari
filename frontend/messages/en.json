@@ -186,6 +186,7 @@
   "chat_unpin_label": "Unpin",
   "chat_unpin_title": "Unpin",
   "chat_mls_sync_in_progress": "MLS sync in progress - sending temporarily unavailable",
+  "chat_history_request_pending_offline": "History pending: no online member has sent it yet. Retrying automatically…",
   "chat_conversation_deleted_message": "This conversation has been deleted.",
   "chat_delete_locally_button": "Delete locally",
   "chat_typing_one_person": "{names} is typing…",

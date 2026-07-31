@@ -1,4 +1,5 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
 import {
   markAwaitingHistory,
   clearAwaitingHistory,
@@ -10,6 +11,10 @@ import {
  * ride out a peer that is briefly away, bounded so a group whose only other member stays offline
  * does not solicit forever WITHIN one session. Cross-session persistence (the awaiting-history
  * registry) drives the longer-horizon retries on each reconnect.
+ *
+ * WP-HIST-1 (Option C): the in-session burst now works together with a request-level timeout/
+ * retry tracker (`historyRequestPendingStore`). The tracker is what lets the UI show a
+ * `pending-offline` state when no bundle arrived inside the response window.
  */
 const RETRY_DELAYS_MS = [30_000, 90_000, 180_000];
 
@@ -60,11 +65,24 @@ export function solicitHistory(
   const entry: PendingSolicit = { timers: [] };
   pending.set(groupId, entry);
 
-  const fire = (attempt: number): Promise<void> =>
-    mlsService
+  const fire = (attempt: number): Promise<void> => {
+    // WP-HIST-1: register the start of this attempt with the timeout/retry tracker.
+    historyRequestPendingStore.start(groupId, () => fire(attempt + 1));
+    return mlsService
       .sendHistoryRequest(groupId)
       .then(() => log(`[HISTORY_REQ] solicit attempt ${attempt} for ${groupId.slice(0, 8)}...`))
-      .catch(() => {});
+      .catch((e) => {
+        // Network-level failure (offline, fetch abort, etc.): move straight to pending-offline.
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          log(`[HISTORY_REQ] offline during attempt ${attempt} for ${groupId.slice(0, 8)}...`);
+          historyRequestPendingStore.markOffline(groupId);
+          return;
+        }
+        log(
+          `[HISTORY_REQ] attempt ${attempt} failed for ${groupId.slice(0, 8)}...: ${String(e).slice(0, 120)}`
+        );
+      });
+  };
 
   // Attempt 0 is deferred by initialDelayMs so a self-join peer can apply our commit first.
   entry.timers.push(setTimeout(() => void fire(0), initialDelayMs));
@@ -112,6 +130,8 @@ export function cancelHistorySolicit(groupId: string): void {
 export function noteHistoryBundleReceived(userId: string, groupId: string): void {
   cancelHistorySolicit(groupId);
   clearAwaitingHistory(userId, groupId);
+  // WP-HIST-1: clear the reactive pending state so the UI stops showing the offline banner.
+  historyRequestPendingStore.noteReceived(groupId);
 }
 
 /** Cancels every pending solicitation (session teardown / test cleanup). */

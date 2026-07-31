@@ -261,6 +261,15 @@ The **Welcome** join path solicits history the same way (`solicitHistory` in `hi
 
 The first attempt is deferred by `INITIAL_SOLICIT_DELAY_MS` (~2.5 s) so a self-join peer applies our fan-out external commit before it re-encrypts the bundle - otherwise it would serve the history at its old (pre-commit) epoch, which the joiner (now one epoch ahead) cannot decrypt.
 
+**Request-level timeout / retry (WP-HIST-1 Option C).** `sendHistoryRequest` is online-only: the server returns `no_peer_online` when no responder is reachable, and if the single picked responder is backgrounded or killed the request is silently dropped. To keep the user informed, each `sendHistoryRequest` call is now wrapped in a 30 s response window (`historyRequestPendingStore`).
+
+- If a `history_bundle` arrives in that window, the window closes and nothing is shown.
+- If the window elapses without a bundle, the group moves to `pending-offline`; the UI shows `chat_history_request_pending_offline` in the open conversation.
+- Up to 3 automatic retries are scheduled (30 s, 2 min, 5 min). A retry also fires immediately when the app returns to the foreground or the network comes back.
+- Retries are bounded: after 3 attempts the banner stays visible but no new automatic retry is scheduled until the next online/foreground resume event.
+- The pending state is cleared as soon as a bundle arrives (`noteHistoryBundleReceived`).
+- No native or backend changes; the `history-request` wire format is unchanged. Option A (full background FCM wake + headless native runtime) remains planned for a future WP.
+
 **Cross-session durability.** The in-session backoff spans only ~3 min; if the only reachable member stays offline for that window, a naive one-shot solicitation is lost forever, because a later session finds the group already in WASM and recovery no longer solicits. To fix this, `solicitHistory` records the group in a persistent `awaiting-history` registry (`awaitingHistoryRegistry.ts`, localStorage, per-user, 30-day give-up horizon), cleared only when a `history_bundle` actually arrives (`noteHistoryBundleReceived`). The connection sync (`syncConnectionAfterWsOpen`) calls `reSolicitAwaitingHistory` on every (re)connect, re-driving a fresh solicitation burst for each still-awaiting local group - so the history is retried across sessions until it lands (or the horizon lapses).
 
 **What the bundle carries.** `serializeForBundle` (`groupActions.ts`) sends, per message: `id`, `senderId`, `content`, `timestamp`, plus `reactions`, `readBy`, `readAt`, `isDeleted`, `isEdited` and `serverTimestamp` when set. Replies need no field of their own - `replyTo` lives inside the serialized envelope, i.e. inside `content`, and travels verbatim. Not carried, because `StoredMessage` does not hold them: `editedAt` (only the `isEdited` flag survives), pins, and system messages - the last two are rebuilt by the stream replay when their events are still in the window.

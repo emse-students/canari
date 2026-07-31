@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ShieldCheck, TriangleAlert, Loader2 } from '@lucide/svelte';
+  import { ShieldCheck, TriangleAlert, Loader2, CloudOff } from '@lucide/svelte';
   import {
     ArrowDown,
     Search,
@@ -32,6 +32,7 @@
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
+  import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
 
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
@@ -144,6 +145,8 @@
     isLoadingHistory?: boolean;
     /** Whether MLS is catching up messages after reconnect (shows a blocking overlay). */
     isCatchingUpMessages?: boolean;
+    /** When true, this conversation is waiting for a history bundle that has not arrived. */
+    historyRequestPending?: boolean;
     /** Called when in-memory groups are exhausted; should load older messages from DB. Returns true if more may be available. */
     onLoadOlderMessages?: () => Promise<boolean>;
     /** Exposes the scrollable messages element (for programmatic scroll from messaging). */
@@ -203,6 +206,7 @@
     currentUserId = '',
     isLoadingHistory = false,
     isCatchingUpMessages = false,
+    historyRequestPending = false,
     onLoadOlderMessages,
     onMessagesScrollEl,
   }: Props = $props();
@@ -420,6 +424,12 @@
       ? `${text.slice(0, 77)}…`
       : text || m.chat_pinned_message_default_label();
   }
+
+  /** Reactive banner text when the history bundle is delayed because no responder is online. */
+  const historyPendingLabel = $derived.by(() => {
+    if (!historyRequestPending) return '';
+    return m.chat_history_request_pending_offline();
+  });
 
   /** Reactive "X is typing…" label for the active conversation, excluding the current user. */
   const typingLabel = $derived.by(() => {
@@ -1022,6 +1032,17 @@
       >
         <Loader2 size={11} class="animate-spin shrink-0" strokeWidth={2.5} />
         {m.chat_mls_sync_in_progress()}
+      </div>
+    {/if}
+
+    {#if historyPendingLabel}
+      <div
+        class="absolute top-0 inset-x-0 z-30 flex items-center justify-center gap-2 py-1.5 px-4 bg-sky-500/10 text-sky-600 dark:text-sky-400 text-xs font-medium border-b border-sky-500/20"
+        role="status"
+        aria-live="polite"
+      >
+        <CloudOff size={11} class="shrink-0" strokeWidth={2.5} />
+        {historyPendingLabel}
       </div>
     {/if}
   {:else}

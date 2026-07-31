@@ -35,6 +35,7 @@
     globalNotifs as notifs,
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
+  import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
   import { openInvitedChannel, selectionBelongsToRoute } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
@@ -884,6 +885,8 @@
           conversation={activeConversation}
           {messageText}
           isChannel={isSelectedChannel ?? false}
+          historyRequestPending={!!convs.selectedContact &&
+            historyRequestPendingStore.phases.get(convs.selectedContact) === 'pending-offline'}
           imageMediaId={activeConversation?.imageMediaId ?? null}
           onMessageChange={(value) => (messageText = value)}
           onSend={handleSendChat}

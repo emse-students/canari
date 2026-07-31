@@ -23,6 +23,7 @@ import { m } from '$lib/paraglide/messages';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { solicitHistory, cancelAllHistorySolicit } from '$lib/utils/chat/historySolicit';
+import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
@@ -1193,6 +1194,7 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
   unregisterOutbox();
   cancelAllHistorySolicit();
+  historyRequestPendingStore.cancelAll();
   void flushActiveMlsStateEncrypted().finally(() => {
     uninstallMlsStatePersisterLifecycle();
     unregisterMlsStatePersister();

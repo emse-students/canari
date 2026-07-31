@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **WP-HIST-1: history requests now show an explicit offline state and retry automatically.** `notifyHistoryRequest` is online-only, so a requester whose only responder is killed used to wait indefinitely with no feedback. The requester now starts a 30 s response window for every `sendHistoryRequest`; if no `history_bundle` arrives, the request is marked `pending-offline` and retried up to 3 times with documented backoffs (30 s, 2 min, 5 min). The open conversation shows a non-blocking banner (`chat_history_request_pending_offline`). Retries are also triggered immediately when the app comes back online or to the foreground, and the pending state is cleared as soon as a bundle arrives. No native or backend changes; the protocol history request frame is unchanged. This is the Option C mitigation. Option A (full background FCM wake + headless native runtime) remains planned for a future WP
+
 ### Changed
 - **Android background push decryption now catches up commits first when the group already exists locally.** A silent commit push (epoch advance) previously could not be applied by the read-only background path, so the next message push found an epoch gap and spent ~9.6 s in three identical `tryDecrypt` retries before `tryDecryptWithCommitCatchup` succeeded. The ladder now checks `isGroupLocal` after the first failure: a known group runs in-memory commit catch-up immediately, while the expensive Welcome/join-race loop is reserved for groups that are not yet joined. A silent push that still cannot be decrypted now returns without logging the misleading "Decryption failed -> MlsBackgroundWorker enqueued" or "Fallback notification: ..." lines
 

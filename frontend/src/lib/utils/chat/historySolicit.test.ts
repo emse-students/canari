@@ -6,6 +6,7 @@ import {
   cancelAllHistorySolicit,
 } from './historySolicit';
 import { enumerateAwaitingHistory } from './awaitingHistoryRegistry';
+import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
 
 const log = () => {};
 const USER = 'user-1';
@@ -18,11 +19,13 @@ function makeMls() {
 
 describe('solicitHistory', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     localStorage.clear();
+    historyRequestPendingStore.cancelAll();
   });
   afterEach(() => {
     cancelAllHistorySolicit();
+    historyRequestPendingStore.cancelAll();
     vi.useRealTimers();
     localStorage.clear();
   });
@@ -95,15 +98,50 @@ describe('solicitHistory', () => {
     // Only the surviving (second) solicitation's single retry fires.
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
   });
+  it('moves the reactive pending state to pending-offline when the response window elapses', () => {
+    const mls = makeMls();
+    // No burst delays: we only want to observe the single request window.
+    solicitHistory(mls, USER, 'g1', log, []);
+    vi.advanceTimersByTime(INITIAL);
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
+
+    // WP-HIST-1 response timeout is 30 s from the moment the request fires.
+    vi.advanceTimersByTime(30_000);
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
+  });
+
+  it('clears the reactive pending state when the bundle arrives', () => {
+    const mls = makeMls();
+    solicitHistory(mls, USER, 'g1', log, [1000]);
+    vi.advanceTimersByTime(INITIAL);
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
+
+    noteHistoryBundleReceived(USER, 'g1');
+    expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
+  });
+
+  it('moves straight to pending-offline when the network is offline', async () => {
+    const mls = makeMls();
+    mls.sendHistoryRequest.mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('navigator', { onLine: false });
+
+    solicitHistory(mls, USER, 'g1', log, []);
+    await vi.advanceTimersByTimeAsync(INITIAL);
+
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
+    vi.unstubAllGlobals();
+  });
 });
 
 describe('reSolicitAwaitingHistory', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     localStorage.clear();
+    historyRequestPendingStore.cancelAll();
   });
   afterEach(() => {
     cancelAllHistorySolicit();
+    historyRequestPendingStore.cancelAll();
     vi.useRealTimers();
     localStorage.clear();
   });
