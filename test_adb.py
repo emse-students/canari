@@ -438,8 +438,6 @@ LOGCAT_TAGS = [
 class TauriManagerApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root: tk.Tk = root
-        self.root.title("Gestionnaire Tauri Android - Canari")
-        self.root.geometry("1600x900")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # (source_key, timestamp, message) - source_key is a device id or SYSTEM_SOURCE.
@@ -455,19 +453,23 @@ class TauriManagerApp:
         self.device_buttons: dict[str, ttk.Button] = {}
         self.device_text_areas: dict[str, scrolledtext.ScrolledText] = {}
 
-        self.root.withdraw()
         self.show_config_window()
 
     # === CONFIG WINDOW ===
     def show_config_window(self) -> None:
-        """Initial configuration window: project path, SDK, device detection."""
+        """Initial configuration step: project path, SDK, device detection.
+
+        It lives INSIDE the root window rather than in a Toplevel. A Toplevel declared
+        `transient` of a withdrawn master is never mapped on Windows, so the form used to
+        exist without ever being drawn.
+        """
         global ANDROID_HOME
 
-        config_win = tk.Toplevel(self.root)
-        config_win.title("Configuration initiale")
-        config_win.geometry("640x480")
-        config_win.transient(self.root)
-        config_win.grab_set()
+        self.root.title("Canari - Configuration initiale")
+        self.root.geometry("640x520")
+
+        config_win = ttk.Frame(self.root)
+        config_win.pack(fill=tk.BOTH, expand=True)
 
         ttk.Label(config_win, text="Chemin du projet frontend :", font=("Segoe UI", 10)).pack(
             pady=(10, 5), padx=10, anchor=tk.W
@@ -645,7 +647,8 @@ class TauriManagerApp:
                     return
 
             config_win.destroy()
-            self.root.deiconify()
+            self.root.title("Gestionnaire Tauri Android - Canari")
+            self.root.geometry("1600x900")
             self.setup_ui()
             self.root.after(100, self.process_log_queue)
 
@@ -655,18 +658,6 @@ class TauriManagerApp:
         # the device scan (which shells out to adb) goes to a worker.
         config_win.after(0, check_android_sdk)
         config_win.after(50, detect_and_refresh)
-
-        def ensure_visible():
-            try:
-                config_win.lift()
-                config_win.focus_force()
-                if not config_win.winfo_ismapped():
-                    print("[WARN] Config window not mapped, forcing it visible.")
-                    config_win.deiconify()
-            except Exception as e:
-                print(f"[ERROR] Visibility check failed: {e}")
-
-        config_win.after(2000, ensure_visible)
 
     # === MAIN UI ===
     def setup_ui(self) -> None:
