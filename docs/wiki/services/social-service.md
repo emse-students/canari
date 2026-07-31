@@ -230,8 +230,30 @@ push clears the conversation's notification on the user's other devices.
 | PATCH | `/api/associations/:id` | Update association (admin with `MANAGE_MEMBERS`) |
 | POST | `/api/associations/:id/members` | Add member to association |
 | POST | `/api/associations/:id/events` | Create calendar event |
+| PATCH | `/api/associations/:id/events/:eventId` | Update calendar event |
+| DELETE | `/api/associations/:id/events/:eventId` | Delete calendar event |
 | POST | `/api/associations/:id/products` | Create boutique product |
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for product |
+
+### Who may touch a calendar event
+
+One rule, enforced in `updateCalendarEvent` / `deleteCalendarEvent` and mirrored by every UI that
+offers the buttons:
+
+| Caller | Scope |
+|---|---|
+| Global admin (`x-global-admin: true`) | any association's event |
+| BDE admin (`isUserBdeAdmin`: `VALIDATE_EVENTS` in an association flagged `isBDE`) | any association's event |
+| Anyone else | needs `PROPOSE_EVENT` in the association that owns the event |
+
+`:id` is always the **owning** association - an event never changes owner, so there is no
+`targetAssocId` on update the way there is on create.
+
+Two surfaces offer these actions and they gate differently on purpose. An association's own page
+(`AssociationCalendarSection`) gates on `PROPOSE_EVENT` *there*, so a BDE validator holding no
+membership in that club sees nothing. The global agenda (`/calendar`) gates per event on the full
+server rule, which is the only place that validator can act - deriving its gate from the other
+surface instead of from the server would have kept the right unusable.
 
 ## Redis events published
 

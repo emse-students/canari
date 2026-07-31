@@ -23,11 +23,19 @@
  * `reconcileOutboxSent()` drains that file at login and deletes the corresponding outbox entries.
  * Reconciliation is best-effort: the outbox DB stays authoritative and a missed reconciliation only
  * costs a duplicate proto on the next foreground flush, deduplicated by the receiver on messageId.
+ *
+ * The mirror is not write-only, though: the notification quick reply builds its proto natively and
+ * appends it here, so an entry the background drain could NOT deliver exists only in this file -
+ * and `syncOutboxMirror` rewrites the file from the TS queue, which would wipe it. That is what
+ * `adoptOrphanedMirrorEntries()` prevents: at login, any mirror entry the TS outbox does not know
+ * about is turned back into a real outbox entry (plus the local message the sender never got), so
+ * the ordinary flusher owns it from then on. It is the symmetric twin of `reconcileOutboxSent`.
  */
 
-import type { IStorage, OutboxEntry } from '$lib/db';
+import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import { buildOutboxProto } from '$lib/utils/chat/outbox';
-import { toBase64 } from '$lib/utils/hex';
+import { decodeAppMessage } from '$lib/proto/codec';
+import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 
@@ -102,4 +110,153 @@ export async function reconcileOutboxSent(storage: IStorage): Promise<void> {
   for (const id of sentIds) {
     await storage.deleteOutboxEntry(id).catch(() => {});
   }
+}
+
+/** A mirror entry turned back into queue state: what to flush, and what to show meanwhile. */
+interface AdoptedMirrorEntry {
+  outbox: OutboxEntry;
+  /** Local copy of the pending message, or null when the entry carries no displayable body. */
+  message: StoredMessage | null;
+}
+
+/**
+ * Rebuild a real outbox entry (and the local message it should have left) from a mirror line.
+ * Returns null when the proto cannot be understood, which is the one case worth a log: the entry
+ * would otherwise be dropped silently by the next mirror rewrite, exactly the bug being fixed.
+ */
+function adoptMirrorEntry(entry: OutboxMirrorEntry, userId: string): AdoptedMirrorEntry | null {
+  let proto: Uint8Array;
+  try {
+    proto = fromBase64(entry.proto);
+  } catch (e) {
+    appendLog(
+      `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… has an unreadable proto: ${String(e)}`
+    );
+    return null;
+  }
+  const now = Date.now();
+  const base = {
+    id: entry.id,
+    conversationId: entry.groupId,
+    sentAt: entry.sentAt,
+    status: 'pending' as const,
+    attempts: 0,
+    createdAt: entry.sentAt || now,
+  };
+
+  // A silent entry is a control event (reaction/edit/delete/read): the flusher sends its proto
+  // verbatim and silently, which is exactly what `kind: 'control'` means. Nothing to display.
+  if (entry.silent) {
+    return { outbox: { ...base, kind: 'control', controlProto: proto }, message: null };
+  }
+
+  // Anything else is a user-visible body, today only the native quick reply. Decode it so the
+  // entry becomes a first-class text/reply the flusher re-encodes identically (same messageId,
+  // same sentAt), instead of an opaque blob only this code path could send.
+  const app = decodeAppMessage(proto);
+  if (app?.reply?.content !== undefined && app.reply?.replyTo) {
+    const replyTo = {
+      id: app.reply.replyTo.id ?? '',
+      senderId: app.reply.replyTo.senderId ?? '',
+      preview: app.reply.replyTo.preview ?? '',
+    };
+    const text = app.reply.content ?? '';
+    return {
+      outbox: { ...base, kind: 'reply', text, replyTo },
+      message: {
+        id: entry.id,
+        conversationId: entry.groupId,
+        senderId: userId.toLowerCase(),
+        content: text,
+        timestamp: entry.sentAt,
+      },
+    };
+  }
+  if (app?.text?.content !== undefined) {
+    const text = app.text.content ?? '';
+    return {
+      outbox: { ...base, kind: 'text', text },
+      message: {
+        id: entry.id,
+        conversationId: entry.groupId,
+        senderId: userId.toLowerCase(),
+        content: text,
+        timestamp: entry.sentAt,
+      },
+    };
+  }
+  appendLog(
+    `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… is neither text nor reply - cannot adopt it`
+  );
+  return null;
+}
+
+/**
+ * Adopt into the TypeScript outbox every mirror entry it does not already know about, and persist
+ * the local copy of each so the sender finally sees what they sent. Tauri only; no-op elsewhere.
+ *
+ * Must run BEFORE conversations are loaded: the adopted message is written to the store and picked
+ * up by the ordinary history load, which is also what gives it its `pending` status afterwards.
+ *
+ * A delivered background send is removed from the mirror by the native drain, so an entry still
+ * present here was NOT delivered. Should one race through anyway, `reconcileOutboxSent` deletes it
+ * moments later - adoption is idempotent on the stable messageId either way.
+ */
+export async function adoptOrphanedMirrorEntries(
+  storage: IStorage,
+  deviceKeyB64: string,
+  userId: string
+): Promise<number> {
+  if (!isTauriRuntime()) return 0;
+  let mirror: OutboxMirrorEntry[];
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    mirror = await invoke<OutboxMirrorEntry[]>('read_outbox_mirror');
+  } catch (e) {
+    appendLog(`[OUTBOX_MIRROR] Mirror read failed: ${e instanceof Error ? e.message : String(e)}`);
+    return 0;
+  }
+  if (!mirror.length) return 0;
+
+  const known = await storage
+    .getOutboxEntries(deviceKeyB64)
+    .catch((e) => {
+      // Treating a failed read as an empty queue here would re-adopt the whole live queue, so this
+      // is the one branch that must give up rather than guess.
+      appendLog(`[OUTBOX_MIRROR] Outbox read failed, adoption skipped: ${String(e)}`);
+      return null;
+    })
+    .then((entries) => (entries ? new Set(entries.map((e) => e.id)) : null));
+  if (!known) return 0;
+
+  const orphans = mirror.filter((e) => e.id && !known.has(e.id));
+  if (!orphans.length) return 0;
+  appendLog(`[OUTBOX_MIRROR] ${orphans.length} orphan mirror entr(y/ies) to adopt`);
+
+  let adopted = 0;
+  for (const orphan of orphans) {
+    const rebuilt = adoptMirrorEntry(orphan, userId);
+    if (!rebuilt) continue;
+    try {
+      await storage.saveOutboxEntry(rebuilt.outbox, deviceKeyB64);
+    } catch (e) {
+      appendLog(`[OUTBOX_MIRROR] Adoption of ${orphan.id.slice(0, 8)}… failed: ${String(e)}`);
+      continue;
+    }
+    adopted++;
+    if (rebuilt.message) {
+      // Best-effort: the entry is queued either way, this only decides whether the user can see it
+      // before it lands. A missing conversation row is the expected failure (FK), and it means the
+      // group is gone, in which case the flusher will drop the entry too.
+      await storage
+        .saveMessage(rebuilt.message, deviceKeyB64)
+        .catch((e) =>
+          appendLog(
+            `[OUTBOX_MIRROR] Local copy of ${orphan.id.slice(0, 8)}… not saved: ${String(e)}`
+          )
+        );
+    }
+  }
+  appendLog(`[OUTBOX_MIRROR] ${adopted}/${orphans.length} orphan entr(y/ies) adopted`);
+  return adopted;
 }

@@ -183,6 +183,40 @@ pub(crate) fn store_outbox_mirror(
     Ok(())
 }
 
+/// Reads {app_data_dir}/outbox_pending.ndjson WITHOUT clearing it, so the frontend can adopt back
+/// into its own outbox any entry the native side queued on its own (a notification quick reply
+/// that did not deliver). Not clearing is deliberate: the file is authoritative for the background
+/// service until the next `store_outbox_mirror`, which rewrites it from the adopted TS queue.
+#[tauri::command]
+pub(crate) fn read_outbox_mirror(app: tauri::AppHandle) -> Vec<serde_json::Value> {
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("[OUTBOX_MIRROR] app_data_dir() failed: {e}");
+            return vec![];
+        }
+    };
+    let path = data_dir.join("outbox_pending.ndjson");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
+        Err(e) => {
+            log::warn!("[OUTBOX_MIRROR] mirror read failed: {e}");
+            return vec![];
+        }
+    };
+    let entries: Vec<serde_json::Value> = content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    log::debug!(
+        "[OUTBOX_MIRROR] {} mirror entry/entries read",
+        entries.len()
+    );
+    entries
+}
+
 /// Merges one channel epoch key into {app_data_dir}/channel_keys.json so the Android background
 /// service can AES-256-GCM-decrypt channel-message pushes (app killed). The file is a JSON map
 /// `channelId -> { keyVersion -> base64(rawKey) }`; the raw 32-byte epoch key never leaves the
@@ -236,12 +270,12 @@ pub(crate) fn read_and_clear_outbox_sent(app: tauri::AppHandle) -> Vec<String> {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
         Err(e) => {
-            log::warn!("[OUTBOX_MIRROR] lecture sent: {e}");
+            log::warn!("[OUTBOX_MIRROR] sent read failed: {e}");
             return vec![];
         }
     };
     if let Err(e) = std::fs::remove_file(&path) {
-        log::warn!("[OUTBOX_MIRROR] suppression sent: {e}");
+        log::warn!("[OUTBOX_MIRROR] sent delete failed: {e}");
     }
     let ids: Vec<String> = content
         .lines()

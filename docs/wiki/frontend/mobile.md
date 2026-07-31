@@ -197,7 +197,7 @@ The file is bounded to 50 entries and read at boot by `read_and_clear_fcm_cache`
 
 **The cache also carries OUTGOING messages, not only received ones.** A notification quick reply is built and delivered entirely natively (`writeSentMessageToCache` on Android, `CanariWriteSentMessageToCache` on iOS), so it never becomes a TypeScript outbox entry - and `reconcileOutboxSent` only *deletes* entries. Without an entry here, a reply the peers received would leave no trace whatsoever on the device that sent it, which from the app is indistinguishable from a reply that was never sent. The entry carries OUR user id as `senderId`, which is all the injection path needs: `mapStoredMessagesToChatMessages` derives `isOwn` from it, so the row renders as our own message and raises no phantom unread. It is written only once the drain reports the reply delivered - an undelivered reply must not appear as sent.
 
-Note the asymmetry that leaves: an undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_outbox_mirror` **rewrites** that file from the TypeScript queue, so the next foreground outbox mutation wipes it rather than flushing it. The notification is deliberately left up as the retry affordance. Adopting an unknown mirror entry back into the TS outbox is the real fix and is still open (WP-NOTIF-1).
+An undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_outbox_mirror` **rewrites** that file from the TypeScript queue — which has never heard of an entry the native side appended. That used to erase it on the next foreground outbox mutation. `adoptOrphanedMirrorEntries` closes it: see [Outbox mirror](#outbox-mirror) below. The notification is still left up as the immediate retry affordance, since adoption only happens at the next login.
 
 ### Background execution
 
@@ -209,10 +209,24 @@ Note the asymmetry that leaves: an undelivered quick reply is kept in `outbox_pe
 
 Both platforms maintain an `outbox_pending.ndjson` mirror for background sends:
 
-- TS writes to the mirror on every outbox append
+- TS writes to the mirror on every outbox append (`syncOutboxMirror` → `store_outbox_mirror`, a full rewrite, never an append)
 - Background path reads + drains the mirror
 - Preserves `silent` flag per entry
 - Shared drain path: encrypt via JNI/FFI → POST `/api/mls/push/send`
+
+The mirror is not one-way, and that is the part worth remembering. The native quick reply **appends** to it, so an entry can exist there that the TypeScript outbox has never heard of — and since `store_outbox_mirror` rewrites the file wholesale from the TS queue, the next foreground mutation would delete it. Two passes keep the two sides in step, and they are twins:
+
+| Direction | Pass | What it does |
+|---|---|---|
+| native → TS, delivered | `reconcileOutboxSent` (`read_and_clear_outbox_sent`) | drains `outbox_sent.ndjson` and **deletes** the matching outbox entries |
+| native → TS, undelivered | `adoptOrphanedMirrorEntries` (`read_outbox_mirror`) | **creates** an outbox entry, plus the local message, for every mirror line the TS queue does not know |
+
+Notes on the adoption pass:
+
+- It runs **before** `loadAndRestoreConversations`, so the adopted message is picked up by the ordinary history load and marked `pending` by `applyOutboxPendingStatuses` — there is no separate in-memory merge path to keep correct.
+- `read_outbox_mirror` deliberately does **not** clear the file: the mirror stays authoritative for the background service until the next rewrite.
+- The proto is decoded, not replayed opaquely, so an adopted entry becomes a first-class `text`/`reply` that the flusher re-encodes identically (same `messageId`, same `sentAt`). A `silent` entry stays `control` — sent verbatim and without a push, which is what silent means. Anything else logs and is left alone.
+- A delivered send is removed from the mirror by the native drain, so an entry still present was not delivered. Should one race through, `reconcileOutboxSent` deletes it moments later; adoption is idempotent on the stable `messageId` either way.
 
 ### Keyboard media (Android)
 

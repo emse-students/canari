@@ -1755,6 +1755,8 @@
   "calendar_deposit_placeholder": "Describe the event…",
   "calendar_deposit_publish": "Publish",
   "calendar_deposit_publishing": "Publishing…",
+  "calendar_deposit_immediate_note": "The event is published immediately on behalf of the chosen association.",
+  "calendar_edit_owner_note": "Event from {association}. The organising association cannot be changed.",
   "calendar_error_choose_asso": "Choose an association.",
   "calendar_error_title_required": "Title and start date are required.",
   "calendar_export_back": "Back to calendar",

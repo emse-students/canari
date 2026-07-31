@@ -546,6 +546,7 @@
     open={detailModalOpen}
     event={detailEvent}
     {canEdit}
+    showAssociation={false}
     onClose={() => {
       detailModalOpen = false;
       detailEvent = null;

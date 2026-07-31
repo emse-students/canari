@@ -50,7 +50,7 @@ import {
 import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/utils/deviceKeyVault';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
-import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
+import { adoptOrphanedMirrorEntries, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
 import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -512,6 +512,14 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // Message outbox: register the flusher before loading conversations so that
     // applyOutboxPendingStatuses can restore the "pending" status on restored messages.
     registerOutbox(makeOutboxDeps(ctx, cb));
+
+    // Adopt anything the native side queued on its own (an undelivered notification quick reply
+    // lives only in the mirror file, which the next mirror rewrite would erase). BEFORE the load:
+    // the adopted message is written to the store, so the ordinary history load displays it and
+    // applyOutboxPendingStatuses below marks it pending.
+    await adoptOrphanedMirrorEntries(ctx.getStorage()!, ctx.getDeviceKey(), ctx.getUserId()).catch(
+      (e) => cb.log(`[OUTBOX_MIRROR] Adoption pass failed: ${String(e)}`)
+    );
 
     // Load conversations first: consumeFcmCache can access
     // the conversations Map via addMessageToChat once it is populated.

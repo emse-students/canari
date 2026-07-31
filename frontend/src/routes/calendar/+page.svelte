@@ -8,12 +8,15 @@
     listPendingCalendarEvents,
     listMyAssociations,
     createAssociationCalendarEvent,
+    updateAssociationCalendarEvent,
+    deleteAssociationCalendarEvent,
     hasPermissionFlag,
     AssociationPermissionFlag,
     type AssociationCalendarFeedEvent,
     type Association,
   } from '$lib/associations/api';
   import { isGlobalAdmin } from '$lib/stores/user';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
   import CalendarDayEventsPanel from '$lib/components/calendar/CalendarDayEventsPanel.svelte';
@@ -135,9 +138,17 @@
         );
         depositAuthorityAssoId = authority?.id ?? '';
         canDepositEvent = !!authority;
+        proposeAssocIds = new Set(
+          mine
+            .filter((a) =>
+              hasPermissionFlag(a.permissions ?? 0, AssociationPermissionFlag.PROPOSE_EVENT)
+            )
+            .map((a) => a.id)
+        );
       } catch {
         canModerateAgenda = false;
         canDepositEvent = false;
+        proposeAssocIds = new Set();
       }
     }
     if (canModerateAgenda) {
@@ -185,6 +196,47 @@
   let detailEvent = $state<AssociationCalendarFeedEvent | null>(null);
   let detailModalOpen = $state(false);
 
+  // ── Editing from the global agenda ────────────────────────────────────────
+  // Mirrors the server rule on PATCH/DELETE `/associations/:id/events/:eventId`: a global admin
+  // or a BDE VALIDATE_EVENTS holder may touch any association's event, anyone else needs
+  // PROPOSE_EVENT in the association that owns it. Without this the buttons only existed on the
+  // owning association's page, so touching an event meant first finding who filed it.
+
+  /** Associations where the user holds PROPOSE_EVENT (empty for a global admin - they bypass it). */
+  let proposeAssocIds = $state<Set<string>>(new Set());
+
+  function canEditEvent(ev: AssociationCalendarFeedEvent): boolean {
+    return canDepositEvent || proposeAssocIds.has(ev.associationId);
+  }
+
+  const canEditDetailEvent = $derived(detailEvent ? canEditEvent(detailEvent) : false);
+
+  function handleDetailEdit(ev: AssociationCalendarFeedEvent) {
+    detailModalOpen = false;
+    openEditEvent(ev);
+  }
+
+  async function handleDetailDelete(id: string) {
+    const target = detailEvent;
+    if (!target) return;
+    if (
+      !(await showConfirm(m.asso_calendar_confirm_delete(), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }))
+    ) {
+      return;
+    }
+    detailModalOpen = false;
+    detailEvent = null;
+    try {
+      await deleteAssociationCalendarEvent(target.associationId, id);
+      await loadMonth();
+    } catch (e) {
+      loadError = e instanceof Error ? e.message : m.common_generic_error_label();
+    }
+  }
+
   // ── Event deposit (global admins + BDE validators) ────────────────────────
   // These users can auto-validate events. A global admin posts directly on the
   // chosen association; a BDE validator posts via their BDE association and
@@ -203,6 +255,10 @@
   let depositCoOwnerIds = $state<string[]>([]);
   let depositSaving = $state(false);
   let depositError = $state('');
+  /** Non-null when the modal is editing an existing event instead of depositing a new one. */
+  let editingEventId = $state<string | null>(null);
+  /** Owning association of the event being edited, shown read-only (an event never changes owner). */
+  let editingOwnerName = $state('');
 
   function pad(n: number): string {
     return n < 10 ? `0${n}` : `${n}`;
@@ -214,13 +270,33 @@
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00`;
   }
 
+  function toDatetimeLocalValue(iso: string): string {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
   function openDeposit() {
+    editingEventId = null;
+    editingOwnerName = '';
     depositTargetAssocId = filterAssociationId || associations[0]?.id || '';
     depositTitle = '';
     depositDescription = '';
     depositStart = nowHourLocal();
     depositEnd = '';
     depositCoOwnerIds = [];
+    depositError = '';
+    depositModalOpen = true;
+  }
+
+  function openEditEvent(ev: AssociationCalendarFeedEvent) {
+    editingEventId = ev.id;
+    editingOwnerName = ev.associationName;
+    depositTargetAssocId = ev.associationId;
+    depositTitle = ev.title;
+    depositDescription = ev.description ?? '';
+    depositStart = toDatetimeLocalValue(ev.startsAt);
+    depositEnd = ev.endsAt ? toDatetimeLocalValue(ev.endsAt) : '';
+    depositCoOwnerIds = (ev.coOwners ?? []).map((co) => co.associationId);
     depositError = '';
     depositModalOpen = true;
   }
@@ -239,18 +315,32 @@
     depositSaving = true;
     depositError = '';
     try {
-      // Global admin: posts directly on the target association (auto-validated server-side).
-      // BDE validator: posts through their BDE association with targetAssocId toward the target.
-      const urlAssocId = isGlobalAdmin() ? depositTargetAssocId : depositAuthorityAssoId;
-      await createAssociationCalendarEvent(urlAssocId, {
-        title: depositTitle.trim(),
-        description: depositDescription.trim() || undefined,
-        startsAt: startIso,
-        endsAt: endIso,
-        ...(isGlobalAdmin() ? {} : { targetAssocId: depositTargetAssocId }),
-        coOwnerIds: depositCoOwnerIds,
-      });
+      if (editingEventId) {
+        // The event keeps its owner, so the URL :id is the owning association. `kind`,
+        // `linkedFormId` and the poster are omitted on purpose: they are only editable from the
+        // association's own page, and an omitted field is left unchanged server-side.
+        await updateAssociationCalendarEvent(depositTargetAssocId, editingEventId, {
+          title: depositTitle.trim(),
+          description: depositDescription.trim() || undefined,
+          startsAt: startIso,
+          endsAt: endIso,
+          coOwnerIds: depositCoOwnerIds,
+        });
+      } else {
+        // Global admin: posts directly on the target association (auto-validated server-side).
+        // BDE validator: posts through their BDE association with targetAssocId toward the target.
+        const urlAssocId = isGlobalAdmin() ? depositTargetAssocId : depositAuthorityAssoId;
+        await createAssociationCalendarEvent(urlAssocId, {
+          title: depositTitle.trim(),
+          description: depositDescription.trim() || undefined,
+          startsAt: startIso,
+          endsAt: endIso,
+          ...(isGlobalAdmin() ? {} : { targetAssocId: depositTargetAssocId }),
+          coOwnerIds: depositCoOwnerIds,
+        });
+      }
       depositModalOpen = false;
+      detailEvent = null;
       await loadMonth();
     } catch (e) {
       depositError = e instanceof Error ? e.message : m.common_generic_error_label();
@@ -394,10 +484,13 @@
   <CalendarEventDetailModal
     open={detailModalOpen}
     event={detailEvent}
+    canEdit={canEditDetailEvent}
     onClose={() => {
       detailModalOpen = false;
       detailEvent = null;
     }}
+    onEdit={handleDetailEdit}
+    onDelete={handleDetailDelete}
   />
 </div>
 
@@ -416,26 +509,33 @@
         aria-labelledby="deposit-modal-title"
       >
         <h3 id="deposit-modal-title" class="text-lg font-bold text-text-main">
-          {m.calendar_deposit_modal_title()}
+          {editingEventId ? m.asso_calendar_modal_edit_title() : m.calendar_deposit_modal_title()}
         </h3>
-        <p class="text-xs text-text-muted">
-          L'evenement est publie immediatement au nom de l'association choisie.
-        </p>
 
-        <div>
-          <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="deposit-asso"
-            >{m.calendar_deposit_on_behalf()}</label
-          >
-          <select
-            id="deposit-asso"
-            bind:value={depositTargetAssocId}
-            class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
-          >
-            {#each associations as a (a.id)}
-              <option value={a.id}>{a.name}</option>
-            {/each}
-          </select>
-        </div>
+        {#if editingEventId}
+          <p class="text-xs text-text-muted">
+            {m.calendar_edit_owner_note({ association: editingOwnerName })}
+          </p>
+        {:else}
+          <p class="text-xs text-text-muted">
+            {m.calendar_deposit_immediate_note()}
+          </p>
+
+          <div>
+            <label class="block text-sm font-bold text-text-main mb-1 ml-1" for="deposit-asso"
+              >{m.calendar_deposit_on_behalf()}</label
+            >
+            <select
+              id="deposit-asso"
+              bind:value={depositTargetAssocId}
+              class="w-full rounded-xl border border-cn-border bg-[var(--cn-surface)] px-3 py-2 text-sm text-text-main"
+            >
+              {#each associations as a (a.id)}
+                <option value={a.id}>{a.name}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
 
         <Input label={m.calendar_deposit_title_label()} bind:value={depositTitle} />
 
@@ -495,7 +595,11 @@
             disabled={depositSaving}
             class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
           >
-            {depositSaving ? m.calendar_deposit_publishing() : m.calendar_deposit_publish()}
+            {#if depositSaving}
+              {editingEventId ? m.asso_calendar_saving_label() : m.calendar_deposit_publishing()}
+            {:else}
+              {editingEventId ? m.common_save_button() : m.calendar_deposit_publish()}
+            {/if}
           </button>
         </div>
       </div>

@@ -11,12 +11,35 @@
     open: boolean;
     event: AssociationCalendarFeedEvent | null;
     canEdit?: boolean;
+    /**
+     * Whether to name the owning association. False on that association's own page, where the
+     * name is redundant; co-owners are listed either way, since they are never redundant.
+     */
+    showAssociation?: boolean;
     onClose: () => void;
     onEdit?: (ev: AssociationCalendarFeedEvent) => void;
     onDelete?: (id: string) => void;
   }
 
-  let { open, event, canEdit = false, onClose, onEdit, onDelete }: Props = $props();
+  let {
+    open,
+    event,
+    canEdit = false,
+    showAssociation = true,
+    onClose,
+    onEdit,
+    onDelete,
+  }: Props = $props();
+
+  /** Owning association (unless suppressed) then co-owners, in display order. */
+  const identityLinks = $derived.by(() => {
+    if (!event) return [] as { slug: string; name: string }[];
+    const links = showAssociation
+      ? [{ slug: event.associationSlug, name: event.associationName }]
+      : [];
+    for (const co of event.coOwners ?? []) links.push({ slug: co.slug, name: co.name });
+    return links;
+  });
 
   function formatEventRange(ev: AssociationCalendarFeedEvent): string {
     const s = new Date(ev.startsAt);
@@ -55,18 +78,12 @@
 >
   {#if event}
     <div class="space-y-4 text-sm">
-      {#if !canEdit}
+      {#if identityLinks.length > 0}
         <p class="text-xs font-semibold uppercase tracking-wide text-cn-dark/80">
-          <a
-            href="/associations/{encodeURIComponent(event.associationSlug)}"
-            class="hover:underline"
-          >
-            {event.associationName}
-          </a>
-          {#each event.coOwners ?? [] as co (co.associationId)}
-            <span class="text-text-muted"> · </span>
-            <a href="/associations/{encodeURIComponent(co.slug)}" class="hover:underline">
-              {co.name}
+          {#each identityLinks as link, i (link.slug)}
+            {#if i > 0}<span class="text-text-muted"> · </span>{/if}
+            <a href="/associations/{encodeURIComponent(link.slug)}" class="hover:underline">
+              {link.name}
             </a>
           {/each}
         </p>

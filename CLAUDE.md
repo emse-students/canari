@@ -106,50 +106,34 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
 
 - \[~\] **WP-VERIF-0..4 + the DEEPLINK-1 and UI-1 residuals (P1 to P3) - [device] one single pass.**
   Everything native is verified by COMPILING, which proves nothing about running. The ordered
-  cross-platform runbook is **[device-verification](docs/wiki/device-verification.md)**: checks B-J,
-  which WP each one closes, and the exact log line that is the verdict for each. Do not re-derive
-  the checks here; extend that file instead. Check A (the upgrade path) was RETIRED 2026-07-31: it
-  needed a deliberate downgrade to a pre-WP-SEC-1 build, and every install worth testing has
-  migrated. Build under test: **v0.11.7**, on TestFlight
-  and Play production since 2026-07-31 - the first build carrying WP-PUSH-1/2, HIST-1 and NET-1.
-  Its native half is COMPILED, and checked the honest way: the iOS log shows
-  `SwiftCompile normal arm64 .../NotificationService.swift` and a `canari_push.o`, so neither was
-  silently missing from the hand-maintained pbxproj. Compiling still proves nothing about running.
-  Already banked from the Android run of 2026-07-29 (log on the user's desktop): SQLite storage on
-  every launch, never the IndexedDB fallback; and the post-enrolment relaunch does raise the
-  biometric path, so the `89f8d230` `isKeyPresent` fix holds. One bug found there and fixed in
-  v0.11.5 (the `Base64.DEFAULT` newline) - check G is its re-run.
-  **Check G is CLOSED on Android: G.2 passed on v0.11.5, G.3 and G.4 on v0.11.6 (2026-07-30).**
-  Two cold biometric launches, no `Call ignored`, no PIN modal, no `Failed to decrypt SQLite row`,
-  one prompt per login - and a 51-message history bundle served out of the local store where the
-  session had started from 50, which is the proof the biometric session both writes and reads.
-  **Checks I and J are CLOSED on Android too (2026-07-31, v0.11.7, log on the user's desktop).**
-  That run also exercised B-H incidentally and the user reports everything working except the two
-  notification defects now tracked as WP-NOTIF-1. **ANDROID IS DONE; the whole runbook is still
-  owed on iOS.** Anomalies the log itself showed, all filed below: WP-NOTIF-1 (the quick reply
-  leaves no local trace), `GET /api/users/system` 404, and two French dev log lines in
-  `outboxMirror.ts`.
+  runbook is **[device-verification](docs/wiki/device-verification.md)**: checks B-K, which WP each
+  one closes, and the exact log line that is the verdict. Do not re-derive the checks here; extend
+  that file instead - it was pruned on 2026-07-31 to bank the closed Android pass and re-point at
+  iOS, and it carries the per-check PASS/owed table.
+  **ANDROID IS DONE** (full ladder on v0.11.7, 2026-07-31, log on the user's desktop). **iOS is
+  entirely owed - not one check has ever run on hardware.** Check A (the upgrade path) was RETIRED
+  the same day: it needed a deliberate downgrade to a pre-WP-SEC-1 build.
+  Check **K is new and owed on BOTH platforms**: it closes WP-NOTIF-1 and needs a build carrying it.
+  All anomalies the Android log showed are now closed or filed: WP-NOTIF-1, the
+  `GET /api/users/system` 404, and the two French `[OUTBOX_MIRROR]` lines (they were in
+  `commands/push.rs`, not `outboxMirror.ts`).
   **Android capture tool: `test_adb.py`** at the repo root (tkinter GUI: build, install, per-device
   logcat with the runbook's tags already whitelisted).
 
-- \[~\] **WP-NOTIF-1 (P2) - Notification quick actions.** (a) and (b) are CODE COMPLETE, NOT
-  COMPILED (native: Kotlin + ObjC), and unverified on device; (c) is what is left to build.
-  (a) *"Repondre" left no local trace.* It always DID send (`handleReply: queued`,
-  `sendQueuedMessagePush: HTTP 201`, `1 sent, 0 remaining`) but the reply is built natively and
-  never becomes an outbox entry, and `reconcileOutboxSent` only DELETES entries - so the sender's
-  own conversation showed nothing. FIXED both platforms by writing the delivered reply to
-  `fcm_message_cache.ndjson` under OUR user id (`writeSentMessageToCache` /
-  `CanariWriteSentMessageToCache`).
-  (b) *Our own avatar was blank in the thread.* FIXED: `selfPerson` now gets `fetchAvatar`, via a
-  new `MlsContextLoader.loadUserId` (no Keystore hop). Android only - iOS has no self Person.
-  (c) *STILL OPEN: an UNDELIVERED quick reply is silently dropped.* It lives only in
-  `outbox_pending.ndjson`, and `store_outbox_mirror` REWRITES that file from the TS queue, so the
-  next foreground outbox mutation wipes it instead of flushing it. The notification is left up as
-  the retry affordance, deliberately. The real fix is adopting an unknown mirror entry back into
-  the TS outbox at boot - the symmetric twin of `read_and_clear_outbox_sent`.
-  **Both native halves need a `workflow_dispatch` compile run before they are believed** (grep the
-  logs for `CompileC ...canari_push.o` and the Kotlin task), and check that a quick reply now shows
-  up in the sender's own conversation after the app reopens.
+- \[~\] **WP-NOTIF-1 (P2) - Notification quick actions. ALL THREE PARTS CODE COMPLETE, NOT
+  COMPILED, unverified on device.** (a) the delivered reply left no local trace - fixed both
+  platforms by writing it to `fcm_message_cache.ndjson` under OUR user id
+  (`writeSentMessageToCache` / `CanariWriteSentMessageToCache`). (b) our own avatar was blank in
+  the thread - fixed via a new `MlsContextLoader.loadUserId` (no Keystore hop); Android only, iOS
+  has no self Person. (c) an UNDELIVERED reply was dropped by the next `store_outbox_mirror`
+  rewrite - fixed by `adoptOrphanedMirrorEntries` (`outboxMirror.ts`) + the new Rust
+  `read_outbox_mirror`, which at login adopts every mirror line the TS outbox does not know about
+  back into the queue, plus the local message. Runs BEFORE `loadAndRestoreConversations` on
+  purpose, so the ordinary load displays it and `applyOutboxPendingStatuses` marks it pending.
+  **What is owed: a `workflow_dispatch` compile run of BOTH release workflows** for the (a)/(b)
+  native halves (grep for `CompileC ...canari_push.o` and the Kotlin task), then **check K** of the
+  runbook on both platforms. Note (c) is pure TS + Rust, so `cargo check` and `bun run check`
+  already cover its compile; only its behaviour is unverified.
 
 - \[~\] **WP-DEV-PANEL-1 (P2) - Why is the current device missing from its own list?** The harm is
   FIXED (deleting the last device is refused; an unlisted current device is now named on screen and
@@ -158,10 +142,6 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   cutoff (unlikely, `registerDevice` refreshes it on purpose), an unresolvable KeyPackage, or a
   `revoked_devices` row from an earlier deletion, which is permanent and fits best. Verdict line,
   on opening the panel: `[DevicePanel] Current device <id> is ABSENT from its own list`.
-
-- \[ \] **WP-AGENDA-1 (P3) - No edit/delete on the global agenda.** The buttons exist only inside
-  the owning association, so a sys admin (or a BDE member holding the permission) has to find which
-  association filed an event before they can touch it. Same permission check, second surface.
 
 - \[~\] **WP-PDF-1 (P3) - Only the missing second logo is left.** The rounded corners and the
   uncropped background are FIXED (`frontend/src/lib/utils/calendarExport.ts` - the sheet is the
@@ -266,6 +246,10 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - `waitForMessageQueueIdle` before a flush is correctness: skipping it sends at a stale epoch.
 - A history request is online-only. The requester can retry and SAY it is waiting (v0.11.7); only
   a real background wake could answer it, and that is unbuilt on purpose.
+- The mirror is READ as well as written: a file one side rewrites wholesale silently deletes
+  whatever the other side appended, so every such pair needs an adoption pass, not just a drain.
+- Adopt before the conversations load and the ordinary history load displays it - no second
+  in-memory merge path to keep correct.
 
 #### UI and i18n -> [frontend/architecture](docs/wiki/frontend/architecture.md)
 
@@ -340,6 +324,13 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - What must fit a card is the longest WORD, not the name: shrink to it, then widen the card.
 - A card's `photo` is published, never derived from its width - widening must not grow the face.
 - A debug slider whose panel is gone still ships: fold it back into constants, or it rots as plumbing.
+
+#### Associations and agenda -> [social-service](docs/wiki/services/social-service.md)
+
+- A second surface for an existing action mirrors the SERVER's rule, not the first surface's:
+  the association page gates on `PROPOSE_EVENT` there, the server also lets any BDE
+  `VALIDATE_EVENTS` holder edit any event - so that holder had the right and nowhere to use it.
+- What a modal hides because it is redundant is a decision of the PAGE, never of `canEdit`.
 
 #### Cotisations (Cercle) -> [cotisations](docs/wiki/cotisations.md)
 

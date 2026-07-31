@@ -1776,6 +1776,8 @@
   "calendar_deposit_placeholder": "Décrivez l'événement…",
   "calendar_deposit_publish": "Publier",
   "calendar_deposit_publishing": "Publication…",
+  "calendar_deposit_immediate_note": "L'événement est publié immédiatement au nom de l'association choisie.",
+  "calendar_edit_owner_note": "Événement de {association}. L'association organisatrice ne peut pas être changée.",
   "calendar_error_choose_asso": "Choisissez une association.",
   "calendar_error_title_required": "Titre et date de début requis.",
   "calendar_export_back": "Retour à l'agenda",

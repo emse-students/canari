@@ -112,12 +112,11 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             CanariFirebaseMessagingService.cancelConversationNotification(context, groupId)
         } else {
             // Not delivered: NO cache entry, or the app would show as sent a message that never
-            // left. The notification stays up, which is the only retry affordance - and it has to
-            // be, because `store_outbox_mirror` REWRITES outbox_pending.ndjson from the TypeScript
-            // queue, so this entry is wiped by the next foreground outbox mutation rather than
-            // flushed. Adopting an unknown mirror entry back into the TS outbox is the real fix
-            // (WP-NOTIF-1) and is not attempted here.
-            Log.w(TAG, "handleReply: reply still queued (remaining=$remaining) - notification left as-is, entry NOT persisted")
+            // left. The notification stays up as the immediate retry affordance, and the entry
+            // stays in outbox_pending.ndjson - where `adoptOrphanedMirrorEntries` (outboxMirror.ts)
+            // now picks it up at the next login and turns it into a real TypeScript outbox entry
+            // plus a local message, instead of it being erased by the next `store_outbox_mirror`.
+            Log.w(TAG, "handleReply: reply still queued (remaining=$remaining) - notification left as-is, adoption owed at next login")
         }
     }
 
