@@ -56,6 +56,18 @@
   let editingDeviceId = $state<string | null>(null);
   let editingName = $state('');
 
+  /**
+   * Whether the device we are running on appears in the list the server returned.
+   *
+   * Every safeguard here is keyed on matching `myDeviceId` against a row: the highlight, the
+   * "current device" badge, and the hidden delete button. When no row matches, all three vanish
+   * silently and the panel looks like a list of other people's machines - which is how the user
+   * ends up deleting every row and landing on "0 devices". The server can legitimately omit us
+   * (the list is filtered to the retention window and drops a device whose KeyPackage cannot be
+   * resolved), so this is a state to SHOW, not an impossibility to assert.
+   */
+  const currentDeviceListed = $derived(devices.some((d) => d.deviceId === myDeviceId));
+
   $effect(() => {
     if (open && userId) {
       void loadDeviceData();
@@ -90,6 +102,12 @@
       const allDevices = await mlsService.fetchUserDevices(userId);
       devices = allDevices;
       console.log(`[DevicePanel] Found ${allDevices.length} device(s)`);
+      // Worth a loud line: this is the state in which every self-protection in this panel is
+      // inert, and the cause is server-side (retention filter, unresolvable KeyPackage) so it
+      // cannot be diagnosed from what the UI shows.
+      if (!allDevices.some((d) => d.deviceId === myDeviceId)) {
+        console.warn(`[DevicePanel] Current device ${myDeviceId} is ABSENT from its own list`);
+      }
 
       // Load memberships for each device
       const newMemberships = new SvelteMap<string, DeviceMembership[]>();
@@ -123,6 +141,15 @@
 
   async function handleRemoveDevice(deviceId: string) {
     if (deviceId === myDeviceId) return;
+    // Never empty the account. Deleting the current device is already blocked above, so reaching
+    // zero means we did not recognise ourselves in the list - and the deletion would then hit the
+    // machine we are on. That is not recoverable by re-logging in: deleteDevice denylists the
+    // device against re-registration, on top of purging its memberships and queued messages.
+    if (devices.length <= 1) {
+      console.warn(`[DevicePanel] Refused to delete the last device ${deviceId.slice(0, 8)}…`);
+      error = m.chat_device_last_one_error();
+      return;
+    }
     // Deletion is irreversible for the revoked device: deleteDevice purges its
     // KeyPackages, prekeys, push tokens, memberships and queued messages, so anything
     // still in flight for it is lost. Confirm before firing, as kicking a member does.
@@ -211,14 +238,29 @@
         <Loader size={28} class="animate-spin text-amber-500" />
         <span class="text-sm font-semibold tracking-wide">{m.chat_syncing_devices()}</span>
       </div>
-    {:else if error}
-      <div
-        class="flex items-start gap-3 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 mb-4 shadow-inner"
-      >
-        <ShieldAlert size={20} class="shrink-0 mt-0.5" />
-        <p class="text-sm font-medium leading-relaxed">{error}</p>
-      </div>
     {:else}
+      <!-- The error sits ABOVE the list, never instead of it: a refused deletion has to be read
+           next to the devices it refused to touch, not on an empty panel. -->
+      {#if error}
+        <div
+          class="flex items-start gap-3 p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 mb-4 shadow-inner"
+        >
+          <ShieldAlert size={20} class="shrink-0 mt-0.5" />
+          <p class="text-sm font-medium leading-relaxed">{error}</p>
+        </div>
+      {/if}
+
+      {#if devices.length > 0 && !currentDeviceListed}
+        <div
+          class="flex items-start gap-3 p-4 rounded-2xl bg-orange-500/10 border border-orange-500/20 text-orange-700 dark:text-orange-300 mb-4 shadow-inner"
+        >
+          <TriangleAlert size={20} class="shrink-0 mt-0.5" />
+          <p class="text-sm font-medium leading-relaxed">
+            {m.chat_device_not_listed_warning({ id: myDeviceId })}
+          </p>
+        </div>
+      {/if}
+
       <div class="space-y-5 pb-2">
         <div class="flex items-center justify-between">
           <p class="text-[0.85rem] font-bold uppercase tracking-wider text-text-muted">

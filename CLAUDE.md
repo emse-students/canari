@@ -151,10 +151,13 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   logs for `CompileC ...canari_push.o` and the Kotlin task), and check that a quick reply now shows
   up in the sender's own conversation after the app reopens.
 
-- \[ \] **WP-DEV-PANEL-1 (P2) - The device panel does not identify the current device.** On Windows
-  the current device is not highlighted, so nothing tells the user which row is the machine they
-  are on - and deleting every row is allowed, leaving "0 appareils connectes" with no warning.
-  Decide whether self-deletion is refused outright or confirmed loudly.
+- \[~\] **WP-DEV-PANEL-1 (P2) - Why is the current device missing from its own list?** The harm is
+  FIXED (deleting the last device is refused; an unlisted current device is now named on screen and
+  logged). The cause is NOT known: the panel was always correct, the server's list simply had no
+  row matching `myDeviceId`. `getUserDevices` can omit us three ways - the 90-day `createdAt`
+  cutoff (unlikely, `registerDevice` refreshes it on purpose), an unresolvable KeyPackage, or a
+  `revoked_devices` row from an earlier deletion, which is permanent and fits best. Verdict line,
+  on opening the panel: `[DevicePanel] Current device <id> is ABSENT from its own list`.
 
 - \[ \] **WP-AGENDA-1 (P3) - No edit/delete on the global agenda.** The buttons exist only inside
   the owning association, so a sys admin (or a BDE member holding the permission) has to find which

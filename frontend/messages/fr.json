@@ -258,6 +258,8 @@
   "chat_device_management_title": "Gestion des appareils",
   "chat_syncing_devices": "Synchronisation des appareils…",
   "chat_devices_load_error": "Impossible de charger les appareils liés à votre compte.",
+  "chat_device_not_listed_warning": "Cet appareil ({id}) n'apparaît pas dans la liste ci-dessous. Rechargez avant de supprimer quoi que ce soit : une suppression est définitive et empêche le réenregistrement.",
+  "chat_device_last_one_error": "Impossible de supprimer le dernier appareil : vous perdriez l'accès à vos conversations chiffrées, et cet appareil ne pourrait plus se réenregistrer.",
   "chat_devices_count_label": "{devices} appareil(s) connecté(s)",
   "chat_no_devices_registered": "Aucun appareil enregistré",
   "chat_device_name_placeholder": "Nom de l'appareil",

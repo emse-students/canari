@@ -237,6 +237,8 @@
   "chat_device_management_title": "Device management",
   "chat_syncing_devices": "Syncing devices…",
   "chat_devices_load_error": "Unable to load devices linked to your account.",
+  "chat_device_not_listed_warning": "This device ({id}) does not appear in the list below. Refresh before deleting anything: a deletion is permanent and blocks re-registration.",
+  "chat_device_last_one_error": "The last device cannot be deleted: you would lose access to your encrypted conversations, and this device could no longer re-register.",
   "chat_devices_count_label": "{devices} device(s) connected",
   "chat_no_devices_registered": "No devices registered",
   "chat_device_name_placeholder": "Device name",
