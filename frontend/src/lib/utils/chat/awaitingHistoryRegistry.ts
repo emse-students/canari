@@ -43,6 +43,22 @@ export function clearAwaitingHistory(userId: string, groupId: string): void {
 }
 
 /**
+ * Whether this device is itself still awaiting the history bundle of `groupId`.
+ *
+ * Used by the RESPONDER side: an empty local store only proves the group has no history if we are
+ * not ourselves waiting for it. A device that just joined has an empty store for a group that may
+ * well have years of history held by others, so its emptiness says nothing and it must stay silent.
+ * Honours the same give-up horizon as {@link enumerateAwaitingHistory} - an expired marker means we
+ * gave up waiting, so our store is authoritative again.
+ */
+export function isAwaitingHistory(userId: string, groupId: string): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  const since = Number(localStorage.getItem(key(userId, groupId)));
+  if (!Number.isFinite(since) || since === 0) return false;
+  return Date.now() - since <= MAX_AGE_MS;
+}
+
+/**
  * All groupIds for `userId` still awaiting their history bundle. Entries older than
  * {@link MAX_AGE_MS} are considered given-up and are pruned as a side effect of enumeration, so the
  * registry stays bounded without a separate GC pass.

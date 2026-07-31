@@ -2,6 +2,7 @@ import {
   markAwaitingHistory,
   clearAwaitingHistory,
   enumerateAwaitingHistory,
+  isAwaitingHistory,
 } from './awaitingHistoryRegistry';
 
 describe('awaitingHistoryRegistry', () => {
@@ -49,5 +50,30 @@ describe('awaitingHistoryRegistry', () => {
     markAwaitingHistory('user-a', 'g1');
     vi.setSystemTime(1_000_000 + 29 * 24 * 60 * 60 * 1000);
     expect(enumerateAwaitingHistory('user-a')).toEqual(['g1']);
+  });
+
+  describe('isAwaitingHistory', () => {
+    it('is false for an unmarked group, and per user', () => {
+      markAwaitingHistory('user-a', 'g1');
+      expect(isAwaitingHistory('user-a', 'g1')).toBe(true);
+      expect(isAwaitingHistory('user-a', 'g2')).toBe(false);
+      expect(isAwaitingHistory('user-b', 'g1')).toBe(false);
+    });
+
+    it('is false once cleared', () => {
+      markAwaitingHistory('user-a', 'g1');
+      clearAwaitingHistory('user-a', 'g1');
+      expect(isAwaitingHistory('user-a', 'g1')).toBe(false);
+    });
+
+    it('is false past the give-up horizon - we stopped waiting, so our store is authoritative', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
+      markAwaitingHistory('user-a', 'g1');
+      vi.setSystemTime(1_000_000 + 29 * 24 * 60 * 60 * 1000);
+      expect(isAwaitingHistory('user-a', 'g1')).toBe(true);
+      vi.setSystemTime(1_000_000 + 31 * 24 * 60 * 60 * 1000);
+      expect(isAwaitingHistory('user-a', 'g1')).toBe(false);
+    });
   });
 });

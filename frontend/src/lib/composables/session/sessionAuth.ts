@@ -792,6 +792,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             conversations: cb.conversations,
             log: cb.log,
             requesterUserId,
+            selfUserId: ctx.getUserId(),
             groupId,
           });
         } catch (e) {

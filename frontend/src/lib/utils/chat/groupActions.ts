@@ -4,6 +4,7 @@ import type { IStorage, StoredMessage } from '$lib/db';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
+import { isAwaitingHistory } from './awaitingHistoryRegistry';
 
 /**
  * Reports (log + `console.warn`) devices skipped by `addMembersBulk` because their KeyPackage
@@ -456,6 +457,13 @@ function serializeForBundle(m: StoredMessage) {
  *
  * The recipient deduplicates messages by `id` on receipt - multiple calls are idempotent.
  * Stops at the first chunk error to avoid spamming the network.
+ *
+ * **An empty group is answered, not ignored.** Returning silently made "there is no history" and
+ * "nobody answered" the same signal to the requester, so every join of a brand-new conversation
+ * timed out into `pending-offline`, showed the offline banner and kept its durable awaiting-history
+ * marker - re-soliciting on every reconnect for the 30 days of the give-up horizon. An empty bundle
+ * closes that loop (the receiver clears the marker before it even reads `messages`). It is only sent
+ * when our emptiness is authoritative: see {@link isAwaitingHistory}.
  */
 export async function sendFullHistoryBundle(
   groupId: string,
@@ -464,19 +472,42 @@ export async function sendFullHistoryBundle(
     deviceKeyB64: string;
     mlsService: IMlsService;
     log: (msg: string) => void;
+    /** OUR user id, for the authoritative-emptiness check. Not the requester's. */
+    selfUserId: string;
   },
   chunkSize = 200
 ): Promise<void> {
-  const { storage, deviceKeyB64, mlsService, log } = deps;
-  if (!storage) return;
+  const { storage, deviceKeyB64, mlsService, log, selfUserId } = deps;
+  if (!storage) {
+    log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
+    return;
+  }
 
   let messages: StoredMessage[];
   try {
     messages = await storage.getMessages(groupId, deviceKeyB64);
-  } catch {
+  } catch (e) {
+    // A read that FAILED proves nothing about the group: stay silent so the requester retries
+    // against another member rather than concluding the history is empty.
+    log(`[HISTORY_BUNDLE] Read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
     return;
   }
-  if (messages.length === 0) return;
+  if (messages.length === 0) {
+    if (isAwaitingHistory(selfUserId, groupId)) {
+      log(
+        `[HISTORY_BUNDLE] Empty and still awaiting history ourselves for ${groupId.slice(0, 8)}… - staying silent`
+      );
+      return;
+    }
+    const bytes = encodeAppMessage(mkSystem('history_bundle', JSON.stringify({ messages: [] })));
+    try {
+      await mlsService.sendMessage(groupId, bytes, undefined, true);
+      log(`[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (group has no history)`);
+    } catch (e) {
+      log(`[HISTORY_BUNDLE] Empty bundle send error: ${String(e).slice(0, 120)}`);
+    }
+    return;
+  }
 
   const totalChunks = Math.ceil(messages.length / chunkSize);
   for (let i = 0; i < messages.length; i += chunkSize) {

@@ -199,6 +199,7 @@ export async function processPendingInvitations(params: {
             deviceKeyB64,
             mlsService,
             log,
+            selfUserId: userId,
           }).catch((e) =>
             log(`[HISTORY_BUNDLE] History send error to ${inv.userId}: ${String(e)}`)
           );
@@ -927,9 +928,13 @@ export async function handleWelcomeRequest(params: {
     // go through validateCommit): the recipient has already joined via the Welcome (same epoch as
     // us). The bundle arrives after the Welcome client-side (order guaranteed by MLS) and reads
     // IndexedDB. [[C8]]
-    await sendFullHistoryBundle(groupId, { storage, deviceKeyB64, mlsService, log }).catch((e) =>
-      log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
-    );
+    await sendFullHistoryBundle(groupId, {
+      storage,
+      deviceKeyB64,
+      mlsService,
+      log,
+      selfUserId: userId,
+    }).catch((e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`));
   } catch (e) {
     const errStr = String(e);
 
@@ -975,10 +980,20 @@ export async function handleHistoryRequest(params: {
   conversations: Map<string, Conversation>;
   log: (msg: string) => void;
   requesterUserId: string;
+  /** OUR user id - the responder's, not the requester's. */
+  selfUserId: string;
   groupId: string;
 }): Promise<void> {
-  const { mlsService, storage, deviceKeyB64, conversations, log, requesterUserId, groupId } =
-    params;
+  const {
+    mlsService,
+    storage,
+    deviceKeyB64,
+    conversations,
+    log,
+    requesterUserId,
+    selfUserId,
+    groupId,
+  } = params;
   if (!mlsService.getLocalGroups().includes(groupId)) {
     log(`[HISTORY_REQ] ${groupId.slice(0, 8)}... not local - cannot serve history, skip`);
     return;
@@ -988,7 +1003,11 @@ export async function handleHistoryRequest(params: {
     return;
   }
   log(`[HISTORY_REQ] serving history bundle to ${requesterUserId} for ${groupId.slice(0, 8)}...`);
-  await sendFullHistoryBundle(groupId, { storage, deviceKeyB64, mlsService, log }).catch((e) =>
-    log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
-  );
+  await sendFullHistoryBundle(groupId, {
+    storage,
+    deviceKeyB64,
+    mlsService,
+    log,
+    selfUserId,
+  }).catch((e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`));
 }

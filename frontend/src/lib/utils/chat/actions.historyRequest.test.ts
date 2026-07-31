@@ -34,6 +34,7 @@ const base = {
   deviceKeyB64: 'pin',
   log: vi.fn(),
   requesterUserId: 'u2',
+  selfUserId: 'u1',
 };
 
 describe('handleHistoryRequest', () => {
@@ -50,7 +51,12 @@ describe('handleHistoryRequest', () => {
       conversations: activeConversations(groupId),
       groupId,
     });
-    expect(sendFullHistoryBundle).toHaveBeenCalledWith(groupId, expect.anything());
+    // `selfUserId` must be OUR id, never the requester's: it decides whether our empty store is
+    // authoritative enough to answer "this group has no history".
+    expect(sendFullHistoryBundle).toHaveBeenCalledWith(
+      groupId,
+      expect.objectContaining({ selfUserId: 'u1' })
+    );
   });
 
   it('skips when the group is not held locally (cannot re-encrypt history)', async () => {
