@@ -1,4 +1,4 @@
-import { eventBgCss, splitLogoWatermark } from './calendarExport';
+import { eventBgCss, splitLogoBands, splitLogoWatermark } from './calendarExport';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
 /** Minimal feed-event factory: only the fields the visual helpers read need to be meaningful. */
@@ -77,6 +77,24 @@ describe('splitLogoWatermark', () => {
     expect(html).not.toContain('gap:3px');
   });
 
+  it('immunises each band image against the app-wide img max-width', () => {
+    // This markup renders INSIDE the app document, so Tailwind Preflight's `img { max-width:100% }`
+    // applies: without max-width:none the logo is clamped to its BAND instead of the circle, and
+    // every band at a negative offset lands entirely outside its own window and paints nothing.
+    // The left half survives as a squeezed centre strip, so it reads as "the second logo is
+    // missing" - and it is invisible to any probe rendered outside the app, which has no Preflight.
+    const html = splitLogoWatermark(['/logo1.png', '/logo2.png'], 40);
+    const imgStyles = [...html.matchAll(/<img [^>]*style="([^"]*)"/g)].map((m) => m[1]);
+
+    expect(imgStyles).toHaveLength(2);
+    for (const style of imgStyles) {
+      expect(style).toContain('max-width:none');
+      expect(style).toContain('max-height:none');
+      // The image must span the whole circle, never just its own band.
+      expect(style).toContain('width:40px');
+    }
+  });
+
   it('leaves an owner half empty rather than renumbering the bands', () => {
     // A band belongs to an OWNER, so an unresolved logo must not shift the next one into its place.
     // Compacting the array instead is what disguised a missing logo as a correct render: two owners
@@ -95,5 +113,35 @@ describe('splitLogoWatermark', () => {
     expect((html.match(/<img /g) ?? []).length).toBe(1);
     expect(html).toContain('left:20.00px'); // still the RIGHT band
     expect(html).toContain('left:-20.00px'); // still showing its own right half
+  });
+});
+
+describe('splitLogoBands', () => {
+  // This geometry is shared with MonthCalendarGridRich.svelte, which draws the same split on screen.
+  // The two surfaces drifted once - the export was fixed while the grid kept a row of small separate
+  // logos - so the split is defined here, in percentages, and both read it.
+  it('splits the circle into equal bands, each exposing its own slice', () => {
+    expect(splitLogoBands(2)).toEqual([
+      { leftPct: 0, widthPct: 50, imgLeftPct: -0, imgWidthPct: 200 },
+      { leftPct: 50, widthPct: 50, imgLeftPct: -100, imgWidthPct: 200 },
+    ]);
+  });
+
+  it('scales to any owner count without leaving a gap', () => {
+    const bands = splitLogoBands(3);
+    expect(bands).toHaveLength(3);
+    // Bands tile the circle edge to edge.
+    expect(bands.at(-1)!.leftPct + bands.at(-1)!.widthPct).toBeCloseTo(100);
+    // Each logo stays circle-wide inside its band, shifted by whole band widths.
+    for (const [i, b] of bands.entries()) {
+      expect(b.imgWidthPct).toBe(300);
+      expect(b.imgLeftPct).toBe(-i * 100);
+    }
+  });
+
+  it('degenerates to a single full-width band for one owner', () => {
+    expect(splitLogoBands(1)).toEqual([
+      { leftPct: 0, widthPct: 100, imgLeftPct: -0, imgWidthPct: 100 },
+    ]);
   });
 });

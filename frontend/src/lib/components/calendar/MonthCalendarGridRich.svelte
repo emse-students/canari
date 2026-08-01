@@ -2,6 +2,7 @@
   import { generateAvatarColor, getInitials } from '$lib/utils/avatar';
   import { contrastColor, toHex } from '$lib/utils/color';
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
+  import { splitLogoBands } from '$lib/utils/calendarExport';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -219,7 +220,8 @@
                         style="color:{fg};">{cell.day}</span
                       >
                     {/if}
-                    <!-- Logo(s) en filigrane : un seul centré, ou une rangée pour les co-portages -->
+                    <!-- Logo watermark: one centred circle, or that same circle split into one band
+                         per owner for a co-owned event. Never a row of small separate logos. -->
                     {#if logos.length === 1}
                       {#if logos[0].src}
                         <img
@@ -237,26 +239,44 @@
                         >
                       {/if}
                     {:else}
+                      {@const bands = splitLogoBands(logos.length)}
+                      <!-- ONE circle, one band per owner, cut from the same geometry the PDF export
+                           uses (splitLogoBands) so the screen and the export agree. `aspect-ratio`
+                           rather than a percentage width: the two percentages resolve against
+                           different axes, so on a slot shorter than it is wide the circle would
+                           flatten into an ellipse. -->
                       <div
-                        class="absolute inset-0 flex items-center justify-center gap-1"
-                        style="opacity:0.22;"
+                        class="absolute overflow-hidden rounded-full"
+                        style="height:62%;aspect-ratio:1;max-height:52px;opacity:0.22;left:50%;top:50%;transform:translate(-50%,-50%);"
                         aria-hidden="true"
                       >
-                        {#each logos as lg (lg.name)}
-                          {#if lg.src}
-                            <img
-                              src={lg.src}
-                              alt=""
-                              class="rounded-full object-cover"
-                              style="width:30%;height:30%;max-width:30px;max-height:30px;"
-                            />
-                          {:else}
-                            <span
-                              class="rounded-full flex items-center justify-center text-[9px] font-black"
-                              style="width:26px;height:26px;background:rgba(255,255,255,0.3);color:{fg};"
-                              >{getInitials(lg.name)}</span
-                            >
-                          {/if}
+                        {#each logos as lg, i (lg.name)}
+                          <div
+                            class="absolute top-0 h-full overflow-hidden"
+                            style="left:{bands[i].leftPct}%;width:{bands[i].widthPct}%;"
+                          >
+                            {#if lg.src}
+                              <!-- max-width:none is load-bearing: Tailwind Preflight's
+                                   `img { max-width: 100% }` would clamp this to its BAND instead of
+                                   the circle, pushing every band after the first entirely outside
+                                   its own window - a right half that paints nothing. -->
+                              <img
+                                src={lg.src}
+                                alt=""
+                                class="absolute top-0 h-full max-w-none object-cover"
+                                style="left:{bands[i].imgLeftPct}%;width:{bands[i].imgWidthPct}%;"
+                              />
+                            {:else}
+                              <!-- No logo for this owner: its band keeps its place and shows the
+                                   initials, so a missing logo never lets a sibling take the whole
+                                   circle - which is what disguised the defect on the export. -->
+                              <span
+                                class="flex h-full w-full items-center justify-center text-[9px] font-black"
+                                style="background:rgba(255,255,255,0.3);color:{fg};"
+                                >{getInitials(lg.name)}</span
+                              >
+                            {/if}
+                          </div>
                         {/each}
                       </div>
                     {/if}

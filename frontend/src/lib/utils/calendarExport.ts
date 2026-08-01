@@ -267,6 +267,38 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
   }
 }
 
+/** Geometry of one band of a split logo watermark, as percentages. */
+export interface LogoBand {
+  /** Band window offset from the circle's left edge, in % of the circle width. */
+  leftPct: number;
+  /** Band window width, in % of the circle width. */
+  widthPct: number;
+  /** Offset of the full-size logo inside its band, in % of the BAND width (0 for the first). */
+  imgLeftPct: number;
+  /** Width the full-size logo must have inside its band, in % of the BAND width. */
+  imgWidthPct: number;
+}
+
+/**
+ * Band geometry for an `n`-owner split watermark, in percentages so it is unit-free.
+ *
+ * This is the single definition of the split, shared by the two surfaces that draw it: the PDF
+ * export ({@link splitLogoWatermark}, which scales these to px) and the on-screen calendar grid
+ * (`MonthCalendarGridRich.svelte`, which uses them as-is). They MUST agree - the export was fixed
+ * on 2026-08-01 while the grid was left showing a row of small separate logos, so the surface the
+ * user actually looks at still contradicted the decided design.
+ */
+export function splitLogoBands(n: number): LogoBand[] {
+  return Array.from({ length: n }, (_, i) => ({
+    leftPct: (i * 100) / n,
+    widthPct: 100 / n,
+    // The logo keeps the circle's full width inside a band that is 1/n of it, shifted left by i
+    // whole band widths so each band exposes only its own vertical slice.
+    imgLeftPct: -i * 100,
+    imgWidthPct: n * 100,
+  }));
+}
+
 /**
  * Watermark for a co-owned event: the owners' logos are merged into ONE circle split into equal
  * vertical bands, each band cut from a different logo (2 owners -> left half of logo 1 on the left,
@@ -278,16 +310,26 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
  * half empty. Dropping the nulls instead would renumber the bands - two owners with one resolvable
  * logo would collapse to n=1 and draw that logo WHOLE across the circle, which is indistinguishable
  * from a working two-logo split and hides the fact that a logo failed to load.
+ *
+ * Each band image MUST carry `max-width:none;max-height:none`. This markup is rendered inside the
+ * app document (the preview inline, the export in an offscreen container), so Tailwind's Preflight
+ * `img { max-width: 100% }` applies to it and clamps the logo to its BAND rather than the circle -
+ * the image then measures one half-width, and the band at `left:-bandW` is pushed entirely outside
+ * its own window and paints nothing. That is a right half that vanishes while the left one survives
+ * as a squeezed centre strip, which reads exactly like "the second logo is missing". It reproduces
+ * only inside the app: a standalone probe page has no Preflight and renders the split correctly.
  */
 export function splitLogoWatermark(logoSrcs: (string | null)[], size: number): string {
-  const n = logoSrcs.length;
-  const bandW = size / n;
+  const geometry = splitLogoBands(logoSrcs.length);
   const bands = logoSrcs
-    .map((src, i) =>
-      src === null
-        ? ''
-        : `<div style="position:absolute;top:0;left:${(i * bandW).toFixed(2)}px;width:${bandW.toFixed(2)}px;height:${size}px;overflow:hidden;"><img src="${src}" style="position:absolute;top:0;left:${(-i * bandW).toFixed(2)}px;width:${size}px;height:${size}px;object-fit:cover;" /></div>`
-    )
+    .map((src, i) => {
+      if (src === null) return '';
+      const b = geometry[i];
+      const left = (b.leftPct / 100) * size;
+      const width = (b.widthPct / 100) * size;
+      const imgLeft = (b.imgLeftPct / 100) * width;
+      return `<div style="position:absolute;top:0;left:${left.toFixed(2)}px;width:${width.toFixed(2)}px;height:${size}px;overflow:hidden;"><img src="${src}" style="position:absolute;top:0;left:${imgLeft.toFixed(2)}px;width:${size}px;height:${size}px;max-width:none;max-height:none;object-fit:cover;" /></div>`;
+    })
     .join('');
   return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><div style="position:relative;width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;opacity:0.20;">${bands}</div></div>`;
 }

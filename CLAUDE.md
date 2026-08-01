@@ -152,21 +152,17 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   `[MLS] Device <old> was revoked - re-enrolled as <new>`, then the panel lists the new id. Costs
   the local history of that device, by design.
 
-- \[ \] **WP-PDF-1 (P3) - the split RENDERS; what fails is contrast. Nothing is owed on device.**
-  The two-half watermark is the intended design (`79645923`) - do NOT replace it with whole logos
-  side by side, that was tried on 2026-08-01 and rejected. The compaction fix (`97eae20f`, bands are
-  positional, a missing logo leaves that half empty) is correct and stays, but **it was not the
-  cause** - the user said so ("les logos sont resolus a d'autres endroits") and the measurement
-  agreed. Re-rendering the production markup with the real prod feed and the real logo files
-  (public, no auth: `GET /api/associations` + `/api/associations/calendar/feed`) showed both halves
-  painted, all 6 co-owned events resolving both logos, and every logo at alpha 1.00. Each half is
-  composited at a FIXED 0.20 over its OWN owner's brand colour, and a logo is usually in its brand's
-  colour family: measured shift +29 (Mines'ramax) down to **-3.9** (DopaMines, black logo on
-  `#000000`) and -21.6 (MiTV, no colour -> `#888888`). `dL = alpha x (L_logo - L_band)`, so the only
-  lever is per-half adaptive opacity (clamped ~[0.20, 0.55] targeting |dL| ~ 15-18, one canvas pass
-  per unique logo for its mean luminance - same origin, untainted). NOT applied: the user answered
-  "ca me parait parfait" on the render. Reopen only if they report a washed-out half again.
-  A contrast plate behind the logo is useless - an opaque image covers it.
+- \[x\] **WP-PDF-1 - SOLVED 2026-08-01, confirmed live on prod by the user. Nothing owed.**
+  Cause: Tailwind Preflight's `img { max-width:100% }` clamped each band image to its WINDOW instead
+  of the circle (prod DOM: inline `width:25px`, computed `12.5px`), so the band at `left:-12.5px`
+  fell entirely outside its own 12.5px window and painted nothing. Fixed with
+  `max-width:none;max-height:none` on the band image, plus the grid, which had never been split at
+  all. Details in `CHANGELOG.md`; the two rules it taught are in DURABLE RULES / Carte de la Vie Asso.
+  Kept because it cost four dead ends: the split IS the intended design (`79645923`) - do NOT replace
+  it with whole logos side by side, tried 2026-08-01 and rejected. Contrast was NOT the cause and the
+  adaptive-opacity remedy was NOT applied (the user judged all three test renders correct); the
+  measured shifts, if it ever does resurface, are +29 (Mines'ramax) to -3.9 (DopaMines, black on
+  black), `dL = alpha x (L_logo - L_band)`. A contrast plate is useless - an opaque image covers it.
 
 - \[~\] **WP-DEEPLINK-1 (P1) - RE-OPENED 2026-08-01: a tapped notification opens the tab, not the
   conversation.** Check H had been recorded PASS on v0.11.7 - "right tab" is what a pass looks like
@@ -371,6 +367,13 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   the vector re-draw, which anchors to the marked box's TOP. Preview right + PDF high = this.
 - A positional layout must NEVER be handed a compacted array: the missing entry then renumbers the
   rest, and the result looks like a correct render of different data instead of a visible gap.
+- Markup built as a STRING still lives in the app document, so the global stylesheet applies to it.
+  Tailwind Preflight's `img { max-width:100% }` clamped a split-watermark band image to its window
+  and pushed every negatively-offset band out of view: pin `max-width:none` on any image sized
+  larger than its own container.
+- A probe page is not the app: reproducing app markup outside it silently drops every global rule,
+  so it can only ever confirm the markup, never clear it. Measure the LIVE DOM - a computed width
+  that contradicts the inline one names the culprit in one call.
 
 #### Associations and agenda -> [social-service](docs/wiki/services/social-service.md)
 
