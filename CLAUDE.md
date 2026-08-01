@@ -78,37 +78,49 @@ trail; Canari credits but never displays the balance.
 nothing that POSTs - each action guards itself. `CANARI_INTEGRATION_ENABLED=false` is the local
 switch: it freezes the cotisant snapshot instead of refreshing it, and never opens the gate.
 
-- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link. AUREL HAS FORKED, NOT
-  REVIEWED - decide what survives before doing any more work here.** Observed 2026-08-01 by fetching:
-  he pushed `audit/security-and-canari-rewrite`, which is **separate lineage** (merge-base with my
-  branch is `df692f2`, the same point I forked from - `git merge-base --is-ancestor` says NO), 12
-  commits redoing the security half his own way: Session JWT + refresh, DB-backed sessions with
-  revoking, `auth/authentik/` + `auth/cercle/`, `--bun` on vite, UTC datetimes. It **deletes the
-  entire Canari link**: no `src/lib/server/canari/`, no `cotisant.ts`, no `authz.ts`, no
-  `session.ts`, no `db/movements/` (the ledger), and no `CANARI_*` variable anywhere in `src/` or
-  his `.env.example`. His migration `02-add_sessions.sql` also collides in NUMBER with my
-  `02-canari_integration.sql`. He has separately pushed to `main` (keg inventory, INSERT OR REPLACE
-  fix). So "j'ai beaucoup avancé sur ton PR" means a parallel rewrite, and the cotisant/ledger work
-  is not in it - the architecture decisions of 2026-07-28 are not settled on his side.
+**Driving the Cercle locally to test it (2026-08-01, all four cost time):** the DEV server is not
+worth testing against - `$env/dynamic/private` there came from a stale process and read the OLD
+`.env`, silently disabling the Canari link; build and run `bun ./build/index.js` with the env
+explicit on the command line instead. `TaskStop` does NOT free the port (a survivor kept 5387 and
+answered every request); kill by port with `Get-NetTCPConnection ... | Stop-Process`. That server
+needs `ORIGIN=http://127.0.0.1:<port>` or SvelteKit's CSRF check 403s every form action, and Bun's
+`fetch` cannot set `Origin` itself (forbidden header) - drive actions with an explicit header the
+runtime allows. `localhost` resolves to `::1`, where another project's Vite was listening: always
+address `127.0.0.1`.
+
+- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link. AUREL'S FORK IS NOW MERGED
+  IN (`418c268`, pushed 2026-08-01). Only the two live checks are owed.** He had forked rather than
+  reviewed: `audit/security-and-canari-rewrite` was separate lineage (same merge-base `df692f2`) and
+  deleted the whole Canari link. Both halves are now on this branch, nothing dropped - his revocable
+  DB sessions, `auth/authentik|cercle/`, `UTCISOString`, keg inventory, bartender LRU cache; my
+  `server/canari/`, `cotisant.ts`, `authz.ts`, `db/movements/`. Reconciled by hand: one date model,
+  one migration line (his session scripts collapsed into `04-add_sessions.sql` - neither had ever
+  run), one till (`events/open/[id]` folded into `events/[id]?/open`). Four security holes found IN
+  his code and fixed on top - see DURABLE RULES / Le Cercle auth.
+  Both directions were then driven end to end against a running build: inbound webhook credits once,
+  idempotent on `paymentIntentId`, rejects bad/missing signature; outbound `cotisant-status` sends
+  the right key+slug+sub, drives the snapshot and the gate, resolves an unnameable tier to
+  sans-alcool; at the till the alcohol tier, a forged `unit_price`, a lapsed cotisation and a
+  negative quantity all behave, and the ledger balances against the cached total.
   **MR open, awaiting Aurel: https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/1**
   (GitLab over SSH - `gh` is useless and there is no API token here; **git refuses a push option
   containing newlines**, so the full French description must be pasted by hand from
   `...\Temp\claude\c--Users-jolan-Documents-Programmation-canari\2df0218a-c456-4153-8f17-1a97db43e51b\scratchpad\MR-DESCRIPTION.md`,
-  also a TEMP path).
-  Still owed before merge, both blocked on the site being online: a run against a REAL Canari
-  (`CANARI_INTEGRATION_ENABLED=true` has never been exercised - 24 h grace window and TTL refresh
-  untested against a live `cotisant-status`) and a real OIDC round trip (the checks mint their own
-  cookies). Runbook: `docs/PROD-TEST-CERCLE.md`, checks V1-V6.
+  also a TEMP path). That description now understates the branch - it predates the merge.
+  **Still owed, both needing the site online:** a run against the REAL Canari (the stub proved the
+  contract, not the deployment) and a real OIDC round trip (the checks mint their own cookies).
+  Runbook: `docs/PROD-TEST-CERCLE.md`, checks V1-V6.
 
 - \[ \] **WP-CERCLE-2 (P3) - No way to correct a mis-keyed consumption.** The ledger is
   append-only and the user declined an `adjustment` kind, so a drink charged twice or to the wrong
   account cannot be undone. Revisit once the bar has used it for a term.
 
-- \[~\] **WP-CERCLE-3 (P3) - Dev secrets are in the working `.env`.** The two real values ARE
-  generated (2026-07-30), in the session scratchpad `CERCLE-PROD-SECRETS.md` with the posting
-  procedure - outside every repo on purpose. That file now also carries the third value,
-  `CANARI_API_KEY` (2026-08-01), and records which of the three are already posted. All that is left
-  is putting them in the prod env and deleting that file. Rotating `SESSION_SECRET` is also the only way to revoke every session at once;
+- \[~\] **WP-CERCLE-3 (P3) - Dev secrets are in the working `.env`.** The three real values ARE
+  generated, in the session scratchpad `CERCLE-PROD-SECRETS.md` with the posting procedure - outside
+  every repo on purpose - and it records which are already posted. All that is left is putting them
+  in the prod env and deleting that file. **`SESSION_SECRET` is now named `JWT_SECRET`** (the merge
+  took Aurel's naming; `JWT_OLD_SECRET` holds the previous value during a rotation and MUST stay
+  empty otherwise). Rotating `JWT_SECRET` is still the only way to revoke every session at once.
   `CANARI_WEBHOOK_SECRET` must equal the Canari product's `webhookSecret` exactly (see WP-INT-1).
 
 ---
@@ -420,6 +432,21 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - `variantKey` is editable and the tags follow; convert rather than delete a tier with cotisants.
 - Named tiers sort before the base tier, so a legacy base-tag holder is not reported as `tier: null`.
 - Cotisant status is server-authoritative - no client-side tag derivation.
+
+#### Le Cercle auth and merging its fork -> `../le-cercle/README.md`
+
+- `TextEncoder().encode(undefined)` is the KEY "undefined": an unset secret used as a verification
+  key accepts anything anyone signs with it, and it fails OPEN. Skip absent keys, never encode them.
+- Detecting a replayed token and only LOGGING it makes the theft succeed - it rotates for whoever
+  presented it. A reused `jti` means two holders share one cookie: revoke the session.
+- Every new page under `/gestion` re-opens the layout-load hole; the guard belongs in the ACTION.
+- One app, one date model. Half the seams in a merge are a `Date` meeting a string, and the compiler
+  only catches the ones that cross a typed boundary - a SQL default writing `datetime('now')` into
+  an ISO column type-checks perfectly and reads back two hours off.
+- A duplicate migration NUMBER is silently skipped by the runner, so two branches numbering from the
+  same point collide invisibly. Migrations that NEVER ran are collapsible: recreate the final shape.
+- `Intl.DateTimeFormat` without `timeZone` renders in the server's zone during SSR and the reader's
+  on hydration - one row, two times.
 
 ---
 
