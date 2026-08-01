@@ -154,6 +154,15 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   means the logo exists but could not be inlined; NO line means the second association simply has no
   `logoUrl` set, which would make the export correct and the request a different feature.
 
+- \[ \] **WP-XP-7 residual (P3) - the iOS group-summary text has never worked.** Found 2026-07-31
+  in the v0.11.8 release logs, which warn on BOTH writers: `canari_push.mm:904` and
+  `NotificationService.swift:472` set `content.summaryArgument`, deprecated in iOS 15.0 with
+  "summaryArgument is ignored". Both are guarded by `@available(iOS 15.0, *)` and the deployment
+  target is 18.2, so the guard is always true and the assignment always discarded - dead code, and
+  the comment above each claims the opposite ("iOS 15+ uses this text"). Android is unaffected
+  (its twin is the real `GROUP_KEY_MESSAGES` summary notification). Deleting the two assignments is
+  behaviour-neutral; giving iOS an actual stacked-summary line is a different, unbuilt feature.
+
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
   outbox drained - and the peer never received it, not live and not after a reload. Two later
