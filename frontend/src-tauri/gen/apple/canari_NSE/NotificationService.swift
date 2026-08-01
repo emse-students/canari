@@ -466,11 +466,10 @@ class NotificationService: UNNotificationServiceExtension {
       // MLS DM/group only - channels go through handleChannelMessage and get no quick actions.
       content.categoryIdentifier = "canari_message_category"
     }
-    // Group summary (WP-XP-7): iOS 15+ uses summaryArgument as the text shown in the stacked-
-    // notification group summary line. Android twin: GROUP_KEY_MESSAGES summary notification.
-    if #available(iOS 15.0, *), !groupId.isEmpty {
-      content.summaryArgument = isGroup ? groupName : (senderName.isEmpty ? "Canari" : senderName)
-    }
+    // No group-summary text here: UNMutableNotificationContent.summaryArgument was deprecated in
+    // iOS 15.0 and is ignored by the system, and the deployment target is 18.2 - so there is no
+    // reachable version where setting it would do anything. iOS stacks by threadIdentifier and
+    // writes the summary line itself. Twin of the same removal in canari_push.mm.
     content.userInfo["deepLink"] =
       groupId.isEmpty ? "fr.emse.canari://chat" : "fr.emse.canari://chat/\(groupId)"
 

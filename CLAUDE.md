@@ -134,6 +134,10 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   native halves (grep for `CompileC ...canari_push.o` and the Kotlin task), then **check K** of the
   runbook on both platforms. Note (c) is pure TS + Rust, so `cargo check` and `bun run check`
   already cover its compile; only its behaviour is unverified.
+  **The same iOS compile run also covers the WP-XP-7 removal** (shipped 2026-08-01: the two dead
+  `summaryArgument` assignments, the parameter carrying it, and its call-site string are gone from
+  `canari_push.mm` + `NotificationService.swift` - behaviour-neutral, but ObjC/Swift cannot be
+  compiled from Windows, so it is unverified until that run is green).
 
 - \[~\] **WP-DEV-PANEL-1 (P2) - CAUSE FOUND AND FIXED, one check owed on device.** It was the
   `revoked_devices` row, and the mechanism is that `registerDevice` never consulted the denylist:
@@ -179,15 +183,6 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   `PluginManager.onNewIntent`, `DeepLinkPlugin.isDeepLink` against `plugins.deep-link.mobile`
   (matches), and the Rust `deep-link://new-url` emit. The PendingIntent shape is already the one
   every Android guide prescribes for a `singleTask` activity.
-
-- \[ \] **WP-XP-7 residual (P3) - the iOS group-summary text has never worked.** Found 2026-07-31
-  in the v0.11.8 release logs, which warn on BOTH writers: `canari_push.mm:904` and
-  `NotificationService.swift:472` set `content.summaryArgument`, deprecated in iOS 15.0 with
-  "summaryArgument is ignored". Both are guarded by `@available(iOS 15.0, *)` and the deployment
-  target is 18.2, so the guard is always true and the assignment always discarded - dead code, and
-  the comment above each claims the opposite ("iOS 15+ uses this text"). Android is unaffected
-  (its twin is the real `GROUP_KEY_MESSAGES` summary notification). Deleting the two assignments is
-  behaviour-neutral; giving iOS an actual stacked-summary line is a different, unbuilt feature.
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the

@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **The last French dev-facing logs are English.** Seven `NSLog` lines in the iOS push path (`epoch inconnu`, `etat MLS absent`, `%lu envoye(s), %lu restant(s)`, `mis en cache`, `champs manquants` and two `restant(s)` counters) survived the v0.11.7 sweep, as did `[OK] N msg rattrapes pour ...` in the history catch-up and two `[OUTBOX_MIRROR]` lines. All of them are read while debugging, so all of them are English now; user-visible native strings stay French
 
+### Removed
+- **WP-XP-7: the iOS group-summary text, which never once reached a user.** Both iOS notification writers set `UNMutableNotificationContent.summaryArgument` - `canari_push.mm` for the app-alive path, `NotificationService.swift` for the killed-app path - each guarded by `@available(iOS 15.0, *)`. That property was deprecated *in* iOS 15.0 and is ignored by the system, and the deployment target is 18.2, so the guard is always true and the assignment always discarded: there is no reachable OS version where either line did anything. The v0.11.8 build logs said so on both writers, which is the only reason it was ever noticed - the comment above each line claimed the opposite ("iOS 15+ uses this text"), so the code documented a behaviour it did not have. Removing them is behaviour-neutral by construction; the parameter that carried the value through `CanariShowLocalNotification` and the string built for it at the call site go with them, rather than leaving a dead argument threaded through three call sites. iOS still stacks per conversation via `threadIdentifier` and writes its own summary line. Android is unaffected - its twin is the real `GROUP_KEY_MESSAGES` summary notification, not a deprecated hint - and giving iOS an actual stacked-summary line remains a separate, unbuilt feature rather than something this removal takes away
+
 ## [v0.11.7] - 2026-07-31
 
 ### Added
