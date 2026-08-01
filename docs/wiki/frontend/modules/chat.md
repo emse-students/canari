@@ -149,10 +149,21 @@ nulls it, which is what made *every* deep link land in the right tab with nothin
   every route and reads the same `globalConvs`/`globalChannels` singletons a page would, so a
   second copy inside `MainChatPage` only released the target early.
 - The effect re-runs on every mutation of the conversations map and **re-asserts** a lost
-  selection, then stays idle once the target is on screen (`selectedContact === id` and the map has
-  it) - otherwise a plain incoming message would re-select it and refetch its history.
-- The watchdog keeps a selection whose key equals `notifNav.pending`: absent from the map means
-  "not there *yet*" while a landing is in progress.
+  selection, then stays idle once the target is on screen - otherwise a plain incoming message
+  would re-select it and refetch its history.
+- The watchdog keeps a selection that IS the landing: absent from the map means "not there *yet*"
+  while a landing is in progress.
+- **A target is a group id; a selection is a map key, and for a DM they are different strings.**
+  Only a community channel is keyed by the very id that names it - a DM or group is keyed by its
+  display name and carries the group id in `conversation.id`. So neither of the two comparisons
+  above may be made on the raw strings: both go through `resolveConversationKey`, the single
+  id -> key lookup (direct hit, then a scan on `conversation.id`) that `openConversationFromId`
+  itself is built on. Matched raw, `endLandingUnlessTarget` read the landing's own
+  `selectConversation(key)` call as the user opening something else and ended the landing at the
+  instant it succeeded, so the restore dropped the selection a moment later and the tap arrived on
+  the right tab with nothing open; and the idle guard never recognised a landed DM, re-selecting it
+  and re-requesting its history on every mutation of the map. Pinned by
+  `openConversationFromId.test.ts`.
 - `landingRecovery` / `landingAfterRefresh` decide when to stop: refetch the communities once for
   an unknown channel, retry if that refetch was dropped by the loader's in-flight guard, and
   abandon (releasing the target) when a real refresh still does not know it, or when a DM is absent

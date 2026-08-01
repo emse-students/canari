@@ -19,6 +19,7 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { chat_system_removed_from_group } from '$lib/paraglide/messages';
 import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { notifNav } from '$lib/stores/notifNav.svelte';
+import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { setChannelReactions } from '$lib/stores/reactionStore.svelte';
 import {
@@ -573,9 +574,17 @@ export function useConversations() {
    * Ends a deep-link landing as soon as the user opens something else, so its target stops being
    * protected from the selection watchdog. The landing itself selects its own target, so a call
    * naming that target is the landing at work and must not cancel it.
+   *
+   * "Naming that target" is a comparison of a MAP KEY against a pending GROUP ID, and those differ
+   * for every DM - so the raw string check ended the landing on the landing's own call. The target
+   * then lost its protection immediately and the IndexedDB restore dropped the selection moments
+   * later: the tap arrived on the right tab, on no conversation. Resolve before comparing.
    */
   function endLandingUnlessTarget(name: string | null) {
-    if (notifNav.pending && notifNav.pending !== name) notifNav.clear();
+    const pending = notifNav.pending;
+    if (!pending || pending === name) return;
+    if (resolveConversationKey(conversations, pending) === name) return;
+    notifNav.clear();
   }
 
   function selectConversation(name: string) {

@@ -98,8 +98,13 @@ if (isTauriRuntime()) {
                 Promise.all([
                   import('$lib/stores/notifNav.svelte'),
                   import('$lib/utils/chat/notificationRouting'),
+                  import('$lib/stores/globalChatSingleton.svelte'),
                 ])
-                  .then(([{ notifNav }, { chatDeepLinkRoute }]) => {
+                  .then(([{ notifNav }, { chatDeepLinkRoute }, { appendLog }]) => {
+                    // The one line that says the native half of a notification tap worked. Without
+                    // it the chain - PendingIntent, onNewIntent, the deep-link plugin, this handler -
+                    // fails silently and indistinguishably at four different hops.
+                    appendLog(`[notifNav] deep link received: ${url} -> target ${groupId}`);
                     notifNav.navigate(groupId);
                     const target = chatDeepLinkRoute(groupId);
                     if (window.location.pathname !== target) {

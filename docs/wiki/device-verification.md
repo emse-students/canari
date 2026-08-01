@@ -9,9 +9,12 @@ This file is the single ordered pass that closes them.
 
 ## Where the pass stands
 
-**Android is DONE.** The full ladder was run on **v0.11.7** on 2026-07-31 (log archived on the
-user's desktop) after partial runs on v0.11.5 and v0.11.6. Every check below passed there. Only
-two defects came out of it, both now tracked as WP-NOTIF-1, and both re-checked by **check K**.
+**Android is done except H and K.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
+archived on the user's desktop) after partial runs on v0.11.5 and v0.11.6. Two defects came out of
+it, both tracked as WP-NOTIF-1 and both re-checked by **check K**. **Check H was recorded PASS and
+was not one**: the user reported on 2026-08-01 that a tapped notification still does not open the
+conversation. That is the lesson this file exists for - a check whose verdict is "it looked right"
+is not a check, so H now names the log lines that decide it.
 
 **iOS is entirely owed.** Not one check has ever run on hardware. That is what this file is now
 for. The iOS half of WP-SEC-1 and WP-IOS-1 has only ever been compiled, and a green CI run is not
@@ -24,7 +27,7 @@ proof a given file compiled - the pbxproj is hand-maintained, so grep the log fo
 | D, E | WP-VERIF-0 (PIN change, fresh install) | PASS v0.11.7 | owed |
 | F | WP-VERIF-1 | PASS v0.11.7 | owed |
 | G | WP-VERIF-3 | PASS v0.11.6 | owed |
-| H | WP-DEEPLINK-1 residual | PASS v0.11.7 | owed |
+| H | WP-DEEPLINK-1 residual | **RE-OPENED** (the v0.11.7 pass missed the DM half) | owed |
 | I | WP-UI-1 residual | PASS v0.11.7 | owed |
 | J | WP-VERIF-4 | PASS v0.11.7 | owed |
 | K | WP-NOTIF-1 | owed | owed |
@@ -132,7 +135,7 @@ since migrated).
 6. **Disable** biometric unlock, relaunch, confirm the PIN is required and the keychain entry is
    really gone (the biometric sheet must not appear at all).
 
-## H. Deep link from an OS notification tap
+## H. Deep link from an OS notification tap - RE-OPENED on Android
 
 **Proves** the WP-DEEPLINK-1 residual. The fix is verified on the web for the two link paths; the
 notification tap could not be driven from a headless browser. It publishes to `notifNav` exactly like
@@ -140,6 +143,19 @@ the two verified paths.
 
 1. Kill the app. Have the peer send a DM, then a channel message.
 2. Tap each notification. Each must land in the right conversation, **not** merely the right tab.
+
+**Read the log, not just the screen.** This check was recorded PASS on v0.11.7 and the DM half was
+broken the whole time: the tap does reach the right tab, and "right tab" is what a pass looks like
+from across the room. Three lines, in order, and each one names the hop that failed if it is the
+last one you see:
+
+- `[notifNav] deep link received: fr.emse.canari://chat/<id> -> target <id>` - everything native
+  worked (PendingIntent, `onNewIntent`, the deep-link plugin, `hooks.client.ts`). Absent: the
+  failure is native, and none of the JS below ever ran.
+- `[notifNav] routing to /chat|/communities for pending conversation <id>` - only printed when a
+  route change was actually needed.
+- The thread on screen, with its history. A DM that lands and then empties is the landing being
+  ended by its own selection - the group-id-vs-map-key bug fixed on 2026-08-01.
 
 Remember `/c/<groupId>` and `/chat/<groupId>` are not routes: a conversation opens by publishing to
 `notifNav`, and a channel target can only be opened on `/communities`.

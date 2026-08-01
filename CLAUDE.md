@@ -145,17 +145,40 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   `[MLS] Device <old> was revoked - re-enrolled as <new>`, then the panel lists the new id. Costs
   the local history of that device, by design.
 
-- \[~\] **WP-PDF-1 (P3) - the split is WANTED; one console line still owed.** The two-half watermark
-  is the intended design (`79645923`) - do NOT replace it with whole logos side by side, that was
-  tried on 2026-08-01 and rejected. The defect was that `logoSrcs` was compacted: an owner whose
-  logo did not resolve renumbered the bands, so two owners with one usable logo fell to the
-  single-logo branch and drew it WHOLE across the circle - which is nearly indistinguishable from a
-  working split, and is why this stayed unexplained. Bands are now positional and a missing logo
-  leaves that owner's half empty. The weekday labels are also fixed (`data-pdf-text` sat on a padded
-  box; the vector re-draw anchors to the marked box's TOP). **Owed:** one export, then the console.
-  `[CalendarExport] No logo for "<asso>" on "<event>"` names the association and says whether a
-  `logoUrl` was set at all - no line at all means every logo resolved and the split is simply
-  working.
+- \[ \] **WP-PDF-1 (P3) - the split RENDERS; what fails is contrast. Nothing is owed on device.**
+  The two-half watermark is the intended design (`79645923`) - do NOT replace it with whole logos
+  side by side, that was tried on 2026-08-01 and rejected. The compaction fix (`97eae20f`, bands are
+  positional, a missing logo leaves that half empty) is correct and stays, but **it was not the
+  cause** - the user said so ("les logos sont resolus a d'autres endroits") and the measurement
+  agreed. Re-rendering the production markup with the real prod feed and the real logo files
+  (public, no auth: `GET /api/associations` + `/api/associations/calendar/feed`) showed both halves
+  painted, all 6 co-owned events resolving both logos, and every logo at alpha 1.00. Each half is
+  composited at a FIXED 0.20 over its OWN owner's brand colour, and a logo is usually in its brand's
+  colour family: measured shift +29 (Mines'ramax) down to **-3.9** (DopaMines, black logo on
+  `#000000`) and -21.6 (MiTV, no colour -> `#888888`). `dL = alpha x (L_logo - L_band)`, so the only
+  lever is per-half adaptive opacity (clamped ~[0.20, 0.55] targeting |dL| ~ 15-18, one canvas pass
+  per unique logo for its mean luminance - same origin, untainted). NOT applied: the user answered
+  "ca me parait parfait" on the render. Reopen only if they report a washed-out half again.
+  A contrast plate behind the logo is useless - an opaque image covers it.
+
+- \[~\] **WP-DEEPLINK-1 (P1) - RE-OPENED 2026-08-01: a tapped notification opens the tab, not the
+  conversation.** Check H had been recorded PASS on v0.11.7 - "right tab" is what a pass looks like
+  from across the room. **Cause found and fixed, frontend only, not yet seen on a device.** A target
+  is a GROUP ID, a selection is a MAP KEY, and for a DM those differ; only a channel is keyed by the
+  id that names it, which is why channels behaved. `endLandingUnlessTarget` compared them raw, so
+  the landing's own `selectConversation(key)` ended the landing at the instant it succeeded, the
+  restore dropped the selection, and the tap arrived on nothing. The idle guard had the mirror bug
+  (a landed DM never looked landed -> re-select + re-fetch history on every map mutation). Both now
+  cross through one `resolveConversationKey` (`openConversationFromId.ts`), which
+  `openConversationFromId` is itself built on. **Owed:** check H of the runbook on Android, which
+  now names its verdict lines - first `[notifNav] deep link received: <url> -> target <id>` (new;
+  absent = the failure is NATIVE and no JS ran), then `[notifNav] routing to ...`, then the thread
+  with its history. Nothing native was touched, so no compile run is needed for this.
+  Researched and cleared while hunting it, do not redo: the manifest (`singleTask`, scheme+host
+  filters for `chat`), `MainActivity.onNewIntent` -> `setIntent` + `TauriActivity` ->
+  `PluginManager.onNewIntent`, `DeepLinkPlugin.isDeepLink` against `plugins.deep-link.mobile`
+  (matches), and the Rust `deep-link://new-url` emit. The PendingIntent shape is already the one
+  every Android guide prescribes for a `singleTask` activity.
 
 - \[ \] **WP-XP-7 residual (P3) - the iOS group-summary text has never worked.** Found 2026-07-31
   in the v0.11.8 release logs, which warn on BOTH writers: `canari_push.mm:904` and
@@ -234,6 +257,8 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - A slug is not an authorization - `getWorkspaceBySlug` gates on membership.
 - `/c/<groupId>` and `/chat/<groupId>` are NOT routes; a conversation opens by publishing to `notifNav`.
 - A deep-linked selection must outlive the route remount, and is held until DISPLAYED, not selected.
+- A deep-link target is a GROUP ID and a selection is a MAP KEY; they are the same string only for a
+  channel, so cross the gap with `resolveConversationKey` or the landing cancels itself on the DM.
 - A channel target can only be opened on `/communities`; `openInvitedChannel` is the one entry point.
 - Holding a landing means nothing without a rule for abandoning it - but a refetch that FAILED
   proves nothing about its target, so it holds and retries; only a refetch that SUCCEEDED abandons.
