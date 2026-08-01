@@ -374,6 +374,8 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - A probe page is not the app: reproducing app markup outside it silently drops every global rule,
   so it can only ever confirm the markup, never clear it. Measure the LIVE DOM - a computed width
   that contradicts the inline one names the culprit in one call.
+- `width:X%;height:X%` is NOT a square: the two resolve against different axes, so a `rounded-full`
+  box drawn that way is a pill on any non-square parent. Size one axis and use `aspect-ratio:1`.
 
 #### Associations and agenda -> [social-service](docs/wiki/services/social-service.md)
 

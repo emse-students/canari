@@ -223,18 +223,22 @@
                     <!-- Logo watermark: one centred circle, or that same circle split into one band
                          per owner for a co-owned event. Never a row of small separate logos. -->
                     {#if logos.length === 1}
+                      <!-- Sized off the slot HEIGHT alone, like the export's `slotH * 0.62`. Two
+                           percentages resolve against different axes, so `width:62%;height:62%` was
+                           only square by accident: on the usual slot, wider than it is tall, it
+                           rendered as a rounded rectangle instead of the circle the export draws. -->
                       {#if logos[0].src}
                         <img
                           src={logos[0].src}
                           alt=""
                           aria-hidden="true"
                           class="absolute rounded-full object-cover"
-                          style="width:62%;height:62%;max-width:52px;max-height:52px;opacity:0.18;left:50%;top:50%;transform:translate(-50%,-50%);"
+                          style="height:62%;aspect-ratio:1;max-height:52px;opacity:0.18;left:50%;top:50%;transform:translate(-50%,-50%);"
                         />
                       {:else}
                         <span
-                          class="absolute rounded-full flex items-center justify-center text-[11px] font-black opacity-15"
-                          style="width:52px;height:52px;background:rgba(255,255,255,0.2);color:{fg};left:50%;top:50%;transform:translate(-50%,-50%);"
+                          class="absolute flex items-center justify-center rounded-full text-[11px] font-black opacity-15"
+                          style="height:62%;aspect-ratio:1;max-height:52px;background:rgba(255,255,255,0.2);color:{fg};left:50%;top:50%;transform:translate(-50%,-50%);"
                           >{getInitials(ev.associationName)}</span
                         >
                       {/if}
