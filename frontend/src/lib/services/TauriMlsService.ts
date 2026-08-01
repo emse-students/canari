@@ -389,7 +389,6 @@ export class TauriMlsService extends BaseMlsService {
     // Per-user device ID (same rationale as WebMlsService). resolveDeviceId restores
     // from localStorage or the native push_context before generating a fresh id, and
     // is idempotent: a no-op when login already resolved it before the pin-check.
-    const deviceKey = `mls_device_id_${userId}`;
     await this.resolveDeviceId(userId);
 
     try {
@@ -440,29 +439,11 @@ export class TauriMlsService extends BaseMlsService {
         if (opts?.noFreshStart && cause === 'sealed') {
           throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
         }
-        const oldDeviceId = this.deviceId; // capture before overwriting
-        if (cause === 'mismatch') {
-          console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');
-        } else {
-          console.warn(
-            '[MLS] Loaded state unusable (corruption?) → fresh-start:',
-            String(e).slice(0, 200)
-          );
-        }
-        this.deviceId = this.generateDeviceId(userId);
-        localStorage.setItem(deviceKey, this.deviceId);
-        this.delivery.deviceId = this.deviceId;
-        await this.loadStateWithKey(deviceKeyB64, undefined);
-        // Persist mls.bin under the new id BEFORE anything else can fail. The opportunistic
-        // save further down is swallowed on error; leaving the old blob on disk next to a new
-        // localStorage id is what made the churn repeat on every launch.
-        await this.saveState(deviceKeyB64);
-        // Deregister the stale device from the server so other devices no longer
-        // try to use its key packages when generating Welcome messages.
-        // Without this, re-bootstrap sends a Welcome for the OLD key package
-        // (which is now gone from our fresh state), causing NoMatchingKeyPackage.
-        this.deleteDevice(userId, oldDeviceId).catch((err) =>
-          console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
+        await this.rotateDeviceIdentity(
+          deviceKeyB64,
+          cause === 'mismatch'
+            ? 'credential mismatch - stale state'
+            : `loaded state unusable (corruption?): ${String(e).slice(0, 200)}`
         );
       } else {
         throw e;
@@ -515,6 +496,11 @@ export class TauriMlsService extends BaseMlsService {
     // A dedicated force_creer_groupe IPC command could be added later if needed.
     await invoke('creer_groupe', { groupId }).catch(() => {});
     this._knownGroups.add(groupId);
+  }
+
+  /** Native save already writes mls.bin, so persisting the fresh state is just that one call. */
+  protected async persistFreshState(deviceKeyB64: string): Promise<void> {
+    await this.saveState(deviceKeyB64);
   }
 
   /** Tauri-native `invoke` wrapper - calls `sauvegarder_mls_et_persister` to encrypt and persist the MLS state to the native mls.bin file using the device key. */
@@ -648,7 +634,7 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Tauri-native `invoke` wrapper - calls `generer_key_packages_et_persister`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
-  async generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array> {
+  protected async generateKeyPackageImpl(deviceKeyB64: string): Promise<Uint8Array> {
     // On fresh start (no saved WASM state), old OTKPs on the server belong to
     // a previous session whose private keys are gone. Purge them so inviting
     // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.

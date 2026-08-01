@@ -13,6 +13,18 @@ export type MlsDeliveryFetch = typeof fetch;
  */
 export const MLS_ADD_LOCK_TTL_MS = 30_000;
 
+/**
+ * The delivery service refused this device id: it was explicitly deleted, and the denylist is
+ * permanent. Typed rather than message-matched, because the only cure is structural - enrol under
+ * a fresh device id ({@link BaseMlsService.rotateDeviceIdentity}), never a retry of the same call.
+ */
+export class DeviceRevokedError extends Error {
+  constructor(readonly deviceId: string) {
+    super(`Device ${deviceId} is revoked server-side`);
+    this.name = 'DeviceRevokedError';
+  }
+}
+
 export type MlsDeliveryApiOptions = {
   historyUrl: string;
   getToken: () => Promise<string>;
@@ -213,6 +225,15 @@ export class MlsDeliveryApi {
     });
 
     if (!response.ok) {
+      // 403 + DEVICE_REVOKED is the one failure a retry can never fix: the id itself is banned.
+      if (response.status === 403) {
+        const code = await response
+          .clone()
+          .json()
+          .then((b) => (b as { code?: string })?.code)
+          .catch(() => undefined);
+        if (code === 'DEVICE_REVOKED') throw new DeviceRevokedError(this.deviceId);
+      }
       throw new Error(`Failed to publish KeyPackage: ${response.status} ${response.statusText}`);
     }
   }

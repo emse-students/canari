@@ -557,7 +557,6 @@ export class WebMlsService extends BaseMlsService {
     // device ID, which would cause the delivery service to route the welcome message
     // to the wrong user. Idempotent: a no-op when login already resolved it before
     // the pin-check.
-    const deviceKey = `mls_device_id_${userId}`;
     await this.resolveDeviceId(userId);
 
     try {
@@ -605,26 +604,11 @@ export class WebMlsService extends BaseMlsService {
         if (opts?.noFreshStart && cause === 'sealed') {
           throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
         }
-        const oldDeviceId = this.deviceId;
-        if (cause === 'mismatch') {
-          console.warn('[MLS] Credential mismatch - discarding stale state, starting fresh');
-        } else {
-          console.warn(
-            '[MLS] Loaded state unusable (corruption?) → fresh-start:',
-            String(e).slice(0, 200)
-          );
-        }
-        this.deviceId = this.generateDeviceId(userId);
-        localStorage.setItem(deviceKey, this.deviceId);
-        this.delivery.deviceId = this.deviceId;
-        await this.loadStateWithKey(deviceKeyB64, undefined);
-        // Persist the fresh state under the new id BEFORE anything else can fail. Skipping this
-        // is what made the churn self-sustaining: the new id went to localStorage while the old
-        // blob stayed in storage, so the next launch mismatched again and minted yet another
-        // device - four in eight seconds, each deleted server-side.
-        await saveMlsState(this.userId, await this.saveState(deviceKeyB64));
-        this.deleteDevice(userId, oldDeviceId).catch((err) =>
-          console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
+        await this.rotateDeviceIdentity(
+          deviceKeyB64,
+          cause === 'mismatch'
+            ? 'credential mismatch - stale state'
+            : `loaded state unusable (corruption?): ${String(e).slice(0, 200)}`
         );
       } else {
         console.error('[MLS] WASM init failed:', e);
@@ -660,6 +644,11 @@ export class WebMlsService extends BaseMlsService {
     return encryptMlsStateOffThread(plain, deviceKeyB64, { enabled: this.useEncryptWorker });
   }
 
+  /** Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over. */
+  protected async persistFreshState(deviceKeyB64: string): Promise<void> {
+    await saveMlsState(this.userId, await this.saveState(deviceKeyB64));
+  }
+
   /** Plain CBOR on main thread, then Argon2+ChaCha off-thread when the encrypt worker is enabled. */
   async saveState(deviceKeyB64: string): Promise<Uint8Array> {
     const plain = await this.saveStatePlain();
@@ -683,7 +672,7 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** WASM client wrapper - calls `this.client.generate_key_package`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
-  async generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array> {
+  protected async generateKeyPackageImpl(deviceKeyB64: string): Promise<Uint8Array> {
     // On fresh start (no saved WASM state), old OTKPs on the server belong to
     // a previous session whose private keys are gone. Purge them so inviting
     // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.

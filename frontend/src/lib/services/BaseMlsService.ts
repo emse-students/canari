@@ -11,7 +11,7 @@ import {
   type MlsDecryptSession,
   createSequentialDecryptSession,
 } from '$lib/mls-client/mlsDecryptSession';
-import type { MlsDeliveryFetch } from '$lib/mls-client/mlsDeliveryApi';
+import { DeviceRevokedError, type MlsDeliveryFetch } from '$lib/mls-client/mlsDeliveryApi';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
@@ -664,6 +664,54 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * Generates and publishes this device's key packages, re-enrolling under a fresh id when the
+   * server answers that this one is revoked.
+   *
+   * A revoked id is denylisted for good and `resolveDeviceId` deliberately hands the same id back
+   * after a reinstall, so retrying it is futile: the only way forward is to become a new device.
+   * Retried exactly once - a second refusal is a server bug, not a state to keep rotating through.
+   */
+  async generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array> {
+    try {
+      return await this.generateKeyPackageImpl(deviceKeyB64);
+    } catch (e) {
+      if (!(e instanceof DeviceRevokedError)) throw e;
+      const abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
+      console.warn(`[MLS] Device ${abandoned} was revoked - re-enrolled as ${this.deviceId}`);
+      return this.generateKeyPackageImpl(deviceKeyB64);
+    }
+  }
+
+  /**
+   * Abandons this device's identity and starts over under a freshly generated id: the MLS
+   * credential is `userId:deviceId`, so a new id IS a new device and the old state can only be
+   * discarded. Used for a credential mismatch (the state names someone else) and for a server-side
+   * revocation (the id is denylisted and no retry can lift it).
+   *
+   * Order matters: the fresh state is persisted under the new id BEFORE anything else may fail.
+   * Leaving a new id in localStorage next to the old blob is what made the churn self-sustaining -
+   * every launch mismatched again and minted yet another device.
+   *
+   * @returns the id that was abandoned, for the caller to log.
+   */
+  protected async rotateDeviceIdentity(deviceKeyB64: string, reason: string): Promise<string> {
+    const oldDeviceId = this.deviceId;
+    console.warn(`[MLS] Rotating device identity (${reason}), abandoning ${oldDeviceId}`);
+    this.deviceId = this.generateDeviceId(this.userId);
+    localStorage.setItem(`mls_device_id_${this.userId}`, this.deviceId);
+    this.delivery.deviceId = this.deviceId;
+    await this.loadStateWithKey(deviceKeyB64, undefined);
+    await this.persistFreshState(deviceKeyB64);
+    // Deregister the abandoned device so other members stop generating Welcomes for a key package
+    // our fresh state no longer holds (NoMatchingKeyPackage). Best-effort: a revoked id is already
+    // gone server-side, and a mismatch must not block on the network.
+    this.deleteDevice(this.userId, oldDeviceId).catch((err) =>
+      console.warn(`[MLS] Cleanup old device ${oldDeviceId} failed:`, err)
+    );
+    return oldDeviceId;
+  }
+
+  /**
    * Platform hook: restore a previously-used device id from native storage when
    * localStorage was cleared (Tauri reads push_context.json to avoid a credential
    * mismatch after a WebView eviction / reinstall). Web has no native store → null.
@@ -956,9 +1004,16 @@ export abstract class BaseMlsService implements IMlsService {
 
   // ── Platform-specific (abstract) ──────────────────────────────────────────
 
+  /**
+   * Writes the freshly loaded state to this platform's durable store. Split from {@link saveState}
+   * because Tauri's already lands on disk while Web still has to hand the bytes to IndexedDB, and
+   * {@link rotateDeviceIdentity} must not know which.
+   */
+  protected abstract persistFreshState(deviceKeyB64: string): Promise<void>;
+
   abstract saveState(deviceKeyB64: string): Promise<Uint8Array>;
   abstract changeDeviceKey(newDeviceKeyB64: string): Promise<void>;
-  abstract generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array>;
+  protected abstract generateKeyPackageImpl(deviceKeyB64: string): Promise<Uint8Array>;
   abstract publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
   abstract createGroup(groupId: string): Promise<void>;
   abstract forceCreateGroup(groupId: string): Promise<void>;

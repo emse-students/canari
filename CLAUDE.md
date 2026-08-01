@@ -135,13 +135,15 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   runbook on both platforms. Note (c) is pure TS + Rust, so `cargo check` and `bun run check`
   already cover its compile; only its behaviour is unverified.
 
-- \[~\] **WP-DEV-PANEL-1 (P2) - Why is the current device missing from its own list?** The harm is
-  FIXED (deleting the last device is refused; an unlisted current device is now named on screen and
-  logged). The cause is NOT known: the panel was always correct, the server's list simply had no
-  row matching `myDeviceId`. `getUserDevices` can omit us three ways - the 90-day `createdAt`
-  cutoff (unlikely, `registerDevice` refreshes it on purpose), an unresolvable KeyPackage, or a
-  `revoked_devices` row from an earlier deletion, which is permanent and fits best. Verdict line,
-  on opening the panel: `[DevicePanel] Current device <id> is ABSENT from its own list`.
+- \[~\] **WP-DEV-PANEL-1 (P2) - CAUSE FOUND AND FIXED, one check owed on device.** It was the
+  `revoked_devices` row, and the mechanism is that `registerDevice` never consulted the denylist:
+  a deleted device that came back kept the SAME id (`resolveDeviceId` restores it on purpose), got
+  a 200, and was then filtered out of `getUserDevices` and resolved to a null KeyPackage - enrolled,
+  invisible, never invitable, silent, forever. Registration now answers `403 DEVICE_REVOKED` and the
+  client re-enrols under a fresh id (`rotateDeviceIdentity`, shared with the mismatch path).
+  **Owed:** open the panel on a device whose id was deleted earlier and confirm the recovery -
+  `[MLS] Device <old> was revoked - re-enrolled as <new>`, then the panel lists the new id. Costs
+  the local history of that device, by design.
 
 - \[~\] **WP-PDF-1 (P3) - Only the missing second logo is left.** The rounded corners and the
   uncropped background are FIXED (`frontend/src/lib/utils/calendarExport.ts` - the sheet is the
@@ -221,6 +223,9 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - Rust's copy of the device key seals `mls.bin` only - local messages are encrypted in the
   FRONTEND, so biometric mode must pull the key back (`recuperer_cle_session_mls`) or persist nothing.
 - `isLoginInProgress` is one flag with two owners: every entry point must release it before `loginImpl`.
+- A permanent denylist and an id restored ON PURPOSE across reinstalls WILL meet: the writer that
+  ignores the ban does not fail, it succeeds into a state every reader silently drops.
+- Rotating the device identity is ONE operation (`rotateDeviceIdentity`) - a new id IS a new device.
 
 #### Community channels -> [chat](docs/wiki/frontend/modules/chat.md), [social-service](docs/wiki/services/social-service.md)
 

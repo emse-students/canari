@@ -49,6 +49,26 @@ offline window - a device that is merely off for a fortnight must still get its 
 leak. Anything that needs a device to stop receiving *immediately* (a revocation) must act on the
 Redis set directly rather than wait for the reaper.
 
+### A revoked device id never comes back
+
+`DELETE /mls/devices/:userId/:deviceId` purges the device footprint **and** writes a permanent
+`revoked_device` row. Nothing expires it, and the client deliberately restores the *same* device id
+after a reinstall (`resolveDeviceId` reads `localStorage`, then `push_context.json`) - so the
+denylist and re-registration meet on every reinstall of a deleted device.
+
+`registerDevice` therefore refuses a revoked id with **403 `{ code: 'DEVICE_REVOKED' }`**. Before
+that check existed, registration succeeded and the device was then filtered out of `getUserDevices`
+and resolved to a `null` KeyPackage by `resolveKeyPackagePayloadForDevice` - registered, absent from
+its own device list, never invitable to a group, with no error surfaced anywhere. That silent state
+was [WP-DEV-PANEL-1](../../../CLAUDE.md).
+
+The client answers the refusal by becoming a new device: `BaseMlsService.generateKeyPackage` catches
+the typed `DeviceRevokedError` and calls `rotateDeviceIdentity`, which mints a fresh id, reloads
+empty MLS state, persists it, and deregisters the abandoned id. Retried exactly once - a second
+refusal is a server bug, not a state to keep rotating through. The MLS credential is
+`userId:deviceId`, so a new id *is* a new device: local history is gone and every group must
+re-invite it. That is the intended cost of a revocation being real.
+
 ## Routes
 
 All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (injected by Nginx) unless noted.

@@ -11,6 +11,7 @@ import {
   BadRequestException,
   UseGuards,
   Logger,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThanOrEqual, DataSource, In, IsNull } from 'typeorm';
@@ -134,6 +135,22 @@ export class DevicesController {
       userId,
       'Cannot register a device for another user'
     );
+    // A deleted device is denylisted for good, and `resolveDeviceId` deliberately restores the
+    // SAME id after a reinstall - so without this check the row is written, 200 is returned, and
+    // the device is then filtered out of getUserDevices and resolves to a null KeyPackage
+    // forever: registered, invisible, never invitable, with no error anywhere. Refusing here is
+    // what makes revocation mean something; the client answers by enrolling under a fresh id.
+    const revoked = await this.revokedDeviceRepo.findOne({ where: { userId, deviceId } });
+    if (revoked) {
+      this.logger.warn(
+        `[REGISTER_DEVICE] REFUSED revoked device user=${userId} device=${deviceId}`
+      );
+      throw new ForbiddenException({
+        code: 'DEVICE_REVOKED',
+        message: 'This device was revoked. Enrol again under a new device id.',
+      });
+    }
+
     if (
       typeof body.keyPackage !== 'string' ||
       body.keyPackage.trim().length === 0 ||
