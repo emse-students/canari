@@ -19,7 +19,16 @@ is not a check, so H now names the log lines that decide it.
 **iOS is entirely owed.** Not one check has ever run on hardware. That is what this file is now
 for. The iOS half of WP-SEC-1 and WP-IOS-1 has only ever been compiled, and a green CI run is not
 proof a given file compiled - the pbxproj is hand-maintained, so grep the log for
-`SwiftCompile ...<file>.swift` / `CompileC ...<file>.o` before believing any of it.
+`SwiftCompile ...<file>.swift` / `CompileC ...<file>.o` before believing any of it. That caveat is
+iOS-only: Tauri runs Gradle quietly, so there is no Kotlin task line to look for, and Gradle
+compiles by source set, so no Kotlin file can be silently skipped.
+
+**The build to test both platforms on** is the 2026-08-01 compile run of `2b5ba1b0` (v0.11.8), both
+workflows green - iOS [`30704254549`](https://github.com/emse-students/canari/actions/runs/30704254549),
+Android [`30704255667`](https://github.com/emse-students/canari/actions/runs/30704255667). A
+`workflow_dispatch` publishes nothing (Release, TestFlight and Play upload are each gated on
+`workflow_run`), so take the **artifact**: the Android APK carries WP-DEEPLINK-1, WP-NOTIF-1 and the
+WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a single install.
 
 | Check | Closes | Android | iOS |
 |---|---|---|---|
@@ -32,8 +41,9 @@ proof a given file compiled - the pbxproj is hand-maintained, so grep the log fo
 | J | WP-VERIF-4 | PASS v0.11.7 | owed |
 | K | WP-NOTIF-1 | owed | owed |
 
-Build under test for the iOS pass: whatever is current on TestFlight, which must be **at or above
-the build carrying WP-NOTIF-1** for check K to mean anything.
+For the iOS pass, install the `ios-release` artifact of the run above rather than waiting for
+TestFlight: a dispatch does not upload there, so TestFlight is still on the previous build and check
+K would be meaningless on it.
 
 ## Before you start
 
@@ -184,7 +194,7 @@ Android equivalent (tag `CanariOutboxRetry`) already passed and is not owed.
 
 ## K. The notification quick reply - owed on BOTH platforms
 
-**Proves** WP-NOTIF-1 (a) and (b). The reply always did send; what it left behind was nothing. It is
+**Proves** WP-NOTIF-1 (a) and (b); K2 below proves (c). The reply always did send; what it left behind was nothing. It is
 built natively and never becomes an outbox entry, and `reconcileOutboxSent` only ever DELETES, so
 the sender's own conversation showed the reply nowhere. Both platforms now write the delivered reply
 into `fcm_message_cache.ndjson` under OUR user id.
@@ -197,10 +207,23 @@ into `fcm_message_cache.ndjson` under OUR user id.
 5. **Android only:** in the notification thread, your own avatar must be drawn, not a blank
    placeholder. (iOS has no self `Person`, so this half does not apply.)
 
-**Still open by design and NOT covered here:** an *undelivered* quick reply is silently dropped. It
-lives only in `outbox_pending.ndjson`, and `store_outbox_mirror` rewrites that file from the TS
-queue, so the next foreground outbox mutation wipes it. Do not file it again from this check - it is
-WP-NOTIF-1 (c).
+**K2 - the UNDELIVERED reply, WP-NOTIF-1 (c).** This used to be listed here as out of scope; it is
+fixed now, and it is the half most likely to still be wrong, because unlike (a) and (b) it has no
+compile check worth the name - it is pure TS + Rust, so it built the moment it was written.
+
+An undelivered reply lives only in `outbox_pending.ndjson`, and `store_outbox_mirror` rewrites that
+file wholesale from the TS queue, which has never heard of it. `adoptOrphanedMirrorEntries` now runs
+at login, before conversations load, and turns every unknown mirror line back into a real outbox
+entry plus its local message.
+
+1. Put the device in airplane mode, then have the peer send a DM (send it *before* going offline, or
+   there is no notification to answer).
+2. Answer from the notification. The drain must FAIL - the point is a reply that never left.
+3. Reopen the app, still offline. The reply must be in your conversation, marked pending.
+4. Restore the network. It must send on its own, without retyping it.
+
+**Verdict lines:** `[OUTBOX_MIRROR]` adoption at login, then the ordinary `[OUTBOX]` flush. A silent
+proto stays `control` and is sent verbatim with no push - that is intended, not a miss.
 
 ---
 

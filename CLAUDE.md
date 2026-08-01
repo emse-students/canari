@@ -120,8 +120,8 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   **Android capture tool: `test_adb.py`** at the repo root (tkinter GUI: build, install, per-device
   logcat with the runbook's tags already whitelisted).
 
-- \[~\] **WP-NOTIF-1 (P2) - Notification quick actions. ALL THREE PARTS CODE COMPLETE, NOT
-  COMPILED, unverified on device.** (a) the delivered reply left no local trace - fixed both
+- \[~\] **WP-NOTIF-1 (P2) - Notification quick actions. ALL THREE PARTS CODE COMPLETE AND
+  COMPILED; only the device behaviour is unverified.** (a) the delivered reply left no local trace - fixed both
   platforms by writing it to `fcm_message_cache.ndjson` under OUR user id
   (`writeSentMessageToCache` / `CanariWriteSentMessageToCache`). (b) our own avatar was blank in
   the thread - fixed via a new `MlsContextLoader.loadUserId` (no Keystore hop); Android only, iOS
@@ -130,14 +130,17 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   `read_outbox_mirror`, which at login adopts every mirror line the TS outbox does not know about
   back into the queue, plus the local message. Runs BEFORE `loadAndRestoreConversations` on
   purpose, so the ordinary load displays it and `applyOutboxPendingStatuses` marks it pending.
-  **What is owed: a `workflow_dispatch` compile run of BOTH release workflows** for the (a)/(b)
-  native halves (grep for `CompileC ...canari_push.o` and the Kotlin task), then **check K** of the
-  runbook on both platforms. Note (c) is pure TS + Rust, so `cargo check` and `bun run check`
-  already cover its compile; only its behaviour is unverified.
-  **The same iOS compile run also covers the WP-XP-7 removal** (shipped 2026-08-01: the two dead
-  `summaryArgument` assignments, the parameter carrying it, and its call-site string are gone from
-  `canari_push.mm` + `NotificationService.swift` - behaviour-neutral, but ObjC/Swift cannot be
-  compiled from Windows, so it is unverified until that run is green).
+  **COMPILE RUN DONE 2026-08-01** on `2b5ba1b0`, both workflows dispatched green (iOS
+  `30704254549`, Android `30704255667`, v0.11.8): `CompileC ...canari_push.o` present, the NSE
+  Swift compile present, `Canari.ipa` + AAB/APK produced, and ZERO `summaryArgument` lines - which
+  is what confirms the WP-XP-7 removal landed, that deprecation warning having been the only thing
+  that ever revealed it. Nothing was published (Release/TestFlight/Play are all gated on
+  `workflow_run`).
+  **What is left is purely behavioural: check K** of the runbook on both platforms. Note (c) is
+  pure TS + Rust, so `cargo check` and `bun run check` already covered its compile.
+  **The Android artifact of that run IS the device build** - it carries WP-DEEPLINK-1, WP-NOTIF-1
+  and the WP-XP-7 removal at once, so checks H, K, I and the dev-panel check all ride one install:
+  https://github.com/emse-students/canari/actions/runs/30704255667/artifacts/8819943358
 
 - \[~\] **WP-DEV-PANEL-1 (P2) - CAUSE FOUND AND FIXED, one check owed on device.** It was the
   `revoked_devices` row, and the mechanism is that `registerDevice` never consulted the denylist:
@@ -345,6 +348,11 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - A green run is not proof YOUR file compiled - the iOS pbxproj is hand-maintained, so a source
   missing from it is skipped, not failed. Grep the log for `SwiftCompile ...<file>.swift` /
   `CompileC ...<file>.o`.
+- That grep is iOS-ONLY. Tauri runs Gradle quietly (no `> Task :`, no `BUILD SUCCESSFUL`), so
+  hunting a Kotlin task line finds nothing and proves nothing; Gradle compiles by SOURCE SET, so
+  no Kotlin file can be silently skipped and the produced APK is itself the proof.
+- A disappeared compiler WARNING can be the verdict: if a deprecation warning was the only thing
+  that ever revealed dead code, its absence is what confirms the removal.
 - Two NAMED provisioning profiles, team `4CLNB8SR6L`, expire 2027-07-11.
 - `bump-app-version.sh` must patch the NSE too, and `bump-version.yml` stages an EXPLICIT add list.
 - Never add a `branches` filter to a `workflow_run` chained off a release-triggered workflow.
