@@ -78,8 +78,18 @@ trail; Canari credits but never displays the balance.
 nothing that POSTs - each action guards itself. `CANARI_INTEGRATION_ENABLED=false` is the local
 switch: it freezes the cotisant snapshot instead of refreshing it, and never opens the gate.
 
-- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link.** CODE COMPLETE (3 commits,
-  50 files), 27/27 end-to-end checks green against an HTTP stub of `cotisant-status`.
+- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link. AUREL HAS FORKED, NOT
+  REVIEWED - decide what survives before doing any more work here.** Observed 2026-08-01 by fetching:
+  he pushed `audit/security-and-canari-rewrite`, which is **separate lineage** (merge-base with my
+  branch is `df692f2`, the same point I forked from - `git merge-base --is-ancestor` says NO), 12
+  commits redoing the security half his own way: Session JWT + refresh, DB-backed sessions with
+  revoking, `auth/authentik/` + `auth/cercle/`, `--bun` on vite, UTC datetimes. It **deletes the
+  entire Canari link**: no `src/lib/server/canari/`, no `cotisant.ts`, no `authz.ts`, no
+  `session.ts`, no `db/movements/` (the ledger), and no `CANARI_*` variable anywhere in `src/` or
+  his `.env.example`. His migration `02-add_sessions.sql` also collides in NUMBER with my
+  `02-canari_integration.sql`. He has separately pushed to `main` (keg inventory, INSERT OR REPLACE
+  fix). So "j'ai beaucoup avancé sur ton PR" means a parallel rewrite, and the cotisant/ledger work
+  is not in it - the architecture decisions of 2026-07-28 are not settled on his side.
   **MR open, awaiting Aurel: https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/1**
   (GitLab over SSH - `gh` is useless and there is no API token here; **git refuses a push option
   containing newlines**, so the full French description must be pasted by hand from
@@ -96,8 +106,9 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
 
 - \[~\] **WP-CERCLE-3 (P3) - Dev secrets are in the working `.env`.** The two real values ARE
   generated (2026-07-30), in the session scratchpad `CERCLE-PROD-SECRETS.md` with the posting
-  procedure - outside every repo on purpose. All that is left is putting them in the prod env and
-  deleting that file. Rotating `SESSION_SECRET` is also the only way to revoke every session at once;
+  procedure - outside every repo on purpose. That file now also carries the third value,
+  `CANARI_API_KEY` (2026-08-01), and records which of the three are already posted. All that is left
+  is putting them in the prod env and deleting that file. Rotating `SESSION_SECRET` is also the only way to revoke every session at once;
   `CANARI_WEBHOOK_SECRET` must equal the Canari product's `webhookSecret` exactly (see WP-INT-1).
 
 ---
@@ -198,8 +209,21 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   chrome, the white plate behind a QR). Detector: `frontend/scripts/find-oneway-colors.mjs`. The one
   open question (the enrolment sheet reporting DARK under a LIGHT theme) is check I of the runbook.
 
-- \[ \] **WP-INT-1 (P3) - Cercle webhook credentials.** Set the real `webhookUrl`/`webhookSecret`
-  on the prod `balance_topup` product. Blocked on the Cercle site going online.
+- \[~\] **WP-INT-1 (P3) - Cercle credentials. THE API-KEY HALF IS DONE (2026-08-01); the webhook half
+  is still blocked.** It was never fully blocked on the Cercle being online - only the webhook is,
+  since only `webhookUrl` needs their host. The API key is outbound Cercle -> Canari and needed
+  nothing from them, and it had **never been generated at all**: prod carried an EMPTY
+  `CERCLE_API_KEY`, which rejects every request (timing-safe compare, empty expected never matches),
+  and `cd.yml` did not carry the variable, so any SSH hand-edit would have been reverted by the next
+  deploy. Now: GitHub secret `CERCLE_API_KEY` set, `cd.yml` syncs it with a warning when unset,
+  `docs/PROD-TEST-CERCLE.md` rewritten to name the secret as the source of truth.
+  **Owed: run a deploy so it reaches `infrastructure/.env`** (verify:
+  `ssh canari 'grep -cE "^CERCLE_API_KEY=.+" /home/canari/canari/infrastructure/.env'` -> 1), then
+  give Aurel the same value as `CANARI_API_KEY`.
+  Still blocked: the real `webhookUrl`/`webhookSecret` on the prod `balance_topup` product.
+  The Authentik application `cercle` EXISTS (both `.well-known/openid-configuration` and `jwks/`
+  answer 200); its `MICONNECT_CLIENT_ID`/`_SECRET` must be read from the Authentik admin panel -
+  they cannot be generated, and the Cercle's redirect URI has to be registered there.
   **Contract verified 2026-07-29 against `../le-cercle` (code read on both sides, nothing run):**
   `dispatchCercleWebhook` POSTs `{productId, userId, amountCents, paymentIntentId, timestamp}` with
   `X-Canari-Signature: sha256=<hex HMAC-SHA256 of the RAW body>`; `verifyWebhookSignature` +
@@ -352,6 +376,11 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - Two NAMED provisioning profiles, team `4CLNB8SR6L`, expire 2027-07-11.
 - `bump-app-version.sh` must patch the NSE too, and `bump-version.yml` stages an EXPLICIT add list.
 - Never add a `branches` filter to a `workflow_run` chained off a release-triggered workflow.
+- The CD regenerates `infrastructure/.env` from the repo secrets, so a value set over SSH lasts until
+  the next deploy. A credential is only real once it is a GitHub secret AND named in `cd.yml` -
+  being in `.env.example` and both compose files proves nothing about whether it is ever populated.
+- An empty API key is not a permissive default: `assertCercleApiKey` compares timing-safely, and an
+  empty expected value never matches, so "unset" means the endpoint refuses everyone.
 
 #### Carte de la Vie Asso -> [carte-vie-asso](docs/wiki/carte-vie-asso.md)
 

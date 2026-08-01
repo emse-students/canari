@@ -45,7 +45,7 @@ most likely setup mistake.
 
 | Secret | On Canari | On Le Cercle | Generate |
 | --- | --- | --- | --- |
-| Cotisant-status API key | `CERCLE_API_KEY` in `infrastructure/.env` | `CANARI_API_KEY` in `.env` | `openssl rand -hex 32` |
+| Cotisant-status API key | GitHub secret `CERCLE_API_KEY` (the CD writes it into `infrastructure/.env`) | `CANARI_API_KEY` in `.env` | `openssl rand -hex 32` |
 | Webhook signing secret | `webhookSecret` on the `balance_topup` product (in the database, set from the UI) | `CANARI_WEBHOOK_SECRET` in `.env` | `openssl rand -hex 32` |
 | Session key | - | `SESSION_SECRET` in `.env` | `openssl rand -base64 48` |
 | OIDC client | Authentik application `cercle` | `MICONNECT_CLIENT_ID` / `MICONNECT_CLIENT_SECRET` | Authentik |
@@ -61,16 +61,23 @@ the only way to revoke every Cercle session at once.
 
 ### 1. Canari: the API key
 
-On the Canari host, set `CERCLE_API_KEY` in `infrastructure/.env`, then recreate social-service:
+The key is a **GitHub secret**, not a hand-edited file. The CD regenerates `infrastructure/.env`
+from the repo secrets on every deploy, so editing it over SSH works until the next deploy silently
+reverts it - and the symptom then is the bar losing cotisant status for no visible reason.
 
 ```sh
-ssh canari
-cd infrastructure
-# edit .env
-docker compose -f docker-compose.prod.yml up -d social-service
+gh secret set CERCLE_API_KEY --repo emse-students/canari   # value: openssl rand -hex 32
 ```
 
-Also set it as a GitHub secret if the deployment pipeline injects it.
+Then run a deploy (or re-run the last CD) so the key reaches `infrastructure/.env`. The sync step
+warns when the secret is missing, so a deploy log carrying
+`CERCLE_API_KEY is not set` means the endpoint is still rejecting everything.
+
+Verify without printing the value:
+
+```sh
+ssh canari 'grep -cE "^CERCLE_API_KEY=.+" /home/canari/canari/infrastructure/.env'   # 1 = populated
+```
 
 ### 2. Canari: the association and its tiers
 

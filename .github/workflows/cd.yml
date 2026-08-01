@@ -473,6 +473,7 @@ jobs:
           SERVICE_ACCOUNT_USER_ID: ${{ secrets.SERVICE_ACCOUNT_USER_ID }}
           EXTERNAL_API_KEY: ${{ secrets.EXTERNAL_API_KEY }}
           SKY_API_KEY: ${{ secrets.SKY_API_KEY }}
+          CERCLE_API_KEY: ${{ secrets.CERCLE_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
@@ -558,6 +559,15 @@ jobs:
             upsert_env_var "SKY_API_KEY" "$SKY_API_KEY"
           else
             echo "::warning::SKY_API_KEY is not set - Sky parrainage tree on profiles will be empty"
+          fi
+
+          # Le Cercle reads /api/public/cotisant-status before letting a member drink. An empty
+          # key is not a degraded mode: assertCercleApiKey rejects EVERY request when unset, so
+          # the bar simply stops serving cotisants. Must equal CANARI_API_KEY on the Cercle side.
+          if [ -n "$CERCLE_API_KEY" ]; then
+            upsert_env_var "CERCLE_API_KEY" "$CERCLE_API_KEY"
+          else
+            echo "::warning::CERCLE_API_KEY is not set - /api/public/cotisant-status will reject all requests (Le Cercle cannot check cotisant status)"
           fi
 
           upsert_env_var "CALL_E2E_ENCRYPTION" "false"
