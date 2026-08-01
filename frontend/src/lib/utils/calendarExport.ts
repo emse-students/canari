@@ -268,22 +268,24 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
 }
 
 /**
- * Watermark for a co-owned event: the owners' logos are merged into ONE circle split into equal
- * vertical bands, each band cut from a different logo (2 owners -> left half of logo 1 on the left,
- * right half of logo 2 on the right). Each band is a window onto a full-size logo shifted so only its
- * own vertical slice shows, so the bands line up into a single seamless circle rather than a row of
- * small separate logos.
+ * Watermark for a co-owned event: each owner's logo WHOLE, side by side and centred, so a two-owner
+ * event shows one logo over each half of its split background.
+ *
+ * This used to merge the logos into a single seamless circle - the left half cut from logo 1, the
+ * right half from logo 2. It composed exactly as designed and still failed at the only thing a
+ * watermark is for: half a seal is not recognisable as anyone's logo, and with two similar logos the
+ * seam is invisible, so the result reads as one badly-cropped image rather than two associations.
+ * Every logo is now drawn in full, at the same diameter a single-owner event uses.
  */
 export function splitLogoWatermark(logoSrcs: string[], size: number): string {
-  const n = logoSrcs.length;
-  const bandW = size / n;
-  const bands = logoSrcs
+  const GAP = 3;
+  const logos = logoSrcs
     .map(
-      (src, i) =>
-        `<div style="position:absolute;top:0;left:${(i * bandW).toFixed(2)}px;width:${bandW.toFixed(2)}px;height:${size}px;overflow:hidden;"><img src="${src}" style="position:absolute;top:0;left:${(-i * bandW).toFixed(2)}px;width:${size}px;height:${size}px;object-fit:cover;" /></div>`
+      (src) =>
+        `<img src="${src}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;" />`
     )
     .join('');
-  return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><div style="position:relative;width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;opacity:0.20;">${bands}</div></div>`;
+  return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:${GAP}px;opacity:0.20;pointer-events:none;">${logos}</div>`;
 }
 
 /**
@@ -326,7 +328,11 @@ function buildCalendarHtml(
   const headerRow = weekdayNames
     .map(
       (w, i) =>
-        `<div data-pdf-text style="padding:11px 6px;text-align:center;font-size:${weekdayFontSize}px;font-weight:800;text-transform:uppercase;letter-spacing:${weekdayLetterSpacing};color:${i >= 5 ? opts.weekendLabelColor : opts.weekdayLabelColor};background:${opts.weekdayRowBg};${labelShadow}">${w}</div>`
+        // The marker sits on the inner span, never on this padded box: the vector re-draw anchors a
+        // run to the TOP of the marked element and knows nothing about padding, so marking the box
+        // drew the label 11 px above where the preview shows it. Flex centring also makes the row
+        // height explicit rather than padding-derived, which is what WEEKDAY_ROW_H already assumed.
+        `<div style="height:${WEEKDAY_ROW_H}px;display:flex;align-items:center;justify-content:center;padding:0 6px;box-sizing:border-box;background:${opts.weekdayRowBg};"><span data-pdf-text style="text-align:center;font-size:${weekdayFontSize}px;font-weight:800;line-height:1;text-transform:uppercase;letter-spacing:${weekdayLetterSpacing};color:${i >= 5 ? opts.weekendLabelColor : opts.weekdayLabelColor};${labelShadow}">${w}</span></div>`
     )
     .join('');
 

@@ -10,6 +10,11 @@
  * The caller owns nothing but the element: this reads the live DOM boxes, so wrapping and any
  * auto-shrink already applied on screen are reproduced for free. Overlay text uses the app's real
  * embedded fonts (see {@link registerAppFonts}), so it matches the on-screen typography exactly.
+ *
+ * MARKUP CONTRACT: put `data-pdf-text` on the element whose box IS the text's line box - a bare
+ * `<span>`, not a padded or flex-centred container. A run is anchored to the TOP of the marked box
+ * ({@link drawTextSpecs}); padding and vertical centring are invisible here, so marking a container
+ * silently draws its text higher in the PDF than the on-screen preview shows it.
  */
 import { rasterizeElementToCanvas, type RasterizeOptions } from '$lib/utils/pdfRaster';
 import { registerAppFonts, pickAppFont } from './appFonts';

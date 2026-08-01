@@ -145,16 +145,14 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   `[MLS] Device <old> was revoked - re-enrolled as <new>`, then the panel lists the new id. Costs
   the local history of that device, by design.
 
-- \[~\] **WP-PDF-1 (P3) - Only the missing second logo is left.** The rounded corners and the
-  uncropped background are FIXED (`frontend/src/lib/utils/calendarExport.ts` - the sheet is the
-  export container, and the background is now a `background-size:cover` box at `inset:0` instead of
-  an `<img>` whose height was JS-patched on the export path only). The second logo could NOT be
-  reproduced from the code: the backend relation is `eager: true`, so `coOwners[].logoUrl` IS
-  populated, and `splitLogoWatermark` composes n bands correctly. The remaining candidate is
-  `fetchDataUrl` returning null, which used to be silent and now logs
-  `[CalendarExport] Logo fetch failed (HTTP <n>): <url>`. **Next step needs the console**: that line
-  means the logo exists but could not be inlined; NO line means the second association simply has no
-  `logoUrl` set, which would make the export correct and the request a different feature.
+- \[ \] **WP-PDF-1 (P3) - CLOSED, pending a look at the next export.** The "missing" second logo was
+  never missing: `splitLogoWatermark` merged the two into ONE circle, left half of logo A + right
+  half of logo B, so each association showed a half-seal and two similar logos read as a single
+  cropped image. That was a deliberate design (`79645923`, 2026-07-20) that the user rejected on
+  sight - each logo is now drawn whole, side by side. Also fixed: the weekday labels were centred in
+  the preview and high in the PDF, because `data-pdf-text` sat on a padded container and the vector
+  re-draw anchors a run to the TOP of the marked box. Rounded corners and the cropped background were
+  already fixed. Nothing owed but a glance at the next real export.
 
 - \[ \] **WP-XP-7 residual (P3) - the iOS group-summary text has never worked.** Found 2026-07-31
   in the v0.11.8 release logs, which warn on BOTH writers: `canari_push.mm:904` and
@@ -338,6 +336,9 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - What must fit a card is the longest WORD, not the name: shrink to it, then widen the card.
 - A card's `photo` is published, never derived from its width - widening must not grow the face.
 - A debug slider whose panel is gone still ships: fold it back into constants, or it rots as plumbing.
+- `data-pdf-text` goes on the box that IS the text line - padding and flex centring are invisible to
+  the vector re-draw, which anchors to the marked box's TOP. Preview right + PDF high = this.
+- A watermark is for RECOGNITION: a design that slices a logo composes perfectly and shows nothing.
 
 #### Associations and agenda -> [social-service](docs/wiki/services/social-service.md)
 
