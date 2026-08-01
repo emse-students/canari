@@ -145,14 +145,17 @@ switch: it freezes the cotisant snapshot instead of refreshing it, and never ope
   `[MLS] Device <old> was revoked - re-enrolled as <new>`, then the panel lists the new id. Costs
   the local history of that device, by design.
 
-- \[ \] **WP-PDF-1 (P3) - CLOSED, pending a look at the next export.** The "missing" second logo was
-  never missing: `splitLogoWatermark` merged the two into ONE circle, left half of logo A + right
-  half of logo B, so each association showed a half-seal and two similar logos read as a single
-  cropped image. That was a deliberate design (`79645923`, 2026-07-20) that the user rejected on
-  sight - each logo is now drawn whole, side by side. Also fixed: the weekday labels were centred in
-  the preview and high in the PDF, because `data-pdf-text` sat on a padded container and the vector
-  re-draw anchors a run to the TOP of the marked box. Rounded corners and the cropped background were
-  already fixed. Nothing owed but a glance at the next real export.
+- \[~\] **WP-PDF-1 (P3) - the split is WANTED; one console line still owed.** The two-half watermark
+  is the intended design (`79645923`) - do NOT replace it with whole logos side by side, that was
+  tried on 2026-08-01 and rejected. The defect was that `logoSrcs` was compacted: an owner whose
+  logo did not resolve renumbered the bands, so two owners with one usable logo fell to the
+  single-logo branch and drew it WHOLE across the circle - which is nearly indistinguishable from a
+  working split, and is why this stayed unexplained. Bands are now positional and a missing logo
+  leaves that owner's half empty. The weekday labels are also fixed (`data-pdf-text` sat on a padded
+  box; the vector re-draw anchors to the marked box's TOP). **Owed:** one export, then the console.
+  `[CalendarExport] No logo for "<asso>" on "<event>"` names the association and says whether a
+  `logoUrl` was set at all - no line at all means every logo resolved and the split is simply
+  working.
 
 - \[ \] **WP-XP-7 residual (P3) - the iOS group-summary text has never worked.** Found 2026-07-31
   in the v0.11.8 release logs, which warn on BOTH writers: `canari_push.mm:904` and
@@ -338,7 +341,8 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - A debug slider whose panel is gone still ships: fold it back into constants, or it rots as plumbing.
 - `data-pdf-text` goes on the box that IS the text line - padding and flex centring are invisible to
   the vector re-draw, which anchors to the marked box's TOP. Preview right + PDF high = this.
-- A watermark is for RECOGNITION: a design that slices a logo composes perfectly and shows nothing.
+- A positional layout must NEVER be handed a compacted array: the missing entry then renumbers the
+  rest, and the result looks like a correct render of different data instead of a visible gap.
 
 #### Associations and agenda -> [social-service](docs/wiki/services/social-service.md)
 

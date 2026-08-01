@@ -268,24 +268,28 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
 }
 
 /**
- * Watermark for a co-owned event: each owner's logo WHOLE, side by side and centred, so a two-owner
- * event shows one logo over each half of its split background.
+ * Watermark for a co-owned event: the owners' logos are merged into ONE circle split into equal
+ * vertical bands, each band cut from a different logo (2 owners -> left half of logo 1 on the left,
+ * right half of logo 2 on the right). Each band is a window onto a full-size logo shifted so only its
+ * own vertical slice shows, so the bands line up into a single seamless circle rather than a row of
+ * small separate logos.
  *
- * This used to merge the logos into a single seamless circle - the left half cut from logo 1, the
- * right half from logo 2. It composed exactly as designed and still failed at the only thing a
- * watermark is for: half a seal is not recognisable as anyone's logo, and with two similar logos the
- * seam is invisible, so the result reads as one badly-cropped image rather than two associations.
- * Every logo is now drawn in full, at the same diameter a single-owner event uses.
+ * A band is reserved per OWNER, so `logoSrcs` must stay positional: a `null` leaves that owner's
+ * half empty. Dropping the nulls instead would renumber the bands - two owners with one resolvable
+ * logo would collapse to n=1 and draw that logo WHOLE across the circle, which is indistinguishable
+ * from a working two-logo split and hides the fact that a logo failed to load.
  */
-export function splitLogoWatermark(logoSrcs: string[], size: number): string {
-  const GAP = 3;
-  const logos = logoSrcs
-    .map(
-      (src) =>
-        `<img src="${src}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;" />`
+export function splitLogoWatermark(logoSrcs: (string | null)[], size: number): string {
+  const n = logoSrcs.length;
+  const bandW = size / n;
+  const bands = logoSrcs
+    .map((src, i) =>
+      src === null
+        ? ''
+        : `<div style="position:absolute;top:0;left:${(i * bandW).toFixed(2)}px;width:${bandW.toFixed(2)}px;height:${size}px;overflow:hidden;"><img src="${src}" style="position:absolute;top:0;left:${(-i * bandW).toFixed(2)}px;width:${size}px;height:${size}px;object-fit:cover;" /></div>`
     )
     .join('');
-  return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:${GAP}px;opacity:0.20;pointer-events:none;">${logos}</div>`;
+  return `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><div style="position:relative;width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;opacity:0.20;">${bands}</div></div>`;
 }
 
 /**
@@ -388,18 +392,31 @@ function buildCalendarHtml(
           // Resolve logos (primary + co-owners): data URL map for PDF export, direct URL for preview.
           const resolveLogo = (url: string | null | undefined): string | null =>
             url ? (logoMap === 'direct' ? url : (logoMap.get(url) ?? null)) : null;
-          const logoSrcs = [ev.associationLogoUrl, ...(ev.coOwners ?? []).map((co) => co.logoUrl)]
-            .map(resolveLogo)
-            .filter((s): s is string => !!s);
+          // Positional, one entry per OWNER, nulls kept: the split reserves a band per owner, so
+          // dropping the unresolved ones renumbers the bands. Two owners with one usable logo then
+          // collapsed to the single-logo branch and drew it WHOLE across the circle - which looks
+          // exactly like a working split and is why "the second logo is missing" stayed unexplained
+          // for so long: the symptom was disguised as a correct render.
+          const owners = [
+            { name: ev.associationName, url: ev.associationLogoUrl },
+            ...(ev.coOwners ?? []).map((co) => ({ name: co.name, url: co.logoUrl })),
+          ];
+          const logoSrcs = owners.map((o) => resolveLogo(o.url));
+          for (const [i, o] of owners.entries()) {
+            if (logoSrcs[i] === null) {
+              console.warn(
+                `[CalendarExport] No logo for "${o.name}" on "${ev.title}" - its half stays empty (logoUrl: ${o.url ?? 'none set'})`
+              );
+            }
+          }
 
           const logoSize = Math.max(Math.round(slotH * 0.62), 14);
           // Watermark stays absolute - decorative only, doesn't affect flow.
-          const watermark =
-            logoSrcs.length === 0
-              ? ''
-              : logoSrcs.length === 1
-                ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrcs[0]}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
-                : splitLogoWatermark(logoSrcs, logoSize);
+          const watermark = logoSrcs.every((s) => s === null)
+            ? ''
+            : owners.length === 1
+              ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrcs[0]}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:0.18;" /></div>`
+              : splitLogoWatermark(logoSrcs, logoSize);
 
           const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
 

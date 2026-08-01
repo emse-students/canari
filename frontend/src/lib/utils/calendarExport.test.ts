@@ -62,24 +62,38 @@ describe('eventBgCss', () => {
 });
 
 describe('splitLogoWatermark', () => {
-  it('draws every owner logo whole, side by side', () => {
+  it('merges two logos into one circle split into halves (not a row of small logos)', () => {
     const html = splitLogoWatermark(['/logo1.png', '/logo2.png'], 40);
-
-    expect((html.match(/<img /g) ?? []).length).toBe(2);
-    // Each logo keeps the full diameter a single-owner event uses - no slicing, no shrinking.
-    expect((html.match(/width:40px;height:40px/g) ?? []).length).toBe(2);
-    expect(html).toContain('gap:3px');
-    // The watermark used to merge the two into one circle, each contributing a vertical half. It
-    // composed as designed and still failed: half a seal reads as a cropped image, not as a logo.
-    expect(html).not.toContain('left:-20.00px');
+    // A single circular clip container...
+    expect(html).toContain('border-radius:50%');
+    // ...holding one window per logo (a band), each shifted so only its own vertical slice shows.
+    const bandCount = (html.match(/<img /g) ?? []).length;
+    expect(bandCount).toBe(2);
+    expect(html).toContain('left:0.00px'); // first band anchored at the left edge
+    expect(html).toContain('left:20.00px'); // second band starts at the half (size / 2)
+    // The image inside the second band is shifted left by the band width so the halves align.
+    expect(html).toContain('left:-20.00px');
+    // It must NOT fall back to the old side-by-side small-logo row.
+    expect(html).not.toContain('gap:3px');
   });
 
-  it('keeps the logos centred over the split background, so each sits on its own half', () => {
-    const html = splitLogoWatermark(['/a.png', '/b.png'], 30);
-    expect(html).toContain('justify-content:center');
-    expect(html).toContain('align-items:center');
-    // Decorative only: it must never intercept a click or shift the cell's flow.
-    expect(html).toContain('position:absolute;inset:0');
-    expect(html).toContain('pointer-events:none');
+  it('leaves an owner half empty rather than renumbering the bands', () => {
+    // A band belongs to an OWNER, so an unresolved logo must not shift the next one into its place.
+    // Compacting the array instead is what disguised a missing logo as a correct render: two owners
+    // with one usable logo fell to the single-logo branch and drew it whole across the circle.
+    const html = splitLogoWatermark(['/logo1.png', null], 40);
+
+    expect((html.match(/<img /g) ?? []).length).toBe(1);
+    // The surviving logo keeps the LEFT band - it does not slide over or grow to fill the circle.
+    expect(html).toContain('left:0.00px');
+    expect(html).not.toContain('left:20.00px');
+  });
+
+  it('keeps the second owner on the right when only the first logo is missing', () => {
+    const html = splitLogoWatermark([null, '/logo2.png'], 40);
+
+    expect((html.match(/<img /g) ?? []).length).toBe(1);
+    expect(html).toContain('left:20.00px'); // still the RIGHT band
+    expect(html).toContain('left:-20.00px'); // still showing its own right half
   });
 });
