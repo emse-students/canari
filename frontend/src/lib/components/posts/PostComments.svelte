@@ -17,7 +17,7 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import PostImage from './PostImage.svelte';
   import { MediaService, compressImage, IMAGE_COMPRESS_PRESETS } from '$lib/media';
-  import { mediaAspectStyle } from '$lib/utils/mediaLayout';
+  import { mediaAspectStyle, resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import PostMentionLink from './PostMentionLink.svelte';
@@ -408,9 +408,12 @@
             {/if}
           {/if}
           {#if comment.media && authToken}
+            {@const reserved = reservesAspectRatio(resolveMediaType(comment.media))}
             <div
-              class="relative mt-1.5 w-full max-w-[14rem] rounded-xl overflow-hidden bg-black/5 dark:bg-white/5"
-              style={mediaAspectStyle(comment.media.width, comment.media.height)}
+              class="relative mt-1.5 w-full rounded-xl overflow-hidden {reserved
+                ? 'max-w-[14rem] bg-black/5 dark:bg-white/5'
+                : 'max-w-[20rem]'}"
+              style={reserved ? mediaAspectStyle(comment.media.width, comment.media.height) : ''}
             >
               <PostImage media={comment.media} {authToken} />
             </div>

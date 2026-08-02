@@ -1,7 +1,6 @@
 <script lang="ts">
   import PostMedia from './PostMedia.svelte';
   import type { PostEntity, PostMediaRef } from '$lib/posts/api';
-  import type { MediaType } from '$lib/media';
   import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
   import PostMentionLink from './PostMentionLink.svelte';
@@ -12,7 +11,12 @@
   import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
   import { onMount } from 'svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
-  import { mediaAspectStyle, GALLERY_MEDIA_ASPECT } from '$lib/utils/mediaLayout';
+  import {
+    mediaAspectStyle,
+    resolveMediaType,
+    reservesAspectRatio,
+    GALLERY_MEDIA_ASPECT,
+  } from '$lib/utils/mediaLayout';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -37,20 +41,15 @@
   let lightboxIndex = $state<number | null>(null);
 
   const postMedia = $derived<PostMediaRef[]>(post.media ?? post.images ?? []);
-  const lightboxMedia = $derived<PostMediaRef[]>(
-    postMedia.filter(
-      (m) =>
-        (m.type ?? mediaTypeFromMime(m.mimeType)) === 'image' ||
-        (m.type ?? mediaTypeFromMime(m.mimeType)) === 'video'
-    )
-  );
-
-  function mediaTypeFromMime(mimeType: string): MediaType {
-    if (mimeType.startsWith('video/')) return 'video';
-    if (mimeType.startsWith('audio/')) return 'audio';
-    if (mimeType.startsWith('image/')) return 'image';
-    return 'file';
+  /** Image and video are the only types the lightbox can display. */
+  function isLightboxable(media: PostMediaRef): boolean {
+    const type = resolveMediaType(media);
+    return type === 'image' || type === 'video';
   }
+
+  // Compacted on purpose: a document is skipped. A grid position is therefore NOT
+  // a lightbox index - openLightbox is always given the index in THIS array.
+  const lightboxMedia = $derived<PostMediaRef[]>(postMedia.filter(isLightboxable));
 
   function openLightbox(i: number) {
     lightboxIndex = i;
@@ -112,10 +111,11 @@
   <div class="w-full mt-1">
     {#if postMedia.length === 1}
       {@const media = postMedia[0]}
+      {@const reserved = reservesAspectRatio(resolveMediaType(media))}
       <div>
         <div
-          class="relative w-full bg-black/5 dark:bg-white/5 overflow-hidden"
-          style={mediaAspectStyle(media.width, media.height)}
+          class="relative w-full overflow-hidden {reserved ? 'bg-black/5 dark:bg-white/5' : ''}"
+          style={reserved ? mediaAspectStyle(media.width, media.height) : ''}
         >
           <!-- Single attachment: PostMedia handles its own lightbox/download -->
           <PostMedia {media} {authToken} />
@@ -127,18 +127,20 @@
     {:else}
       <!-- Multi-media gallery: centralized lightbox with navigation for image/video -->
       <div class="grid grid-cols-2 gap-0.5 sm:gap-1 bg-white/20 dark:bg-black/20">
-        {#each postMedia as media, i (media.mediaId)}
-          {@const isLightboxable =
-            (media.type ?? mediaTypeFromMime(media.mimeType)) === 'image' ||
-            (media.type ?? mediaTypeFromMime(media.mimeType)) === 'video'}
+        {#each postMedia as media (media.mediaId)}
+          {@const lightboxIdx = lightboxMedia.indexOf(media)}
           <div
-            class="relative w-full overflow-hidden bg-black/5 dark:bg-white/5"
-            style={mediaAspectStyle(media.width, media.height, GALLERY_MEDIA_ASPECT)}
+            class="relative w-full overflow-hidden bg-black/5 dark:bg-white/5 {lightboxIdx === -1
+              ? 'flex items-center p-2'
+              : ''}"
+            style={lightboxIdx === -1
+              ? ''
+              : mediaAspectStyle(media.width, media.height, GALLERY_MEDIA_ASPECT)}
           >
             <PostMedia
               {media}
               {authToken}
-              onOpen={isLightboxable ? () => openLightbox(i) : undefined}
+              onOpen={lightboxIdx === -1 ? undefined : () => openLightbox(lightboxIdx)}
             />
             {#if media.caption}
               <p

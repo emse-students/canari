@@ -10,7 +10,7 @@
   import { MediaService } from '$lib/media';
   import type { MediaRef, MediaType } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
-  import { mediaAspectStyle } from '$lib/utils/mediaLayout';
+  import { resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -42,17 +42,12 @@
   let loading = $state(true);
   let loadError = $state('');
 
-  /** Resolved media type: use the explicit type field, or fall back to mime-based detection (legacy images). */
-  const mediaType = $derived<MediaType>(
-    media.type ??
-      (media.mimeType.startsWith('video/')
-        ? 'video'
-        : media.mimeType.startsWith('audio/')
-          ? 'audio'
-          : media.mimeType.startsWith('image/')
-            ? 'image'
-            : 'file')
-  );
+  const mediaType = $derived<MediaType>(resolveMediaType(media));
+
+  // The caller only reserves a box for picture-shaped media, so a file/audio
+  // placeholder must take part in the flow instead of filling a parent that has
+  // no height of its own.
+  const fillsReservedBox = $derived(reservesAspectRatio(mediaType));
 
   $effect(() => {
     if (!authToken) {
@@ -194,15 +189,23 @@
         <div class="flex-1 ml-3 h-2 bg-current opacity-10 rounded-full"></div>
       </div>
     {:else}
+      <!-- Same footprint as the loaded file card, so nothing jumps on arrival. -->
       <div
-        class="absolute inset-0 flex items-center justify-center bg-black/5 dark:bg-white/5 animate-pulse"
+        class="flex items-center gap-3.5 px-3.5 py-3 w-full rounded-[1rem] bg-black/5 dark:bg-white/10 animate-pulse"
       >
-        <FileText size={32} class="opacity-20 text-text-muted" strokeWidth={1.5} />
+        <div
+          class="w-11 h-11 rounded-xl bg-black/10 dark:bg-white/10 flex items-center justify-center shrink-0"
+        >
+          <FileText size={22} class="opacity-20 text-text-muted" strokeWidth={1.5} />
+        </div>
+        <div class="flex-1 h-2.5 rounded-full bg-black/10 dark:bg-white/10"></div>
       </div>
     {/if}
   {:else if loadError}
     <div
-      class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center bg-red-500/5 dark:bg-red-500/10 border border-dashed border-red-500/20"
+      class="{fillsReservedBox
+        ? 'absolute inset-0'
+        : 'w-full rounded-[1rem]'} flex flex-col items-center justify-center gap-2 p-4 text-center bg-red-500/5 dark:bg-red-500/10 border border-dashed border-red-500/20"
     >
       <CircleAlert size={24} class="text-red-500 opacity-70" strokeWidth={2} />
       <span class="text-xs font-semibold text-red-600 dark:text-red-400">{loadError}</span>
@@ -271,7 +274,8 @@
           <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
             {media.fileName ?? m.post_media_file_label()}
           </p>
-          <p class="text-[0.65rem] uppercase tracking-wider font-semibold text-text-muted">
+          <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
+          <p class="text-[0.65rem] tracking-wider font-semibold text-text-muted">
             {formatFileSize(media.size)}
           </p>
         </div>

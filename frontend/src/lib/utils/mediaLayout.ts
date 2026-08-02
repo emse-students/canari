@@ -1,3 +1,5 @@
+import type { MediaType } from '$lib/media';
+
 /** Default aspect ratio when width/height are unknown (legacy messages). */
 export const DEFAULT_MEDIA_ASPECT = 4 / 3;
 
@@ -28,6 +30,28 @@ export function mediaAspectStyle(
 ): string {
   const ratio = normalizedAspectRatio(width, height, fallback);
   return `aspect-ratio: ${ratio}`;
+}
+
+/**
+ * Resolved display type of an attachment: the explicit field, or mime-based
+ * detection for legacy media stored before `type` existed.
+ */
+export function resolveMediaType(media: { type?: MediaType; mimeType: string }): MediaType {
+  if (media.type) return media.type;
+  if (media.mimeType.startsWith('video/')) return 'video';
+  if (media.mimeType.startsWith('audio/')) return 'audio';
+  if (media.mimeType.startsWith('image/')) return 'image';
+  return 'file';
+}
+
+/**
+ * Whether a container should reserve space with `aspect-ratio` while the media
+ * decrypts. Only a picture-shaped attachment has a size known in advance; a file
+ * or audio attachment is a self-sizing card, and reserving a ratio for it strands
+ * the card at the top of an empty box.
+ */
+export function reservesAspectRatio(type: MediaType): boolean {
+  return type === 'image' || type === 'video';
 }
 
 /** Min-height reserved for a form card while metadata loads (matches PostForms). */
