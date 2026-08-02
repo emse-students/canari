@@ -218,13 +218,39 @@ address `127.0.0.1`.
   MLS transport turns the bundle into a diff, makes the union bidirectional across all members, and
   subsumes the `no-local-history` clause of WP-HIST-2 - "awaiting history" becomes "my diff with at
   least one peer is non-empty", which empties itself.
-  **Three things to settle before writing code, all named by the user's own framing:** (a) SIZE - a
-  manifest is every id of the group; 60 messages is nothing, 10k is ~360 KB per exchange inside an
-  MLS message, and unlike the QR gesture this would run at every join and reconnect, so it likely
-  needs bucketing by time range with a hash per bucket and descent only where hashes differ;
-  (b) DELETIONS - pooling resurrects what a peer still holds and we deleted, and `isDeleted` only
-  exists on devices the deletion event reached; (c) it publishes "who holds what" inside the group -
-  no content leaks, but it is new metadata.
+  **DESIGN SETTLED 2026-08-02 by reading the code - nothing is open, the next session writes it.**
+  The three "questions" resolved as follows, two of them into findings rather than choices:
+  (a) SIZE - the digest has two modes: `ids` (the exact sorted id list) below a threshold of ~1000
+  ids (~40 KB of UUIDs), `buckets` above it (one entry per `YYYY-MM`: count + truncated SHA-256 of
+  that month's sorted ids, so ~2 KB for any history). A differing bucket over-sends that month; the
+  receiver dedupes by id, so the cost is bandwidth, never correctness. And the digest only travels
+  when someone actually asked.
+  (b) DELETIONS - a NON-problem, verified in code: deleting one message keeps a TOMBSTONE row
+  (`isDeleted: true`, content replaced), so its id stays in the manifest and no peer ever counts it
+  missing; both stores import non-destructively (`INSERT OR IGNORE` / IDB `add`). Bulk row deletion
+  exists only for CHANNELS (`conversations.ts:629`, `useConversations.svelte.ts:360`) and for a whole
+  conversation. Rule to hold on merge: a tombstone WINS over a body, so a peer that never received
+  the deletion cannot undo it.
+  (c) METADATA - the digest rides INSIDE MLS, so the server learns nothing it does not already hold
+  (it stores the stream). Co-members learn "which ids this device kept", reduced to a per-month hash
+  in bucket mode. Accepted.
+  **The protocol, 3 legs.** Leg 1 is today's WS `history_request` UNCHANGED - it stays the trigger,
+  because server-side election is what keeps one responder instead of a storm. Leg 2: the elected
+  peer answers with a new MLS system message `history_digest` INSTEAD of its whole store. Leg 3: the
+  requester - who alone knows both sides - diffs, then `history_pull {to, ids|buckets}` for what it
+  lacks and a filtered `history_bundle` push for what the peer lacks. No difference either way = zero
+  traffic and the awaiting marker clears, which also retires the empty-bundle hack in
+  `sendFullHistoryBundle`. No race to correlate: the requester holds both halves.
+  **Two traps.** Every leg is a GROUP broadcast (`mlsService.sendMessage(groupId, ...)`), so the pull
+  must carry its target and non-targets must ignore it - while a broadcast push is a feature, the
+  union spreads. And the REPLAY path (`historySystemEvents.ts`) must ignore `history_digest` /
+  `history_pull`: they are transient negotiation, meaningless when re-read from the stream days later.
+  **Scope: DMs and groups only.** Channels are excluded - their local rows are wiped and re-fetched
+  from the server tally at every load, so pooling would fight the refresh (`isChannelConversationId`).
+  **Order of work:** (1) a pure `historyManifest.ts` (build digest, diff, bucket hash) + its tests;
+  (2) the wiring - `handleHistoryRequest` sends a digest, `systemMessageHandler` gains the digest and
+  pull branches, `groupActions` gains a bundle filtered by id; (3) marker semantics (a digest showing
+  no gap clears it, like a bundle does today); (4) the cosmetics below; (5) wiki + CHANGELOG.
   Two cosmetic fixes were deliberately left out of WP-HIST-2 and belong here or nowhere: the client
   **ignores the `no_peer_online` the server already returns** (`deliveryKeepalivePost` returns void
   and swallows the body), so it opens a 30 s window and burns a retry on a settled question; and
