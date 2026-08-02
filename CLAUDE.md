@@ -206,6 +206,33 @@ address `127.0.0.1`.
   (matches), and the Rust `deep-link://new-url` emit. The PendingIntent shape is already the one
   every Android guide prescribes for a `singleTask` activity.
 
+- \[ \] **WP-HIST-3 (P2) - Pool history per MESSAGE between devices, not all-or-nothing.** Successor
+  to WP-HIST-2 (shipped 2026-08-02), which stopped the blind soliciting but left the exchange itself
+  binary: `sendFullHistoryBundle` ships the responder's ENTIRE store and the receiver dedupes by id,
+  one-way, with neither side knowing what the other holds. **The algorithm already exists and is
+  tested**: `frontend/src/lib/sync/syncEngine.ts` - `buildLocalSyncManifest` (all message ids per
+  conversation, sorted) and `diffLocalAndRemoteManifest` (symmetric difference, returning
+  `missingOnRequester` AND `missingOnPeer`), computed entirely client-side. What is missing is the
+  TRANSPORT: today it only runs over a QR-paired session between two of the user's own devices,
+  driven by hand (`SyncSessionModal.svelte`, `useSyncSession.svelte.ts`). Putting the manifest on the
+  MLS transport turns the bundle into a diff, makes the union bidirectional across all members, and
+  subsumes the `no-local-history` clause of WP-HIST-2 - "awaiting history" becomes "my diff with at
+  least one peer is non-empty", which empties itself.
+  **Three things to settle before writing code, all named by the user's own framing:** (a) SIZE - a
+  manifest is every id of the group; 60 messages is nothing, 10k is ~360 KB per exchange inside an
+  MLS message, and unlike the QR gesture this would run at every join and reconnect, so it likely
+  needs bucketing by time range with a hash per bucket and descent only where hashes differ;
+  (b) DELETIONS - pooling resurrects what a peer still holds and we deleted, and `isDeleted` only
+  exists on devices the deletion event reached; (c) it publishes "who holds what" inside the group -
+  no content leaks, but it is new metadata.
+  Two cosmetic fixes were deliberately left out of WP-HIST-2 and belong here or nowhere: the client
+  **ignores the `no_peer_online` the server already returns** (`deliveryKeepalivePost` returns void
+  and swallows the body), so it opens a 30 s window and burns a retry on a settled question; and
+  nothing re-solicits when a peer comes back, though presence is polled every 10 s in the same tab.
+  Also spotted while reading it, independent and 3 lines: `checkPresenceNow`
+  (`stores/presenceStore.ts`) has **no in-flight guard**, so on a bad link the 10 s interval stacks
+  4-5 concurrent `/api/presence` calls (measured at 32 s each on a train connection).
+
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
   outbox drained - and the peer never received it, not live and not after a reload. Two later
@@ -306,6 +333,12 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - A community is soft-deleted, never dropped; `DELETE workspaces/:id` needs MANAGE_WORKSPACE only.
 - `channel.moderate` = pin or delete SOMEONE ELSE's message, nothing more.
 - Dead devices are reaped after 90 days - until then a churned id keeps receiving fan-out.
+- A join is NOT evidence of a gap: the message store and the seen-frame ledger are keyed by USER, so
+  a rotated identity rejoins every group while the browser still holds every message.
+- A durable marker must carry the EVIDENCE that justified it, or nothing can ever revisit the
+  diagnosis; one written without evidence is legacy - drop it, do not replay it.
+- The only moment the app learns history is genuinely missing is the replay declaring a frame
+  permanently undecryptable - record it THERE, the frame is consumed in the same breath.
 
 #### Outbound delivery -> [chat](docs/wiki/frontend/modules/chat.md)
 

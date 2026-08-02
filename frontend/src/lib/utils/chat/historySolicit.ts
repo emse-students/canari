@@ -1,9 +1,11 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import type { IStorage } from '$lib/db';
 import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
 import {
   markAwaitingHistory,
   clearAwaitingHistory,
   enumerateAwaitingHistory,
+  isAwaitingHistory,
 } from './awaitingHistoryRegistry';
 
 /**
@@ -44,22 +46,19 @@ const pending = new Map<string, PendingSolicit>();
  * (`noteHistoryBundleReceived`). The bundle receiver deduplicates by message id, so a redundant
  * resend is harmless.
  *
- * Durable across sessions: the group is recorded in the awaiting-history registry until a bundle
- * arrives, so the connection sync re-solicits it on every (re)connect (see
- * {@link reSolicitAwaitingHistory}). This fixes the old one-shot behaviour where a peer that stayed
- * offline for the ~3 min in-session window left the history never re-requested (a later session
- * finds the group already in WASM and recovery no longer solicits).
+ * Durable across sessions ONLY through the awaiting-history registry, which this function no
+ * longer writes: soliciting is the ACTION, deciding that history is missing is a separate
+ * judgement that needs evidence (see {@link solicitHistoryIfMissing}). Once a marker exists the
+ * connection sync re-solicits it on every (re)connect (see {@link reSolicitAwaitingHistory}),
+ * which is what covers a peer that stayed offline for the whole ~3 min in-session window.
  */
 export function solicitHistory(
   mlsService: Pick<IMlsService, 'sendHistoryRequest'>,
-  userId: string,
   groupId: string,
   log: (msg: string) => void,
   delaysMs: number[] = RETRY_DELAYS_MS,
   initialDelayMs: number = INITIAL_SOLICIT_DELAY_MS
 ): void {
-  // Persist the intent so the history is re-solicited on future connections until it lands.
-  markAwaitingHistory(userId, groupId);
   // Restart cleanly if a prior solicitation for this group is still in flight.
   cancelHistorySolicit(groupId);
   const entry: PendingSolicit = { timers: [] };
@@ -93,6 +92,57 @@ export function solicitHistory(
 }
 
 /**
+ * Solicits the history bundle for a group this device has just (re)joined, but ONLY when it can
+ * point at something missing. This is the single decision seam for "do I need history?", and it
+ * exists because the join event alone is not evidence: the commonest join of all is a device
+ * rotating its MLS identity inside a browser whose message store - keyed by USER, not by device -
+ * still holds every message. Asking on the join event marked every group of such a device, forever.
+ *
+ * Two things count as evidence, in order:
+ *  1. An existing awaiting marker, which the replay writes when it gives up on a frame it can never
+ *     decrypt. That is a PROVEN gap, whatever the store holds.
+ *  2. An empty local store for the group: we hold nothing, so we cannot tell a conversation that is
+ *     empty from one whose history we are missing, and only a peer can. This is also the sole case
+ *     covering a group whose server-side stream has been trimmed - a gap no replay can ever observe,
+ *     because a frame that is gone never fails to decrypt.
+ *
+ * A non-empty store with nothing unreadable in it means we are not missing anything: we stay quiet
+ * and drop any marker left behind by the old join-time behaviour.
+ *
+ * A storage READ that failed proves nothing either way, so it falls through to soliciting: a
+ * needless bundle is deduplicated by id on arrival, a skipped one is lost.
+ */
+export async function solicitHistoryIfMissing(params: {
+  mlsService: Pick<IMlsService, 'sendHistoryRequest'>;
+  storage: IStorage | null;
+  userId: string;
+  deviceKeyB64: string;
+  groupId: string;
+  log: (msg: string) => void;
+}): Promise<void> {
+  const { mlsService, storage, userId, deviceKeyB64, groupId, log } = params;
+  const short = groupId.slice(0, 8);
+
+  if (!isAwaitingHistory(userId, groupId)) {
+    let localCount: number | null = null;
+    try {
+      localCount = ((await storage?.getMessages(groupId, deviceKeyB64)) ?? []).length;
+    } catch (e) {
+      log(`[HISTORY_REQ] store read failed for ${short}...: ${String(e).slice(0, 120)}`);
+    }
+    if (localCount !== null && localCount > 0) {
+      // Nothing unreadable, and we already hold this conversation: there is nothing to ask for.
+      clearAwaitingHistory(userId, groupId);
+      log(`[HISTORY_REQ] ${short}... already holds ${localCount} message(s) - no bundle needed`);
+      return;
+    }
+    markAwaitingHistory(userId, groupId, 'no-local-history');
+  }
+
+  solicitHistory(mlsService, groupId, log);
+}
+
+/**
  * Re-solicits the history bundle for every group still awaiting it (durable registry) that is
  * currently held locally. Called on each (re)connect: it is the cross-session retry seam that
  * survives the ~3 min in-session backoff. Groups NOT in local WASM are skipped here - they are
@@ -111,7 +161,7 @@ export function reSolicitAwaitingHistory(
     log(
       `[HISTORY_REQ] re-soliciting bundle for ${groupId.slice(0, 8)}... (awaiting across sessions)`
     );
-    solicitHistory(mlsService, userId, groupId, log);
+    solicitHistory(mlsService, groupId, log);
   }
 }
 

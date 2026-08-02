@@ -11,9 +11,45 @@
 // This registry makes the "still needs history" intent durable: it is set when a solicitation
 // starts and cleared once a bundle actually arrives. The connection sync re-solicits every awaiting
 // group on each (re)connect, so the history is retried across sessions until it lands.
+//
+// EVERY marker carries the EVIDENCE that justified it. The registry used to be written on the mere
+// fact of joining, which made "I rejoined" mean "history is missing" - false for the commonest join
+// of all: a device rotating its MLS identity in a browser whose message store (keyed by USER, not
+// by device) still holds everything. Such a device marked EVERY one of its groups, solicited them
+// forever and showed the pending banner over conversations that were already complete. A reason is
+// therefore mandatory, and a marker without one is legacy: it proves nothing and is dropped rather
+// than replayed.
 // ---------------------------------------------------------------------------
 
 const PREFIX = 'mls_awaiting_history_since';
+
+/**
+ * Why a group is recorded as awaiting its history bundle.
+ * - `no-local-history`: we hold NOTHING for this group, so we cannot tell an empty conversation
+ *   from a missing one - the presumption of a gap, and the only case a blind ask is warranted.
+ * - `unreadable-frames`: the replay actually gave up on a frame it could never decrypt (pre-join
+ *   or forked epoch). A re-encrypted bundle is the ONLY way to obtain it: a proven gap.
+ */
+export type AwaitingHistoryReason = 'no-local-history' | 'unreadable-frames';
+
+/** A stored marker: when we started waiting, and the evidence that we are. */
+type AwaitingMarker = { since: number; reason: AwaitingHistoryReason };
+
+/**
+ * Parses a stored marker, returning null for anything that carries no evidence - malformed
+ * entries, and the legacy bare-timestamp format written by the old join-time solicitation.
+ */
+function readMarker(raw: string | null): AwaitingMarker | null {
+  if (raw === null) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<AwaitingMarker>;
+    if (typeof parsed?.since !== 'number' || !Number.isFinite(parsed.since)) return null;
+    if (parsed.reason !== 'no-local-history' && parsed.reason !== 'unreadable-frames') return null;
+    return { since: parsed.since, reason: parsed.reason };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Give-up horizon: past this age we stop re-soliciting and drop the marker. Pre-join history is not
@@ -27,13 +63,26 @@ function key(userId: string, groupId: string): string {
 }
 
 /**
- * Records that `groupId` is awaiting its history bundle, if not already recorded. Idempotent: keeps
- * the earliest instant so the give-up horizon is stable across sessions.
+ * Records that `groupId` is awaiting its history bundle, with the evidence for it. Idempotent:
+ * keeps the earliest instant so the give-up horizon is stable across sessions.
+ *
+ * A proof outranks a presumption: once the replay has reported `unreadable-frames` the reason is
+ * never downgraded, so a later join that happens to find a non-empty store cannot erase the fact
+ * that some frame is genuinely unreadable.
  */
-export function markAwaitingHistory(userId: string, groupId: string): void {
+export function markAwaitingHistory(
+  userId: string,
+  groupId: string,
+  reason: AwaitingHistoryReason
+): void {
   if (typeof localStorage === 'undefined') return;
   const k = key(userId, groupId);
-  if (localStorage.getItem(k) === null) localStorage.setItem(k, String(Date.now()));
+  const existing = readMarker(localStorage.getItem(k));
+  const next: AwaitingMarker = {
+    since: existing?.since ?? Date.now(),
+    reason: existing?.reason === 'unreadable-frames' ? 'unreadable-frames' : reason,
+  };
+  localStorage.setItem(k, JSON.stringify(next));
 }
 
 /** Clears the awaiting-history marker for `groupId` (bundle arrived, or the group was dropped). */
@@ -53,32 +102,36 @@ export function clearAwaitingHistory(userId: string, groupId: string): void {
  */
 export function isAwaitingHistory(userId: string, groupId: string): boolean {
   if (typeof localStorage === 'undefined') return false;
-  const since = Number(localStorage.getItem(key(userId, groupId)));
-  if (!Number.isFinite(since) || since === 0) return false;
-  return Date.now() - since <= MAX_AGE_MS;
+  const marker = readMarker(localStorage.getItem(key(userId, groupId)));
+  if (marker === null) return false;
+  return Date.now() - marker.since <= MAX_AGE_MS;
 }
 
 /**
- * All groupIds for `userId` still awaiting their history bundle. Entries older than
- * {@link MAX_AGE_MS} are considered given-up and are pruned as a side effect of enumeration, so the
- * registry stays bounded without a separate GC pass.
+ * All groupIds for `userId` still awaiting their history bundle. Two kinds of entry are pruned as a
+ * side effect of enumeration, so the registry stays bounded without a separate GC pass:
+ * entries past {@link MAX_AGE_MS} (given up on), and entries carrying no evidence - the legacy
+ * bare-timestamp markers the join-time solicitation used to write for every group it rejoined.
+ * Dropping the latter is the one-shot migration: they were posted without anyone checking whether
+ * anything was actually missing, and a device that IS missing something re-proves it at the next
+ * replay.
  */
 export function enumerateAwaitingHistory(userId: string): string[] {
   if (typeof localStorage === 'undefined') return [];
   const prefix = `${PREFIX}:${userId}:`;
   const now = Date.now();
   const out: string[] = [];
-  const expired: string[] = [];
+  const stale: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
     if (k === null || !k.startsWith(prefix)) continue;
-    const since = Number(localStorage.getItem(k));
-    if (Number.isFinite(since) && now - since > MAX_AGE_MS) {
-      expired.push(k);
+    const marker = readMarker(localStorage.getItem(k));
+    if (marker === null || now - marker.since > MAX_AGE_MS) {
+      stale.push(k);
       continue;
     }
     out.push(k.slice(prefix.length));
   }
-  for (const k of expired) localStorage.removeItem(k);
+  for (const k of stale) localStorage.removeItem(k);
   return out;
 }

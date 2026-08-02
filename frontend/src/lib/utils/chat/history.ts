@@ -16,6 +16,7 @@ import {
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
+import { markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
 import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
@@ -437,8 +438,13 @@ export async function replayConversationHistory(params: {
               // still lets shouldFlagStaleEpochGap escalate a genuinely stuck-behind group.
               retryCounts.delete(cipherFingerprint);
               retryUpdated = true;
+              // This is the ONLY moment the app learns that history is genuinely missing rather
+              // than merely late: a frame we saw, will never read, and can only obtain re-encrypted
+              // from a member. Record it so the bundle is solicited on the next connection - the
+              // frame itself is about to be consumed and will never fail again to remind us.
+              markAwaitingHistory(userId, id, 'unreadable-frames');
               console.warn(
-                `[History] permanently undecryptable after ${attempts} attempts (${kind}); marking seen`
+                `[History] permanently undecryptable after ${attempts} attempts (${kind}); marking seen and awaiting bundle`
               );
             }
           } else {

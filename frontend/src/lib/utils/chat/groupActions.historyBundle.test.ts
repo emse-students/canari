@@ -61,7 +61,7 @@ describe('sendFullHistoryBundle', () => {
   it('stays silent when empty AND still awaiting history itself (emptiness proves nothing)', async () => {
     // A device that just joined has an empty store for a group that may hold years of history:
     // answering "empty" here would wrongly close the requester's loop.
-    markAwaitingHistory(SELF, GROUP);
+    markAwaitingHistory(SELF, GROUP, 'unreadable-frames');
     const mlsService = createMlsServiceStub();
     await sendFullHistoryBundle(GROUP, {
       storage: storageWith([]),
@@ -88,7 +88,7 @@ describe('sendFullHistoryBundle', () => {
   });
 
   it('still sends the real history when there is some, awaiting marker or not', async () => {
-    markAwaitingHistory(SELF, GROUP);
+    markAwaitingHistory(SELF, GROUP, 'unreadable-frames');
     const mlsService = createMlsServiceStub();
     await sendFullHistoryBundle(GROUP, {
       storage: storageWith([storedMessage('m1'), storedMessage('m2')]),

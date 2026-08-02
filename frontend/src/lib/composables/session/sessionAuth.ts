@@ -22,7 +22,7 @@ import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
 import { m } from '$lib/paraglide/messages';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
-import { solicitHistory, cancelAllHistorySolicit } from '$lib/utils/chat/historySolicit';
+import { solicitHistoryIfMissing, cancelAllHistorySolicit } from '$lib/utils/chat/historySolicit';
 import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -741,8 +741,15 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             // Fresh join: the Welcome lands us at the current epoch with no pre-join history. The
             // inviter pushes a bundle on the foreground add path, but its background twin
             // (send-welcome-and-commit) does not, so we also solicit it ourselves (idempotent,
-            // receipt-driven retries). Only for a genuinely new local conversation.
-            solicitHistory(mlsService, ctx.getUserId(), groupId, cb.log);
+            // receipt-driven retries) - but only when the local store cannot already show it.
+            await solicitHistoryIfMissing({
+              mlsService,
+              storage: ctx.getStorage(),
+              userId: ctx.getUserId(),
+              deviceKeyB64: ctx.getDeviceKey(),
+              groupId,
+              log: cb.log,
+            });
           }
           cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
             cb.log(`[WARN] Error refreshing conv ${groupId}: ${e}`)

@@ -5,7 +5,7 @@ import type { SvelteMap } from 'svelte/reactivity';
 import { persistMlsStateAfterMutation, purgeLocalConversationRecord } from './groupActions';
 import { classifyServerStatus } from './groupLifecycle';
 import { markGroupNotReady, clearGroupNotReady } from './notReadyRegistry';
-import { solicitHistory } from './historySolicit';
+import { solicitHistoryIfMissing } from './historySolicit';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).
@@ -170,9 +170,17 @@ export async function requestReAdd(
       await deps.saveConversation(groupId).catch(() => {});
     }
     // Solicit the pre-join history from one online member: an external join lands at the current
-    // epoch WITHOUT the peer-driven history bundle, so we ask for it explicitly. Bounded,
-    // receipt-driven retries rotate past a frozen-online peer; cancelled when the bundle arrives.
-    solicitHistory(deps.mlsService, deps.userId, groupId, deps.log);
+    // epoch WITHOUT the peer-driven history bundle. Only when something is actually missing - this
+    // very path also runs for a device that merely rotated its MLS identity and whose store, keyed
+    // by user, still holds the whole conversation.
+    await solicitHistoryIfMissing({
+      mlsService: deps.mlsService,
+      storage: deps.storage,
+      userId: deps.userId,
+      deviceKeyB64: deps.deviceKeyB64,
+      groupId,
+      log: deps.log,
+    });
     return;
   }
 
