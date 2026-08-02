@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository, SelectQueryBuilder } from 'typeorm';
+import { randomBytes } from 'node:crypto';
 import axios from 'axios';
 import { User } from './entities/user.entity';
 import {
@@ -73,17 +74,45 @@ export class UsersService implements OnModuleInit {
     return await this.userRepository.save(user);
   }
 
-  /** Returns the caller's private personal notepad content (empty string if unset). */
-  async getNotes(id: string): Promise<string> {
+  /**
+   * Returns the caller's personal notepad as stored: the ciphertext, plus the
+   * legacy plaintext when the note predates encryption and has not been
+   * re-saved yet. Only one of the two is ever meaningful - the client re-saves
+   * a legacy note immediately, which clears it.
+   */
+  async getNotes(id: string): Promise<{ ciphertext: string; legacyNotes: string }> {
     const user = await this.findOne(id);
-    return user.notes ?? '';
+    return {
+      ciphertext: user.notesCiphertext ?? '',
+      legacyNotes: user.notesCiphertext ? '' : (user.notes ?? ''),
+    };
   }
 
-  /** Persists the caller's private personal notepad content. */
-  async setNotes(id: string, notes: string): Promise<void> {
+  /**
+   * Persists the caller's notepad ciphertext, and drops the legacy plaintext:
+   * once an encrypted copy exists, keeping the readable one would defeat the
+   * whole change.
+   */
+  async setNotes(id: string, ciphertext: string): Promise<void> {
     const user = await this.findOne(id);
-    user.notes = notes;
+    user.notesCiphertext = ciphertext;
+    user.notes = null;
     await this.userRepository.save(user);
+  }
+
+  /**
+   * Returns the caller's notepad key, generating it on first use. 32 random bytes
+   * hex, mirroring an association's vault key. It is served only to its owner, so
+   * a database dump alone cannot read the notepad.
+   */
+  async getOrCreateNotesKey(id: string): Promise<string> {
+    const user = await this.findOne(id);
+    if (user.notesKey) return user.notesKey;
+
+    user.notesKey = randomBytes(32).toString('hex');
+    await this.userRepository.save(user);
+    this.logger.log(`[NOTES] generated a notepad key for ${id}`);
+    return user.notesKey;
   }
 
   /** Maps a User entity to a PublicUserDto, stripping internal fields. */
@@ -200,10 +229,7 @@ export class UsersService implements OnModuleInit {
    * Returns up to 10 results. The caller (requesterId) is included in results - callers that
    * must not target themselves (e.g. starting a DM) enforce that as a separate business rule.
    */
-  async search(
-    query: string,
-    requesterId?: string
-  ): Promise<Pick<User, 'id' | 'displayName'>[]> {
+  async search(query: string, requesterId?: string): Promise<Pick<User, 'id' | 'displayName'>[]> {
     // `query` is typed `string`, but Express query parsing can yield an array or
     // object at runtime (e.g. `?q=a&q=b` -> string[], `?q[x]=1` -> object). Re-check
     // the runtime type before any string operation to prevent parameter-tampering

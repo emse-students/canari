@@ -47,8 +47,9 @@ Dev only (disabled in production via `ENABLE_DEV_ROUTES=false`):
 | GET | `/api/users/directory` | JWT | Paginated directory with filters (promo, formation, association) |
 | GET | `/api/users/:id/avatar` | JWT | Fetch user avatar from external service |
 | POST | `/api/users` | global admin | Create user manually |
-| GET | `/api/users/me/notes` | JWT | Get caller's private notepad (Markdown) |
-| PUT | `/api/users/me/notes` | JWT | Update caller's private notepad |
+| GET | `/api/users/me/notes` | JWT | Get caller's notepad ciphertext (+ `legacyNotes` once, pre-encryption) |
+| PUT | `/api/users/me/notes` | JWT | Store caller's notepad ciphertext; clears the legacy plaintext |
+| GET | `/api/users/me/notes-key` | JWT | Caller's notepad key (32 bytes hex), generated on first use |
 | GET | `/api/users/:id` | JWT | Get public profile (`me` resolves to caller) |
 | PATCH | `/api/users/me` | JWT | Update caller's profile |
 | DELETE | `/api/users/me` | JWT | Permanently delete account and all data across services |
@@ -110,9 +111,23 @@ PostgreSQL (`auth_db`). Main tables:
 
 | Table | Key columns |
 |---|---|
-| `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `stripeCustomerId`, `admin` |
+| `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `stripeCustomerId`, `admin`, `notesCiphertext`, `notesKey`, `notes` (legacy) |
 | `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion` |
-| `notes` | `userId`, `content` (Markdown) |
+
+### Personal notepad
+
+Stored as opaque AES-256-GCM ciphertext (base64) under a per-user key, the same envelope an
+association's `notesCiphertext` uses — `encryptVaultNote`/`decryptVaultNote` are shared, not copied.
+The key lives in `users.notesKey`, is generated on first use and is served only to its owner, so a
+database dump alone cannot read a notepad.
+
+Deliberately **not** zero-knowledge: the key is chosen so a forgotten PIN, a new device or a
+reinstall never costs the user their notes. The service can decrypt if it decides to; the threat
+this addresses is a readable database, not a hostile operator.
+
+`users.notes` held the old plaintext and is kept only as a one-shot migration path: the server hands
+it back as `legacyNotes` while no ciphertext exists, the client re-saves it encrypted, and the save
+nulls the column. Only the client can encrypt, so the conversion cannot happen in SQL.
 
 ## Environment variables
 

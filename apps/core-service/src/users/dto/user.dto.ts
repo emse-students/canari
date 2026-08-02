@@ -98,11 +98,15 @@ export class UpdateUserDto {
 
 /** Payload for updating the caller's private personal notepad. */
 export class UpdateNotesDto {
-  /** Markdown content of the personal notepad (max 50000 chars). */
+  /**
+   * AES-256-GCM ciphertext (base64) of the personal notepad. The server stores
+   * it opaquely and never decrypts it. The bound is generous because base64 plus
+   * the GCM envelope inflates the 50000-character plaintext limit by about a third.
+   */
   @IsString()
-  @MaxLength(50000)
+  @MaxLength(100000)
   @IsOptional()
-  notes?: string;
+  ciphertext?: string;
 }
 
 /** Public-facing projection of a user - omits sensitive or internal fields. */

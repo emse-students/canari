@@ -71,20 +71,32 @@ export class UsersController {
     return this.usersService.create(createUserDto);
   }
 
-  /** Returns the caller's private personal notepad (markdown). */
+  /**
+   * Returns the caller's notepad ciphertext, and the legacy plaintext when the
+   * note predates encryption. The server never sees the decrypted content.
+   */
   @UseGuards(NginxAuthGuard)
   @Get('me/notes')
   async getMyNotes(@Headers('x-user-id') userId: string) {
-    const notes = await this.usersService.getNotes(userId);
-    return { notes };
+    return this.usersService.getNotes(userId);
   }
 
-  /** Updates the caller's private personal notepad. */
+  /** Stores the caller's notepad ciphertext and drops any legacy plaintext. */
   @UseGuards(NginxAuthGuard)
   @Put('me/notes')
   async setMyNotes(@Headers('x-user-id') userId: string, @Body() dto: UpdateNotesDto) {
-    await this.usersService.setNotes(userId, dto.notes ?? '');
+    await this.usersService.setNotes(userId, dto.ciphertext ?? '');
     return { ok: true };
+  }
+
+  /**
+   * Returns the caller's notepad encryption key, generated on first use. Served
+   * to the owner only - there is no route that returns another user's key.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('me/notes-key')
+  async getMyNotesKey(@Headers('x-user-id') userId: string) {
+    return { key: await this.usersService.getOrCreateNotesKey(userId) };
   }
 
   /** Returns the public profile of the requested user, resolving "me" to the caller. */

@@ -270,6 +270,13 @@ address `127.0.0.1`.
   and `AssociationDocumentManager` list files without fetching them, and a password-protected vault
   document cannot be decrypted without its password at all. Reasoning in
   [posts](docs/wiki/frontend/modules/posts.md).
+  **THE PROD FAILURE IS FOUND AND FIXED (`9d2d713b`), and it was never the code:** nginx's
+  `mime.types` has no `.mjs` entry, so the worker asset was served as `application/octet-stream`
+  (measured: `curl -I` on prod returned 200, 1.2 MB, wrong type) and the browser module loader
+  refused it - both the real worker and the fake-worker fallback die on that same header. A regex
+  location now sets `default_type application/javascript` for `.mjs`. **This needs a DEPLOY to take
+  effect**, and the same question is open for the Tauri asset protocol on mobile, which serves the
+  bundle itself and was never measured.
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
@@ -413,6 +420,9 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   try/catch around the parse guards nothing.
 - A third-party icon/metadata service answers a PLACEHOLDER for hosts it never crawled, which is
   indistinguishable from a real answer. We already download the page: read the site's own tags.
+- nginx `mime.types` has NO `.mjs`, so any ES-module build asset is served as octet-stream and the
+  browser refuses it. A `types {}` block would REPLACE the whole map - use `default_type` in a
+  location. Serving a file is not serving it correctly: check the header, not the status code.
 
 #### Contracts the compiler does not check -> [development](docs/wiki/development.md)
 

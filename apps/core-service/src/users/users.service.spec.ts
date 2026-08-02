@@ -40,3 +40,55 @@ describe('UsersService.search type guard', () => {
     expect(createQueryBuilder).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The notepad is stored as opaque ciphertext under a per-user key. These cover
+ * the two things that would silently defeat that: leaking the legacy plaintext
+ * once an encrypted copy exists, and regenerating the key on every read.
+ */
+describe('UsersService notepad', () => {
+  function makeService(user: Partial<User>) {
+    const stored = { id: 'u1', ...user } as User;
+    const save = jest.fn().mockImplementation((u: User) => Promise.resolve(u));
+    const userRepository = {
+      findOne: jest.fn().mockResolvedValue(stored),
+      save,
+    } as unknown as Repository<User>;
+    const service = new UsersService(userRepository, {} as DataSource);
+    return { service, stored, save };
+  }
+
+  it('returns the ciphertext and hides the legacy plaintext once one exists', async () => {
+    const { service } = makeService({ notesCiphertext: 'AAAA', notes: 'my bank pin' });
+    await expect(service.getNotes('u1')).resolves.toEqual({
+      ciphertext: 'AAAA',
+      legacyNotes: '',
+    });
+  });
+
+  it('hands back the legacy plaintext only while nothing encrypted exists', async () => {
+    const { service } = makeService({ notes: 'written before encryption' });
+    await expect(service.getNotes('u1')).resolves.toEqual({
+      ciphertext: '',
+      legacyNotes: 'written before encryption',
+    });
+  });
+
+  it('drops the plaintext when a ciphertext is saved - keeping it defeats the change', async () => {
+    const { service, stored } = makeService({ notes: 'my bank pin' });
+    await service.setNotes('u1', 'BBBB');
+    expect(stored.notesCiphertext).toBe('BBBB');
+    expect(stored.notes).toBeNull();
+  });
+
+  it('generates a 32-byte hex key once, then returns the same one', async () => {
+    const { service, save } = makeService({});
+    const key = await service.getOrCreateNotesKey('u1');
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // A second read must not rotate the key: every stored note would be lost.
+    await expect(service.getOrCreateNotesKey('u1')).resolves.toBe(key);
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+});

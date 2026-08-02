@@ -6,8 +6,9 @@
   import { fetchMyNotes, saveMyNotes } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
 
-  // Private plaintext notepad (server-side, not encrypted). State is owned here so the
-  // section is self-contained and can be dropped on any page without wiring.
+  // Private notepad, encrypted client-side under a per-user key (see `saveMyNotes`).
+  // State is owned here so the section is self-contained and can be dropped on any
+  // page without wiring.
   let noteInput = $state('');
   let noteLoading = $state(true);
   let noteSaving = $state(false);
