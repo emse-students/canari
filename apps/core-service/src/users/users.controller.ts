@@ -13,6 +13,7 @@ import {
   HttpCode,
   Res,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { UsersService } from './users.service';
@@ -81,11 +82,20 @@ export class UsersController {
     return this.usersService.getNotes(userId);
   }
 
-  /** Stores the caller's notepad ciphertext and drops any legacy plaintext. */
+  /**
+   * Stores the caller's notepad ciphertext and drops any legacy plaintext.
+   *
+   * A missing `ciphertext` is refused rather than treated as an empty notepad:
+   * during a deploy a still-cached client sends the old `{ notes }` body, and
+   * coercing that to `''` would wipe the note it was trying to save.
+   */
   @UseGuards(NginxAuthGuard)
   @Put('me/notes')
   async setMyNotes(@Headers('x-user-id') userId: string, @Body() dto: UpdateNotesDto) {
-    await this.usersService.setNotes(userId, dto.ciphertext ?? '');
+    if (typeof dto.ciphertext !== 'string') {
+      throw new BadRequestException('ciphertext is required - reload the app');
+    }
+    await this.usersService.setNotes(userId, dto.ciphertext);
     return { ok: true };
   }
 
