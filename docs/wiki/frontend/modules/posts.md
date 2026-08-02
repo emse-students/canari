@@ -62,6 +62,23 @@ image/video. A grid position is therefore not a lightbox index: each cell resolv
 via `indexOf`, and `-1` doubles as "not lightboxable". Passing the grid index would let one
 document renumber every image after it.
 
+## PDF previews
+
+`PdfThumbnail.svelte` (shared) renders page 1 of an already-decrypted PDF to a canvas via
+`utils/pdfThumbnail.ts`. Two constraints fix this design:
+
+- **No server-side thumbnail is possible.** Media is encrypted with a per-file CEK before upload;
+  the backend only ever holds an opaque blob.
+- **No `<iframe>` either.** Desktop browsers and iOS WKWebView render a PDF natively, Android's
+  WebView does not — it would be blank on the main mobile platform.
+
+pdf.js and its worker load through a dynamic `import()`, so they stay out of the main bundle. The
+preview is a bonus and never a gate: on any failure the file icon and the download button remain.
+A post renders the page full-width under the file row; a chat bubble uses the 44 px icon square.
+List surfaces that do not decrypt their files (`ConversationMediaPanel`, `AssociationDocumentManager`)
+are excluded on purpose — previewing there would mean downloading and decrypting every listed
+document, and a password-protected vault document cannot be decrypted at all without its password.
+
 ## Comment media (image + GIF)
 
 A comment can carry one image or GIF (encrypted + uploaded via `MediaService.encryptAndUpload`,

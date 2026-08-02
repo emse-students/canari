@@ -4,6 +4,8 @@ import {
   assertPublicAddresses,
   assertSafeExternalUrl,
   ssrfSafeLookup,
+  extractIconUrl,
+  buildLinkPreviewPayload,
 } from './url-guard';
 
 describe('isPrivateIpAddress', () => {
@@ -156,5 +158,64 @@ describe('assertSafeExternalUrl', () => {
     const url = await assertSafeExternalUrl('https://1.1.1.1/path');
     expect(url.hostname).toBe('1.1.1.1');
     expect(url.protocol).toBe('https:');
+  });
+});
+
+describe('extractIconUrl', () => {
+  const page = new URL('https://sky.mitv.fr/arbre');
+
+  it('resolves a relative icon href against the page URL', () => {
+    const html = '<link rel="icon" href="/favicon.svg">';
+    expect(extractIconUrl(html, page)).toBe('https://sky.mitv.fr/favicon.svg');
+  });
+
+  it('prefers the largest declared size over the first declaration', () => {
+    const html = [
+      '<link rel="icon" sizes="16x16" href="/small.png">',
+      '<link rel="icon" sizes="192x192" href="/large.png">',
+      '<link rel="icon" sizes="32x32" href="/medium.png">',
+    ].join('');
+    expect(extractIconUrl(html, page)).toBe('https://sky.mitv.fr/large.png');
+  });
+
+  it('prefers an apple-touch-icon over a bare sizeless icon', () => {
+    const html = '<link rel="icon" href="/f.ico"><link rel="apple-touch-icon" href="/a.png">';
+    expect(extractIconUrl(html, page)).toBe('https://sky.mitv.fr/a.png');
+  });
+
+  it('accepts the legacy "shortcut icon" rel', () => {
+    const html = '<link rel="shortcut icon" href="https://cdn.example.com/i.png">';
+    expect(extractIconUrl(html, page)).toBe('https://cdn.example.com/i.png');
+  });
+
+  it('ignores an unrelated rel that merely contains the word', () => {
+    // "canonical" and "stylesheet" must not be mistaken for icons.
+    const html = '<link rel="stylesheet" href="/app.css"><link rel="canonical" href="/x">';
+    expect(extractIconUrl(html, page)).toBe('https://sky.mitv.fr/favicon.ico');
+  });
+
+  it('falls back to /favicon.ico on the ORIGIN, not the current path', () => {
+    expect(extractIconUrl('<html></html>', page)).toBe('https://sky.mitv.fr/favicon.ico');
+  });
+
+  it('refuses a non-http scheme, which new URL() resolves rather than rejects', () => {
+    // The href reaches an <img src>, and `new URL('javascript:...', base)` does
+    // not throw - it keeps the scheme. A bigger declared size must not buy a
+    // dangerous scheme its way in either.
+    for (const href of ['javascript:alert(1)', 'data:text/html,<script></script>', 'file:///etc']) {
+      const html = `<link rel="icon" sizes="512x512" href="${href}"><link rel="icon" href="/ok.png">`;
+      expect(extractIconUrl(html, page)).toBe('https://sky.mitv.fr/ok.png');
+    }
+  });
+});
+
+describe('buildLinkPreviewPayload', () => {
+  it('carries the icon alongside the Open Graph fields', () => {
+    const html = ['<title>Sky</title>', '<link rel="icon" sizes="180x180" href="/icon.png">'].join(
+      ''
+    );
+    const payload = buildLinkPreviewPayload(html, new URL('https://sky.mitv.fr/'));
+    expect(payload.title).toBe('Sky');
+    expect(payload.icon).toBe('https://sky.mitv.fr/icon.png');
   });
 });

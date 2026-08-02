@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowUpRight, ExternalLink } from '@lucide/svelte';
+  import { ArrowUpRight, ExternalLink, Globe } from '@lucide/svelte';
   import CanariLinkPreviewMedia from '$lib/components/shared/CanariLinkPreviewMedia.svelte';
   import MiGalleryLinkPreview from '$lib/components/messages/MiGalleryLinkPreview.svelte';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
@@ -42,16 +42,14 @@
   const fallbackInAppLabel = $derived(publicAppLinkLabel(url));
   const inAppPath = $derived(inAppPathFromHref(url));
 
-  const faviconUrl = $derived(
-    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(parsed.host)}&sz=64`
-  );
-
   interface ExternalPreviewPayload {
     url: string;
     title?: string;
     description?: string;
     image?: string;
     siteName?: string;
+    /** The site's own icon, resolved server-side from its `<link rel="icon">`. */
+    icon?: string;
   }
 
   let canariPreview = $state<CanariLinkPreview | null>(null);
@@ -107,6 +105,31 @@
 
   const cardSubtitle = $derived(isInApp ? canariPreview?.subtitle : externalPreview?.description);
 
+  /**
+   * The site's own icon. The preview endpoint resolves it from the page it already
+   * downloaded; when the preview itself failed we still try the conventional path,
+   * which is what a browser does. Deliberately NOT a third-party icon service:
+   * those only know hosts they have crawled and answer a generic globe for
+   * anything private or unindexed - which is why self-hosted sites showed a
+   * placeholder - and asking one would hand every browsed hostname to a third
+   * party from inside an end-to-end encrypted conversation.
+   */
+  const faviconUrl = $derived.by(() => {
+    if (externalPreview?.icon) return externalPreview.icon;
+    try {
+      return new URL('/favicon.ico', new URL(parsed.href).origin).toString();
+    } catch {
+      return '';
+    }
+  });
+
+  // An icon that 404s must not leave a broken-image glyph in the card.
+  let faviconFailed = $state(false);
+  $effect(() => {
+    void faviconUrl;
+    faviconFailed = false;
+  });
+
   async function handleClick(e: MouseEvent) {
     e.stopPropagation();
     if (!isInApp) return;
@@ -145,12 +168,19 @@
             class="w-full h-full object-cover"
             loading="lazy"
           />
-        {:else}
+        {:else if faviconUrl && !faviconFailed}
           <!-- No Open Graph image: the site's own favicon stands in for its logo. -->
           <img
             src={faviconUrl}
             alt=""
             class="w-8 h-8 object-contain opacity-70 group-hover:opacity-100 transition-opacity duration-300"
+            onerror={() => (faviconFailed = true)}
+          />
+        {:else}
+          <Globe
+            size={20}
+            strokeWidth={2}
+            class="text-text-muted opacity-50 group-hover:opacity-80 transition-opacity duration-300"
           />
         {/if}
       </div>

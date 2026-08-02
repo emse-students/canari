@@ -11,6 +11,9 @@
   import type { MediaRef, MediaType } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import { resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
+  import { formatFileSize } from '$lib/utils/fileSize';
+  import { isPdfAttachment } from '$lib/utils/pdfThumbnail';
+  import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -48,6 +51,8 @@
   // placeholder must take part in the flow instead of filling a parent that has
   // no height of its own.
   const fillsReservedBox = $derived(reservesAspectRatio(mediaType));
+
+  const isPdf = $derived(mediaType === 'file' && isPdfAttachment(media.mimeType, media.fileName));
 
   $effect(() => {
     if (!authToken) {
@@ -124,12 +129,6 @@
     a.href = url;
     a.download = name;
     a.click();
-  }
-
-  function formatFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} o`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
   }
 </script>
 
@@ -263,37 +262,48 @@
     {:else}
       <!-- ========== GENERIC FILE ========== -->
       <div
-        class="flex items-center gap-3.5 px-3.5 py-3 w-full max-w-full rounded-[1rem] border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/10 backdrop-blur-md transition-colors group/file"
+        class="w-full max-w-full rounded-[1rem] border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/10 backdrop-blur-md overflow-hidden transition-colors group/file"
       >
-        <div
-          class="w-11 h-11 rounded-xl bg-black/10 dark:bg-white/10 flex items-center justify-center shrink-0"
-        >
-          <FileText size={22} strokeWidth={2} class="text-text-muted" />
+        <div class="flex items-center gap-3.5 px-3.5 py-3">
+          <div
+            class="w-11 h-11 rounded-xl bg-black/10 dark:bg-white/10 flex items-center justify-center shrink-0"
+          >
+            <FileText size={22} strokeWidth={2} class="text-text-muted" />
+          </div>
+          <div class="flex-1 min-w-0 overflow-hidden">
+            <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
+              {media.fileName ?? m.post_media_file_label()}
+            </p>
+            <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
+            <p class="text-[0.65rem] tracking-wider font-semibold text-text-muted">
+              {formatFileSize(media.size)}
+            </p>
+          </div>
+          <button
+            type="button"
+            onclick={(e) => {
+              e.stopPropagation();
+              downloadBlob(blobUrl!, media.fileName ?? 'file');
+            }}
+            class="p-2.5 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 shrink-0"
+            aria-label={m.post_download_label()}
+          >
+            <Download
+              size={18}
+              strokeWidth={2.5}
+              class="opacity-70 group-hover/file:opacity-100 transition-opacity"
+            />
+          </button>
         </div>
-        <div class="flex-1 min-w-0 overflow-hidden">
-          <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
-            {media.fileName ?? m.post_media_file_label()}
-          </p>
-          <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
-          <p class="text-[0.65rem] tracking-wider font-semibold text-text-muted">
-            {formatFileSize(media.size)}
-          </p>
-        </div>
-        <button
-          type="button"
-          onclick={(e) => {
-            e.stopPropagation();
-            downloadBlob(blobUrl!, media.fileName ?? 'file');
-          }}
-          class="p-2.5 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 shrink-0"
-          aria-label={m.post_download_label()}
-        >
-          <Download
-            size={18}
-            strokeWidth={2.5}
-            class="opacity-70 group-hover/file:opacity-100 transition-opacity"
+        {#if isPdf}
+          <!-- A post is wide enough to show the page itself; the row keeps its
+               icon so the document is never rendered twice. -->
+          <PdfThumbnail
+            url={blobUrl}
+            maxWidth={640}
+            imgClass="w-full max-h-[22rem] object-contain object-top border-t border-black/5 dark:border-white/10 bg-white"
           />
-        </button>
+        {/if}
       </div>
     {/if}
   {/if}

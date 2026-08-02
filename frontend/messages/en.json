@@ -2204,5 +2204,10 @@
   "auth_keystore_prompt_unlock_reason": "Confirm your identity to unlock Canari.",
   "push_permission_rationale": "Enable notifications to be notified of new messages, even when the app is closed.",
   "call_sibling_device_busy": "Another device is already in a call.",
-  "channel_poll_vote_error": "Could not vote"
+  "channel_poll_vote_error": "Could not vote",
+  "pdf_preview_alt": "Preview of the document's first page",
+  "file_size_bytes": "{value} B",
+  "file_size_kilobytes": "{value} KB",
+  "file_size_megabytes": "{value} MB",
+  "file_size_gigabytes": "{value} GB"
 }

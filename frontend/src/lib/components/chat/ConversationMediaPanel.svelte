@@ -18,6 +18,7 @@
   import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { formatFileSize } from '$lib/utils/fileSize';
 
   interface Props {
     open: boolean;
@@ -53,20 +54,6 @@
       year: '2-digit',
     })
   );
-
-  function formatBytes(bytes: number): string {
-    const locale = getLocale();
-    const baseUnit = locale === 'en' ? 'B' : 'o';
-    const units = locale === 'en' ? ['KB', 'MB', 'GB'] : ['Ko', 'Mo', 'Go'];
-    if (!bytes || bytes < 1024) return `${bytes || 0} ${baseUnit}`;
-    let v = bytes / 1024;
-    let i = 0;
-    while (v >= 1024 && i < units.length - 1) {
-      v /= 1024;
-      i++;
-    }
-    return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
-  }
 
   function senderName(userId: string): string {
     return getUserDisplayNameSync(userId);
@@ -290,7 +277,7 @@
                     >{file.media.fileName ?? m.chat_file_label()}</span
                   >
                   <span class="block text-xs text-text-muted"
-                    >{formatBytes(file.media.size)} · {senderName(file.senderId)} · {dateFmt.format(
+                    >{formatFileSize(file.media.size)} · {senderName(file.senderId)} · {dateFmt.format(
                       file.timestamp
                     )}</span
                   >

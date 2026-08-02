@@ -11,6 +11,9 @@
   import VoiceMessagePlayer from './VoiceMessagePlayer.svelte';
   import type { MediaRef } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
+  import { formatFileSize } from '$lib/utils/fileSize';
+  import { isPdfAttachment } from '$lib/utils/pdfThumbnail';
+  import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import AppLink from '$lib/components/shared/AppLink.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
 
@@ -70,11 +73,9 @@
     mediaRef?.type === 'image' ? mediaAspectStyle(mediaRef.width, mediaRef.height) : ''
   );
 
-  function formatFileSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} o`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} Ko`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
-  }
+  const isPdf = $derived(
+    mediaRef?.type === 'file' && isPdfAttachment(mediaRef.mimeType, mediaRef.fileName)
+  );
 
   function downloadBlob(url: string, fileName: string) {
     const link = document.createElement('a');
@@ -233,11 +234,23 @@
         ontouchstart={(e) => e.stopPropagation()}
         ontouchend={(e) => e.stopPropagation()}
       >
-        <!-- File icon. -->
+        <!-- File icon, or the PDF's own first page once it is decrypted. -->
         <div
-          class="w-11 h-11 rounded-xl bg-current/10 flex items-center justify-center shrink-0 text-current opacity-80"
+          class="w-11 h-11 rounded-xl bg-current/10 flex items-center justify-center shrink-0 overflow-hidden text-current opacity-80"
         >
-          <FileText size={22} strokeWidth={2} />
+          {#if isPdf && blobUrl}
+            <PdfThumbnail
+              url={blobUrl}
+              maxWidth={44}
+              imgClass="w-full h-full object-cover object-top"
+            >
+              {#snippet fallback()}
+                <FileText size={22} strokeWidth={2} />
+              {/snippet}
+            </PdfThumbnail>
+          {:else}
+            <FileText size={22} strokeWidth={2} />
+          {/if}
         </div>
 
         <!-- File metadata. -->
@@ -246,7 +259,8 @@
             {mediaRef.fileName ?? m.msg_attached_file_label()}
           </p>
           {#if !mediaPurgedByRetention}
-            <p class="text-[0.65rem] uppercase tracking-wider font-semibold opacity-60">
+            <!-- No `uppercase`: it would render the "Ko" unit as "KO". -->
+            <p class="text-[0.65rem] tracking-wider font-semibold opacity-60">
               {formatFileSize(mediaRef.size)}
             </p>
           {/if}

@@ -261,10 +261,84 @@ export function extractTitle(html: string): string | null {
   return match ? decodeHtmlEntity(match[1].trim()) : null;
 }
 
+/** Parses all `<link>` tags from an HTML string and returns their attributes as key/value maps. */
+export function extractLinkTags(html: string): Array<Record<string, string>> {
+  const tags: string[] = html.match(/<link\b[^>]*>/gi) ?? [];
+  return tags.map((tag) => {
+    const attrs: Record<string, string> = {};
+    const attrRegex = /([a-zA-Z:-]+)\s*=\s*(["'])(.*?)\2/g;
+    let match: RegExpExecArray | null;
+    while ((match = attrRegex.exec(tag)) !== null) {
+      const rawKey = String(match[1] ?? '').toLowerCase();
+      const rawValue = String(match[3] ?? '').trim();
+      if (!rawKey) continue;
+      attrs[rawKey] = decodeHtmlEntity(rawValue);
+    }
+    return attrs;
+  });
+}
+
+/** Largest dimension declared in a `sizes` attribute ("32x32 16x16"), or 0 when absent/"any". */
+function largestDeclaredSize(sizes?: string): number {
+  if (!sizes) return 0;
+  let largest = 0;
+  for (const token of sizes.toLowerCase().split(/\s+/)) {
+    const width = Number.parseInt(token.split('x')[0] ?? '', 10);
+    if (Number.isFinite(width) && width > largest) largest = width;
+  }
+  return largest;
+}
+
+/**
+ * Resolves the site's own favicon from its `<link rel="icon">` declarations.
+ *
+ * The page has already been downloaded to read its Open Graph tags, so the icon
+ * costs nothing extra - and the site is the only authority on it. A third-party
+ * icon service only knows hosts it has crawled, so it answers a generic
+ * placeholder for anything private or unindexed, which is indistinguishable from
+ * a real icon to the caller.
+ *
+ * Falls back to the conventional `/favicon.ico`, which browsers request whether
+ * or not a page declares it. Returns an absolute URL; never throws.
+ */
+export function extractIconUrl(html: string, targetUrl: URL): string {
+  let best: { href: string; score: number } | null = null;
+
+  for (const attrs of extractLinkTags(html)) {
+    const rel = attrs.rel?.toLowerCase();
+    const href = attrs.href;
+    if (
+      !rel ||
+      !href ||
+      !/(^|\s)(icon|shortcut icon|apple-touch-icon(-precomposed)?)(\s|$)/.test(rel)
+    ) {
+      continue;
+    }
+    // Prefer a declared size, then an apple-touch-icon (always a large PNG),
+    // then anything else - a 16x16 .ico is the last resort, not the first hit.
+    const score = largestDeclaredSize(attrs.sizes) || (rel.includes('apple-touch-icon') ? 180 : 1);
+    if (best && score <= best.score) continue;
+
+    try {
+      const resolved = new URL(href, targetUrl);
+      // The href is attacker-controlled markup and this URL is handed straight to
+      // an <img src>. `new URL` resolves almost anything against a base rather
+      // than throwing - including `javascript:` and `data:`, which stay absolute
+      // - so the scheme has to be checked, not merely the parse.
+      if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') continue;
+      best = { href: resolved.toString(), score };
+    } catch {
+      // Keep looking rather than failing the whole preview over one bad tag.
+    }
+  }
+
+  return best?.href ?? new URL('/favicon.ico', targetUrl.origin).toString();
+}
+
 /**
  * Extracts Open Graph / standard meta tags from `html` and returns a normalised
- * link-preview payload (url, title, description, image, siteName), each field
- * truncated to a safe display length.
+ * link-preview payload (url, title, description, image, siteName, icon), each
+ * field truncated to a safe display length.
  */
 export function buildLinkPreviewPayload(html: string, targetUrl: URL) {
   const title = extractMetaContent(html, 'og:title') || extractTitle(html) || targetUrl.hostname;
@@ -288,6 +362,7 @@ export function buildLinkPreviewPayload(html: string, targetUrl: URL) {
     description: description.slice(0, 280),
     image,
     siteName: siteName.slice(0, 120),
+    icon: extractIconUrl(html, targetUrl),
   };
 }
 

@@ -44,7 +44,7 @@
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
+  import { formatFileSize } from '$lib/utils/fileSize';
 
   interface Props {
     associationId: string;
@@ -402,15 +402,6 @@
       error = e instanceof Error ? e.message : m.common_delete_error();
     }
   }
-
-  function formatBytes(bytes: number): string {
-    const en = getLocale() === 'en';
-    if (bytes < 1024) return `${bytes} ${en ? 'B' : 'o'}`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} ${en ? 'KB' : 'Ko'}`;
-    if (bytes < 1024 * 1024 * 1024)
-      return `${(bytes / 1024 / 1024).toFixed(1)} ${en ? 'MB' : 'Mo'}`;
-    return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} ${en ? 'GB' : 'Go'}`;
-  }
 </script>
 
 <div class="space-y-5">
@@ -464,7 +455,7 @@
     <div class="space-y-1.5">
       <div class="flex items-center justify-between text-xs text-text-muted">
         <span>{m.asso_doc_quota_label()}</span>
-        <span>{formatBytes(stats.usedBytes)} / {formatBytes(stats.quotaBytes)}</span>
+        <span>{formatFileSize(stats.usedBytes)} / {formatFileSize(stats.quotaBytes)}</span>
       </div>
       <div class="h-2 rounded-full bg-cn-border/50 overflow-hidden">
         <div
@@ -528,7 +519,7 @@
                 <span class="truncate">{doc.name}</span>
               </p>
               <p class="text-xs text-text-muted">
-                {formatBytes(doc.size)} · {doc.mimeType}{#if isProtected(doc)}
+                {formatFileSize(doc.size)} · {doc.mimeType}{#if isProtected(doc)}
                   · {m.asso_doc_protected_suffix()}{/if}
               </p>
             </div>
