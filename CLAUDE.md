@@ -259,6 +259,24 @@ address `127.0.0.1`.
   (`stores/presenceStore.ts`) has **no in-flight guard**, so on a bad link the 10 s interval stacks
   4-5 concurrent `/api/presence` calls (measured at 32 s each on a train connection).
 
+- \[ \] **WP-POST-DOC-2 (P3) - PDF preview on the four surfaces that show a document.** Asked for
+  2026-08-02 alongside the layout fix (shipped, `b5663b90`): posts, association documents, chat,
+  communities. **The decisive constraint is already settled and must not be re-litigated: a
+  server-side thumbnailer is IMPOSSIBLE for chat/posts media.** The client generates the CEK and the
+  backend stores an opaque blob, so nothing server-side can open the PDF. The preview is therefore
+  client-side or nowhere. Second finding: `<iframe>`/`<embed>` on the blob URL is NOT portable -
+  desktop browsers and iOS WKWebView render a PDF natively, Android's WebView has no PDF renderer at
+  all, so the app's main platform would show a blank frame. That leaves `pdfjs-dist`, rendering page
+  1 to a canvas, behind a dynamic `import()` so the ~300 KB worker never enters the main bundle and
+  is fetched only when a PDF is actually displayed. **Open question for the user: adding that
+  dependency.** Nothing else is open. Shape: one `PdfThumbnail.svelte` taking the already-decrypted
+  blob URL, used by the file card on all four surfaces, failing back to the current `FileText` icon
+  (it must never block the download button). Pair it with the hygiene item found while fixing the
+  layout: the byte formatter exists in FOUR copies under two names - `formatFileSize` in
+  `PostMedia.svelte` and `MessageMediaRenderer.svelte`, `formatBytes` in
+  `AssociationDocumentManager.svelte` and `ConversationMediaPanel.svelte` - all four hardcoding the
+  French units `o`/`Ko`/`Mo` in code, which is a Paraglide violation the compiler cannot see.
+
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted on the sender, the
   outbox drained - and the peer never received it, not live and not after a reload. Two later
