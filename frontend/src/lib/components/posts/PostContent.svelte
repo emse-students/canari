@@ -113,8 +113,12 @@
       {@const media = postMedia[0]}
       {@const reserved = reservesAspectRatio(resolveMediaType(media))}
       <div>
+        <!-- An image is deliberately full-bleed; a document card is not, so it
+             lines up with the post text (px-5) instead of touching the edges. -->
         <div
-          class="relative w-full overflow-hidden {reserved ? 'bg-black/5 dark:bg-white/5' : ''}"
+          class="relative w-full overflow-hidden {reserved
+            ? 'bg-black/5 dark:bg-white/5'
+            : 'px-5 pb-1'}"
           style={reserved ? mediaAspectStyle(media.width, media.height) : ''}
         >
           <!-- Single attachment: PostMedia handles its own lightbox/download -->
