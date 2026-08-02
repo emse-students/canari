@@ -28,7 +28,9 @@ import {
   fetchYouTubeOEmbed,
   fetchMiGalleryPreview,
   buildLinkPreviewPayload,
-  ssrfSafeDispatcher,
+  ssrfSafeFetch,
+  errorCause,
+  type SsrfSafeResponse,
 } from '../utils/url-guard';
 
 /** PIN verifier and link-preview (SSRF-protected) endpoints. */
@@ -326,7 +328,7 @@ export class SecurityController {
       }
 
       let currentUrl = targetUrl;
-      let response: Response | null = null;
+      let response: SsrfSafeResponse | null = null;
       let redirectsCount = 0;
       const MAX_REDIRECTS = 3;
 
@@ -339,18 +341,18 @@ export class SecurityController {
           currentUrl.pathname + currentUrl.search + currentUrl.hash,
           currentUrl.origin
         ).href;
-        response = await fetch(fetchUrl, {
+        // ssrfSafeFetch pins the connection to a re-validated, public-only IP at
+        // connect time (defends against DNS-rebinding between the check above and
+        // this fetch). It must stay undici's own fetch - see its doc comment.
+        response = await ssrfSafeFetch(fetchUrl, {
           method: 'GET',
           redirect: 'manual', // prevent automatic redirects
           signal: abortController.signal,
-          // Pin the connection to a re-validated, public-only IP at connect time
-          // (defends against DNS-rebinding between the check above and this fetch).
-          dispatcher: ssrfSafeDispatcher,
           headers: {
             'user-agent': 'CanariLinkPreview/1.0',
             accept: 'text/html,application/xhtml+xml',
           },
-        } as RequestInit & { dispatcher: typeof ssrfSafeDispatcher });
+        });
 
         // Manually handle redirects.
         if (response.status >= 300 && response.status <= 399) {
@@ -382,6 +384,11 @@ export class SecurityController {
       return buildLinkPreviewPayload(html, targetUrl);
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
+      // The client only ever sees "Link preview failed", so without this line a
+      // transport-level break (a dispatcher the runtime rejects, a DNS failure)
+      // is indistinguishable from a site that simply refused us.
+      const cause = errorCause(error) ?? error;
+      this.logger.warn(`[LINK_PREVIEW] ${targetUrl.hostname} failed: ${String(cause)}`);
       throw new BadRequestException('Link preview failed');
     } finally {
       clearTimeout(timeout);

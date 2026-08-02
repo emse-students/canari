@@ -420,6 +420,13 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   try/catch around the parse guards nothing.
 - A third-party icon/metadata service answers a PLACEHOLDER for hosts it never crawled, which is
   indistinguishable from a real answer. We already download the page: read the site's own tags.
+- A dispatcher and the `fetch` that carries it must come from the SAME undici copy: Node's global
+  `fetch` rejects an `undici` `Agent` (`invalid onRequestStart method`) before opening a socket, so
+  every request dies and the guard it carried never runs. One seam, `ssrfSafeFetch`.
+- `fetch` reports every transport failure as a bare `TypeError: fetch failed` - the diagnosis is
+  entirely in `cause`, so a handler that answers a generic message without logging it hides an outage.
+- One missing `/favicon.ico` is not proof a site has no icon (an SPA answers `index.html`, a 200 that
+  is not an image): cascade the candidates, and reach the globe only when all of them failed.
 - nginx `mime.types` has NO `.mjs`, so any ES-module build asset is served as octet-stream and the
   browser refuses it. A `types {}` block would REPLACE the whole map - use `default_type` in a
   location. Serving a file is not serving it correctly: check the header, not the status code.

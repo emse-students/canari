@@ -4,6 +4,7 @@
   import MiGalleryLinkPreview from '$lib/components/messages/MiGalleryLinkPreview.svelte';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
   import { fetchCanariLinkPreview, type CanariLinkPreview } from '$lib/utils/canariLinkPreview';
+  import { faviconCandidates } from '$lib/utils/faviconCandidates';
   import { inAppPathFromHref, isInAppHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
 
   interface Props {
@@ -106,29 +107,25 @@
   const cardSubtitle = $derived(isInApp ? canariPreview?.subtitle : externalPreview?.description);
 
   /**
-   * The site's own icon. The preview endpoint resolves it from the page it already
-   * downloaded; when the preview itself failed we still try the conventional path,
-   * which is what a browser does. Deliberately NOT a third-party icon service:
-   * those only know hosts they have crawled and answer a generic globe for
-   * anything private or unindexed - which is why self-hosted sites showed a
-   * placeholder - and asking one would hand every browsed hostname to a third
-   * party from inside an end-to-end encrypted conversation.
+   * The site's own icon, as an ordered list of things to try. The preview endpoint
+   * resolves the declared one from the page it already downloaded; the conventional
+   * paths follow it, in any format, so a single 404 does not end the search.
+   * Deliberately NOT a third-party icon service: those only know hosts they have
+   * crawled and answer a generic globe for anything private or unindexed - which is
+   * why self-hosted sites showed a placeholder - and asking one would hand every
+   * browsed hostname to a third party from inside an end-to-end encrypted
+   * conversation.
    */
-  const faviconUrl = $derived.by(() => {
-    if (externalPreview?.icon) return externalPreview.icon;
-    try {
-      return new URL('/favicon.ico', new URL(parsed.href).origin).toString();
-    } catch {
-      return '';
-    }
-  });
+  const faviconChain = $derived(faviconCandidates(parsed.href, externalPreview?.icon));
 
-  // An icon that 404s must not leave a broken-image glyph in the card.
-  let faviconFailed = $state(false);
+  // Walk the chain on each failure; the globe below is what is left once every
+  // candidate has 404'd, never a shortcut taken earlier.
+  let faviconAttempt = $state(0);
   $effect(() => {
-    void faviconUrl;
-    faviconFailed = false;
+    void faviconChain;
+    faviconAttempt = 0;
   });
+  const faviconUrl = $derived(faviconChain[faviconAttempt] ?? '');
 
   async function handleClick(e: MouseEvent) {
     e.stopPropagation();
@@ -168,13 +165,13 @@
             class="w-full h-full object-cover"
             loading="lazy"
           />
-        {:else if faviconUrl && !faviconFailed}
+        {:else if faviconUrl}
           <!-- No Open Graph image: the site's own favicon stands in for its logo. -->
           <img
             src={faviconUrl}
             alt=""
             class="w-8 h-8 object-contain opacity-70 group-hover:opacity-100 transition-opacity duration-300"
-            onerror={() => (faviconFailed = true)}
+            onerror={() => (faviconAttempt += 1)}
           />
         {:else}
           <Globe

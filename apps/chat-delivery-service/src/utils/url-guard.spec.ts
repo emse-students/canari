@@ -4,6 +4,8 @@ import {
   assertPublicAddresses,
   assertSafeExternalUrl,
   ssrfSafeLookup,
+  ssrfSafeFetch,
+  errorCause,
   extractIconUrl,
   buildLinkPreviewPayload,
 } from './url-guard';
@@ -118,6 +120,27 @@ describe('ssrfSafeLookup', () => {
       expect(family).toBe(4);
       done();
     });
+  });
+});
+
+describe('ssrfSafeFetch', () => {
+  it('gets as far as the SSRF guard, i.e. the runtime accepted the dispatcher', async () => {
+    // Regression guard: the dispatcher and the fetch that consumes it must come
+    // from the SAME undici copy. Handing Node's global fetch an `undici` Agent
+    // raised InvalidArgumentError ("invalid onRequestStart method") before any
+    // connection, which silently broke every link preview.
+    // A host name (not an IP literal) is required: net.connect skips the lookup
+    // for a literal, and the lookup is what this asserts ran.
+    const error = await ssrfSafeFetch('http://localhost:44444/').then(
+      () => null,
+      (thrown: unknown) => thrown
+    );
+
+    expect(error).toBeInstanceOf(TypeError);
+    const cause = errorCause(error) as NodeJS.ErrnoException | undefined;
+    // ESSRFBLOCKED = our lookup ran and refused. Any other code (notably
+    // UND_ERR_INVALID_ARG) means the request died before reaching it.
+    expect(cause?.code).toBe('ESSRFBLOCKED');
   });
 });
 

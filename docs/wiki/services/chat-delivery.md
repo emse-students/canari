@@ -507,6 +507,32 @@ because one is not enough:
   socket reaches is the IP that was validated. This closes the DNS-rebinding window: the two
   resolutions are separate events and an attacker-controlled zone can answer differently.
 
+**The dispatcher and the `fetch` that carries it must come from the same undici copy**, which is
+why every call site goes through `ssrfSafeFetch` rather than passing `dispatcher:` to the global
+`fetch`. Node bundles its own undici behind the global `fetch`; handed an `Agent` built from the
+`undici` package, it throws `InvalidArgumentError: invalid onRequestStart method` before opening a
+socket - the two copies disagree on the dispatch handler interface. That mismatch broke *every*
+non-YouTube preview in production after the undici major bump, and it was invisible because `fetch`
+reports it as a bare `TypeError: fetch failed` and the handler answered a generic
+`Link preview failed`. The failure is now logged (`[LINK_PREVIEW] <host> failed: <cause>`), and
+`url-guard.spec.ts` pins the pairing offline: a fetch to `localhost` must fail with `ESSRFBLOCKED`
+(our lookup ran) and nothing else.
+
+#### Favicons come from the site, never from an icon service
+
+`extractIconUrl` reads the page's own `<link rel="icon">` - the page is already downloaded for its
+Open Graph tags, so the icon is free, and the site is the only authority on it. A third-party icon
+service answers a generic placeholder for any host it has not crawled, indistinguishable from a
+real icon, which is what made every self-hosted site look iconless; it would also leak every
+browsed hostname out of an end-to-end encrypted conversation. The largest declared `sizes` wins,
+then an `apple-touch-icon`, then anything else. The `href` reaches an `<img src>`, so its scheme is
+checked explicitly - `new URL('javascript:...', base)` resolves rather than throws.
+
+Client-side, `faviconCandidates` (frontend) turns that into an ordered list: the declared icon
+first, then `/favicon.ico`, `/favicon.svg`, `/favicon.png`, `/apple-touch-icon.png`. The card walks
+the list on each `onerror` and only shows the globe once every candidate has failed - a site whose
+SPA answers `index.html` on `/favicon.ico` (a 200 that is not an image) still gets its real icon.
+
 **Deciding "is this address reachable" is the whole guard, and the address space is wider than
 RFC 1918.** `isPrivateIpAddress` also rejects `0.0.0.0/8` (on Linux a connection to `0.0.0.0`
 lands on loopback), CGNAT, the benchmark/protocol blocks, multicast and reserved space; on IPv6

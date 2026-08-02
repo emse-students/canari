@@ -2,7 +2,12 @@ import { BadRequestException } from '@nestjs/common';
 import { lookup } from 'node:dns/promises';
 import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from 'node:dns';
 import { isIP } from 'node:net';
-import { Agent } from 'undici';
+import {
+  Agent,
+  fetch as undiciFetch,
+  type RequestInit as UndiciRequestInit,
+  type Response as UndiciResponse,
+} from 'undici';
 
 /**
  * Returns true if `ip` is an IPv4 address a server-side fetch must never reach:
@@ -198,6 +203,40 @@ export function ssrfSafeLookup(
 export const ssrfSafeDispatcher = new Agent({
   connect: { lookup: ssrfSafeLookup },
 });
+
+/** The response type of {@link ssrfSafeFetch} - undici's `Response`, not the global one. */
+export type SsrfSafeResponse = UndiciResponse;
+
+/**
+ * Reads the `cause` of a thrown value, or `undefined` when it carries none.
+ *
+ * `fetch` reports every transport failure as a bare `TypeError: fetch failed`
+ * and puts the real reason in `cause`, so the cause is the only diagnosable
+ * part. Accessed through a cast because this service targets ES2021, where
+ * `Error.cause` is not yet declared.
+ */
+export function errorCause(error: unknown): unknown {
+  return error instanceof Error ? (error as Error & { cause?: unknown }).cause : undefined;
+}
+
+/**
+ * Performs an outbound fetch pinned to {@link ssrfSafeDispatcher}.
+ *
+ * It exists to keep the dispatcher and the `fetch` that consumes it in ONE
+ * place, because they must come from the SAME undici copy. Node bundles its own
+ * undici behind the global `fetch`, and handing it an `Agent` built from the
+ * `undici` package throws `InvalidArgumentError: invalid onRequestStart method`
+ * before a single byte leaves the process - the two copies disagree on the
+ * dispatch handler interface. The failure is total (every outbound preview) and
+ * silent (a plain `TypeError: fetch failed`), so the pairing is enforced here
+ * rather than left to each call site.
+ */
+export function ssrfSafeFetch(
+  url: string,
+  init?: Omit<UndiciRequestInit, 'dispatcher'>
+): Promise<SsrfSafeResponse> {
+  return undiciFetch(url, { ...init, dispatcher: ssrfSafeDispatcher });
+}
 
 /**
  * Decodes a safe subset of HTML entities (`&amp;`, `&quot;`, `&apos;`, `&#39;`, `&#x27;`)
