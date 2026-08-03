@@ -480,6 +480,12 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - Background decrypt applies no commit, so a silent commit push leaves the next message unreadable -
   that is the epoch gap, not a bug to retry through.
 - Only user-VISIBLE native strings stay French; everything read while debugging is English.
+- Android/iOS native parity is COMPLETE as of v0.12.0 (audited 2026-08-03, file by file): same push
+  types, same 12-entry FFI surface, state lock, quick actions, deferred outbox retry, badge, sent-
+  message cache, background Welcome. The only asymmetries are OS-imposed - no boot broadcast on iOS,
+  CallKit vs full-screen intent, and no self `Person` on iOS. Do not re-audit; extend this line.
+- A silent push (`content-available`) NEVER runs the iOS NSE - it wakes the app process. So a control
+  frame's handler belongs in `canari_push.mm`, and the twin branch in the NSE is dead code.
 
 #### Release and CI -> [cicd](docs/wiki/cicd.md)
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.12.0] - 2026-08-03
+
 ### Added
 - **WP-POST-DOC-2: a PDF attachment shows its first page instead of a generic icon.** Rendered client-side with pdf.js onto a canvas, which is the only option available and not a preference: chat and post media are encrypted with a per-file CEK before upload, so the backend holds an opaque blob and cannot rasterise anything, and an `<iframe>` on the decrypted blob would render on desktop and iOS but not on Android, whose WebView has no PDF engine at all. pdf.js and its worker are behind a dynamic `import()`, so nothing is fetched until a PDF is actually displayed and the worker stays a separate chunk. A post renders the page full-width under the file row - the surface is wide, and that space is exactly what used to be empty - while a chat bubble puts it in the 44 px icon square, so each surface rasterises the document once, at the size it can afford. The preview is strictly a bonus: an unreadable, password-protected or oversized PDF keeps the icon and, above all, keeps its download button. Deliberately excluded, with a reason rather than an omission: the conversation media panel and the association document vault list files without fetching them, so previewing would mean eagerly downloading and decrypting every document in the list to draw a thumbnail - and for a password-protected vault document it is not merely expensive but impossible, the CEK being derived from a password the server never sees and the viewer has not typed
 
