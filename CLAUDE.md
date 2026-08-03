@@ -102,14 +102,26 @@ address `127.0.0.1`.
   the right key+slug+sub, drives the snapshot and the gate, resolves an unnameable tier to
   sans-alcool; at the till the alcohol tier, a forged `unit_price`, a lapsed cotisation and a
   negative quantity all behave, and the ledger balances against the cached total.
-  **MR open, awaiting Aurel: https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/1**
-  (GitLab over SSH - `gh` is useless and there is no API token here; **git refuses a push option
-  containing newlines**, so the full French description must be pasted by hand from
-  `...\Temp\claude\c--Users-jolan-Documents-Programmation-canari\2df0218a-c456-4153-8f17-1a97db43e51b\scratchpad\MR-DESCRIPTION.md`,
-  also a TEMP path). That description now understates the branch - it predates the merge.
-  **Still owed, both needing the site online:** a run against the REAL Canari (the stub proved the
-  contract, not the deployment) and a real OIDC round trip (the checks mint their own cookies).
-  Runbook: `docs/PROD-TEST-CERCLE.md`, checks V1-V6.
+  **THE MR IS GONE, SUPERSEDED (measured 2026-08-03).** Aurel ARCHIVED the branch - GitLab now has
+  only `main`, plus a tag `archive/audit/security-and-canari-integration` - and rewrote the Canari
+  link his own way on `main` (`be5c377`, 2 commits past my fork point `df692f2`). His version has
+  the OUTBOUND half (`src/lib/server/canari/memberships.ts`, same `avec-alcool`/`sans-alcool`
+  strings, anything else -> sans-alcool) and BOTH building blocks of the inbound one
+  (`db/ledger/canari.ts#creditUserFromCanariTopup`, `server/hmac.ts#verifyHMACSHA256`,
+  migration `05-add_canari.sql`) - **but NO HTTP route exposing them**: `src/routes/api/` holds only
+  menu_items, perm_bartenders, perm_menu_items, users. So Canari's webhook has nowhere to land and
+  gets a SvelteKit 404 page (verified: `curl` from the Canari host, deployed bundle greps clean for
+  `X-Canari-Signature`). **Next step is a NEW branch off his `main` adding just
+  `src/routes/api/canari/topup/+server.ts` on top of his two helpers** - do NOT redeploy my archived
+  branch, it would revert his rewrite. My local checkout still has the branch at `418c268` and my
+  route to copy from.
+  **Cercle prod (`ssh canari` then `ssh cercle@10.0.0.6`, password auth - no key, no `sshpass` on
+  the jump host; drive it with `"<pw>" | ssh -tt canari "ssh -tt cercle@10.0.0.6 '...'"`):** systemd
+  unit `cercleapp.service` runs `bun --env-file /var/www/le-cercle/.env /var/www/le-cercle/build/index.js`;
+  the git checkout is `/home/cercle/le-cercle` (on `main`, 2 files dirty) and is NOT what serves -
+  `/var/www/le-cercle` is. Its `.env` already carries all 5 `CANARI_*` keys.
+  **Still owed:** the route above, then V1-V6 of `docs/PROD-TEST-CERCLE.md` against the real Canari,
+  and a real OIDC round trip (the certification minted its own cookies).
 
 - \[ \] **WP-CERCLE-2 (P3) - No way to correct a mis-keyed consumption.** The ledger is
   append-only and the user declined an `adjustment` kind, so a drink charged twice or to the wrong
@@ -308,6 +320,11 @@ address `127.0.0.1`.
   `webhookSecret`), Le Cercle has **no Stripe account** (`stripeOnboardingComplete=f`, no delegation)
   - which is why its 3 membership products are all `isActive=f`, which in turn had every Cercle
   cotisant reporting `isCotisant:false` until the `isActive` filter was dropped the same day.
+  **The product now EXISTS** (`29ba29fe`, 5 EUR fixed, `webhookUrl=https://cercle.canari-emse.fr/api/canari/topup`,
+  secret set) and the first test top-up ran: dispatch fine, **404 from the Cercle** because the route
+  does not exist there yet (see WP-CERCLE-1). Two prod tiers still carry the WRONG keys for the
+  Cercle - base + `alcool`, where it only understands `avec-alcool`/`sans-alcool`; rename the
+  `variantKey`s (editing migrates the holders' tags, deleting orphans them).
   **Owed: run a deploy so it reaches `infrastructure/.env`** (verify:
   `ssh canari 'grep -cE "^CERCLE_API_KEY=.+" /home/canari/canari/infrastructure/.env'` -> 1), then
   give Aurel the same value as `CANARI_API_KEY`.
@@ -556,6 +573,8 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 
 - The XOR has ONE implementation, `UserTagService.revokeSiblingTierTags`.
 - A tag revoke MUST be scoped to `issuingAssocId`, or it is a cross-tenant IDOR.
+- `balance_topup` is repeatable BY DEFINITION - the product default `allowRepeatPurchase: false`
+  silently caps every user at one recharge for life.
 - `variantKey` is editable and the tags follow; convert rather than delete a tier with cotisants.
 - Named tiers sort before the base tier, so a legacy base-tag holder is not reported as `tier: null`.
 - Cotisant status is server-authoritative - no client-side tag derivation.

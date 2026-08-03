@@ -391,6 +391,24 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(productRepo.save).toHaveBeenCalled();
     });
 
+    // Found by the first live test top-up: the second one was refused with "You have already
+    // purchased this product", and a real user would have hit it on their second recharge.
+    it('makes a balance_topup product repeatable, on creation and on save', async () => {
+      const { service, productRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+
+      await service.create('asso1', { name: 'Recharge', type: 'balance_topup' }, true);
+      expect(productRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ allowRepeatPurchase: true })
+      );
+
+      productRepo.findOne.mockResolvedValue(
+        product({ type: 'balance_topup', allowRepeatPurchase: false })
+      );
+      const updated = await service.update('asso1', 'prod1', { name: 'Recharge' }, true);
+      expect(updated.allowRepeatPurchase).toBe(true);
+    });
+
     it('rejects updating an existing balance_topup product for a non-global-admin', async () => {
       const { service, productRepo } = makeService();
       productRepo.findOne.mockResolvedValue(product({ type: 'balance_topup' }));

@@ -278,6 +278,10 @@ product's `webhookUrl`:
   `webhook_deliveries` (`status: pending|delivered|failed`) for admin visibility and manual retry
   from `/admin/cercle`.
 
+A `balance_topup` product is always `allowRepeatPurchase: true` (forced on create AND on update): a
+recharge is repeatable by nature, and the default `false` made `assertCanPurchase` refuse every
+top-up after a user's first one.
+
 **Testing the link without paying (`simulateCercleTopup`)**: each product on `/admin/cercle` carries
 a test button that credits the CALLING admin's own Cercle account for 5 EUR through the production
 path - `resolvePurchase` for the buyer checks, purchase limits and the server-side amount, then

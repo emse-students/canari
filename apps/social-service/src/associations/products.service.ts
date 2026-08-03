@@ -228,6 +228,9 @@ export class ProductsService {
       associationId,
       grantedTagName,
       tagExpiresAt,
+      // A balance top-up is repeatable by definition - the default `false` would let a user
+      // recharge exactly once, ever, and `assertCanPurchase` refuses every recharge after it.
+      allowRepeatPurchase: dto.type === 'balance_topup' ? true : rest.allowRepeatPurchase,
       webhookUrl: webhookUrl ?? null,
       webhookSecret: webhookSecret ?? null,
       // Product is inactive until payments can be taken (own or delegated Stripe account ready).
@@ -282,6 +285,9 @@ export class ProductsService {
         : null;
 
     Object.assign(product, dto, { currency: 'eur' });
+    // Same rule as on creation, and it also repairs a top-up product created before it existed:
+    // saving the product from /admin/cercle is enough to make it repeatable again.
+    if (product.type === 'balance_topup') product.allowRepeatPurchase = true;
     if (!retagging) return this.productRepo.save(product);
 
     product.grantedTagName = retagging.newTagName;
