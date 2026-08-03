@@ -438,6 +438,11 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   entirely in `cause`, so a handler that answers a generic message without logging it hides an outage.
 - One missing `/favicon.ico` is not proof a site has no icon (an SPA answers `index.html`, a 200 that
   is not an image): cascade the candidates, and reach the globe only when all of them failed.
+- But never cascade a fallback chain through ONE element's `onerror`: a new `src` aborts the old
+  load without unqueueing its error, so the stale event skips the candidate now displayed. Probe
+  each URL on its own `Image` - an answer must only be about the URL that was asked.
+- A great many sites set `og:site_name` to the page title, so a chip showing it above the title
+  prints the same sentence twice. Show the HOST: short by construction, and it says where you go.
 - nginx `mime.types` has NO `.mjs`, so any ES-module build asset is served as octet-stream and the
   browser refuses it. A `types {}` block would REPLACE the whole map - use `default_type` in a
   location. Serving a file is not serving it correctly: check the header, not the status code.

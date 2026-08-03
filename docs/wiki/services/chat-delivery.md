@@ -529,9 +529,17 @@ then an `apple-touch-icon`, then anything else. The `href` reaches an `<img src>
 checked explicitly - `new URL('javascript:...', base)` resolves rather than throws.
 
 Client-side, `faviconCandidates` (frontend) turns that into an ordered list: the declared icon
-first, then `/favicon.ico`, `/favicon.svg`, `/favicon.png`, `/apple-touch-icon.png`. The card walks
-the list on each `onerror` and only shows the globe once every candidate has failed - a site whose
-SPA answers `index.html` on `/favicon.ico` (a 200 that is not an image) still gets its real icon.
+first, then `/favicon.ico`, `/favicon.svg`, `/favicon.png`, `/apple-touch-icon.png`. Only the globe
+is left once every candidate has failed - a site whose SPA answers `index.html` on `/favicon.ico`
+(a 200 that is not an image) still gets its real icon, because the probe decides on the bytes.
+
+**The list is walked with off-screen `Image` probes, never by cascading the displayed `<img>`
+through its own `onerror`.** That `<img>` is one element reused across every candidate: assigning a
+new `src` aborts the previous load but does not unqueue an error already fired for it, so a stale
+event advances the pointer past the candidate now on screen. The chain is rebuilt exactly when the
+preview payload arrives with the declared icon - i.e. while a conventional path is in flight - so
+the race is the normal case, not an edge one: the icon appeared and was then replaced by the globe.
+A probe owns its element, so an answer can only be about the URL that was asked.
 
 **Deciding "is this address reachable" is the whole guard, and the address space is wider than
 RFC 1918.** `isPrivateIpAddress` also rejects `0.0.0.0/8` (on Linux a connection to `0.0.0.0`

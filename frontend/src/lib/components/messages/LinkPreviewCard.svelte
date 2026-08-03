@@ -100,9 +100,14 @@
       : externalPreview?.title || parsed.path || parsed.href
   );
 
-  const cardCategory = $derived(
-    isInApp ? (canariPreview?.categoryLabel ?? 'Canari') : externalPreview?.siteName || parsed.host
-  );
+  /**
+   * The amber chip. In-app it names the kind of content; for an external link it
+   * is the HOST, never `siteName`: a great many sites set `og:site_name` to the
+   * page title, so the chip and the title below it printed the same sentence
+   * twice. The hostname is always short, and it is the one thing the title does
+   * not already say - where the link actually goes.
+   */
+  const cardCategory = $derived(isInApp ? (canariPreview?.categoryLabel ?? 'Canari') : parsed.host);
 
   const cardSubtitle = $derived(isInApp ? canariPreview?.subtitle : externalPreview?.description);
 
@@ -118,14 +123,55 @@
    */
   const faviconChain = $derived(faviconCandidates(parsed.href, externalPreview?.icon));
 
-  // Walk the chain on each failure; the globe below is what is left once every
-  // candidate has 404'd, never a shortcut taken earlier.
-  let faviconAttempt = $state(0);
+  /** Resolves once we know whether `src` decodes as an image. Never rejects. */
+  function loadsAsImage(src: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const probe = new Image();
+      probe.onload = () => resolve(probe.naturalWidth > 0);
+      probe.onerror = () => resolve(false);
+      probe.src = src;
+    });
+  }
+
+  /**
+   * The first candidate that actually decodes, or '' while none has been proven.
+   *
+   * The chain is walked with off-screen probes rather than by cascading the
+   * displayed `<img>` through its own `onerror`: that `<img>` is a single element
+   * reused across every candidate, so a failure event already queued for one src
+   * still fires after the next has been assigned, and advancing on it skips the
+   * candidate now on screen. That is what made an icon appear and then be
+   * replaced by the globe a moment later - the chain is rebuilt when the preview
+   * payload arrives with the site's declared icon, and the stale error from the
+   * conventional path tried meanwhile walked straight past it. A probe owns its
+   * own element, so an answer can only ever be about the URL that was asked.
+   */
+  let faviconUrl = $state('');
+  /** False while candidates are still being probed: the globe waits for a verdict. */
+  let faviconSearchDone = $state(false);
   $effect(() => {
-    void faviconChain;
-    faviconAttempt = 0;
+    const chain = faviconChain;
+    let cancelled = false;
+    faviconUrl = '';
+    faviconSearchDone = false;
+
+    void (async () => {
+      for (const candidate of chain) {
+        const ok = await loadsAsImage(candidate);
+        if (cancelled) return;
+        if (ok) {
+          faviconUrl = candidate;
+          faviconSearchDone = true;
+          return;
+        }
+      }
+      faviconSearchDone = true;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   });
-  const faviconUrl = $derived(faviconChain[faviconAttempt] ?? '');
 
   async function handleClick(e: MouseEvent) {
     e.stopPropagation();
@@ -166,14 +212,14 @@
             loading="lazy"
           />
         {:else if faviconUrl}
-          <!-- No Open Graph image: the site's own favicon stands in for its logo. -->
+          <!-- No Open Graph image: the site's own favicon stands in for its logo.
+               Already proven loadable by the probe above, so it needs no onerror. -->
           <img
             src={faviconUrl}
             alt=""
             class="w-8 h-8 object-contain opacity-70 group-hover:opacity-100 transition-opacity duration-300"
-            onerror={() => (faviconAttempt += 1)}
           />
-        {:else}
+        {:else if faviconSearchDone}
           <Globe
             size={20}
             strokeWidth={2}
@@ -185,7 +231,9 @@
 
     <div class="min-w-0 flex-1 py-0.5 flex flex-col justify-center gap-0.5">
       <span
-        class="inline-flex self-start max-w-full items-center rounded-md bg-amber-500/12 dark:bg-amber-400/10 px-2 py-0.5 text-[0.65rem] sm:text-[0.68rem] uppercase tracking-wider font-bold text-amber-800 dark:text-amber-300 truncate"
+        class="inline-flex self-start max-w-full items-center rounded-md bg-amber-500/12 dark:bg-amber-400/10 px-2 py-0.5 text-[0.65rem] sm:text-[0.68rem] tracking-wider font-bold text-amber-800 dark:text-amber-300 truncate {isInApp
+          ? 'uppercase'
+          : 'normal-case'}"
       >
         {cardCategory}
       </span>
