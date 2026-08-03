@@ -51,8 +51,9 @@ State lives HERE (canonical). Five repos, all `emse-students/*`:
 Canari (this monorepo) | Sky (../Sky) | MiGallery (../MiGallery) | Portail-etu (../refonte-portail-etu)
 | **Le Cercle (../le-cercle)**.
 Sky, MiGallery and Portail-etu are COMPLETE - nothing open on any of them.
-All on `main` EXCEPT Le Cercle: that repo has another primary developer, so work happens on the
-branch `audit/security-and-canari-integration` and ships as a PR. Never commit to its `main`.
+All on `main` EXCEPT Le Cercle: that repo has another primary developer (Aurel), and he owns it -
+our branch there was archived and superseded by his own rewrite, which is what runs in production.
+Never commit to its `main`; raise findings with him rather than patching around him.
 
 Work is tracked as Work Packages ordered by severity: **P1** (security, or a user-facing path that
 is broken), **P2** (correctness, nothing at risk), **P3** (hygiene). `[ ]` open, `[~]` in progress.
@@ -63,7 +64,7 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
 
 ### LE CERCLE (../le-cercle) - OPEN WORK PACKAGES
 
-Branch `audit/security-and-canari-integration`, forked from `main` @ `df692f2`. SvelteKit 5 +
+SvelteKit 5 +
 `bun:sqlite` (file DB, `DB_PATH`), hand-written SQL modules under `src/lib/server/db/`, migrations
 = numbered files in `db/sql/migrate/` replayed by `bun run db:migrate` (the runner wraps each file
 in a transaction - so NO `BEGIN`/`COMMIT` and no `PRAGMA foreign_keys` inside a migration).
@@ -76,8 +77,8 @@ trail; Canari credits but never displays the balance.
 **Cercle gotchas (cost time once, will again):** `bun run dev` MUST run Vite under Bun
 (`bun --bun vite dev`) or `bun:sqlite` fails to import and every request 500s. A SvelteKit layout
 `load` does NOT run for a child page's form action, so `gestion/+layout.server.ts` protected
-nothing that POSTs - each action guards itself. `CANARI_INTEGRATION_ENABLED=false` is the local
-switch: it freezes the cotisant snapshot instead of refreshing it, and never opens the gate.
+nothing that POSTs - each action guards itself. `CANARI_INTEGRATION_ENABLED` still sits in the
+deployed `.env` but is referenced NOWHERE in the code since the rewrite - it is dead, not a switch.
 
 **Driving the Cercle locally to test it (2026-08-01, all four cost time):** the DEV server is not
 worth testing against - `$env/dynamic/private` there came from a stale process and read the OLD
@@ -89,40 +90,31 @@ needs `ORIGIN=http://127.0.0.1:<port>` or SvelteKit's CSRF check 403s every form
 runtime allows. `localhost` resolves to `::1`, where another project's Vite was listening: always
 address `127.0.0.1`.
 
-- \[~\] **WP-CERCLE-1 (P1) - Audit + security fixes + Canari double link. AUREL'S FORK IS NOW MERGED
-  IN (`418c268`, pushed 2026-08-01). Only the two live checks are owed.** He had forked rather than
-  reviewed: `audit/security-and-canari-rewrite` was separate lineage (same merge-base `df692f2`) and
-  deleted the whole Canari link. Both halves are now on this branch, nothing dropped - his revocable
-  DB sessions, `auth/authentik|cercle/`, `UTCISOString`, keg inventory, bartender LRU cache; my
-  `server/canari/`, `cotisant.ts`, `authz.ts`, `db/movements/`. Reconciled by hand: one date model,
-  one migration line (his session scripts collapsed into `04-add_sessions.sql` - neither had ever
-  run), one till (`events/open/[id]` folded into `events/[id]?/open`). Four security holes found IN
-  his code and fixed on top - see DURABLE RULES / Le Cercle auth.
-  Both directions were then driven end to end against a running build: inbound webhook credits once,
-  idempotent on `paymentIntentId`, rejects bad/missing signature; outbound `cotisant-status` sends
-  the right key+slug+sub, drives the snapshot and the gate, resolves an unnameable tier to
-  sans-alcool; at the till the alcohol tier, a forged `unit_price`, a lapsed cotisation and a
-  negative quantity all behave, and the ledger balances against the cached total.
-  **THE MR IS GONE, SUPERSEDED (measured 2026-08-03).** Aurel ARCHIVED the branch - GitLab now has
-  only `main`, plus a tag `archive/audit/security-and-canari-integration` - and rewrote the Canari
-  link his own way on `main` (`be5c377`, 2 commits past my fork point `df692f2`). His version has
-  the OUTBOUND half (`src/lib/server/canari/memberships.ts`, same `avec-alcool`/`sans-alcool`
-  strings, anything else -> sans-alcool) and BOTH building blocks of the inbound one
-  (`db/ledger/canari.ts#creditUserFromCanariTopup`, `server/hmac.ts#verifyHMACSHA256`,
-  migration `05-add_canari.sql`) - **but NO HTTP route exposing them**: `src/routes/api/` holds only
-  menu_items, perm_bartenders, perm_menu_items, users. So Canari's webhook has nowhere to land and
-  gets a SvelteKit 404 page (verified: `curl` from the Canari host, deployed bundle greps clean for
-  `X-Canari-Signature`). **Next step is a NEW branch off his `main` adding just
-  `src/routes/api/canari/topup/+server.ts` on top of his two helpers** - do NOT redeploy my archived
-  branch, it would revert his rewrite. My local checkout still has the branch at `418c268` and my
-  route to copy from.
-  **Cercle prod (`ssh canari` then `ssh cercle@10.0.0.6`, password auth - no key, no `sshpass` on
-  the jump host; drive it with `"<pw>" | ssh -tt canari "ssh -tt cercle@10.0.0.6 '...'"`):** systemd
-  unit `cercleapp.service` runs `bun --env-file /var/www/le-cercle/.env /var/www/le-cercle/build/index.js`;
-  the git checkout is `/home/cercle/le-cercle` (on `main`, 2 files dirty) and is NOT what serves -
-  `/var/www/le-cercle` is. Its `.env` already carries all 5 `CANARI_*` keys.
-  **Still owed:** the route above, then V1-V6 of `docs/PROD-TEST-CERCLE.md` against the real Canari,
-  and a real OIDC round trip (the certification minted its own cookies).
+- \[~\] **WP-CERCLE-1 (P1) - THE LINK IS LIVE, BOTH DIRECTIONS PROVEN ON PROD (2026-08-03). Only
+  browser-bound checks are owed.** My audit branch is dead and must never be redeployed: Aurel
+  archived it (tag `archive/audit/security-and-canari-integration`) and rewrote the Canari link on
+  `main`. His version is what runs. Aurel then added `src/routes/api/canari/topup/+server.ts` and the
+  `sha256=` strip on top - the two things that were missing - so nothing is owed from us in his repo.
+  What was measured, with the exact probes, now lives in `docs/PROD-TEST-CERCLE.md`; do not re-derive
+  it here.
+  **His rewrite changed the model, and any old note that contradicts this is stale:** there is NO
+  cotisant snapshot and NO TTL - `syncCanaryMembership` writes `users.id_membership` (FK to a
+  `memberships` table) and re-runs only at login and on the 5-minute session-JWT refresh. The ledger
+  table is `ledger` + `canari_ledger_details`, not `account_movements`. `CANARI_INTEGRATION_ENABLED`
+  is referenced NOWHERE in his code - it is dead, not a kill switch.
+  **Owed, all needing a human at a browser or a till:** V1 (a real MiConnect round trip - the two
+  real rows carry Canari-shaped ids but could predate the current callback), V2 (the access gate,
+  incl. a cercleux with no cotisation getting in but unable to consume) and V4 (the alcohol gate
+  driven live from Canari, incl. a tier change taking effect on the next round).
+  **Two findings to pass to Aurel, neither blocking:** on a duplicate top-up the route reports a
+  `balance` computed inside the rolled-back transaction (fiction - the stored balance is right, and
+  Canari ignores the body); and the seed users have an opening `users.balance` with no matching
+  `topup` entry, which makes the ledger-integrity check permanently red and therefore useless as an
+  alarm.
+  **Cercle prod access:** `ssh cercle` (10.0.0.6, ProxyJump canari, key installed - no password).
+  `cercleapp.service` serves `/var/www/le-cercle`; the checkout `/home/cercle/le-cercle` does NOT
+  serve. DB `/var/www/le-cercle/data/le_cercle.db`. No `node`, no `sqlite3` - use `bun`; and
+  `journalctl` shows nothing to that account (not in `adm`), so probe the endpoint instead.
 
 - \[ \] **WP-CERCLE-2 (P3) - No way to correct a mis-keyed consumption.** The ledger is
   append-only and the user declined an `adjustment` kind, so a drink charged twice or to the wrong
@@ -306,55 +298,20 @@ address `127.0.0.1`.
   chrome, the white plate behind a QR). Detector: `frontend/scripts/find-oneway-colors.mjs`. The one
   open question (the enrolment sheet reporting DARK under a LIGHT theme) is check I of the runbook.
 
-- \[~\] **WP-INT-1 (P3) - Cercle credentials. THE API-KEY HALF IS DONE (2026-08-01); the webhook half
-  is still blocked.** It was never fully blocked on the Cercle being online - only the webhook is,
-  since only `webhookUrl` needs their host. The API key is outbound Cercle -> Canari and needed
-  nothing from them, and it had **never been generated at all**: prod carried an EMPTY
-  `CERCLE_API_KEY`, which rejects every request (timing-safe compare, empty expected never matches),
-  and `cd.yml` did not carry the variable, so any SSH hand-edit would have been reverted by the next
-  deploy. Now: GitHub secret `CERCLE_API_KEY` set, `cd.yml` syncs it with a warning when unset,
-  `docs/PROD-TEST-CERCLE.md` rewritten to name the secret as the source of truth.
-  **THE TEST BUTTON IS BUILT (2026-08-03, `/admin/cercle`, per product): 5 EUR to the calling admin
-  through the production path, no Stripe charge.** So the outbound half can be proven the day the
-  Cercle answers, without a card and without Connect onboarding. Prod facts measured that day, all
-  still true: **no `balance_topup` product exists yet** (create it there, with `webhookUrl` +
-  `webhookSecret`), Le Cercle has **no Stripe account** (`stripeOnboardingComplete=f`, no delegation)
-  - which is why its 3 membership products are all `isActive=f`, which in turn had every Cercle
-  cotisant reporting `isCotisant:false` until the `isActive` filter was dropped the same day.
-  **The product now EXISTS** (`29ba29fe`, 5 EUR fixed, `webhookUrl=https://cercle.canari-emse.fr/api/canari/topup`,
-  secret set) and the first test top-up ran: dispatch fine, **404 from the Cercle** because the route
-  does not exist there yet (see WP-CERCLE-1). The SECOND press then failed with "You have already
-  purchased this product" - the prod row predates the repeat-purchase forcing - fixed by waiving the
-  caps on TYPE in `assertCanPurchase`; **needs a deploy** before the button works twice.
-  Two prod tiers still carry the WRONG keys for the
-  Cercle - base + `alcool`, where it only understands `avec-alcool`/`sans-alcool`; rename the
-  `variantKey`s (editing migrates the holders' tags, deleting orphans them).
-  **Owed: run a deploy so it reaches `infrastructure/.env`** (verify:
-  `ssh canari 'grep -cE "^CERCLE_API_KEY=.+" /home/canari/canari/infrastructure/.env'` -> 1), then
-  give Aurel the same value as `CANARI_API_KEY`.
-  Still blocked: the real `webhookUrl`/`webhookSecret` on the prod `balance_topup` product.
-  The Authentik application `cercle` EXISTS (both `.well-known/openid-configuration` and `jwks/`
-  answer 200); its `MICONNECT_CLIENT_ID`/`_SECRET` must be read from the Authentik admin panel -
-  they cannot be generated, and the Cercle's redirect URI has to be registered there.
-  **Contract verified 2026-07-29 against `../le-cercle` (code read on both sides, nothing run):**
-  `dispatchCercleWebhook` POSTs `{productId, userId, amountCents, paymentIntentId, timestamp}` with
-  `X-Canari-Signature: sha256=<hex HMAC-SHA256 of the RAW body>`; `verifyWebhookSignature` +
-  `/api/canari/topup` expect exactly that, sign the raw body too, and read the same field names.
-  `userId` IS the OIDC `sub` = `users.uuid` there, so no id mapping. Replays are idempotent on
-  `paymentIntentId`. The two sides agree.
-  Two operational traps for the day it goes live: Canari sets `maxRedirects: 0` and accepts 2xx
-  only, so `webhookUrl` must be the FINAL https URL (an http->https redirect fails every delivery);
-  and the Cercle answers **404** for a user who has never logged into its site, which Canari counts
-  as a failure - after 3 attempts that top-up sits in `webhook_deliveries` as `failed` and needs a
-  manual retry from the admin panel. `CANARI_WEBHOOK_SECRET` (Cercle env) and the product's
-  `webhookSecret` (Canari) are the same string under two names.
-  **The secret itself is already generated** (2026-07-30), together with the Cercle's
-  `SESSION_SECRET`, at
-  `%LOCALAPPDATA%\Temp\claude\c--Users-jolan-Documents-Programmation-canari\9451e6ef-4c01-4c18-8203-df740c9d9476\scratchpad\CERCLE-PROD-SECRETS.md`
-  - deliberately outside every repo, with the posting procedure and these two traps repeated. That
-  file closes WP-CERCLE-3 as well; delete it once both values are in place. It sits in a TEMP
-  directory: one cleanup and both secrets have to be regenerated (which is harmless as long as
-  neither has been posted yet - they are only paired, never derived).
+- \[x\] **WP-INT-1 - CLOSED 2026-08-03. Every credential is in place and PROVEN AGAINST PROD.** Both
+  shared secrets fingerprint-match across the two hosts (`CERCLE_API_KEY`/`CANARI_API_KEY`,
+  `webhookSecret`/`CANARI_WEBHOOK_SECRET`), the slug is `cercle`, the two tiers carry
+  `avec-alcool`/`sans-alcool`, the OIDC client id/secret are populated, and the top-up product
+  `29ba29fe` delivers on the first attempt. Do not re-verify from here - `docs/PROD-TEST-CERCLE.md`
+  holds the probes and their answers. The one credential fact worth keeping is a durable rule below
+  (a value is only real once it is a GitHub secret AND named in `cd.yml`).
+
+- \[ \] **WP-CERCLE-4 (P2) - `JWT_OLD_SECRET` is non-empty on Cercle prod, outside any rotation.**
+  `verifySessionJWT` tries `[JWT_SECRET, JWT_OLD_SECRET]` in turn, so every session signed with the
+  PREVIOUS secret is still valid today - which means the rotation that was performed has not actually
+  revoked anything. It is not the `.env.example` placeholder (fingerprints differ), so this is a real
+  former secret rather than a public one, which is why this is P2 and not P1. Fix is one line: empty
+  it on `/var/www/le-cercle/.env` and restart. Aurel's call, his repo.
 
 ---
 
@@ -594,6 +551,18 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   parallel implementation would only ever prove itself. Intent prefix `pi_canari_test_`.
 - A dispatch the fulfillment SKIPS silently (no `webhookUrl`/`webhookSecret`) must be refused up
   front by any test, or the test reports a success for something that never left the building.
+- The `sha256=` prefix must be STRIPPED before hex-decoding: `Buffer.from('sha256=..','hex')` gives
+  an EMPTY buffer, so the compare fails on length and the digest is never looked at. It presents as
+  a secret mismatch - compare secret FINGERPRINTS first, and you stop chasing the wrong thing.
+- An undeployed SvelteKit route answers an HTML 404, indistinguishable from a broken receiver: for a
+  webhook, "not working" and "not deployed" are the same status code. Probe the route before the code.
+- `webhookUrl` must be the FINAL https URL - `maxRedirects: 0` and 2xx-only, so a http->https hop
+  fails every delivery. And a user who never logged into the Cercle is a 404, i.e. a failed delivery
+  needing a manual retry, not a lost payment.
+- Prove idempotency by re-signing a FRESH body with the same key field, never by replaying the exact
+  bytes: byte-identity would pass even if the dedup were a checksum of the request.
+- An integrity check that is permanently red because of fixture data is not a monitor. Seed rows need
+  the same opening entry real rows get, or the alarm can never be acted on.
 
 #### Le Cercle auth and merging its fork -> `../le-cercle/README.md`
 
@@ -609,6 +578,12 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   same point collide invisibly. Migrations that NEVER ran are collapsible: recreate the final shape.
 - `Intl.DateTimeFormat` without `timeZone` renders in the server's zone during SSR and the reader's
   on hydration - one row, two times.
+- A rotation only revokes once the OLD key is removed: while `JWT_OLD_SECRET` is set, every session
+  signed with it is still valid, so the rotation has changed nothing yet.
+- Rolling a transaction back by THROWING a success value leaks the uncommitted state into the
+  response: the balance reported on a duplicate top-up is the one that was just rolled back.
+- Its prod facts (paths, DB, missing tooling) are in `docs/PROD-TEST-CERCLE.md` - `/var/www` serves,
+  the git checkout does not; `bun` only, no `node`/`sqlite3`; `journalctl` is unreadable to that user.
 
 ---
 

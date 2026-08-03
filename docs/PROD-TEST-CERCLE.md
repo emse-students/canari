@@ -8,35 +8,47 @@ Related: [`docs/wiki/cotisations.md`](wiki/cotisations.md) for how tiers and tag
 
 ## What is already proven, and what is not
 
-The link was certified end to end on 2026-07-28 - 27 automated checks against a faithful HTTP stub
-of `GET /api/public/cotisant-status`, including: the 15-minute snapshot TTL, the 24-hour grace
-window, live-tier-driven alcohol gating, a tier downgrade taking effect on the next round,
-`tier: null` failing closed to sans-alcool, revocation locking the user out on the next request, an
-expired snapshot overriding a stale `isCotisant`, and a signed webhook crediting exactly once when
-replayed, with zero ledger drift throughout.
+**Both directions now work against the real hosts (measured 2026-08-03).** What each step below
+established, and what is still owed, is recorded in the step itself. The short version:
 
-Three things a stub cannot prove, and which this runbook exists to check:
+| | Status |
+| --- | --- |
+| Outbound webhook (Canari -> Cercle), incl. idempotency and rejection cases | **PASS** |
+| `cotisant-status` (Cercle -> Canari), incl. named tiers and failure modes | **PASS** |
+| Shared identity (`sub` = Canari `userId` = Cercle `users.uuid`) | **PASS**, but see V1 |
+| A real MiConnect OIDC round trip | **owed** - needs a browser |
+| The access gate and the alcohol gate at a real till | **owed** - needs an open perm |
 
-1. Canari's real `cotisant-status` answers the shape the Cercle parses, over real TLS, with the real
-   API key and the real 20 req/min throttle.
-2. A real OIDC login through MiConnect produces a `sub` that IS the Canari `userId` - the whole link
-   keys on that identity, and the certification minted its own cookies.
-3. Canari's real webhook dispatcher (3 attempts, `X-Canari-Signature: sha256=<hex>` over the exact
-   bytes it sent) reaches the Cercle and is accepted.
+The link had been certified on 2026-07-28 against an HTTP stub (27 checks). That certification is
+now largely historical: the Cercle side was rewritten afterwards, and its snapshot columns, its TTL
+and its `account_movements` table no longer exist. Trust the steps below, not the stub run.
+
+Two traps this runbook exists to catch, both of which DID fire on the first live attempt:
+
+1. A missing route answers a SvelteKit **HTML 404**, which the dispatcher records as an ordinary
+   failure - "the webhook does not work" and "the webhook is not deployed" look identical from
+   Canari.
+2. The receiver must strip the **`sha256=` prefix** before decoding the signature. Without it,
+   `Buffer.from('sha256=<hex>', 'hex')` yields an empty buffer and every delivery is a 401 - which
+   reads exactly like a secret mismatch and sends you comparing secrets that were never wrong.
 
 ## The real addresses
 
 | What | Value |
 | --- | --- |
 | Canari | `https://canari-emse.fr` |
-| Canari cotisant endpoint | `GET https://canari-emse.fr/api/public/cotisant-status?assoSlug=<slug>&sub=<userId>` |
-| Cercle webhook endpoint | `POST https://<cercle-host>/api/canari/topup` |
+| Canari cotisant endpoint | `GET https://canari-emse.fr/api/public/cotisant-status?assoSlug=cercle&sub=<userId>` |
+| Cercle webhook endpoint | `POST https://cercle.canari-emse.fr/api/canari/topup` |
 | OIDC issuer | `https://auth.canari-emse.fr/application/o` |
 | OIDC JWKS | `https://auth.canari-emse.fr/application/o/cercle/jwks/` |
-| Canari host | `ssh canari`, compose project `infrastructure-*` |
+| Canari host | `ssh canari`, compose project `infrastructure-*`, Postgres db `auth_db` |
+| Cercle host | `ssh cercle` (10.0.0.6, ProxyJump canari, key installed) |
 
-`<cercle-host>` is the only value not yet fixed - fill it in when the Cercle is deployed, and set it
-as the `balance_topup` product's `webhookUrl` (see step 3).
+On the Cercle host: `cercleapp.service` serves **`/var/www/le-cercle`**, not the git checkout in
+`/home/cercle/le-cercle`. Its SQLite file is `/var/www/le-cercle/data/le_cercle.db`. There is no
+`node` and no `sqlite3` on that box - drive it with `bun` (`/usr/local/bin/bun`), and note that
+`journalctl -u cercleapp` shows nothing to the `cercle` account (not in the `adm` group), so probe
+the endpoint rather than expecting to read its logs.
 
 ## Secrets, and which name they wear on each side
 
@@ -94,22 +106,34 @@ created, in **Association -> Cotisations**:
   cotisants actually paid for), then add the other one.
 - A cotisant holds exactly one tier: granting or buying one revokes the siblings in the same
   transaction. There is no way to hold both.
-- `CANARI_ASSO_SLUG` on the Cercle side must equal the association's slug in Canari (`le-cercle`
-  unless it was renamed).
+- `CANARI_ASSO_SLUG` on the Cercle side must equal the association's slug in Canari. **It is
+  `cercle`, not `le-cercle`** - the association's display name and its slug differ, and an
+  unknown slug answers 404, which the Cercle treats as "not a cotisant" and bounces everyone.
 
-Check the tier setup from the outside before going further:
+Check the tier setup from the outside before going further (the key is in
+`/home/canari/canari/infrastructure/.env` on the Canari host, so run this from there):
 
 ```sh
 curl -s -H "X-Api-Key: $CERCLE_API_KEY" \
-  "https://canari-emse.fr/api/public/cotisant-status?assoSlug=le-cercle&sub=<a-real-cotisant-userId>"
+  "https://canari-emse.fr/api/public/cotisant-status?assoSlug=cercle&sub=<a-real-cotisant-userId>"
 ```
 
-Expected: `{"isCotisant":true,"tier":"avec-alcool","expiresAt":"2026-08-31T..."}` -
 `tier` must be a **named** key. A `null` tier on a real cotisant means the base tier was never
 converted, and every one of them will be treated as sans-alcool.
 
-Then check it fails closed: same call with a bogus key must be `403`, and with a non-cotisant `sub`
-must be `{"isCotisant":false,"tier":null,"expiresAt":null}` - not a 404.
+**Measured 2026-08-03, all seven as expected:**
+
+| Call | Answer |
+| --- | --- |
+| `avec-alcool` cotisant | `200 {"isCotisant":true,"tier":"avec-alcool","expiresAt":null}` |
+| `sans-alcool` cotisant | `200 {"isCotisant":true,"tier":"sans-alcool","expiresAt":null}` |
+| unknown `sub` | `200 {"isCotisant":false,"tier":null,"expiresAt":null}` - **not** a 404 |
+| forged key | `403` |
+| empty key | `403` |
+| unknown `assoSlug` | `404 Association not found` |
+| `assoSlug=le-cercle` | `404` - proof the slug is `cercle` |
+
+`expiresAt: null` is correct here and not a missing value: the association is in `lifetime` mode.
 
 ### 3. Canari: the `balance_topup` product (WP-INT-1)
 
@@ -131,21 +155,26 @@ back on.
 
 ```sh
 DB_PATH=<persistent path, outside the deploy directory>
-SESSION_SECRET=<openssl rand -base64 48>
+JWT_SECRET=<openssl rand -base64 48>
+JWT_OLD_SECRET=            # only non-empty during a rotation
 MICONNECT_ISSUER=https://auth.canari-emse.fr/application/o
 MICONNECT_JWKS=https://auth.canari-emse.fr/application/o/cercle/jwks/
 MICONNECT_CLIENT_ID=<from Authentik>
 MICONNECT_CLIENT_SECRET=<from Authentik>
-CANARI_INTEGRATION_ENABLED=true
 CANARI_BASE_URL=https://canari-emse.fr
-CANARI_ASSO_SLUG=le-cercle
+CANARI_ASSO_SLUG=cercle
 CANARI_API_KEY=<same value as CERCLE_API_KEY on Canari>
 CANARI_WEBHOOK_SECRET=<same value as the product's webhookSecret>
 ```
 
-`CANARI_INTEGRATION_ENABLED=false` is a development switch only. In production it would freeze the
-cotisant snapshot at whatever it last was and never refresh it - it does not open the access gate,
-but it does make every gate decide on stale data forever.
+`CANARI_INTEGRATION_ENABLED` is still present in the deployed `.env` but is referenced **nowhere in
+the code** since the Cercle rewrite - the integration is unconditionally on. Do not rely on it as a
+kill switch; to actually cut the link, empty `CANARI_API_KEY` (the Cercle then falls back to each
+user's stored membership) or `CERCLE_API_KEY` on the Canari side (which refuses everyone).
+
+`JWT_SECRET` was called `SESSION_SECRET` before the merge. Rotating it is the only way to revoke
+every Cercle session at once; `JWT_OLD_SECRET` carries the previous value during a rotation and MUST
+stay empty otherwise - an unset secret used as a verification key would accept anything.
 
 Then, on the Cercle host: `bun run db:migrate` (idempotent, replays against `PRAGMA user_version`),
 and back up `DB_PATH` before the first real service - the ledger is the only record of who owes
@@ -160,17 +189,23 @@ broken earlier one proves nothing.
 
 Log in as a real cotisant through MiConnect. Expect: redirected in, no `/unauthorized`.
 
-Then, on the Cercle host, confirm the identity is the shared one:
+Then, on the Cercle host, confirm the identity is the shared one. The snapshot columns this step
+used to read (`is_cotisant`, `tier`, `cotisation_synced_at`) **no longer exist**: the rewrite stores
+the tier as a foreign key to a `memberships` table instead.
 
 ```sh
-sqlite3 "$DB_PATH" "SELECT uuid, first_name, is_cotisant, tier, cotisation_synced_at FROM users ORDER BY rowid DESC LIMIT 3;"
+bun -e 'import{Database}from"bun:sqlite";
+const d=new Database("/var/www/le-cercle/data/le_cercle.db",{readonly:true});
+console.log(d.query("SELECT u.uuid, u.first_name, u.role, m.name AS tier FROM users u LEFT JOIN memberships m ON m.id = u.id_membership ORDER BY u.rowid DESC LIMIT 3").all())'
 ```
 
 `uuid` must be the same string as the user's Canari `userId`. If it is not, nothing downstream can
 work: the Cercle asks Canari about `sub`, and Canari looks that up as its own primary key.
 
-`cotisation_synced_at` must be set - the login callback forces a sync rather than waiting for the
-TTL, precisely so a first login does not bounce a genuine cotisant.
+**Partially confirmed 2026-08-03**: two real accounts carry Canari-shaped 64-hex ids (the other 20
+rows are UUID seed data), and the `avec-alcool` tag on Canari matches `id_membership = 1` ("Avec
+alcool") on the Cercle. What is still owed is that a *fresh* MiConnect login produces that id -
+those two rows could predate the current callback. Only a browser can close this.
 
 ### V2 - The access gate
 
@@ -179,11 +214,11 @@ TTL, precisely so a first login does not bounce a genuine cotisant.
 - A cercleux with no cotisation: gets in, but any attempt to consume is refused with "not a
   cotisant". Site access and the right to consume are two different rights, by design.
 
-### V3 - The TTL actually holds
+### V3 - The refresh cadence, and the throttle ceiling
 
-This is the one that was broken until `7e87b61` (SQLite writes bare UTC, `new Date()` read it as
-Paris local, so every snapshot looked two hours old and every single request re-queried Canari -
-against a 20 req/min throttle).
+There is no snapshot TTL any more. The rewrite re-queries Canari (`syncCanaryMembership`) in exactly
+two places: the login callback, and the session-JWT refresh - and that JWT lives **5 minutes**. So
+the JWT lifetime IS the TTL, and an active user costs about one request per 5 minutes.
 
 Load three or four Cercle pages in a row as the same user, then read Canari's logs:
 
@@ -192,9 +227,13 @@ ssh canari
 docker compose -f infrastructure/docker-compose.prod.yml logs --tail=200 social-service | grep 'cotisant-status'
 ```
 
-Expect **one** `[CERCLE] cotisant-status` line for the whole burst (plus one for the login), not one
-per page. More than that means the snapshot is not being read as fresh, and the throttle will start
-returning 429 during a busy perm.
+Expect **one** `[CERCLE] cotisant-status` line for the burst, not one per page.
+
+Do the arithmetic before the first big perm: the throttle is 20 req/min counted per source IP and
+the Cercle is one IP, so the ceiling sits near **100 concurrent users**. Past it Canari answers 429,
+which the Cercle handles like any fetch failure - it falls back to the stored membership, so the bar
+degrades to slightly stale tiers instead of locking up. The exception is a user logging in for the
+FIRST time during saturation: they have nothing stored, and will be treated as a non-cotisant.
 
 ### V4 - The alcohol gate, driven live from Canari
 
@@ -229,34 +268,62 @@ Expect `[CERCLE] webhook delivered: product=... attempt=1`. If all three attempt
 5s, 15s), the delivery is recorded in `webhook_deliveries` with its error and can be retried from
 `/admin/cercle` once the cause is fixed - the payment is not lost.
 
-On the Cercle: the balance must have moved by exactly `amountCents`, with one `topup` movement in
-`account_movements` whose `idempotency_key` is the Stripe payment intent.
+On the Cercle: the balance must have moved by exactly `amountCents`, with one `ledger` row
+(`type='topup'`, `uuid_staff` NULL - no human behind a Canari credit) and one
+`canari_ledger_details` row carrying the payment intent. The table is `ledger`, not
+`account_movements`; that name belonged to the pre-rewrite schema.
 
-Then prove the idempotency, because Canari retries: replay the exact same body and signature.
+Then prove the idempotency, because Canari retries. Do **not** bother reproducing the exact original
+bytes - re-sign a fresh body reusing the same `paymentIntentId`, which is a stronger check: it
+proves the dedup keys on the intent rather than on byte-identity.
 
-```sh
-BODY='<the exact body from the delivery record>'
-SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$CANARI_WEBHOOK_SECRET" -hex | awk '{print $2}')
-curl -si -X POST "https://<cercle-host>/api/canari/topup" \
-  -H 'Content-Type: application/json' -H "X-Canari-Signature: sha256=$SIG" --data "$BODY"
-```
+**Measured 2026-08-03** (balance 1500, 3 entries, before and after every line):
 
-Expect `200`, and the balance **unchanged**, with no second movement. Then flip one character of
-the signature and repeat: expect `401` and, again, no movement.
+| Probe | Answer | Ledger |
+| --- | --- | --- |
+| replay, same intent | `200 {"ok":true,"duplicate":true}` | unchanged |
+| replay, same intent, `amountCents` inflated to 999999 | `200 ... duplicate:true` | unchanged |
+| forged signature | `401` | unchanged |
+| `amountCents: -500` | `400 Invalid amount` | unchanged |
+| timestamp 24 h in the future | `422 Invalid timestamp` | unchanged |
+
+Idempotency is enforced by `canari_ledger_details.payment_intent_id` being `NOT NULL UNIQUE` inside
+a transaction, not by an application-level check - the credit is written optimistically and rolled
+back on conflict, so the database refuses a double credit even if the route's logic is bypassed.
+
+**Known bug on the Cercle side, reported, not blocking:** on a duplicate the response reports
+`balance` as *what the balance would have been*, computed inside the transaction that was then
+rolled back - the replay above returned `balance: 2000` and, with the inflated amount,
+`balance: 1001499`, while the stored balance never left 1500. The database is right and the credit
+is safe; only the reported number is fiction. Canari checks the status code and ignores the body,
+so nothing downstream is wrong today - but do not build anything on that field.
 
 ### V6 - Ledger integrity
 
-At the end of the session, on the Cercle host:
+At the end of the session, on the Cercle host, walk each account's entries in order: a `topup` adds
+`amount_cents`, a `purchase` subtracts it (amounts are stored unsigned, the sign is in `type`), and
+every row carries the `balance_after` it produced. Two things must hold - the chain must agree with
+itself, and `users.balance` must equal the last `balance_after`.
 
 ```sh
-sqlite3 "$DB_PATH" "
-SELECT u.uuid, u.balance, COALESCE(SUM(m.amount_cents), 0) AS ledger
-FROM users u LEFT JOIN account_movements m ON m.uuid_user = u.uuid
-GROUP BY u.uuid HAVING u.balance <> ledger;"
+bun -e 'import{Database}from"bun:sqlite";
+const d=new Database("/var/www/le-cercle/data/le_cercle.db",{readonly:true});
+for(const u of d.query("SELECT uuid,first_name,balance FROM users").all()){
+ const l=d.query("SELECT type,amount_cents,balance_after FROM ledger WHERE uuid_user=? ORDER BY id").all(u.uuid);
+ if(!l.length)continue; let r=0,ok=true;
+ for(const e of l){r+=e.type==="topup"?e.amount_cents:-e.amount_cents; if(e.balance_after!==r)ok=false;}
+ if(!ok||u.balance!==l.at(-1).balance_after)console.log("BAD",u.first_name,u.balance,r);}'
 ```
 
-Must return nothing. `users.balance` is a cache of the append-only ledger, written in the same
-transaction; any row here is a bug, not a rounding artefact.
+**Measured 2026-08-03: the only account whose whole history came through the real code path (3
+Canari top-ups) is exactly consistent.** Seven others report BAD, and every one is fixture data: the
+seed gave them an opening `users.balance` without a matching `topup` entry, so their running sum
+starts below zero and can never reconcile. One more (`Aurel DAUTRY`) has a balance edited by hand
+away from its last `balance_after`.
+
+That matters more than it looks: **this check cannot be used as an alarm while it is permanently
+red.** Either give the seed rows an opening `topup` entry or exclude them explicitly - a monitor
+nobody can act on is a monitor nobody reads.
 
 Note the ledger has no reversal movement, so **a drink charged to the wrong account cannot be
 undone today**. Say so to the bar staff before the first real perm.
@@ -265,9 +332,11 @@ undone today**. Say so to the bar staff before the first real perm.
 
 | Symptom | Look at |
 | --- | --- |
-| Everyone bounced to `/unauthorized` | `CANARI_API_KEY` vs `CERCLE_API_KEY`; `CANARI_ASSO_SLUG`; Canari logs for `403` on `cotisant-status` |
+| Everyone bounced to `/unauthorized` | `CANARI_API_KEY` vs `CERCLE_API_KEY`; `CANARI_ASSO_SLUG` must be `cercle`; Canari logs for `403` on `cotisant-status` |
 | Every cotisant treated as sans-alcool | the base tier was never converted - `tier` comes back `null` and fails closed |
-| `429` from Canari under load | the TTL is not holding - see V3 |
-| Webhook never arrives | `webhookUrl`/`webhookSecret` empty on the product, or the Cercle host unreachable from the Canari container |
-| Webhook arrives but `401` | the two secrets differ, or a proxy re-serialized the body (the signature is over the exact bytes sent) |
-| Balance credited twice | the idempotency key is not the payment intent - check `account_movements.idempotency_key` |
+| `429` from Canari under load | past ~100 concurrent users - see V3, it degrades to stale tiers rather than failing |
+| Webhook `404`, body is HTML | the route is not deployed on the Cercle - a missing SvelteKit route answers a 404 *page*, which looks like any other failure from Canari |
+| Webhook `401` | the receiver is not stripping the `sha256=` prefix (check this BEFORE comparing secrets - it fails identically), or a proxy re-serialized the body |
+| Secrets suspected of differing | compare fingerprints, never values: `md5` of the product's `webhookSecret` on Canari against `md5` of `CANARI_WEBHOOK_SECRET` on the Cercle |
+| Balance credited twice | `canari_ledger_details.payment_intent_id` lost its `UNIQUE` constraint - that column is the whole idempotency mechanism |
+| Reported balance looks absurd after a retry | known Cercle bug on the duplicate path, see V5 - the stored balance is fine |

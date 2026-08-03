@@ -271,7 +271,11 @@ Stripe, `ProductsService.dispatchCercleWebhook` (`products.service.ts`) POSTs th
 product's `webhookUrl`:
 
 - **Signature**: `X-Canari-Signature: sha256=<hex hmac>` - HMAC-SHA256 of the raw JSON body, keyed
-  by the product's own `webhookSecret` (set per-product, not a shared env secret).
+  by the product's own `webhookSecret` (set per-product, not a shared env secret). The `sha256=`
+  prefix is part of the contract (the GitHub/Stripe convention) and the receiver must strip it
+  before decoding: `Buffer.from('sha256=<hex>', 'hex')` stops at the first non-hex character and
+  yields an EMPTY buffer, so a comparison against it fails on length rather than on the digest -
+  a receiver that forgets the prefix rejects every delivery while looking like a secret mismatch.
 - **Payload**: `{ productId, userId, amountCents, paymentIntentId, timestamp }`. `userId` doubles as
   the OIDC `sub` (see below) and `paymentIntentId` is the idempotency key.
 - **Retries**: up to 3 attempts (`CERCLE_RETRY_DELAYS = [1s, 5s, 15s]`), each attempt recorded in
@@ -299,7 +303,7 @@ and the beneficiary is always the caller (taken from `x-user-id`, never from the
 Three deliberate departures, and nothing else differs:
 
 - the PaymentIntent is synthetic, prefixed **`pi_canari_test_`** so the rows are identifiable on
-  both sides (it is also the Cercle's `account_movements.idempotency_key`);
+  both sides (it is also what the Cercle stores as `canari_ledger_details.payment_intent_id`);
 - `skipPaymentReadiness` waives the two conditions that exist only to take money - the product being
   on sale and the Connect account being onboarded - because an association with no Stripe account
   must still be able to prove its webhook works;
@@ -309,6 +313,14 @@ Three deliberate departures, and nothing else differs:
 
 It DOES record a real 5 EUR purchase in the association's accounting (that is what "reproduces
 everything" means) - the rows are removable by their `pi_canari_test_` intent.
+
+**The outbound half is live and proven against the real Cercle (2026-08-03)**: deliveries land on
+the first attempt, and on the Cercle they produce one `ledger` row (`type='topup'`, `uuid_staff`
+null - no human behind a Canari credit) plus one `canari_ledger_details` row carrying the intent.
+Replaying an intent returns 200 `duplicate: true` and moves nothing, enforced by a `NOT NULL UNIQUE`
+column rather than by an application check; a forged signature, a negative amount and a future
+timestamp are refused (401/400/422) with no ledger write. See
+[../PROD-TEST-CERCLE.md](../PROD-TEST-CERCLE.md) for the exact probes.
 
 ### Inbound: Cercle -> Canari (`GET /api/public/cotisant-status`)
 
@@ -333,7 +345,14 @@ X-Api-Key: <CERCLE_API_KEY>
   non-cotisant); `expiresAt` is ISO 8601 or `null` for a lifetime tag. Implemented by
   `ProductsService.getCotisantStatusBySlug`, which reuses the same tier-enumeration pattern as
   `isBuyerCotisant`/`cotisantStatusFor` rather than a separate tag-derivation path.
-- Always queried live (never cached) - Canari is authoritative for this half of the relationship.
+- Canari is authoritative for this half and answers live; **whether the Cercle caches the answer is
+  the Cercle's choice, and today it does.** Its `syncCanaryMembership` maps the reply onto
+  `users.id_membership` and re-runs only when the 5-minute session JWT is refreshed, so an active
+  user costs ~1 request per 5 minutes. With the 20 req/min throttle counted per source IP, and the
+  Cercle being one IP, that puts the ceiling near 100 concurrent users. Past it the throttle answers
+  429, which the Cercle treats like any fetch failure: it falls back to the stored membership, so
+  the bar keeps working on slightly stale tiers rather than locking everyone out - except for a user
+  logging in for the FIRST time, who has nothing stored to fall back on.
 
 Setting both directions up on the real hosts, and the checks that prove the link works there, are in
 [../PROD-TEST-CERCLE.md](../PROD-TEST-CERCLE.md).
