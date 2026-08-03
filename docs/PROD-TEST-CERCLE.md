@@ -297,6 +297,7 @@ rolled back - the replay above returned `balance: 2000` and, with the inflated a
 `balance: 1001499`, while the stored balance never left 1500. The database is right and the credit
 is safe; only the reported number is fiction. Canari checks the status code and ignores the body,
 so nothing downstream is wrong today - but do not build anything on that field.
+*Fix written 2026-08-03 on the Cercle branch `fix/audit-2026-08-canari-and-session`, awaiting Aurel.*
 
 ### V6 - Ledger integrity
 
@@ -324,6 +325,11 @@ away from its last `balance_after`.
 That matters more than it looks: **this check cannot be used as an alarm while it is permanently
 red.** Either give the seed rows an opening `topup` entry or exclude them explicitly - a monitor
 nobody can act on is a monitor nobody reads.
+
+*Fix written 2026-08-03 on the Cercle branch `fix/audit-2026-08-canari-and-session`, awaiting Aurel:
+migration `07` writes one opening entry per unexplained balance (it never touches `users.balance`),
+and `bun run db:check` is the walk above, packaged. Once merged and migrated, this section becomes
+`ssh cercle` + `bun run db:check` and the red is actionable.*
 
 Note the ledger has no reversal movement, so **a drink charged to the wrong account cannot be
 undone today**. Say so to the bar staff before the first real perm.
