@@ -323,7 +323,10 @@ address `127.0.0.1`.
   cotisant reporting `isCotisant:false` until the `isActive` filter was dropped the same day.
   **The product now EXISTS** (`29ba29fe`, 5 EUR fixed, `webhookUrl=https://cercle.canari-emse.fr/api/canari/topup`,
   secret set) and the first test top-up ran: dispatch fine, **404 from the Cercle** because the route
-  does not exist there yet (see WP-CERCLE-1). Two prod tiers still carry the WRONG keys for the
+  does not exist there yet (see WP-CERCLE-1). The SECOND press then failed with "You have already
+  purchased this product" - the prod row predates the repeat-purchase forcing - fixed by waiving the
+  caps on TYPE in `assertCanPurchase`; **needs a deploy** before the button works twice.
+  Two prod tiers still carry the WRONG keys for the
   Cercle - base + `alcool`, where it only understands `avec-alcool`/`sans-alcool`; rename the
   `variantKey`s (editing migrates the holders' tags, deleting orphans them).
   **Owed: run a deploy so it reaches `infrastructure/.env`** (verify:
@@ -576,6 +579,8 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - A tag revoke MUST be scoped to `issuingAssocId`, or it is a cross-tenant IDOR.
 - `balance_topup` is repeatable BY DEFINITION and cannot run out - the product defaults
   (`allowRepeatPurchase: false`, purchase caps) silently cap every user at one recharge for life.
+  Forcing them at write repairs nothing already stored, so the TYPE decides in `assertCanPurchase`.
+  A column that cannot mean anything for a type must not be READ for it, only kept tidy.
 - A product entity carries `webhookSecret`: `toSafeProduct` is the ONE seam that strips it, and
   `/products/all` answers every logged-in user (same lesson as `Channel.masterSecret`).
 - A delivery id is not an authorization: retry/delete resolve the product through `associationId`

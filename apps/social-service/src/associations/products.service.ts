@@ -69,7 +69,9 @@ export class ProductsService {
    * carries the key, and `/products/all` answers every logged-in user. `webhookUrl` stays: it is a
    * public endpoint, and the admin page has to show what is configured.
    */
-  private toSafeProduct<T extends AssociationProduct>(product: T): T & { webhookConfigured: boolean } {
+  private toSafeProduct<T extends AssociationProduct>(
+    product: T
+  ): T & { webhookConfigured: boolean } {
     return { ...product, webhookSecret: null, webhookConfigured: !!product.webhookSecret };
   }
 
@@ -910,6 +912,17 @@ export class ProductsService {
           ? 'This product is reserved to users holding one of the required tags'
           : "This product is reserved to the association's cotisants"
       );
+    }
+
+    // A balance top-up is a recharge of an account on another site: repeatable by definition and
+    // impossible to exhaust. The three shop columns below are meaningless for that type, and a row
+    // created before `create`/`update` started forcing them still carries the restrictive defaults
+    // - so the TYPE decides here, not the stored data.
+    if (product.type === 'balance_topup') {
+      this.logger.debug(
+        `[SHOP] purchase limits waived: balance_topup product=${product.id.slice(0, 8)}`
+      );
+      return;
     }
 
     const paidCount = await this.purchaseRecordService.countPaidByUserAndProduct(

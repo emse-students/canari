@@ -635,6 +635,25 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     });
   });
 
+  describe('assertCanPurchase: a balance top-up is never capped', () => {
+    it('lets a top-up be re-bought even when the stored row says otherwise', async () => {
+      const { service, purchaseRecordService } = makeService();
+      // A row created before the forcing landed: repeat purchase off, both caps already reached.
+      purchaseRecordService.countPaidByUserAndProduct.mockResolvedValue(3);
+      purchaseRecordService.countPaidByProduct.mockResolvedValue(3);
+      const topup = product({
+        type: 'balance_topup',
+        allowRepeatPurchase: false,
+        maxPurchasesPerUser: 1,
+        maxPurchasesTotal: 1,
+      });
+
+      await expect(
+        (service as any).assertCanPurchase(topup, 'user1', true)
+      ).resolves.toBeUndefined();
+    });
+  });
+
   describe('assertCanPurchase: same-tier rebuy blocked / sibling switch allowed (WP-COT-2)', () => {
     it('blocks re-buying the same tier while its tag is still active', async () => {
       const { service, assoRepo, purchaseRecordService, userTagService } = makeService();
