@@ -278,9 +278,15 @@ product's `webhookUrl`:
   `webhook_deliveries` (`status: pending|delivered|failed`) for admin visibility and manual retry
   from `/admin/cercle`.
 
-A `balance_topup` product is always `allowRepeatPurchase: true` (forced on create AND on update): a
-recharge is repeatable by nature, and the default `false` made `assertCanPurchase` refuse every
+A `balance_topup` product is always `allowRepeatPurchase: true` with both purchase caps cleared
+(forced on create AND on update): a recharge is repeatable by nature and credits an account on
+another site, so it can never run out. The default `false` made `assertCanPurchase` refuse every
 top-up after a user's first one.
+
+**`webhookSecret` never leaves the server.** Products are returned through `toSafeProduct`, which
+nulls it and adds `webhookConfigured: boolean`. It had no projection at all before: `/products/all`
+answers every logged-in user, and a signature is worthless once its key is in a JSON response.
+`webhookUrl` is returned - it is the Cercle's public endpoint, and the admin form must show it.
 
 **Testing the link without paying (`simulateCercleTopup`)**: each product on `/admin/cercle` carries
 a test button that credits the CALLING admin's own Cercle account for 5 EUR through the production
@@ -361,6 +367,8 @@ by another - a cross-tenant IDOR (WP-COT-9).
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for a product |
 | POST | `/api/associations/:id/products/:productId/grant` | Manual purchase + tag grant (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/products/:productId/simulate-topup` | Test top-up for the caller, no Stripe charge (global admin) |
+| POST | `/api/associations/:id/webhook-failures/:deliveryId/retry` | Re-fire a failed Cercle delivery (`MANAGE_PRODUCTS`, scoped to `:id`) |
+| DELETE | `/api/associations/:id/webhook-failures/:deliveryId` | Drop a failed delivery settled by hand (`MANAGE_PRODUCTS`) |
 | POST | `/api/forms/:id/submit` | Submit a form; applies member pricing, may grant a tag |
 | GET | `/api/public/cotisant-status` | Cercle-facing live cotisant status by `assoSlug`+`sub` (`X-Api-Key`, not `MANAGE_*`) |
 

@@ -1088,7 +1088,13 @@ export interface AssociationProduct {
   allowCustomAmount: boolean;
   customAmountMinCents: number | null;
   customAmountMaxCents: number | null;
-  /** webhookUrl and webhookSecret are never returned by the API. */
+  /** Cercle webhook endpoint (`balance_topup`); not a secret, so it is returned as configured. */
+  webhookUrl: string | null;
+  /**
+   * Whether an HMAC signing secret is set. The secret ITSELF is never returned - the server
+   * replaces it with this flag, so the admin page can say "configured" without holding the key.
+   */
+  webhookConfigured: boolean;
   isActive: boolean;
   sortOrder: number;
   allowRepeatPurchase: boolean;
@@ -1461,6 +1467,20 @@ export async function retryWebhookDelivery(
   await request<unknown>(
     `/api/associations/${encodeURIComponent(associationId)}/webhook-failures/${encodeURIComponent(deliveryId)}/retry`,
     { method: 'POST' }
+  );
+}
+
+/**
+ * Drops a failed Cercle webhook delivery from the list (requires MANAGE_PRODUCTS). For a top-up
+ * already settled by hand on the Cercle side, where retrying would credit it a second time.
+ */
+export async function deleteWebhookDelivery(
+  associationId: string,
+  deliveryId: string
+): Promise<void> {
+  await request<unknown>(
+    `/api/associations/${encodeURIComponent(associationId)}/webhook-failures/${encodeURIComponent(deliveryId)}`,
+    { method: 'DELETE' }
   );
 }
 

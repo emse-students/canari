@@ -1094,8 +1094,19 @@ export class AssociationsController {
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
   @Post(':id/webhook-failures/:deliveryId/retry')
-  retryWebhookDelivery(@Param('deliveryId') deliveryId: string) {
-    return this.productsService.retryWebhookDelivery(deliveryId);
+  retryWebhookDelivery(@Param('id') id: string, @Param('deliveryId') deliveryId: string) {
+    return this.productsService.retryWebhookDelivery(id, deliveryId);
+  }
+
+  /**
+   * Drops a failed Cercle webhook delivery from the audit list - for a top-up already settled by
+   * hand on the Cercle side, where a retry would credit it twice. Requires MANAGE_PRODUCTS flag.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Delete(':id/webhook-failures/:deliveryId')
+  deleteWebhookDelivery(@Param('id') id: string, @Param('deliveryId') deliveryId: string) {
+    return this.productsService.deleteWebhookDelivery(id, deliveryId);
   }
 
   // ── Payment delegation (parent-association Stripe routing) ─────────────────

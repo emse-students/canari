@@ -13,7 +13,8 @@
 - CHANGELOG: When adding features, fixing bugs, or making breaking changes, add an entry under `[Unreleased]` in `CHANGELOG.md` (Keep a Changelog format). Move to a version section on release.
 - WIKI IS PREFERRED: Always search `docs/wiki/` before reading source code. Update the relevant wiki page alongside code changes — stale wiki is worse than no wiki. Cross-link freely between pages.
 - SERVICE READMES: Each `apps/*/README.md` should stay synced with its wiki counterpart. If you expand the wiki page, reflect the summary in the README.
-- PROD ACCESS: `ssh canari` or `ssh mitv`.
+- PROD ACCESS: `ssh canari`, `ssh mitv`, `ssh cercle` (Le Cercle, via ProxyJump canari; key installed
+  2026-08-03, no password needed). Postgres db is `auth_db`, not `canari`.
 - CLASSIFIER DOWN: End of session signal. Stop ASAP, prepare compaction + easy resume for next session.
 
 ## **ARCHITECTURE & CONSTRAINTS**
@@ -573,8 +574,12 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 
 - The XOR has ONE implementation, `UserTagService.revokeSiblingTierTags`.
 - A tag revoke MUST be scoped to `issuingAssocId`, or it is a cross-tenant IDOR.
-- `balance_topup` is repeatable BY DEFINITION - the product default `allowRepeatPurchase: false`
-  silently caps every user at one recharge for life.
+- `balance_topup` is repeatable BY DEFINITION and cannot run out - the product defaults
+  (`allowRepeatPurchase: false`, purchase caps) silently cap every user at one recharge for life.
+- A product entity carries `webhookSecret`: `toSafeProduct` is the ONE seam that strips it, and
+  `/products/all` answers every logged-in user (same lesson as `Channel.masterSecret`).
+- A delivery id is not an authorization: retry/delete resolve the product through `associationId`
+  too, or an admin of any association acts on another's top-up.
 - `variantKey` is editable and the tags follow; convert rather than delete a tier with cotisants.
 - Named tiers sort before the base tier, so a legacy base-tag holder is not reported as `tier: null`.
 - Cotisant status is server-authoritative - no client-side tag derivation.

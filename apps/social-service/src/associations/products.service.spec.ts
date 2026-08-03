@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { of } from 'rxjs';
 import { Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -35,6 +35,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         return Promise.resolve(x);
       }),
       findOne: jest.fn(() => Promise.resolve(lastDelivery)),
+      remove: jest.fn(() => Promise.resolve()),
     };
     const assoRepo = {
       findOne: jest.fn(),
@@ -533,6 +534,54 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(result.attemptCount).toBe(3);
       expect(result.lastError).toContain('401');
       jest.restoreAllMocks();
+    });
+  });
+
+  describe('webhook secret exposure and failed-delivery cleanup', () => {
+    it('never returns the webhook secret, only whether one is set', async () => {
+      const { service, productRepo } = makeService();
+      productRepo.find.mockResolvedValue([
+        product({ type: 'balance_topup', webhookSecret: 'shhh', webhookUrl: 'https://x/y' }),
+      ]);
+
+      const [listed] = await service.listAllByAssoc('asso1');
+      expect(listed.webhookSecret).toBeNull();
+      expect(listed.webhookConfigured).toBe(true);
+      // The URL is the Cercle's public endpoint, and the admin page has to show it.
+      expect(listed.webhookUrl).toBe('https://x/y');
+    });
+
+    it('refuses to delete a delivery belonging to another association', async () => {
+      const { service, productRepo, deliveryRepo } = makeService();
+      deliveryRepo.findOne.mockResolvedValue({ id: 'd1', productId: 'prod1', status: 'failed' });
+      // The product does not resolve under the caller's association.
+      productRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.deleteWebhookDelivery('other-asso', 'd1')).rejects.toThrow(
+        NotFoundException
+      );
+      expect(deliveryRepo.remove).not.toHaveBeenCalled();
+    });
+
+    it('refuses to delete a delivered row, which records a real credit', async () => {
+      const { service, productRepo, deliveryRepo } = makeService();
+      deliveryRepo.findOne.mockResolvedValue({ id: 'd1', productId: 'prod1', status: 'delivered' });
+      productRepo.findOne.mockResolvedValue(product({ type: 'balance_topup' }));
+
+      await expect(service.deleteWebhookDelivery('asso1', 'd1')).rejects.toThrow(
+        BadRequestException
+      );
+      expect(deliveryRepo.remove).not.toHaveBeenCalled();
+    });
+
+    it('deletes a failed delivery of its own association', async () => {
+      const { service, productRepo, deliveryRepo } = makeService();
+      const row = { id: 'd1', productId: 'prod1', status: 'failed', paymentIntentId: 'pi_x' };
+      deliveryRepo.findOne.mockResolvedValue(row);
+      productRepo.findOne.mockResolvedValue(product({ type: 'balance_topup' }));
+
+      await service.deleteWebhookDelivery('asso1', 'd1');
+      expect(deliveryRepo.remove).toHaveBeenCalledWith(row);
     });
   });
 

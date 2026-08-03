@@ -38,6 +38,13 @@ export type ShopProduct = AssociationProduct & {
   viewerActiveTier: string | null;
 };
 
+/**
+ * A product as returned to a client: the Cercle HMAC key is replaced by a boolean saying whether
+ * one is set. The admin page needs to know that a webhook is configured; nobody outside this
+ * service needs the key itself.
+ */
+export type SafeProduct = AssociationProduct & { webhookConfigured: boolean };
+
 /** Boutique CRUD, Stripe Checkout creation, and Cercle webhook dispatch for association products. */
 @Injectable()
 export class ProductsService {
@@ -55,6 +62,16 @@ export class ProductsService {
     private readonly userTagService: UserTagService,
     private readonly purchaseRecordService: PurchaseRecordService
   ) {}
+
+  /**
+   * Strips the Cercle HMAC key from a product before it leaves the service. `webhookSecret` is
+   * shared with the Cercle alone - the signature it produces is worth nothing once a JSON response
+   * carries the key, and `/products/all` answers every logged-in user. `webhookUrl` stays: it is a
+   * public endpoint, and the admin page has to show what is configured.
+   */
+  private toSafeProduct<T extends AssociationProduct>(product: T): T & { webhookConfigured: boolean } {
+    return { ...product, webhookSecret: null, webhookConfigured: !!product.webhookSecret };
+  }
 
   /**
    * Resolves the Stripe target for an association, following an approved parent-payment delegation
@@ -84,11 +101,11 @@ export class ProductsService {
     ]);
     return products.map((p) => {
       const status = statusByAssoc.get(p.associationId);
-      return {
+      return this.toSafeProduct({
         ...p,
         viewerIsCotisant: status?.isCotisant ?? false,
         viewerActiveTier: status?.activeTier ?? null,
-      };
+      });
     });
   }
 
@@ -148,19 +165,21 @@ export class ProductsService {
   }
 
   /** Returns active products for a single association ordered by sortOrder. */
-  async listByAssoc(associationId: string): Promise<AssociationProduct[]> {
-    return this.productRepo.find({
+  async listByAssoc(associationId: string): Promise<SafeProduct[]> {
+    const products = await this.productRepo.find({
       where: { associationId, isActive: true },
       order: { sortOrder: 'ASC', createdAt: 'ASC' },
     });
+    return products.map((p) => this.toSafeProduct(p));
   }
 
   /** Returns all products for admin (including inactive), ordered by sortOrder. */
-  async listAllByAssoc(associationId: string): Promise<AssociationProduct[]> {
-    return this.productRepo.find({
+  async listAllByAssoc(associationId: string): Promise<SafeProduct[]> {
+    const products = await this.productRepo.find({
       where: { associationId },
       order: { sortOrder: 'ASC', createdAt: 'ASC' },
     });
+    return products.map((p) => this.toSafeProduct(p));
   }
 
   /**
@@ -173,7 +192,7 @@ export class ProductsService {
     associationId: string,
     dto: CreateProductDto,
     isGlobalAdmin: boolean
-  ): Promise<AssociationProduct> {
+  ): Promise<SafeProduct> {
     this.logger.debug(
       `[SHOP] create product: association=${associationId.slice(0, 8)} type=${dto.type} isGlobalAdmin=${isGlobalAdmin}`
     );
@@ -228,15 +247,18 @@ export class ProductsService {
       associationId,
       grantedTagName,
       tagExpiresAt,
-      // A balance top-up is repeatable by definition - the default `false` would let a user
-      // recharge exactly once, ever, and `assertCanPurchase` refuses every recharge after it.
-      allowRepeatPurchase: dto.type === 'balance_topup' ? true : rest.allowRepeatPurchase,
+      // A balance top-up is repeatable by definition and cannot run out - it credits an account on
+      // another site. The default `allowRepeatPurchase: false` would cap every user at one recharge
+      // for life, and a purchase cap would put a top-up "out of stock".
+      ...(dto.type === 'balance_topup'
+        ? { allowRepeatPurchase: true, maxPurchasesPerUser: null, maxPurchasesTotal: null }
+        : { allowRepeatPurchase: rest.allowRepeatPurchase }),
       webhookUrl: webhookUrl ?? null,
       webhookSecret: webhookSecret ?? null,
       // Product is inactive until payments can be taken (own or delegated Stripe account ready).
       isActive: paymentTarget.ready ? (dto.isActive ?? true) : false,
     });
-    return this.productRepo.save(product);
+    return this.toSafeProduct(await this.productRepo.save(product));
   }
 
   /**
@@ -250,7 +272,7 @@ export class ProductsService {
     productId: string,
     dto: UpdateProductDto,
     isGlobalAdmin: boolean
-  ): Promise<AssociationProduct> {
+  ): Promise<SafeProduct> {
     const product = await this.productRepo.findOne({
       where: { id: productId, associationId },
     });
@@ -286,9 +308,13 @@ export class ProductsService {
 
     Object.assign(product, dto, { currency: 'eur' });
     // Same rule as on creation, and it also repairs a top-up product created before it existed:
-    // saving the product from /admin/cercle is enough to make it repeatable again.
-    if (product.type === 'balance_topup') product.allowRepeatPurchase = true;
-    if (!retagging) return this.productRepo.save(product);
+    // saving the product from /admin/cercle is enough to make it repeatable and unlimited again.
+    if (product.type === 'balance_topup') {
+      product.allowRepeatPurchase = true;
+      product.maxPurchasesPerUser = null;
+      product.maxPurchasesTotal = null;
+    }
+    if (!retagging) return this.toSafeProduct(await this.productRepo.save(product));
 
     product.grantedTagName = retagging.newTagName;
     product.tagExpiresAt = retagging.newExpiresAt;
@@ -308,7 +334,7 @@ export class ProductsService {
       this.logger.log(
         `[COTISATION] retagged tier ${product.id.slice(0, 8)}: "${retagging.oldTagName}" -> "${retagging.newTagName}" (${result.affected ?? 0} cotisant tag(s) migrated)`
       );
-      return saved;
+      return this.toSafeProduct(saved);
     });
   }
 
@@ -1301,13 +1327,20 @@ export class ProductsService {
       .getMany();
   }
 
-  /** Retries a failed webhook delivery once. */
-  async retryWebhookDelivery(deliveryId: string): Promise<void> {
+  /**
+   * Retries a failed webhook delivery once. The product is resolved through `associationId` as
+   * well, not by the delivery id alone: `MANAGE_PRODUCTS` is granted per association, so an
+   * unscoped lookup would let an admin of any association re-fire another one's top-up.
+   */
+  async retryWebhookDelivery(associationId: string, deliveryId: string): Promise<void> {
     const delivery = await this.deliveryRepo.findOne({ where: { id: deliveryId } });
     if (!delivery) throw new NotFoundException('Webhook delivery not found');
 
-    const product = await this.productRepo.findOne({ where: { id: delivery.productId } });
-    if (!product || !product.webhookUrl || !product.webhookSecret) {
+    const product = await this.productRepo.findOne({
+      where: { id: delivery.productId, associationId },
+    });
+    if (!product) throw new NotFoundException('Webhook delivery not found');
+    if (!product.webhookUrl || !product.webhookSecret) {
       throw new BadRequestException('Product webhook not configured');
     }
 
@@ -1316,6 +1349,31 @@ export class ProductsService {
       delivery.userId,
       delivery.amountCents,
       delivery.paymentIntentId
+    );
+  }
+
+  /**
+   * Drops a failed delivery from the audit list. The case this exists for: the top-up was settled
+   * by hand on the Cercle side, so retrying would credit it twice and the row has nothing left to
+   * say. Scoped to the association like the retry, and refuses anything but a `failed` row - a
+   * delivered one is the record of a credit that really happened.
+   */
+  async deleteWebhookDelivery(associationId: string, deliveryId: string): Promise<void> {
+    const delivery = await this.deliveryRepo.findOne({ where: { id: deliveryId } });
+    if (!delivery) throw new NotFoundException('Webhook delivery not found');
+
+    const product = await this.productRepo.findOne({
+      where: { id: delivery.productId, associationId },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundException('Webhook delivery not found');
+    if (delivery.status !== 'failed') {
+      throw new BadRequestException('Only a failed delivery can be deleted');
+    }
+
+    await this.deliveryRepo.remove(delivery);
+    this.logger.log(
+      `[CERCLE] deleted failed delivery ${deliveryId.slice(0, 8)} intent=${delivery.paymentIntentId}`
     );
   }
 }

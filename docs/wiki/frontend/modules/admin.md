@@ -25,9 +25,14 @@ All admin routes check `isGlobalAdmin()` (derived from `X-Global-Admin` header i
 
 ## Cercle top-ups (`/admin/cercle`)
 
-`balance_topup` (Cercle recharge) products are managed here, not in an association's boutique. The
-page has a beneficiary-association selector (a global admin recharges on behalf of an association),
-creates/edits the top-up products, and retries failed Cercle webhook deliveries. Creating or
+The Cercle recharge is configured here, not in an association's boutique. The page is a
+beneficiary-association selector (Le Cercle preselected by slug) over **one** `balance_topup`
+product: amount bounds, webhook URL, webhook secret. It is not a product catalogue - a recharge
+exists once per beneficiary, so the shape is imposed rather than offered: the buyer picks the
+amount (`allowCustomAmount`, no fixed price) and the server forces `allowRepeatPurchase` with both
+purchase caps cleared, a top-up being repeatable by nature and impossible to exhaust. Failed
+webhook deliveries are listed below, each retryable **or deletable** - deletion is for a top-up
+already settled by hand on the Cercle side, where a retry would credit it twice. Creating or
 updating a `balance_topup` product requires a **global admin** - enforced server-side in
 `products.service.ts` (D7), not merely by this route's `isGlobalAdmin()` guard. See
 [Cotisations](../../cotisations.md) for the product model.

@@ -7,9 +7,9 @@
     listAssociationProductsForManage,
     createProduct,
     updateProduct,
-    deleteProduct,
     listWebhookFailures,
     retryWebhookDelivery,
+    deleteWebhookDelivery,
     simulateCercleTopup,
     type Association,
     type AssociationProduct,
@@ -19,53 +19,48 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
     Wallet,
-    Plus,
-    Trash2,
-    ChevronDown,
     AlertTriangle,
     RefreshCw,
     FlaskConical,
     CheckCircle2,
     XCircle,
+    Trash2,
   } from '@lucide/svelte';
-  import Textarea from '$lib/components/ui/Textarea.svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
+  /** Beneficiary preselected on arrival: in practice a Cercle balance belongs to Le Cercle. */
+  const CERCLE_SLUG = 'cercle';
+  /** Amount the test button asks for. A recharge is priced by the buyer, so this is only the test's. */
+  const TEST_TOPUP_CENTS = 500;
+
   let ready = $state(false);
+  let loading = $state(true);
+  let error = $state('');
 
   let associations = $state<Association[]>([]);
-  let associationsLoading = $state(true);
   let selectedAssoId = $state('');
-
-  let products = $state<AssociationProduct[]>([]);
+  const asso = $derived(associations.find((a) => a.id === selectedAssoId) ?? null);
+  /** The single `balance_topup` product. Null until it has been configured once. */
+  let product = $state<AssociationProduct | null>(null);
   let webhookFailures = $state<WebhookDelivery[]>([]);
-  let productsLoading = $state(false);
-  let error = $state('');
-  let retryingDelivery = $state<string | null>(null);
 
-  let showProductForm = $state(false);
-  let savingProduct = $state(false);
-  let newName = $state('');
-  let newDescription = $state('');
-  let newAmountCents = $state<number | ''>('');
-  let newAllowCustom = $state(false);
-  let newMinCents = $state<number | ''>('');
-  let newMaxCents = $state<number | ''>('');
-  let newWebhookUrl = $state('');
-  let newWebhookSecret = $state('');
+  // Configuration form. The secret is write-only: the server never returns it, so an empty field
+  // means "keep the current one" rather than "erase it".
+  let minEuros = $state<number | ''>('');
+  let maxEuros = $state<number | ''>('');
+  let webhookUrl = $state('');
+  let webhookSecret = $state('');
+  let saving = $state(false);
+  let saved = $state(false);
 
-  let expandedProductId = $state<string | null>(null);
-  let savingProductId = $state<string | null>(null);
-
-  /** Amount requested by the test button. A fixed-price product still credits its own price. */
-  const TEST_TOPUP_CENTS = 500;
-  let testingProductId = $state<string | null>(null);
+  let testing = $state(false);
   let testResult = $state<CercleTopupSimulation | null>(null);
+  let retryingDelivery = $state<string | null>(null);
+  let deletingDelivery = $state<string | null>(null);
 
-  /** Only `balance_topup` (Cercle recharge) products are managed on this page. */
-  const cercleProducts = $derived(products.filter((p) => p.type === 'balance_topup'));
+  const isConfigured = $derived(!!product?.webhookUrl && !!product?.webhookConfigured);
 
   onMount(() => {
     if (!isGlobalAdmin()) {
@@ -74,178 +69,122 @@
       return;
     }
     ready = true;
-    void loadAssociations();
+    void load();
   });
 
-  async function loadAssociations() {
-    console.log('[ADMIN][CERCLE] loading associations for beneficiary selector');
-    associationsLoading = true;
+  /** Loads the beneficiary list and preselects Le Cercle, which is what this page is for. */
+  async function load() {
+    loading = true;
     error = '';
+    console.log('[ADMIN][CERCLE] loading beneficiary associations');
     try {
       associations = (await listAssociations('association')).sort((a, b) =>
         a.name.localeCompare(b.name)
       );
+      selectedAssoId = associations.find((a) => a.slug === CERCLE_SLUG)?.id ?? '';
+      if (selectedAssoId) await loadProduct();
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to load associations', e);
       error = e instanceof Error ? e.message : m.admin_cercle_load_assoc_error();
     } finally {
-      associationsLoading = false;
+      loading = false;
     }
   }
 
-  async function handleSelectAsso() {
-    resetProductForm();
-    expandedProductId = null;
-    if (!selectedAssoId) {
-      products = [];
+  /** Loads the selected association's single top-up product and its failed deliveries. */
+  async function loadProduct() {
+    if (!asso) {
+      product = null;
       webhookFailures = [];
       return;
     }
-    await loadProducts();
-  }
-
-  async function loadProducts() {
-    if (!selectedAssoId) return;
-    console.log(
-      `[ADMIN][CERCLE] loading products/webhook-failures for association=${selectedAssoId}`
-    );
-    productsLoading = true;
     error = '';
+    testResult = null;
+    saved = false;
+    console.log(`[ADMIN][CERCLE] loading top-up product for association=${asso.id}`);
     try {
-      const [prods, failures] = await Promise.all([
-        listAssociationProductsForManage(selectedAssoId),
-        listWebhookFailures(selectedAssoId),
+      const [products, failures] = await Promise.all([
+        listAssociationProductsForManage(asso.id),
+        listWebhookFailures(asso.id),
       ]);
-      products = prods;
+      product = products.find((p) => p.type === 'balance_topup') ?? null;
       webhookFailures = failures;
-    } catch (e) {
-      console.error('[ADMIN][CERCLE] failed to load products/webhook-failures', e);
-      error = e instanceof Error ? e.message : m.admin_cercle_load_error();
-    } finally {
-      productsLoading = false;
-    }
-  }
-
-  function resetProductForm() {
-    newName = '';
-    newDescription = '';
-    newAmountCents = '';
-    newAllowCustom = false;
-    newMinCents = '';
-    newMaxCents = '';
-    newWebhookUrl = '';
-    newWebhookSecret = '';
-    showProductForm = false;
-  }
-
-  async function handleCreateProduct() {
-    if (!selectedAssoId || !newName.trim()) return;
-    savingProduct = true;
-    error = '';
-    try {
+      syncFormFromProduct();
       console.log(
-        `[ADMIN][CERCLE] creating balance_topup product for association=${selectedAssoId}`
-      );
-      await createProduct(selectedAssoId, {
-        name: newName.trim(),
-        description: newDescription.trim() || undefined,
-        type: 'balance_topup',
-        amountCents: newAmountCents !== '' ? Math.round(Number(newAmountCents) * 100) : undefined,
-        allowCustomAmount: newAllowCustom,
-        customAmountMinCents:
-          newAllowCustom && newMinCents !== '' ? Math.round(Number(newMinCents) * 100) : undefined,
-        customAmountMaxCents:
-          newAllowCustom && newMaxCents !== '' ? Math.round(Number(newMaxCents) * 100) : undefined,
-        webhookUrl: newWebhookUrl.trim() || undefined,
-        webhookSecret: newWebhookSecret.trim() || undefined,
-      });
-      resetProductForm();
-      await loadProducts();
-    } catch (e) {
-      console.error('[ADMIN][CERCLE] failed to create balance_topup product', e);
-      error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
-    } finally {
-      savingProduct = false;
-    }
-  }
-
-  function toggleEdit(product: AssociationProduct) {
-    expandedProductId = expandedProductId === product.id ? null : product.id;
-  }
-
-  async function handleToggleActive(product: AssociationProduct) {
-    error = '';
-    try {
-      await updateProduct(selectedAssoId, product.id, { isActive: !product.isActive });
-      products = products.map((p) =>
-        p.id === product.id ? { ...p, isActive: !product.isActive } : p
+        `[ADMIN][CERCLE] loaded: product=${product?.id ?? 'none'} failures=${failures.length}`
       );
     } catch (e) {
-      console.error('[ADMIN][CERCLE] failed to toggle product active state', e);
-      error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
+      console.error('[ADMIN][CERCLE] failed to load the top-up product', e);
+      error = e instanceof Error ? e.message : m.admin_cercle_load_error();
     }
   }
 
-  async function handleSaveProductEdit(product: AssociationProduct, form: HTMLFormElement) {
-    const fd = new FormData(form);
-    savingProductId = product.id;
+  function syncFormFromProduct() {
+    minEuros = product?.customAmountMinCents != null ? product.customAmountMinCents / 100 : '';
+    maxEuros = product?.customAmountMaxCents != null ? product.customAmountMaxCents / 100 : '';
+    webhookUrl = product?.webhookUrl ?? '';
+    webhookSecret = '';
+  }
+
+  /**
+   * Creates or updates THE top-up product. The shape is fixed by what a recharge is: the buyer
+   * chooses the amount (`allowCustomAmount`, no fixed price), and the server forces it repeatable
+   * and uncapped - so this form only ever asks for the bounds and the webhook.
+   */
+  async function handleSave() {
+    if (!asso) return;
+    saving = true;
+    saved = false;
     error = '';
+    const payload = {
+      allowCustomAmount: true,
+      customAmountMinCents: minEuros !== '' ? Math.round(Number(minEuros) * 100) : null,
+      customAmountMaxCents: maxEuros !== '' ? Math.round(Number(maxEuros) * 100) : null,
+      ...(webhookUrl.trim() ? { webhookUrl: webhookUrl.trim() } : {}),
+      ...(webhookSecret.trim() ? { webhookSecret: webhookSecret.trim() } : {}),
+    };
     try {
-      const name = String(fd.get('name') ?? '').trim();
-      const description = String(fd.get('description') ?? '').trim();
-      const amountRaw = String(fd.get('amountEuros') ?? '').trim();
-      const allowCustom = fd.get('allowCustomAmount') === 'on';
-      const minRaw = String(fd.get('minEuros') ?? '').trim();
-      const maxRaw = String(fd.get('maxEuros') ?? '').trim();
-      const webhookUrl = String(fd.get('webhookUrl') ?? '').trim();
-      const webhookSecret = String(fd.get('webhookSecret') ?? '').trim();
-      console.log(`[ADMIN][CERCLE] updating balance_topup product=${product.id}`);
-      const updated = await updateProduct(selectedAssoId, product.id, {
-        name: name || undefined,
-        description: description || undefined,
-        amountCents: amountRaw ? Math.round(Number(amountRaw) * 100) : null,
-        allowCustomAmount: allowCustom,
-        customAmountMinCents: allowCustom && minRaw ? Math.round(Number(minRaw) * 100) : null,
-        customAmountMaxCents: allowCustom && maxRaw ? Math.round(Number(maxRaw) * 100) : null,
-        // webhookUrl/webhookSecret are write-only (never returned by the API) - only
-        // sent when the admin actually typed a new value, so a blank field never
-        // erases the existing configuration.
-        ...(webhookUrl ? { webhookUrl } : {}),
-        ...(webhookSecret ? { webhookSecret } : {}),
-      });
-      products = products.map((p) => (p.id === product.id ? updated : p));
-      expandedProductId = null;
+      if (product) {
+        console.log(`[ADMIN][CERCLE] updating top-up product=${product.id}`);
+        product = await updateProduct(asso.id, product.id, { ...payload, amountCents: null });
+      } else {
+        console.log('[ADMIN][CERCLE] creating the top-up product');
+        product = await createProduct(asso.id, {
+          name: m.admin_cercle_product_name(),
+          type: 'balance_topup',
+          ...payload,
+          customAmountMinCents: payload.customAmountMinCents ?? undefined,
+          customAmountMaxCents: payload.customAmountMaxCents ?? undefined,
+        });
+      }
+      syncFormFromProduct();
+      saved = true;
     } catch (e) {
-      console.error('[ADMIN][CERCLE] failed to update balance_topup product', e);
+      console.error('[ADMIN][CERCLE] failed to save the top-up product', e);
       error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
     } finally {
-      savingProductId = null;
+      saving = false;
     }
   }
 
-  async function handleDeleteProduct(product: AssociationProduct) {
-    if (
-      !(await showConfirm(m.admin_cercle_delete_confirm({ name: product.name }), {
-        danger: true,
-        confirmLabel: m.common_delete_button(),
-      }))
-    )
-      return;
+  async function handleToggleActive() {
+    if (!asso || !product) return;
+    error = '';
     try {
-      await deleteProduct(selectedAssoId, product.id);
-      products = products.filter((p) => p.id !== product.id);
+      console.log(`[ADMIN][CERCLE] toggling active -> ${!product.isActive}`);
+      product = await updateProduct(asso.id, product.id, { isActive: !product.isActive });
     } catch (e) {
-      console.error('[ADMIN][CERCLE] failed to delete balance_topup product', e);
+      console.error('[ADMIN][CERCLE] failed to toggle the product', e);
       error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
     }
   }
 
   /**
-   * Runs the production top-up path for the current admin without any Stripe charge: same
-   * purchase validation, same signed webhook to the Cercle, same audit and accounting rows.
-   * Reloads the products/failures afterwards so a failed delivery lands in the retry list.
+   * Runs the production top-up path for the current admin with no Stripe charge: same purchase
+   * checks, same signed webhook to the Cercle, same audit and accounting rows.
    */
-  async function handleTestTopup(product: AssociationProduct) {
+  async function handleTestTopup() {
+    if (!asso || !product) return;
     if (
       !(await showConfirm(
         m.admin_cercle_test_confirm({ amount: (TEST_TOPUP_CENTS / 100).toFixed(2) }),
@@ -254,34 +193,61 @@
     )
       return;
     console.log(`[ADMIN][CERCLE] running test top-up on product=${product.id}`);
-    testingProductId = product.id;
+    testing = true;
     testResult = null;
     error = '';
     try {
-      testResult = await simulateCercleTopup(selectedAssoId, product.id, TEST_TOPUP_CENTS);
+      testResult = await simulateCercleTopup(asso.id, product.id, TEST_TOPUP_CENTS);
       console.log(
         `[ADMIN][CERCLE] test top-up finished: status=${testResult.status} intent=${testResult.paymentIntentId}`
       );
-      await loadProducts();
+      webhookFailures = await listWebhookFailures(asso.id);
     } catch (e) {
       console.error('[ADMIN][CERCLE] test top-up failed', e);
       error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
     } finally {
-      testingProductId = null;
+      testing = false;
     }
   }
 
   async function handleRetryDelivery(delivery: WebhookDelivery) {
+    if (!asso) return;
     retryingDelivery = delivery.id;
     error = '';
     try {
-      await retryWebhookDelivery(selectedAssoId, delivery.id);
-      await loadProducts();
+      await retryWebhookDelivery(asso.id, delivery.id);
+      webhookFailures = await listWebhookFailures(asso.id);
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to retry webhook delivery', e);
       error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
     } finally {
       retryingDelivery = null;
+    }
+  }
+
+  /** Drops a failed delivery - for a top-up already settled by hand on the Cercle side. */
+  async function handleDeleteDelivery(delivery: WebhookDelivery) {
+    if (!asso) return;
+    if (
+      !(await showConfirm(
+        m.admin_cercle_delivery_delete_confirm({
+          amount: (delivery.amountCents / 100).toFixed(2),
+        }),
+        { danger: true, confirmLabel: m.common_delete_button() }
+      ))
+    )
+      return;
+    deletingDelivery = delivery.id;
+    error = '';
+    try {
+      console.log(`[ADMIN][CERCLE] deleting failed delivery=${delivery.id}`);
+      await deleteWebhookDelivery(asso.id, delivery.id);
+      webhookFailures = webhookFailures.filter((d) => d.id !== delivery.id);
+    } catch (e) {
+      console.error('[ADMIN][CERCLE] failed to delete webhook delivery', e);
+      error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
+    } finally {
+      deletingDelivery = null;
     }
   }
 </script>
@@ -306,21 +272,21 @@
       </div>
     {/if}
 
-    <div class="space-y-1.5">
-      <label for="cercle-asso-select" class="text-sm font-bold text-text-main">
-        {m.admin_cercle_asso_label()}
-      </label>
-      {#if associationsLoading}
-        <div class="flex items-center gap-2 py-2">
-          <div
-            class="h-5 w-5 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
-          ></div>
-        </div>
-      {:else}
+    {#if loading}
+      <div class="flex justify-center py-10">
+        <div
+          class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
+        ></div>
+      </div>
+    {:else}
+      <div class="space-y-1.5">
+        <label for="cercle-asso-select" class="text-sm font-bold text-text-main">
+          {m.admin_cercle_asso_label()}
+        </label>
         <select
           id="cercle-asso-select"
           bind:value={selectedAssoId}
-          onchange={() => void handleSelectAsso()}
+          onchange={() => void loadProduct()}
           class="w-full max-w-md rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
         >
           <option value="">{m.admin_cercle_asso_placeholder()}</option>
@@ -328,392 +294,165 @@
             <option value={assoc.id}>{assoc.name}</option>
           {/each}
         </select>
-      {/if}
-    </div>
+      </div>
+    {/if}
 
-    {#if !selectedAssoId}
+    {#if !loading && !asso}
       <p class="text-sm text-text-muted">{m.admin_cercle_select_asso_hint()}</p>
-    {:else}
+    {:else if !loading && asso}
       <div
-        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-6 shadow-sm"
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-5 shadow-sm"
       >
         <div class="flex items-center justify-between gap-3 flex-wrap">
-          <h3 class="text-base font-bold text-text-main">
-            {m.admin_cercle_form_title()}
-          </h3>
-          <button
-            type="button"
-            onclick={() => (showProductForm = !showProductForm)}
-            class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover transition-colors"
-          >
-            <Plus size={16} />
-            {m.admin_cercle_new_product_button()}
-          </button>
+          <div>
+            <h3 class="text-base font-bold text-text-main">{m.admin_cercle_config_title()}</h3>
+            <p class="text-xs text-text-muted mt-0.5">
+              {m.admin_cercle_config_hint({ name: asso.name })}
+            </p>
+          </div>
+          {#if product}
+            <div class="flex items-center gap-2">
+              <span
+                class="rounded-full px-2.5 py-1 text-xs font-semibold {product.isActive
+                  ? 'bg-green-ok/15 text-green-ok'
+                  : 'bg-cn-surface-alt text-text-muted'}"
+              >
+                {product.isActive
+                  ? m.admin_cercle_product_active()
+                  : m.admin_cercle_product_inactive()}
+              </span>
+              <button
+                type="button"
+                onclick={() => void handleToggleActive()}
+                class="text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-cn-bg/50 transition-colors"
+              >
+                {product.isActive
+                  ? m.admin_cercle_deactivate_button()
+                  : m.admin_cercle_activate_button()}
+              </button>
+            </div>
+          {/if}
         </div>
 
-        {#if showProductForm}
-          <form
-            class="rounded-xl border border-cn-border bg-cn-bg/40 p-5 space-y-4"
-            onsubmit={(e) => {
-              e.preventDefault();
-              void handleCreateProduct();
-            }}
-          >
+        <form
+          class="space-y-4"
+          onsubmit={(e) => {
+            e.preventDefault();
+            void handleSave();
+          }}
+        >
+          <div class="grid gap-4 sm:grid-cols-2">
             <div class="space-y-1">
-              <label for="new-cercle-name" class="text-xs font-semibold text-text-muted"
-                >{m.admin_cercle_name_label()}</label
+              <label for="cercle-min" class="text-xs font-semibold text-text-muted"
+                >{m.admin_cercle_min_label()}</label
               >
               <input
-                id="new-cercle-name"
-                type="text"
-                bind:value={newName}
-                required
+                id="cercle-min"
+                type="number"
+                min="0.01"
+                step="0.01"
+                bind:value={minEuros}
                 class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
               />
             </div>
-
-            <Textarea
-              id="new-cercle-description"
-              bind:value={newDescription}
-              rows={2}
-              placeholder={m.admin_cercle_description_placeholder()}
-              label={m.admin_cercle_description_label()}
-            />
-
-            <div class="grid gap-4 sm:grid-cols-2">
-              <div class="space-y-1">
-                <label for="new-cercle-amount" class="text-xs font-semibold text-text-muted"
-                  >{m.admin_cercle_fixed_price_label()}</label
-                >
-                <input
-                  id="new-cercle-amount"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  bind:value={newAmountCents}
-                  class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                />
-              </div>
-              <div class="space-y-1 flex flex-col justify-end">
-                <label class="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" bind:checked={newAllowCustom} class="rounded" />
-                  {m.admin_cercle_allow_custom_label()}
-                </label>
-              </div>
-            </div>
-
-            {#if newAllowCustom}
-              <div class="grid gap-4 sm:grid-cols-2">
-                <div class="space-y-1">
-                  <label for="new-cercle-min" class="text-xs font-semibold text-text-muted"
-                    >{m.admin_cercle_min_label()}</label
-                  >
-                  <input
-                    id="new-cercle-min"
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    bind:value={newMinCents}
-                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                  />
-                </div>
-                <div class="space-y-1">
-                  <label for="new-cercle-max" class="text-xs font-semibold text-text-muted"
-                    >{m.admin_cercle_max_label()}</label
-                  >
-                  <input
-                    id="new-cercle-max"
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    bind:value={newMaxCents}
-                    class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-            {/if}
-
-            <StripeNetPayoutHint
-              grossEuros={newAmountCents}
-              minEuros={newAllowCustom ? newMinCents : ''}
-              maxEuros={newAllowCustom ? newMaxCents : ''}
-            />
-
-            <div class="rounded-xl border border-cn-border/60 bg-cn-bg/30 p-4 space-y-3">
-              <div class="space-y-1">
-                <label for="new-cercle-webhook-url" class="text-xs font-semibold text-text-muted"
-                  >{m.admin_cercle_webhook_url_label()}</label
-                >
-                <input
-                  id="new-cercle-webhook-url"
-                  type="url"
-                  bind:value={newWebhookUrl}
-                  placeholder={m.admin_cercle_webhook_url_placeholder()}
-                  class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                />
-              </div>
-              <div class="space-y-1">
-                <label for="new-cercle-webhook-secret" class="text-xs font-semibold text-text-muted"
-                  >{m.admin_cercle_webhook_secret_label()}</label
-                >
-                <input
-                  id="new-cercle-webhook-secret"
-                  type="password"
-                  autocomplete="off"
-                  bind:value={newWebhookSecret}
-                  placeholder={m.admin_cercle_webhook_secret_placeholder()}
-                  class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                />
-                <p class="text-xs text-text-muted">{m.admin_cercle_webhook_secret_hint()}</p>
-              </div>
-            </div>
-
-            <div class="flex items-center gap-3 pt-2">
-              <button
-                type="submit"
-                disabled={savingProduct || !newName.trim()}
-                class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+            <div class="space-y-1">
+              <label for="cercle-max" class="text-xs font-semibold text-text-muted"
+                >{m.admin_cercle_max_label()}</label
               >
-                {savingProduct ? m.admin_cercle_creating() : m.admin_cercle_create_button()}
-              </button>
-              <button
-                type="button"
-                onclick={resetProductForm}
-                class="text-sm text-text-muted hover:text-text-main"
-                >{m.common_cancel_button()}</button
-              >
+              <input
+                id="cercle-max"
+                type="number"
+                min="0.01"
+                step="0.01"
+                bind:value={maxEuros}
+                class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+              />
             </div>
-          </form>
-        {/if}
-
-        {#if productsLoading}
-          <div class="flex justify-center py-6">
-            <div
-              class="h-6 w-6 animate-spin rounded-full border-4 border-cn-yellow border-t-transparent"
-            ></div>
           </div>
-        {:else if cercleProducts.length === 0}
-          <p class="text-sm text-text-muted text-center py-6">{m.admin_cercle_no_products()}</p>
-        {:else}
-          <ul class="space-y-3">
-            {#each cercleProducts as product (product.id)}
-              <li class="rounded-xl border border-cn-border/70 bg-cn-bg/40 overflow-hidden">
-                <div class="flex items-center gap-3 px-4 py-3">
-                  <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-2 flex-wrap">
-                      <p class="font-semibold text-sm text-text-main">{product.name}</p>
-                      <span
-                        class="rounded-full px-2 py-0.5 text-xs font-semibold {product.isActive
-                          ? 'bg-green-ok/15 text-green-ok'
-                          : 'bg-cn-surface-alt text-text-muted'}"
-                      >
-                        {product.isActive
-                          ? m.admin_cercle_product_active()
-                          : m.admin_cercle_product_inactive()}
-                      </span>
-                    </div>
-                    <p class="text-xs text-text-muted mt-0.5">
-                      {product.amountCents != null
-                        ? `${(product.amountCents / 100).toFixed(2)} €`
-                        : m.admin_cercle_product_custom_only()}
-                    </p>
-                  </div>
-                  <div class="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      disabled={testingProductId !== null}
-                      onclick={() => void handleTestTopup(product)}
-                      title={m.admin_cercle_test_hint()}
-                      class="inline-flex items-center gap-1.5 text-xs rounded-lg border border-cn-yellow/50 bg-cn-yellow/10 px-3 py-1.5 font-semibold text-text-main hover:bg-cn-yellow/20 disabled:opacity-50 transition-colors"
-                    >
-                      <FlaskConical
-                        size={13}
-                        class={testingProductId === product.id ? 'animate-pulse' : ''}
-                      />
-                      {testingProductId === product.id
-                        ? m.admin_cercle_test_running()
-                        : m.admin_cercle_test_button({
-                            amount: (TEST_TOPUP_CENTS / 100).toFixed(2),
-                          })}
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => toggleEdit(product)}
-                      class="inline-flex items-center gap-1 text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
-                    >
-                      {m.admin_cercle_edit_button()}
-                      <ChevronDown
-                        size={12}
-                        class="transition-transform {expandedProductId === product.id
-                          ? 'rotate-180'
-                          : ''}"
-                      />
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => handleToggleActive(product)}
-                      class="text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
-                    >
-                      {product.isActive
-                        ? m.admin_cercle_deactivate_button()
-                        : m.admin_cercle_activate_button()}
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => handleDeleteProduct(product)}
-                      title={m.common_delete_button()}
-                      class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 transition-colors"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
+          <p class="text-xs text-text-muted">{m.admin_cercle_amount_hint()}</p>
+          <!-- A 5 EUR recharge credits the member 5 EUR but pays the association less: the Cercle's
+               treasury has to know the gap before setting the bounds. -->
+          <StripeNetPayoutHint grossEuros="" {minEuros} {maxEuros} />
 
-                {#if expandedProductId === product.id}
-                  <div class="border-t border-cn-border/60 px-4 py-4 bg-cn-bg/20">
-                    <form
-                      class="grid gap-3 sm:grid-cols-2"
-                      onsubmit={(e) => {
-                        e.preventDefault();
-                        void handleSaveProductEdit(product, e.currentTarget);
-                      }}
-                    >
-                      <div class="space-y-1 sm:col-span-2">
-                        <label
-                          for="edit-name-{product.id}"
-                          class="text-xs font-semibold text-text-muted"
-                          >{m.admin_cercle_name_label()}</label
-                        >
-                        <input
-                          id="edit-name-{product.id}"
-                          name="name"
-                          type="text"
-                          value={product.name}
-                          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                        />
-                      </div>
-                      <div class="space-y-1 sm:col-span-2">
-                        <label
-                          for="edit-description-{product.id}"
-                          class="text-xs font-semibold text-text-muted"
-                          >{m.admin_cercle_description_label()}</label
-                        >
-                        <textarea
-                          id="edit-description-{product.id}"
-                          name="description"
-                          rows="2"
-                          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                          >{product.description ?? ''}</textarea
-                        >
-                      </div>
-                      <div class="space-y-1">
-                        <label
-                          for="edit-amount-{product.id}"
-                          class="text-xs font-semibold text-text-muted"
-                          >{m.admin_cercle_fixed_price_label()}</label
-                        >
-                        <input
-                          id="edit-amount-{product.id}"
-                          name="amountEuros"
-                          type="number"
-                          min="0.01"
-                          step="0.01"
-                          value={product.amountCents != null ? product.amountCents / 100 : ''}
-                          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                        />
-                      </div>
-                      <label class="flex items-center gap-2 text-sm cursor-pointer self-end">
-                        <input
-                          type="checkbox"
-                          name="allowCustomAmount"
-                          checked={product.allowCustomAmount}
-                          class="rounded"
-                        />
-                        {m.admin_cercle_allow_custom_label()}
-                      </label>
-                      <div class="space-y-1">
-                        <label
-                          for="edit-min-{product.id}"
-                          class="text-xs font-semibold text-text-muted"
-                          >{m.admin_cercle_min_label()}</label
-                        >
-                        <input
-                          id="edit-min-{product.id}"
-                          name="minEuros"
-                          type="number"
-                          min="0.01"
-                          step="0.01"
-                          value={product.customAmountMinCents != null
-                            ? product.customAmountMinCents / 100
-                            : ''}
-                          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                        />
-                      </div>
-                      <div class="space-y-1">
-                        <label
-                          for="edit-max-{product.id}"
-                          class="text-xs font-semibold text-text-muted"
-                          >{m.admin_cercle_max_label()}</label
-                        >
-                        <input
-                          id="edit-max-{product.id}"
-                          name="maxEuros"
-                          type="number"
-                          min="0.01"
-                          step="0.01"
-                          value={product.customAmountMaxCents != null
-                            ? product.customAmountMaxCents / 100
-                            : ''}
-                          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                        />
-                      </div>
-                      <div class="space-y-1 sm:col-span-2">
-                        <label
-                          for="edit-webhook-url-{product.id}"
-                          class="text-xs font-semibold text-text-muted"
-                          >{m.admin_cercle_webhook_url_label()}</label
-                        >
-                        <input
-                          id="edit-webhook-url-{product.id}"
-                          name="webhookUrl"
-                          type="url"
-                          placeholder={m.admin_cercle_webhook_edit_hint()}
-                          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                        />
-                      </div>
-                      <div class="space-y-1 sm:col-span-2">
-                        <label
-                          for="edit-webhook-secret-{product.id}"
-                          class="text-xs font-semibold text-text-muted"
-                          >{m.admin_cercle_webhook_secret_label()}</label
-                        >
-                        <input
-                          id="edit-webhook-secret-{product.id}"
-                          name="webhookSecret"
-                          type="password"
-                          autocomplete="off"
-                          placeholder={m.admin_cercle_webhook_edit_hint()}
-                          class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
-                        />
-                        <p class="text-xs text-text-muted">
-                          {m.admin_cercle_webhook_secret_hint()}
-                        </p>
-                      </div>
-                      <button
-                        type="submit"
-                        disabled={savingProductId === product.id}
-                        class="sm:col-span-2 text-xs rounded-lg bg-cn-yellow px-4 py-2 font-bold text-cn-dark disabled:opacity-50 w-fit"
-                      >
-                        {savingProductId === product.id
-                          ? m.admin_cercle_saving()
-                          : m.common_save_button()}
-                      </button>
-                    </form>
-                  </div>
-                {/if}
-              </li>
-            {/each}
-          </ul>
+          <div class="space-y-1">
+            <label for="cercle-webhook-url" class="text-xs font-semibold text-text-muted"
+              >{m.admin_cercle_webhook_url_label()}</label
+            >
+            <input
+              id="cercle-webhook-url"
+              type="url"
+              bind:value={webhookUrl}
+              placeholder={m.admin_cercle_webhook_url_placeholder()}
+              class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div class="space-y-1">
+            <label for="cercle-webhook-secret" class="text-xs font-semibold text-text-muted"
+              >{m.admin_cercle_webhook_secret_label()}</label
+            >
+            <input
+              id="cercle-webhook-secret"
+              type="password"
+              autocomplete="off"
+              bind:value={webhookSecret}
+              placeholder={product?.webhookConfigured
+                ? m.admin_cercle_webhook_edit_hint()
+                : m.admin_cercle_webhook_secret_placeholder()}
+              class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm"
+            />
+            <p class="text-xs text-text-muted">
+              {product?.webhookConfigured
+                ? m.admin_cercle_webhook_secret_set()
+                : m.admin_cercle_webhook_secret_hint()}
+            </p>
+          </div>
+
+          <div class="flex items-center gap-3 pt-1">
+            <button
+              type="submit"
+              disabled={saving}
+              class="rounded-xl bg-cn-yellow px-5 py-2.5 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+            >
+              {saving
+                ? m.admin_cercle_saving()
+                : product
+                  ? m.common_save_button()
+                  : m.admin_cercle_create_button()}
+            </button>
+            {#if saved}
+              <span class="text-xs font-semibold text-green-ok inline-flex items-center gap-1.5">
+                <CheckCircle2 size={14} />
+                {m.admin_cercle_saved()}
+              </span>
+            {/if}
+          </div>
+        </form>
+      </div>
+
+      <div
+        class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
+      >
+        <div>
+          <h3 class="text-base font-bold text-text-main">{m.admin_cercle_test_title()}</h3>
+          <p class="text-xs text-text-muted mt-0.5">
+            {m.admin_cercle_test_section_hint({ amount: (TEST_TOPUP_CENTS / 100).toFixed(2) })}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          disabled={testing || !isConfigured}
+          onclick={() => void handleTestTopup()}
+          class="inline-flex items-center gap-2 rounded-xl border border-cn-yellow/50 bg-cn-yellow/10 px-4 py-2.5 text-sm font-bold text-text-main hover:bg-cn-yellow/20 disabled:opacity-50 transition-colors"
+        >
+          <FlaskConical size={16} class={testing ? 'animate-pulse' : ''} />
+          {testing
+            ? m.admin_cercle_test_running()
+            : m.admin_cercle_test_button({ amount: (TEST_TOPUP_CENTS / 100).toFixed(2) })}
+        </button>
+        {#if !isConfigured}
+          <p class="text-xs text-amber-warn">{m.admin_cercle_test_needs_config()}</p>
         {/if}
 
         {#if testResult}
@@ -747,41 +486,46 @@
             </p>
           </div>
         {/if}
+      </div>
 
-        {#if webhookFailures.length > 0}
-          <div class="border-t border-cn-border pt-5 space-y-3">
-            <h3 class="text-sm font-bold text-text-main flex items-center gap-2 text-amber-warn">
-              <AlertTriangle size={16} />
-              {m.admin_cercle_webhook_failures_title({ count: webhookFailures.length })}
-            </h3>
-            <ul class="space-y-2">
-              {#each webhookFailures as delivery (delivery.id)}
-                <li
-                  class="flex items-center gap-3 rounded-xl border border-amber-warn/30 bg-amber-warn/10 px-4 py-3"
-                >
-                  <div class="min-w-0 flex-1">
-                    <p class="text-xs font-semibold text-text-main">
-                      {(delivery.amountCents / 100).toFixed(2)} € - {delivery.paymentIntentId.slice(
-                        0,
-                        20
-                      )}…
-                    </p>
-                    <p class="text-xs text-text-muted">
-                      {m.admin_cercle_webhook_attempts({ count: delivery.attemptCount })} ·
-                      {delivery.lastAttemptAt
-                        ? new Date(delivery.lastAttemptAt).toLocaleString(
-                            getLocale() === 'en' ? 'en-US' : 'fr-FR'
-                          )
-                        : '-'}
-                    </p>
-                    {#if delivery.lastError}
-                      <p class="text-xs text-red-err truncate">{delivery.lastError}</p>
-                    {/if}
-                  </div>
+      {#if webhookFailures.length > 0}
+        <div
+          class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-3 shadow-sm"
+        >
+          <h3 class="text-sm font-bold flex items-center gap-2 text-amber-warn">
+            <AlertTriangle size={16} />
+            {m.admin_cercle_webhook_failures_title({ count: webhookFailures.length })}
+          </h3>
+          <p class="text-xs text-text-muted">{m.admin_cercle_webhook_failures_hint()}</p>
+          <ul class="space-y-2">
+            {#each webhookFailures as delivery (delivery.id)}
+              <li
+                class="flex items-center gap-3 rounded-xl border border-amber-warn/30 bg-amber-warn/10 px-4 py-3"
+              >
+                <div class="min-w-0 flex-1">
+                  <p class="text-xs font-semibold text-text-main">
+                    {(delivery.amountCents / 100).toFixed(2)} € - {delivery.paymentIntentId.slice(
+                      0,
+                      20
+                    )}…
+                  </p>
+                  <p class="text-xs text-text-muted">
+                    {m.admin_cercle_webhook_attempts({ count: delivery.attemptCount })} ·
+                    {delivery.lastAttemptAt
+                      ? new Date(delivery.lastAttemptAt).toLocaleString(
+                          getLocale() === 'en' ? 'en-US' : 'fr-FR'
+                        )
+                      : '-'}
+                  </p>
+                  {#if delivery.lastError}
+                    <p class="text-xs text-red-err truncate">{delivery.lastError}</p>
+                  {/if}
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
                   <button
                     type="button"
                     disabled={retryingDelivery === delivery.id}
-                    onclick={() => handleRetryDelivery(delivery)}
+                    onclick={() => void handleRetryDelivery(delivery)}
                     class="inline-flex items-center gap-1.5 rounded-xl border border-cn-border px-3 py-1.5 text-xs font-semibold hover:bg-[var(--cn-surface)] disabled:opacity-50"
                   >
                     <RefreshCw
@@ -790,12 +534,21 @@
                     />
                     {m.common_retry_button()}
                   </button>
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/if}
-      </div>
+                  <button
+                    type="button"
+                    disabled={deletingDelivery === delivery.id}
+                    onclick={() => void handleDeleteDelivery(delivery)}
+                    title={m.common_delete_button()}
+                    class="inline-flex items-center justify-center rounded-xl border border-red-err/30 bg-red-err/10 p-2 text-red-err hover:bg-red-err/20 disabled:opacity-50 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
     {/if}
   </div>
 {/if}
