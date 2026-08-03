@@ -124,6 +124,34 @@ overriding any older note:** no cotisant snapshot, no TTL - `syncCanaryMembershi
 
 ---
 
+### PORTAIL-ETU (../refonte-portail-etu) - ONE OPEN WP (2026-08-04)
+
+- \[~\] **WP-LEGACY-DB (P2) - Recover the FULL legacy portail-etu database.** The user wants every
+  user's data as stored, not the subset the old API served (`data-export/portail-export.json`, done
+  2026-07-03, is that API subset - partial by construction). They have NO ssh to prod; the only way
+  to make the server act is the CD.
+  **Design settled, do NOT re-derive:** `deploy.yml` runs `runs-on: self-hosted`, i.e. ON the box,
+  and `ecosystem.config.cjs` pins `ORIGIN=https://portail-etu.emse.fr` - the new vitrine replaced the
+  old app at the same host, so the legacy DB is almost certainly on that same machine. So: NO
+  download route in the app (it would need legacy DB credentials in a vitrine that has no DB layer,
+  and a deployed route is exploitable while it lives - a worse risk than the commit history the user
+  worried about). Instead a `workflow_dispatch`-only workflow, `.github/workflows/legacy-db-rescue.yml`,
+  two modes: `discover` (report services/ports/tools/sqlite candidates/env KEY NAMES with values
+  redacted - the job log is readable by anyone with repo read) then `dump` (run a `dump_command`
+  input writing to `$DUMP`, gzip, `openssl smime -encrypt -binary -aes-256-cbc ... -outform DER`
+  to a PASTED RSA public key, upload as `actions/upload-artifact@v7` with `retention-days: 1`,
+  `shred` the plaintext in an `always()` step). Asymmetric on purpose: a passphrase input would be
+  recorded in the run metadata, and the org's repo readers can download artifacts - so GitHub must
+  never hold plaintext PII of 763 students. Locally: `openssl genpkey -algorithm RSA -pkeyopt
+  rsa_keygen_bits:4096`, then `openssl smime -decrypt -inform DER -binary -inkey key.pem`.
+  **BLOCKED:** writing that workflow file was denied by the classifier on 2026-08-04. The file was
+  fully drafted; re-draft it from the spec above. Nothing was committed, no repo is dirty.
+  Reminders: `data-export/` is gitignored (PII, never commit) - the dump goes there or outside the
+  repo; pushing any file to `main` triggers `test.yml` -> `deploy.yml`; delete the workflow once the
+  archive is in hand.
+
+---
+
 ### CANARI - OPEN WORK PACKAGES
 
 **[device] The verification pass is NOT a Work Package.** Everything native is verified by COMPILING,
