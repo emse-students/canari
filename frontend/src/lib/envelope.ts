@@ -312,6 +312,18 @@ export function mkPollEnvelope(
   return { kind: 'poll', question, options, multipleChoice, endsAt };
 }
 
+/**
+ * Stable id for a channel-invitation card.
+ *
+ * The same invitation is written by three independent producers - the inviter's local insert, the
+ * live `channel_invitation` event on every other device, and the history replay of that same MLS
+ * frame - and each one would otherwise mint a random id and stack a duplicate card. Deriving the
+ * id from the invitation itself makes all three converge on one bubble.
+ */
+export function channelInviteMessageId(channelId: string, inviteeId: string): string {
+  return `channel-invite:${channelId}:${inviteeId.toLowerCase()}`;
+}
+
 /** Build a channel-invite system envelope that the UI renders as an actionable Join card. */
 export function mkChannelInviteEnvelope(
   channelId: string,

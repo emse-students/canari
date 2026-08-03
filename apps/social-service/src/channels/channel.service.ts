@@ -1740,8 +1740,19 @@ export class ChannelService {
 
   // ================= CHANNEL MEMBERS =================
 
-  /** Returns all members of the workspace that owns the channel, each with their highest-priority role normalized to admin/moderator/member. */
-  async listChannelMembers(channelId: string, actorUserId: string) {
+  /**
+   * Lists members with their highest-priority role normalized to admin/moderator/member.
+   *
+   * `scope: 'channel'` (default) answers "who is in THIS channel": for a private channel that is
+   * its allowed users plus the workspace admins, not the whole community. `scope: 'workspace'` is
+   * the community roster - what the settings panel needs, since the picker that grants access to a
+   * private channel must be able to offer people who are not in it yet.
+   */
+  async listChannelMembers(
+    channelId: string,
+    actorUserId: string,
+    scope: 'channel' | 'workspace' = 'channel'
+  ) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
 
@@ -1749,12 +1760,28 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId: actorUserId },
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
+    if (scope === 'channel' && !(await this.canAccessChannel(channel, actorMember, actorUserId))) {
+      throw new ForbiddenException('Not allowed to read this channel');
+    }
 
     const members = await this.memberRepo.find({ where: { workspaceId: channel.workspaceId } });
     const roles = await this.roleRepo.find({ where: { workspaceId: channel.workspaceId } });
     const roleMap = new Map(roles.map((r) => [r.id, r]));
 
-    return members.map((m) => {
+    // A private channel has its own roster: returning the workspace's listed people who cannot
+    // read the channel at all. Mirrors canAccessChannel (explicit allowedUsers, plus anyone
+    // holding workspace.manage) but resolved from the roles already loaded above, so scoping the
+    // list costs no extra query.
+    const allowedUsers = new Set((channel.allowedUsers || []).map((u) => u.trim().toLowerCase()));
+    const belongsToChannel = (member: ChannelMember): boolean => {
+      if (scope === 'workspace' || !channel.isPrivate) return true;
+      if (allowedUsers.has(member.userId.trim().toLowerCase())) return true;
+      return (member.roleIds || []).some((roleId) =>
+        roleMap.get(roleId)?.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
+      );
+    };
+
+    return members.filter(belongsToChannel).map((m) => {
       const memberRoles = (m.roleIds || []).map((rid) => roleMap.get(rid)).filter(Boolean);
       const highestRole = memberRoles.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
       return {

@@ -155,7 +155,9 @@
     membersLoading = true;
     membersError = '';
     try {
-      channelMembers = await channelService.listMembers(selectedChannelId);
+      // Workspace scope on purpose: this panel manages community membership, and the private
+      // access picker has to offer people who are not in the channel yet.
+      channelMembers = await channelService.listMembers(selectedChannelId, 'workspace');
     } catch (e) {
       membersError = e instanceof Error ? e.message : m.chat_channel_load_members_error();
     } finally {

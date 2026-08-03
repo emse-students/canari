@@ -103,7 +103,8 @@ export function resolveAppMessageTimestampMs(
 /**
  * Convert a decoded AppMessage to { content, options } ready for addMessageToChat.
  * Returns null for non-displayable types (reaction, system, call) which require
- * special handling at the call site.
+ * special handling at the call site - a channel notice goes through
+ * {@link appMsgToChannelSystemEnvelope}, a DM/group control event through `handleSystemEvent`.
  *
  * @param serverFallbackMs Server queue/history time (ms) when `sentAt` is absent in the payload.
  */
@@ -178,12 +179,40 @@ export function appMsgToEnvelope(
     };
   }
 
-  if (msg.system) {
-    return {
-      content: serializeEnvelope(mkSystemEnvelope(msg.system.data || msg.system.event || '')),
-      options: { messageId: msg.messageId || undefined, timestamp },
-    };
-  }
-
   return null;
+}
+
+/**
+ * Convert a decoded CHANNEL AppMessage carrying a `system` event into a neutral notice.
+ *
+ * A channel transports its membership notices as an ALREADY-LOCALIZED sentence in `system.data`
+ * (see `inviteMemberToChannel`), so the only thing left to do is wrap it in a system envelope.
+ * A DM/group system event is the opposite: `data` is a JSON control payload that only
+ * `handleSystemEvent` / `applyReplaySystemEvent` know how to interpret.
+ *
+ * Kept OUT of {@link appMsgToEnvelope} deliberately: both DM replay paths branch on that function
+ * returning null to route a system event to its handler, so a system envelope coming back from it
+ * makes the handler branch dead code - the event is never applied and its raw JSON is rendered as
+ * an ordinary message attributed to the sender.
+ *
+ * @param serverFallbackMs Server queue/history time (ms) when `sentAt` is absent in the payload.
+ */
+export function appMsgToChannelSystemEnvelope(
+  msg: IAppMessage,
+  serverFallbackMs?: number
+): {
+  content: string;
+  options: Pick<AddMessageToChatOptions, 'messageId' | 'timestamp'>;
+} | null {
+  if (!msg.system) return null;
+  const text = msg.system.data || msg.system.event || '';
+  if (!text) return null;
+  const ms = resolveAppMessageTimestampMs(msg, serverFallbackMs);
+  return {
+    content: serializeEnvelope(mkSystemEnvelope(text)),
+    options: {
+      messageId: msg.messageId || undefined,
+      timestamp: ms !== undefined ? new Date(ms) : undefined,
+    },
+  };
 }

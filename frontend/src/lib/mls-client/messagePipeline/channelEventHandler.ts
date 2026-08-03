@@ -2,7 +2,7 @@ import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
 import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
-import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { setTyping } from '$lib/stores/typingStore.svelte';
 import { applyPin } from '$lib/stores/pinStore.svelte';
@@ -232,6 +232,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
     if (convoKey) {
       let content: string | undefined;
+      let isSystemNotice = false;
       const channelServerMs = parseServerTimestampMs(data.createdAt);
       try {
         if (data.ciphertext) {
@@ -244,8 +245,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           );
           const msg = decodeAppMessage(bytes);
           if (msg) {
-            const envelope = appMsgToEnvelope(msg, channelServerMs);
-            if (envelope) content = envelope.content;
+            const envelope =
+              appMsgToEnvelope(msg, channelServerMs) ??
+              appMsgToChannelSystemEnvelope(msg, channelServerMs);
+            if (envelope) {
+              content = envelope.content;
+              isSystemNotice = !!msg.system;
+            }
           }
         } else if (data.plaintext) {
           content = serializeEnvelope(mkTextEnvelope(data.plaintext));
@@ -267,10 +273,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       const poll = data.poll as ChannelPollMeta | undefined;
       if (poll) setPollMeta(renderedId, poll);
 
-      addMessageToChat(sender, content, convoKey, {
+      // A membership notice is attributed to nobody, exactly like `decodeChannelMessageRow` does
+      // on the history path - otherwise the same event reads as a message from its trigger.
+      addMessageToChat(isSystemNotice ? 'system' : sender, content, convoKey, {
         messageId: renderedId,
         timestamp: channelServerMs !== undefined ? new Date(channelServerMs) : undefined,
         skipDbSave: true,
+        ...(isSystemNotice ? { isSystem: true } : {}),
       }).catch((e) => console.error(e));
     } else {
       log(`Message received for an unknown channel: ${channelId}`);

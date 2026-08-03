@@ -236,11 +236,22 @@ export class ChannelsController {
     );
   }
 
-  /** Returns all members of a channel visible to the calling user. */
+  /**
+   * Returns the channel's own members. `?scope=workspace` returns the whole community roster
+   * instead - needed by the settings panel to offer people who are not in the channel yet.
+   */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/members')
-  listChannelMembers(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
-    return this.service.listChannelMembers(channelId, xUserId.trim().toLowerCase());
+  listChannelMembers(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Query('scope') scope?: string
+  ) {
+    return this.service.listChannelMembers(
+      channelId,
+      xUserId.trim().toLowerCase(),
+      scope === 'workspace' ? 'workspace' : 'channel'
+    );
   }
 
   /** Rotates the encryption key for a channel, generating a new key version. */

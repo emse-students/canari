@@ -391,6 +391,7 @@ export async function replayConversationHistory(params: {
               parsed,
               msg,
               contactName,
+              userId,
               getConversation,
               setConversation,
               messageReactions,

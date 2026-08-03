@@ -1,7 +1,9 @@
-import { encodeAppMessage, decodeAppMessage, mkText } from '$lib/proto/codec';
+import { encodeAppMessage, decodeAppMessage, mkText, mkSystem } from '$lib/proto/codec';
+import { parseEnvelope } from '$lib/envelope';
 import {
   appMessageSentAtMs,
   appMsgToEnvelope,
+  appMsgToChannelSystemEnvelope,
   computeMessageListSwitchTime,
   isStaleInboundMessage,
   normalizeMessageId,
@@ -93,6 +95,41 @@ describe('appMessageSentAtMs / appMsgToEnvelope', () => {
     expect(resolveAppMessageTimestampMs(decoded, serverMs)).toBe(serverMs);
     const envelope = appMsgToEnvelope(decoded, serverMs);
     expect(envelope?.options.timestamp?.getTime()).toBe(serverMs);
+  });
+
+  // Regression: while appMsgToEnvelope answered a system envelope, both DM replay paths - which
+  // branch on it returning null to reach handleSystemEvent / applyReplaySystemEvent - rendered the
+  // control payload's raw JSON as an ordinary message and never applied the event.
+  it('returns null for a system event so the call site routes it to its handler', () => {
+    const bytes = encodeAppMessage({
+      ...mkSystem('channel_invitation', JSON.stringify({ channelId: 'c1' })),
+      messageId: 'id-sys',
+    });
+    const decoded = decodeAppMessage(bytes)!;
+    expect(appMsgToEnvelope(decoded)).toBeNull();
+  });
+});
+
+describe('appMsgToChannelSystemEnvelope', () => {
+  it('wraps a channel notice, whose data is already a localized sentence', () => {
+    const serverMs = Date.parse('2024-03-01T08:00:00Z');
+    const bytes = encodeAppMessage({
+      ...mkSystem('memberAdded', 'Alice a ajoute Bob au groupe'),
+      messageId: 'id-notice',
+    });
+    const decoded = decodeAppMessage(bytes)!;
+    const envelope = appMsgToChannelSystemEnvelope(decoded, serverMs)!;
+    expect(parseEnvelope(envelope.content)).toMatchObject({
+      kind: 'system',
+      text: 'Alice a ajoute Bob au groupe',
+    });
+    expect(envelope.options.messageId).toBe('id-notice');
+    expect(envelope.options.timestamp?.getTime()).toBe(serverMs);
+  });
+
+  it('returns null for a non-system message', () => {
+    const decoded = decodeAppMessage(encodeAppMessage(mkText('hi')))!;
+    expect(appMsgToChannelSystemEnvelope(decoded)).toBeNull();
   });
 });
 

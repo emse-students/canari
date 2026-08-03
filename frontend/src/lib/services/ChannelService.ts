@@ -682,9 +682,17 @@ export class ChannelService {
     return { rows: rows.slice(0, cap), capped: rows.length >= cap };
   }
 
-  async listMembers(channelId: string): Promise<ChannelMemberDto[]> {
+  /**
+   * Lists the channel's own members. Pass `scope: 'workspace'` for the whole community roster -
+   * a private channel otherwise answers only the people who may actually read it.
+   */
+  async listMembers(
+    channelId: string,
+    scope: 'channel' | 'workspace' = 'channel'
+  ): Promise<ChannelMemberDto[]> {
     const cid = this.normalizeChannelId(channelId);
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members`);
+    const query = scope === 'workspace' ? '?scope=workspace' : '';
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members${query}`);
     await this.handleError(res);
     return res.json();
   }

@@ -1,5 +1,6 @@
 import type { MediaRef } from '$lib/media';
 import { decryptMediaBuffer } from '$lib/mediaCrypto';
+import { getToken } from '$lib/stores/auth';
 import { BlobUrlPool } from './blobUrlPool';
 
 const CIPHER_CACHE_NAME = 'canari-media-ciphertext-v1';
@@ -20,12 +21,14 @@ function cipherCacheKey(baseUrl: string, mediaId: string): string {
 /**
  * Fetches encrypted media bytes, using the Cache API when available so ciphertext
  * survives page reloads without hitting the network again.
+ *
+ * The bearer token is resolved HERE, per request, rather than taken from the caller: an access
+ * token lives in memory for minutes, while the copy the chat session hands down its component
+ * tree is captured once at login. A tab left open past that expiry kept rendering already-cached
+ * media and 401'd on every newly received one - visible as an image that only appeared after a
+ * reload. `getToken` refreshes silently when the token is within a minute of expiring.
  */
-async function fetchCiphertext(
-  mediaId: string,
-  authToken: string,
-  baseUrl: string
-): Promise<ArrayBuffer> {
+async function fetchCiphertext(mediaId: string, baseUrl: string): Promise<ArrayBuffer> {
   const cacheKey = cipherCacheKey(baseUrl, mediaId);
 
   if (typeof caches !== 'undefined') {
@@ -44,7 +47,7 @@ async function fetchCiphertext(
   const res = await fetch(
     `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`,
     {
-      headers: { Authorization: `Bearer ${authToken}` },
+      headers: { Authorization: `Bearer ${await getToken()}` },
     }
   );
 
@@ -70,11 +73,7 @@ async function fetchCiphertext(
   return ciphertext;
 }
 
-async function loadDecryptedBlobUrl(
-  ref: MediaRef,
-  authToken: string,
-  baseUrl: string
-): Promise<string> {
+async function loadDecryptedBlobUrl(ref: MediaRef, baseUrl: string): Promise<string> {
   const key = decryptedKey(ref);
   const cached = decryptedPool.tryRetain(key);
   if (cached) return cached;
@@ -86,7 +85,7 @@ async function loadDecryptedBlobUrl(
   }
 
   const promise = (async () => {
-    const ciphertext = await fetchCiphertext(ref.mediaId, authToken, baseUrl);
+    const ciphertext = await fetchCiphertext(ref.mediaId, baseUrl);
     const plaintext = await decryptMediaBuffer(ciphertext, ref.key, ref.iv);
     const blobUrl = URL.createObjectURL(new Blob([plaintext], { type: ref.mimeType }));
     decryptedPool.retain(key, blobUrl);
@@ -101,11 +100,7 @@ async function loadDecryptedBlobUrl(
   }
 }
 
-async function loadRawBlobUrl(
-  mediaId: string,
-  authToken: string,
-  baseUrl: string
-): Promise<string> {
+async function loadRawBlobUrl(mediaId: string, baseUrl: string): Promise<string> {
   const key = mediaId;
   const cached = rawPool.tryRetain(key);
   if (cached) return cached;
@@ -119,7 +114,7 @@ async function loadRawBlobUrl(
   const promise = (async () => {
     const res = await fetch(
       `${baseUrl.replace(/\/$/, '')}/api/media/${encodeURIComponent(mediaId)}`,
-      { headers: { Authorization: `Bearer ${authToken}` } }
+      { headers: { Authorization: `Bearer ${await getToken()}` } }
     );
     if (!res.ok) {
       if (res.status === 410) throw new Error('MEDIA_PURGED_BY_RETENTION');
@@ -144,10 +139,9 @@ async function loadRawBlobUrl(
  */
 export async function acquireDecryptedMediaBlobUrl(
   ref: MediaRef,
-  authToken: string,
   baseUrl: string
 ): Promise<string> {
-  return loadDecryptedBlobUrl(ref, authToken, baseUrl);
+  return loadDecryptedBlobUrl(ref, baseUrl);
 }
 
 /** Releases a decrypted media blob URL acquired via {@link acquireDecryptedMediaBlobUrl}. */
@@ -158,12 +152,8 @@ export function releaseDecryptedMediaBlobUrl(ref: MediaRef): void {
 /**
  * Returns a blob URL for raw (unencrypted) media such as group avatars.
  */
-export async function acquireRawMediaBlobUrl(
-  mediaId: string,
-  authToken: string,
-  baseUrl: string
-): Promise<string> {
-  return loadRawBlobUrl(mediaId, authToken, baseUrl);
+export async function acquireRawMediaBlobUrl(mediaId: string, baseUrl: string): Promise<string> {
+  return loadRawBlobUrl(mediaId, baseUrl);
 }
 
 /** Releases a raw media blob URL acquired via {@link acquireRawMediaBlobUrl}. */

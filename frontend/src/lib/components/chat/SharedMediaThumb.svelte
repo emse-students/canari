@@ -23,13 +23,13 @@
   // window (see panel) keeps the number of concurrent decryptions reasonable.
   $effect(() => {
     const ref = media;
-    const token = authToken;
-    if (!token) return;
+    // Gate on the session being authenticated; the download resolves its own live token.
+    if (!authToken) return;
     let destroyed = false;
     let acquired = false;
     failed = false;
     new MediaService()
-      .downloadAndDecrypt(ref, token)
+      .downloadAndDecrypt(ref)
       .then((url) => {
         if (destroyed) releaseDecryptedMediaBlobUrl(ref);
         else {

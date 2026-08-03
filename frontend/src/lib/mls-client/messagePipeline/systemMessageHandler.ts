@@ -4,6 +4,7 @@ import {
   serializeEnvelope,
   mkChannelInviteEnvelope,
   mkChannelInviteSentEnvelope,
+  channelInviteMessageId,
 } from '$lib/envelope';
 import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { ChannelService } from '$lib/services/ChannelService';
@@ -132,6 +133,9 @@ export async function handleSystemEvent(
 
     if (!channelId) return true;
 
+    const inviteeId = String(data.inviteeId || '');
+    const inviteMessageId = channelInviteMessageId(channelId, inviteeId);
+
     if (senderNorm === userId) {
       // The inviter's OTHER devices: MLS never returns a message to the device that sent it, so
       // this branch is only ever reached on a second device. The sending device inserts the same
@@ -149,7 +153,7 @@ export async function handleSystemEvent(
           )
         ),
         convoKey,
-        { isSystem: true }
+        { isSystem: true, messageId: inviteMessageId }
       );
     } else {
       // The invitee receives the invitation card
@@ -163,7 +167,10 @@ export async function handleSystemEvent(
           workspaceImageMediaId
         )
       );
-      await addMessageToChat('system', inviteEnvelope, convoKey, { isSystem: true });
+      await addMessageToChat('system', inviteEnvelope, convoKey, {
+        isSystem: true,
+        messageId: inviteMessageId,
+      });
     }
 
     return true;

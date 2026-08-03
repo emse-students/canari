@@ -31,7 +31,7 @@
       height?: number;
       caption?: string;
     };
-    /** Bearer token used to authenticate the media download request. */
+    /** Non-empty once the session is authenticated; the download resolves its own live token. */
     authToken: string;
     /** When set, clicking the image calls this instead of opening its own lightbox. */
     onOpen?: () => void;
@@ -81,7 +81,7 @@
     const mediaService = new MediaService();
 
     mediaService
-      .downloadAndDecrypt(mediaRef, authToken)
+      .downloadAndDecrypt(mediaRef)
       .then((url) => {
         if (destroyed) {
           releaseDecryptedMediaBlobUrl(mediaRef);

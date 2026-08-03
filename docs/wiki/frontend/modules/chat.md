@@ -107,7 +107,25 @@ type MessageEnvelope =
   | { type: 'system'; event: string; data?: unknown }
 ```
 
-`appMsgToEnvelope()` in `proto/codec.ts` is the canonical decoder (protobuf AppMessage -> MessageEnvelope).
+`appMsgToEnvelope()` (`utils/chat/messageUtils.ts`) is the canonical decoder (protobuf AppMessage ->
+MessageEnvelope).
+
+### A system event is executed, never displayed
+
+**`appMsgToEnvelope` returns `null` for a `system` AppMessage, and that null is load-bearing.** Every
+call site that can receive a control event is written as `if (envelope) { display } else if
+(msg.system) { handle }` - `handleKnownGroup` and the Welcome buffer in `setupMessageHandler`, the
+replay in `history.ts`. Make it return an envelope and those handler branches become dead code: the
+event is never applied and its JSON payload is rendered as an ordinary message attributed to the
+sender. That is exactly what a `msg.system` branch added to it in `7e9d66e8` did until 2026-08-03.
+
+A **channel** notice is the one system message that IS pre-rendered text: `inviteMemberToChannel`
+sends `mkSystem('memberAdded', <already-localized sentence>)` into the channel, because a channel
+has no per-event handler. The two channel decode sites - `channelEventHandler`
+(`channel.message.created`) and `decodeChannelMessageRow` (history + search) - ask for it
+explicitly through **`appMsgToChannelSystemEnvelope`** and attribute it to `'system'` with
+`isSystem: true`, so it renders centred and neutral rather than as a message from whoever triggered
+it. `ChatMessageGroups` centres on the ROW flag; the `system` envelope kind only gives the pill.
 
 ### Channel invitation card
 
@@ -121,6 +139,15 @@ BOTH sides render the same `channelInvite` card in that conversation:
 
 `channelInvite.invitedName` is the discriminator: **present = the inviter's copy**, and its presence
 is what suppresses the Join button. Never set it on the invitee's copy.
+
+The card has **three** producers - `inviteMemberToChannel` inserting the inviter's local copy, the
+live `channel_invitation` branch of `systemMessageHandler` on their other devices and on the
+invitee's, and `applyReplaySystemEvent` when the frame is only read back from the stream (an
+invitation that arrived while the device was offline). All three id the bubble with
+`channelInviteMessageId(channelId, inviteeId)`, so they converge on one card instead of stacking
+three; `addMessageToChat` dedupes on that id. Its sibling `channel_key_distribution` is deliberately
+NOT replayed: `hydrateChannelHistoryKeys` pulls every epoch key from the server when the channel is
+opened, so the MLS delivery is an optimisation, not the only source.
 
 `channelInvite.workspaceImageMediaId` carries the community's cover so the card shows the real logo;
 absent (no cover, or an envelope written before the field existed) it falls back to the community

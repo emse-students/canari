@@ -4,7 +4,11 @@ import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
-import { mkChannelInviteSentEnvelope, serializeEnvelope } from '$lib/envelope';
+import {
+  mkChannelInviteSentEnvelope,
+  serializeEnvelope,
+  channelInviteMessageId,
+} from '$lib/envelope';
 import {
   hydrateChannelBootstrap,
   isChannelConversationId,
@@ -699,7 +703,7 @@ export function useChannelWorkspaces() {
                     )
                   ),
                   directConvo[0],
-                  { isSystem: true }
+                  { isSystem: true, messageId: channelInviteMessageId(channelId, memberId) }
                 );
               } catch (err) {
                 console.warn('[Channel Invite] Failed to send invitation message:', err);

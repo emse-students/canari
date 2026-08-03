@@ -64,6 +64,7 @@ Channels use server-assisted symmetric encryption (not MLS):
 | POST | `/api/channels/:channelId/members/invite` | Invite user to channel |
 | POST | `/api/channels/:channelId/members/kick` | Kick member (role check) |
 | POST | `/api/channels/:channelId/members/leave` | Leave channel |
+| GET | `/api/channels/:channelId/members` | Roster of THIS channel (private = `allowedUsers` + admins); `?scope=workspace` for the whole community |
 | DELETE | `/api/channels/workspaces/:workspaceId` | Delete a whole community for every member (MANAGE_WORKSPACE **only** - see "Deleting a community") |
 | DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS) |
 | PATCH | `/api/channels/workspaces/:workspaceId/members/:userId/role` | Set a member's workspace role, replacing existing roles (MANAGE_WORKSPACE / MANAGE_ROLES) |
@@ -91,6 +92,13 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
 - **Channel access.** `canAccessChannel`: a **public** channel is readable by every workspace
   member; a **private** channel is readable only by users listed in `channels.allowedUsers` **plus**
   any admin (`workspace.manage`) - admins reach every channel without being explicitly added.
+- **Channel roster.** `GET /:channelId/members` answers the CHANNEL's members, not the workspace's:
+  for a private channel that is the same set `canAccessChannel` admits, resolved from the roles the
+  handler already loaded rather than one query per member, and the caller is refused outright if
+  they cannot read the channel. `?scope=workspace` returns the community roster instead - the
+  channel settings panel needs it, since the picker that grants access to a private channel must be
+  able to offer people who are not in it yet. Getting this wrong is visible: the members sidebar
+  listed all nine people of a community in a channel only five of them could read.
 - **Write policy.** Independent of read access, `channels.writePolicy` (migration 031) gates
   posting: `everyone` (default), `admins_moderators` (roles with `channel.moderate` or
   `workspace.manage`), or `admins` (`workspace.manage` only). Enforced in `sendMessage` via

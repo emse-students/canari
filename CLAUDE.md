@@ -369,6 +369,13 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - A removal broadcast reaches every REMAINING member too - read `kickedUserId` before acting.
 - A channel bubble is keyed by the SERVER row id, everywhere.
 - Channel reactions are a cleartext server tally; DM reactions are encrypted MLS system messages.
+- `appMsgToEnvelope` returning NULL for a system event is load-bearing: every replay path is
+  `if (envelope) display else if (system) handle`, so an envelope there silently kills the handler.
+- A DM system event is a JSON control payload to EXECUTE; a channel notice is pre-rendered text to
+  DISPLAY (`appMsgToChannelSystemEnvelope`), attributed to `'system'`, never to its trigger.
+- A card written by three producers (local insert, live event, replay) needs ONE derived id.
+- A channel roster is the CHANNEL's, not the workspace's - except the settings picker, which must
+  offer people not in the channel yet (`?scope=workspace`).
 
 #### MLS membership and routing -> [mls-protocol](docs/wiki/protocols/mls-protocol.md), [chat-delivery](docs/wiki/services/chat-delivery.md)
 
@@ -398,6 +405,8 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   whatever the other side appended, so every such pair needs an adoption pass, not just a drain.
 - Adopt before the conversations load and the ordinary history load displays it - no second
   in-memory merge path to keep correct.
+- An access token is time-bound, so a COPY of it passed down a component tree is a bug waiting for
+  the TTL: resolve it at the fetch (`getToken`). `authToken` as a prop means "session is authed".
 
 #### UI and i18n -> [frontend/architecture](docs/wiki/frontend/architecture.md)
 
@@ -409,6 +418,8 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - No user-facing string names a sensor ("empreinte ou Face ID" is wrong on every device, half the time).
 - A native process cannot resolve a locale, so prompt text must travel down the call.
 - Nothing types a string as user-visible, so no compiler enforces Paraglide.
+- Svelte TRIMS whitespace at a block boundary: `{label}{#if x}<span>` loses the space, `{label}`
+  then `{#if x}` on the next line keeps it.
 - Re-run `bun run paraglide:compile` before `bun run test` after any build.
 
 #### Server-side fetches -> [chat-delivery](docs/wiki/services/chat-delivery.md)

@@ -481,10 +481,9 @@
     mediaPurgedByRetention = false;
 
     const ref: MediaRef = mediaRef;
-    const token: string = authToken;
 
     new MediaService()
-      .downloadAndDecrypt(ref, token)
+      .downloadAndDecrypt(ref)
       .then((url) => {
         if (destroyed) {
           releaseDecryptedMediaBlobUrl(ref);

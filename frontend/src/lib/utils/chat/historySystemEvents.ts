@@ -10,6 +10,12 @@ import {
   chat_system_member_added,
   chat_system_conversation_deleted,
 } from '$lib/paraglide/messages';
+import {
+  serializeEnvelope,
+  mkChannelInviteEnvelope,
+  mkChannelInviteSentEnvelope,
+  channelInviteMessageId,
+} from '$lib/envelope';
 
 /** One Redis-stream history row as returned by `IMlsService.fetchHistory`. */
 export type HistoryRow = { id?: string; sender_id: string; content: string; timestamp: string };
@@ -36,6 +42,8 @@ export interface ReplaySystemEventCtx {
   parsed: canari.AppMessage;
   msg: HistoryRow;
   contactName: string;
+  /** Local user id, used to tell an invitation we SENT from one we received. */
+  userId: string;
   getConversation: (contactName: string) => Conversation | undefined;
   setConversation: (contactName: string, next: Conversation) => void;
   messageReactions: Map<string, MessageReaction[]>;
@@ -62,6 +70,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     parsed,
     msg,
     contactName,
+    userId,
     getConversation,
     setConversation,
     messageReactions,
@@ -74,7 +83,11 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
 
   if (!parsed.system) return;
   const senderNorm = msg.sender_id.toLowerCase();
-  let systemText: string | null = null;
+  // Plain text for a membership notice, a serialized envelope for a card (channel invitation).
+  let systemContent: string | null = null;
+  // Defaults to the MLS frame id; a card overrides it with an id derived from the invitation so
+  // the replay converges on the bubble the live path already wrote instead of duplicating it.
+  let systemMessageId: string | undefined = parsed.messageId || undefined;
 
   try {
     const data = parsed.system.data ? JSON.parse(parsed.system.data) : {};
@@ -85,16 +98,19 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         setConversation(contactName, { ...convo, name: data.newName });
       }
       const getName = await resolveDisplayNames([senderNorm]);
-      systemText = chat_system_group_renamed({ sender: getName(senderNorm), name: data.newName });
+      systemContent = chat_system_group_renamed({
+        sender: getName(senderNorm),
+        name: data.newName,
+      });
     } else if (parsed.system.event === 'memberRemoved' && data.targetUser) {
       const getName = await resolveDisplayNames([senderNorm, data.targetUser]);
-      systemText = chat_system_member_removed({
+      systemContent = chat_system_member_removed({
         sender: getName(senderNorm),
         target: getName(data.targetUser),
       });
     } else if (parsed.system.event === 'memberLeft' && data.userId) {
       const getName = await resolveDisplayNames([data.userId]);
-      systemText = chat_system_member_left({ user: getName(data.userId) });
+      systemContent = chat_system_member_left({ user: getName(data.userId) });
     } else if (parsed.system.event === 'memberAdded') {
       const newUserIds: string[] =
         data.newUsers && Array.isArray(data.newUsers)
@@ -105,10 +121,40 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       const getName = await resolveDisplayNames([senderNorm, ...newUserIds]);
       const added = newUserIds.map((u: string) => getName(u)).join(', ');
       if (added)
-        systemText = chat_system_member_added({ sender: getName(senderNorm), members: added });
+        systemContent = chat_system_member_added({ sender: getName(senderNorm), members: added });
+    } else if (parsed.system.event === 'channel_invitation' && data.channelId) {
+      // Mirrors the live handler: both sides render the same card, the inviter's copy without a
+      // Join button (`invitedName` is the discriminator). Replayed rather than ignored because an
+      // invitation that lands while the device is offline only ever reaches it through the stream.
+      // Its sibling `channel_key_distribution` needs no replay: `hydrateChannelHistoryKeys` pulls
+      // every epoch key from the server when the channel is opened.
+      const channelId = String(data.channelId);
+      const channelName = String(data.channelName || channelId);
+      const workspaceName = data.workspaceName ? String(data.workspaceName) : undefined;
+      const workspaceImageMediaId = data.workspaceImageMediaId
+        ? String(data.workspaceImageMediaId)
+        : undefined;
+      systemMessageId = channelInviteMessageId(channelId, String(data.inviteeId || ''));
+      systemContent = serializeEnvelope(
+        senderNorm === userId.toLowerCase()
+          ? mkChannelInviteSentEnvelope(
+              channelId,
+              workspaceName ?? channelName,
+              workspaceName,
+              String(data.inviteeName || data.inviteeId || ''),
+              workspaceImageMediaId
+            )
+          : mkChannelInviteEnvelope(
+              channelId,
+              workspaceName ?? channelName,
+              workspaceName,
+              String(data.inviterName || ''),
+              workspaceImageMediaId
+            )
+      );
     } else if (parsed.system.event === 'groupDeleted') {
       const getName = await resolveDisplayNames([senderNorm]);
-      systemText = chat_system_conversation_deleted({ sender: getName(senderNorm) });
+      systemContent = chat_system_conversation_deleted({ sender: getName(senderNorm) });
     } else if (parsed.system.event === 'read_receipt') {
       const msgIds: string[] = data.messageIds ?? [];
       const convo = getConversation(contactName);
@@ -275,13 +321,13 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     // Keep history replay robust even if a control payload is malformed.
   }
 
-  if (systemText) {
+  if (systemContent) {
     const systemServerMs = parseServerTimestampMs(msg.timestamp);
     pushPendingMessage({
       senderId: 'system',
-      content: systemText,
+      content: systemContent,
       isSystem: true,
-      messageId: parsed.messageId || undefined,
+      messageId: systemMessageId,
       timestamp: systemServerMs !== undefined ? new Date(systemServerMs) : undefined,
     });
   }

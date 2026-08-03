@@ -408,13 +408,15 @@ export class MediaService {
   /**
    * Download the encrypted blob and decrypt it client-side.
    *
+   * The bearer token is resolved per request inside the blob cache, so a long-lived view never
+   * downloads with the token it was mounted with.
+   *
    * @param ref        The `MediaRef` extracted from the MLS message.
-   * @param authToken  JWT token.
    * @returns          A cached object URL (`blob:…`). Call
    *                   `releaseDecryptedMediaBlobUrl(ref)` when the element unmounts.
    */
-  async downloadAndDecrypt(ref: MediaRef, authToken: string): Promise<string> {
-    return acquireDecryptedMediaBlobUrl(ref, authToken, this.baseUrl);
+  async downloadAndDecrypt(ref: MediaRef): Promise<string> {
+    return acquireDecryptedMediaBlobUrl(ref, this.baseUrl);
   }
 
   // -------------------------------------------------------------------------
@@ -456,9 +458,8 @@ export class MediaService {
    * Call `releaseRawMediaBlobUrl(mediaId)` when the element unmounts.
    *
    * @param mediaId    The opaque identifier returned by `uploadRaw`.
-   * @param authToken  JWT token.
    */
-  async downloadRaw(mediaId: string, authToken: string): Promise<string> {
-    return acquireRawMediaBlobUrl(mediaId, authToken, this.baseUrl);
+  async downloadRaw(mediaId: string): Promise<string> {
+    return acquireRawMediaBlobUrl(mediaId, this.baseUrl);
   }
 }

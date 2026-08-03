@@ -6,7 +6,7 @@ import {
   type ChannelPollInput,
 } from '$lib/services/ChannelService';
 import { encodeAppMessage, decodeAppMessage, mkPoll } from '$lib/proto/codec';
-import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { SvelteDate } from 'svelte/reactivity';
@@ -20,6 +20,8 @@ export interface DecodedChannelMessage {
   content: string;
   timestamp: Date;
   isOwn: boolean;
+  /** True for a membership notice: rendered centred and neutral, attributed to nobody. */
+  isSystem: boolean;
 }
 
 /**
@@ -37,6 +39,7 @@ export async function decodeChannelMessageRow(
   const serverMs = parseServerTimestampMs(row.createdAt);
   let content: string | undefined;
   let timestamp: Date | undefined;
+  let isSystem = false;
   try {
     let bytes: Uint8Array | undefined;
     if (row.ciphertext && row.nonce && row.keyVersion != null) {
@@ -54,10 +57,12 @@ export async function decodeChannelMessageRow(
     if (bytes) {
       const decoded = decodeAppMessage(bytes);
       if (decoded) {
-        const envelope = appMsgToEnvelope(decoded, serverMs);
+        const envelope =
+          appMsgToEnvelope(decoded, serverMs) ?? appMsgToChannelSystemEnvelope(decoded, serverMs);
         if (envelope) {
           content = envelope.content;
           timestamp = envelope.options.timestamp;
+          isSystem = !!decoded.system;
         }
       }
     }
@@ -66,13 +71,16 @@ export async function decodeChannelMessageRow(
   }
   if (content === undefined) return null;
 
-  const senderId = String(row.senderId || 'unknown').toLowerCase();
+  // A membership notice belongs to the conversation, not to whoever triggered it: attributing it
+  // to the sender would give it an avatar, a name header and a left-aligned bubble.
+  const senderId = isSystem ? 'system' : String(row.senderId || 'unknown').toLowerCase();
   return {
     id: String(row.id),
     senderId,
     content,
     timestamp: timestamp ?? (serverMs !== undefined ? new SvelteDate(serverMs) : new SvelteDate()),
-    isOwn: senderId === userIdLower,
+    isOwn: !isSystem && senderId === userIdLower,
+    isSystem,
   };
 }
 

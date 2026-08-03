@@ -1004,4 +1004,67 @@ describe('ChannelService security hardening', () => {
     await expect(service.listWorkspacesForUser('u1')).resolves.toEqual([]);
     expect(workspaceRepo.find).not.toHaveBeenCalled();
   });
+  /** Wires a private channel owned by ws1, its roles, and its full workspace roster. */
+  function arrangePrivateChannelRoster(repos: {
+    channelRepo: { findOne: jest.Mock };
+    memberRepo: { findOne: jest.Mock; find: jest.Mock };
+    roleRepo: { find: jest.Mock };
+  }) {
+    repos.channelRepo.findOne.mockResolvedValue({
+      id: 'ch1',
+      workspaceId: 'ws1',
+      isPrivate: true,
+      allowedUsers: ['guest'],
+      allowedRoles: [],
+    });
+    repos.memberRepo.findOne.mockImplementation(({ where }: { where: { userId: string } }) =>
+      Promise.resolve({ workspaceId: 'ws1', userId: where.userId, roleIds: ['r-admin'] })
+    );
+    repos.memberRepo.find.mockResolvedValue([
+      { id: 'm1', userId: 'boss', roleIds: ['r-admin'], createdAt: 'now' },
+      { id: 'm2', userId: 'guest', roleIds: ['r-member'], createdAt: 'now' },
+      { id: 'm3', userId: 'outsider', roleIds: ['r-member'], createdAt: 'now' },
+    ]);
+    repos.roleRepo.find.mockResolvedValue([
+      { id: 'r-admin', name: 'Administrateur', priority: 10, permissions: ['workspace.manage'] },
+      { id: 'r-member', name: 'Membre', priority: 1, permissions: [] },
+    ]);
+  }
+
+  it('listChannelMembers scopes a private channel to admins + its allowed users', async () => {
+    const { service, channelRepo, memberRepo, roleRepo } = makeService();
+    arrangePrivateChannelRoster({ channelRepo, memberRepo, roleRepo });
+
+    const members = await service.listChannelMembers('ch1', 'boss');
+
+    // `outsider` is in the community but cannot read the channel, so it is not in its roster.
+    expect(members.map((m) => m.userId).sort()).toEqual(['boss', 'guest']);
+  });
+
+  it('listChannelMembers with scope=workspace still returns the whole community roster', async () => {
+    const { service, channelRepo, memberRepo, roleRepo } = makeService();
+    arrangePrivateChannelRoster({ channelRepo, memberRepo, roleRepo });
+
+    // The settings picker grants access to people who are not in the channel yet.
+    const members = await service.listChannelMembers('ch1', 'boss', 'workspace');
+
+    expect(members.map((m) => m.userId).sort()).toEqual(['boss', 'guest', 'outsider']);
+  });
+
+  it('listChannelMembers refuses a private channel roster to a member without access', async () => {
+    const { service, channelRepo, memberRepo, roleRepo } = makeService();
+    arrangePrivateChannelRoster({ channelRepo, memberRepo, roleRepo });
+    memberRepo.findOne.mockResolvedValue({
+      workspaceId: 'ws1',
+      userId: 'outsider',
+      roleIds: ['r-member'],
+    });
+    roleRepo.find.mockResolvedValue([
+      { id: 'r-member', name: 'Membre', priority: 1, permissions: [] },
+    ]);
+
+    await expect(service.listChannelMembers('ch1', 'outsider')).rejects.toBeInstanceOf(
+      ForbiddenException
+    );
+  });
 });

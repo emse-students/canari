@@ -387,6 +387,7 @@ export function useConversations() {
             content: decoded.content,
             timestamp: decoded.timestamp,
             isOwn: decoded.isOwn,
+            isSystem: decoded.isSystem,
           });
         }
       }
@@ -449,6 +450,7 @@ export function useConversations() {
         content: decoded.content,
         timestamp: decoded.timestamp,
         isOwn: decoded.isOwn,
+        isSystem: decoded.isSystem,
       });
       let text = decoded.content;
       try {

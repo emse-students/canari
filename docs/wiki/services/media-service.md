@@ -29,6 +29,20 @@ Server:
   - Never sees the plaintext or the key
 ```
 
+## Client-side download (`utils/mediaBlobCache.ts`)
+
+Every download goes through one seam: ciphertext is fetched (and kept in the Cache API under
+`canari-media-ciphertext-v1`, so it survives a reload), decrypted, and handed out as a
+reference-counted blob URL (`BlobUrlPool`, 5-minute delayed eviction).
+
+**The bearer token is resolved inside that seam, per request, never passed in.** An access token
+lives in memory for minutes and refreshes itself silently through `getToken`; the copy the chat
+session hands down its component tree (`session.authToken`) is captured once at login and never
+updated. Passing that copy down to the fetch meant a tab open past the expiry kept rendering
+already-cached media while every newly received image 401'd - a bug that reads as "the image only
+appears after a reload", because a reload is what mints a fresh token. `authToken` still travels as
+a prop, but only as a signal that the session is authenticated.
+
 ## Routes
 
 | Method | Path | Auth | Description |

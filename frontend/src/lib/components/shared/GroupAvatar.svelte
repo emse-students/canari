@@ -2,7 +2,6 @@
   import { Users } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
   import { MediaService } from '$lib/media';
-  import { getToken } from '$lib/stores/auth';
   import { releaseRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import { m } from '$lib/paraglide/messages';
 
@@ -70,8 +69,7 @@
     currentMediaId = mediaId;
     loadFailed = false;
     try {
-      const token = await getToken();
-      const url = await mediaService.downloadRaw(mediaId, token);
+      const url = await mediaService.downloadRaw(mediaId);
       if (currentMediaId !== mediaId) {
         releaseRawMediaBlobUrl(mediaId);
         return;

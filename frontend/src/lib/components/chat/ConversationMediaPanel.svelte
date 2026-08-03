@@ -24,7 +24,7 @@
     open: boolean;
     /** Conversation whose shared content is displayed (groupId or channel_<id>). */
     conversationId: string;
-    /** Bearer token forwarded to MediaService for decryption. */
+    /** Non-empty once the session is authenticated; the download resolves its own live token. */
     authToken: string;
     onClose: () => void;
     /** Loads the full aggregated shared content from the local message history. */
@@ -100,7 +100,7 @@
     let acquired = false;
     lightboxUrl = null;
     new MediaService()
-      .downloadAndDecrypt(ref, authToken)
+      .downloadAndDecrypt(ref)
       .then((url) => {
         if (destroyed) releaseDecryptedMediaBlobUrl(ref);
         else {
@@ -117,7 +117,7 @@
 
   async function downloadFile(ref: (typeof content.files)[number]['media']) {
     try {
-      const url = await new MediaService().downloadAndDecrypt(ref, authToken);
+      const url = await new MediaService().downloadAndDecrypt(ref);
       const a = document.createElement('a');
       a.href = url;
       a.download = ref.fileName ?? 'fichier';
