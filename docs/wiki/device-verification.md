@@ -7,9 +7,15 @@ Work Packages sit open with correct-looking code that has never executed on hard
 
 This file is the single ordered pass that closes them.
 
+**It is the only place they are tracked.** On 2026-08-04 every Work Package whose sole remaining
+debt was "run this on a device" was deleted from `CLAUDE.md` and folded in here - a check owed is
+not a work package, it is a line in this table. The WP ids are kept in the table because commits and
+`CHANGELOG.md` name them. **A check that FAILS earns a new WP; a check that passes earns a PASS
+here and nothing else.**
+
 ## Where the pass stands
 
-**Android is done except H and K.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
+**Android is done except H, K, L and M.** The full ladder was run on **v0.11.7** on 2026-07-31 (log
 archived on the user's desktop) after partial runs on v0.11.5 and v0.11.6. Two defects came out of
 it, both tracked as WP-NOTIF-1 and both re-checked by **check K**. **Check H was recorded PASS and
 was not one**: the user reported on 2026-08-01 that a tapped notification still does not open the
@@ -40,6 +46,8 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | I | WP-UI-1 residual | PASS v0.11.7 | owed |
 | J | WP-VERIF-4 | PASS v0.11.7 | owed |
 | K | WP-NOTIF-1 | owed | owed |
+| L | WP-DEV-PANEL-1 | owed | owed |
+| M | WP-POST-DOC-2 | owed (the platform that matters) | n/a |
 
 For the iOS pass, install the `ios-release` artifact of the run above rather than waiting for
 TestFlight: a dispatch does not upload there, so TestFlight is still on the previous build and check
@@ -225,6 +233,40 @@ entry plus its local message.
 **Verdict lines:** `[OUTBOX_MIRROR]` adoption at login, then the ordinary `[OUTBOX]` flush. A silent
 proto stays `control` and is sent verbatim with no push - that is intended, not a miss.
 
+## L. A revoked device coming back - the dev panel
+
+**Proves** WP-DEV-PANEL-1. The cause is known and fixed; only the recovery has never been seen run.
+`registerDevice` never consulted the denylist, and `resolveDeviceId` restores the same id across
+reinstalls on purpose - so a device deleted from the panel came back under its old id, got a 200,
+and was then filtered out of `getUserDevices` and resolved to a null KeyPackage: enrolled, invisible,
+never invitable, silent, forever. Registration now answers `403 DEVICE_REVOKED` and the client
+re-enrols under a fresh identity.
+
+1. On a second device, delete this device from the dev panel (or use one whose id was deleted
+   earlier).
+2. Relaunch the app on the deleted device and log in.
+
+**Verdict:** `[MLS] Device <old> was revoked - re-enrolled as <new>`, then the panel lists the new
+id and the device receives again. **It costs that device's local history, by design** - a new id IS
+a new device, so do not run this on a device whose messages you want.
+
+## M. A PDF preview, on Android
+
+**Proves** WP-POST-DOC-2. Android is the platform that decides it: its WebView has no PDF engine,
+which is the whole reason pdf.js was chosen over an `<iframe>`, and nothing in the compile or the
+tests can tell you the canvas path works there.
+
+The prod half of this is already fixed and **verified live on 2026-08-04**: nginx has no `.mjs` type,
+so the worker was served as `application/octet-stream` and the module loader refused it. A `HEAD` on
+`/_app/immutable/assets/pdf.worker.min.*.mjs` now answers `application/javascript`.
+
+1. Open a post carrying a PDF: the first page must render full-width under the file row.
+2. Open a chat message carrying a PDF: the same page must render in the 44 px icon square.
+
+`ConversationMediaPanel` and `AssociationDocumentManager` show no preview on purpose - they list
+files without fetching them - and a password-protected vault document cannot be decrypted without
+its password at all. Neither is a failure.
+
 ---
 
 ## Traps that outlived the work that found them
@@ -249,6 +291,7 @@ Kept because each one costs a full device pass to rediscover.
 
 ## Recording the results
 
-Update SESSION STATE in `CLAUDE.md` per Work Package: what passed, what failed, and **the log lines
-you actually saw**. A failure with no captured log is worth almost nothing - the whole reason
-WP-FWD-1 is still open is that the one loss it describes left no trace.
+Record them **here**, in the table and next to the check: what passed, on which build, and **the log
+lines you actually saw**. Only a FAILURE goes to `CLAUDE.md`, as a new Work Package carrying its
+captured log - a failure with no log is worth almost nothing, which is exactly why WP-FWD-1 is still
+open with nothing to act on.

@@ -51,9 +51,8 @@ State lives HERE (canonical). Five repos: Canari (this monorepo), Sky (../Sky), 
 (../MiGallery) and Portail-etu (../refonte-portail-etu) are `emse-students/*` on GitHub;
 **Le Cercle (../le-cercle)** is `gitlab.emse.fr:aurel.dautry/le-cercle`.
 Sky, MiGallery and Portail-etu are COMPLETE - nothing open on any of them.
-All on `main` EXCEPT Le Cercle: Aurel owns that repo - our audit branch there was archived and
-superseded by his own rewrite, which is what runs in production. Never commit to its `main`; work on
-a branch and hand him a merge request.
+All on `main` EXCEPT Le Cercle: Aurel owns that repo. Never commit to its `main`; work on a branch
+and hand him a merge request.
 
 Work is tracked as Work Packages ordered by severity: **P1** (security, or a user-facing path that
 is broken), **P2** (correctness, nothing at risk), **P3** (hygiene). `[ ]` open, `[~]` in progress.
@@ -62,9 +61,33 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
 
 ---
 
-### LE CERCLE (../le-cercle) - OPEN WORK PACKAGES
+### LE CERCLE (../le-cercle) - ROADMAP CLEARED 2026-08-04, ready for the big work
 
-SvelteKit 5 +
+**No Work Package is open on the Cercle.** What was owed either shipped, moved to the merge request
+below, or is a test in `docs/PROD-TEST-CERCLE.md` (V1 a real MiConnect round trip, V2 the access
+gate, V4 the alcohol gate at a till - all three need a human, none is a WP). The link itself is LIVE
+and proven both directions on prod; every probe and its answer is in that file, do not re-derive it.
+
+**Merge request open, awaiting Aurel** (2026-08-04): branch
+`fix/audit-2026-08-canari-and-session`, 5 commits, gates green -
+https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/new?merge_request%5Bsource_branch%5D=fix%2Faudit-2026-08-canari-and-session
+It carries the rolled-back balance on a replayed top-up, opening ledger entries + `bun run db:check`,
+the unconfigured-JWT-key skip, a `.env.example` that can actually build, and two lint fixes.
+
+**Two things it cannot do, both on HIS host, both to raise with him rather than patch around:**
+`JWT_OLD_SECRET` is non-empty outside any rotation (55 chars, a real former secret - so the rotation
+that was performed revoked nothing until it is emptied and the service restarted), and `AUTH_SECRET`
+is byte-for-byte the `.env.example` placeholder (dead config since Auth.js left, so weight rather
+than a hole). Verified 2026-08-04 by fingerprint: `JWT_SECRET` and `MICONNECT_CLIENT_SECRET` on prod
+are real random values, distinct from every dev value, and the dev `.env` leaks nothing.
+
+**First question the big work must settle:** `undo` and `cashout` are declared in the ledger schema
+and written by nothing, so the ledger is append-only with no way to correct a mis-keyed consumption
+(the user declined an `adjustment` kind, 2026-07-28). Both `db:check` and migration 07 REFUSE to
+guess their sign - they stop rather than compute a wrong balance - so implementing them means
+choosing that convention first, in one place.
+
+**Stack:** SvelteKit 5 +
 `bun:sqlite` (file DB, `DB_PATH`), hand-written SQL modules under `src/lib/server/db/`, migrations
 = numbered files in `db/sql/migrate/` replayed by `bun run db:migrate` (the runner wraps each file
 in a transaction - so NO `BEGIN`/`COMMIT` and no `PRAGMA foreign_keys` inside a migration).
@@ -90,96 +113,26 @@ needs `ORIGIN=http://127.0.0.1:<port>` or SvelteKit's CSRF check 403s every form
 runtime allows. `localhost` resolves to `::1`, where another project's Vite was listening: always
 address `127.0.0.1`.
 
-- \[~\] **WP-CERCLE-1 (P1) - THE LINK IS LIVE, BOTH DIRECTIONS PROVEN ON PROD (2026-08-03). Only
-  browser-bound checks are owed.** Every probe and its answer is in `docs/PROD-TEST-CERCLE.md` - do
-  not re-derive it here. Our audit branch is dead and must never be redeployed (tag
-  `archive/audit/security-and-canari-integration`); Aurel's rewrite is what runs, and it added the
-  top-up route and the `sha256=` strip, so nothing is owed from us there.
-  **His model, overriding any older note:** no cotisant snapshot, no TTL - `syncCanaryMembership`
-  writes `users.id_membership` (FK to `memberships`) at login and on the 5-minute session-JWT
-  refresh. Ledger tables are `ledger` + `canari_ledger_details`.
-  **Owed, all needing a human at a browser or a till:** V1 (a real MiConnect round trip), V2 (the
-  access gate, incl. a cercleux with no cotisation getting in but unable to consume) and V4 (the
-  alcohol gate driven live, incl. a tier change taking effect on the next round).
-  **Cercle prod access:** `ssh cercle` (10.0.0.6, ProxyJump canari, key installed - no password).
-  `cercleapp.service` serves `/var/www/le-cercle`; the checkout `/home/cercle/le-cercle` does NOT
-  serve. DB `/var/www/le-cercle/data/le_cercle.db`. No `node`, no `sqlite3` - use `bun`; and
-  `journalctl` shows nothing to that account (not in `adm`), so probe the endpoint instead.
-
-- \[~\] **WP-CERCLE-2 (P2) - Merge request written 2026-08-03, NOT PUSHED - waiting on the user.**
-  Branch `fix/audit-2026-08-canari-and-session` in `../le-cercle`, 4 commits, gates green: the
-  rolled-back balance on a replayed top-up, opening ledger entries + `bun run db:check` (red before,
-  green after, on a copy of the fixtures), the unconfigured-JWT-key skip + a documented
-  `JWT_OLD_SECRET` rotation, and the two pre-existing lint failures. Description to paste is in the
-  session scratchpad `MR-CERCLE.md`. **The prod action it does NOT do stays owed: emptying
-  `JWT_OLD_SECRET` on `/var/www/le-cercle/.env` and restarting** - it is non-empty outside any
-  rotation, so every session signed with the previous secret is still valid and the rotation that was
-  performed revoked nothing. Aurel's call, his host.
-
-- \[ \] **WP-CERCLE-3 (P3) - No way to correct a mis-keyed consumption.** The ledger is
-  append-only and the user declined an `adjustment` kind, so a drink charged twice or to the wrong
-  account cannot be undone. Revisit once the bar has used it for a term.
-
-- \[~\] **WP-CERCLE-4 (P3) - Dev secrets are in the working `.env`.** The three real values ARE
-  generated, in the session scratchpad `CERCLE-PROD-SECRETS.md` with the posting procedure - outside
-  every repo on purpose - and it records which are already posted. All that is left is putting them
-  in the prod env and deleting that file. Rotating `JWT_SECRET` is the only way to revoke every
-  session at once, and it only takes effect once `JWT_OLD_SECRET` is empty again (WP-CERCLE-2).
+**Cercle prod access:** `ssh cercle` (10.0.0.6, ProxyJump canari, key installed - no password).
+`cercleapp.service` serves `/var/www/le-cercle`; the checkout `/home/cercle/le-cercle` does NOT
+serve. DB `/var/www/le-cercle/data/le_cercle.db`. No `node`, no `sqlite3` - use `bun`; and
+`journalctl` shows nothing to that account (not in `adm`), so probe the endpoint instead.
+Aurel's rewrite is what runs; our audit branch is archived
+(`archive/audit/security-and-canari-integration`) and must never be redeployed. **His model,
+overriding any older note:** no cotisant snapshot, no TTL - `syncCanaryMembership` writes
+`users.id_membership` (FK to `memberships`) at login and on the 5-minute session-JWT refresh.
 
 ---
 
 ### CANARI - OPEN WORK PACKAGES
 
-- \[~\] **WP-VERIF-0..4 + the DEEPLINK-1 and UI-1 residuals (P1 to P3) - [device] one single pass.**
-  Everything native is verified by COMPILING, which proves nothing about running. The ordered runbook
-  is **[device-verification](docs/wiki/device-verification.md)**: checks B-K, which WP each closes,
-  the verdict log line, and the per-check PASS/owed table. Do not re-derive the checks here; extend
-  that file. **ANDROID IS DONE** (full ladder on v0.11.7, 2026-07-31). **iOS is entirely owed - not
-  one check has ever run on hardware.** Check A was RETIRED (it needed a deliberate downgrade to a
-  pre-WP-SEC-1 build); check **K is new and owed on BOTH platforms**.
-  **Android capture tool: `test_adb.py`** at the repo root (tkinter GUI: build, install, per-device
-  logcat with the runbook's tags already whitelisted).
-
-- \[~\] **WP-NOTIF-1 (P2) - Notification quick actions. CODE COMPLETE AND COMPILED; only the device
-  behaviour is unverified.** (a) the delivered reply left no local trace - written to
-  `fcm_message_cache.ndjson` under OUR user id (`writeSentMessageToCache` /
-  `CanariWriteSentMessageToCache`). (b) our own avatar was blank - new `MlsContextLoader.loadUserId`
-  (no Keystore hop); Android only, iOS has no self Person. (c) an UNDELIVERED reply was dropped by
-  the next `store_outbox_mirror` rewrite - `adoptOrphanedMirrorEntries` (`outboxMirror.ts`) + the new
-  Rust `read_outbox_mirror` adopt every unknown mirror line back into the queue at login, BEFORE
-  `loadAndRestoreConversations` so the ordinary load displays it.
-  **COMPILE RUN DONE 2026-08-01** on `2b5ba1b0`, both workflows green (iOS `30704254549`, Android
-  `30704255667`, v0.11.8), nothing published. **Owed: check K** of the runbook on both platforms.
-  **That run's Android artifact IS the device build** - it carries WP-DEEPLINK-1, WP-NOTIF-1 and the
-  WP-XP-7 removal at once, so checks H, K, I and the dev-panel check all ride one install:
-  https://github.com/emse-students/canari/actions/runs/30704255667/artifacts/8819943358
-
-- \[~\] **WP-DEV-PANEL-1 (P2) - CAUSE FOUND AND FIXED, one check owed on device.** It was the
-  `revoked_devices` row, and the mechanism is that `registerDevice` never consulted the denylist:
-  a deleted device that came back kept the SAME id (`resolveDeviceId` restores it on purpose), got
-  a 200, and was then filtered out of `getUserDevices` and resolved to a null KeyPackage - enrolled,
-  invisible, never invitable, silent, forever. Registration now answers `403 DEVICE_REVOKED` and the
-  client re-enrols under a fresh id (`rotateDeviceIdentity`, shared with the mismatch path).
-  **Owed:** open the panel on a device whose id was deleted earlier and confirm the recovery -
-  `[MLS] Device <old> was revoked - re-enrolled as <new>`, then the panel lists the new id. Costs
-  the local history of that device, by design.
-
-- \[~\] **WP-DEEPLINK-1 (P1) - RE-OPENED 2026-08-01: a tapped notification opens the tab, not the
-  conversation.** Check H had been recorded PASS on v0.11.7 - "right tab" is what a pass looks like
-  from across the room. **Cause found and fixed, frontend only, not yet seen on a device.** A target
-  is a GROUP ID, a selection is a MAP KEY, and for a DM those differ; only a channel is keyed by the
-  id that names it, which is why channels behaved. `endLandingUnlessTarget` compared them raw, so
-  the landing's own `selectConversation(key)` ended the landing at the instant it succeeded, the
-  restore dropped the selection, and the tap arrived on nothing. The idle guard had the mirror bug
-  (a landed DM never looked landed -> re-select + re-fetch history on every map mutation). Both now
-  cross through one `resolveConversationKey` (`openConversationFromId.ts`), which
-  `openConversationFromId` is itself built on. **Owed:** check H of the runbook on Android, which
-  now names its verdict lines - first `[notifNav] deep link received: <url> -> target <id>` (new;
-  absent = the failure is NATIVE and no JS ran), then `[notifNav] routing to ...`, then the thread
-  with its history. Nothing native was touched, so no compile run is needed for this.
-  Cleared while hunting it, do not redo: the manifest filters, `MainActivity.onNewIntent` ->
-  `PluginManager.onNewIntent`, `DeepLinkPlugin.isDeepLink`, the Rust `deep-link://new-url` emit, and
-  the PendingIntent shape (already the one every guide prescribes for a `singleTask` activity).
+**[device] The verification pass is NOT a Work Package.** Everything native is verified by COMPILING,
+which proves nothing about running, and the whole owed list lives in
+**[device-verification](docs/wiki/device-verification.md)** - checks B-M, the build to install, the
+verdict log line of each, and the PASS/owed table. Android passed the ladder on v0.11.7; **iOS has
+never run one check on hardware**. Owed on both: H (deep link into the conversation), K (quick
+reply), L (revoked device re-enrolling), plus M (PDF preview) on Android. **Open a WP only when a
+check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at the repo root.
 
 - \[ \] **WP-HIST-3 (P2) - Pool history per MESSAGE between devices, not all-or-nothing.** Successor
   to WP-HIST-2 (shipped 2026-08-02), which stopped the blind soliciting but left the exchange itself
@@ -225,17 +178,6 @@ address `127.0.0.1`.
   presence is polled every 10 s; and `checkPresenceNow` (`stores/presenceStore.ts`) has **no
   in-flight guard**, so a bad link stacks 4-5 concurrent `/api/presence` calls (32 s each, measured).
 
-- \[~\] **WP-POST-DOC-2 (P3) - PDF preview. CODE COMPLETE, gates green, NOT SEEN RENDERING once.**
-  `pdfjs-dist@6`, dynamic `import()`, worker emitted as its own asset. Posts render the page
-  full-width under the file row, chat in the 44 px icon square. Reasoning in
-  [posts](docs/wiki/frontend/modules/posts.md); `ConversationMediaPanel`, `AssociationDocumentManager`
-  and password-protected vault documents are deliberate exclusions, not gaps.
-  **The prod failure was found and fixed (`9d2d713b`) and it was never the code:** nginx served the
-  `.mjs` worker as octet-stream and the module loader refused it (rule below). **This needs a DEPLOY
-  to take effect.** **Owed after that: open a post and a chat message carrying a PDF** - specifically
-  ON ANDROID, whose WebView has no PDF engine and is the reason pdf.js was chosen over an iframe. The
-  same question is open for the Tauri asset protocol on mobile, never measured.
-
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted, the outbox drained -
   and the peer never received it. Not reproducible (two later attempts delivered), and nothing is
@@ -243,11 +185,6 @@ address `127.0.0.1`.
   instrumentation already shipped (`ca8e3ef0` logs every swallowed outbox branch), so the decision is
   to WAIT for a recurrence rather than audit a working queue blind. If it recurs, capture
   `[OUTBOX]`/`[QUEUE]` on both sides at the moment of loss.
-
-- \[ \] **WP-UI-1 residual (P3) - one open question, no code left.** The sweep is done (390 -> 31,
-  and the 31 are deliberate: switch thumbs, colour-picker handles, always-dark call/lightbox
-  chrome, the white plate behind a QR). Detector: `frontend/scripts/find-oneway-colors.mjs`. The one
-  open question (the enrolment sheet reporting DARK under a LIGHT theme) is check I of the runbook.
 
 ---
 
@@ -332,7 +269,9 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 #### UI and i18n -> [frontend/architecture](docs/wiki/frontend/architecture.md)
 
 - A one-way colour is a dark-mode bug waiting to happen; use the `app.css` tokens.
-- Detect one-way colour per CLASS LIST (`find-oneway-colors.mjs`), never per file.
+- Detect one-way colour per CLASS LIST (`find-oneway-colors.mjs`), never per file. The sweep is done
+  (390 -> 31) and the 31 left are DELIBERATE: switch thumbs, colour-picker handles, always-dark
+  call/lightbox chrome, the white plate behind a QR. Do not "fix" them.
 - A `@theme` entry is what makes a token exist - an undefined token is silently inert.
 - EVERY modal body clips on BOTH axes (`overflow-y-auto` forces the `visible` axis to `auto`), so an
   anchored dropdown must be portalled + `fixed` (`bindFixedPopover`), never `absolute`. No z-index
