@@ -413,15 +413,15 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
       expect(await service.listCotisationTiers('asso1')).toEqual([]);
     });
 
-    it('only sees active tiers unless asked for the inactive ones too', async () => {
+    // `isActive` says a tier can be BOUGHT, not that it exists: an association whose Stripe
+    // account is not onboarded has every tier inactive, and its cotisants must still be listed,
+    // grantable and recognized.
+    it('lists tiers that are not on sale', async () => {
       const { service, repo } = makeService();
       mockCatalogue(repo, { slug: 'cercle', cotisationMode: 'lifetime' }, []);
 
       await service.listCotisationTiers('asso1');
-      expect(repo.manager.query.mock.calls[1][0]).toContain('"isActive" = true');
-
-      await service.listCotisationTiers('asso1', { includeInactive: true });
-      expect(repo.manager.query.mock.calls[3][0]).not.toContain('"isActive" = true');
+      expect(repo.manager.query.mock.calls[1][0]).not.toContain('"isActive"');
     });
   });
 });

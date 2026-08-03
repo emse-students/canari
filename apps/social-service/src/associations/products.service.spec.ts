@@ -1,4 +1,5 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { of } from 'rxjs';
 import { Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
@@ -24,12 +25,22 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       manager,
     };
-    const deliveryRepo = {};
+    // Mirrors the real repo closely enough for the webhook dispatcher: `save` returns the entity
+    // it was handed, and `findOne` answers with the last saved row (the audit record).
+    let lastDelivery: any = null;
+    const deliveryRepo = {
+      create: jest.fn((x: any) => ({ attemptCount: 0, lastError: null, ...x })),
+      save: jest.fn((x: any) => {
+        lastDelivery = x;
+        return Promise.resolve(x);
+      }),
+      findOne: jest.fn(() => Promise.resolve(lastDelivery)),
+    };
     const assoRepo = {
       findOne: jest.fn(),
       find: jest.fn(() => Promise.resolve([])),
     };
-    const httpService = {} as HttpService;
+    const httpService = { post: jest.fn(() => of({ data: {} })) } as unknown as HttpService;
     const config = { get: jest.fn() } as unknown as ConfigService;
     const userTagService = {
       hasActiveTag: jest.fn(),
@@ -46,11 +57,12 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       countPaidByUserAndProduct: jest.fn(() => Promise.resolve(0)),
       countPaidByProduct: jest.fn(() => Promise.resolve(0)),
       create: jest.fn((x: unknown) => Promise.resolve(x)),
+      findByPaymentIntent: jest.fn(() => Promise.resolve(null)),
     };
 
     const service = new ProductsService(
       productRepo as unknown as Repository<AssociationProduct>,
-      deliveryRepo as Repository<WebhookDelivery>,
+      deliveryRepo as unknown as Repository<WebhookDelivery>,
       assoRepo as unknown as Repository<Association>,
       httpService,
       config,
@@ -58,7 +70,16 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       purchaseRecordService as unknown as PurchaseRecordService
     );
 
-    return { service, productRepo, assoRepo, userTagService, purchaseRecordService, manager };
+    return {
+      service,
+      productRepo,
+      deliveryRepo,
+      assoRepo,
+      httpService,
+      userTagService,
+      purchaseRecordService,
+      manager,
+    };
   }
 
   const asso = (overrides: Partial<Association> = {}): Association =>
@@ -397,6 +418,106 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     });
   });
 
+  describe('simulated Cercle top-up (admin test button, no Stripe charge)', () => {
+    const topupProduct = (overrides: Partial<AssociationProduct> = {}) =>
+      product({
+        type: 'balance_topup',
+        amountCents: null,
+        allowCustomAmount: true,
+        allowRepeatPurchase: true,
+        customAmountMinCents: 100,
+        customAmountMaxCents: 5000,
+        webhookUrl: 'https://cercle.example/api/canari/topup',
+        webhookSecret: 'shhh',
+        ...overrides,
+      } as Partial<AssociationProduct>);
+
+    it('runs the production path: signed webhook, audit row and a purchase recorded as Stripe', async () => {
+      const { service, productRepo, assoRepo, httpService, purchaseRecordService } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(topupProduct());
+
+      const result = await service.simulateCercleTopup('asso1', 'prod1', 'user1', 500);
+
+      expect(result.status).toBe('delivered');
+      expect(result.amountCents).toBe(500);
+      expect(result.paymentIntentId).toMatch(/^pi_canari_test_[0-9a-f]{24}$/);
+
+      const [url, body, config] = (httpService.post as jest.Mock).mock.calls[0];
+      expect(url).toBe('https://cercle.example/api/canari/topup');
+      expect(JSON.parse(body)).toMatchObject({
+        productId: 'prod1',
+        userId: 'user1',
+        amountCents: 500,
+        paymentIntentId: result.paymentIntentId,
+      });
+      expect(config.headers['X-Canari-Signature']).toMatch(/^sha256=[0-9a-f]{64}$/);
+
+      // The purchase is recorded exactly as a paid Stripe purchase would be - only the intent is
+      // synthetic, so the accounting rows and the Cercle idempotency key are the real ones.
+      expect(purchaseRecordService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user1',
+          paymentMethod: 'stripe',
+          status: 'paid',
+          amountCents: 500,
+          stripePaymentIntentId: result.paymentIntentId,
+        })
+      );
+    });
+
+    it('credits the fixed price rather than the requested amount', async () => {
+      const { service, productRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        topupProduct({ amountCents: 1000, allowCustomAmount: false })
+      );
+
+      const result = await service.simulateCercleTopup('asso1', 'prod1', 'user1', 500);
+      expect(result.amountCents).toBe(1000);
+    });
+
+    it('refuses when the product has no webhook configured, instead of silently crediting nothing', async () => {
+      const { service, productRepo, assoRepo, purchaseRecordService } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(topupProduct({ webhookSecret: null }));
+
+      await expect(service.simulateCercleTopup('asso1', 'prod1', 'user1', 500)).rejects.toThrow(
+        BadRequestException
+      );
+      expect(purchaseRecordService.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a product that is not a balance_topup', async () => {
+      const { service, productRepo, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(topupProduct({ type: 'other' }));
+
+      await expect(service.simulateCercleTopup('asso1', 'prod1', 'user1', 500)).rejects.toThrow(
+        BadRequestException
+      );
+    });
+
+    it('reports a failed delivery instead of a success when the Cercle refuses it', async () => {
+      const { service, productRepo, assoRepo, httpService } = makeService();
+      jest.spyOn(global, 'setTimeout').mockImplementation(((cb: () => void) => {
+        cb();
+        return 0 as unknown as NodeJS.Timeout;
+      }) as unknown as typeof setTimeout);
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() => {
+        throw new Error('401 Unauthorized');
+      });
+
+      const result = await service.simulateCercleTopup('asso1', 'prod1', 'user1', 500);
+      expect(result.status).toBe('failed');
+      expect(result.attemptCount).toBe(3);
+      expect(result.lastError).toContain('401');
+      jest.restoreAllMocks();
+    });
+  });
+
   describe('multi-tier upgrade pricing via memberPriceTag (WP-COT-2)', () => {
     it('applies the member price when the buyer holds the named memberPriceTag, even without the generic tag', async () => {
       const { service, productRepo, assoRepo, userTagService } = makeService();
@@ -703,6 +824,22 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       const status = await service.getCotisantStatusBySlug('bde', 'user1');
       expect(status).toEqual({ isCotisant: false, tier: null, expiresAt: null });
+    });
+
+    // An association with no Stripe account has every tier product inactive, so filtering the
+    // lookup on `isActive` reported each of its cotisants as `isCotisant: false` - which locks
+    // the whole Cercle out rather than degrading it.
+    it('enumerates tiers that are not on sale, so their cotisants stay recognized', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso({ slug: 'cercle', cotisationMode: 'lifetime' }));
+      productRepo.find.mockResolvedValue([]);
+
+      await service.getCotisantStatusBySlug('cercle', 'user1');
+      expect(productRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { associationId: 'asso1', type: 'membership' },
+        })
+      );
     });
 
     it('returns the held tier and its expiry for a multi-tier association', async () => {

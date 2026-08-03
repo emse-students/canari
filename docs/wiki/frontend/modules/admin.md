@@ -32,6 +32,13 @@ updating a `balance_topup` product requires a **global admin** - enforced server
 `products.service.ts` (D7), not merely by this route's `isGlobalAdmin()` guard. See
 [Cotisations](../../cotisations.md) for the product model.
 
+Each product also carries a **test button** (`simulateCercleTopup`): it credits 5 EUR to the
+pressing admin's own Cercle account through the production path with no Stripe charge, and shows
+what the dispatcher recorded (delivered / failed, attempt count, the `pi_canari_test_…` intent). A
+failed test lands in the retry list on the same page. The rules it does and does not reproduce are
+in [Cotisations](../../cotisations.md#outbound-canari---cercle-balance_topup-webhook); the operational
+runbook is `docs/PROD-TEST-CERCLE.md` (step V5).
+
 ## Platform configuration (`/admin/platform`)
 
 Fetches and updates `GET/PATCH /api/users/admin/platform`:

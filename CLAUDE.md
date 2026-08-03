@@ -301,6 +301,13 @@ address `127.0.0.1`.
   and `cd.yml` did not carry the variable, so any SSH hand-edit would have been reverted by the next
   deploy. Now: GitHub secret `CERCLE_API_KEY` set, `cd.yml` syncs it with a warning when unset,
   `docs/PROD-TEST-CERCLE.md` rewritten to name the secret as the source of truth.
+  **THE TEST BUTTON IS BUILT (2026-08-03, `/admin/cercle`, per product): 5 EUR to the calling admin
+  through the production path, no Stripe charge.** So the outbound half can be proven the day the
+  Cercle answers, without a card and without Connect onboarding. Prod facts measured that day, all
+  still true: **no `balance_topup` product exists yet** (create it there, with `webhookUrl` +
+  `webhookSecret`), Le Cercle has **no Stripe account** (`stripeOnboardingComplete=f`, no delegation)
+  - which is why its 3 membership products are all `isActive=f`, which in turn had every Cercle
+  cotisant reporting `isCotisant:false` until the `isActive` filter was dropped the same day.
   **Owed: run a deploy so it reaches `infrastructure/.env`** (verify:
   `ssh canari 'grep -cE "^CERCLE_API_KEY=.+" /home/canari/canari/infrastructure/.env'` -> 1), then
   give Aurel the same value as `CANARI_API_KEY`.
@@ -424,6 +431,8 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - Svelte TRIMS whitespace at a block boundary: `{label}{#if x}<span>` loses the space, `{label}`
   then `{#if x}` on the next line keeps it.
 - Re-run `bun run paraglide:compile` before `bun run test` after any build.
+- An API helper ending in `res.json()` throws on the empty body a DELETE/void POST returns - AFTER
+  the server acted, so the call that WORKED is the one displayed as failed and the UI never updates.
 
 #### Server-side fetches -> [chat-delivery](docs/wiki/services/chat-delivery.md)
 
@@ -550,6 +559,12 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - `variantKey` is editable and the tags follow; convert rather than delete a tier with cotisants.
 - Named tiers sort before the base tier, so a legacy base-tag holder is not reported as `tier: null`.
 - Cotisant status is server-authoritative - no client-side tag derivation.
+- `isActive` gates BUYING a tier, never RECOGNIZING one: creation forces it false when the asso
+  cannot take payments, so filtering tier enumeration on it reports a whole roster as non-cotisant.
+- The test top-up is the real path (`resolvePurchase` + `handlePurchaseCompleted`) minus Stripe; a
+  parallel implementation would only ever prove itself. Intent prefix `pi_canari_test_`.
+- A dispatch the fulfillment SKIPS silently (no `webhookUrl`/`webhookSecret`) must be refused up
+  front by any test, or the test reports a success for something that never left the building.
 
 #### Le Cercle auth and merging its fork -> `../le-cercle/README.md`
 

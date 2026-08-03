@@ -98,6 +98,8 @@
   let cotisationTiers = $state<CotisationTier[]>([]);
   let addVariantKey = $state('');
   let tiersLoadedForMembersAssoId: string | null = null;
+  /** Roster row whose tier switch is in flight, so its picker can be disabled meanwhile. */
+  let switchingTagId = $state<string | null>(null);
 
   // ── Export ────────────────────────────────────────────────────────────────
   let exporting = $state(false);
@@ -385,6 +387,44 @@
     } catch (e) {
       tiersError = e instanceof Error ? e.message : m.asso_cotisations_tier_delete_error();
       console.error('[Cotisations] Failed to delete tier:', e);
+    }
+  }
+
+  /**
+   * The `variantKey` of the tier a roster row currently holds. Matched on the tag name (exact,
+   * derived from the same source on both sides) and only then on the display name, which is what
+   * still identifies a tag granted under a previous period in `dated` mode.
+   */
+  function currentVariantKey(item: CotisantRosterItem): string {
+    const byTag = cotisationTiers.find((t) => t.tagName === item.tagName);
+    if (byTag) return byTag.variantKey ?? '';
+    const byName = cotisationTiers.find((t) => t.name === item.tier);
+    return byName?.variantKey ?? '';
+  }
+
+  /**
+   * Moves an existing cotisant to another tier (upgrade or downgrade). Re-granting is the whole
+   * operation: the server grants the new tier and revokes the sibling in one transaction (XOR), so
+   * there is no window where the user holds two forfaits or none. Reloads the roster because the
+   * row's tag, id and dates all change.
+   */
+  async function handleChangeTier(item: CotisantRosterItem, variantKey: string) {
+    if (variantKey === currentVariantKey(item)) return;
+    console.log(
+      `[Cotisations] Switching tier - asso=${asso.id.slice(0, 8)} user=${item.userId.slice(0, 8)} tier=${variantKey || 'base'}`
+    );
+    switchingTagId = item.tagId;
+    rosterError = '';
+    try {
+      await grantCotisant(asso.id, item.userId, variantKey || null);
+      await loadRoster(0, true);
+    } catch (e) {
+      rosterError = e instanceof Error ? e.message : m.asso_cotisations_tier_change_error();
+      console.error('[Cotisations] Failed to switch tier:', e);
+      // Put the <select> back on the tier actually held - the change never happened.
+      rosterItems = [...rosterItems];
+    } finally {
+      switchingTagId = null;
     }
   }
 
@@ -963,7 +1003,22 @@
                     <div class="min-w-0 flex-1">
                       <div class="flex items-center gap-2 flex-wrap">
                         <p class="text-sm font-semibold text-text-main">{cotisantName(item)}</p>
-                        {#if item.tier}
+                        <!-- Multi-tier: the badge becomes a picker, so a forfait can be upgraded
+                             or downgraded in place (the server swaps the tags atomically). -->
+                        {#if canManageMembers && cotisationTiers.length > 1}
+                          <select
+                            aria-label={m.asso_cotisations_tier_change_label()}
+                            title={m.asso_cotisations_tier_change_label()}
+                            disabled={switchingTagId !== null}
+                            value={currentVariantKey(item)}
+                            onchange={(e) => void handleChangeTier(item, e.currentTarget.value)}
+                            class="rounded-full border border-amber-warn/40 bg-amber-warn/15 px-2 py-0.5 text-xs font-semibold text-amber-warn disabled:opacity-50"
+                          >
+                            {#each cotisationTiers as tier (tier.tagName)}
+                              <option value={tier.variantKey ?? ''}>{tier.name}</option>
+                            {/each}
+                          </select>
+                        {:else if item.tier}
                           <span
                             class="rounded-full px-2 py-0.5 text-xs font-semibold bg-amber-warn/15 text-amber-warn"
                           >

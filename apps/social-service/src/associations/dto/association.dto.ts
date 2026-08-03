@@ -630,6 +630,17 @@ export class GrantProductPurchaseDto {
   amountCents?: number;
 }
 
+/**
+ * DTO for the `/admin/cercle` test top-up: runs the whole production credit path for the caller
+ * without a Stripe charge. The amount is only a REQUEST - a fixed-price product still charges its
+ * own price, exactly as it would for a paying buyer.
+ */
+export class SimulateCercleTopupDto {
+  @IsInt()
+  @Min(1)
+  amountCents: number;
+}
+
 /** DTO for manually granting a cotisation tag to a user. */
 export class GrantTagDto {
   @IsString()

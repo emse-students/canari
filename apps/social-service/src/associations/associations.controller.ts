@@ -46,6 +46,7 @@ import {
   RejectCalendarEventDto,
   ReorderMembersDto,
   RequestPaymentDelegationDto,
+  SimulateCercleTopupDto,
   UpdateAssociationDto,
   UpdateAssociationCalendarEventDto,
   UpdateMemberRoleDto,
@@ -1071,6 +1072,22 @@ export class AssociationsController {
   @Get(':id/webhook-failures')
   listWebhookFailures(@Param('id') id: string) {
     return this.productsService.listWebhookFailures(id);
+  }
+
+  /**
+   * Credits the CALLER's own Cercle account through the full production top-up path, without any
+   * Stripe charge (the test button on `/admin/cercle`). Global admins only, and the beneficiary is
+   * always the caller - there is no way to credit somebody else from here.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Post(':id/products/:productId/simulate-topup')
+  simulateCercleTopup(
+    @Param('id') id: string,
+    @Param('productId') productId: string,
+    @Headers('x-user-id') userId: string,
+    @Body() dto: SimulateCercleTopupDto
+  ) {
+    return this.productsService.simulateCercleTopup(id, productId, userId, dto.amountCents);
   }
 
   /** Retries a failed Cercle webhook delivery. Requires MANAGE_PRODUCTS flag. */

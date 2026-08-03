@@ -10,12 +10,24 @@
     deleteProduct,
     listWebhookFailures,
     retryWebhookDelivery,
+    simulateCercleTopup,
     type Association,
     type AssociationProduct,
+    type CercleTopupSimulation,
     type WebhookDelivery,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { Wallet, Plus, Trash2, ChevronDown, AlertTriangle, RefreshCw } from '@lucide/svelte';
+  import {
+    Wallet,
+    Plus,
+    Trash2,
+    ChevronDown,
+    AlertTriangle,
+    RefreshCw,
+    FlaskConical,
+    CheckCircle2,
+    XCircle,
+  } from '@lucide/svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -46,6 +58,11 @@
 
   let expandedProductId = $state<string | null>(null);
   let savingProductId = $state<string | null>(null);
+
+  /** Amount requested by the test button. A fixed-price product still credits its own price. */
+  const TEST_TOPUP_CENTS = 500;
+  let testingProductId = $state<string | null>(null);
+  let testResult = $state<CercleTopupSimulation | null>(null);
 
   /** Only `balance_topup` (Cercle recharge) products are managed on this page. */
   const cercleProducts = $derived(products.filter((p) => p.type === 'balance_topup'));
@@ -220,6 +237,37 @@
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to delete balance_topup product', e);
       error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
+    }
+  }
+
+  /**
+   * Runs the production top-up path for the current admin without any Stripe charge: same
+   * purchase validation, same signed webhook to the Cercle, same audit and accounting rows.
+   * Reloads the products/failures afterwards so a failed delivery lands in the retry list.
+   */
+  async function handleTestTopup(product: AssociationProduct) {
+    if (
+      !(await showConfirm(
+        m.admin_cercle_test_confirm({ amount: (TEST_TOPUP_CENTS / 100).toFixed(2) }),
+        { confirmLabel: m.admin_cercle_test_confirm_label() }
+      ))
+    )
+      return;
+    console.log(`[ADMIN][CERCLE] running test top-up on product=${product.id}`);
+    testingProductId = product.id;
+    testResult = null;
+    error = '';
+    try {
+      testResult = await simulateCercleTopup(selectedAssoId, product.id, TEST_TOPUP_CENTS);
+      console.log(
+        `[ADMIN][CERCLE] test top-up finished: status=${testResult.status} intent=${testResult.paymentIntentId}`
+      );
+      await loadProducts();
+    } catch (e) {
+      console.error('[ADMIN][CERCLE] test top-up failed', e);
+      error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
+    } finally {
+      testingProductId = null;
     }
   }
 
@@ -473,6 +521,23 @@
                   <div class="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
+                      disabled={testingProductId !== null}
+                      onclick={() => void handleTestTopup(product)}
+                      title={m.admin_cercle_test_hint()}
+                      class="inline-flex items-center gap-1.5 text-xs rounded-lg border border-cn-yellow/50 bg-cn-yellow/10 px-3 py-1.5 font-semibold text-text-main hover:bg-cn-yellow/20 disabled:opacity-50 transition-colors"
+                    >
+                      <FlaskConical
+                        size={13}
+                        class={testingProductId === product.id ? 'animate-pulse' : ''}
+                      />
+                      {testingProductId === product.id
+                        ? m.admin_cercle_test_running()
+                        : m.admin_cercle_test_button({
+                            amount: (TEST_TOPUP_CENTS / 100).toFixed(2),
+                          })}
+                    </button>
+                    <button
+                      type="button"
                       onclick={() => toggleEdit(product)}
                       class="inline-flex items-center gap-1 text-xs rounded-lg border border-cn-border px-3 py-1.5 font-semibold hover:bg-[var(--cn-surface)] transition-colors"
                     >
@@ -649,6 +714,38 @@
               </li>
             {/each}
           </ul>
+        {/if}
+
+        {#if testResult}
+          {@const delivered = testResult.status === 'delivered'}
+          <div
+            class="rounded-xl border px-4 py-3 space-y-1 {delivered
+              ? 'border-green-ok/30 bg-green-ok/10'
+              : 'border-red-err/30 bg-red-err/10'}"
+          >
+            <p
+              class="flex items-center gap-2 text-sm font-bold {delivered
+                ? 'text-green-ok'
+                : 'text-red-err'}"
+            >
+              {#if delivered}
+                <CheckCircle2 size={16} />
+                {m.admin_cercle_test_delivered({
+                  amount: (testResult.amountCents / 100).toFixed(2),
+                  attempts: testResult.attemptCount,
+                })}
+              {:else}
+                <XCircle size={16} />
+                {m.admin_cercle_test_failed({ attempts: testResult.attemptCount })}
+              {/if}
+            </p>
+            {#if testResult.lastError}
+              <p class="text-xs text-red-err break-all">{testResult.lastError}</p>
+            {/if}
+            <p class="text-xs text-text-muted break-all">
+              {m.admin_cercle_test_intent({ intent: testResult.paymentIntentId })}
+            </p>
+          </div>
         {/if}
 
         {#if webhookFailures.length > 0}

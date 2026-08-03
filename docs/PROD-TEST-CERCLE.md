@@ -211,7 +211,13 @@ With a perm open and a bartender logged in:
 
 ### V5 - The recharge webhook
 
-Buy the `balance_topup` product from Canari with a real (small) Stripe payment.
+Buy the `balance_topup` product from Canari with a real (small) Stripe payment - **or** press the
+test button on that product at `/admin/cercle`, which credits 5 EUR to the pressing admin's own
+Cercle account through the exact same server path with no card charged. The test is worth running
+first: it needs neither a Stripe Connect onboarding on Le Cercle nor a real payment, and everything
+below applies to it unchanged, the delivery being produced by the same dispatcher. Its payment
+intent is prefixed `pi_canari_test_` instead of `pi_3…`, and it does leave a real 5 EUR line in the
+association's accounting - delete it by that prefix once the check is done.
 
 On Canari:
 

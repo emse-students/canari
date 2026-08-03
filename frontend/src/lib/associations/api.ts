@@ -298,7 +298,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
     throw new Error(message);
   }
-  return res.json() as Promise<T>;
+  // A successful response is not always JSON: DELETEs and void POSTs answer 204, or 200 with an
+  // empty body. `res.json()` on those throws "unexpected end of data", turning a call that WORKED
+  // into a visible error - and, worse, skipping whatever the caller does after it (a revoked
+  // cotisant stayed listed because the row removal never ran).
+  if (res.status === 204) return undefined as T;
+  const raw = await res.text();
+  return (raw ? JSON.parse(raw) : undefined) as T;
 }
 
 // ── Public ────────────────────────────────────────────────────────────────
@@ -1417,6 +1423,33 @@ export interface WebhookDelivery {
 export async function listWebhookFailures(associationId: string): Promise<WebhookDelivery[]> {
   return request<WebhookDelivery[]>(
     `/api/associations/${encodeURIComponent(associationId)}/webhook-failures`
+  );
+}
+
+/** Outcome of a test top-up: the audit row the production dispatcher left behind. */
+export interface CercleTopupSimulation {
+  /** Synthetic Stripe intent (`pi_canari_test_…`) - the idempotency key on both sides. */
+  paymentIntentId: string;
+  /** Amount actually credited: the server-resolved price, not necessarily the requested one. */
+  amountCents: number;
+  status: 'pending' | 'delivered' | 'failed';
+  attemptCount: number;
+  lastError: string | null;
+}
+
+/**
+ * Credits the CURRENT user's Cercle account through the whole production path with no Stripe
+ * charge (global admin only): same validation, same signed webhook, same audit rows as a real
+ * purchase. `amountCents` is a request - a fixed-price product still credits its own price.
+ */
+export async function simulateCercleTopup(
+  associationId: string,
+  productId: string,
+  amountCents: number
+): Promise<CercleTopupSimulation> {
+  return request<CercleTopupSimulation>(
+    `/api/associations/${encodeURIComponent(associationId)}/products/${encodeURIComponent(productId)}/simulate-topup`,
+    { method: 'POST', body: JSON.stringify({ amountCents }) }
   );
 }
 

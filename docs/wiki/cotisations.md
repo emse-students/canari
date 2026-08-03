@@ -99,6 +99,16 @@ reads as "no forfait". A multi-tier association therefore has to get rid of it, 
 `tierVariantKeys()` returns **named tiers before the base one**, so a user still holding a legacy
 base tag alongside a named tier is reported at the named tier rather than at `tier: null`.
 
+**`isActive` gates BUYING a tier, never recognizing one.** Every enumeration of an association's
+tiers - `listCotisationTiers`, `revokeSiblingTierTags`, `isBuyerCotisant`, `cotisantStatusFor`,
+`getCotisantStatusBySlug` - covers all `membership` products regardless of `isActive`. A tier is
+inactive either because it was withdrawn from sale or because the association has no completed
+Stripe Connect onboarding (product creation forces `isActive: false` in that case), and neither fact
+says anything about the cotisants already holding its tag. Filtering on it made every cotisant of an
+association without a Stripe account report `isCotisant: false` - the Cercle's whole roster locked
+out, silently, with the tags still in the database. Only the boutique listings (`listByAssoc`,
+`listAllActive`) filter on `isActive`, which is what it is for.
+
 **Upgrade pricing (`memberPriceTag`)**: a tier-upgrade product can set `memberPriceTag` to a sibling
 tier's tag name and `amountCentsMember` to the price delta. The reduced price then applies **iff the
 buyer holds that specific tag** - it does NOT fall back to the generic asso-wide cotisant check the
@@ -168,6 +178,12 @@ It is promo-sorted (**NULLS LAST** - "Sans promo" grouped last), searchable, off
 Echeance). Manual add grants the canonical tag only (D10: no payment/amount recorded); revoke
 deletes the tag.
 
+**Changing a cotisant's forfait**: on a multi-tier association the roster's tier badge is a picker.
+Switching it re-calls `grantCotisant` with the new `variantKey` - there is no dedicated "upgrade"
+endpoint and there must not be one, since granting already revokes the siblings in the same
+transaction (XOR). Upgrade and downgrade are therefore the same operation, and no intermediate state
+exists in which the cotisant holds two forfaits or none.
+
 **Tier label (`tier`/"Forfait", WP-COT-6)**: `UserTagService.buildTierLabelMap` maps each active
 tiered product's *derived* tag name to its display name (e.g. `Avec alcool`), so both the roster and
 the export can show which forfait a cotisant holds without the client re-deriving tags. The base tier
@@ -214,8 +230,9 @@ social-service never calls Stripe directly. Online sales require completed Strip
 
 - `POST /api/associations/:id/cotisants` -> `userTagService.grantCotisant`: grants a tier's tag only,
   no purchase recorded (D10). Tag + expiry derived server-side from the optional `variantKey`, which
-  must name one of the association's **active** membership products - an arbitrary key would mint a
-  tag no product grants and no gate checks. Omit it for a single-tier association; an association
+  must name one of the association's membership products - an arbitrary key would mint a tag no
+  product grants and no gate checks. **Enumerating tiers ignores `isActive`** (see below). Omit it
+  for a single-tier association; an association
   that dropped its base tier refuses the empty choice rather than granting an orphan base tag. The
   grant and the XOR sibling revoke share one transaction, exactly like a paid purchase, so a manual
   add can never leave a user holding two forfaits (WP-COT-10). Requires `MANAGE_MEMBERS`.
@@ -260,6 +277,28 @@ product's `webhookUrl`:
 - **Retries**: up to 3 attempts (`CERCLE_RETRY_DELAYS = [1s, 5s, 15s]`), each attempt recorded in
   `webhook_deliveries` (`status: pending|delivered|failed`) for admin visibility and manual retry
   from `/admin/cercle`.
+
+**Testing the link without paying (`simulateCercleTopup`)**: each product on `/admin/cercle` carries
+a test button that credits the CALLING admin's own Cercle account for 5 EUR through the production
+path - `resolvePurchase` for the buyer checks, purchase limits and the server-side amount, then
+`handlePurchaseCompleted`, the very entry point core-service calls from the Stripe webhook, so the
+signed dispatch, the retry ladder, the `webhook_deliveries` row and the `purchase_records` row are
+all the real ones. `POST /associations/:id/products/:productId/simulate-topup`, global admin only,
+and the beneficiary is always the caller (taken from `x-user-id`, never from the body).
+
+Three deliberate departures, and nothing else differs:
+
+- the PaymentIntent is synthetic, prefixed **`pi_canari_test_`** so the rows are identifiable on
+  both sides (it is also the Cercle's `account_movements.idempotency_key`);
+- `skipPaymentReadiness` waives the two conditions that exist only to take money - the product being
+  on sale and the Connect account being onboarded - because an association with no Stripe account
+  must still be able to prove its webhook works;
+- a product with an empty `webhookUrl`/`webhookSecret` is refused up front rather than run: the real
+  fulfillment skips the dispatch silently there, which would report a flawless success while nothing
+  was ever sent.
+
+It DOES record a real 5 EUR purchase in the association's accounting (that is what "reproduces
+everything" means) - the rows are removable by their `pi_canari_test_` intent.
 
 ### Inbound: Cercle -> Canari (`GET /api/public/cotisant-status`)
 
@@ -317,6 +356,7 @@ by another - a cross-tenant IDOR (WP-COT-9).
 | POST | `/api/associations/:id/products` | Create a product (incl. `type: 'membership'`) (`MANAGE_PRODUCTS`) |
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for a product |
 | POST | `/api/associations/:id/products/:productId/grant` | Manual purchase + tag grant (`MANAGE_PRODUCTS`) |
+| POST | `/api/associations/:id/products/:productId/simulate-topup` | Test top-up for the caller, no Stripe charge (global admin) |
 | POST | `/api/forms/:id/submit` | Submit a form; applies member pricing, may grant a tag |
 | GET | `/api/public/cotisant-status` | Cercle-facing live cotisant status by `assoSlug`+`sub` (`X-Api-Key`, not `MANAGE_*`) |
 

@@ -143,12 +143,15 @@ export class UserTagService {
    * The single source of truth for "which tiers exist", shared by the roster labels, the manual
    * grant's tier validation, and the XOR sibling revoke.
    *
-   * Pass `includeInactive` when the answer must cover tiers that are no longer on sale - a
-   * deactivated tier's tag is still held by its cotisants, so the XOR revoke has to see it.
+   * Covers EVERY membership product, on sale or not: `isActive` says whether a tier can be bought
+   * in the boutique right now, never whether it exists. A tier goes inactive on its own (a
+   * seasonal forfait) or because the association has no Stripe account yet - and in both cases its
+   * cotisants still hold its tag, so hiding it here would make them invisible to the roster, to
+   * the manual grant's validation, and to the XOR revoke that must drop the sibling tag.
    */
   async listCotisationTiers(
     assocId: string,
-    opts: { includeInactive?: boolean; manager?: EntityManager } = {}
+    opts: { manager?: EntityManager } = {}
   ): Promise<CotisationTierInfo[]> {
     const runner = opts.manager ?? this.repo.manager;
     const assoRows: { slug: string; cotisationMode: CotisationMode | null }[] = await runner.query(
@@ -159,10 +162,9 @@ export class UserTagService {
     if (!asso?.cotisationMode) return [];
     const cotisationMode = asso.cotisationMode;
 
-    const activeClause = opts.includeInactive ? '' : `AND "isActive" = true`;
     const products: { name: string; variantKey: string | null }[] = await runner.query(
       `SELECT name, "variantKey" FROM association_products
-       WHERE "associationId" = $1 AND type = 'membership' ${activeClause}
+       WHERE "associationId" = $1 AND type = 'membership'
        ORDER BY "variantKey" ASC NULLS FIRST`,
       [assocId]
     );
@@ -191,7 +193,7 @@ export class UserTagService {
     keepVariantKey: string | null,
     manager?: EntityManager
   ): Promise<void> {
-    const tiers = await this.listCotisationTiers(assocId, { includeInactive: true, manager });
+    const tiers = await this.listCotisationTiers(assocId, { manager });
     if (tiers.length < 2) return;
     for (const tier of tiers) {
       if (tier.variantKey === keepVariantKey) continue;
@@ -205,8 +207,8 @@ export class UserTagService {
    * derived server-side from the association's slug, validity mode and the chosen tier (see
    * `deriveCotisationTag`), so the frontend never needs to know the tag convention.
    *
-   * `variantKey` names the tier and MUST match one of the association's active membership
-   * products; omit it for a single-tier association. The grant and the sibling-tier revoke share
+   * `variantKey` names the tier and MUST match one of the association's membership products (on
+   * sale or not); omit it for a single-tier association. The grant and the sibling-tier revoke share
    * one transaction, so a manual add can never leave a user holding two tiers at once - the same
    * XOR rule a paid purchase goes through.
    */
