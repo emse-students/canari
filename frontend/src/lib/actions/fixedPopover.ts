@@ -9,6 +9,11 @@ export interface FixedPopoverLayoutOptions {
   margin?: number;
   /** Estimated height before layout (used for flip decision). */
   estimatedHeight?: number;
+  /**
+   * When true, the popover takes the anchor's width instead of its own - what a dropdown
+   * anchored to an input needs, since `w-full` no longer resolves once it is portalled out.
+   */
+  matchAnchorWidth?: boolean;
 }
 
 export interface FixedPopoverOptions extends FixedPopoverLayoutOptions {
@@ -21,6 +26,8 @@ export interface FixedPopoverPosition {
   left: number;
   maxHeight: number;
   side: FixedPopoverSide;
+  /** Width the panel was laid out against - the anchor's under `matchAnchorWidth`, its own otherwise. */
+  width: number;
 }
 
 /** Computes viewport-safe fixed coordinates for a popover panel. */
@@ -34,7 +41,10 @@ export function computeFixedPopoverPosition(
   const estimatedHeight = options.estimatedHeight ?? 360;
 
   const anchorRect = anchor.getBoundingClientRect();
-  const panelWidth = Math.min(panel.offsetWidth || 352, window.innerWidth - margin * 2);
+  const panelWidth = Math.min(
+    options.matchAnchorWidth ? anchorRect.width : panel.offsetWidth || 352,
+    window.innerWidth - margin * 2
+  );
   const panelHeight = panel.offsetHeight || estimatedHeight;
 
   const spaceBelow = window.innerHeight - anchorRect.bottom - margin;
@@ -57,7 +67,7 @@ export function computeFixedPopoverPosition(
   let left = options.alignEnd ? anchorRect.right - panelWidth : anchorRect.left;
   left = Math.max(margin, Math.min(left, window.innerWidth - panelWidth - margin));
 
-  return { top, left, maxHeight, side };
+  return { top, left, maxHeight, side, width: panelWidth };
 }
 
 /** Keeps a `position: fixed` popover inside the viewport while scrolling/resizing. */
@@ -65,9 +75,16 @@ export function bindFixedPopover(panel: HTMLElement, options: FixedPopoverOption
   const apply = () => {
     const anchor = options.anchor();
     if (!anchor) return;
-    const { top, left, maxHeight, side } = computeFixedPopoverPosition(anchor, panel, options);
+    const { top, left, maxHeight, side, width } = computeFixedPopoverPosition(
+      anchor,
+      panel,
+      options
+    );
     panel.style.top = `${top}px`;
     panel.style.left = `${left}px`;
+    // Only written when asked for: pinning a panel to its own measured width would freeze
+    // whatever responsive sizing its classes describe.
+    if (options.matchAnchorWidth) panel.style.width = `${width}px`;
     panel.style.maxHeight = `${maxHeight}px`;
     panel.style.setProperty('--popover-max-h', `${maxHeight}px`);
     panel.dataset.popoverSide = side;

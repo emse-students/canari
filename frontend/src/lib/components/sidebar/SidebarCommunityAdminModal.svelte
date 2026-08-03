@@ -636,12 +636,8 @@
           <h2 class="text-xl font-bold text-text-main">{m.common_members_label()}</h2>
           <p class="text-sm text-text-muted">{m.chat_community_members_description()}</p>
 
-          <!-- No overflow-hidden here: it would clip the user autocomplete dropdown.
-               The rounded corners are carried by the children that paint a background instead. -->
-          <div class="border border-cn-border rounded-xl bg-cn-surface text-sm">
-            <div
-              class="p-4 flex items-center justify-between border-b border-cn-border bg-cn-bg rounded-t-xl"
-            >
+          <div class="border border-cn-border rounded-xl bg-cn-surface overflow-hidden text-sm">
+            <div class="p-4 flex items-center justify-between border-b border-cn-border bg-cn-bg">
               <span class="font-semibold text-text-main"
                 >{communityMembers.length} {m.chat_community_member_count_label()}</span
               >

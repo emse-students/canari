@@ -4,6 +4,8 @@
   import { coreUrl } from '$lib/utils/apiUrl';
   import { Search } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { portal } from '$lib/actions/portal';
+  import { bindFixedPopover } from '$lib/actions/fixedPopover';
 
   interface User {
     id: string;
@@ -50,6 +52,26 @@
   let selectedIndex = $state(-1);
   let inputText = $state('');
   let selectedUser = $state<User | null>(null);
+  let anchorEl = $state<HTMLElement | null>(null);
+  let dropdownEl = $state<HTMLElement | null>(null);
+
+  /**
+   * Position the portalled dropdown against the input.
+   *
+   * The list is rendered into `<body>` as `position: fixed` rather than absolutely inside the
+   * field: this component is embedded in modal bodies and cards that clip their overflow, and
+   * no z-index takes an element out of an ancestor that clips. Being portalled, it no longer
+   * inherits the field's width either - hence `matchAnchorWidth`.
+   */
+  $effect(() => {
+    if (!dropdownEl || !anchorEl) return;
+    return bindFixedPopover(dropdownEl, {
+      anchor: () => anchorEl,
+      matchAnchorWidth: true,
+      offset: 4,
+      estimatedHeight: 192,
+    });
+  });
 
   // Cancel pending debounce/blur timers on unmount to avoid API calls on a destroyed component.
   onDestroy(() => {
@@ -170,7 +192,7 @@
   }
 </script>
 
-<div class="relative">
+<div class="relative" bind:this={anchorEl}>
   <span class="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted">
     <Search size={15} />
   </span>
@@ -207,8 +229,11 @@
   {/if}
 
   {#if showDropdown && suggestions.length > 0}
+    <!-- Portalled so no embedding container can clip it; positioned by the effect above. -->
     <ul
-      class="absolute z-50 w-full mt-1 bg-white/95 dark:bg-gray-900/95 border border-white/60 dark:border-white/10 rounded-xl shadow-lg max-h-48 overflow-auto backdrop-blur-sm"
+      bind:this={dropdownEl}
+      use:portal
+      class="fixed z-[290] bg-white/95 dark:bg-gray-900/95 border border-white/60 dark:border-white/10 rounded-xl shadow-lg overflow-auto backdrop-blur-sm"
     >
       {#each suggestions as user, index (user.id)}
         <li>

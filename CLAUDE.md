@@ -413,6 +413,9 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - A one-way colour is a dark-mode bug waiting to happen; use the `app.css` tokens.
 - Detect one-way colour per CLASS LIST (`find-oneway-colors.mjs`), never per file.
 - A `@theme` entry is what makes a token exist - an undefined token is silently inert.
+- EVERY modal body clips on BOTH axes (`overflow-y-auto` forces the `visible` axis to `auto`), so an
+  anchored dropdown must be portalled + `fixed` (`bindFixedPopover`), never `absolute`. No z-index
+  takes an element out of an ancestor that clips.
 - A native prompt is UI you only partly own: `reason` alone leaves the plugin's English defaults up.
 - But Android stacks title+subtitle+description and adds its own hint - four fields, four lines.
 - No user-facing string names a sensor ("empreinte ou Face ID" is wrong on every device, half the time).
