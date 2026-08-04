@@ -50,7 +50,7 @@
 State lives HERE (canonical). Five repos: Canari (this monorepo), Sky (../Sky), MiGallery
 (../MiGallery) and Portail-etu (../refonte-portail-etu) are `emse-students/*` on GitHub;
 **Le Cercle (../le-cercle)** is `gitlab.emse.fr:aurel.dautry/le-cercle`.
-Sky and Portail-etu are COMPLETE - nothing open on either. MiGallery has ONE P1 (see WP-SESS-1).
+Sky, MiGallery and Portail-etu are COMPLETE - nothing open on any of them.
 All on `main` EXCEPT Le Cercle: Aurel owns that repo. Never commit to its `main`; work on a branch
 and hand him a merge request.
 
@@ -58,48 +58,6 @@ Work is tracked as Work Packages ordered by severity: **P1** (security, or a use
 is broken), **P2** (correctness, nothing at risk), **P3** (hygiene). `[ ]` open, `[~]` in progress.
 Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, the story to
 `CHANGELOG.md`.
-
----
-
-### MIGALLERY (../MiGallery) - ONE OPEN WP, THE ONLY P1 ANYWHERE (2026-08-04)
-
-- \[ \] **WP-SESS-1 (P1) - The MiGallery session cookie is an unsigned identity claim.** Any logged-in
-  user can become any other user, including an admin, in two HTTP requests. Found 2026-08-04 while
-  answering "does Canari have a `JWT_OLD_SECRET` too?". NOT exploited, NOT reported - assume it is
-  live on prod until fixed.
-  **The chain, read in full - every link verified, nothing inferred:**
-  (1) the real login path `api/auth/callback/+server.ts:43` calls `setSessionCookie(cookies,
-  result.dbUser.id_user)`, and `lib/session.ts:15` writes that id RAW into `__session_user`,
-  `maxAge` ONE YEAR. Nothing signs it. `httpOnly` stops other people's JavaScript from reading the
-  cookie; it does not stop the holder from writing one.
-  (2) `lib/server/auth.ts:44` `getUserFromSessionCookie` does `SELECT * FROM users WHERE id_user = ?`
-  on the cookie value and returns the row. The cookie's only content is the identity it claims, and
-  the check is that the claim exists.
-  (3) `ensureAdmin` (same file, l.115) accepts that row when its `role` is `admin`, and
-  `getCurrentUser` (l.140) accepts it always - so both `requireScope(event, 'admin')` and
-  `'write'` resolve through it (`lib/server/permissions.ts:118`).
-  (4) the ids are HANDED OUT: `api/albums/permissions/options/+server.ts` is `requireScope 'write'`,
-  i.e. any ordinary logged-in user, and returns `id_user` for EVERY row of `users`. So there is
-  nothing to guess.
-  **The signing already exists and the login path just does not use it.** `lib/auth/cookies.ts`
-  (`signId` / `verifySigned`, HMAC-SHA256 + `timingSafeEqual`) is correct, and the second cookie
-  `current_user_id` does use it - it is the impersonation/admin path. `COOKIE_SECRET` is a required
-  GitHub secret and `docker-compose.prod.yml` refuses to start without it (`:?requis`), so prod has
-  a real key. The hole is not the crypto, it is that the front door bypasses it.
-  **Fix, in order.** (a) `setSessionCookie` writes `signId(userId)` and `getSessionUser` /
-  `getUserFromSessionCookie` go through `verifySigned` - one seam each, and every existing cookie
-  stops verifying, which logs everyone out once (say so, it is the point). (b) `cookies.ts` must
-  REFUSE an absent `COOKIE_SECRET` instead of `|| ''`: an HMAC with an empty key is perfectly
-  computable, so unset means anyone can forge a valid signature - this one fails OPEN, the exact
-  mirror of the Cercle's jose behaviour (see DURABLE RULES). CI sets a PUBLIC value
-  (`ci-test-secret-not-for-production-use`, in `ci.yml` and `release.yml`), so an env leak between CI
-  and prod config is not theoretical. (c) then, and only then, consider Sky's model below.
-  **Sky is the reference implementation, in the same stack - copy it rather than invent.**
-  `Sky/src/lib/server/session.ts` + `database.ts:961` : the cookie holds an OPAQUE uuid, the
-  `sessions` table holds `token / person_id / expires_at` (7 days), logout DELETEs the row, and
-  unlinking a person revokes their sessions. Nothing to sign, nothing to rotate, revocation is a
-  DELETE. **Sky needs NO work** - verified 2026-08-04, it already has what both others lack.
-  **Portail-etu needs no work either**: vitrine, `ssr = false`, no session of any kind.
 
 ---
 
@@ -111,10 +69,11 @@ gate, V4 the alcohol gate at a till - all three need a human, none is a WP). The
 and proven both directions on prod; every probe and its answer is in that file, do not re-derive it.
 
 **Merge request open, awaiting Aurel** (2026-08-04): branch
-`fix/audit-2026-08-canari-and-session`, 5 commits, gates green -
+`fix/audit-2026-08-canari-and-session`, 6 commits, gates green -
 https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/new?merge_request%5Bsource_branch%5D=fix%2Faudit-2026-08-canari-and-session
 It carries the rolled-back balance on a replayed top-up, opening ledger entries + `bun run db:check`,
-the unconfigured-JWT-key skip, a `.env.example` that can actually build, and two lint fixes.
+the unconfigured-JWT-key skip, a `.env.example` that can actually build and whose placeholders are all
+unusable (`JWT_SECRET="secret"` was a working 6-byte key), and two lint fixes.
 
 **Two things it cannot do, both on HIS host, both to raise with him rather than patch around:**
 `JWT_OLD_SECRET` is non-empty outside any rotation (55 chars, a real former secret - so the rotation
@@ -223,6 +182,10 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   a replayed `jti` revokes the session (the Cercle detects this and only LOGS it - do not repeat
   that), and "sign out this device" becomes possible. Blast radius worth noting separately: one
   secret across six services means a leak in the smallest of them mints admin tokens for all.
+  **Two working implementations to copy rather than redesign**, both SvelteKit + SQLite:
+  `Sky/src/lib/server/session.ts` and `MiGallery/src/lib/db/sessions.ts` (shipped 2026-08-04,
+  WP-SESS-1). Canari differs on ONE point only - the access token stays stateless, or every service
+  and the nginx `auth_request` gains a DB round trip - so the row backs the REFRESH, not the access.
   **CI/CD: nothing to change, verified 2026-08-04.** `cd.yml` already fails hard when `JWT_SECRET` is
   absent (l.498), upserts it into `infrastructure/.env` (l.538), and - the good part - re-reads it
   from INSIDE the running core-service container and compares sha256 against the GitHub secret
@@ -565,6 +528,27 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   a fresh DB - it has to be in the fixtures as well, or day one is already inconsistent.
 - Its prod facts (paths, DB, missing tooling) are in `docs/PROD-TEST-CERCLE.md` - `/var/www` serves,
   the git checkout does not; `bun` only, no `node`/`sqlite3`; `journalctl` is unreadable to that user.
+
+#### Sessions, in every app -> [MiGallery authentication](../MiGallery/docs/wiki/authentication.md)
+
+Settled 2026-08-04 by fixing WP-SESS-1. **The house model is Sky's**, now MiGallery's too: an OPAQUE
+token in the cookie, one server-side row holding everything else. Canari keeps a stateless 1 h access
+token because six services and nginx verify it without a DB - but the LONG-lived credential must
+still be a row (WP-SESS-2).
+
+- A cookie whose content IS the identity it claims is not a credential, it is a form field.
+- `httpOnly` stops other people's JavaScript from READING a cookie; nothing stops the holder from
+  WRITING one. It is an XSS mitigation, never an authentication mechanism.
+- "Hard to guess" is not a defence for an id an ordinary endpoint hands out to any logged-in user.
+- An empty key can fail OPEN or CLOSED and you cannot guess which: `crypto.createHmac('sha256','')`
+  signs happily (anyone can forge), while jose refuses a zero-length key. Decide explicitly.
+- Impersonation belongs in the session ROW, never in a second cookie: a parallel credential outlives
+  the logout of the first, and nothing can then prove who really acted. Authorise STARTING one on
+  the effective user and STOPPING one on the real user - that split is the design.
+- An audit trail names the account that ACTED, so it reads the real user, not the worn identity.
+- A logout that only clears the cookie has revoked nothing; deleting the row is the whole point.
+- A SvelteKit `redirect()` is not an `Error`, so `catch (e) { if (e instanceof Error) ... }` swallows
+  it and answers 500 on a handler that worked. Throw redirects OUTSIDE the try.
 
 ---
 
