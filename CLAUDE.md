@@ -50,7 +50,7 @@
 State lives HERE (canonical). Five repos: Canari (this monorepo), Sky (../Sky), MiGallery
 (../MiGallery) and Portail-etu (../refonte-portail-etu) are `emse-students/*` on GitHub;
 **Le Cercle (../le-cercle)** is `gitlab.emse.fr:aurel.dautry/le-cercle`.
-Sky, MiGallery and Portail-etu are COMPLETE - nothing open on any of them.
+Sky and Portail-etu are COMPLETE - nothing open on either. MiGallery has ONE P1 (see WP-SESS-1).
 All on `main` EXCEPT Le Cercle: Aurel owns that repo. Never commit to its `main`; work on a branch
 and hand him a merge request.
 
@@ -58,6 +58,48 @@ Work is tracked as Work Packages ordered by severity: **P1** (security, or a use
 is broken), **P2** (correctness, nothing at risk), **P3** (hygiene). `[ ]` open, `[~]` in progress.
 Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, the story to
 `CHANGELOG.md`.
+
+---
+
+### MIGALLERY (../MiGallery) - ONE OPEN WP, THE ONLY P1 ANYWHERE (2026-08-04)
+
+- \[ \] **WP-SESS-1 (P1) - The MiGallery session cookie is an unsigned identity claim.** Any logged-in
+  user can become any other user, including an admin, in two HTTP requests. Found 2026-08-04 while
+  answering "does Canari have a `JWT_OLD_SECRET` too?". NOT exploited, NOT reported - assume it is
+  live on prod until fixed.
+  **The chain, read in full - every link verified, nothing inferred:**
+  (1) the real login path `api/auth/callback/+server.ts:43` calls `setSessionCookie(cookies,
+  result.dbUser.id_user)`, and `lib/session.ts:15` writes that id RAW into `__session_user`,
+  `maxAge` ONE YEAR. Nothing signs it. `httpOnly` stops other people's JavaScript from reading the
+  cookie; it does not stop the holder from writing one.
+  (2) `lib/server/auth.ts:44` `getUserFromSessionCookie` does `SELECT * FROM users WHERE id_user = ?`
+  on the cookie value and returns the row. The cookie's only content is the identity it claims, and
+  the check is that the claim exists.
+  (3) `ensureAdmin` (same file, l.115) accepts that row when its `role` is `admin`, and
+  `getCurrentUser` (l.140) accepts it always - so both `requireScope(event, 'admin')` and
+  `'write'` resolve through it (`lib/server/permissions.ts:118`).
+  (4) the ids are HANDED OUT: `api/albums/permissions/options/+server.ts` is `requireScope 'write'`,
+  i.e. any ordinary logged-in user, and returns `id_user` for EVERY row of `users`. So there is
+  nothing to guess.
+  **The signing already exists and the login path just does not use it.** `lib/auth/cookies.ts`
+  (`signId` / `verifySigned`, HMAC-SHA256 + `timingSafeEqual`) is correct, and the second cookie
+  `current_user_id` does use it - it is the impersonation/admin path. `COOKIE_SECRET` is a required
+  GitHub secret and `docker-compose.prod.yml` refuses to start without it (`:?requis`), so prod has
+  a real key. The hole is not the crypto, it is that the front door bypasses it.
+  **Fix, in order.** (a) `setSessionCookie` writes `signId(userId)` and `getSessionUser` /
+  `getUserFromSessionCookie` go through `verifySigned` - one seam each, and every existing cookie
+  stops verifying, which logs everyone out once (say so, it is the point). (b) `cookies.ts` must
+  REFUSE an absent `COOKIE_SECRET` instead of `|| ''`: an HMAC with an empty key is perfectly
+  computable, so unset means anyone can forge a valid signature - this one fails OPEN, the exact
+  mirror of the Cercle's jose behaviour (see DURABLE RULES). CI sets a PUBLIC value
+  (`ci-test-secret-not-for-production-use`, in `ci.yml` and `release.yml`), so an env leak between CI
+  and prod config is not theoretical. (c) then, and only then, consider Sky's model below.
+  **Sky is the reference implementation, in the same stack - copy it rather than invent.**
+  `Sky/src/lib/server/session.ts` + `database.ts:961` : the cookie holds an OPAQUE uuid, the
+  `sessions` table holds `token / person_id / expires_at` (7 days), logout DELETEs the row, and
+  unlinking a person revokes their sessions. Nothing to sign, nothing to rotate, revocation is a
+  DELETE. **Sky needs NO work** - verified 2026-08-04, it already has what both others lack.
+  **Portail-etu needs no work either**: vitrine, `ssr = false`, no session of any kind.
 
 ---
 
@@ -161,6 +203,32 @@ verdict log line of each, and the PASS/owed table. Android passed the ladder on 
 never run one check on hardware**. Owed on both: H (deep link into the conversation), K (quick
 reply), L (revoked device re-enrolling), plus M (PDF preview) on Android. **Open a WP only when a
 check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at the repo root.
+
+- \[ \] **WP-SESS-2 (P2) - Nothing can revoke a Canari session.** No exploit, no incident: this is a
+  missing lever, not a hole. Sibling of WP-SESS-1, raised the same day and for the same reason.
+  **What is there** (`apps/core-service/src/auth/auth.controller.ts`): one `JWT_SECRET`, HS256, shared
+  by all six services; access token 1 h carrying `admin: isAdmin`; refresh cookie 7 d, `path=/api/auth`.
+  **What is missing, measured:** the refresh is called "rotated" but is STATELESS (l.240-278) - verify
+  the signature, check `type === 'refresh'`, reissue. No `jti`, no store, no reuse detection. So a
+  stolen refresh cookie is worth 7 days AND mints a fresh 7 days on every use, in parallel with the
+  real user, unnoticed - and `logout` (l.287) only clears the cookie, so the token it just "revoked"
+  keeps working. The one lever that exists is rotating `JWT_SECRET`, which logs every user out of all
+  six services at once.
+  **Do NOT add a `JWT_OLD_SECRET`.** The grace window it buys is paid for with a two-step rotation
+  whose second step is invisible, and the Cercle's prod is the proof it does not get taken (its old
+  secret still signs, months later). It is also exactly backwards for the case you actually rotate in
+  - a leak, where you want the old key dead now. Canari logs in through Authentik, so a hard rotation
+  costs a mostly transparent SSO redirect.
+  **Build instead:** give the refresh an identity (`jti` + `sid`) and a row, then `logout` deletes it,
+  a replayed `jti` revokes the session (the Cercle detects this and only LOGS it - do not repeat
+  that), and "sign out this device" becomes possible. Blast radius worth noting separately: one
+  secret across six services means a leak in the smallest of them mints admin tokens for all.
+  **CI/CD: nothing to change, verified 2026-08-04.** `cd.yml` already fails hard when `JWT_SECRET` is
+  absent (l.498), upserts it into `infrastructure/.env` (l.538), and - the good part - re-reads it
+  from INSIDE the running core-service container and compares sha256 against the GitHub secret
+  (l.863-869), so a rotation that did not actually land fails the deploy. Rotating is therefore
+  already "change the GitHub secret, re-run the CD". What is missing is only that nobody does it on a
+  schedule and no doc says to: that belongs in `docs/wiki/cicd.md`, not in new workflow code.
 
 - \[ \] **WP-HIST-3 (P2) - Pool history per MESSAGE between devices, not all-or-nothing.** Successor
   to WP-HIST-2 (shipped 2026-08-02), which stopped the blind soliciting but left the exchange itself
