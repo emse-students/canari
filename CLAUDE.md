@@ -63,23 +63,31 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
 
 ### LE CERCLE (../le-cercle) - TWO BRANCHES PUSHED, BOTH AWAITING AUREL
 
-**Second branch, `chore/project-conventions`, pushed 2026-08-04 - MR NOT CREATED YET.** Stacked on
-`fix/audit-2026-08-canari-and-session` ON PURPOSE (user's call), so the wiki can describe the final
-session model; it cannot merge before !3. Two commits: `d77b7d8` docs (LICENSE PolyForm naming Aurel,
-README replacing the untouched `sv` template, CONTRIBUTING, SECURITY, CHANGELOG starting 2026-08-04,
-AGENTS.md + CLAUDE.md pointer, and `docs/wiki/` x8 - architecture, authentication, data-model,
-ledger, canari-integration, deployment, frontend, index) and `6efcbfb` tooling (multi-stage
-Dockerfile on `oven/bun` + compose.yml, `.gitlab-ci.yml` with gates/image/deploy, husky +
-lint-staged, and Paraglide FR+EN across every string). Gates: check 1050 files 0 errors, lint clean,
-`bun test` 10/10, `bun run build` proven with `.env.example` standing in for `.env`.
-**Owed next session: write the MR description (like `../MR-CERCLE.md`) and open the MR.**
-Create URL: https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/new?merge_request%5Bsource_branch%5D=chore%2Fproject-conventions
+**Second branch, `chore/project-conventions` - MR NOT CREATED YET, and it is now much more than
+conventions: it carries the whole redesign.** Stacked on `fix/audit-2026-08-canari-and-session` ON
+PURPOSE (user's call), so the wiki can describe the final session model; it cannot merge before !3.
 Decisions taken so they are not re-litigated: FR+EN complete (not FR-only), Docker + full GitLab CD
-(not gates-only), stacked on !3 (not branched from main). Things flagged in the wiki as caveats
-rather than fixed: the session row stores the WHOLE `X-Forwarded-For` (head is client-controlled),
-and an empty `CANARI_WEBHOOK_SECRET` fails OPEN (`createHmac('sha256','')` signs happily). Typos
-fixed in passing: navbar `A propros`/`Compet`, `Enregister` x2, and the top-up test page printing
-`Result Status: undefined` on its validation branches.
+(not gates-only), stacked on !3 (not branched from main), both themes + a toggle, access exceptions
+= cercleux + bartenders of an open perm, `/menu` and `/about` created.
+**Owed next session: write the MR description (like `../MR-CERCLE.md`) and open the MR** - it now
+has to cover eight commits, not two.
+Create URL: https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/new?merge_request%5Bsource_branch%5D=chore%2Fproject-conventions
+
+Commits, oldest first: `d77b7d8` docs (LICENSE/README/CONTRIBUTING/SECURITY/CHANGELOG/AGENTS.md +
+`docs/wiki/` x8), `6efcbfb` tooling (Dockerfile + compose, `.gitlab-ci.yml`, husky + lint-staged,
+Paraglide FR+EN), then the redesign: art direction + icon set + cotisant gate (59 files), member
+pages (25), `feat(gestion)` (39), `test(canari)` (10), and the wiki update. Gates green throughout:
+`bun run check` 5002 files 0 errors, lint clean, `bun test` **31/31**.
+
+**What the redesign found, all fixed and all in `CHANGELOG.md`:** every `/gestion` action ran
+unguarded - eleven called `fail(403, ...)` without `return` (fail BUILDS a value, it does not
+interrupt), `futs`/`pression_types` had no check, and `/gestion/ledger` CREDITS an account, so any
+member could POST themselves a balance; a refusal answered a bare string that landed under `form.0`
+and was displayed nowhere; `/gestion` itself was an empty file behind a navbar link; prices were
+typed in raw cents; `setKegTapNumber` coerced an out-of-range tap to "no tap" and answered success;
+`/gestion/historique`'s load-more called an empty function; and an empty `CANARI_WEBHOOK_SECRET`
+failed OPEN (now CLOSED, with a test). Still flagged as a caveat rather than fixed: the session row
+stores the WHOLE `X-Forwarded-For`.
 
 **No other Work Package is open on the Cercle.** What was owed either shipped, moved to the merge request
 below, or is a test in `docs/PROD-TEST-CERCLE.md` (V1 a real MiConnect round trip, V2 the access
@@ -453,6 +461,17 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 
 - The XOR has ONE implementation, `UserTagService.revokeSiblingTierTags`.
 - A tag revoke MUST be scoped to `issuingAssocId`, or it is a cross-tenant IDOR.
+- An audit table is ONE row per subject, updated in place - never one row per attempt. A retry that
+  INSERTS leaves the failure it was pressed on in the list whatever happens, so the button reads as
+  dead: success adds an invisible row, failure adds a second visible one.
+- A retry button must not re-run the dispatcher's backoff ladder: sleeps + timeouts blow past the
+  proxy timeout, so the one call that would have worked is the one displayed as failed.
+- Automatic retry needs its OWN counter (`autoRetryCount`): the initial dispatch already burns
+  `attemptCount`, so a shared counter reports the ladder exhausted before it starts.
+- A ladder must END. A delivery still failing a day later is a configuration problem, and retrying
+  forever hides it - `nextAttemptAt = null` is what says "a human must look at this".
+- A uuid in an admin list is not information: join the name, and leave it NULL when the account is
+  gone (that is a different problem from a failed delivery, and needs a different action).
 - `balance_topup` is repeatable BY DEFINITION and cannot run out - the product defaults
   (`allowRepeatPurchase: false`, purchase caps) silently cap every user at one recharge for life.
   Forcing them at write repairs nothing already stored, so the TYPE decides in `assertCanPurchase`.
