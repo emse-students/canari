@@ -48,6 +48,40 @@ After a successful bump push, CD runs in **rebuild-only** mode: skips CI and Cod
 
 See [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) (section 3) for the full secrets inventory.
 
+## Rotating `JWT_SECRET`
+
+One HS256 secret signs every token of all six services, so a leak in the smallest of them mints
+admin tokens for all. Rotating it is already a supported operation — nothing in the workflows needs
+changing — but nothing schedules it either, which is why it is written down here.
+
+**The procedure is two steps**, and the second is not optional:
+
+1. Change the `JWT_SECRET` repository secret (`openssl rand -hex 32`).
+2. Re-run the CD workflow.
+
+`cd.yml` makes this safe by refusing every failure mode it can see:
+
+| Step | What it does |
+|---|---|
+| l.498 | Fails the deploy outright when `JWT_SECRET` is absent — no accidental default |
+| l.538 | Upserts it into `infrastructure/.env` on the server |
+| l.863-869 | Re-reads the value **from inside the running core-service container** and compares its sha256 against the GitHub secret |
+
+That last check is what makes a rotation believable: a deploy where the new secret did not actually
+reach the running process **fails**, instead of reporting success over a service still signing with
+the old key.
+
+**Rotation is a hard cut, on purpose.** There is no `JWT_OLD_SECRET` grace window in Canari and
+none should be added: the grace period is paid for with a second step that is invisible and
+therefore never taken (Le Cercle's production is the standing proof — its old secret still signed
+sessions months after the rotation "happened"), and it is exactly backwards for the case you
+actually rotate in, a leak, where the old key must die *now*. Canari signs in through Authentik, so
+the cost of the hard cut is one mostly transparent SSO redirect.
+
+**A rotation is not the everyday revocation lever.** Signing one device out, or ending one stolen
+session, is a row in `auth_sessions` — see [`services/core-service.md`](services/core-service.md).
+Reach for the secret only when the secret itself is suspect.
+
 ## Container registry
 
 All service images are published to GitHub Container Registry:

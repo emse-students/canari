@@ -2,9 +2,11 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Head,
   HttpCode,
+  Param,
   Post,
   Req,
   Res,
@@ -16,14 +18,38 @@ import * as jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
 import { UsersService } from '../users/users.service';
 import { PlatformService } from '../platform/platform.service';
+import {
+  AuthSessionsService,
+  SESSION_TTL_SECONDS,
+  type SessionClientInfo,
+} from './auth-sessions.service';
 
 interface OidcCallbackDto {
   code: string;
   redirect_uri: string;
 }
 
+/** Claims carried by the refresh JWT. `sid`/`jti` are absent on tokens issued before WP-SESS-2. */
+interface RefreshClaims {
+  sub: string;
+  type: string;
+  sid?: string;
+  jti?: string;
+}
+
+/** One session as returned by `GET /api/auth/sessions`. */
+interface SessionDto {
+  id: string;
+  current: boolean;
+  createdAt: string;
+  lastUsedAt: string;
+  expiresAt: string;
+  userAgent: string | null;
+  lastIp: string | null;
+}
+
 const REFRESH_COOKIE = 'canari_refresh';
-const REFRESH_MAX_AGE = 7 * 24 * 60 * 60; // 7 days in seconds
+const REFRESH_MAX_AGE = SESSION_TTL_SECONDS; // 7 days in seconds - the cookie and the row must agree
 
 /** Controller handling OIDC login, token refresh, logout, and nginx JWT verification. */
 @Controller('auth')
@@ -38,7 +64,8 @@ export class AuthController {
 
   constructor(
     private readonly usersService: UsersService,
-    private readonly platformService: PlatformService
+    private readonly platformService: PlatformService,
+    private readonly authSessions: AuthSessionsService
   ) {
     const secret = process.env.JWT_SECRET;
     if (!secret || secret === 'change-me-in-production') {
@@ -81,6 +108,87 @@ export class AuthController {
       path: '/api/auth',
       maxAge: REFRESH_MAX_AGE * 1000, // express uses milliseconds
     });
+  }
+
+  /**
+   * Signs a refresh JWT bound to a stored session.
+   *
+   * `sid` names the row and survives every rotation; `jti` names the single
+   * token the row currently accepts. A token whose `jti` no longer matches has
+   * already been spent - see {@link AuthSessionsService.rotate}.
+   */
+  private signRefreshToken(userId: string, sessionId: string, tokenId: string): string {
+    return jwt.sign(
+      { sub: userId, type: 'refresh', sid: sessionId, jti: tokenId },
+      this.jwtSecret,
+      {
+        expiresIn: REFRESH_MAX_AGE,
+      }
+    );
+  }
+
+  /**
+   * Facts recorded on the session so its owner can recognise it later.
+   *
+   * The IP is taken from the LAST `X-Forwarded-For` entry, not the first: nginx
+   * appends the connecting address to whatever the client sent, so the head of
+   * that list is attacker-controlled and only the tail is what nginx actually
+   * saw.
+   */
+  private clientInfo(req: Request): SessionClientInfo {
+    const forwarded = req.headers['x-forwarded-for'];
+    const chain = Array.isArray(forwarded) ? forwarded.join(',') : (forwarded ?? '');
+    const hops = String(chain)
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    return {
+      userAgent: req.get('user-agent') ?? null,
+      ip: hops.length > 0 ? hops[hops.length - 1] : (req.socket?.remoteAddress ?? null),
+    };
+  }
+
+  /**
+   * Resolves the caller of a session-management route from its Bearer access token.
+   *
+   * These routes live under `/api/auth`, which nginx serves unauthenticated and
+   * where it deliberately blanks `X-User-Id` - so `NginxAuthGuard` would refuse
+   * every request. The token is verified here instead, exactly as
+   * `/api/auth/verify` does it.
+   */
+  private requireAccessToken(req: Request): { userId: string; isAdmin: boolean } {
+    const header = req.headers['authorization'];
+    if (!header) throw new UnauthorizedException('Missing Authorization header');
+    const parts = String(header).split(' ');
+    const token = parts.length > 1 ? parts[1] : parts[0];
+    if (!token) throw new UnauthorizedException('Missing bearer token');
+
+    let payload: { sub?: string; admin?: boolean; type?: string };
+    try {
+      payload = jwt.verify(token, this.jwtSecret, { algorithms: ['HS256'] }) as typeof payload;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired access token');
+    }
+    // A refresh token is signed with the same key, so nothing but this check
+    // stops it from being presented as an access token.
+    if (payload.type === 'refresh')
+      throw new UnauthorizedException('Refresh token is not an access token');
+    if (!payload.sub) throw new UnauthorizedException('Token carries no subject');
+    return { userId: payload.sub, isAdmin: !!payload.admin };
+  }
+
+  /** Reads the `sid` of the refresh cookie, if one is present and parsable. Never throws. */
+  private currentSessionId(req: Request): string | null {
+    const cookie = req.cookies?.[REFRESH_COOKIE] as string | undefined;
+    if (!cookie) return null;
+    try {
+      const payload = jwt.verify(cookie, this.jwtSecret, {
+        algorithms: ['HS256'],
+      }) as RefreshClaims;
+      return payload.type === 'refresh' ? (payload.sid ?? null) : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Clear the refresh cookie with environment-aware security settings. */
@@ -196,13 +304,12 @@ export class AuthController {
       });
     }
 
-    // 4. Issue internal JWT pair
+    // 4. Issue internal JWT pair, backed by a session row so the refresh can be revoked
     const access_token = jwt.sign({ sub: user.id, admin: !!user.admin }, this.jwtSecret, {
       expiresIn: '1h',
     });
-    const refresh_token = jwt.sign({ sub: user.id, type: 'refresh' }, this.jwtSecret, {
-      expiresIn: '7d',
-    });
+    const session = await this.authSessions.create(user.id, this.clientInfo(req));
+    const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
 
     // Set refresh token as HttpOnly cookie (not accessible to JS)
     this.setRefreshCookie(req, res, refresh_token);
@@ -222,7 +329,15 @@ export class AuthController {
   }
 
   // ─── Token refresh ─────────────────────────────────────────────────────────
-  /** Rotates the refresh cookie and returns a new short-lived access token. */
+  /**
+   * Rotates the refresh cookie against its stored session and returns a new
+   * short-lived access token.
+   *
+   * The signature alone is not enough to be let in: the token also has to name
+   * a live session AND be the one that session currently expects. That second
+   * condition is the whole point - it is what makes `logout`, "sign out this
+   * device" and replay detection possible.
+   */
   @Post('refresh')
   @HttpCode(200)
   async refreshToken(
@@ -235,14 +350,11 @@ export class AuthController {
       throw new UnauthorizedException('No refresh token - please log in again');
     }
 
-    let payload: { sub: string; type: string };
+    let payload: RefreshClaims;
     try {
       payload = jwt.verify(refresh_token, this.jwtSecret, {
         algorithms: ['HS256'],
-      }) as {
-        sub: string;
-        type: string;
-      };
+      }) as RefreshClaims;
     } catch {
       this.clearRefreshCookie(req, res);
       throw new UnauthorizedException('Invalid or expired refresh token');
@@ -258,6 +370,8 @@ export class AuthController {
 
     const platformConfig = await this.platformService.getConfig();
     if (this.platformService.isAccessBlockedByMaintenance(platformConfig, isAdmin)) {
+      // Do NOT touch the session here: maintenance is a temporary refusal, and
+      // consuming the rotation would sign the user out of a healthy session.
       this.clearRefreshCookie(req, res);
       throw new ServiceUnavailableException({
         code: 'MAINTENANCE',
@@ -267,12 +381,36 @@ export class AuthController {
       });
     }
 
+    const client = this.clientInfo(req);
+    let sessionId = payload.sid;
+    let nextTokenId: string;
+
+    if (!sessionId || !payload.jti) {
+      // Adoption path for tokens issued before WP-SESS-2, which carry no session.
+      // Refusing them would sign every logged-in user out on the deploy; they are
+      // still signature-valid and unexpired, so they are worth exactly what they
+      // were worth yesterday - and no more, for at most one refresh TTL (7 days)
+      // after the release. Safe to delete after 2026-08-12.
+      const created = await this.authSessions.create(payload.sub, client);
+      sessionId = created.sessionId;
+      nextTokenId = created.tokenId;
+    } else {
+      const result = await this.authSessions.rotate(sessionId, payload.jti, client);
+      if (result.status === 'replayed' || result.status === 'unknown') {
+        this.clearRefreshCookie(req, res);
+        throw new UnauthorizedException(
+          result.status === 'replayed'
+            ? 'Refresh token reused - session revoked, please log in again'
+            : 'Session revoked or expired - please log in again'
+        );
+      }
+      nextTokenId = result.tokenId;
+    }
+
     const access_token = jwt.sign({ sub: payload.sub, admin: isAdmin }, this.jwtSecret, {
       expiresIn: '1h',
     });
-    const new_refresh = jwt.sign({ sub: payload.sub, type: 'refresh' }, this.jwtSecret, {
-      expiresIn: '7d',
-    });
+    const new_refresh = this.signRefreshToken(payload.sub, sessionId, nextTokenId);
 
     // Rotate the refresh cookie
     this.setRefreshCookie(req, res, new_refresh);
@@ -281,25 +419,90 @@ export class AuthController {
   }
 
   // ─── Logout ────────────────────────────────────────────────────────────────
-  /** Clears the refresh cookie and invalidates the session. */
+  /**
+   * Destroys the session behind the refresh cookie, then clears the cookie.
+   *
+   * Deleting the row is the part that revokes anything: clearing a cookie only
+   * asks the browser in front of us to forget a credential that would still
+   * have worked for another seven days anywhere else.
+   */
   @Post('logout')
   @HttpCode(200)
-  logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): { ok: true } {
+  async logout(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response
+  ): Promise<{ ok: true }> {
+    const sessionId = this.currentSessionId(req);
+    if (sessionId) await this.authSessions.revoke(sessionId);
     this.clearRefreshCookie(req, res);
     return { ok: true };
+  }
+
+  // ─── Session management ────────────────────────────────────────────────────
+  /** Lists the caller's live sessions, flagging the one this request came from. */
+  @Get('sessions')
+  async listSessions(@Req() req: Request): Promise<{ sessions: SessionDto[] }> {
+    const { userId } = this.requireAccessToken(req);
+    const currentId = this.currentSessionId(req);
+    const rows = await this.authSessions.listForUser(userId);
+    return {
+      sessions: rows.map((row) => ({
+        id: row.id,
+        current: row.id === currentId,
+        createdAt: row.createdAt.toISOString(),
+        lastUsedAt: row.lastUsedAt.toISOString(),
+        expiresAt: row.expiresAt.toISOString(),
+        userAgent: row.userAgent,
+        lastIp: row.lastIp,
+      })),
+    };
+  }
+
+  /**
+   * Revokes every session of the caller except the one making the request.
+   *
+   * Declared before `sessions/:id` on purpose - a parameterised route registered
+   * first would swallow this path.
+   */
+  @Delete('sessions')
+  @HttpCode(200)
+  async revokeOtherSessions(@Req() req: Request): Promise<{ revoked: number }> {
+    const { userId } = this.requireAccessToken(req);
+    const currentId = this.currentSessionId(req);
+    const revoked = await this.authSessions.revokeOthers(userId, currentId);
+    return { revoked };
+  }
+
+  /** Revokes one of the caller's sessions. Revoking the current one is a logout. */
+  @Delete('sessions/:id')
+  @HttpCode(200)
+  async revokeSession(
+    @Param('id') id: string,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response
+  ): Promise<{ ok: boolean }> {
+    const { userId } = this.requireAccessToken(req);
+    // Scoped to the caller: a session id is an identifier, never an authorization.
+    const ok = await this.authSessions.revokeOwned(userId, id);
+    if (ok && this.currentSessionId(req) === id) {
+      this.clearRefreshCookie(req, res);
+    }
+    return { ok };
   }
 
   // ─── Verify (used by nginx auth_request) ──────────────────────────────────
   /** Verifies the Bearer token and injects X-User-Id / X-Logged-In headers for nginx auth_request (GET). */
   @Get('verify')
   verifyStart(@Req() req: Request, @Res() res: Response) {
-    void this.check(req, res);
+    // Returning the promise rather than discarding it: nothing else would ever
+    // observe a rejection from `check`, and a test cannot await a void call.
+    return this.check(req, res);
   }
 
   /** Verifies the Bearer token and injects X-User-Id / X-Logged-In headers for nginx auth_request (HEAD). */
   @Head('verify')
   verify(@Req() req: Request, @Res() res: Response) {
-    void this.check(req, res);
+    return this.check(req, res);
   }
 
   private async check(req: Request, res: Response) {
@@ -327,7 +530,15 @@ export class AuthController {
       }) as {
         sub: string;
         admin?: boolean;
+        type?: string;
       };
+
+      // The refresh token is signed with the same key, so it verifies here too.
+      // Nothing but this check stops it from being spent as an access token -
+      // which would hand a 7-day credential the reach of a 1-hour one.
+      if (payload.type === 'refresh') {
+        return res.status(200).send();
+      }
 
       const platformConfig = await this.platformService.getConfig();
       if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!payload.admin)) {

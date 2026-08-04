@@ -1,11 +1,20 @@
 <script lang="ts">
-  import { Shield, KeyRound, Monitor, CheckCircle2, Fingerprint, LogIn } from '@lucide/svelte';
+  import {
+    Shield,
+    KeyRound,
+    Monitor,
+    CheckCircle2,
+    Fingerprint,
+    LogIn,
+    Globe,
+  } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
   import { globalSession as session, appendLog } from '$lib/stores/globalChatSingleton.svelte';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import ChangePinModal from '$lib/components/auth/ChangePinModal.svelte';
   import DeviceManagementPanel from '$lib/components/chat/DeviceManagementPanel.svelte';
+  import SessionManagementPanel from '$lib/components/settings/SessionManagementPanel.svelte';
   import { type PinOperationProgress } from '$lib/utils/chat/pinChange';
   import { BiometricService } from '$lib/services/biometric';
   import {
@@ -66,6 +75,7 @@
 
   // PIN change + device management. Both flows own their state here so the section is drop-in.
   let showDevicePanel = $state(false);
+  let showSessionPanel = $state(false);
   let showChangePinModal = $state(false);
   let changePinError = $state('');
   let changePinLoading = $state(false);
@@ -264,6 +274,31 @@
           {/if}
         </button>
       </div>
+
+      <!-- Account sessions, deliberately next to (and distinct from) the MLS devices above:
+           a device says who can decrypt, a session says who can still obtain an access token. -->
+      <div
+        class="flex items-center justify-between gap-4 p-4 rounded-2xl bg-white/50 dark:bg-white/5 border border-black/5 dark:border-white/5 shadow-sm"
+      >
+        <div class="flex items-center gap-3.5 min-w-0">
+          <div class="p-2.5 rounded-xl bg-black/5 dark:bg-black/40 text-text-muted shrink-0">
+            <Globe size={20} strokeWidth={2.5} />
+          </div>
+          <div class="min-w-0">
+            <p class="text-sm font-bold text-text-main">{m.settings_sessions_heading()}</p>
+            <p class="text-xs font-medium text-text-muted mt-0.5">
+              {m.settings_sessions_desc()}
+            </p>
+          </div>
+        </div>
+        <button
+          onclick={() => (showSessionPanel = true)}
+          class="shrink-0 inline-flex items-center gap-2 rounded-xl bg-black/5 dark:bg-white/10 px-4 py-2 text-sm font-bold text-text-main hover:bg-black/10 dark:hover:bg-white/20 transition-all active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-text-muted"
+        >
+          <Globe size={16} strokeWidth={2.5} />
+          <span class="hidden sm:inline">{m.settings_sessions_manage_btn()}</span>
+        </button>
+      </div>
     </div>
   {:else}
     <p class="text-sm text-text-muted leading-relaxed">
@@ -280,6 +315,8 @@
   isLoading={changePinLoading}
   loadingProgress={changePinProgress}
 />
+
+<SessionManagementPanel open={showSessionPanel} onClose={() => (showSessionPanel = false)} />
 
 {#if session.isLoggedIn}
   <DeviceManagementPanel

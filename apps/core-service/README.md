@@ -8,21 +8,32 @@ NestJS microservice for authentication, user management, and Stripe payments. Ru
 
 Handles the full OIDC login flow via Authentik:
 
-- **Code exchange**: `POST /api/auth/oidc/callback` — exchanges Authentik authorization code for JWT access token + HttpOnly refresh cookie. Upserts the local user on first login.
-- **Refresh rotation**: `POST /api/auth/refresh` — issues a new access token and rotates the refresh cookie.
-- **Logout**: `POST /api/auth/logout` — clears the refresh cookie.
+- **Code exchange**: `POST /api/auth/oidc/callback` — exchanges Authentik authorization code for JWT access token + HttpOnly refresh cookie. Upserts the local user and opens a session row on first login.
+- **Refresh rotation**: `POST /api/auth/refresh` — rotates the session's `jti`, issues a new access token, and revokes the session on a replayed token.
+- **Logout**: `POST /api/auth/logout` — deletes the session row, then clears the refresh cookie.
+- **Session management**: `GET /api/auth/sessions`, `DELETE /api/auth/sessions` (all but the current one), `DELETE /api/auth/sessions/:id`.
 - **Nginx verification**: `GET /api/auth/verify` — validates the JWT Bearer token for Nginx `auth_request`. Injects `X-User-Id`, `X-Logged-In`, `X-Global-Admin` headers on success.
-- **Dev login**: `POST /api/auth/dev-login` — instant login without OIDC, disabled in production via `ENABLE_DEV_ROUTES=false`.
 
 **Token model**:
 
 | Token | Location | TTL | Rotation |
 |---|---|---|---|
-| Access token | In-memory only (never localStorage) | 15 minutes | — |
-| Refresh token | HttpOnly cookie | 7 days | Rotated on each use |
-| WebSocket auth | Cookie `canari_ws_token` | 15 minutes | — |
+| Access token | In-memory only (never localStorage) | 1 hour | — (stateless) |
+| Refresh token | HttpOnly cookie, backed by an `auth_sessions` row | 7 days idle | Rotated on each use |
+| WebSocket auth | Cookie `canari_ws_token` | 1 hour | — |
 
 All tokens use JWT HS256 signed with a shared `JWT_SECRET`.
+
+The refresh cookie carries `sid` (the session row) and `jti` (the only token that row accepts), so
+a valid signature is no longer sufficient — the token must also name a live session and be the one
+it expects. That is what lets `logout` actually revoke, lets a user sign one device out from
+another, and turns a replayed refresh token into a destroyed session rather than a log line. The
+access token deliberately stays stateless: making it a row would put a database round trip in front
+of every service and the nginx `auth_request`, so revoking a session stops it renewing itself at
+once while an access token already issued survives until it expires (≤ 1 h).
+
+See [`docs/wiki/services/core-service.md`](../../docs/wiki/services/core-service.md) for the
+rotation grace window, replay handling and the legacy-token adoption path.
 
 ### Users
 
@@ -77,11 +88,13 @@ Main tables:
 
 | Table | Key columns |
 |---|---|
-| `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `stripeCustomerId`, `admin` |
+| `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `stripeCustomerId`, `admin`, `notesCiphertext`, `notesKey` |
+| `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp` |
 | `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion` |
-| `notes` | `userId`, `content` (Markdown) |
 
-Migrations live in `src/migrations/` and are run automatically by TypeORM on startup.
+Migrations are numbered `.sql` files in `src/migrations/`, replayed by the CD workflow against
+`auth_db` and recorded in `schema_migrations`. TypeORM `synchronize` only runs outside production,
+so a schema change needs the migration file to reach the server at all.
 
 ## Startup
 
@@ -105,7 +118,6 @@ Requires a running PostgreSQL instance, Authentik OIDC provider, and Stripe (opt
 | `STRIPE_SECRET_KEY` | no | Stripe secret key (payments) |
 | `STRIPE_WEBHOOK_SECRET` | no | Stripe webhook signing secret |
 | `INTERNAL_SECRET` | yes | Shared secret for service-to-service calls |
-| `ENABLE_DEV_ROUTES` | no | Set `true` to enable dev-login (never in production) |
 
 ## See also
 
