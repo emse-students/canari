@@ -63,21 +63,23 @@ Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, th
 
 ### LE CERCLE (../le-cercle) - TWO BRANCHES PUSHED, BOTH AWAITING AUREL
 
-**Second branch, `chore/project-conventions` - MR NOT CREATED YET, and it is now much more than
-conventions: it carries the whole redesign.** Stacked on `fix/audit-2026-08-canari-and-session` ON
-PURPOSE (user's call), so the wiki can describe the final session model; it cannot merge before !3.
+**Merge request !4 OPENED 2026-08-04** (branch `chore/project-conventions`, 9 commits, TARGETS
+`fix/audit-2026-08-canari-and-session` so the diff shows only its own work; GitLab retargets it to
+`main` once !3 merges) - https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/4
+**Description still to PASTE by hand: `../MR-CERCLE-2.md`.** It could not be pushed: git refuses a
+push option containing newlines, so `merge_request.description` is unusable for anything real - but
+`merge_request.create` + `.target_branch` + `.title` over SSH DO work, and that is how !4 was opened
+with no `glab` and no token.
 Decisions taken so they are not re-litigated: FR+EN complete (not FR-only), Docker + full GitLab CD
 (not gates-only), stacked on !3 (not branched from main), both themes + a toggle, access exceptions
 = cercleux + bartenders of an open perm, `/menu` and `/about` created.
-**Owed next session: write the MR description (like `../MR-CERCLE.md`) and open the MR** - it now
-has to cover eight commits, not two.
-Create URL: https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/new?merge_request%5Bsource_branch%5D=chore%2Fproject-conventions
 
 Commits, oldest first: `d77b7d8` docs (LICENSE/README/CONTRIBUTING/SECURITY/CHANGELOG/AGENTS.md +
 `docs/wiki/` x8), `6efcbfb` tooling (Dockerfile + compose, `.gitlab-ci.yml`, husky + lint-staged,
 Paraglide FR+EN), then the redesign: art direction + icon set + cotisant gate (59 files), member
-pages (25), `feat(gestion)` (39), `test(canari)` (10), and the wiki update. Gates green throughout:
-`bun run check` 5002 files 0 errors, lint clean, `bun test` **31/31**.
+pages (25), `feat(gestion)` (39), `test(canari)` (10), the wiki update, and `0f84dec`
+`fix(events)`. Gates green throughout: `bun run check` 5008 files 0 errors, lint clean,
+`bun test` **31/31**.
 
 **What the redesign found, all fixed and all in `CHANGELOG.md`:** every `/gestion` action ran
 unguarded - eleven called `fail(403, ...)` without `return` (fail BUILDS a value, it does not
@@ -510,6 +512,10 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   a valid 9-byte public key). Skip absent keys anyway: the safe behaviour is a caught exception two
   layers down, not a decision.
 - Every new page under `/gestion` re-opens the layout-load hole; the guard belongs in the ACTION.
+- A control the server will refuse must not be DRAWN, and the page cannot answer that itself - a
+  bartender list is not something the browser holds, so the load returns the ids it may act on.
+- Never point a refusal at a page: `/unauthorized` did not exist (a bare 404), and its `301` is
+  cached forever, so a member refused once stays bounced after being granted the right. Throw 403.
 - One app, one date model. Half the seams in a merge are a `Date` meeting a string, and the compiler
   only catches the ones that cross a typed boundary - a SQL default writing `datetime('now')` into
   an ISO column type-checks perfectly and reads back two hours off.
