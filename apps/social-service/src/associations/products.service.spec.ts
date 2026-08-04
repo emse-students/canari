@@ -702,7 +702,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       await expect(service.retryWebhookDelivery('other-asso', 'd1')).rejects.toThrow(
         NotFoundException
       );
-      expect(httpService.post).not.toHaveBeenCalled();
+      expect((httpService.post as jest.Mock).mock.calls).toHaveLength(0);
     });
 
     it('retries every due delivery and reports what went through', async () => {
@@ -758,7 +758,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       const result = await service.retryDueWebhookDeliveries();
 
-      expect(httpService.post).not.toHaveBeenCalled();
+      expect((httpService.post as jest.Mock).mock.calls).toHaveLength(0);
       expect(row.nextAttemptAt).toBeNull();
       expect(row.lastError).toContain('not configured');
       expect(result).toEqual({ delivered: 0, attempted: 1 });
