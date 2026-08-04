@@ -1412,15 +1412,27 @@ export async function createProductCheckout(
   );
 }
 
+/**
+ * A failed Cercle top-up delivery, as the admin dashboard needs it: the row plus who and what it
+ * is about. The uuids alone said nothing about whose money is stuck.
+ */
 export interface WebhookDelivery {
   id: string;
   productId: string;
+  productName: string | null;
   userId: string;
+  /** Null when the account no longer exists - a different problem from a Cercle-side failure. */
+  firstName: string | null;
+  lastName: string | null;
   amountCents: number;
   paymentIntentId: string;
   status: 'pending' | 'delivered' | 'failed';
+  /** Total sends, across the initial dispatch and every retry since. */
   attemptCount: number;
+  autoRetryCount: number;
   lastAttemptAt: string | null;
+  /** When the automatic retry will fire; null once the ladder is exhausted and a human is needed. */
+  nextAttemptAt: string | null;
   lastError: string | null;
   createdAt: string;
 }
@@ -1459,12 +1471,15 @@ export async function simulateCercleTopup(
   );
 }
 
-/** Retries a failed Cercle webhook delivery (requires MANAGE_PRODUCTS). */
+/**
+ * Retries a failed Cercle webhook delivery ONCE (requires MANAGE_PRODUCTS), and answers with the
+ * row as it now stands - so the caller can say whether it went through rather than just reload.
+ */
 export async function retryWebhookDelivery(
   associationId: string,
   deliveryId: string
-): Promise<void> {
-  await request<unknown>(
+): Promise<WebhookDelivery> {
+  return request<WebhookDelivery>(
     `/api/associations/${encodeURIComponent(associationId)}/webhook-failures/${encodeURIComponent(deliveryId)}/retry`,
     { method: 'POST' }
   );

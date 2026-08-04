@@ -19,6 +19,7 @@ import { PostNotification } from '../posts/entities/post-notification.entity';
 import { AssociationsService } from './associations.service';
 import { UserProfileService } from './user-profile.service';
 import { ProductsService } from './products.service';
+import { CercleDeliveryScheduler } from './cercle-delivery.scheduler';
 import { AssociationCategoriesService } from './association-categories.service';
 import { PosterService } from './poster.service';
 import { AssociationsController } from './associations.controller';
@@ -61,6 +62,7 @@ import { PurchaseRecordModule } from '../users/purchase-record.module';
     AssociationsService,
     UserProfileService,
     ProductsService,
+    CercleDeliveryScheduler,
     AssociationCategoriesService,
     PosterService,
     AssociationRoleGuard,

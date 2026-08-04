@@ -59,6 +59,8 @@
   let testResult = $state<CercleTopupSimulation | null>(null);
   let retryingDelivery = $state<string | null>(null);
   let deletingDelivery = $state<string | null>(null);
+  /** What the last manual retry did. A retry that silently changes nothing reads as a broken button. */
+  let retryOutcome = $state<{ delivered: boolean; message: string } | null>(null);
 
   const isConfigured = $derived(!!product?.webhookUrl && !!product?.webhookConfigured);
 
@@ -210,12 +212,39 @@
     }
   }
 
+  /** A member's name, falling back to the raw id when the account is gone. */
+  function memberLabel(delivery: WebhookDelivery): string {
+    const name = [delivery.firstName, delivery.lastName].filter(Boolean).join(' ');
+
+    return name || m.admin_cercle_webhook_unknown_member({ id: delivery.userId.slice(0, 8) });
+  }
+
+  function formatMoment(iso: string): string {
+    return new Date(iso).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR');
+  }
+
+  /**
+   * Retries one delivery and says what happened.
+   *
+   * The retry updates the row in place now, so a success removes it from the list - which is what
+   * makes this button visibly do something. It used to insert a second row and leave this one
+   * behind, so the list never changed however many times it was pressed.
+   */
   async function handleRetryDelivery(delivery: WebhookDelivery) {
     if (!asso) return;
     retryingDelivery = delivery.id;
     error = '';
+    retryOutcome = null;
     try {
-      await retryWebhookDelivery(asso.id, delivery.id);
+      console.log(`[ADMIN][CERCLE] retrying delivery=${delivery.id}`);
+      const updated = await retryWebhookDelivery(asso.id, delivery.id);
+      retryOutcome =
+        updated.status === 'delivered'
+          ? { delivered: true, message: m.admin_cercle_webhook_retry_delivered() }
+          : {
+              delivered: false,
+              message: updated.lastError ?? m.admin_cercle_webhook_retry_failed(),
+            };
       webhookFailures = await listWebhookFailures(asso.id);
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to retry webhook delivery', e);
@@ -497,29 +526,50 @@
             {m.admin_cercle_webhook_failures_title({ count: webhookFailures.length })}
           </h3>
           <p class="text-xs text-text-muted">{m.admin_cercle_webhook_failures_hint()}</p>
+
+          {#if retryOutcome}
+            <p
+              class="rounded-xl border px-3 py-2 text-xs font-semibold {retryOutcome.delivered
+                ? 'border-green-ok/30 bg-green-ok/10 text-green-ok'
+                : 'border-red-err/30 bg-red-err/10 text-red-err'}"
+            >
+              {retryOutcome.message}
+            </p>
+          {/if}
+
           <ul class="space-y-2">
             {#each webhookFailures as delivery (delivery.id)}
               <li
                 class="flex items-center gap-3 rounded-xl border border-amber-warn/30 bg-amber-warn/10 px-4 py-3"
               >
-                <div class="min-w-0 flex-1">
+                <div class="min-w-0 flex-1 space-y-0.5">
                   <p class="text-xs font-semibold text-text-main">
-                    {(delivery.amountCents / 100).toFixed(2)} € - {delivery.paymentIntentId.slice(
-                      0,
-                      20
-                    )}…
+                    {memberLabel(delivery)} - {(delivery.amountCents / 100).toFixed(2)} €
+                    {#if delivery.productName}
+                      <span class="font-normal text-text-muted">· {delivery.productName}</span>
+                    {/if}
                   </p>
                   <p class="text-xs text-text-muted">
                     {m.admin_cercle_webhook_attempts({ count: delivery.attemptCount })} ·
-                    {delivery.lastAttemptAt
-                      ? new Date(delivery.lastAttemptAt).toLocaleString(
-                          getLocale() === 'en' ? 'en-US' : 'fr-FR'
-                        )
-                      : '-'}
+                    {delivery.lastAttemptAt ? formatMoment(delivery.lastAttemptAt) : '-'}
+                  </p>
+                  <!--
+                    What happens NEXT without anyone doing anything: a row on the automatic ladder
+                    needs no decision, an exhausted one is the only kind that does.
+                  -->
+                  <p
+                    class="text-xs {delivery.nextAttemptAt ? 'text-text-muted' : 'text-amber-warn'}"
+                  >
+                    {delivery.nextAttemptAt
+                      ? m.admin_cercle_webhook_next_attempt({
+                          moment: formatMoment(delivery.nextAttemptAt),
+                        })
+                      : m.admin_cercle_webhook_retries_exhausted()}
                   </p>
                   {#if delivery.lastError}
-                    <p class="text-xs text-red-err truncate">{delivery.lastError}</p>
+                    <p class="text-xs text-red-err break-all">{delivery.lastError}</p>
                   {/if}
+                  <p class="text-xs text-text-muted break-all">{delivery.paymentIntentId}</p>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
                   <button

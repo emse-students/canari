@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { createHmac } from 'crypto';
 import { of } from 'rxjs';
 import { Repository } from 'typeorm';
 import { HttpService } from '@nestjs/axios';
@@ -28,14 +29,36 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     // Mirrors the real repo closely enough for the webhook dispatcher: `save` returns the entity
     // it was handed, and `findOne` answers with the last saved row (the audit record).
     let lastDelivery: any = null;
+    // What `createQueryBuilder(...).getMany()` should answer. Chainable, because the service builds
+    // its query fluently.
+    let queryBuilderRows: any[] = [];
     const deliveryRepo = {
-      create: jest.fn((x: any) => ({ attemptCount: 0, lastError: null, ...x })),
+      create: jest.fn((x: any) => ({
+        attemptCount: 0,
+        autoRetryCount: 0,
+        lastError: null,
+        nextAttemptAt: null,
+        ...x,
+      })),
       save: jest.fn((x: any) => {
         lastDelivery = x;
         return Promise.resolve(x);
       }),
       findOne: jest.fn(() => Promise.resolve(lastDelivery)),
       remove: jest.fn(() => Promise.resolve()),
+      manager,
+      createQueryBuilder: jest.fn(() => {
+        const qb: any = {};
+        for (const method of ['where', 'andWhere', 'orderBy', 'take']) {
+          qb[method] = jest.fn(() => qb);
+        }
+        qb.getMany = jest.fn(() => Promise.resolve(queryBuilderRows));
+
+        return qb;
+      }),
+      __setRows: (rows: any[]) => {
+        queryBuilderRows = rows;
+      },
     };
     const assoRepo = {
       findOne: jest.fn(),
@@ -437,20 +460,21 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     });
   });
 
-  describe('simulated Cercle top-up (admin test button, no Stripe charge)', () => {
-    const topupProduct = (overrides: Partial<AssociationProduct> = {}) =>
-      product({
-        type: 'balance_topup',
-        amountCents: null,
-        allowCustomAmount: true,
-        allowRepeatPurchase: true,
-        customAmountMinCents: 100,
-        customAmountMaxCents: 5000,
-        webhookUrl: 'https://cercle.example/api/canari/topup',
-        webhookSecret: 'shhh',
-        ...overrides,
-      } as Partial<AssociationProduct>);
+  /** THE Cercle product: a repeatable, buyer-priced top-up with its webhook configured. */
+  const topupProduct = (overrides: Partial<AssociationProduct> = {}) =>
+    product({
+      type: 'balance_topup',
+      amountCents: null,
+      allowCustomAmount: true,
+      allowRepeatPurchase: true,
+      customAmountMinCents: 100,
+      customAmountMaxCents: 5000,
+      webhookUrl: 'https://cercle.example/api/canari/topup',
+      webhookSecret: 'shhh',
+      ...overrides,
+    } as Partial<AssociationProduct>);
 
+  describe('simulated Cercle top-up (admin test button, no Stripe charge)', () => {
     it('runs the production path: signed webhook, audit row and a purchase recorded as Stripe', async () => {
       const { service, productRepo, assoRepo, httpService, purchaseRecordService } = makeService();
       assoRepo.findOne.mockResolvedValue(asso());
@@ -582,6 +606,193 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
 
       await service.deleteWebhookDelivery('asso1', 'd1');
       expect(deliveryRepo.remove).toHaveBeenCalledWith(row);
+    });
+  });
+
+  describe('failed delivery retry, manual and automatic', () => {
+    /** A row as the initial dispatch leaves it: three attempts burned, first backoff scheduled. */
+    const failedRow = (overrides: Record<string, unknown> = {}) => ({
+      id: 'd1',
+      productId: 'prod1',
+      userId: 'user1',
+      amountCents: 1500,
+      paymentIntentId: 'pi_x',
+      status: 'failed' as const,
+      attemptCount: 3,
+      autoRetryCount: 0,
+      lastAttemptAt: new Date('2026-08-04T10:00:00Z'),
+      nextAttemptAt: new Date('2026-08-04T10:05:00Z'),
+      lastError: 'connect ECONNREFUSED',
+      createdAt: new Date('2026-08-04T10:00:00Z'),
+      ...overrides,
+    });
+
+    it('updates the row it was given instead of inserting a second one', async () => {
+      // The whole reason the button looked dead: a successful retry used to leave the original
+      // failure in the list and add a delivered row beside it.
+      const { service, productRepo, deliveryRepo } = makeService();
+      const row = failedRow();
+      deliveryRepo.findOne.mockResolvedValue(row);
+      productRepo.findOne.mockResolvedValue(topupProduct());
+
+      const updated = await service.retryWebhookDelivery('asso1', 'd1');
+
+      expect(deliveryRepo.create).not.toHaveBeenCalled();
+      expect(updated.id).toBe('d1');
+      expect(updated.status).toBe('delivered');
+      expect(updated.nextAttemptAt).toBeNull();
+    });
+
+    it('sends exactly once, so the admin request cannot hang on the backoff ladder', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      deliveryRepo.findOne.mockResolvedValue(failedRow());
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() => {
+        throw new Error('502 Bad Gateway');
+      });
+
+      const updated = await service.retryWebhookDelivery('asso1', 'd1');
+
+      expect((httpService.post as jest.Mock).mock.calls).toHaveLength(1);
+      // Accumulated across the initial dispatch, not reset: this top-up has been sent four times.
+      expect(updated.attemptCount).toBe(4);
+      expect(updated.status).toBe('failed');
+    });
+
+    it('re-reads the product, so a corrected URL and secret are the ones used', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      deliveryRepo.findOne.mockResolvedValue(failedRow());
+      productRepo.findOne.mockResolvedValue(
+        topupProduct({ webhookUrl: 'https://fixed.example/api', webhookSecret: 'rotated' })
+      );
+
+      await service.retryWebhookDelivery('asso1', 'd1');
+
+      const [url, , options] = (httpService.post as jest.Mock).mock.calls[0];
+      expect(url).toBe('https://fixed.example/api');
+      // Signed with the CURRENT secret: recomputing per attempt is what makes a rotation take
+      // effect without touching the delivery row.
+      const expected = createHmac('sha256', 'rotated')
+        .update((httpService.post as jest.Mock).mock.calls[0][1])
+        .digest('hex');
+      expect(options.headers['X-Canari-Signature']).toBe(`sha256=${expected}`);
+    });
+
+    it('restarts the automatic ladder, because a manual retry means something was fixed', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      deliveryRepo.findOne.mockResolvedValue(failedRow({ autoRetryCount: 4 }));
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() => {
+        throw new Error('502 Bad Gateway');
+      });
+
+      const updated = await service.retryWebhookDelivery('asso1', 'd1');
+
+      expect(updated.autoRetryCount).toBe(0);
+      // Rescheduled rather than left exhausted, which is what an autoRetryCount of 4 would have
+      // become after one more step.
+      expect(updated.nextAttemptAt).not.toBeNull();
+    });
+
+    it('refuses a delivery belonging to another association', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      deliveryRepo.findOne.mockResolvedValue(failedRow());
+      productRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.retryWebhookDelivery('other-asso', 'd1')).rejects.toThrow(
+        NotFoundException
+      );
+      expect(httpService.post).not.toHaveBeenCalled();
+    });
+
+    it('retries every due delivery and reports what went through', async () => {
+      const { service, productRepo, deliveryRepo } = makeService();
+      deliveryRepo.__setRows([failedRow(), failedRow({ id: 'd2', paymentIntentId: 'pi_y' })]);
+      productRepo.findOne.mockResolvedValue(topupProduct());
+
+      const result = await service.retryDueWebhookDeliveries();
+
+      expect(result).toEqual({ delivered: 2, attempted: 2 });
+    });
+
+    it('counts the automatic attempt before making it, and schedules the next step', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      const row = failedRow();
+      deliveryRepo.__setRows([row]);
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() => {
+        throw new Error('502 Bad Gateway');
+      });
+
+      await service.retryDueWebhookDeliveries();
+
+      // Counted first, so a crash mid-retry cannot leave the row looping on the same step.
+      expect(row.autoRetryCount).toBe(1);
+      expect(row.nextAttemptAt).not.toBeNull();
+      expect(row.nextAttemptAt!.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('takes a row off the ladder once the backoff steps run out', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      // One short of the last step: this attempt is the final one.
+      const row = failedRow({ autoRetryCount: 4 });
+      deliveryRepo.__setRows([row]);
+      productRepo.findOne.mockResolvedValue(topupProduct());
+      (httpService.post as jest.Mock).mockImplementation(() => {
+        throw new Error('502 Bad Gateway');
+      });
+
+      await service.retryDueWebhookDeliveries();
+
+      // Null means "a human has to look at this", which is what the admin list is for. Retrying
+      // forever would only hide a configuration problem.
+      expect(row.nextAttemptAt).toBeNull();
+      expect(row.status).toBe('failed');
+    });
+
+    it('stops retrying a delivery whose product lost its webhook configuration', async () => {
+      const { service, productRepo, deliveryRepo, httpService } = makeService();
+      const row = failedRow();
+      deliveryRepo.__setRows([row]);
+      productRepo.findOne.mockResolvedValue(topupProduct({ webhookUrl: null }));
+
+      const result = await service.retryDueWebhookDeliveries();
+
+      expect(httpService.post).not.toHaveBeenCalled();
+      expect(row.nextAttemptAt).toBeNull();
+      expect(row.lastError).toContain('not configured');
+      expect(result).toEqual({ delivered: 0, attempted: 1 });
+    });
+
+    it('names the member a failed delivery is about', async () => {
+      const { service, productRepo, deliveryRepo, manager } = makeService();
+      productRepo.find.mockResolvedValue([{ id: 'prod1', name: 'Recharge Cercle' }]);
+      deliveryRepo.__setRows([failedRow()]);
+      manager.query.mockResolvedValue([
+        { id: 'user1', firstName: 'Camille', lastName: 'Durand' },
+      ]);
+
+      const [listed] = await service.listWebhookFailures('asso1');
+
+      // The uuids alone told an admin nothing about whose money is stuck.
+      expect(listed.firstName).toBe('Camille');
+      expect(listed.lastName).toBe('Durand');
+      expect(listed.productName).toBe('Recharge Cercle');
+      expect(listed.nextAttemptAt).toBe('2026-08-04T10:05:00.000Z');
+    });
+
+    it('leaves the name null when the account no longer exists', async () => {
+      const { service, productRepo, deliveryRepo, manager } = makeService();
+      productRepo.find.mockResolvedValue([{ id: 'prod1', name: 'Recharge Cercle' }]);
+      deliveryRepo.__setRows([failedRow()]);
+      manager.query.mockResolvedValue([]);
+
+      const [listed] = await service.listWebhookFailures('asso1');
+
+      // A deleted account is a different problem from a Cercle-side failure, and the UI has to be
+      // able to tell them apart - so no placeholder name is invented here.
+      expect(listed.firstName).toBeNull();
+      expect(listed.userId).toBe('user1');
     });
   });
 

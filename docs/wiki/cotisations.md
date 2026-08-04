@@ -278,9 +278,38 @@ product's `webhookUrl`:
   a receiver that forgets the prefix rejects every delivery while looking like a secret mismatch.
 - **Payload**: `{ productId, userId, amountCents, paymentIntentId, timestamp }`. `userId` doubles as
   the OIDC `sub` (see below) and `paymentIntentId` is the idempotency key.
-- **Retries**: up to 3 attempts (`CERCLE_RETRY_DELAYS = [1s, 5s, 15s]`), each attempt recorded in
-  `webhook_deliveries` (`status: pending|delivered|failed`) for admin visibility and manual retry
-  from `/admin/cercle`.
+- **Retries**: 3 immediate attempts (`CERCLE_RETRY_DELAYS = [1s, 5s, 15s]`), then an automatic
+  ladder on a lengthening backoff (`CERCLE_AUTO_RETRY_BACKOFF = [5min, 30min, 2h, 6h, 24h]`) driven
+  by `CercleDeliveryScheduler` every 5 minutes, then a manual retry from `/admin/cercle`.
+
+**One `webhook_deliveries` row per top-up**, updated in place by every later attempt - never one row
+per attempt. That is the shape the whole feature depends on, and getting it wrong is what made the
+retry button look dead: a retry that INSERTS leaves the failure it was pressed on in the list
+whatever happens, so a success adds an invisible `delivered` row and a failure adds a second
+visible one. Consequences worth knowing:
+
+- `attemptCount` is the TOTAL number of sends for that top-up, across the initial dispatch and every
+  retry since. `autoRetryCount` is separate and counts only automatic ones, because the initial
+  dispatch already burns three attempts and a shared counter would report the automatic ladder as
+  exhausted before it started.
+- `nextAttemptAt` is when the scheduler will try again. **Null on a `failed` row means the automatic
+  ladder is exhausted and a human must act** - which is exactly what the `/admin/cercle` failure
+  list is for. A delivery still failing a day later is a configuration problem, not an outage, and
+  retrying it forever would hide it.
+- The payload and the signature are rebuilt **on every attempt** from the product as it stands, so
+  a corrected `webhookUrl` or a rotated `webhookSecret` takes effect with no change to the row. A
+  product that has lost its webhook configuration takes its deliveries OFF the ladder instead of
+  retrying into the void.
+- A **manual** retry is exactly ONE attempt: re-running the 3-attempt ladder sleeps 5s then 15s with
+  a 10s timeout each, so the admin's request could hang for the better part of a minute and time out
+  at the proxy. It also resets `autoRetryCount`, since pressing it means something was fixed.
+- The weekly GC (`purgeDeliveredWebhooks`) only deletes `delivered` rows older than 30 days, so a
+  failure is never swept out from under the ladder.
+
+`listWebhookFailures` returns a `FailedDelivery` DTO, not the entity: the row carries two uuids and
+neither tells an admin whose top-up is stuck, so the member's name and the product's are joined in.
+A member who no longer exists stays `null` rather than getting a placeholder - "the account is gone"
+and "the Cercle refused it" call for different actions.
 
 A `balance_topup` product is always `allowRepeatPurchase: true` with both purchase caps cleared
 (forced on create AND on update): a recharge is repeatable by nature and credits an account on
