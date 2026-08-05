@@ -18,6 +18,19 @@ passes is recorded in the results table and never re-litigated.
 > **Target is PRODUCTION** (`https://canari-emse.fr`). Real accounts, real messages, real FCM. There
 > is no staging that carries push. Everything sent here is visible in the two accounts' real history.
 
+## 0. Decisions taken 2026-08-05 - do not re-litigate
+
+- **All channel traffic goes to a dedicated private channel** holding only the two test accounts
+  (SETUP-9). Several checks send 30 messages in a row or 25 forwards in a loop; on a real channel
+  those are real people receiving the burst. The dedicated channel is also what makes the commit
+  tests (add/remove a member) possible without disturbing anyone - and NOTIF-2/3, the epoch gap, has
+  no other way to run.
+- **`claire.vanruymbeke` has no 2FA.** Only `jolan.boudin` does, and only once, at SETUP-4.
+  Both browser profiles are persistent, so no code is ever asked for twice.
+- **Wiping the phone is authorised.** SETUP-2 uninstalls, which erases `mls.bin` and the local
+  history. That is not collateral damage: the re-enrolment path and MULTI-3 (history pooling into a
+  device enrolled after the fact) are only testable from a clean device.
+
 ---
 
 ## 1. The three clients
@@ -81,10 +94,11 @@ belong to itself.
 | SETUP-2 | `adb uninstall fr.emse.canari` then a clean `adb install`. **This wipes `mls.bin`** - the device loses its MLS identity and its local history, by design | `dumpsys package` shows versionName 0.12.0, fresh `firstInstallTime` |
 | SETUP-3 | Start logcat in the background with the 19-tag whitelist from [test_adb.py:415-435](../../test_adb.py#L415-L435). A tag missing there is a verdict that never arrives | log file growing in the scratchpad |
 | SETUP-4 | W1: launch Chrome via MCP, log in `jolan.boudin`. **The one manual step: the 2FA code.** Then enrol the device and set PIN `1826` | conversation list renders |
-| SETUP-5 | Build and verify `w2.mjs`; log in `claire.vanruymbeke`; set PIN `1234` | W2 renders the conversation list, `eval` returns app state |
+| SETUP-5 | Build and verify `w2.mjs`; log in `claire.vanruymbeke` (**no 2FA on this account**); set PIN `1234` | W2 renders the conversation list, `eval` returns app state |
 | SETUP-6 | A1: log in `jolan.boudin`, PIN `1826`. **Decline / disable biometrics** so PIN is always the unlock path - a fingerprint prompt is the one thing no tool here can answer | app reaches the conversation list; `canari_biometric_prompt_dismissed` set |
 | SETUP-7 | **Discovery pass, do not skip.** Enumerate the real at-rest artefacts instead of guessing them: web = every `localStorage`/`sessionStorage` key + `indexedDB.databases()` on both browsers; Android = `run-as fr.emse.canari ls -lR files/ shared_prefs/ databases/`. Record the actual names in section 7 | section 7 filled with real names, sizes, paths |
 | SETUP-8 | Baseline snapshot: copy the intact Android app data (`run-as ... tar`) to the scratchpad so every corruption test can be rolled back without a re-enrolment | archive exists |
+| SETUP-9 | Create the **dedicated private channel** from W1, with `claire.vanruymbeke` as its only other member. Every channel check in this campaign uses it and nothing else | channel visible on W1, W2 and A1 |
 
 SETUP-7 is what makes section 6 real. Corruption tests written against guessed key names test
 nothing and pass silently.
