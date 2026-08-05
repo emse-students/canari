@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.media.AudioAttributes
 import android.media.RingtoneManager
+import android.os.Build
 import android.util.Log
 import java.io.File
 
@@ -15,6 +16,8 @@ import java.io.File
  *  2. Create the Android notification channels (required since API 26).
  *  3. Transfer the pushSecret from pending_push_secret.txt to the Android Keystore
  *     (written by Tauri after FCM registration, read exactly once then deleted).
+ *  4. Record the installing package so the WebView can tell a Play install from a
+ *     sideload (see [recordInstallerPackage]).
  *
  * Registered in AndroidManifest.xml via android:name=".CanariApplication".
  */
@@ -31,6 +34,37 @@ class CanariApplication : Application() {
         processPendingPushSecret()
         migrateDeviceKeyFromJson()
         checkKeystoreHealth()
+        recordInstallerPackage()
+    }
+
+    /**
+     * Writes the package that installed this app into `installer_package.txt`, read by the
+     * Tauri command `get_installer_package`.
+     *
+     * The Play build is signed by Google Play App Signing and the GitHub APK by our upload
+     * key, so NEITHER can install over the other. The in-app update prompt must therefore
+     * send a Play install to the Play Store and a sideload to the APK - a build-time
+     * constant cannot know which this is, only the system can.
+     *
+     * Writes an empty file when there is no installing package (adb / `pm install`), which
+     * the reader treats as a sideload. Rewritten at every startup rather than cached: it
+     * costs nothing and no staleness can survive a restart. Silent on failure like its
+     * neighbours - an update hint must never block startup.
+     */
+    internal fun recordInstallerPackage() {
+        try {
+            val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                packageManager.getInstallSourceInfo(packageName).installingPackageName
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getInstallerPackageName(packageName)
+            }
+            File(MlsContextLoader.tauriDataDir(this), "installer_package.txt")
+                .writeText(installer ?: "")
+            Log.d(TAG, "recordInstallerPackage: installed by ${installer ?: "(none - sideload)"}")
+        } catch (e: Exception) {
+            Log.e(TAG, "recordInstallerPackage: exception: ${e.message}", e)
+        }
     }
 
     private fun createNotificationChannels() {

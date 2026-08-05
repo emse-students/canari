@@ -187,6 +187,19 @@ reply), L (revoked device re-enrolling), N (offline unlock + promotion), plus M 
 Android. **Open a WP only when a
 check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at the repo root.
 
+- \[ \] **WP-STORE-1 - the update prompts are gone; what is owed is ON-DEVICE, not code.** Shipped
+  2026-08-05: the optional nag modal is deleted (version now sits passively in `/settings` >
+  A propos), `minClientVersion` is the only interrupt left, and the destination is resolved at
+  runtime from `installer_package.txt` (Kotlin writer -> `get_installer_package` -> `appVersion.ts`).
+  Gates green, `buildUpdateTarget` and the cross-process contract are both unit-tested.
+  What a test cannot prove: (1) a `workflow_dispatch` run of `android-release.yml` is the ONLY real
+  Kotlin compile of `recordInstallerPackage`; (2) on a **Play-installed** build the blocking gate
+  must offer the Play Store, and on a **sideloaded CI APK** it must offer the APK - capture
+  `[appVersion] install source: ...` with `test_adb.py`; (3) `/admin/platform` round trip: raise
+  `minClientVersion` above the running version, see the gate, **reset it afterwards**.
+  Do NOT raise `minClientVersion` on prod until a build is actually live on Play.
+  Open a WP only if one of these FAILS.
+
 - \[ \] **WP-SEO-1 / WP-SEO-2 / WP-PREV-2 - checks owed AFTER the next deploy, none a code task.**
   Everything shipped and is green locally: the built server was probed on every enriched path kind
   with a stub social-service (real titles, JSON-LD, `article:*`, the injected client payload), the
@@ -495,6 +508,11 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   CallKit vs full-screen intent, and no self `Person` on iOS. Do not re-audit; extend this line.
 - A silent push (`content-available`) NEVER runs the iOS NSE - it wakes the app process. So a control
   frame's handler belongs in `canari_push.mm`, and the twin branch in the NSE is dead code.
+- A Play-signed install and the GitHub-signed APK cannot update each other (Play App Signing re-signs
+  the `.aab`), and switching sides needs an uninstall, which wipes `mls.bin` and all local history -
+  so the update target is a RUNTIME fact (`installer_package.txt`), never a build-time constant.
+- `minClientVersion` is the ONLY thing that interrupts a user now; raising it before the store
+  rollout has reached devices locks everyone out behind a button leading to the old version.
 
 #### Release and CI -> [cicd](docs/wiki/cicd.md)
 

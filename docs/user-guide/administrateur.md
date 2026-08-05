@@ -44,8 +44,20 @@ ou d'une intervention sur les services backend.
 |---|---|
 | **Version minimale** | Version semver minimale (ex: `1.2.0`) |
 
-Si un utilisateur ouvre l'app avec une version inferieure, il voit une invite de mise a jour
-et ne peut pas continuer. Laissez vide ou `0.0.0` pour desactiver le controle.
+Si un utilisateur ouvre l'app avec une version inferieure, il est bloque et redirige vers le store
+(Google Play sur Android, App Store sur iOS, telechargement de l'APK s'il a installe l'app depuis
+GitHub). Laissez vide ou `0.0.0` pour desactiver le controle.
+
+C'est le **seul** message de mise a jour que l'app affiche : un utilisateur simplement en retard
+d'une version n'est plus derange, le store se charge des mises a jour tout seul. Il peut consulter
+sa version dans **Reglages > A propos**.
+
+> **Attention : ne relevez ce champ qu'une fois la nouvelle version reellement disponible sur les
+> stores.** Le blocage prend effet des l'enregistrement, alors qu'une publication Google Play met
+> plusieurs jours (validation + deploiement progressif) et l'App Store davantage. Si vous exigez une
+> version que personne ne peut encore installer, tous les utilisateurs mobiles se retrouvent bloques
+> devant un bouton qui mene a un store proposant toujours l'ancienne version. L'ordre a respecter :
+> publier, attendre que la version soit visible sur les deux stores, puis relever le minimum.
 
 **Quand l'utiliser** : apres un changement de protocole incompatible ascendant (MLS, API).
 

@@ -8,33 +8,27 @@ export const CANARI_RELEASES_REPO = 'emse-students/canari';
 export const CANARI_RELEASE_APK_FILENAME = 'app-universal-release.apk';
 
 /**
- * App Store listing URL for the iOS build.
- *
- * Injected at build time via `VITE_IOS_APP_STORE_URL` (CI / Mac side, same as the
- * other iOS release secrets) because the numeric App Store id does not exist until
- * the app is published on the store (see WP-iOS-11). Empty until configured. iOS
- * updates always go through the App Store - there is no sideloadable binary like
- * the Android APK or the desktop AppImage - so this is the only meaningful update
- * target on iOS. Prefer the `itms-apps://` deep link so it opens the App Store app
- * directly; an `https://apps.apple.com/...` URL works too.
- */
-export function getIosAppStoreUrl(): string {
-  return import.meta.env.VITE_IOS_APP_STORE_URL?.trim() || '';
-}
-
-/**
  * Google Play listing URL for the Android build.
  *
- * Injected at build time via `VITE_ANDROID_PLAY_STORE_URL`. Empty until the app is
- * live on the Play Store; while empty, Android falls back to the direct APK download
- * from GitHub Releases (see {@link getAppUpdateUrl}) so existing sideload users keep a
- * working update path and never hit a dead store link. Prefer the
- * `market://details?id=fr.emse.canari` deep link so it opens the Play Store app
- * directly; an `https://play.google.com/store/apps/details?id=...` URL works too.
+ * A public, permanent URL - deliberately a constant rather than build-time config, so
+ * an unset variable can never mean "update path silently dead". The `https://` form is
+ * used over `market://details?id=...` because the Play Store app intercepts it on
+ * device, it stays valid in a desktop browser, and it needs no `opener` ACL change.
  */
-export function getAndroidPlayStoreUrl(): string {
-  return import.meta.env.VITE_ANDROID_PLAY_STORE_URL?.trim() || '';
-}
+export const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=fr.emse.canari';
+
+/**
+ * App Store listing URL for the iOS build.
+ *
+ * Geo-neutral on purpose (no `/us/` path segment): Apple redirects to the viewer's own
+ * regional storefront. iOS updates always go through the App Store - there is no
+ * sideloadable binary like the Android APK or the desktop AppImage - so this is the
+ * only meaningful update target on iOS.
+ */
+export const APP_STORE_URL = 'https://apps.apple.com/app/id6793060521';
+
+/** Play Store package name of the Google Play installer itself. */
+const PLAY_STORE_INSTALLER_PACKAGE = 'com.android.vending';
 
 export type PlatformMaintenanceInfo = {
   enabled: boolean;
@@ -243,59 +237,119 @@ export function isMobileTauriRuntime(): boolean {
 }
 
 /**
- * URL opened when the user accepts an app update prompt.
- * Android Tauri: Play Store listing once `VITE_ANDROID_PLAY_STORE_URL` is configured,
- * else the direct APK download (no regression for sideload users); iOS Tauri: App
- * Store listing (empty until `VITE_IOS_APP_STORE_URL` is configured); other native:
- * release tag page; web: n/a (reload).
+ * How this Android install arrived, which decides where its updates can come from.
+ *
+ * The Play build is signed by Google Play App Signing; the GitHub `app-universal-release.apk`
+ * is signed with our upload key. The two signatures differ, so NEITHER build can install
+ * over the other - sending a sideload user to the Play Store hands them an install Android
+ * will refuse. The target is therefore a runtime fact, never a build-time constant.
  */
-export function getAppUpdateUrl(serverVersion: string | null): string {
-  if (isAndroidTauriRuntime()) {
-    // Prefer the Play Store once the listing is live; otherwise fall back to the direct
-    // APK download so existing sideload users keep a working update path.
-    return getAndroidPlayStoreUrl() || getReleaseApkDownloadUrl(serverVersion);
-  }
-  if (isIosTauriRuntime()) {
-    // iOS updates through the App Store only; there is no sideloadable binary.
-    return getIosAppStoreUrl();
-  }
-  return getReleasePageUrl(serverVersion);
+export type AndroidInstallSource = 'play' | 'sideload';
+
+/** Where an update prompt sends the user, and which wording that target needs. */
+export type UpdateTargetKind = 'play' | 'appstore' | 'apk' | 'releasePage' | 'reload';
+
+export type UpdateTarget = {
+  kind: UpdateTargetKind;
+  /** Empty for `reload`, which is a `window.location.reload()` rather than a navigation. */
+  url: string;
+};
+
+/** Runtime platform facts {@link buildUpdateTarget} decides from. Injectable for tests. */
+export type UpdatePlatform = {
+  android: boolean;
+  ios: boolean;
+  native: boolean;
+};
+
+/** Reads the current runtime into an {@link UpdatePlatform}. */
+export function currentUpdatePlatform(): UpdatePlatform {
+  return {
+    android: isAndroidTauriRuntime(),
+    ios: isIosTauriRuntime(),
+    native: isTauriRuntime(),
+  };
 }
 
 /**
- * Whether the current platform has a usable update destination right now. Gates the
- * update prompt so it never presents a dead action: iOS has no sideload fallback, so
- * its prompt must stay hidden until the App Store listing (`VITE_IOS_APP_STORE_URL`)
- * is configured. Every other platform always has a target (Play Store or APK on
- * Android, the release page on desktop, a reload on web).
+ * Pure mapping from platform + install source to an update destination.
+ *
+ * Split from the probe below so the decision itself is unit-testable without a Tauri
+ * runtime: Android goes to Play or to the matching APK depending on how it was installed,
+ * iOS always to the App Store, other native builds to the GitHub release page, and the
+ * web to a plain reload (the browser then fetches the deployed bundle).
  */
-export function hasConfiguredUpdateTarget(): boolean {
-  if (isIosTauriRuntime()) {
-    return getIosAppStoreUrl() !== '';
+export function buildUpdateTarget(
+  serverVersion: string | null,
+  platform: UpdatePlatform,
+  installSource: AndroidInstallSource
+): UpdateTarget {
+  if (platform.android) {
+    return installSource === 'play'
+      ? { kind: 'play', url: PLAY_STORE_URL }
+      : { kind: 'apk', url: getReleaseApkDownloadUrl(serverVersion) };
   }
-  return true;
+  if (platform.ios) {
+    return { kind: 'appstore', url: APP_STORE_URL };
+  }
+  if (platform.native) {
+    return { kind: 'releasePage', url: getReleasePageUrl(serverVersion) };
+  }
+  return { kind: 'reload', url: '' };
+}
+
+/** Memoized: the install source cannot change while the process lives. */
+let installSourceProbe: Promise<AndroidInstallSource> | null = null;
+
+/**
+ * Asks the native side which package installed this app (`installer_package.txt`, written
+ * by `CanariApplication.onCreate`) and maps it to an {@link AndroidInstallSource}.
+ *
+ * Defaults to `'play'` when the probe fails AND LOGS IT: every build carrying this code
+ * writes that file at startup, so a miss is a real fault rather than an expected state,
+ * and Play is the correct assumption for every install made from now on.
+ */
+export async function probeAndroidInstallSource(): Promise<AndroidInstallSource> {
+  installSourceProbe ??= (async (): Promise<AndroidInstallSource> => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const installer = (await invoke<string | null>('get_installer_package'))?.trim();
+      if (!installer) {
+        console.warn(
+          '[appVersion] installer package unknown (empty or missing installer_package.txt) - assuming Play Store'
+        );
+        return 'play';
+      }
+      console.debug(`[appVersion] install source: ${installer}`);
+      return installer === PLAY_STORE_INSTALLER_PACKAGE ? 'play' : 'sideload';
+    } catch (e) {
+      console.warn('[appVersion] get_installer_package failed - assuming Play Store:', e);
+      return 'play';
+    }
+  })();
+  return installSourceProbe;
 }
 
 /**
- * Opens the update target (APK download on Android, App Store listing on iOS,
- * release page on desktop Tauri) or reloads the web app so the browser fetches the
- * deployed bundle. No-ops when the platform has no update URL (iOS before the App
- * Store listing is configured) rather than opening a blank page.
+ * Resolves where this specific install must be sent to update. Probes the Android install
+ * source; every other platform has a single possible target, so it skips the round trip.
+ */
+export async function resolveUpdateTarget(serverVersion: string | null): Promise<UpdateTarget> {
+  const platform = currentUpdatePlatform();
+  const installSource = platform.android ? await probeAndroidInstallSource() : 'play';
+  return buildUpdateTarget(serverVersion, platform, installSource);
+}
+
+/**
+ * Opens the resolved update target (Play Store or matching APK on Android, App Store on
+ * iOS, release page on desktop Tauri), or reloads the web app so the browser fetches the
+ * deployed bundle.
  */
 export async function openLatestAppUpdate(serverVersion: string | null): Promise<void> {
-  try {
-    const { isTauri } = await import('@tauri-apps/api/core');
-    if (isTauri()) {
-      const url = getAppUpdateUrl(serverVersion);
-      if (!url) {
-        console.warn('[appVersion] no update URL for this platform - skipping openExternal');
-        return;
-      }
-      await openExternal(url);
-      return;
-    }
-  } catch {
-    /* not in Tauri */
+  const target = await resolveUpdateTarget(serverVersion);
+  if (target.kind === 'reload') {
+    window.location.reload();
+    return;
   }
-  window.location.reload();
+  await openExternal(target.url);
 }

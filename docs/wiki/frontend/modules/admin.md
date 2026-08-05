@@ -52,9 +52,26 @@ Fetches and updates `GET/PATCH /api/users/admin/platform`:
 |---|---|
 | `maintenanceEnabled` | Show maintenance gate to all non-admin users |
 | `maintenanceMessage` | Custom message shown during maintenance |
-| `minClientVersion` | Minimum app version; older clients see an upgrade prompt |
+| `minClientVersion` | Minimum app version; older clients are blocked until they update |
 
 On save, the frontend also triggers `refreshAppVersionCheck()` to apply the new version gate without reload.
+
+> **`minClientVersion` is now the only thing that interrupts a user.** Since the store release there
+> is no optional update prompt at all - a client merely behind the deployed version is told nothing,
+> because the store updates people by itself and a modal on every launch was pure friction. The
+> version is available passively in the "A propos" block of `/settings`. Raising this field is
+> therefore the whole escalation ladder in one step: it blocks the app outright
+> (`PlatformGateOverlay`, `shouldBlockSessionUnlock`) and offers the store as the only way forward.
+>
+> **Raise it only once the store rollout has actually reached devices.** The gate is enforced the
+> instant it is saved, while a Google Play review plus rollout takes days and an App Store review
+> longer - set it to a version nobody can install yet and every mobile user is locked out with a
+> button that leads to a store still serving the old build. The safe sequence is: ship, wait for the
+> new version to be live on both stores, then raise the minimum.
+
+The destination of that block is resolved at runtime, not from configuration - see
+[mobile](../mobile.md#where-an-update-comes-from) for why a sideloaded Android install must never be
+sent to Google Play.
 
 ## Moderation
 

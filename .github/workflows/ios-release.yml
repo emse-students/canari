@@ -176,7 +176,6 @@ jobs:
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
-          IOS_APP_STORE_URL: ${{ vars.VITE_IOS_APP_STORE_URL }}
         run: |
           # Same variable set as android-release.yml: the SvelteKit frontend is shared,
           # so it needs the identical build-time config (Authentik SSO included).
@@ -192,12 +191,6 @@ jobs:
           echo "VITE_CALL_E2E_ENCRYPTION=false" >> .env
           if [ -n "$KLIPY_API_KEY" ]; then
             echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
-          fi
-          # App Store deep link for the in-app "update" prompt. Empty until the listing
-          # is live (repo variable VITE_IOS_APP_STORE_URL); while empty the iOS prompt
-          # stays hidden (no sideload fallback), so it never shows a dead action.
-          if [ -n "$IOS_APP_STORE_URL" ]; then
-            echo "VITE_IOS_APP_STORE_URL=${IOS_APP_STORE_URL}" >> .env
           fi
 
       - name: Verify frontend env for iOS build

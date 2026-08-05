@@ -164,6 +164,45 @@ pub(crate) fn set_native_flag(
     std::fs::write(&path, serde_json::Value::Object(flags).to_string()).map_err(|e| e.to_string())
 }
 
+/// Name of the file `CanariApplication.onCreate` (Kotlin) writes the installing package
+/// name into. Cross-process contract with the Android side - pinned by
+/// `frontend/src/lib/mobile/installerPackageContract.test.ts`, which is the only thing
+/// standing between a rename here and a reader that silently finds nothing.
+const INSTALLER_PACKAGE_FILE: &str = "installer_package.txt";
+
+/// Reads the package that installed this app, as recorded by the Android side at startup
+/// (`com.android.vending` for Google Play, something else or empty for a sideload).
+///
+/// The frontend needs this because the Play build and the GitHub APK carry DIFFERENT
+/// signatures - neither can install over the other - so the update destination depends on
+/// how this install actually arrived. Returns `None` off Android, and whenever the file is
+/// missing or empty; the caller decides what an unknown source means.
+#[tauri::command]
+pub(crate) fn get_installer_package(app: tauri::AppHandle) -> Option<String> {
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("[Installer] app_data_dir() failed: {e}");
+            return None;
+        }
+    };
+    let path = data_dir.join(INSTALLER_PACKAGE_FILE);
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            log::debug!("[Installer] {INSTALLER_PACKAGE_FILE} unreadable: {e}");
+            return None;
+        }
+    };
+    let installer = raw.trim();
+    if installer.is_empty() {
+        log::debug!("[Installer] no installing package recorded (sideload or adb install)");
+        return None;
+    }
+    log::debug!("[Installer] installing package: {installer}");
+    Some(installer.to_string())
+}
+
 /// Reads all boolean flags from {app_data_dir}/native_flags.json.
 /// Returns an empty object if the file does not exist yet.
 #[tauri::command]

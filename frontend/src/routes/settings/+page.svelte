@@ -9,6 +9,7 @@
   import SettingsSyncSection from '$lib/components/settings/SettingsSyncSection.svelte';
   import SettingsPaymentsSection from '$lib/components/settings/SettingsPaymentsSection.svelte';
   import SettingsSubscriptionsSection from '$lib/components/settings/SettingsSubscriptionsSection.svelte';
+  import SettingsAboutSection from '$lib/components/settings/SettingsAboutSection.svelte';
   import SettingsDangerZone from '$lib/components/settings/SettingsDangerZone.svelte';
   import MinesweeperModal from '$lib/components/settings/MinesweeperModal.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -68,6 +69,7 @@
   <SettingsSyncSection />
   <SettingsPaymentsSection />
   <SettingsSubscriptionsSection />
+  <SettingsAboutSection />
   <SettingsDangerZone />
 
   <!-- Device identifier (discreet diagnostic). Tap 5x quickly to unlock Minesweeper. -->

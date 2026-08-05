@@ -115,6 +115,63 @@ when adding one, decide deliberately which of the two it belongs to.
 there they are unreachable by class name, and the failure only appears in the release build, which
 is the [first real Kotlin compile](../cicd.md).
 
+## Where an update comes from
+
+Canari ships from three places at once: Google Play (`fr.emse.canari`), the App Store
+(`id6793060521`) and `app-universal-release.apk` on GitHub Releases. Only one of them is ever the
+right answer for a given install, and **the app has to work it out at runtime**.
+
+> **The Play build and the GitHub APK cannot install over each other.** The release workflow uploads
+> an `.aab`, so the binary users get from Play is re-signed by **Google Play App Signing**, while the
+> APK attached to the same GitHub release is signed with our upload key. Different signatures means
+> Android refuses the install outright (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`), and switching sides
+> requires uninstalling first — which wipes `mls.bin`, the keystore entry and the whole local message
+> history. So sending a sideloaded user to the Play Store is not a slightly wrong link, it is a dead
+> end that ends in data loss if they follow it far enough. The update target is a **runtime fact**,
+> never a build-time constant, and that is why the store URLs are plain constants in `appVersion.ts`
+> with no env plumbing behind them: the thing that varies is the *install*, not the build.
+
+`android-release.yml` must therefore keep attaching the APK to every GitHub release — it is the only
+update path sideload users have.
+
+### The install-source probe
+
+| Step | Where |
+|---|---|
+| Read the installing package at startup, write it to `installer_package.txt` | `CanariApplication.recordInstallerPackage` (Kotlin) |
+| Read that file back on demand | `get_installer_package` in `src-tauri/src/commands/storage.rs` |
+| Map it to `'play' \| 'sideload'` and pick a target | `probeAndroidInstallSource` / `buildUpdateTarget` in `appVersion.ts` |
+
+Kotlin uses `packageManager.getInstallSourceInfo(packageName).installingPackageName` on API ≥ 30
+(`Build.VERSION_CODES.R`) and the deprecated `getInstallerPackageName` below it — `minSdk` is under
+30, so the version guard is required, not defensive. `com.android.vending` is Google Play; anything
+else (or nothing at all, which is what `adb install` leaves) is a sideload. No `<queries>` manifest
+entry is needed: reading the installer *name* is not subject to package-visibility filtering.
+
+The file hop is the same cross-process pattern as `push_context.json` and `get_native_flags` —
+Kotlin writes into `MlsContextLoader.tauriDataDir(context)`, Rust reads the same directory through
+`app.path().app_data_dir()`. It is deliberately **not** a Tauri plugin: a new local plugin forces
+`gen/android/tauri.settings.gradle` and `app/tauri.build.gradle.kts` to be regenerated, which risks
+clobbering the hand-maintained `AndroidManifest.xml`, and this needs no ACL, no `build.rs` and no
+capability entry. Nothing type-checks either end of that path, so
+`src/lib/mobile/installerPackageContract.test.ts` pins the filename, the directory helper, the
+command registration in `generate_handler!` and the `com.android.vending` literal — the same role
+`fcmCacheFields.test.ts` plays for the FCM cache.
+
+A failed or empty probe resolves to `'play'` **and logs a warning**: every build carrying this code
+writes the file at startup, so a miss is a real fault rather than an expected state, and Play is the
+correct default for every install made from now on. `buildUpdateTarget` is kept pure (platform +
+install source in, `{ kind, url }` out) so the decision is unit-testable with no Tauri runtime;
+`resolveUpdateTarget` is the thin async wrapper that runs the probe, and it skips the round trip
+entirely off Android, where there is only ever one possible target.
+
+### What actually prompts
+
+Only `minClientVersion` does. There is no optional update prompt — the store handles ordinary
+updates, and `/settings` shows the installed version passively. See
+[admin](modules/admin.md#platform-configuration-adminplatform) for the rollout-timing trap that
+comes with raising the minimum.
+
 ## iOS specifics
 
 ### Notification Service Extension (NSE)

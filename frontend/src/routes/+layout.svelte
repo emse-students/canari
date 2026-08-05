@@ -22,7 +22,6 @@
     getAppVersionCheck,
     isBelowMinClientVersion,
   } from '$lib/stores/appVersionCheck.svelte';
-  import AppUpdateModal from '$lib/components/shared/AppUpdateModal.svelte';
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -282,7 +281,6 @@
 
 <a href="#main-content" class="skip-link">{m.layout_skip_to_content()}</a>
 
-<AppUpdateModal />
 <PlatformGateOverlay />
 {#if showMaintenanceAdminBanner}
   <MaintenanceAdminBanner />

@@ -9,11 +9,11 @@
   import { isGlobalAdmin } from '$lib/stores/user';
   import { clearAuth } from '$lib/stores/auth';
   import {
-    isAndroidTauriRuntime,
-    isIosTauriRuntime,
     openLatestAppUpdate,
+    resolveUpdateTarget,
+    type UpdateTarget,
   } from '$lib/utils/appVersion';
-  import { isTauriRuntime } from '$lib/utils/openExternal';
+  import { updateTargetButtonLabel, updateTargetInstruction } from '$lib/utils/updateTargetCopy';
   import { goto } from '$app/navigation';
   import { m } from '$lib/paraglide/messages';
 
@@ -23,17 +23,27 @@
   const showMaintenance = $derived(
     !showMinVersion && isMaintenanceBlockingCurrentUser(isGlobalAdminUser) && info !== null
   );
-  const isNative = $derived(isTauriRuntime());
-  const isAndroid = $derived(isAndroidTauriRuntime());
-  const isIos = $derived(isIosTauriRuntime());
+  /** Version to install: the enforced minimum, or the server build when it is unknown. */
+  const targetVersion = $derived(info?.minClientVersion ?? info?.serverVersion ?? null);
+
+  // Resolved asynchronously: on Android the destination depends on how this install
+  // arrived (Play Store vs sideloaded APK), which only the native side knows.
+  let target = $state<UpdateTarget | null>(null);
 
   let updating = $state(false);
   let loggingOut = $state(false);
 
+  $effect(() => {
+    if (!showMinVersion) return;
+    const version = targetVersion;
+    void resolveUpdateTarget(version).then((resolved) => {
+      target = resolved;
+    });
+  });
+
   async function handleUpdate() {
     updating = true;
     try {
-      const targetVersion = info?.minClientVersion ?? info?.serverVersion ?? null;
       await openLatestAppUpdate(targetVersion);
     } finally {
       updating = false;
@@ -66,14 +76,8 @@
         <strong class="text-cn-dark">{info.minClientVersion}</strong>
         {m.platform_gate_version_suffix()}
       </p>
-      {#if isAndroid}
-        <p>{m.update_android_instruction()}</p>
-      {:else if isIos}
-        <p>{m.update_ios_instruction()}</p>
-      {:else if isNative}
-        <p>{m.update_native_instruction()}</p>
-      {:else}
-        <p>{m.update_web_instruction()}</p>
+      {#if target}
+        <p>{updateTargetInstruction(target.kind)}</p>
       {/if}
     </div>
 
@@ -81,17 +85,15 @@
       <button
         type="button"
         class="inline-flex items-center gap-2 rounded-lg bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-60 shadow-sm w-full justify-center"
-        disabled={updating}
+        disabled={updating || target === null}
         onclick={() => void handleUpdate()}
       >
         <Download size={16} />
         {updating
           ? m.update_opening_label()
-          : isIos
-            ? m.update_open_app_store_button()
-            : isNative
-              ? m.update_download_button()
-              : m.update_reload_button()}
+          : target
+            ? updateTargetButtonLabel(target.kind)
+            : m.common_loading_label()}
       </button>
     {/snippet}
   </Modal>

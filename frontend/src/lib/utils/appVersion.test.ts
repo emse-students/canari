@@ -1,10 +1,11 @@
 import {
+  APP_STORE_URL,
+  PLAY_STORE_URL,
   buildAppVersionCheckResult,
+  buildUpdateTarget,
   compareSemver,
   fetchServerAppVersionReliable,
-  getAndroidPlayStoreUrl,
   getClientAppVersion,
-  getIosAppStoreUrl,
   getReleaseApkDownloadUrl,
   getReleasePageUrl,
   isMaintenanceBlockingUser,
@@ -153,34 +154,57 @@ describe('getReleasePageUrl', () => {
   });
 });
 
-describe('getIosAppStoreUrl', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('returns an empty string when VITE_IOS_APP_STORE_URL is unset', () => {
-    vi.stubEnv('VITE_IOS_APP_STORE_URL', '');
-    expect(getIosAppStoreUrl()).toBe('');
-  });
-
-  it('returns the trimmed injected App Store URL', () => {
-    vi.stubEnv('VITE_IOS_APP_STORE_URL', '  itms-apps://apps.apple.com/app/id123456789  ');
-    expect(getIosAppStoreUrl()).toBe('itms-apps://apps.apple.com/app/id123456789');
+describe('store URLs', () => {
+  it('points at the published listings, with no build-time configuration', () => {
+    expect(PLAY_STORE_URL).toBe('https://play.google.com/store/apps/details?id=fr.emse.canari');
+    // Geo-neutral: no /us/ segment, Apple redirects to the viewer's storefront.
+    expect(APP_STORE_URL).toBe('https://apps.apple.com/app/id6793060521');
   });
 });
 
-describe('getAndroidPlayStoreUrl', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
+describe('buildUpdateTarget', () => {
+  const android = { android: true, ios: false, native: true };
+  const ios = { android: false, ios: true, native: true };
+  const desktop = { android: false, ios: false, native: true };
+  const web = { android: false, ios: false, native: false };
+
+  it('sends a Play install to the Play Store', () => {
+    expect(buildUpdateTarget('1.2.3', android, 'play')).toEqual({
+      kind: 'play',
+      url: PLAY_STORE_URL,
+    });
   });
 
-  it('returns an empty string when VITE_ANDROID_PLAY_STORE_URL is unset', () => {
-    vi.stubEnv('VITE_ANDROID_PLAY_STORE_URL', '');
-    expect(getAndroidPlayStoreUrl()).toBe('');
+  // The Play build and the GitHub APK carry different signatures, so a sideload CANNOT
+  // install the Play version - it must keep getting the APK it can actually install.
+  it('sends a sideloaded install to the matching APK, never to the Play Store', () => {
+    expect(buildUpdateTarget('1.2.3', android, 'sideload')).toEqual({
+      kind: 'apk',
+      url: 'https://github.com/emse-students/canari/releases/download/v1.2.3/app-universal-release.apk',
+    });
   });
 
-  it('returns the trimmed injected Play Store URL', () => {
-    vi.stubEnv('VITE_ANDROID_PLAY_STORE_URL', '  market://details?id=fr.emse.canari  ');
-    expect(getAndroidPlayStoreUrl()).toBe('market://details?id=fr.emse.canari');
+  it('always sends iOS to the App Store, whatever the recorded source', () => {
+    expect(buildUpdateTarget('1.2.3', ios, 'sideload')).toEqual({
+      kind: 'appstore',
+      url: APP_STORE_URL,
+    });
+  });
+
+  it('sends other native builds to the release page', () => {
+    expect(buildUpdateTarget('1.2.3', desktop, 'play')).toEqual({
+      kind: 'releasePage',
+      url: 'https://github.com/emse-students/canari/releases/tag/v1.2.3',
+    });
+  });
+
+  it('reloads on the web instead of navigating anywhere', () => {
+    expect(buildUpdateTarget('1.2.3', web, 'play')).toEqual({ kind: 'reload', url: '' });
+  });
+
+  it('falls back to the latest release when the target version is unknown', () => {
+    expect(buildUpdateTarget(null, android, 'sideload').url).toBe(
+      'https://github.com/emse-students/canari/releases/latest/download/app-universal-release.apk'
+    );
   });
 });

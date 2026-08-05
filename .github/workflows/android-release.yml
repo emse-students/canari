@@ -140,7 +140,6 @@ jobs:
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
-          ANDROID_PLAY_STORE_URL: ${{ vars.VITE_ANDROID_PLAY_STORE_URL }}
         run: |
           echo "VITE_FRONTEND_URL=${BASE_URL}" >> .env
           echo "VITE_GATEWAY_URL=${BASE_URL}" >> .env
@@ -154,12 +153,6 @@ jobs:
           echo "VITE_CALL_E2E_ENCRYPTION=false" >> .env
           if [ -n "$KLIPY_API_KEY" ]; then
             echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
-          fi
-          # Play Store deep link for the in-app "update" prompt. Empty until the listing
-          # is live (repo variable VITE_ANDROID_PLAY_STORE_URL); while empty Android
-          # falls back to the direct APK download so the prompt still works.
-          if [ -n "$ANDROID_PLAY_STORE_URL" ]; then
-            echo "VITE_ANDROID_PLAY_STORE_URL=${ANDROID_PLAY_STORE_URL}" >> .env
           fi
 
       - name: Verify frontend env for Android build

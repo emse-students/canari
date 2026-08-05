@@ -10,7 +10,6 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 const CACHED_SERVER_VERSION_KEY = 'canari:last_server_version_info';
 
 let lastCheck = $state<AppVersionCheckResult | null>(null);
-let updatePromptDismissed = $state(false);
 let inflight: Promise<AppVersionCheckResult> | null = null;
 
 function loadCachedServerInfo(): ReturnType<typeof parseServerVersionInfo> {
@@ -48,14 +47,15 @@ export function getAppVersionCheck(): AppVersionCheckResult | null {
   return lastCheck;
 }
 
-/** True when the server reports a newer optional build than this client. */
+/**
+ * True when the server reports a newer build than this client, without the client being
+ * below the enforced minimum. Purely informational since the app stores handle updates:
+ * it feeds the discreet "About" block in the settings page, and nothing interrupts the
+ * user over it. When the client IS below the minimum, {@link isBelowMinClientVersion}
+ * owns the case and blocks instead.
+ */
 export function isAppUpdateAvailable(): boolean {
-  return (
-    lastCheck !== null &&
-    !lastCheck.upToDate &&
-    !lastCheck.belowMinVersion &&
-    !updatePromptDismissed
-  );
+  return lastCheck !== null && !lastCheck.upToDate && !lastCheck.belowMinVersion;
 }
 
 /** True when the client is below the server-enforced minimum version. */
@@ -73,11 +73,6 @@ export function isMaintenanceBlockingCurrentUser(isGlobalAdmin: boolean): boolea
 export function shouldBlockSessionUnlock(isGlobalAdmin: boolean): boolean {
   if (isBelowMinClientVersion()) return true;
   return isMaintenanceBlockingCurrentUser(isGlobalAdmin);
-}
-
-/** Hides the optional update modal until the next version check (e.g. on window focus). */
-export function dismissAppUpdatePrompt(): void {
-  updatePromptDismissed = true;
 }
 
 /**
@@ -98,24 +93,16 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
     return lastCheck ?? cached;
   }
 
-  const previousServer = lastCheck?.serverVersion ?? null;
-
   inflight = (async () => {
     try {
       const live = await fetchServerAppVersionReliable();
-      const cached = loadCachedServerInfo();
-      const serverInfo = live ?? (cached && previousServer ? cached : cached);
+      const serverInfo = live ?? loadCachedServerInfo();
 
       if (live) {
         saveCachedServerInfo(live);
       }
 
       lastCheck = buildAppVersionCheckResult(serverInfo);
-
-      if (lastCheck.upToDate || serverInfo?.version !== previousServer) {
-        updatePromptDismissed = false;
-      }
-
       return lastCheck;
     } catch {
       const fallback = buildAppVersionCheckResult(loadCachedServerInfo());
