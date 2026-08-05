@@ -262,7 +262,7 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
 #### Mobile and native -> [frontend/mobile](docs/wiki/frontend/mobile.md)
 
 Push transports, the App Group, the NSE, the decrypt ladder and the update target are all on that
-page. The four to carry, plus one status line:
+page. The five to carry, plus one status line:
 
 - An app extension has its OWN data container: a path that is right in the app process is silently
   wrong in the NSE, and the App Group is the only shared storage.
@@ -273,10 +273,19 @@ page. The four to carry, plus one status line:
 - `minClientVersion` is the ONLY thing that interrupts a user now; raising it before the store
   rollout has reached devices locks everyone out behind a button leading to the old version.
 - Only user-VISIBLE native strings stay French; everything read while debugging is English.
+- A path restriction written for iOS has NO effect on Android: the App Link claim lives in a
+  different file per platform and `assetlinks.json` has no notion of a path, so the lists are
+  GENERATED from one source. A host with no path attribute claims the whole host.
 
-**Android/iOS native parity is COMPLETE as of v0.12.0** (audited 2026-08-03, file by file). The only
-asymmetries are OS-imposed - no boot broadcast on iOS, CallKit vs full-screen intent, no self
-`Person` on iOS. Do not re-audit; extend this line.
+**Android/iOS native parity is COMPLETE as of v0.12.0** (audited 2026-08-03, file by file), for
+code. The asymmetries are OS-imposed - no boot broadcast on iOS, CallKit vs full-screen intent, no
+self `Person` on iOS. Do not re-audit; extend this line.
+
+**That audit read source files, so it could not see a divergence expressed in CONFIGURATION**: the
+App Link path claim was iOS-only for as long as it existed, and Android captured `/auth/callback`
+out of the browser mid-login (fixed 2026-08-05, `56fc6129`). Parity of code is not parity of the
+manifests, entitlements and served association files - those are a separate surface with its own
+tests.
 
 #### Release and CI -> [cicd](docs/wiki/cicd.md)
 
