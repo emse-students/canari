@@ -26,5 +26,6 @@ import { WorkspaceInvite } from './entities/workspace-invite.entity';
   ],
   controllers: [ChannelsController],
   providers: [ChannelService],
+  exports: [ChannelService],
 })
 export class ChannelsModule {}

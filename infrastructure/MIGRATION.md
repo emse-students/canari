@@ -155,6 +155,21 @@ The `frontend` container embeds Nginx and publishes the host port `FRONTEND_HOST
 Cloudflare) in front, pointing the domain to this port. API routes are resolved
 internally by the container's Nginx (see `infrastructure/local/Dockerfile.frontend`).
 
+The web front is **two containers over one build artifact**:
+
+| Container | Role | Published |
+|---|---|---|
+| `frontend` | Nginx: the only public entry point. Serves `build/client` + `build/prerendered` and proxies every `/api/*` | yes, `FRONTEND_HOST_PORT` |
+| `frontend-ssr` | SvelteKit `adapter-node`. Answers HTML navigations only, writing each page's Open Graph head into the shell | no, Docker network only |
+
+`frontend-ssr` needs **`INTERNAL_SECRET`** (already required by core, social,
+chat-delivery and media) to read post/association/invite metadata straight from the
+services. Without it the site still works - previews just stay generic.
+
+There is **no static `index.html` fallback any more**: `adapter-node` does not emit one, so
+Nginx answers a navigation with 502 if `frontend-ssr` is down. Both images must be deployed
+from the same build; the CD rebuilds them together for exactly that reason.
+
 ## Quick checklist
 
 - [ ] Docker + compose installed
@@ -166,3 +181,4 @@ internally by the container's Nginx (see `infrastructure/local/Dockerfile.fronte
 - [ ] Data restored from mitv
 - [ ] Backup cron installed
 - [ ] Reverse proxy / DNS / TLS in place
+- [ ] `frontend-ssr` running and `INTERNAL_SECRET` set (otherwise link previews stay generic)

@@ -4,7 +4,9 @@
 
 ## Overview
 
-Nginx is the sole public HTTP entry point. It runs inside the `frontend` Docker image alongside the SvelteKit static bundle. In production, Cloudflare Tunnel forwards to `http://localhost:8080` -> Nginx:80.
+Nginx is the sole public HTTP entry point. It runs inside the `frontend` Docker image alongside the SvelteKit build assets. In production, Cloudflare Tunnel forwards to `http://localhost:8080` -> Nginx:80.
+
+It no longer serves the app shell itself: HTML navigations go to `frontend-ssr`, see [SSR head](#html-navigations-go-to-frontend-ssr).
 
 Every protected request goes through `auth_request /internal/auth/verify`, which calls `core-service:3012/api/auth/verify` internally. On success, Nginx injects three headers into the upstream request:
 
@@ -32,7 +34,8 @@ Every protected request goes through `auth_request /internal/auth/verify`, which
 | `/api/users/*` | `core-service:3012` | yes | User profiles, search |
 | `/api/payments/*` | `core-service:3012` | yes | Stripe payments |
 | `/internal/auth/verify` | `core-service:3012` | internal | `auth_request` subrequest only — never public |
-| `/*` | SvelteKit static bundle | no | Served from `build/` inside the image |
+| `/_app/immutable/*`, `/.well-known/*`, `*.mjs`, other assets | static | no | Served from `build/client` + `build/prerendered` inside the image |
+| `/*` (HTML) | `frontend-ssr:3000` | no | Named `@ssr` location, reached via `try_files $uri $uri/ @ssr` |
 
 ## Adding a new route
 
@@ -43,6 +46,26 @@ When adding a new API route:
 4. Update the route table in `docs/wiki/architecture.md` and `CLAUDE.md`.
 
 Skipping step 1 means the route will be unreachable from outside Docker, even if the service implements it.
+
+## HTML navigations go to `frontend-ssr`
+
+`location /` is `try_files $uri $uri/ @ssr`: anything that exists on disk is served by Nginx with
+its usual cache headers, and everything else - i.e. every page URL - is proxied to the SvelteKit
+`adapter-node` server in the `frontend-ssr` container.
+
+That server renders **no component**. The app is still a SPA (`ssr = false`); the server exists so
+that `frontend/src/hooks.server.ts` can write the page's Open Graph tags into the shell before it
+is sent. Nothing else can: an unfurler or a crawler never runs the client, so before this every
+shared Canari link previewed as the bare `app.html`.
+
+**There is no `index.html` fallback any more.** `adapter-node` does not emit one, so if
+`frontend-ssr` is down Nginx answers 502 on navigations rather than degrading to a static shell.
+The two images are built from one artifact and deployed together (`cd.yml` rebuilds both whenever
+either changes) - deploying only one ships an nginx whose assets do not match the server's.
+
+Assets deliberately stay on Nginx rather than going through Node: they keep the proven
+`immutable` caching, the `.well-known` content type and the `.mjs` `default_type` fix, and the
+Node process only ever handles the small number of HTML requests.
 
 ## WebSocket specifics
 

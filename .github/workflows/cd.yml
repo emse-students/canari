@@ -63,6 +63,7 @@ jobs:
             [call-service]="./infrastructure/local/Dockerfile.call-service"
             [chat-delivery-service]="./infrastructure/local/Dockerfile.chat-delivery-service"
             [frontend]="./infrastructure/local/Dockerfile.frontend"
+            [frontend-ssr]="./infrastructure/local/Dockerfile.frontend-ssr"
             [media-service]="./infrastructure/local/Dockerfile.media-service"
           )
 
@@ -73,6 +74,7 @@ jobs:
             call-service
             chat-delivery-service
             frontend
+            frontend-ssr
             media-service
           )
 
@@ -97,6 +99,7 @@ jobs:
             if echo "$LAST_MSG" | grep -qE '^chore: bump version to '; then
               add_service core-service
               add_service frontend
+              add_service frontend-ssr
             else
               echo "Latest main commit is not a version bump (${LAST_MSG}); skipping rebuild."
             fi
@@ -140,8 +143,9 @@ jobs:
                 apps/chat-delivery-service/*|libs/shared-ts/*|infrastructure/local/Dockerfile.chat-delivery-service)
                   add_service chat-delivery-service
                   ;;
-                frontend/*|infrastructure/local/Dockerfile.frontend)
+                frontend/*|infrastructure/local/Dockerfile.frontend|infrastructure/local/Dockerfile.frontend-ssr)
                   add_service frontend
+                  add_service frontend-ssr
                   ;;
                 apps/media-service/*|infrastructure/local/Dockerfile.media-service)
                   add_service media-service
@@ -166,6 +170,7 @@ jobs:
                 echo "Version manifest bump - forcing core-service and frontend image rebuild."
                 add_service core-service
                 add_service frontend
+                add_service frontend-ssr
               fi
             fi
           fi
@@ -183,9 +188,9 @@ jobs:
             for service in "${CHANGED_SERVICES[@]}"; do
               dockerfile="${SERVICE_DOCKERFILE[$service]}"
               MATRIX_ITEMS+="{\"name\":\"$service\",\"context\":\".\",\"dockerfile\":\"$dockerfile\"},"
-              if [ "$service" = "frontend" ]; then
-                FRONTEND_CHANGED="true"
-              fi
+              case "$service" in
+                frontend|frontend-ssr) FRONTEND_CHANGED="true" ;;
+              esac
             done
             MATRIX_ITEMS="${MATRIX_ITEMS%,}"
             MATRIX="{\"include\":[${MATRIX_ITEMS}]}"
@@ -312,6 +317,11 @@ jobs:
 
       - name: Build frontend
         working-directory: frontend
+        # BUILD_WEB selects adapter-node over adapter-static (svelte.config.js). The web deploy
+        # needs a server so each page's <head> can be written before it is sent; the Tauri
+        # release workflows build without it and keep the static SPA output.
+        env:
+          BUILD_WEB: '1'
         run: bun run build
 
       - name: Upload frontend build artifact
@@ -346,7 +356,9 @@ jobs:
           ref: ${{ env.CHECKOUT_REF }}
 
       - name: Download frontend build artifact
-        if: matrix.name == 'frontend'
+        # Both frontend images come from the one adapter-node artifact: nginx serves
+        # build/client + build/prerendered, the SSR image runs the server beside it.
+        if: matrix.name == 'frontend' || matrix.name == 'frontend-ssr'
         uses: actions/download-artifact@v8
         with:
           name: frontend-build

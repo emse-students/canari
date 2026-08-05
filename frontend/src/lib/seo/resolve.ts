@@ -12,6 +12,10 @@ const PRIVATE_PREFIXES = [
   '/profile',
   '/notifications',
   '/account',
+  // Invite links carry a one-time token and now unfurl with the real community or group name.
+  // Previewing for whoever holds the link is the point; being listed in a search index is not.
+  '/c/join',
+  '/g/join',
 ] as const;
 
 const LEGAL_SEO: Record<string, SeoMeta> = {

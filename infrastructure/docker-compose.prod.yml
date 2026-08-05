@@ -354,6 +354,30 @@ services:
         condition: service_started
 
 
+  # SvelteKit server (adapter-node). Renders NO component - the app stays a SPA - it only
+  # writes each page's Open Graph head into the shell before nginx sends it, which is the
+  # one thing a crawler or an unfurler can see (frontend/src/hooks.server.ts). Reaches the
+  # services directly on this network, never back through nginx, with INTERNAL_SECRET.
+  # Not published: nginx is still the only container binding a host port.
+  frontend-ssr:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${TAG:-latest}
+    restart: always
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      ORIGIN: ${ALLOW_ORIGIN:-https://canari-emse.fr}
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      SOCIAL_SERVICE_URL: http://social-service:3014
+      CORE_SERVICE_URL: http://core-service:3012
+      DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+    depends_on:
+      social-service:
+        condition: service_started
+      core-service:
+        condition: service_started
+      chat-delivery-service:
+        condition: service_started
+
   frontend:
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${TAG:-latest}
     restart: always
@@ -365,6 +389,9 @@ services:
       VITE_DELIVERY_URL: ${ALLOW_ORIGIN:-https://canari-emse.fr}
     ports:
       - "${FRONTEND_HOST_PORT:-80}:80"
+    depends_on:
+      frontend-ssr:
+        condition: service_started
 
 volumes:
   mongo_data:

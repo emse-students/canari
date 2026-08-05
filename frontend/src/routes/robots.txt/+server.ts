@@ -24,6 +24,11 @@ Disallow: /profile/
 Disallow: /notifications
 Disallow: /account/
 Disallow: /login
+# One-time invite tokens. They now unfurl with the real community/group name, which is
+# what a shared link is for - but an unfurl is a preview to whoever holds the link, and an
+# index entry is a public listing of it.
+Disallow: /c/join/
+Disallow: /g/join/
 
 Sitemap: ${origin}/sitemap.xml
 `;

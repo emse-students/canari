@@ -28,6 +28,7 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { sanitizeQueryValue, assertCallerOwnsUserId } from '../utils/sanitize';
 import { In } from 'typeorm';
 import { MessagingService } from '../services/messaging.service';
+import { groupInviteIsValid, resolveGroupInvitePreview } from '../utils/group-invite';
 
 /** Device-group membership management: pending invitations, status updates, kick-stale. */
 @Controller()
@@ -50,14 +51,6 @@ export class InvitationsController {
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly messagingService: MessagingService
   ) {}
-
-  /** Whether an invite is still usable (not revoked/expired/exhausted). */
-  private groupInviteIsValid(invite: GroupInvite): boolean {
-    if (invite.revoked) return false;
-    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) return false;
-    if (invite.maxUses != null && invite.uses >= invite.maxUses) return false;
-    return true;
-  }
 
   private makeTraceId(scope: string): string {
     return `${scope}-${crypto.randomUUID().slice(0, 8)}`;
@@ -117,15 +110,7 @@ export class InvitationsController {
   @UseGuards(HeaderAuthGuard)
   @Get('mls/group-invites/:token')
   async getGroupInvitePreview(@Param('token') token: string) {
-    const invite = await this.groupInviteRepo.findOne({ where: { token } });
-    if (!invite || !this.groupInviteIsValid(invite)) {
-      return { valid: false, groupId: null, groupName: null };
-    }
-    const group = await this.groupRepo.findOne({
-      where: { id: invite.groupId, deletedAt: IsNull() },
-    });
-    if (!group || !group.isGroup) return { valid: false, groupId: null, groupName: null };
-    return { valid: true, groupId: group.id, groupName: group.name ?? null };
+    return resolveGroupInvitePreview(this.groupInviteRepo, this.groupRepo, token);
   }
 
   /**
@@ -141,7 +126,7 @@ export class InvitationsController {
   ) {
     const callerId = sanitizeQueryValue(headerUserId ?? '', 'userId');
     const invite = await this.groupInviteRepo.findOne({ where: { token } });
-    if (!invite || !this.groupInviteIsValid(invite)) {
+    if (!invite || !groupInviteIsValid(invite)) {
       throw new NotFoundException('Invalid or expired invitation.');
     }
     const group = await this.groupRepo.findOne({

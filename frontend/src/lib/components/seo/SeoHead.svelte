@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { buildSiteJsonLdScriptTag } from '$lib/seo/jsonLd';
   import { formatDocumentTitle, mergeSeo, resolveSeoForPath } from '$lib/seo/resolve';
@@ -34,6 +35,17 @@
   const ogType = $derived(resolved.ogType ?? SITE.defaultOgType);
   const showSiteJsonLd = $derived(pathname === '/posts' || pathname === '/');
   const jsonLdScript = $derived(showSiteJsonLd ? buildSiteJsonLdScriptTag() : '');
+
+  /**
+   * Drops the head block the web server wrote into the shell (`hooks.server.ts`), which is about
+   * to be superseded by the `<svelte:head>` below. Without this the document carries two of every
+   * og/twitter tag - harmless to an unfurler, which never gets this far, but the kind of thing
+   * that makes a later "why are there two og:title" investigation expensive. It applies to the
+   * Tauri build as well, whose shell carries the generic block baked in at prerender time.
+   */
+  onMount(() => {
+    for (const node of document.head.querySelectorAll('[data-canari-seo]')) node.remove();
+  });
 </script>
 
 <svelte:head>

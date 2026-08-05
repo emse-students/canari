@@ -5,7 +5,39 @@
 
 ## Overview
 
-The frontend is a SvelteKit application compiled as a static bundle (`adapter-static`), served by Nginx in production. The same bundle can also run inside a **Tauri 2** webview as a native desktop/mobile app (`frontend/src-tauri/`). All MLS encryption/decryption happens in the frontend — either via a WASM module (browser) or via native Rust commands (Tauri).
+The frontend is a SvelteKit application that never renders a component on the server (`export const ssr = false` in `src/routes/+layout.ts`): every page is built by the browser. The same bundle runs inside a **Tauri 2** webview as a native desktop/mobile app (`frontend/src-tauri/`). All MLS encryption/decryption happens in the frontend — either via a WASM module (browser) or via native Rust commands (Tauri).
+
+### One SPA, two adapters
+
+`svelte.config.js` picks its adapter from `process.env.BUILD_WEB`:
+
+| Build | Adapter | Output | Who sets it |
+|---|---|---|---|
+| Tauri, local, mobile releases | `adapter-static` (`fallback: index.html`) | `build/` — a plain static bundle | nobody: this is the default |
+| Web (production) | `adapter-node` | `build/client`, `build/prerendered`, `build/index.js` | `BUILD_WEB=1` on the `build-frontend` job in `.github/workflows/cd.yml` |
+
+The polarity is deliberate: a build that forgets the variable produces the static bundle Tauri
+needs, never a Node server it cannot consume.
+
+The web build gains a server for exactly one reason: the `<head>`. An unfurler (Discord, Slack,
+a search crawler) fetches the URL and never hydrates, so every Open Graph tag emitted by
+`SeoHead.svelte` was invisible to the only audience it was written for. `ssr` stays false — no
+component renders server-side — and `src/hooks.server.ts` rewrites the shell on its way out:
+
+- `src/app.html` carries two literal markers, `<title>Canari</title>` and `<!--canari-seo-->`.
+  `renderHead.test.ts` asserts both still exist, or the injector would silently no-op.
+- `src/lib/seo/serverSeo.ts` resolves the metadata for a pathname: the baseline from
+  `seo/resolve.ts`, then a per-kind enrichment that calls social-service, core-service or
+  chat-delivery **directly over the Docker network** with `X-Internal-Secret`, behind a 1.5 s
+  timeout and a 60 s LRU. Any failure falls back to the baseline — a page never fails because a
+  preview did.
+- `src/lib/seo/renderHead.ts` emits the tags, every interpolation HTML-escaped, each tag marked
+  `data-canari-seo`.
+- `SeoHead.svelte` removes those marked nodes in `onMount` before emitting its own, so a hydrated
+  page never carries two `og:title`s.
+
+Nginx serves the assets and proxies HTML navigations to the `frontend-ssr` container — see
+[../infrastructure/nginx.md](../infrastructure/nginx.md).
 
 ## Source tree
 
@@ -15,7 +47,7 @@ frontend/
 │   ├── app.html                    # Root HTML template
 │   ├── app.css                     # Global CSS (Tailwind + utilities)
 │   ├── hooks.client.ts             # Client hooks (MLS init, session restore)
-│   ├── hooks.server.ts             # Server hooks (CSP headers)
+│   ├── hooks.server.ts             # Injects the per-page <head> into the shell (web build only)
 │   ├── lib/
 │   │   ├── components/
 │   │   │   ├── chat/               # Messaging UI (ChatArea, Composer, MessageBubble...)
@@ -40,6 +72,10 @@ frontend/
 │   │   │   ├── confirm.svelte.ts   # Global confirm dialog store
 │   │   │   ├── toast.svelte.ts     # Toast notifications
 │   │   │   └── ui.svelte.ts        # Theme, navigation state
+│   │   ├── seo/
+│   │   │   ├── resolve.ts          # Per-path title/description/noindex baseline
+│   │   │   ├── serverSeo.ts        # Server-only enrichment (internal service calls, LRU)
+│   │   │   └── renderHead.ts       # Escapes and renders the injected head tags
 │   │   ├── types/
 │   │   │   └── index.ts            # Central type dictionary
 │   │   ├── utils/

@@ -1,12 +1,20 @@
-# ── Runtime: Nginx servant le build statique ─────────────────────────────────
+# ── Runtime: Nginx, point d'entree public ────────────────────────────────────
 # Le build Svelte est effectué en amont par le CI (job build-frontend) avec les
-# secrets injectés (VITE_JWT_SECRET). L'artifact compilé est téléchargé dans
-# frontend/build/ avant que cette image soit construite.
+# secrets injectés (VITE_JWT_SECRET) et BUILD_WEB=1, qui selectionne
+# adapter-node. L'artifact compilé est téléchargé dans frontend/build/ avant que
+# cette image soit construite.
 # NE PAS rebuilder ici : le secret ne serait pas disponible dans ce contexte.
+#
+# adapter-node produit build/client (les assets), build/prerendered (robots.txt,
+# sitemap.xml, .well-known/) et un serveur Node. Nginx sert les deux premiers
+# exactement comme avant - memes en-tetes de cache, meme correctif MIME .mjs -
+# et ne delegue au conteneur frontend-ssr que les navigations HTML, les seules a
+# avoir besoin d'un <head> calcule (cf. frontend/src/hooks.server.ts).
 # Dev branch build trigger
 FROM nginx:stable-alpine
 
-COPY frontend/build /usr/share/nginx/html
+COPY frontend/build/client /usr/share/nginx/html
+COPY frontend/build/prerendered /usr/share/nginx/html
 
 # SPA fallback + reverse proxy WebSocket/API vers les services Docker
 RUN printf 'server {\n\
@@ -67,9 +75,23 @@ RUN printf 'server {\n\
     }\n\
     \n\
     location / {\n\
-    try_files $uri $uri/ /index.html;\n\
+    try_files $uri $uri/ @ssr;\n\
     add_header Cache-Control "no-store" always;\n\
     add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://api.stripe.com https://merchant-ui-api.stripe.com https://r.stripe.com https://js.stripe.com https://api.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"' https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com; form-action '"'"'self'"'"' https://checkout.stripe.com; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n\
+    }\n\
+    \n\
+    # Navigations HTML -> serveur SvelteKit (adapter-node), qui ecrit les balises\n\
+    # Open Graph de la page dans le shell. Il n'y a plus d index.html de repli :\n\
+    # un 502 ici veut dire que le site est indisponible, pas qu il perd son head.\n\
+    location @ssr {\n\
+    set $upstream_ssr frontend-ssr:3000;\n\
+    proxy_pass http://$upstream_ssr;\n\
+    proxy_http_version 1.1;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    proxy_read_timeout 30s;\n\
     }\n\
     \n\
     location /api/ws {\n\

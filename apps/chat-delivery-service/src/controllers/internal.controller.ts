@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   Post,
   Delete,
   Param,
@@ -24,6 +25,8 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { GroupInvite } from '../entities/group-invite.entity';
+import { resolveGroupInvitePreview } from '../utils/group-invite';
 
 /**
  * Internal-only endpoints - called by other services via Docker-internal networking.
@@ -54,9 +57,43 @@ export class InternalController {
     private readonly pinVerifierRepo: Repository<PinVerifier>,
     @InjectRepository(RevokedDevice)
     private readonly revokedDeviceRepo: Repository<RevokedDevice>,
+    @InjectRepository(GroupInvite)
+    private readonly groupInviteRepo: Repository<GroupInvite>,
     @Inject('REDIS_CLIENT')
     private readonly redis: Redis
   ) {}
+
+  /**
+   * Refuses anything that is not a service-to-service call. Constant-time, and an unset
+   * INTERNAL_SECRET matches nothing - so a misconfigured deployment fails closed.
+   */
+  private assertInternalSecret(headerSecret: string | undefined): void {
+    const expected = Buffer.from(this.secret);
+    const received = Buffer.from(headerSecret ?? '');
+    if (
+      expected.length === 0 ||
+      received.length !== expected.length ||
+      !crypto.timingSafeEqual(expected, received)
+    ) {
+      throw new ForbiddenException();
+    }
+  }
+
+  /**
+   * Session-free group invite preview, called by the web SSR process when it renders the Open
+   * Graph head of `/g/join/:token`. The user-facing route is behind `HeaderAuthGuard` and an
+   * unfurler has no session; both call one `resolveGroupInvitePreview`, so what a shared invite
+   * link discloses is decided in a single place.
+   */
+  @Get('group-invites/:token')
+  async groupInvitePreview(
+    @Param('token') token: string,
+    @Headers('x-internal-secret') headerSecret?: string
+  ) {
+    this.assertInternalSecret(headerSecret);
+    this.logger.debug(`internal group invite preview token=${token.slice(0, 8)}`);
+    return resolveGroupInvitePreview(this.groupInviteRepo, this.groupRepo, token);
+  }
 
   @Post('push/notify')
   async notifyUser(
@@ -69,16 +106,7 @@ export class InternalController {
       data?: Record<string, string>;
     }
   ) {
-    // Constant-time comparison to prevent timing attacks on the shared secret.
-    const expected = Buffer.from(this.secret);
-    const received = Buffer.from(headerSecret ?? '');
-    if (
-      expected.length === 0 ||
-      received.length !== expected.length ||
-      !crypto.timingSafeEqual(expected, received)
-    ) {
-      throw new ForbiddenException();
-    }
+    this.assertInternalSecret(headerSecret);
 
     if (getApps().length === 0) {
       this.logger.warn('[INTERNAL_PUSH] Firebase not initialized - skipping');
@@ -138,15 +166,7 @@ export class InternalController {
     @Param('userId') userId: string,
     @Headers('x-internal-secret') headerSecret: string
   ) {
-    const expected = Buffer.from(this.secret);
-    const received = Buffer.from(headerSecret ?? '');
-    if (
-      expected.length === 0 ||
-      received.length !== expected.length ||
-      !crypto.timingSafeEqual(expected, received)
-    ) {
-      throw new ForbiddenException();
-    }
+    this.assertInternalSecret(headerSecret);
 
     this.logger.log(`[INTERNAL_DELETE] starting user=${userId}`);
 
