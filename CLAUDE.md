@@ -216,10 +216,11 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   so `X-Canari-Degraded: ssr-unavailable` in the access log is the thing to grep for.
   Open a WP only if one of these FAILS.
   **The first deploy (2026-08-05) shipped three nginx faults - stock welcome page on `/`, 502 on
-  every other navigation, and a fallback Cloudflare swallowed.** All three are fixed and the rules
-  are above; what is still OWED is confirming on prod that a real enriched head arrives (`<title>`,
-  `og:title`, `ld+json` on `/posts/<id>` and `/associations/<slug>`), which is also the only proof
-  `INTERNAL_SECRET` reached the container.
+  every other navigation, and a fallback Cloudflare swallowed.** All three are fixed, the rules are
+  above, and prod is VERIFIED: `/`, `/posts`, `/associations`, `/calendar`, `/robots.txt`,
+  `/sitemap.xml` (83 urls) all 200, and `/associations/ame` + a real `/posts/<uuid>` answer their
+  own `<title>`, `og:*`, `article:published_time`/`author` and JSON-LD - which is also the proof
+  `INTERNAL_SECRET` reached the container. Only the four human checks above remain.
 
 - \[ \] **WP-HIST-3 (P2) - Pool history per MESSAGE between devices, not all-or-nothing.** Successor
   to WP-HIST-2 (shipped 2026-08-02), which stopped the blind soliciting but left the exchange itself
