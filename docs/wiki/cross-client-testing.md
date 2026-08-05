@@ -52,18 +52,54 @@ Credentials are **not in this repo**. They live in the session scratchpad,
 `scratchpad/test-accounts.json`, written at setup time. Never commit them, never paste them into a
 log excerpt, never echo a password into a shell that gets captured.
 
-### 1.1 W2, the second browser
+### 1.1 The harness as BUILT (2026-08-05) - supersedes the plan above where they differ
 
-There is no Playwright or Puppeteer in this project, and `chrome-devtools-mcp` bundles its copy
-where nothing else can require it. Node 24 exposes a global `WebSocket`, so W2 is driven with a
-**dependency-free CDP client** built in Phase 0:
+The harness exists and is proven. It lives OUTSIDE the repo, at
 
 ```
-chrome.exe --remote-debugging-port=9223 --user-data-dir=<scratchpad>/chrome-w2 <url>
+C:\Users\jolan\AppData\Local\Temp\claude\c--Users-jolan-Documents-Programmation-canari\3dd9d8ba-077b-47ad-9f1d-33bb94f62dcd\scratchpad\
 ```
 
-then `GET http://127.0.0.1:9223/json/version` -> `webSocketDebuggerUrl` -> one WebSocket, and the
-CDP domains that cover everything this campaign needs:
+That path is session-named but the files persist on disk; a later session reuses them from there
+rather than rebuilding. Contents:
+
+| File | What |
+| --- | --- |
+| `cdp.mjs` | the CDP driver, both a CLI and an importable module (`connect`, `evaluate`, `until`, `realClick`, `listTargets`, `SNAPSHOT`) |
+| `login.mjs` | MiConnect/CAS login for one account |
+| `pin.mjs` | the encryption-PIN modal, with `--stay` and `--value` for PIN-2/3/9 |
+| `discover-web.mjs` | SETUP-7 web half |
+| `a1.py` | uiautomator2 driver for the phone's NATIVE surfaces only |
+| `test-accounts.json` | credentials - never in the repo |
+| `logs/a1.log` | the whitelisted logcat capture |
+| `chrome-w1/`, `chrome-w2/` | the two persistent Chrome profiles |
+
+**One driver, all three clients**, each on its own port:
+
+| Client | Port | Launched with |
+| --- | --- | --- |
+| W1 (`jolan.boudin`) | 9224 | `chrome.exe --remote-debugging-port=9224 --user-data-dir=<scratchpad>/chrome-w1` |
+| W2 (`claire.vanruymbeke`) | 9223 | same shape, `chrome-w2` |
+| A1 (the Tauri WebView) | 9222 | `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>` |
+
+**W1 moved off the chrome-devtools MCP, deliberately.** Its own Chrome plus this driver is strictly
+better here: a password never has to appear as a tool-call argument in a transcript, `login.mjs`
+reads it from the credentials file instead. The MCP remains available as a second lens.
+
+**Never `sleep` a fixed delay - poll.** `until(cx, predicate)` is the only wait primitive; fixed
+sleeps were both slower than the app and unreliable when they were not.
+
+Three things the login flow taught, which a naive script gets wrong:
+
+- The hop is `canari-emse.fr` -> `auth.canari-emse.fr` (Authentik) -> `cas.emse.fr`. The middle step
+  is a real render, so **poll for the `#username` FIELD, never for the CAS URL** - waiting on the
+  hostname lands on the Authentik step and reads as a failure.
+- The unlock modal is `#encryption-pin`, its button is `Déverrouiller`, and the lone checkbox is
+  "rester connecté" - the vault path PIN-9 turns on.
+- Svelte does NOT react to `input.value = x`. Text goes in through `Input.insertText` after a real
+  click; clicks are `Input.dispatchMouseEvent` at the element centre, not `element.click()`.
+
+The CDP domains that cover everything this campaign needs:
 
 | Need | CDP |
 | --- | --- |
@@ -225,15 +261,30 @@ not what a plan assumed a day earlier.
 **Runs LAST.** It destroys state, and SETUP-8's archive is the only way back that does not cost a
 full re-enrolment. Fill the real names here during SETUP-7 before writing any of these.
 
-Discovered artefacts (SETUP-7 output - **to be filled**):
+Discovered artefacts. **The web half is REAL, measured on both browsers 2026-08-05** by
+`discover-web.mjs`; the Android half is still the documented expectation and must be replaced with
+`run-as` output when SETUP-7 finishes.
 
-| Client | Artefact | Path / key | Format |
+`<dev>` below is the 64-hex device id, which differs per client: W1 (jolan) `d82cd226…4df2`,
+W2 (claire) `b78568a3…d5ec`. **Every web artefact except three is keyed by it**, so a corruption
+test that hardcodes one client's key silently no-ops on the other.
+
+| Client | Artefact | Path / key | Notes |
 | --- | --- | --- | --- |
+| Web | MLS state | IndexedDB `CanariDBMls_<dev>` v1, store `state` | the browser's `mls.bin` equivalent |
+| Web | message store | IndexedDB `CanariDB_<dev>` v6, stores `conversations`, `messages`, `outbox` | CORRUPT-7 drops a store here; the outbox store is what FWD-1 evidence lives in |
+| Web | device key vault | `sessionStorage.canari_device_key_vault` (97 chars) + `canari_device_key_vault_key` (44) | AES-GCM wrapped; CORRUPT-3 targets the first |
+| Web | vault persistence flag | `localStorage.canari_device_key_persist` | present on BOTH clients after a normal unlock |
+| Web | device id | `localStorage.mls_device_id_<dev>` (82 chars) | |
+| Web | last active | `localStorage.canari_last_active:<dev>` | |
+| Web | saved user | `localStorage.canari_saved_user` (64) | |
+| Web | WS auth | cookie `canari_ws_token` - the ONLY cookie readable from JS | the refresh cookie is HttpOnly, as designed |
 | Android | MLS state | `files/mls.bin` | ChaCha20-Poly1305, `[nonce 12 || ct]`, **no version field** |
 | Android | push context | `push_context.json` | see [mobile](frontend/mobile.md) |
 | Android | device key | Keystore alias `mls_device_key_{userId}_{deviceId}` | not a file |
-| Web | device key vault | `sessionStorage`, or `localStorage` when `canari_device_key_persist` | AES-GCM wrapped |
-| Web | message store | _fill from `indexedDB.databases()`_ | |
+
+Note what is NOT there: no access token in any web storage, on either client. That is the
+"access tokens in memory ONLY" rule holding in production.
 
 | Id | Corruption | Expected |
 | --- | --- | --- |
@@ -291,3 +342,36 @@ _Filled during execution. One row per check: id, build, verdict, evidence pointe
 | Id | Build | Verdict | Evidence |
 | --- | --- | --- | --- |
 | | | | |
+
+---
+
+## 11. Phase 0 progress - session of 2026-08-05
+
+| Id | State | Detail |
+| --- | --- | --- |
+| SETUP-1 | **DONE** | `app-universal-debug.apk`, 331 MB, contains `lib/arm64-v8a/libmines_app_lib.so` (313 MB) |
+| SETUP-2 | **DONE** | uninstall + clean install, 21 s. `versionName=0.12.0`, `versionCode=12000`, `flags=[DEBUGGABLE HAS_CODE ALLOW_CLEAR_USER_DATA]`, `firstInstallTime=2026-08-05 23:50:30` |
+| SETUP-3 | **RESTART IT** | started against the USB serial, which then dropped - see the ADB note below |
+| SETUP-4 | **DONE** | W1 logged in, PIN accepted, real conversation list rendering |
+| SETUP-5 | **DONE** | W2 logged in, PIN accepted, "Aucune discussion" (Claire has no history) |
+| SETUP-6 | open | app installed and never launched successfully yet |
+| SETUP-7 | **web half DONE** | section 7 above; Android half still owed |
+| SETUP-8 | open | needs the app to have state first |
+| SETUP-9 | open | W1 `/communities` shows association **MiTV** with `canal général` and an **`Ajouter un canal`** button - that is the entry point |
+
+### What Phase 0 cost, and must not be re-learnt
+
+- **`--target aarch64` emits the `universal` flavour, not `arm64`.** The `apk/arm64/debug/`
+  directory still holds a **stale July APK**, and installing it would silently test the wrong build.
+  Always install `apk/universal/debug/app-universal-debug.apk` and check its mtime.
+- **The build's jniLibs symlink SUCCEEDED here**, so `_ensure_native_lib_present`'s rescue copy was
+  not needed - but verify the `.so` is inside the APK (`zipfile`, `lib/arm64-v8a/`) rather than
+  assuming either way.
+- **The 0.11.6 that was on the device was a RELEASE build**: `run-as` refuses it
+  ("package not debuggable"), so **no old-format `mls.bin` could be salvaged before the wipe**.
+  CORRUPT-5 has no artefact source from this device and needs one built deliberately.
+- **USB ADB drops on this phone.** Immediately after connecting, promote to wireless and use that
+  serial for everything: `adb tcpip 5555` then `adb connect <ip>:5555` (`192.168.1.185:5555` on this
+  network; the device IP comes from `adb shell ip route`). Also `adb shell svc power stayon true` and
+  a 30-minute `screen_off_timeout`. A background logcat bound to the USB serial dies with the cable.
+- 2FA was asked once, on W1, and answered by hand. Both browser profiles are persistent.

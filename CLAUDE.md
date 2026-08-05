@@ -127,18 +127,29 @@ read-only `mysqldump@localhost` that lacks `EVENT` on the `mysql` DB, so `--even
 
 ### CANARI - OPEN WORK PACKAGES
 
-**[campaign] CROSS-CLIENT TEST CAMPAIGN - ACTIVE, started 2026-08-05.** The whole plan (three
-clients, ~60 checks, the phases and their order) is
-**[cross-client-testing](docs/wiki/cross-client-testing.md)**. Do not re-plan it from here. Three
-facts that page depends on and that a compaction must not lose: the campaign runs against
-**PRODUCTION** with two real accounts whose credentials are in `scratchpad/test-accounts.json`
-(**never in the repo**); **W2 is a second Chrome driven by a hand-written CDP client** over Node 24's
-global `WebSocket` (`scratchpad/w2.mjs`) because there is no Playwright/Puppeteer here and the MCP
-bundles its own where nothing can require it; and **Phase 0 must fully pass before any check runs** -
-in particular SETUP-7, the discovery pass, without which every corruption test targets a guessed key
-name and passes silently. A check that FAILS earns a WP with its captured log; a check that passes
-earns a row in section 10 and nothing else. Prime target: **WP-FWD-1**, whose whole point is that it
-has never been reproduced.
+**[campaign] CROSS-CLIENT TEST CAMPAIGN - ACTIVE, Phase 0 nearly closed 2026-08-05.** The whole
+plan AND the built harness are **[cross-client-testing](docs/wiki/cross-client-testing.md)** -
+sections 1.1 (harness), 7 (real artefact names) and 11 (Phase 0 progress + what it cost). Do not
+re-plan or re-derive any of it from here. What a compaction must not lose:
+
+- Runs against **PRODUCTION**, two real accounts, credentials in the scratchpad
+  `test-accounts.json`, **never in the repo**.
+- **The harness is BUILT and proven**, at
+  `C:\Users\jolan\AppData\Local\Temp\claude\c--Users-jolan-Documents-Programmation-canari\3dd9d8ba-077b-47ad-9f1d-33bb94f62dcd\scratchpad\`.
+  Those files persist on disk - a later session REUSES them, it does not rebuild them. One
+  `cdp.mjs` drives all three clients (W1 on 9224, W2 on 9223, A1's WebView on 9222 via
+  `adb forward`); `a1.py` is only for native surfaces. W1 moved OFF the chrome-devtools MCP on
+  purpose, so no password is ever a tool-call argument.
+- **DONE:** SETUP-1, 2, 4, 5, and the web half of 7. **A1 carries a clean 0.12.0 DEBUGGABLE build**
+  (so `run-as` works now). **Owed:** restart the logcat on the WIRELESS serial, then SETUP-6, the
+  Android half of 7, 8, 9.
+- **USB ADB drops on this phone** - promote to `adb tcpip 5555` + `adb connect <ip>:5555` at once,
+  and never bind a long capture to the USB serial.
+- Phase 0 must fully pass before any check runs, SETUP-7 above all: without it every corruption test
+  targets a guessed key name and passes silently.
+
+A check that FAILS earns a WP with its captured log; a check that passes earns a row in section 10
+and nothing else. Prime target: **WP-FWD-1**, whose whole point is that it has never been reproduced.
 
 **[device] The verification pass is NOT a Work Package.** Everything native is verified by COMPILING,
 which proves nothing about running, and the whole owed list lives in
