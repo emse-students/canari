@@ -1,4 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AssociationsController } from './associations.controller';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
@@ -125,4 +127,25 @@ describe('AssociationsController secret stripping', () => {
     // The rest of the row still has to reach the app - the fix is a strip, not an allowlist.
     expect(result).toMatchObject({ id: 'asso1', name: 'BDE', stripeOnboardingComplete: true });
   });
+});
+
+/**
+ * Stripping the two secrets was only half the fix. The three reads still answer the whole row -
+ * `stripeAccountId`, `createdBy`, the document quota, the cotisation configuration - and nginx
+ * lets an anonymous request through `/api/associations` because `AuthController.check()` answers
+ * 200 for anonymous. The guard is therefore load-bearing, and it is a decorator: nothing in the
+ * type system notices when one goes missing, so the metadata Nest reads is what has to be asserted.
+ */
+describe('AssociationsController read guards', () => {
+  it.each(['list', 'findBySlug', 'findOne'] as const)(
+    '%s is behind NginxAuthGuard',
+    (handlerName) => {
+      const guards = Reflect.getMetadata(
+        GUARDS_METADATA,
+        AssociationsController.prototype[handlerName]
+      ) as unknown[] | undefined;
+
+      expect(guards).toContain(NginxAuthGuard);
+    }
+  );
 });

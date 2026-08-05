@@ -187,15 +187,21 @@ reply), L (revoked device re-enrolling), N (offline unlock + promotion), plus M 
 Android. **Open a WP only when a
 check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at the repo root.
 
-- \[ \] **WP-SEO-1 / WP-PREV-2 - two checks owed AFTER the next deploy, neither a code task.**
-  Everything shipped and is green locally (`node build/index.js` probed on 9 path kinds, `nginx -t`
-  on the real image, a no-`BUILD_WEB` build still emitting `build/index.html`). What a curl cannot
-  prove: (1) paste a `/posts/{id}` and a `/c/join/{token}` link into **Discord and Slack** and check
-  the unfurl - that is the only audience the feature has; (2) install the Android build and confirm
-  it still boots, the build-target switch being new. The deploy itself is the risk to watch:
-  `frontend-ssr` must be up or nginx answers 502 on every navigation, and `INTERNAL_SECRET` must
-  reach it or every preview stays generic (both recorded in `infrastructure/MIGRATION.md`).
-  Open a WP only if one of the two FAILS.
+- \[ \] **WP-SEO-1 / WP-SEO-2 / WP-PREV-2 - checks owed AFTER the next deploy, none a code task.**
+  Everything shipped and is green locally: the built server was probed on every enriched path kind
+  with a stub social-service (real titles, JSON-LD, `article:*`, the injected client payload), the
+  sitemap was seen to grow with associations and posts and to degrade to its static entries when the
+  services are unreachable, and `app-shell.html` was confirmed to prerender with a route-less
+  `kit.start`. What a curl cannot prove: (1) paste a `/posts/{id}` and a `/c/join/{token}` link into
+  **Discord and Slack** and check the unfurl; (2) install the Android build and confirm it still
+  boots, the build-target switch being new; (3) run the association and agenda pages through
+  **Google's Rich Results Test** - the JSON-LD is verified by tests, not by Google's own parser;
+  (4) submit `/sitemap.xml` in Search Console and check the coverage report a few days later.
+  The deploy itself is the risk to watch: `INTERNAL_SECRET` must reach `frontend-ssr` or every
+  preview stays generic (recorded in `infrastructure/MIGRATION.md`). A dead `frontend-ssr` no longer
+  takes the site down - nginx serves the prerendered shell - but it does silently cost every head,
+  so `X-Canari-Degraded: ssr-unavailable` in the access log is the thing to grep for.
+  Open a WP only if one of these FAILS.
 
 - \[ \] **WP-HIST-3 (P2) - Pool history per MESSAGE between devices, not all-or-nothing.** Successor
   to WP-HIST-2 (shipped 2026-08-02), which stopped the blind soliciting but left the exchange itself
@@ -359,7 +365,27 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - An API helper ending in `res.json()` throws on the empty body a DELETE/void POST returns - AFTER
   the server acted, so the call that WORKED is the one displayed as failed and the UI never updates.
 
-#### The public head, and the two adapters -> [frontend/architecture](docs/wiki/frontend/architecture.md), [nginx](docs/wiki/infrastructure/nginx.md)
+#### The public head, and the two adapters -> [frontend/seo](docs/wiki/frontend/seo.md), [nginx](docs/wiki/infrastructure/nginx.md)
+
+- A crawler on this site sees NO content: Googlebot renders, but as an anonymous visitor, so what
+  it renders is the login screen. The injected `<head>` is the whole indexable surface - which is
+  why the content itself (titles, dates, authors) has to travel in the JSON-LD.
+- Nothing links to anything in served HTML, so the SITEMAP is the entire link graph. A static list
+  of routes advertises nothing; it has to enumerate the entities.
+- Not blocking a URL and SUBMITTING it are different acts: the sitemap carries association posts
+  (`feed=associations`), never a student's personal post, though both are readable.
+- `JSON.stringify` leaves `</script>` intact and that sequence ENDS a script element - JSON-LD
+  needs its own escaper (`<`), not the attribute one.
+- Hydration REPLACES the server's head with what the browser can derive alone, which is weaker. An
+  unfurler never notices; a crawler indexes the downgrade. Ship the resolved meta as a JSON payload
+  the client adopts - keyed on the REQUESTED path, since `/` canonicalises to `/posts`.
+- An `error_page` without `=` keeps the original 5xx while serving the fallback body. Browsers run
+  the scripts of a 5xx body, so that is a working app for a person and a retry for a crawler - a
+  200 carrying `noindex` would instead ask Google to DEINDEX the page.
+- Docker strips `#` comment lines inside a continued instruction, so an apostrophe in one never
+  reaches the shell and the comment never reaches the generated file. Emulating a Dockerfile
+  locally means stripping comments FIRST, then joining continuations, or you diagnose a bug that
+  does not exist.
 
 - `transformPageChunk` FIRES with `ssr = false`: a server-rendered `<head>` costs no SSR at all.
   Nothing renders server-side, `hooks.server.ts` just rewrites two literal markers in `app.html`.
@@ -368,8 +394,10 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - `svelte.config.js` picks the adapter from `BUILD_WEB`: web = `adapter-node`, everything else =
   `adapter-static`. The polarity is the point - a build that forgets it must not produce a server
   Tauri cannot consume.
-- `adapter-node` emits NO `index.html`, so there is no static fallback: nginx answers 502 when
-  `frontend-ssr` is down. Both images ship from one artifact, together.
+- `adapter-node` emits NO `index.html`. A prerendered `/app-shell` supplies one, so a dead
+  `frontend-ssr` costs the head, not the site. Both images ship from one artifact, together.
+- A prerendered page under `ssr = false` boots at ANY url (`kit.start(app, element)`, no route
+  data) - that is what makes one shell file a valid answer for every path.
 - The SSR process reads services with `X-Internal-Secret`, never `X-Internal-Token` (bound to a
   user id = impersonation). Any enrichment failure falls back to the baseline: a page must never
   fail because its preview did.
@@ -529,7 +557,10 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   Forcing them at write repairs nothing already stored, so the TYPE decides in `assertCanPurchase`.
   A column that cannot mean anything for a type must not be READ for it, only kept tidy.
 - A product entity carries `webhookSecret`: `toSafeProduct` is the ONE seam that strips it, and
-  `/products/all` answers every logged-in user (same lesson as `Channel.masterSecret`).
+  `/products/all` answers every logged-in user (same lesson as `Channel.masterSecret` and
+  `toSafeAssociation`). Stripping the secret is only half of it: the REST of the row is not public
+  either, so the read still needs its guard, and the anonymous audience gets `/api/public/*` with
+  its own explicit projection. A guard is a decorator nothing type-checks - assert the metadata.
 - A delivery id is not an authorization: retry/delete resolve the product through `associationId`
   too, or an admin of any association acts on another's top-up.
 - `variantKey` is editable and the tags follow; convert rather than delete a tier with cotisants.

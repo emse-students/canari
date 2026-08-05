@@ -24,9 +24,11 @@ const config = {
   kit: {
     adapter: buildsForWeb ? adapterNode() : adapterStatic({ fallback: 'index.html' }),
     prerender: {
+      // `/sitemap.xml` is NOT here: it is built per request now, because a crawler can only learn
+      // an association or post URL from it (see routes/sitemap.xml/+server.ts).
       entries: [
         '/robots.txt',
-        '/sitemap.xml',
+        '/app-shell',
         '/.well-known/assetlinks.json',
         '/.well-known/apple-app-site-association',
       ],

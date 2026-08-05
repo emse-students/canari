@@ -1,11 +1,26 @@
-import { env } from '$env/dynamic/private';
+import {
+  CORE_URL,
+  DELIVERY_URL,
+  SOCIAL_URL,
+  fetchJson,
+  internalHeaders,
+} from '$lib/seo/internalApi';
+import {
+  buildArticleJsonLd,
+  buildAssociationJsonLd,
+  buildBreadcrumbJsonLd,
+  buildEventJsonLd,
+  buildEventListJsonLd,
+  buildSiteJsonLd,
+  type JsonLdNode,
+} from '$lib/seo/jsonLd';
 import { mergeSeo, resolveSeoForPath } from '$lib/seo/resolve';
 import { SITE, siteOrigin } from '$lib/seo/site';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
 import type { SeoMeta } from '$lib/seo/types';
 
 /**
- * Per-path Open Graph metadata, resolved on the server.
+ * Per-path Open Graph metadata and structured data, resolved on the server.
  *
  * The app is a SPA (`ssr = false`), so no component runs here - only this module does. It exists
  * because an unfurler or a crawler never executes the client, and therefore never sees a single
@@ -13,19 +28,15 @@ import type { SeoMeta } from '$lib/seo/types';
  * title. It reads the SAME `resolveSeoForPath` the client uses as its baseline and only enriches
  * it with what needs a round trip.
  *
+ * For a SEARCH engine the stake is larger than a preview. Googlebot does render JavaScript, but it
+ * renders as an anonymous visitor - which on this site means the login screen - so the rendered DOM
+ * carries no content whatsoever. The head written here, and the JSON-LD in it, is therefore the
+ * entire indexable surface of the site. That is why each enricher also builds schema.org nodes
+ * rather than stopping at og:title.
+ *
  * Every fetch here is best-effort. A slow or broken service degrades the preview to the generic
  * per-kind text; it must never fail the page, which is the app itself.
  */
-
-/** Docker-network base URLs. Requests go direct, never back through nginx. */
-const SOCIAL_URL = () =>
-  (env.SOCIAL_SERVICE_URL || 'http://social-service:3014').replace(/\/$/, '');
-const CORE_URL = () => (env.CORE_SERVICE_URL || 'http://core-service:3012').replace(/\/$/, '');
-const DELIVERY_URL = () =>
-  (env.DELIVERY_SERVICE_URL || 'http://chat-delivery-service:3010').replace(/\/$/, '');
-
-/** Budget for one enrichment call. An unfurler gives up long before a user would. */
-const FETCH_TIMEOUT_MS = 1500;
 
 /**
  * Cache of rendered metadata, keyed by pathname. One shared link produces a burst - several
@@ -55,34 +66,9 @@ function cachePut(path: string, meta: SeoMeta): SeoMeta {
   return meta;
 }
 
-/** Headers proving a server-to-server call. Never the per-user `X-Internal-Token`. */
-function internalHeaders(): Record<string, string> {
-  const secret = env.INTERNAL_SECRET?.trim();
-  if (!secret) {
-    console.log('[SEO] INTERNAL_SECRET is unset - invite and profile previews will stay generic');
-    return {};
-  }
-  return { 'X-Internal-Secret': secret };
-}
-
-/** GETs JSON with a hard timeout. Returns null on any failure, logging the cause. */
-async function fetchJson<T>(url: string, headers: Record<string, string> = {}): Promise<T | null> {
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { headers, signal: abort.signal });
-    if (!res.ok) {
-      console.log(`[SEO] ${url} answered ${res.status}`);
-      return null;
-    }
-    return (await res.json()) as T;
-  } catch (err) {
-    // `fetch` reports every transport failure as a bare TypeError; the diagnosis is in `cause`.
-    console.log(`[SEO] ${url} failed:`, (err as Error)?.message, (err as Error)?.cause ?? '');
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+/** Absolute canonical URL for a pathname. */
+function pageUrl(path: string): string {
+  return `${siteOrigin()}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
 /**
@@ -99,13 +85,15 @@ function publicMediaUrl(pathOrUrl: string | null | undefined): string | undefine
 
 interface PostPayload {
   markdown?: string;
-  association?: { name?: string; logoUrl?: string | null } | null;
+  createdAt?: string;
+  updatedAt?: string;
+  association?: { name?: string; slug?: string; logoUrl?: string | null } | null;
   authorDisplayName?: string | null;
   authorFirstName?: string | null;
   authorLastName?: string | null;
 }
 
-async function postSeo(postId: string): Promise<Partial<SeoMeta> | null> {
+async function postSeo(postId: string, path: string): Promise<Partial<SeoMeta> | null> {
   const post = await fetchJson<PostPayload>(
     `${SOCIAL_URL()}/api/posts/${encodeURIComponent(postId)}`
   );
@@ -120,15 +108,38 @@ async function postSeo(postId: string): Promise<Partial<SeoMeta> | null> {
 
   // The title is the post's opening words and the description its body, so an author line in
   // front of the description is the only place the card can say WHO posted without repeating it.
+  const title = plain ? truncateForMeta(plain, 70) : 'Publication';
   const description = plain
     ? truncateForMeta(author ? `${author} : ${plain}` : plain, 200)
     : `Publication sur le fil social ${SITE.name}.`;
+  const image = publicMediaUrl(post.association?.logoUrl);
+  const url = pageUrl(path);
 
   return {
-    title: plain ? truncateForMeta(plain, 70) : 'Publication',
+    title,
     description,
     ogType: 'article',
-    image: publicMediaUrl(post.association?.logoUrl),
+    image,
+    imageAlt: post.association?.name ? `Logo ${post.association.name}` : undefined,
+    publishedAt: post.createdAt,
+    authorName: author ?? undefined,
+    jsonLd: [
+      buildArticleJsonLd({
+        url,
+        headline: title,
+        description,
+        image,
+        authorName: author,
+        authorIsOrganization: !!post.association?.name,
+        publishedAt: post.createdAt,
+        modifiedAt: post.updatedAt,
+      }),
+      buildBreadcrumbJsonLd([
+        { name: SITE.name, path: '/' },
+        { name: 'Publications', path: '/posts' },
+        { name: title, path },
+      ]),
+    ],
   };
 }
 
@@ -156,11 +167,13 @@ async function formSeo(formId: string): Promise<Partial<SeoMeta> | null> {
 interface AssociationPayload {
   name?: string;
   description?: string | null;
+  bioMarkdown?: string | null;
   logoUrl?: string | null;
+  contactEmail?: string | null;
   memberCount?: number;
 }
 
-async function associationSeo(slug: string): Promise<Partial<SeoMeta> | null> {
+async function associationSeo(slug: string, path: string): Promise<Partial<SeoMeta> | null> {
   // The safe projection, not `/api/associations/slug/:slug`: this one is designed to be public.
   const asso = await fetchJson<AssociationPayload>(
     `${SOCIAL_URL()}/api/public/associations/slug/${encodeURIComponent(slug)}`
@@ -172,14 +185,41 @@ async function associationSeo(slug: string): Promise<Partial<SeoMeta> | null> {
       ? `${asso.memberCount} membre${asso.memberCount > 1 ? 's' : ''}.`
       : null;
 
+  // The bio is the association's own prose and the richest text this page will ever carry; the
+  // short description is the fallback, and the generated sentence the last resort.
+  const ownText = asso.description?.trim() || markdownToPlainText(asso.bioMarkdown ?? '');
+  const description = ownText
+    ? truncateForMeta(ownText, 200)
+    : [
+        `${asso.name} sur ${SITE.name} : actualités, agenda et formulaires de l'association.`,
+        members,
+      ]
+        .filter(Boolean)
+        .join(' ');
+  const image = publicMediaUrl(asso.logoUrl);
+  const url = pageUrl(path);
+
   return {
-    title: asso.name,
-    description: asso.description?.trim()
-      ? truncateForMeta(asso.description, 200)
-      : [`${asso.name} sur ${SITE.name} : actualités, agenda et formulaires.`, members]
-          .filter(Boolean)
-          .join(' '),
-    image: publicMediaUrl(asso.logoUrl),
+    // The association is what the page is about, but "BDE" alone is a query nobody wins - the
+    // school has to be in the title for the result to be findable at all.
+    title: `${asso.name} - ${SITE.institutionName}`,
+    description,
+    image,
+    imageAlt: `Logo ${asso.name}`,
+    jsonLd: [
+      buildAssociationJsonLd({
+        url,
+        name: asso.name,
+        description,
+        logo: image,
+        email: asso.contactEmail,
+      }),
+      buildBreadcrumbJsonLd([
+        { name: SITE.name, path: '/' },
+        { name: 'Associations', path: '/associations' },
+        { name: asso.name, path },
+      ]),
+    ],
   };
 }
 
@@ -253,7 +293,7 @@ async function groupInviteSeo(token: string): Promise<Partial<SeoMeta> | null> {
  * anything not listed falls through to `resolveSeoForPath` alone, which is a complete answer for
  * the static pages and a correct generic one for everything else.
  */
-const ENRICHERS: [RegExp, (id: string) => Promise<Partial<SeoMeta> | null>][] = [
+const ENRICHERS: [RegExp, (id: string, path: string) => Promise<Partial<SeoMeta> | null>][] = [
   [/^\/posts\/([^/]+)\/?$/, postSeo],
   [/^\/forms\/([^/]+)\/?$/, formSeo],
   [/^\/associations\/([^/]+)\/?$/, associationSeo],
@@ -261,6 +301,75 @@ const ENRICHERS: [RegExp, (id: string) => Promise<Partial<SeoMeta> | null>][] = 
   [/^\/c\/join\/([^/]+)\/?$/, communityInviteSeo],
   [/^\/g\/join\/([^/]+)\/?$/, groupInviteSeo],
 ];
+
+interface CalendarEventPayload {
+  id?: string;
+  title?: string;
+  description?: string | null;
+  startsAt?: string;
+  endsAt?: string | null;
+  imageUrl?: string | null;
+  associationName?: string | null;
+  associationSlug?: string | null;
+}
+
+/** How many upcoming events the agenda page describes. Beyond this the payload stops being read. */
+const AGENDA_JSONLD_MAX = 25;
+/** How far ahead the agenda looks. The feed refuses a range wider than ~18 months. */
+const AGENDA_WINDOW_DAYS = 180;
+
+/**
+ * `Event` nodes for the agenda page.
+ *
+ * The one page whose content is genuinely searchable - "gala Mines Saint-Etienne", "soirée BDE" -
+ * and the one schema.org type Google renders as a rich result with its dates attached. It reads
+ * the same public feed the ICS export uses, so nothing pending or rejected can appear.
+ */
+async function agendaJsonLd(): Promise<JsonLdNode[] | null> {
+  const from = new Date();
+  const to = new Date(from.getTime() + AGENDA_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const rows = await fetchJson<CalendarEventPayload[]>(
+    `${SOCIAL_URL()}/api/associations/calendar/feed?from=${from.toISOString()}&to=${to.toISOString()}`
+  );
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  const events = rows
+    .filter((row) => row.title?.trim() && row.startsAt)
+    .slice(0, AGENDA_JSONLD_MAX)
+    .map((row) =>
+      buildEventJsonLd({
+        name: row.title!.trim(),
+        description: row.description?.trim()
+          ? truncateForMeta(markdownToPlainText(row.description), 300)
+          : null,
+        startDate: new Date(row.startsAt!).toISOString(),
+        endDate: row.endsAt ? new Date(row.endsAt).toISOString() : null,
+        // No per-event page exists, so every event points at the agenda that lists it.
+        url: pageUrl('/calendar'),
+        image: publicMediaUrl(row.imageUrl),
+        organizerName: row.associationName,
+        organizerUrl: row.associationSlug ? pageUrl(`/associations/${row.associationSlug}`) : null,
+      })
+    );
+
+  return events.length > 0 ? [buildEventListJsonLd(events)] : null;
+}
+
+/** Structured data for the pages that have no id in their path. */
+async function staticPageJsonLd(path: string): Promise<JsonLdNode[] | null> {
+  if (path === '/' || path === '/posts') return buildSiteJsonLd();
+  if (path === '/calendar') return agendaJsonLd();
+  if (path === '/associations') {
+    return [
+      ...buildSiteJsonLd(),
+      buildBreadcrumbJsonLd([
+        { name: SITE.name, path: '/' },
+        { name: 'Associations', path: '/associations' },
+      ]),
+    ];
+  }
+  return null;
+}
 
 /** Resolves the metadata for a pathname, enriching it from the services when one applies. */
 export async function resolveServerSeo(pathname: string): Promise<SeoMeta> {
@@ -273,9 +382,11 @@ export async function resolveServerSeo(pathname: string): Promise<SeoMeta> {
     const match = pathname.match(pattern);
     if (!match) continue;
     // `/associations/new` is the creation form, not a slug - the enricher 404s and we fall back.
-    const enriched = await enrich(decodeURIComponent(match[1]));
+    const enriched = await enrich(decodeURIComponent(match[1]), pathname);
     return cachePut(pathname, enriched ? mergeSeo(base, enriched) : base);
   }
 
-  return cachePut(pathname, base);
+  // Structured data is pointless on a page that asks not to be indexed.
+  const jsonLd = base.noindex ? null : await staticPageJsonLd(pathname.replace(/(.)\/$/, '$1'));
+  return cachePut(pathname, jsonLd ? { ...base, jsonLd } : base);
 }

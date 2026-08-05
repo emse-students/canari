@@ -80,9 +80,9 @@ RUN printf 'server {\n\
     add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://api.stripe.com https://merchant-ui-api.stripe.com https://r.stripe.com https://js.stripe.com https://api.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"' https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com; form-action '"'"'self'"'"' https://checkout.stripe.com; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n\
     }\n\
     \n\
-    # Navigations HTML -> serveur SvelteKit (adapter-node), qui ecrit les balises\n\
-    # Open Graph de la page dans le shell. Il n'y a plus d index.html de repli :\n\
-    # un 502 ici veut dire que le site est indisponible, pas qu il perd son head.\n\
+    # HTML navigations -> the SvelteKit server (adapter-node), which writes the\n\
+    # per-page Open Graph tags into the shell. A failure here falls through to\n\
+    # @app_shell rather than 502-ing the whole site.\n\
     location @ssr {\n\
     set $upstream_ssr frontend-ssr:3000;\n\
     proxy_pass http://$upstream_ssr;\n\
@@ -92,6 +92,25 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     proxy_read_timeout 30s;\n\
+    error_page 502 503 504 @app_shell;\n\
+    }\n\
+    \n\
+    # NOTE: no `=` on the error_page above, so the 502/503/504 status is PRESERVED while\n\
+    # the body is the shell. The browser runs the scripts of a 5xx body, so a person gets\n\
+    # a working app; a crawler gets a 5xx it will retry, instead of a 200 carrying noindex,\n\
+    # which is a request to DEINDEX the page.\n\
+    # adapter-node emits no index.html, so without this the frontend-ssr container\n\
+    # being down means a 502 on EVERY navigation - the whole site, to spare the\n\
+    # per-page head. app-shell.html is prerendered (routes/app-shell/) and boots the\n\
+    # SPA on whatever URL was asked for, exactly as the static build always did.\n\
+    # Degraded, not broken: only the injected <head> is missing.\n\
+    location @app_shell {\n\
+    try_files /app-shell.html =502;\n\
+    add_header Cache-Control "no-store" always;\n\
+    add_header X-Canari-Degraded "ssr-unavailable" always;\n\
+    add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://api.stripe.com https://merchant-ui-api.stripe.com https://r.stripe.com https://js.stripe.com https://api.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"' https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com; form-action '"'"'self'"'"' https://checkout.stripe.com; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
     }\n\
     \n\
     location /api/ws {\n\

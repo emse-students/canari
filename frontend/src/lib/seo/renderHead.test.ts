@@ -71,3 +71,68 @@ describe('the app.html contract', () => {
     expect(renderSeoTitle(base)).toBe('<title>Titre - Canari</title>');
   });
 });
+
+describe('renderSeoTags structured data and the client payload', () => {
+  it('renders the JSON-LD nodes it is given, inside one script element', () => {
+    const html = renderSeoTags(
+      { ...base, jsonLd: [{ '@type': 'Article', headline: 'Titre' }] },
+      '/posts/abc'
+    );
+
+    expect(html).toContain('<script type="application/ld+json" data-canari-seo>');
+    expect(html).toContain('"@context":"https://schema.org"');
+    expect(html).toContain('"@type":"Article"');
+  });
+
+  it('omits the JSON-LD element entirely when there are no nodes', () => {
+    expect(renderSeoTags(base, '/posts/abc')).not.toContain('application/ld+json');
+  });
+
+  it('cannot be closed early by entity text', () => {
+    // The attack the escaping exists for: a post title that ends the script element and opens
+    // markup of its own. JSON.stringify alone leaves `</script>` intact.
+    const html = renderSeoTags(
+      { ...base, jsonLd: [{ '@type': 'Article', headline: '</script><img onerror=alert(1)>' }] },
+      '/posts/abc'
+    );
+
+    expect(html).not.toContain('</script><img');
+    expect(html).toContain('\u003c/script');
+  });
+
+  it('carries the resolved metadata for the client to adopt, keyed by the REQUESTED path', () => {
+    // `/` canonicalises to `/posts`, so keying the payload on the canonical path would stop the
+    // client ever recognising it - it compares against `page.url.pathname`.
+    const html = renderSeoTags({ ...base, title: 'Le BDE', path: '/posts' }, '/associations/bde');
+
+    expect(html).toContain('id="canari-seo-data"');
+    const payload = html.match(/id="canari-seo-data" data-canari-seo>(.*?)<\/script>/)?.[1];
+    expect(payload).toBeDefined();
+    const parsed = JSON.parse(payload!.replace(/\u003c/g, '<').replace(/\u0026/g, '&')) as {
+      path: string;
+      meta: SeoMeta;
+    };
+    expect(parsed.path).toBe('/associations/bde');
+    expect(parsed.meta.title).toBe('Le BDE');
+  });
+
+  it('emits the article dates only for an article', () => {
+    const article = renderSeoTags(
+      { ...base, ogType: 'article', publishedAt: '2026-08-05T10:00:00.000Z', authorName: 'BDE' },
+      '/posts/abc'
+    );
+    expect(article).toContain('article:published_time');
+    expect(article).toContain('article:author');
+
+    const page = renderSeoTags({ ...base, publishedAt: '2026-08-05T10:00:00.000Z' }, '/shop');
+    expect(page).not.toContain('article:published_time');
+  });
+
+  it('describes an entity image only when told what it shows', () => {
+    const entity = { ...base, image: 'https://canari-emse.fr/api/media/public/abc' };
+    expect(renderSeoTags(entity, '/posts/abc')).not.toContain('og:image:alt');
+    expect(renderSeoTags({ ...entity, imageAlt: 'Logo BDE' }, '/posts/abc')).toContain('Logo BDE');
+    // The default image is the one whose alt text is known.
+    expect(renderSeoTags(base, '/posts/abc')).toContain('og:image:alt');
+  });
+});

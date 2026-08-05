@@ -11,9 +11,14 @@ export const GET: RequestHandler = () => {
 User-agent: *
 Allow: /posts
 Allow: /associations
+Allow: /calendar
+Allow: /shop
 Allow: /forms/
 Allow: /legal/
 Disallow: /api/
+# The SPA shell nginx serves when the SSR container is unreachable. It is the app booting on
+# whatever URL was asked for, so it has no content and no canonical URL of its own.
+Disallow: /app-shell
 Disallow: /chat
 Disallow: /communities
 Disallow: /admin/

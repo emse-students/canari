@@ -127,9 +127,20 @@ export class AssociationsController {
     return this.service.removeDocumentReviewer(userId);
   }
 
-  // ── Public ────────────────────────────────────────────────────────────────
+  // ── Association reads (logged-in members) ─────────────────────────────────
+  //
+  // These three answer the FULL row minus the two secrets `toSafeAssociation` strips - which still
+  // leaves `stripeAccountId`, `createdBy`, the document quota and the cotisation configuration.
+  // None of that belongs to an anonymous caller, and nginx does not stop one: `/api/associations`
+  // sits behind `auth_request`, but `AuthController.check()` answers 200 for anonymous (it only
+  // sets `X-Logged-In: false`), so the guard has to be here.
+  //
+  // The unauthenticated audience has its own surface, with its own explicit projection:
+  // `/api/public/associations*` (`PublicController`, `toPublic`), which is also what the SSR head
+  // reads. Adding a field there is a deliberate act; adding a column to the entity must not be.
 
   /** Returns associations. Pass `?type=association|list` to restrict; omit for both. */
+  @UseGuards(NginxAuthGuard)
   @Get()
   async list(@Query('type') type?: string) {
     const filter = type === 'association' || type === 'list' ? type : undefined;
@@ -137,6 +148,7 @@ export class AssociationsController {
   }
 
   /** Returns an association looked up by its URL slug. */
+  @UseGuards(NginxAuthGuard)
   @Get('slug/:slug')
   async findBySlug(@Param('slug') slug: string) {
     return toSafeAssociation(await this.service.findBySlug(slug));
@@ -363,7 +375,8 @@ export class AssociationsController {
     return this.service.getCalendarLinkCandidates(id);
   }
 
-  /** Returns a single association by its ID. */
+  /** Returns a single association by its ID. Logged-in callers only - see the note on `list`. */
+  @UseGuards(NginxAuthGuard)
   @Get(':id')
   async findOne(@Param('id') id: string) {
     return toSafeAssociation(await this.service.findById(id));

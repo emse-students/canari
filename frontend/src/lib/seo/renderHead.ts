@@ -1,6 +1,10 @@
+import { renderJsonLdScript, serializeJsonLd } from '$lib/seo/jsonLd';
 import { formatDocumentTitle } from '$lib/seo/resolve';
 import { SITE, siteAssetUrl, siteOrigin } from '$lib/seo/site';
 import type { SeoMeta } from '$lib/seo/types';
+
+/** Id of the payload the client reads back to keep the head it was served. */
+export const SEO_DATA_ELEMENT_ID = 'canari-seo-data';
 
 /**
  * Escapes a value for use inside a double-quoted HTML attribute.
@@ -50,6 +54,12 @@ export function absoluteImageUrl(image: string | undefined | null): string {
  * - `og:image:width`/`height` are emitted only for the default site image. Those numbers are
  *   `SITE.defaultOgImage*`, and an entity's own logo has dimensions nobody here knows - declaring
  *   1080x1080 for a 200x200 logo makes the unfurler reserve a box the image never fills.
+ *
+ * The last element is not a tag at all: it is the resolved metadata as JSON, which the client
+ * reads back in `SeoHead.svelte`. Without it, hydration REPLACES this head with what the browser
+ * can work out on its own - which for `/associations/bde` is the slug and a generic sentence. An
+ * unfurler never gets that far, but Googlebot does render the page, and it would index the
+ * downgrade rather than what was served.
  */
 export function renderSeoTags(meta: SeoMeta, pathname: string): string {
   const documentTitle = formatDocumentTitle(meta.title);
@@ -57,6 +67,8 @@ export function renderSeoTags(meta: SeoMeta, pathname: string): string {
   const canonicalUrl = `${siteOrigin()}${canonicalPath.startsWith('/') ? canonicalPath : `/${canonicalPath}`}`;
   const image = absoluteImageUrl(meta.image);
   const isDefaultImage = image === siteAssetUrl(SITE.defaultOgImagePath);
+  const imageAlt = isDefaultImage ? SITE.defaultOgImageAlt : meta.imageAlt;
+  const isArticle = (meta.ogType ?? SITE.defaultOgType) === 'article';
 
   return [
     metaName('description', meta.description),
@@ -71,14 +83,32 @@ export function renderSeoTags(meta: SeoMeta, pathname: string): string {
     metaProperty('og:image', image),
     isDefaultImage ? metaProperty('og:image:width', String(SITE.defaultOgImageWidth)) : '',
     isDefaultImage ? metaProperty('og:image:height', String(SITE.defaultOgImageHeight)) : '',
-    isDefaultImage ? metaProperty('og:image:alt', SITE.defaultOgImageAlt) : '',
+    metaProperty('og:image:alt', imageAlt),
+    isArticle ? metaProperty('article:published_time', meta.publishedAt) : '',
+    isArticle ? metaProperty('article:author', meta.authorName) : '',
     metaName('twitter:card', 'summary_large_image'),
     metaName('twitter:title', documentTitle),
     metaName('twitter:description', meta.description),
     metaName('twitter:image', image),
+    metaName('twitter:image:alt', imageAlt),
+    renderJsonLdScript(meta.jsonLd ?? [], ' data-canari-seo'),
+    renderSeoDataScript(meta, pathname),
   ]
     .filter(Boolean)
     .join('\n    ');
+}
+
+/**
+ * The resolved metadata, for the client to adopt instead of re-deriving a weaker version.
+ *
+ * Carries the REQUESTED pathname - not the canonical one, which can differ (`/` canonicalises to
+ * `/posts`) - because that is what the client compares against `page.url.pathname`. After one
+ * client-side navigation the payload describes a page the user has left, and adopting it there
+ * would pin the first page's title to every subsequent one.
+ */
+function renderSeoDataScript(meta: SeoMeta, pathname: string): string {
+  const payload = serializeJsonLd({ path: pathname, meta });
+  return `<script type="application/json" id="${SEO_DATA_ELEMENT_ID}" data-canari-seo>${payload}</script>`;
 }
 
 /** The `<title>` element the injection substitutes for the shell's static one. */

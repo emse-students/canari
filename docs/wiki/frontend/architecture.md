@@ -19,24 +19,17 @@ The frontend is a SvelteKit application that never renders a component on the se
 The polarity is deliberate: a build that forgets the variable produces the static bundle Tauri
 needs, never a Node server it cannot consume.
 
-The web build gains a server for exactly one reason: the `<head>`. An unfurler (Discord, Slack,
-a search crawler) fetches the URL and never hydrates, so every Open Graph tag emitted by
-`SeoHead.svelte` was invisible to the only audience it was written for. `ssr` stays false — no
-component renders server-side — and `src/hooks.server.ts` rewrites the shell on its way out:
+The web build gains a server for exactly one reason: the `<head>`. An unfurler (Discord, Slack) and
+a search crawler both fetch the URL without ever getting content out of it — a crawler *does* run
+the JavaScript, but as an anonymous visitor, so it renders the login screen. `ssr` stays false, and
+`src/hooks.server.ts` rewrites two literal markers in the shell on its way out. That head is the
+whole indexable surface of the site.
 
-- `src/app.html` carries two literal markers, `<title>Canari</title>` and `<!--canari-seo-->`.
-  `renderHead.test.ts` asserts both still exist, or the injector would silently no-op.
-- `src/lib/seo/serverSeo.ts` resolves the metadata for a pathname: the baseline from
-  `seo/resolve.ts`, then a per-kind enrichment that calls social-service, core-service or
-  chat-delivery **directly over the Docker network** with `X-Internal-Secret`, behind a 1.5 s
-  timeout and a 60 s LRU. Any failure falls back to the baseline — a page never fails because a
-  preview did.
-- `src/lib/seo/renderHead.ts` emits the tags, every interpolation HTML-escaped, each tag marked
-  `data-canari-seo`.
-- `SeoHead.svelte` removes those marked nodes in `onMount` before emitting its own, so a hydrated
-  page never carries two `og:title`s.
+The design, the structured data, the per-request sitemap and the escaping rules are on their own
+page: **[seo.md](seo.md)**.
 
-Nginx serves the assets and proxies HTML navigations to the `frontend-ssr` container — see
+Nginx serves the assets and proxies HTML navigations to the `frontend-ssr` container; when that
+container is down it falls back to the prerendered `app-shell.html`, so the SPA still boots — see
 [../infrastructure/nginx.md](../infrastructure/nginx.md).
 
 ## Source tree
@@ -75,6 +68,10 @@ frontend/
 │   │   ├── seo/
 │   │   │   ├── resolve.ts          # Per-path title/description/noindex baseline
 │   │   │   ├── serverSeo.ts        # Server-only enrichment (internal service calls, LRU)
+│   │   │   ├── internalApi.ts      # Server-only client shared with the sitemap
+│   │   │   ├── jsonLd.ts           # schema.org nodes + the JSON-LD script escaping
+│   │   │   ├── injectedSeo.ts      # Client reads back what the server resolved
+│   │   │   ├── sitemap.ts          # Static entries + the XML builder
 │   │   │   └── renderHead.ts       # Escapes and renders the injected head tags
 │   │   ├── types/
 │   │   │   └── index.ts            # Central type dictionary
