@@ -40,6 +40,34 @@ const EXCLUDED_UNIVERSAL_PATHS = [
   'NOT /dev/*',
 ] as const;
 
+/**
+ * The same claim as {@link MOBILE_UNIVERSAL_LINK_PATHS}, in the shape an Android
+ * intent-filter takes (`plugins.deep-link.mobile` in `tauri.conf.json`).
+ *
+ * The two platforms carry this claim in different files, and nothing compares
+ * them: iOS reads the served `apple-app-site-association`, Android reads the
+ * intent-filter compiled into the APK - `assetlinks.json` has no notion of a
+ * path at all. So a path restriction written for one platform has **no effect**
+ * on the other, which is how Android came to claim every `canari-emse.fr` URL
+ * including `/auth/callback`, capturing the OIDC redirect meant for the browser.
+ *
+ * Android has no negation, so the `NOT` entries need no counterpart: what is not
+ * listed is not claimed. `/x/*` becomes a prefix, anything else an exact path.
+ */
+export function androidAppLinkPaths(): { path: string[]; pathPrefix: string[] } {
+  const path: string[] = [];
+  const pathPrefix: string[] = [];
+
+  for (const entry of MOBILE_UNIVERSAL_LINK_PATHS) {
+    // `/posts/*` -> prefix `/posts/`; Apple's `*` matches the remainder, which is
+    // exactly what android:pathPrefix does.
+    if (entry.endsWith('/*')) pathPrefix.push(entry.slice(0, -1));
+    else path.push(entry);
+  }
+
+  return { path, pathPrefix };
+}
+
 /** Parses `VITE_ANDROID_APP_LINK_SHA256` (comma- or whitespace-separated SHA-256 fingerprints). */
 export function parseAndroidSha256Fingerprints(raw: string | undefined): string[] {
   if (!raw?.trim()) return [];

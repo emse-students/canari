@@ -60,7 +60,28 @@
             "https"
           ],
           "host": "canari-emse.fr",
-          "appLink": true
+          "appLink": true,
+          "path": [
+            "/chat",
+            "/communities",
+            "/notifications",
+            "/calendar",
+            "/shop",
+            "/"
+          ],
+          "pathPrefix": [
+            "/posts/",
+            "/forms/",
+            "/associations/",
+            "/profile/",
+            "/chat/",
+            "/communities/",
+            "/c/join/",
+            "/g/join/",
+            "/notifications/",
+            "/calendar/",
+            "/shop/"
+          ]
         }
       ]
     }

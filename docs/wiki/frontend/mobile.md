@@ -115,6 +115,44 @@ when adding one, decide deliberately which of the two it belongs to.
 there they are unreachable by class name, and the failure only appears in the release build, which
 is the [first real Kotlin compile](../cicd.md).
 
+## What the app claims over `canari-emse.fr`
+
+Tapping an `https://canari-emse.fr/…` link on a phone with the app installed opens the **app**, not
+the browser, for every path the app claims. The claim is one decision carried in three files that no
+compiler compares:
+
+| File | Platform | Says |
+|---|---|---|
+| `lib/mobile/appSiteAssociation.ts` → `MOBILE_UNIVERSAL_LINK_PATHS` | iOS | The served `apple-app-site-association`. **Canonical.** |
+| `src-tauri/tauri.conf.json` → `plugins.deep-link.mobile` | Android | Source of the generated intent-filter |
+| `gen/android/…/AndroidManifest.xml` | Android | What is actually compiled into the APK |
+
+**A path restriction written for iOS has no effect on Android.** The two platforms express the claim
+in different places, and `assetlinks.json` — Android's half of the verification — has no notion of a
+path at all: on Android the filtering can only live in the intent-filter. That is not a detail of
+this codebase, it is how the two systems differ, and it is why the lists must be generated rather
+than maintained side by side. `androidAppLinkPaths()` does the translation (`/x/*` → `pathPrefix`,
+anything else → exact `path`; Android has no negation, so what is not listed is simply not claimed)
+and `appSiteAssociation.test.ts` fails when any of the three drifts.
+
+**A host with no path attribute claims the entire host.** Android shipped exactly that, so the app
+captured `/auth/callback?code=…&state=…` — the OIDC redirect belonging to whichever browser had
+started the login. The browser never completed its round trip and returned to the login page, on
+every retry; only phones with the app installed were affected, and only in browsers that honour App
+Links, which is why it read as "some people, some browsers". Never widen this claim to a bare host,
+and never add a path here without asking whether a *browser* is waiting for it.
+
+**Verify the claim, do not assume it.** `adb shell pm get-app-links fr.emse.canari` reports the
+verification state on a device, and Google's Digital Asset Links API answers for the served file:
+
+```
+https://digitalassetlinks.googleapis.com/v1/statements:list
+  ?source.web.site=https://canari-emse.fr&relation=delegate_permission/common.handle_all_urls
+```
+
+Both association files are prerendered by SvelteKit (`routes/.well-known/`) and served by nginx from
+`build/.well-known/`, so they follow the ordinary deploy — see [`seo.md`](seo.md) for that pipeline.
+
 ## Where an update comes from
 
 Canari ships from three places at once: Google Play (`fr.emse.canari`), the App Store
