@@ -58,6 +58,19 @@ that `frontend/src/hooks.server.ts` can write the page's Open Graph tags into th
 is sent. Nothing else can: an unfurler or a crawler never runs the client, so before this every
 shared Canari link previewed as the bare `app.html`.
 
+Two things the first deployment got wrong, both worth keeping in mind for any future upstream:
+
+- **`proxy_buffer_size 32k`** in `@ssr`. SvelteKit answers every page with a `Link:` header listing
+  ~130 `rel=modulepreload` chunks - about 7.5 KB, against the 4 KB nginx allocates for a whole
+  upstream header by default. nginx does not truncate an oversized header: it logs `upstream sent
+  too big header` and answers **502**, so every navigation failed while the upstream was healthy
+  and answering 200 to a direct `wget`.
+- **`root` is not `index.html` any more.** `adapter-static` used to overwrite the base image's own
+  `/usr/share/nginx/html/index.html`; `adapter-node` emits none, so nginx's welcome page survived
+  the `COPY` and the index module happily served it on `/`. The image now deletes it, and `/` is
+  routed by an exact `location = /` straight to `@ssr` - without one, `try_files $uri` on `/` tests
+  a directory, falls into the index module and answers 403.
+
 The two images are built from one artifact and deployed together (`cd.yml` rebuilds both whenever
 either changes) - deploying only one ships an nginx whose assets do not match the server's.
 
@@ -74,12 +87,16 @@ data, exactly like the static build's fallback). `@ssr` carries `error_page 502 
 
 Two details that are the whole point:
 
-- **No `=` on that `error_page`.** With `=` the response would be 200; without it the original
-  5xx is preserved while the body is the shell. A browser runs the scripts of a 5xx body, so a
-  person gets a working app - but a crawler gets a status it will retry, instead of a 200 carrying
-  `noindex`, which is a request to *deindex* the page.
+- **`=200` on that `error_page`, decided by measurement.** Preserving the 5xx is better in theory -
+  a crawler retries it, where a 200 gets the generic head indexed - and a browser runs the scripts
+  of a 5xx body, so a person would still get a working app. But **Cloudflare replaces the body of
+  an origin 5xx** with its own `error code: 502` plain-text page (measured 2026-08-05: the origin
+  answered 502 with the full 15 886-byte shell, the tunnel delivered 16 bytes). The shell therefore
+  never reaches anyone behind the tunnel, and a fallback nobody receives is not a fallback. A
+  degraded `<head>` is the price of the safety net; the site being unreachable is not.
 - The response carries `X-Canari-Degraded: ssr-unavailable` and `Cache-Control: no-store`, so the
-  outage is greppable in the access log and nothing caches the degraded answer.
+  outage is greppable in the access log and nothing caches the degraded answer. **That header is
+  now the only external symptom** - with `=200` the status no longer says anything.
 
 What is lost while degraded is exactly the per-page `<head>`: the bonus the SSR container adds.
 The outage stays visible through that container's healthcheck in `docker compose ps`.

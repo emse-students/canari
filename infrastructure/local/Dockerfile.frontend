@@ -16,6 +16,12 @@ FROM nginx:stable-alpine
 COPY frontend/build/client /usr/share/nginx/html
 COPY frontend/build/prerendered /usr/share/nginx/html
 
+# adapter-static used to overwrite the base image's own index.html; adapter-node
+# emits none, so the nginx welcome page survived the COPY and the index module
+# served it on "/". Delete it (and its 50x companion) so nothing can ever fall
+# back to it - the root is routed explicitly to @ssr below.
+RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
+
 # SPA fallback + reverse proxy WebSocket/API vers les services Docker
 RUN printf 'server {\n\
     listen 80;\n\
@@ -74,8 +80,18 @@ RUN printf 'server {\n\
     add_header Cache-Control "public, max-age=31536000, immutable" always;\n\
     }\n\
     \n\
+    # The root has to be matched exactly. There is no index.html any more, so\n\
+    # "try_files $uri" on "/" would test a DIRECTORY, hand the request to the\n\
+    # index module and answer 403 - the one path that cannot reach @ssr on its\n\
+    # own. An exact location skips that machinery entirely.\n\
+    location = / {\n\
+    try_files /nonexistent @ssr;\n\
+    }\n\
+    \n\
+    # No $uri/ here on purpose: every directory under the root has its own\n\
+    # location, so the only thing $uri/ can still do is re-open the 403 above.\n\
     location / {\n\
-    try_files $uri $uri/ @ssr;\n\
+    try_files $uri @ssr;\n\
     add_header Cache-Control "no-store" always;\n\
     add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"' https://js.stripe.com; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://api.stripe.com https://merchant-ui-api.stripe.com https://r.stripe.com https://js.stripe.com https://api.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"' https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com; form-action '"'"'self'"'"' https://checkout.stripe.com; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n\
     }\n\
@@ -92,13 +108,23 @@ RUN printf 'server {\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
     proxy_read_timeout 30s;\n\
-    error_page 502 503 504 @app_shell;\n\
+    # SvelteKit answers every page with a Link: rel=modulepreload header listing\n\
+    # ~130 chunks - about 7.5 KB, where nginx allocates 4 KB for the whole\n\
+    # upstream header by default. It does not truncate: it logs "upstream sent\n\
+    # too big header" and answers 502, so EVERY navigation failed while the\n\
+    # upstream itself was healthy. 32k leaves room for the list to grow.\n\
+    proxy_buffer_size 32k;\n\
+    proxy_buffers 8 32k;\n\
+    proxy_busy_buffers_size 64k;\n\
+    error_page 502 503 504 =200 @app_shell;\n\
     }\n\
     \n\
-    # NOTE: no `=` on the error_page above, so the 502/503/504 status is PRESERVED while\n\
-    # the body is the shell. The browser runs the scripts of a 5xx body, so a person gets\n\
-    # a working app; a crawler gets a 5xx it will retry, instead of a 200 carrying noindex,\n\
-    # which is a request to DEINDEX the page.\n\
+    # NOTE: `=200` on the error_page above, and it was measured rather than chosen.\n\
+    # Preserving the 5xx would be better for a crawler (a status it retries, instead of a\n\
+    # 200 whose head is the generic one), and a browser runs the scripts of a 5xx body\n\
+    # anyway - but Cloudflare REPLACES the body of an origin 5xx with its own\n\
+    # "error code: 502" plain-text page, so the shell never reaches anyone. A degraded\n\
+    # <head> is the cost of the fallback; the site being unreachable is not.\n\
     # adapter-node emits no index.html, so without this the frontend-ssr container\n\
     # being down means a 502 on EVERY navigation - the whole site, to spare the\n\
     # per-page head. app-shell.html is prerendered (routes/app-shell/) and boots the\n\

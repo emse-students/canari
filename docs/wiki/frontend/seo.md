@@ -128,10 +128,12 @@ prerendered into `build/prerendered/app-shell.html`: a plain shell that boots th
 URL was requested (`kit.start(app, element)` with no route data, exactly like the static build's
 fallback). nginx serves it from `@app_shell` on 502/503/504.
 
-**There is deliberately no `=` on that `error_page`**, so the 5xx status is preserved while the body
-is the shell. A browser runs the scripts of a 5xx body, so a person gets a working app; a crawler
-gets a status it will retry, rather than a 200 carrying `noindex` — which is a request to *deindex*
-the page. See [../infrastructure/nginx.md](../infrastructure/nginx.md).
+That `error_page` carries **`=200`**, and the reasoning went the other way first. Preserving the 5xx
+is better for a crawler (a status it retries, rather than a 200 whose head is the generic one), and
+a browser runs the scripts of a 5xx body anyway — but Cloudflare *replaces* the body of an origin
+5xx with its own plain-text page, so the shell never reaches anyone. What is indexed during an
+outage is the site's default head, which the next crawl repairs; what a 5xx costs is the site. See
+[../infrastructure/nginx.md](../infrastructure/nginx.md).
 
 ## Related
 

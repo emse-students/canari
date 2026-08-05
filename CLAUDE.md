@@ -202,6 +202,11 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   takes the site down - nginx serves the prerendered shell - but it does silently cost every head,
   so `X-Canari-Degraded: ssr-unavailable` in the access log is the thing to grep for.
   Open a WP only if one of these FAILS.
+  **The first deploy (2026-08-05) shipped three nginx faults - stock welcome page on `/`, 502 on
+  every other navigation, and a fallback Cloudflare swallowed.** All three are fixed and the rules
+  are above; what is still OWED is confirming on prod that a real enriched head arrives (`<title>`,
+  `og:title`, `ld+json` on `/posts/<id>` and `/associations/<slug>`), which is also the only proof
+  `INTERNAL_SECRET` reached the container.
 
 - \[ \] **WP-HIST-3 (P2) - Pool history per MESSAGE between devices, not all-or-nothing.** Successor
   to WP-HIST-2 (shipped 2026-08-02), which stopped the blind soliciting but left the exchange itself
@@ -379,9 +384,18 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - Hydration REPLACES the server's head with what the browser can derive alone, which is weaker. An
   unfurler never notices; a crawler indexes the downgrade. Ship the resolved meta as a JSON payload
   the client adopts - keyed on the REQUESTED path, since `/` canonicalises to `/posts`.
-- An `error_page` without `=` keeps the original 5xx while serving the fallback body. Browsers run
-  the scripts of a 5xx body, so that is a working app for a person and a retry for a crawler - a
-  200 carrying `noindex` would instead ask Google to DEINDEX the page.
+- An `error_page` without `=` keeps the original 5xx while serving the fallback body - but
+  CLOUDFLARE REPLACES the body of an origin 5xx with its own 16-byte page, so behind the tunnel a
+  fallback served that way reaches nobody. Measured 2026-08-05; hence `=200`.
+- nginx does not TRUNCATE an oversized upstream header, it 502s (`upstream sent too big header`).
+  SvelteKit's `Link: rel=modulepreload` header is ~7.5 KB against a 4 KB default `proxy_buffer_size`,
+  so every page 502'd while `wget` straight at the upstream answered 200.
+- `adapter-static` used to OVERWRITE the nginx image's own `index.html`; `adapter-node` emits none,
+  so the welcome page survives the COPY and becomes the home page. Delete it, and route `/` with an
+  exact `location = /` - `try_files $uri` on `/` tests a directory and falls into the index module.
+- A deploy being green proves the containers started, never that the site answers: probe the public
+  URL for each SHAPE of path (root, an app route, a prerendered file, a dynamic endpoint). Here all
+  four differed, and the one that kept working is what made the outage look like a routing bug.
 - Docker strips `#` comment lines inside a continued instruction, so an apostrophe in one never
   reaches the shell and the comment never reaches the generated file. Emulating a Dockerfile
   locally means stripping comments FIRST, then joining continuations, or you diagnose a bug that
