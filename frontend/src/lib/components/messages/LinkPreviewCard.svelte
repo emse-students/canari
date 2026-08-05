@@ -4,6 +4,7 @@
   import MiGalleryLinkPreview from '$lib/components/messages/MiGalleryLinkPreview.svelte';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
   import { fetchCanariLinkPreview, type CanariLinkPreview } from '$lib/utils/canariLinkPreview';
+  import { CANARI_BADGE_LABEL } from '$lib/utils/canariLinkPreviewFormat';
   import { faviconCandidates } from '$lib/utils/faviconCandidates';
   import { inAppPathFromHref, isInAppHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
 
@@ -101,13 +102,16 @@
   );
 
   /**
-   * The amber chip. In-app it names the kind of content; for an external link it
-   * is the HOST, never `siteName`: a great many sites set `og:site_name` to the
-   * page title, so the chip and the title below it printed the same sentence
-   * twice. The hostname is always short, and it is the one thing the title does
-   * not already say - where the link actually goes.
+   * The amber chip. In-app it names the KIND of content (Publication, Association...),
+   * falling back to the brand for a plain route; for an external link it is the HOST,
+   * never `siteName`. The one rule behind both: a great many sites set `og:site_name`
+   * to the page title, and a Canari route had nothing but its own label to show, so
+   * either way the chip and the title below it printed the same sentence twice. What
+   * belongs here is the thing the title does not already say - where the link goes.
    */
-  const cardCategory = $derived(isInApp ? (canariPreview?.categoryLabel ?? 'Canari') : parsed.host);
+  const cardCategory = $derived(
+    isInApp ? (canariPreview?.categoryLabel ?? CANARI_BADGE_LABEL) : parsed.host
+  );
 
   const cardSubtitle = $derived(isInApp ? canariPreview?.subtitle : externalPreview?.description);
 

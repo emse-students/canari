@@ -768,9 +768,7 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const { service, productRepo, deliveryRepo, manager } = makeService();
       productRepo.find.mockResolvedValue([{ id: 'prod1', name: 'Recharge Cercle' }]);
       deliveryRepo.__setRows([failedRow()]);
-      manager.query.mockResolvedValue([
-        { id: 'user1', firstName: 'Camille', lastName: 'Durand' },
-      ]);
+      manager.query.mockResolvedValue([{ id: 'user1', firstName: 'Camille', lastName: 'Durand' }]);
 
       const [listed] = await service.listWebhookFailures('asso1');
 

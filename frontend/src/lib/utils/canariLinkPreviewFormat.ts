@@ -2,9 +2,17 @@ import type { PostEntity } from '$lib/posts/api';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
 import { inAppPathFromHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
 
+/**
+ * The badge shown on an in-app card that has nothing more specific to say than "this
+ * goes to Canari" - the counterpart of the HOST chip an external card carries. A brand
+ * name, so it is deliberately not localized.
+ */
+export const CANARI_BADGE_LABEL = 'Canari';
+
 /** Resolved metadata for an in-app Canari link (chat / post preview cards). */
 export interface CanariLinkPreview {
   kind: 'post' | 'form' | 'association' | 'profile' | 'route';
+  /** The amber chip: the KIND of thing linked to, never a repeat of {@link title}. */
   categoryLabel: string;
   title: string;
   subtitle?: string;
@@ -19,7 +27,7 @@ export type CanariLinkTarget =
   | { kind: 'profile'; userId: string }
   | { kind: 'community-invite'; token: string }
   | { kind: 'group-invite'; token: string }
-  | { kind: 'route'; categoryLabel: string };
+  | { kind: 'route'; label: string };
 
 /**
  * Parses an in-app href into a fetch target, or null when the route is not supported.
@@ -48,7 +56,7 @@ export function parseCanariLinkTarget(href: string): CanariLinkTarget | null {
   if (groupInvite) return { kind: 'group-invite', token: groupInvite[1] };
 
   const label = publicAppLinkLabel(href);
-  if (label) return { kind: 'route', categoryLabel: label };
+  if (label) return { kind: 'route', label };
 
   return null;
 }

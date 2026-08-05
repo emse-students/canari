@@ -243,6 +243,37 @@ push clears the conversation's notification on the user's other devices.
 | POST | `/api/associations/:id/products` | Create boutique product |
 | POST | `/api/associations/:id/products/:productId/checkout` | Start Stripe checkout for product |
 
+### An association row carries two secrets, and three reads spread it whole
+
+`GET /api/associations`, `/api/associations/:id` and `/api/associations/slug/:slug` sit under the
+controller's `── Public ──` banner and carry **no guard**. nginx puts `/api/associations` behind
+`auth_request`, but `/api/auth/verify` answers 200 for an anonymous request (it only sets
+`X-Logged-In: false`), so those three are reachable from the internet. All three returned
+`{ ...asso, memberCount, parentName }` - which spread `documentVaultKey`, the hex 32-byte master
+key every document CEK is derived from, and `notesCiphertext`.
+
+`toSafeAssociation` (`associations/association.projection.ts`) is now the single seam that nulls
+both, applied at the three controller reads. Third instance of one rule, after `Channel.masterSecret`
+and `AssociationProduct.webhookSecret`: **an entity that carries a secret needs one projection, and
+every read has to pass through it.**
+
+The seam is the controller, not the service, on purpose: `findById` is also used by writers
+(`update`), and stripping in the service would hand them a row whose key column reads null. It
+nulls rather than deletes, so responses keep the shape their TypeScript clients expect.
+
+*Still open, deliberately:* the three routes remain unguarded, so `stripeAccountId` and the rest of
+the row are readable without a session. Adding `NginxAuthGuard` there is the right fix but changes
+access semantics for routes other repos may consume, so it is a separate decision.
+
+### A post scheduled for later is not readable by id
+
+Every `listPosts` query filters `scheduledAt IS NULL OR scheduledAt <= NOW()`. `getById` did not,
+so a queued post was fully readable through `GET /api/posts/:postId` - and would have been
+published early by any link preview or share unfurl. It now applies the same rule, letting through
+only the post's **author** (so scheduling does not hide a post from whoever wrote it) and a global
+admin. Everyone else gets 404, not 403: the existence of an unpublished post is itself the thing to
+hide. Pinned by `posts.service.scheduling.spec.ts`.
+
 ### Who may touch a calendar event
 
 One rule, enforced in `updateCalendarEvent` / `deleteCalendarEvent` and mirrored by every UI that

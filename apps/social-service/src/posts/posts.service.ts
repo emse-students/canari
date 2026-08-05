@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
 import {
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
   ForbiddenException,
@@ -16,6 +17,7 @@ import { PostNotificationsService } from './post-notifications.service';
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
 @Injectable()
 export class PostsService {
+  private readonly logger = new Logger(PostsService.name);
   private static readonly LIST_CACHE_TTL = 30; // seconds
 
   /**
@@ -585,11 +587,23 @@ export class PostsService {
   }
 
   /** Loads a single post by ID and returns the public-shaped version (association identity applied). */
-  async getById(id: string, opts?: { allowHidden?: boolean }) {
+  async getById(id: string, opts?: { allowHidden?: boolean; viewerId?: string }) {
     const post = await this.postRepo.findOne({ where: { id } });
     if (!post) throw new NotFoundException('Post not found');
     if (post.hiddenByModeration && !opts?.allowHidden) {
       throw new ForbiddenException('Post not available');
+    }
+    // Every listPosts query carries `scheduledAt IS NULL OR scheduledAt <= NOW()`; this read did
+    // not, so a post queued for a future date was already served by id - and a link preview or an
+    // unfurled share would have published it before its own publication date. Its author and a
+    // global admin still reach it, so scheduling a post does not hide it from the person who wrote
+    // it. Answers "not found" rather than "forbidden" to everyone else: the existence of an
+    // unpublished post is itself the thing to hide.
+    const publishesLater = !!post.scheduledAt && post.scheduledAt.getTime() > Date.now();
+    const viewerOwnsIt = !!opts?.viewerId && post.authorId === opts.viewerId;
+    if (publishesLater && !viewerOwnsIt && !opts?.allowHidden) {
+      this.logger.debug(`getById ${id} withheld: scheduled for ${post.scheduledAt?.toISOString()}`);
+      throw new NotFoundException('Post not found');
     }
     const shaped = await this.toPublicPostFromEntity(post);
     // Attach author name fields (same source as listPosts - local users table).

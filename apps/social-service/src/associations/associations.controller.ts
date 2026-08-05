@@ -26,6 +26,7 @@ import { GlobalAdminOrAssociationRoleGuard } from './guards/global-admin-or-asso
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
 import { ReviewerAccessGuard } from './guards/reviewer-access.guard';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
+import { toSafeAssociation } from './association.projection';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
 import { assertInternalSecret } from '../internal/internal-secret.util';
@@ -130,15 +131,15 @@ export class AssociationsController {
 
   /** Returns associations. Pass `?type=association|list` to restrict; omit for both. */
   @Get()
-  list(@Query('type') type?: string) {
+  async list(@Query('type') type?: string) {
     const filter = type === 'association' || type === 'list' ? type : undefined;
-    return this.service.list(filter);
+    return (await this.service.list(filter)).map(toSafeAssociation);
   }
 
   /** Returns an association looked up by its URL slug. */
   @Get('slug/:slug')
-  findBySlug(@Param('slug') slug: string) {
-    return this.service.findBySlug(slug);
+  async findBySlug(@Param('slug') slug: string) {
+    return toSafeAssociation(await this.service.findBySlug(slug));
   }
 
   /** Returns all associations the calling user is a member of. */
@@ -364,8 +365,8 @@ export class AssociationsController {
 
   /** Returns a single association by its ID. */
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.service.findById(id);
+  async findOne(@Param('id') id: string) {
+    return toSafeAssociation(await this.service.findById(id));
   }
 
   // ── Authenticated ─────────────────────────────────────────────────────────

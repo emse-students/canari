@@ -1,3 +1,5 @@
+import { m } from '$lib/paraglide/messages';
+
 /** Production web origin used for shareable links when the WebView runs on Tauri. */
 export const DEFAULT_PUBLIC_APP_ORIGIN = 'https://canari-emse.fr';
 
@@ -121,25 +123,31 @@ export function isInAppHref(href: string, base?: string): boolean {
 }
 
 /**
- * Short French label for an in-app Canari link (chat UI). Returns null for external URLs.
+ * Short localized label naming WHAT an in-app Canari link points at. Returns null for
+ * external URLs.
+ *
+ * It names the destination only - never the app - because every surface that shows it
+ * already says Canari next to it (the preview card's badge, {@link AppLink}'s chip). A
+ * label carrying the brand as well printed the word twice in the same card.
  */
 export function publicAppLinkLabel(href: string, base?: string): string | null {
   const path = inAppPathFromHref(href, base);
   if (!path) return null;
 
   const pathname = path.split(/[?#]/)[0] || '/';
-  if (pathname === '/') return 'Accueil Canari';
-  if (pathname === '/chat' || pathname.startsWith('/chat/')) return 'Discussion';
-  if (pathname === '/communities' || pathname.startsWith('/communities/')) return 'Communauté';
-  if (pathname.startsWith('/c/join/')) return 'Invitation communauté';
-  if (pathname.startsWith('/g/join/')) return 'Invitation discussion';
+  if (pathname === '/') return m.link_label_home();
+  if (pathname === '/chat' || pathname.startsWith('/chat/')) return m.link_label_chat();
+  if (pathname === '/communities' || pathname.startsWith('/communities/'))
+    return m.link_label_community();
+  if (pathname.startsWith('/c/join/')) return m.link_label_community_invite();
+  if (pathname.startsWith('/g/join/')) return m.link_label_group_invite();
   if (pathname === '/notifications' || pathname.startsWith('/notifications/'))
-    return 'Notifications';
-  if (pathname === '/calendar' || pathname.startsWith('/calendar/')) return 'Agenda';
-  if (pathname === '/shop' || pathname.startsWith('/shop/')) return 'Boutique';
-  if (pathname.startsWith('/posts/')) return 'Publication';
-  if (pathname.startsWith('/forms/')) return 'Formulaire';
-  if (pathname.startsWith('/associations/')) return 'Association';
-  if (pathname.startsWith('/profile/')) return 'Profil';
-  return 'Lien Canari';
+    return m.link_label_notifications();
+  if (pathname === '/calendar' || pathname.startsWith('/calendar/')) return m.link_label_calendar();
+  if (pathname === '/shop' || pathname.startsWith('/shop/')) return m.link_label_shop();
+  if (pathname.startsWith('/posts/')) return m.link_label_post();
+  if (pathname.startsWith('/forms/')) return m.link_label_form();
+  if (pathname.startsWith('/associations/')) return m.link_label_association();
+  if (pathname.startsWith('/profile/')) return m.link_label_profile();
+  return m.link_label_generic();
 }

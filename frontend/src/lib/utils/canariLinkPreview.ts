@@ -4,7 +4,9 @@ import { getPost } from '$lib/posts/api';
 import { getGroupInvitePreview } from '$lib/mls/groupInvites';
 import { channelService } from '$lib/services/ChannelService';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
+import { m } from '$lib/paraglide/messages';
 import {
+  CANARI_BADGE_LABEL,
   formatPriceCents,
   parseCanariLinkTarget,
   postAuthorDisplayName,
@@ -42,7 +44,7 @@ async function fetchPostPreview(postId: string): Promise<CanariLinkPreview> {
   const post = await getPost(postId);
   return {
     kind: 'post',
-    categoryLabel: 'Publication',
+    categoryLabel: m.link_label_post(),
     title: postPreviewTitle(post),
     subtitle: postAuthorDisplayName(post),
     imageUrl: post.association?.logoUrl ? associationLogoSrc(post.association.logoUrl) : null,
@@ -59,8 +61,8 @@ async function fetchFormPreview(formId: string): Promise<CanariLinkPreview> {
 
   return {
     kind: 'form',
-    categoryLabel: 'Formulaire',
-    title: form.title?.trim() || 'Formulaire',
+    categoryLabel: m.link_label_form(),
+    title: form.title?.trim() || m.link_label_form(),
     subtitle,
     imageUrl: form.imageUrl?.trim() || null,
   };
@@ -76,7 +78,7 @@ async function fetchAssociationPreview(slug: string): Promise<CanariLinkPreview>
 
   return {
     kind: 'association',
-    categoryLabel: 'Association',
+    categoryLabel: m.link_label_association(),
     title: asso.name,
     subtitle,
     imageUrl: associationLogoSrc(asso.logoUrl),
@@ -88,9 +90,9 @@ async function fetchProfilePreview(userId: string): Promise<CanariLinkPreview> {
   void resolveUserDisplayName(userId);
   return {
     kind: 'profile',
-    categoryLabel: 'Profil',
+    categoryLabel: m.link_label_profile(),
     title,
-    subtitle: 'Membre Canari',
+    subtitle: m.link_preview_profile_member(),
   };
 }
 
@@ -98,9 +100,9 @@ async function fetchCommunityInvitePreview(token: string): Promise<CanariLinkPre
   const preview = await channelService.getInvitePreview(token);
   return {
     kind: 'route',
-    categoryLabel: 'Invitation communauté',
-    title: preview.workspaceName?.trim() || 'Communauté',
-    subtitle: preview.valid ? 'Rejoindre la communauté' : 'Invitation invalide ou expirée',
+    categoryLabel: m.link_label_community_invite(),
+    title: preview.workspaceName?.trim() || m.link_label_community(),
+    subtitle: preview.valid ? m.link_preview_join_community() : m.link_preview_invite_invalid(),
     imageUrl: preview.imageMediaId ? `/api/media/public/${preview.imageMediaId}` : null,
   };
 }
@@ -109,9 +111,9 @@ async function fetchGroupInvitePreview(token: string): Promise<CanariLinkPreview
   const preview = await getGroupInvitePreview(token);
   return {
     kind: 'route',
-    categoryLabel: 'Invitation discussion',
-    title: preview.groupName?.trim() || 'Discussion',
-    subtitle: preview.valid ? 'Rejoindre la discussion' : 'Invitation invalide ou expirée',
+    categoryLabel: m.link_label_group_invite(),
+    title: preview.groupName?.trim() || m.link_label_chat(),
+    subtitle: preview.valid ? m.link_preview_join_conversation() : m.link_preview_invite_invalid(),
   };
 }
 
@@ -148,11 +150,14 @@ export async function fetchCanariLinkPreview(href: string): Promise<CanariLinkPr
         preview = await fetchGroupInvitePreview(target.token);
         break;
       case 'route':
+        // A plain route has no entity behind it, so the badge falls back to the brand -
+        // the in-app equivalent of the host chip an external card shows - and the label
+        // is the title. Both carried the label before, printing it twice per card.
         preview = {
           kind: 'route',
-          categoryLabel: target.categoryLabel,
-          title: target.categoryLabel,
-          subtitle: 'Ouvrir dans Canari',
+          categoryLabel: CANARI_BADGE_LABEL,
+          title: target.label,
+          subtitle: m.link_preview_open_in_canari(),
         };
         break;
     }
@@ -161,9 +166,9 @@ export async function fetchCanariLinkPreview(href: string): Promise<CanariLinkPr
     console.log('[canariLinkPreview] fetch failed:', href, err);
     const fallback: CanariLinkPreview = {
       kind: 'route',
-      categoryLabel: publicAppLinkLabel(href) ?? 'Canari',
-      title: publicAppLinkLabel(href) ?? 'Lien Canari',
-      subtitle: 'Contenu indisponible ou accès restreint',
+      categoryLabel: CANARI_BADGE_LABEL,
+      title: publicAppLinkLabel(href) ?? m.link_label_generic(),
+      subtitle: m.link_preview_unavailable(),
     };
     return cachePreview(href, fallback);
   }

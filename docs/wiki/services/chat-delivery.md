@@ -541,6 +541,24 @@ preview payload arrives with the declared icon - i.e. while a conventional path 
 the race is the normal case, not an edge one: the icon appeared and was then replaced by the globe.
 A probe owns its element, so an answer can only be about the URL that was asked.
 
+#### The badge says where the link goes; the title says what is there
+
+`LinkPreviewCard.svelte` draws two text lines, and the rule that keeps them from colliding is the
+same on both branches: **the badge must carry what the title does not already say.**
+
+| | badge | title |
+|---|---|---|
+| external | the HOST (`parsed.host`) | `og:title` |
+| in-app, typed | the KIND (Publication, Association, Formulaire, Profil) | the entity's name |
+| in-app, plain route | `CANARI_BADGE_LABEL` | `publicAppLinkLabel()` (Accueil, Agenda...) |
+
+Never `og:site_name` on the external branch: a great many sites set it to the page title, so the
+card printed the same sentence twice. The in-app branch had the mirror-image bug - a plain route
+has no entity, and both fields were fed the same `publicAppLinkLabel()`, giving "ACCUEIL CANARI"
+over "Accueil Canari". The badge now falls back to the brand (the in-app counterpart of the host
+chip) and the label is the title alone; correspondingly, `publicAppLinkLabel` names the
+destination and never the app, since every surface that shows it already says Canari beside it.
+
 **Deciding "is this address reachable" is the whole guard, and the address space is wider than
 RFC 1918.** `isPrivateIpAddress` also rejects `0.0.0.0/8` (on Linux a connection to `0.0.0.0`
 lands on loopback), CGNAT, the benchmark/protocol blocks, multicast and reserved space; on IPv6

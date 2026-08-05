@@ -24,6 +24,15 @@ describe('parseCanariLinkTarget', () => {
       userId: 'user-1',
     });
   });
+
+  it('carries a plain route as a title label, not as a category', () => {
+    // `label` is what the card puts on its TITLE line; the badge is the brand. The
+    // field was once named categoryLabel and fed both, which printed it twice.
+    expect(parseCanariLinkTarget('https://canari-emse.fr/')).toEqual({
+      kind: 'route',
+      label: 'Accueil',
+    });
+  });
 });
 
 describe('postPreviewTitle', () => {

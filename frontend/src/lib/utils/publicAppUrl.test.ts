@@ -68,4 +68,13 @@ describe('publicAppUrl', () => {
     );
     expect(publicAppLinkLabel('https://example.com/x')).toBeNull();
   });
+
+  it('names the destination without naming the app', () => {
+    // Every surface showing this label sits next to the Canari badge, so a label
+    // carrying the brand printed it twice ("ACCUEIL CANARI" over "Accueil Canari").
+    expect(publicAppLinkLabel('https://canari-emse.fr/')).toBe('Accueil');
+    for (const path of ['/', '/chat', '/calendar', '/posts/abc', '/unknown']) {
+      expect(publicAppLinkLabel(`https://canari-emse.fr${path}`)).not.toContain('Canari');
+    }
+  });
 });

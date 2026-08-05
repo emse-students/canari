@@ -82,3 +82,47 @@ describe('AssociationsController cotisation config gating (D5)', () => {
     expect(productsService.provisionCotisationProduct).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The three association reads all spread the entity, and none of them carries a guard, so the
+ * document vault master key was reachable without a session at all.
+ */
+describe('AssociationsController secret stripping', () => {
+  const row = {
+    id: 'asso1',
+    slug: 'bde',
+    name: 'BDE',
+    memberCount: 3,
+    stripeOnboardingComplete: true,
+    documentVaultKey: 'a'.repeat(64),
+    notesCiphertext: 'encrypted-notes',
+  };
+
+  function makeController() {
+    const service = {
+      list: jest.fn(() => Promise.resolve([row])),
+      findBySlug: jest.fn(() => Promise.resolve(row)),
+      findById: jest.fn(() => Promise.resolve(row)),
+    };
+    return new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService
+    );
+  }
+
+  it.each([
+    ['list', async (c: AssociationsController) => (await c.list())[0]],
+    ['findBySlug', (c: AssociationsController) => c.findBySlug('bde')],
+    ['findOne', (c: AssociationsController) => c.findOne('asso1')],
+  ])('never lets %s answer with the vault key or the private notes', async (_name, read) => {
+    const result = await read(makeController());
+
+    expect(result.documentVaultKey).toBeNull();
+    expect(result.notesCiphertext).toBeNull();
+    // The rest of the row still has to reach the app - the fix is a strip, not an allowlist.
+    expect(result).toMatchObject({ id: 'asso1', name: 'BDE', stripeOnboardingComplete: true });
+  });
+});
