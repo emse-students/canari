@@ -17,6 +17,7 @@ import { coreUrl } from '$lib/utils/apiUrl';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
+import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
@@ -284,10 +285,24 @@ async function _doRefresh(): Promise<string> {
   const endpoint = `${coreUrl()}/api/auth/refresh`;
   alog(`refresh→ ${endpoint}`);
   const t0 = Date.now();
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    credentials: 'include', // send HttpOnly cookie
-  });
+  // The refresh is the first call of every cold start, so it is also the app's primary
+  // connectivity probe. A transport failure here means "no network"; an HTTP status - any status -
+  // means the server answered and the session question is decided below. Keeping the two apart is
+  // what lets an offline launch unlock instead of being reported as an expired session.
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      credentials: 'include', // send HttpOnly cookie
+    });
+    connectivity.notifyServerReachable();
+  } catch (e) {
+    if (isTransportFailure(e)) connectivity.notifyServerUnreachable();
+    _accessToken = null;
+    clearWsSessionCookie();
+    awarn(`refresh✗transport ${Date.now() - t0}ms: ${String(e)}`);
+    throw e;
+  }
 
   if (!res.ok) {
     // Don't call clearAuth() - that would wipe userId from localStorage and revoke

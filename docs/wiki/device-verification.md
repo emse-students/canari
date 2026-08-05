@@ -48,6 +48,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | K | WP-NOTIF-1 | owed | owed |
 | L | WP-DEV-PANEL-1 | owed | owed |
 | M | WP-POST-DOC-2 | owed (the platform that matters) | n/a |
+| N | Offline unlock + promotion | owed | owed |
 
 For the iOS pass, install the `ios-release` artifact of the run above rather than waiting for
 TestFlight: a dispatch does not upload there, so TestFlight is still on the previous build and check
@@ -268,6 +269,34 @@ files without fetching them - and a password-protected vault document cannot be 
 its password at all. Neither is a failure.
 
 ---
+
+## N. Offline unlock and the promotion back - owed on BOTH platforms
+
+**Proves** the offline-unlock work. Nothing in a compile or a unit test can answer it: the whole
+feature is about what a real cold start does when `POST /api/auth/refresh` cannot leave the device,
+and both the keystore read and the SQLite store behave differently on hardware than under jsdom.
+
+Requires biometrics enrolled, or "rester connecté" on. **A PIN-only account is expected to FAIL to
+unlock offline** - that is the designed behaviour, not a defect.
+
+1. Sign in normally, exchange a few messages, then force-quit the app.
+2. Enable flight mode. Launch the app.
+3. The biometric prompt appears and the conversation list opens on the local history. Verdict line:
+   `[LOGIN] Offline unlock (no token) - local session, will promote on reconnect.`
+   The offline banner is visible. It must appear **fast** - the version gate is short-circuited
+   offline, so if the launch hangs ~26 s before the prompt, that short-circuit is not working.
+4. Send a message. It stays `pending`, and the log must NOT show flush attempts:
+   `[OUTBOX] Flush skipped - offline; the queue is kept intact for the next reconnect.`
+   Repeated `transient failure (attempt N)` lines here are a failure - the queue is burning its
+   backoff against an absent network.
+5. Disable flight mode. Expect, in order:
+   `[PROMOTE] Access token acquired`, `[WS] Connected to Chat Gateway`, then the outbox draining.
+   The message turns `sent`, the banner clears, and anything the peer sent meanwhile arrives.
+6. **The session-death half**, which is the one worth being careful about: unlock offline as above,
+   revoke that session from Réglages > Connexions actives on another device, then restore the
+   network. Expect `[PROMOTE] Session expired while offline - signing out.` and a redirect to
+   `/login` - then sign back in and confirm **the full local history is still there**. Losing it
+   would mean the logout wiped the encrypted store, which it must not.
 
 ## Traps that outlived the work that found them
 

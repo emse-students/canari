@@ -111,6 +111,13 @@ export interface SessionContext {
   setLoginError(v: string): void;
   isReconnecting(): boolean;
   setIsReconnecting(v: boolean): void;
+  /**
+   * True when this session was unlocked with no access token, because the device had no network
+   * at launch (see `loginImpl`). The MLS state and the local message store are fully usable; only
+   * the transport is missing. Cleared by `promoteOfflineSession` once a token is obtained.
+   */
+  isOfflineSession(): boolean;
+  setIsOfflineSession(v: boolean): void;
   isSyncing(): boolean;
   setIsSyncing(v: boolean): void;
   getIsLoginInProgress(): boolean;

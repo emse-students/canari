@@ -5,6 +5,7 @@ import {
   parseServerVersionInfo,
   type AppVersionCheckResult,
 } from '$lib/utils/appVersion';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 
 const CACHED_SERVER_VERSION_KEY = 'canari:last_server_version_info';
 
@@ -85,6 +86,17 @@ export function dismissAppUpdatePrompt(): void {
  */
 export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
   if (inflight) return inflight;
+
+  // With no network the probe cannot answer, and its retry ladder (3 x 8 s timeouts plus backoff)
+  // would sit in front of the unlock for ~26 s before falling back to exactly the cached verdict
+  // returned here. The verdict is unchanged - only the wait is dropped.
+  if (connectivity.isOffline) {
+    const cached = buildAppVersionCheckResult(loadCachedServerInfo());
+    if (!cached.upToDate || cached.belowMinVersion || cached.maintenance.enabled) {
+      lastCheck = cached;
+    }
+    return lastCheck ?? cached;
+  }
 
   const previousServer = lastCheck?.serverVersion ?? null;
 

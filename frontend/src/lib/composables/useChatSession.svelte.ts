@@ -63,6 +63,12 @@ export function useChatSession() {
   // ── Session status ────────────────────────────────────────────────────────
   let isLoggedIn = $state(false);
   let isWsConnected = $state(false);
+  /**
+   * True when the session was unlocked with no access token because the device had no network.
+   * The local store is fully readable and the outbox accepts writes; only the transport is
+   * missing. `promoteOfflineSession` clears it on the first successful token.
+   */
+  let isOfflineSession = $state(false);
 
   // ── Services ──────────────────────────────────────────────────────────────
   let mls: IMlsService | null = $state(null);
@@ -188,6 +194,10 @@ export function useChatSession() {
     isReconnecting: () => isReconnecting,
     setIsReconnecting: (v) => {
       isReconnecting = v;
+    },
+    isOfflineSession: () => isOfflineSession,
+    setIsOfflineSession: (v) => {
+      isOfflineSession = v;
     },
     isSyncing: () => isSyncing,
     setIsSyncing: (v) => {
@@ -339,6 +349,14 @@ export function useChatSession() {
     /** True while the WebSocket connection to the gateway is open. */
     get isWsConnected() {
       return isWsConnected;
+    },
+    /**
+     * True when the session was unlocked offline and still holds no access token. The UI uses it
+     * to show the offline banner; it is NOT the same as `!isWsConnected`, which merely says the
+     * socket is down on an otherwise authenticated session.
+     */
+    get isOfflineSession() {
+      return isOfflineSession;
     },
     /** True when this tab is the MLS leader (holds the WebSocket). False for follower tabs. */
     get isTabLeader() {

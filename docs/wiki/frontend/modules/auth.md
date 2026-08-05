@@ -297,6 +297,64 @@ the handler registration, the ACL array or the default permission set drift apar
 attributes without decrypting (it tests the background item first, which carries no access
 control, then the primary one with `kSecUseAuthenticationUISkip`).
 
+## Offline unlock
+
+A cold start with no network used to be unable to open the app at all. The blocker was never the
+PIN - it was `getToken()`. The access token lives in memory only, so every cold start goes to
+`POST /api/auth/refresh`, and offline that `fetch` rejects before anything local is even read.
+Meanwhile a complete encrypted history sits on the device, perfectly readable.
+
+**Only the paths that already skip the server PIN check may unlock offline**
+(`offlineCapable = isBiometric || isVaultLogin` in `sessionAuth.ts`). That is the whole security
+argument, and it is not a convenience choice: on those two paths the platform keystore or the
+encrypted device-key vault *is* the authentication factor, and no server answer is part of the
+decision - online or offline. So an offline unlock verifies everything an online one verifies.
+Nothing is skipped, and nothing is deferred.
+
+The PIN path is deliberately excluded. Its at-rest key derives from a per-user salt only the server
+holds (`GET /api/mls/security/pin-salt`), and that salt is never cached. Caching it is what would
+turn a 4-character PIN into an offline-bruteforceable secret against `mls.bin`, so a PIN user with
+no network still gets the honest `auth_server_unreachable`. `offlineUnlock.test.ts` pins this.
+
+| Signal | Meaning | Offline unlock |
+|---|---|---|
+| `SessionExpiredError` (HTTP 401/403) | The server was reached **and refused us** | Never. Logs out. |
+| Any other `getToken()` rejection | Transport failure - the server said nothing | Proceeds on the two capable paths |
+
+That distinction is the rule the whole feature rests on: **a status code is an answer, a transport
+failure is not**. `_doRefresh` separates them at the source, and `connectivity.svelte.ts` keeps the
+two facts apart for everyone else (`navigator.onLine` is optimistic - a captive portal reports
+`true` - so `isOffline` also requires that the last call actually reached the server).
+
+An offline session sets `authToken = ''` and `isOfflineSession = true`, and login then skips the
+gateway connect, the push registration, group discovery and **both watchdogs**. The watchdogs are
+the harmful part: left running, the connection watchdog would schedule a reconnect every tick, burn
+`MAX_RECONNECT_ATTEMPTS` against a network that is not there and leave the circuit *open* - so
+regaining signal would land the user on a "Retry" button instead of a working app.
+
+### What happens on reconnect
+
+`promoteOfflineSession.ts`, single-flight, subscribed to `connectivity.onReconnect`:
+
+1. `getToken()`. Success sets the token and clears `isOfflineSession`. A `SessionExpiredError` means
+   the session died while the device was away (expired, or revoked) - log out, keeping the local
+   encrypted store, so signing back in restores the history. Any other failure leaves the session
+   offline for the next attempt.
+2. `startPushService` - re-registers rather than retries: FCM/APNs may have rotated the token.
+3. `initializeConnection` - the same call login makes, so KeyPackages are published,
+   `fetchPendingMessages` drains what the server queued, and groups reconcile under their own
+   anti-purge guard.
+4. **Then** `flushOutbox()`. The outbox has its own `online` listener that would otherwise fire
+   before step 1, with an empty token: every queued entry would take a failed attempt and a longer
+   backoff for a send that never had a chance. `canFlush: () => !ctx.isOfflineSession()` holds the
+   queue until this point.
+5. `historyRequestPendingStore.onResume()` and the watchdogs login skipped.
+
+**Device revocation is not deferred by any of this.** `resetRequired` only ever arrives through
+`pin-check`, which a biometric or vault login does not call *even when online* - so that gap
+predates offline unlock, which merely widens the window before the next server contact notices it.
+Revocation is still enforced on reconnect by the refresh answering 401 and by the gateway handshake.
+
 ### Login failure codes
 
 `session/loginErrors.ts` defines `LoginFailure` with a machine-readable `LoginErrorCode`

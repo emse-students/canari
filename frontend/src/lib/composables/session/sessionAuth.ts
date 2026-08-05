@@ -19,6 +19,8 @@ import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
 import { LoginFailure, loginErrorCode } from './loginErrors';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
 import { m } from '$lib/paraglide/messages';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
@@ -107,6 +109,29 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
 }
 
 /**
+ * Builds the dependency bag for `initializeConnection` (WebSocket open + post-connect group
+ * reconciliation). Shared by the login path and `promoteOfflineSession`, which must perform the
+ * exact same connection sequence - a second, hand-copied version would drift the moment either one
+ * gained a callback.
+ */
+export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
+  return {
+    mlsService: ctx.ensureMls(),
+    userId: ctx.getUserId(),
+    deviceKeyB64: ctx.getDeviceKey(),
+    scheduleReconnect: () => scheduleReconnectImpl(ctx, cb),
+    setIsWsConnected: (v: boolean) => ctx.setIsWsConnected(v),
+    setReconnectAttempts: (v: number) => ctx.setReconnectAttempts(v),
+    processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(ctx, cb),
+    log: cb.log,
+    onGroupMissing: (groupId: string) =>
+      requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
+    onGroupDeletedRemotely: (groupId: string) =>
+      markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
+  };
+}
+
+/**
  * Builds the OutboxDeps for the per-session message flusher. Recovery is non-destructive
  * (welcome_request only); a group is "healthy" to send into when its MLS state is in the WASM
  * AND it is not in a known unresolved epoch gap. Sending an application message into a group
@@ -127,6 +152,9 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
       requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
     isGroupHealthy: (groupId: string) =>
       ctx.ensureMls().getLocalGroups().includes(groupId) && !isInEpochGap(groupId),
+    // A session unlocked offline holds no token: hold the queue until promoteOfflineSession has
+    // one and has reopened the socket, then it flushes explicitly.
+    canFlush: () => !ctx.isOfflineSession(),
     markDeletedRemotely: (groupId: string) =>
       markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
     uploadMedia: async (media: NonNullable<import('$lib/db').OutboxEntry['media']>) => {
@@ -234,6 +262,23 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
   const isBiometric = deviceKeyB64.length === 0 && pin.length === 0;
   const isVaultLogin = deviceKeyB64.length > 0 && pin.length === 0;
 
+  /**
+   * Whether this login can complete with no network at all.
+   *
+   * Exactly the two paths above, and for exactly the reason they skip the server PIN check when
+   * online: the platform keystore (biometrics) or the encrypted device-key vault IS the
+   * authentication factor, so no server answer is part of the decision. Unlocking them offline
+   * therefore verifies everything it verifies online - nothing is skipped and nothing is deferred.
+   *
+   * The PIN path is deliberately excluded: its at-rest key derives from a per-user salt that only
+   * the server holds (`/api/mls/security/pin-salt`), and caching that salt on the device is what
+   * would turn a 4-character PIN into an offline-bruteforceable secret. A PIN user offline still
+   * gets the honest "cannot reach the server".
+   */
+  const offlineCapable = isBiometric || isVaultLogin;
+  /** Set when the token could not be obtained: the session runs on local state only. */
+  let offlineSession = false;
+
   if (!userId.trim()) {
     const msg = 'Please fill in all fields.';
     ctx.setLoginError(msg);
@@ -299,23 +344,40 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     try {
       accessToken = await getToken();
     } catch (err) {
-      ctx.setIsLoginInProgress(false);
       // A SessionExpiredError means the refresh cookie is dead (HTTP 401/403) - the session
       // cannot be recovered by re-entering the PIN. Surface it as a session loss (logout +
       // redirect to /login); fall back to a direct redirect when no callback is wired so
       // the user is never stranded in the PIN modal with a dead session.
+      //
+      // This branch stays unconditional, offline unlock or not: a 401 is an ANSWER. The server
+      // was reached and refused us, which is precisely the case that must never be papered over
+      // as "no network".
       if (err instanceof SessionExpiredError) {
+        ctx.setIsLoginInProgress(false);
         if (cb.onSessionExpired) cb.onSessionExpired();
         else void goto('/login', { replaceState: true });
         return;
       }
-      // Anything else is transient (network down, backend restarting): keep the PIN modal
-      // open with a truthful retryable message - do NOT claim the session expired.
-      const msg = m.auth_server_unreachable();
-      ctx.setLoginError(msg);
-      // Notify the caller so a PIN-modal spinner does not hang forever.
-      cb.onLoginFailed?.(msg);
-      return;
+      // Anything else is a transport failure (no network, backend restarting): the server was
+      // never reached, so it has said nothing about this session.
+      if (offlineCapable) {
+        // Nothing this path needs from the server has been skipped - see `offlineCapable`. Carry
+        // on with an empty token: the MLS state, the encrypted message store and the outbox are
+        // all local, and `promoteOfflineSession` settles the session when the network returns.
+        offlineSession = true;
+        accessToken = '';
+        connectivity.notifyServerUnreachable();
+        cb.log('[LOGIN] Offline unlock (no token) - local session, will promote on reconnect.');
+      } else {
+        // The PIN path genuinely cannot continue: the salt it needs lives on the server. Keep the
+        // PIN modal open with a truthful retryable message - do NOT claim the session expired.
+        ctx.setIsLoginInProgress(false);
+        const msg = m.auth_server_unreachable();
+        ctx.setLoginError(msg);
+        // Notify the caller so a PIN-modal spinner does not hang forever.
+        cb.onLoginFailed?.(msg);
+        return;
+      }
     }
 
     // Collect the MLS state that was loading in the background.
@@ -465,7 +527,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       })
       .catch(() => {});
 
-    ctx.setAuthToken(await getToken());
+    // Offline: there is no token to set, and asking again would throw INSIDE this try - whose
+    // catch calls resetMls() + clearUserLocally() + clearDeviceKey(). A network blip would then
+    // destroy the very session that just unlocked. The empty token is what every network-touching
+    // helper reads as "not authenticated yet"; promoteOfflineSession fills it in.
+    ctx.setAuthToken(offlineSession ? '' : await getToken());
+    ctx.setIsOfflineSession(offlineSession);
 
     ctx.setIsLoggedIn(true);
     saveUserLocally({ id: ctx.getUserId(), admin: isGlobalAdmin() });
@@ -487,31 +554,45 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
     // Check push health AFTER registration so pending_push_secret.txt is present
     // (written by store_push_secret during startPushService) before the health check runs.
-    void startPushService(ctx.getHistoryBaseUrl(), ctx.getAuthToken(), ctx.getMyDeviceId())
-      .then(async () => {
-        cb.log('[PUSH] Push token registration complete.');
-        if (!isTauriRuntime()) return;
-        try {
-          const { invoke } = await import('@tauri-apps/api/core');
-          const health = await invoke<{ ok: boolean; reason?: string }>('check_push_secret_health');
-          if (!health.ok && health.reason === 'no_secret') {
-            ctx.setMlsFatalError('keystore_lost');
-            cb.log(
-              '[WARN] Push keystore lost - background notifications are degraded. Restart the app to re-enable them.'
+    // Skipped offline - registering a push token requires the server, and the resulting failure
+    // would raise a spurious "push degraded" fatal error. promoteOfflineSession re-runs it.
+    if (offlineSession) {
+      cb.log('[PUSH] Registration deferred - offline session.');
+    } else {
+      void startPushService(ctx.getHistoryBaseUrl(), ctx.getAuthToken(), ctx.getMyDeviceId())
+        .then(async () => {
+          cb.log('[PUSH] Push token registration complete.');
+          if (!isTauriRuntime()) return;
+          try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            const health = await invoke<{ ok: boolean; reason?: string }>(
+              'check_push_secret_health'
             );
-            appendLog('⚠️ Push notifications degraded - restart the app to re-enable them.');
+            if (!health.ok && health.reason === 'no_secret') {
+              ctx.setMlsFatalError('keystore_lost');
+              cb.log(
+                '[WARN] Push keystore lost - background notifications are degraded. Restart the app to re-enable them.'
+              );
+              appendLog('⚠️ Push notifications degraded - restart the app to re-enable them.');
+            }
+          } catch {
+            /* non-blocking */
           }
-        } catch {
-          /* non-blocking */
-        }
-      })
-      .catch((e) =>
-        cb.log(`[WARN] Push registration failed: ${e instanceof Error ? e.message : String(e)}`)
-      );
+        })
+        .catch((e) =>
+          cb.log(`[WARN] Push registration failed: ${e instanceof Error ? e.message : String(e)}`)
+        );
+    }
 
     // Message outbox: register the flusher before loading conversations so that
     // applyOutboxPendingStatuses can restore the "pending" status on restored messages.
     registerOutbox(makeOutboxDeps(ctx, cb));
+
+    // Watch for connectivity returning. Registered on every session, not only the offline ones:
+    // promoteOfflineSession no-ops on a session that already holds a token, and registering here
+    // unconditionally keeps one lifecycle (login registers, logout unregisters) instead of a flag
+    // deciding whether a listener exists.
+    registerOfflinePromotion(ctx, cb, () => makeConnectionDeps(ctx, cb));
 
     // Adopt anything the native side queued on its own (an undelivered notification quick reply
     // lives only in the mirror file, which the next mirror rewrite would erase). BEFORE the load:
@@ -824,33 +905,28 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       cb.log('[TAB] Follower tab - WebSocket active in another Canari tab.');
     }
 
-    beginStartupCatchupPhase('initialize_connection');
-    await initializeConnection({
-      mlsService,
-      userId: ctx.getUserId(),
-      deviceKeyB64: ctx.getDeviceKey(),
-      scheduleReconnect: () => scheduleReconnectImpl(ctx, cb),
-      setIsWsConnected: (v) => ctx.setIsWsConnected(v),
-      setReconnectAttempts: (v) => ctx.setReconnectAttempts(v),
-      processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(ctx, cb),
-      log: cb.log,
-      onGroupMissing: (groupId) =>
-        requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
-      onGroupDeletedRemotely: (groupId) =>
-        markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
-    });
-    {
-      const stats = summarizeConversationStats(cb.conversations);
-      endStartupCatchupPhase({
-        conversationCount: stats.conversationCount,
-        messageCount: stats.localMessageCount,
-      });
-    }
-    finishStartupCatchupBench(cb.log);
+    // Offline: skip the connection entirely rather than let it fail. openGatewayConnection would
+    // degrade correctly on its own, but the attempt costs a timeout on a launch that already knows
+    // there is no network, and it logs "Gateway inaccessible" for a device that never had one.
+    if (offlineSession) {
+      cb.log('[INIT] Offline session - gateway connection deferred until the network returns.');
+      finishStartupCatchupBench(cb.log);
+    } else {
+      beginStartupCatchupPhase('initialize_connection');
+      await initializeConnection(makeConnectionDeps(ctx, cb));
+      {
+        const stats = summarizeConversationStats(cb.conversations);
+        endStartupCatchupPhase({
+          conversationCount: stats.conversationCount,
+          messageCount: stats.localMessageCount,
+        });
+      }
+      finishStartupCatchupBench(cb.log);
 
-    // Connection established and groups reconciled: drain the outbox (covers reconnection,
-    // which re-runs initializeConnection).
-    flushOutbox();
+      // Connection established and groups reconciled: drain the outbox (covers reconnection,
+      // which re-runs initializeConnection).
+      flushOutbox();
+    }
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
     const lastActiveKey = `canari_last_active:${ctx.getUserId()}`;
@@ -891,6 +967,13 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     }
 
     if (!getIsTabLeader()) return;
+
+    // Everything below talks to the server. On an offline session the watchdogs are the harmful
+    // part: the connection watchdog would schedule a reconnect every tick, burn the
+    // MAX_RECONNECT_ATTEMPTS budget against a network that is not there, and leave the circuit
+    // OPEN - so the moment the user regains signal they would face a "Retry" button instead of a
+    // working app. promoteOfflineSession starts all of this once a token exists.
+    if (offlineSession) return;
 
     runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls());
 
@@ -1209,6 +1292,9 @@ export async function recoverPinImpl(
 export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
   unregisterOutbox();
+  // Detach the reconnect listener too, or a regained network would promote a session that no
+  // longer exists - reopening a WebSocket for the user who just signed out.
+  unregisterOfflinePromotion();
   cancelAllHistorySolicit();
   historyRequestPendingStore.cancelAll();
   void flushActiveMlsStateEncrypted().finally(() => {

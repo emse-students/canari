@@ -3,6 +3,7 @@ import { createOutbox, buildOutboxProto, type OutboxDeps } from './outbox';
 import { toMirrorEntry } from './outboxMirror';
 import { MediaKind } from '$lib/proto/codec';
 import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$lib/db/outboxCodec';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { OutboxEntry } from '$lib/db';
 import type { Conversation } from '$lib/types';
 
@@ -187,7 +188,64 @@ describe('outbox native mirror', () => {
   });
 });
 
+describe('outbox flusher - offline guards', () => {
+  beforeEach(() => {
+    connectivity.reset();
+  });
+
+  it('keeps the queue intact instead of failing every entry while offline', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage, isGroupHealthy: () => true }));
+    connectivity.notifyServerUnreachable();
+
+    await outbox.flush();
+
+    // Attempting a send with no network is not merely wasted: each entry takes a failed attempt
+    // and a longer backoff, so the queue drains slowest exactly when connectivity returns.
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.get('m1')!.attempts).toBe(0);
+    expect(storage._map.size).toBe(1);
+  });
+
+  it('holds the queue while an offline-unlocked session has no token yet', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    // The browser can report `online` before the session has been promoted; a flush in that
+    // window fails every entry for a reason that has nothing to do with the entry.
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, isGroupHealthy: () => true, canFlush: () => false })
+    );
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.get('m1')!.attempts).toBe(0);
+  });
+
+  it('drains normally once the session can send again', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    let ready = false;
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, isGroupHealthy: () => true, canFlush: () => ready })
+    );
+
+    await outbox.flush();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+
+    ready = true;
+    await outbox.flush();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(storage._map.size).toBe(0);
+  });
+});
+
 describe('outbox flusher', () => {
+  beforeEach(() => {
+    connectivity.reset();
+  });
+
   it('sends queued entries in sentAt order then deletes them', async () => {
     const storage = makeStorage([textEntry('m2', 'g1', 200), textEntry('m1', 'g1', 100)]);
     const mlsService = makeMls();

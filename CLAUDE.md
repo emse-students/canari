@@ -180,10 +180,11 @@ runner (account `muselli`, passwordless sudo).
 
 **[device] The verification pass is NOT a Work Package.** Everything native is verified by COMPILING,
 which proves nothing about running, and the whole owed list lives in
-**[device-verification](docs/wiki/device-verification.md)** - checks B-M, the build to install, the
+**[device-verification](docs/wiki/device-verification.md)** - checks B-N, the build to install, the
 verdict log line of each, and the PASS/owed table. Android passed the ladder on v0.11.7; **iOS has
 never run one check on hardware**. Owed on both: H (deep link into the conversation), K (quick
-reply), L (revoked device re-enrolling), plus M (PDF preview) on Android. **Open a WP only when a
+reply), L (revoked device re-enrolling), N (offline unlock + promotion), plus M (PDF preview) on
+Android. **Open a WP only when a
 check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at the repo root.
 
 - \[ \] **WP-HIST-3 (P2) - Pool history per MESSAGE between devices, not all-or-nothing.** Successor
@@ -256,6 +257,11 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - Raw 32 bytes at rest, base64 on the FFI wire; Android must encode with `NO_WRAP`.
 - Android has TWO readers per keystore alias (`MlsDeviceKeyStore` bg, `KeystorePlugin` fg) - fix both.
 - Escape hatch: "forgot PIN" wipes state and restarts, at the cost of local history.
+- Offline unlock is only ever the paths that ALREADY skip the server check online (biometrics,
+  vault). Widening it to the PIN means caching the server salt, which is a security change wearing
+  a UX hat - `offlineUnlock.test.ts` pins the predicate.
+- A status code is an ANSWER, a transport failure is not: only a 401/403 may log a user out, and
+  `navigator.onLine` alone never proves reachability (a captive portal reports `true`).
 - Rust's copy of the device key seals `mls.bin` only - local messages are encrypted in the
   FRONTEND, so biometric mode must pull the key back (`recuperer_cle_session_mls`) or persist nothing.
 - `isLoginInProgress` is one flag with two owners: every entry point must release it before `loginImpl`.
@@ -317,6 +323,10 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
   in-memory merge path to keep correct.
 - An access token is time-bound, so a COPY of it passed down a component tree is a bug waiting for
   the TTL: resolve it at the fetch (`getToken`). `authToken` as a prop means "session is authed".
+- A flush listening on `online` races the token that makes it valid - sequence it after the session
+  is promoted, never beside it, or every queued entry burns an attempt on the first tick.
+- A retry ladder must not run while offline at all: the queue is then slowest exactly when
+  connectivity returns.
 
 #### UI and i18n -> [frontend/architecture](docs/wiki/frontend/architecture.md)
 

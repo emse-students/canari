@@ -81,6 +81,18 @@ IndexedDB. Two rules follow, both enforced in `db/sqliteMigrations.ts` and its t
 - A migration that inspects columns must build its statement from
   `PRAGMA table_info(...)`, so dropping a column can never break the migration that mentions it.
 
+### Opening the app with no network
+
+A cold start with biometrics enrolled, or a device-key vault from "stay signed in", unlocks with no
+server at all: the history reads from the local store above and new messages queue in the outbox.
+The gate that used to prevent it was `getToken()`, not the PIN. A PIN-only user still needs a
+network, because the key derives from a server-issued salt that is deliberately never cached.
+
+The rule to carry: **the two paths that can unlock offline are exactly the two that already skip
+the server PIN check when online**, so nothing is verified less. Full reasoning, and the promotion
+sequence that runs when connectivity returns, in
+[`modules/auth.md`](modules/auth.md#offline-unlock).
+
 ## Rules that hold across both platforms
 
 **Push is all-FCM.** One transport for Android and iOS alike: the backend sends every `PushToken`

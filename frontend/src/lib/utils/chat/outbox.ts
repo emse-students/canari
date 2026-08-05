@@ -10,6 +10,7 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 
 /**
  * Backoff schedule (ms) between flush attempts for an entry that keeps failing.
@@ -66,6 +67,13 @@ export interface OutboxDeps {
   markDeletedRemotely?: (groupId: string) => void;
   /** Encrypt + upload a queued media file, returning the server media ref (queued-media flush). */
   uploadMedia?: (media: NonNullable<OutboxEntry['media']>) => Promise<MediaRef>;
+  /**
+   * True when the session is in a state where sending can succeed. Returns false for a session
+   * unlocked offline that has no access token yet: the browser can report `online` before the
+   * token is reissued, and a flush in that window fails every entry for a reason that has nothing
+   * to do with the entry. `promoteOfflineSession` flushes explicitly once it is ready.
+   */
+  canFlush?: () => boolean;
 }
 
 /** Public surface of the per-session outbox controller. */
@@ -89,7 +97,7 @@ type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip';
  * after a crash is deduplicated by the receiver), and never sends into an unhealthy group.
  */
 export function createOutbox(deps: OutboxDeps): OutboxController {
-  const { conversations, storage, mlsService, deviceKeyB64, log } = deps;
+  const { conversations, storage, mlsService, deviceKeyB64, log, canFlush } = deps;
 
   let flushing = false;
   let rerun = false;
@@ -364,6 +372,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
   async function runFlush(): Promise<void> {
     if (!storage) return;
+    // A flush needs a session that can actually send. Two different reasons it may not be able to:
+    // there is no network at all, or the session was unlocked offline and holds no token yet
+    // (promoteOfflineSession calls back here the moment it does). Attempting anyway is not merely
+    // wasted - every entry takes a failed attempt and a longer backoff for a send that never had a
+    // chance, so the queue is slowest exactly when connectivity returns.
+    if (connectivity.isOffline) {
+      log('[OUTBOX] Flush skipped - offline; the queue is kept intact for the next reconnect.');
+      return;
+    }
+    if (canFlush && !canFlush()) {
+      log('[OUTBOX] Flush skipped - session not ready to send yet.');
+      return;
+    }
     if (flushing) {
       rerun = true;
       return;

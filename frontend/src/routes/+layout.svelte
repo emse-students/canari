@@ -27,6 +27,7 @@
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
+  import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
     classifySwipeRelease,
@@ -308,6 +309,7 @@
   <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[4.5rem]">
     <!-- Bandeau multi-onglets : pleine largeur, en haut du contenu (jamais dans la rangée sidebar). -->
     <TabFollowerBanner />
+    <OfflineBanner />
     {#if !isLoginPage && !isKeyboardOpen}
       <Navbar />
       {#if !isMobileConvoOpen}

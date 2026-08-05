@@ -7,6 +7,23 @@
  */
 
 import { getToken, refresh } from '$lib/stores/auth';
+import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
+
+/**
+ * `fetch` that keeps the connectivity store honest: a transport failure marks the server
+ * unreachable, any HTTP answer marks it reachable. Only the transport half is a connectivity
+ * signal - a 502 is the server telling us it is there and unhappy.
+ */
+async function trackedFetch(url: string, init: RequestInit): Promise<Response> {
+  try {
+    const res = await fetch(url, init);
+    connectivity.notifyServerReachable();
+    return res;
+  } catch (e) {
+    if (isTransportFailure(e)) connectivity.notifyServerUnreachable();
+    throw e;
+  }
+}
 
 /** Options for `apiFetch` - extends `RequestInit` with a typed `headers` override. */
 export interface ApiFetchOptions extends RequestInit {
@@ -46,7 +63,7 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
   const log = POLL_ROUTES.some((r) => logUrl.startsWith(r)) ? console.debug : console.log;
 
   log(`[API] → ${method} ${logUrl}`);
-  let res = await fetch(url, { ...init, headers });
+  let res = await trackedFetch(url, { ...init, headers });
   log(`[API] ← ${res.status} ${method} ${logUrl} (${Date.now() - t0}ms)`);
 
   if (res.status === 401) {
@@ -54,7 +71,7 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
     try {
       const newToken = await refresh();
       headers['Authorization'] = `Bearer ${newToken}`;
-      res = await fetch(url, { ...init, headers });
+      res = await trackedFetch(url, { ...init, headers });
       console.log(`[API] ← ${res.status} ${method} ${logUrl} (retry, ${Date.now() - t0}ms)`);
     } catch {
       console.warn(`[API] refresh failed on ${method} ${logUrl} - session expired`);
