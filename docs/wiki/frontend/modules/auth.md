@@ -160,6 +160,29 @@ Two invariants around it:
 `reloadStateFromDisk` skips on a missing key - and skipping it on every resume is how a background
 engine's advance to `mls.bin` gets clobbered by the next save (lost-update -> `SecretReuse`).
 
+### A PIN change must never turn biometrics off
+
+`applyNewDeviceKeyLocally` (`utils/chat/pinChange.ts`) is the tail of both the change and the
+recovery flow, and it must **never** call `BiometricService.disable`. By the time it runs,
+`IMlsService.changeDeviceKey` has already overwritten the keystore entry and `push_context.json`
+with the NEW key, so disabling there deletes the entry that was just written and switches biometric
+unlock off behind the user's back - a settings toggle silently flipped by an unrelated operation.
+What it does instead is pick the destination: biometrics on -> keep the keystore authoritative and
+`clearDeviceKeyAndWrapKey()` so the next launch still takes the biometric path rather than a silent
+vault login; biometrics off -> `saveDeviceKey` into the local vault.
+
+### An at-rest format change needs its own reader, in the same commit
+
+Every at-rest envelope here is a byte layout with no version field: `mls.bin` is
+`[nonce 12 || ciphertext]`, the keystore blob is KeystorePlugin's own IV/ciphertext pair, and the
+SQLite rows are AES-256-GCM blobs. Nothing negotiates, so **a commit that changes one of those
+layouts must ship the reader for the previous layout with it**. Shipping the writer first is not a
+staged rollout: installed devices hold bytes in the old shape, the new reader rejects them, and the
+failure surfaces as an unopenable state - which `classifyStateLoadFailure` reads as `sealed` or
+`mismatch`, neither of which is what happened. The one-shot migrations already in the tree
+(`CanariApplication.migrateDeviceKeyFromJson`, `CanariMigrateDeviceKeyFromJson`) are the shape this
+takes: read the old, write the new, strip the old, all at the first start after the upgrade.
+
 ### The login guard cannot tell a caller's flag from a concurrent login
 
 `loginImpl` refuses to run when `isLoginInProgress` is already set. `startLoginFlow` sets that same

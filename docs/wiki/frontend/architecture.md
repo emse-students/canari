@@ -118,6 +118,35 @@ const { message, onReply }: Props = $props();
 - Composables with reactive state use the `.svelte.ts` extension.
 - Locale-reactive derived values: `const label = $derived(m.some_key())` — reassigned automatically on locale change.
 
+### Svelte trims whitespace at a block boundary
+
+`{label}{#if x}<span>...</span>{/if}` renders `labelSuffix` with no space: the compiler treats the
+text run ending at `{#if` as trimmed. Putting `{label}` and `{#if x}` on separate source lines keeps
+the space, because the newline itself is the text node. This is invisible in review and only shows
+up as two words glued together in the rendered UI.
+
+### An anchored dropdown must be portalled, never absolutely positioned
+
+**Every modal body clips on both axes.** `overflow-y-auto` alone is enough: CSS forces the other
+axis from `visible` to `auto` whenever one axis is not `visible`, so a modal that only meant to
+scroll vertically also clips horizontally. A panel positioned `absolute` inside it is therefore cut
+off, and **no z-index rescues it** - stacking order does not take an element out of an ancestor that
+clips.
+
+The fix is to take it out of the ancestor: render the panel at the document level and position it
+`fixed` against its anchor's viewport rect, through `bindFixedPopover`
+(`actions/fixedPopover.ts`), which also flips it above the anchor when there is no room below,
+clamps it to the viewport, and re-runs on scroll and resize. `matchAnchorWidth` exists because
+`w-full` no longer resolves once the panel is portalled out of its container.
+
+### An API helper that ends in `res.json()` throws on a void response
+
+A `DELETE` or a void `POST` answers `204`, or `200` with an empty body - and `res.json()` on an
+empty body throws. The throw happens **after** the server has acted, so the call that succeeded is
+the one the UI reports as failed, and the optimistic update is rolled back on a mutation that
+actually went through. Any helper used for those verbs has to check for an empty body before
+parsing.
+
 ## Theming (light / dark)
 
 `themeStore.svelte.ts` writes `data-theme="light" | "dark"` on `<html>` from the persisted

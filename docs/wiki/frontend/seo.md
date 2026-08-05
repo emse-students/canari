@@ -57,6 +57,11 @@ Each is best-effort behind a 1.5 s timeout, with a 60 s LRU in front (one shared
 burst of unfurler hits on one path). **A failure degrades the preview; it never fails the page** —
 the page is the app.
 
+**`og:image` must be built from the site origin.** `associationLogoSrc()` falls back to
+`http://localhost:3011` when `window` is undefined — which is exactly the SSR case, so using it here
+would advertise a localhost URL to every unfurler. The absolute URL is composed from the request's
+own origin instead.
+
 ### Escaping is the security-critical part
 
 Post text, association names and event titles are user-supplied and land in the shell of every
@@ -134,6 +139,24 @@ a browser runs the scripts of a 5xx body anyway — but Cloudflare *replaces* th
 5xx with its own plain-text page, so the shell never reaches anyone. What is indexed during an
 outage is the site's default head, which the next crawl repairs; what a 5xx costs is the site. See
 [../infrastructure/nginx.md](../infrastructure/nginx.md).
+
+## What no test here can prove
+
+Everything above is covered by unit tests and was probed against the built server with a stub
+social-service. Four things still need a human, after a deploy, and none of them is a code task:
+
+1. **Paste a real link into Discord and Slack.** A `/posts/{id}` and a `/c/join/{token}`. Their
+   unfurlers are the actual consumers, and they are not curl.
+2. **Install the Android build and confirm it still boots.** The adapter split means the mobile
+   build now goes down a different branch of `svelte.config.js` than the web one.
+3. **Run an association page and the agenda through Google's Rich Results Test.** The JSON-LD is
+   verified by our tests, never by Google's own parser.
+4. **Submit `/sitemap.xml` in Search Console**, then read the coverage report a few days later.
+
+**The deploy is the risk to watch, not the code.** `INTERNAL_SECRET` has to reach `frontend-ssr` or
+every preview silently degrades to the generic one (recorded in `infrastructure/MIGRATION.md`). A
+dead `frontend-ssr` no longer takes the site down — nginx serves the prerendered shell — but it does
+cost every head, so `X-Canari-Degraded: ssr-unavailable` in the access log is the thing to grep for.
 
 ## Related
 

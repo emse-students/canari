@@ -54,6 +54,7 @@
 
 ### Features
 
+- [Sessions, in every application](sessions.md) — The session model shared by Canari, Sky, MiGallery and Le Cercle: opaque token, rotation, replay, impersonation
 - [Cotisations](cotisations.md) — Membership dues: cotisant tags, boutique products, form member pricing
 - [Carte de la Vie Asso](carte-vie-asso.md) — Editable poster generator (drag & drop canvas, PDF export)
 

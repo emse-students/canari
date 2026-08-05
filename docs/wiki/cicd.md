@@ -127,6 +127,26 @@ a companion object, a plugin command missing from its ACL: none of these are vis
 build (`:app:compileUniversalReleaseKotlin`) is the first real Kotlin compile — a debug build does
 not exercise it.
 
+### A green run is not proof that *your* file compiled
+
+The iOS `project.pbxproj` is hand-maintained (there is no xcodegen here), so a source file that is
+in the repository but absent from the target's build phase is **skipped, not failed**. The run is
+green and the change was never compiled. Grep the log for the file by name:
+
+```
+SwiftCompile ... <YourFile>.swift
+CompileC     ... <YourFile>.o
+```
+
+**That grep is iOS-only, and looking for a Kotlin equivalent wastes an afternoon.** Tauri drives
+Gradle quietly - no `> Task :` lines, no `BUILD SUCCESSFUL` - so hunting a task line finds nothing
+and proves nothing either way. It is also unnecessary: Gradle compiles by **source set**, so a file
+sitting in `src/main/kotlin` cannot be silently skipped, and the produced APK is itself the proof.
+
+**A disappeared compiler warning can be the verdict.** When a deprecation warning was the only
+thing that ever revealed a piece of dead code, its absence from the next run is what confirms the
+removal - there is nothing else to assert against.
+
 ## Signing
 
 Two **named** provisioning profiles must exist and match `PROVISIONING_PROFILE_SPECIFIER` exactly:

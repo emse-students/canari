@@ -332,6 +332,57 @@ Avatars are not in the payload: the showcase already proxies MiGallery at
 `/api/users/:id/avatar`, so only `userId` travels. That also keeps a publication small enough to
 serve from one row.
 
+## Rendering traps
+
+Each of these was diagnosed the long way once. They are about the preview, the PDF and the
+watermark, and none of them fails visibly enough to catch itself.
+
+### Sizing a card to its text
+
+**What must fit a card is the longest WORD, not the whole name.** A name wraps; a word does not, so
+shrinking the font until the name fits produces microscopic text on a name that had one long word in
+it. Shrink to the longest word first, then widen the card if the name still does not fit.
+
+**A card's `photo` is published, never derived from its width.** Widening a card to fit a name must
+not grow the face - the two dimensions are independent, and tying them makes every long name
+produce an oversized polaroid.
+
+**`width:X%; height:X%` is not a square.** The two percentages resolve against different axes, so a
+`rounded-full` box sized that way renders as a pill on any non-square parent. Size one axis and add
+`aspect-ratio: 1`.
+
+**Never hand a positional layout a compacted array.** If entry 3 is missing and the array is
+compacted, everything after it renumbers, and the output looks like a correct render of *different
+data* instead of showing the gap - which is the version nobody notices.
+
+### The PDF re-draw anchors to the marked box
+
+`data-pdf-text` goes on the box that **is** the text line. The vector re-draw anchors to the marked
+box's TOP and knows nothing about padding or flex centring, so marking a padded wrapper puts the
+text high in the PDF while the preview looks right. That combination - correct preview, text sitting
+high in the export - is always this.
+
+### The split watermark, and Preflight
+
+**The split watermark is the intended design** (`79645923`). Whole logos side by side was tried on
+2026-08-01 and rejected, so do not "restore" it. Contrast is not what makes a band vanish either -
+an opaque image covers the plate behind it.
+
+**Markup built as a STRING still lives in the app document**, so the global stylesheet applies to
+it. Tailwind Preflight's `img { max-width: 100% }` clamped a band image to its window and pushed
+every negatively-offset band out of view. Any image deliberately sized larger than its own container
+needs `max-width: none` pinned on it.
+
+**A probe page is not the app.** Reproducing app markup in a standalone page silently drops every
+global rule, so it can confirm that the markup is right but can never clear it. Measure the LIVE
+DOM instead - a computed width that contradicts the inline one names the culprit in one call.
+
+### Where a constant belongs
+
+A constant the publisher needs cannot live in `PosterCanvas.svelte`: unit geometry belongs in
+`layout.ts`, which both the editor and the publisher read. And a debug slider whose panel has been
+removed still ships - fold its value back into a constant, or it rots as plumbing nothing drives.
+
 ## Reuse map
 
 - `frontend/src/lib/utils/pdfRaster.ts` - rasteriser (as-is).

@@ -72,6 +72,21 @@ the epoch - is asynchronous. A flush triggered by `online` or `visibilitychange`
 barrier can send at a stale epoch, which up-to-date peers cannot decrypt. That is a silent loss:
 the sender sees a delivered message and the recipient never receives one.
 
+### The flusher resolves its token, and does not run while offline
+
+Two rules about *when* the queue is allowed to try, both learned from the offline-unlock work
+([auth](auth.md#what-happens-on-reconnect)):
+
+- **An access token is time-bound, so a COPY of it passed down a component tree is a bug waiting for
+  the TTL.** Resolve it at the fetch, through `getToken()`. Where a component still takes an
+  `authToken` prop, that prop means "the session is authenticated", never "here is the credential to
+  use" - a value captured at mount is stale by the time a queued entry flushes an hour later.
+- **The retry ladder must not run while offline at all.** Every failed attempt raises the backoff,
+  so a queue that keeps trying against an absent network is slowest exactly when connectivity comes
+  back. `canFlush: () => !ctx.isOfflineSession()` holds it, and `promoteOfflineSession` calls
+  `flushOutbox()` **after** the token is refreshed and the connection re-established - never beside
+  it. The outbox's own `online` listener fires earlier than any of that.
+
 ### Everything the outbox swallows, it logs
 
 The queue is deliberately best-effort at every step - a storage write that fails must not take the
@@ -303,6 +318,70 @@ as it existed on the in-memory type.
 DM and a DM message into a channel. Only the transport differs (MLS group vs channel epoch key);
 a media forward re-sends the same envelope in both cases, so no blob is re-uploaded and the CEK
 travels with it.
+
+## Pooling history between devices (designed, not built)
+
+Today's exchange is all-or-nothing: `sendFullHistoryBundle` ships the responder's ENTIRE store and
+the receiver dedupes by id, one way, with neither side knowing what the other holds. The design below
+turns that bundle into a diff. It was settled on 2026-08-02 by reading the code - nothing about it is
+open, it only has to be written.
+
+**The algorithm already exists and is tested.** `sync/syncEngine.ts` has `buildLocalSyncManifest`
+(all message ids per conversation, sorted) and `diffLocalAndRemoteManifest` (symmetric difference,
+returning `missingOnRequester` AND `missingOnPeer`), computed entirely client-side. What is missing
+is the TRANSPORT: it only runs today over a QR-paired session between two of the user's own devices,
+driven by hand (`SyncSessionModal.svelte`, `useSyncSession.svelte.ts`).
+
+**Three legs.** Leg 1 is today's WS `history_request`, unchanged - server-side election is what keeps
+one responder instead of a storm. Leg 2: the elected peer answers `history_digest` instead of its
+whole store. Leg 3: the requester - who alone knows both sides - diffs, then sends
+`history_pull {to, ids|buckets}` for what it lacks and a `history_bundle` filtered by id for what the
+peer lacks. No difference means zero traffic, the marker clears, and the empty-bundle hack in
+`sendFullHistoryBundle` retires.
+
+**Two digest modes, by size.** `ids` (the sorted id list) below ~1000 ids, `buckets` above it: per
+`YYYY-MM`, a count plus a truncated SHA-256 of that month's sorted ids, ~2 KB for any history. A
+differing bucket over-sends that month; the receiver dedupes by id, so the cost is bandwidth, never
+correctness.
+
+**Deletions are a non-problem**, verified in code: a deletion keeps a TOMBSTONE row (`isDeleted`), so
+the id stays in the manifest, and both stores import non-destructively (`INSERT OR IGNORE` / IDB
+`add`). Bulk row deletion exists only for CHANNELS and for a whole conversation. On merge a tombstone
+WINS over a body, or a peer that missed the deletion undoes it.
+
+**Metadata**: the digest rides inside MLS, so the server learns nothing it does not already hold.
+Co-members learn which ids this device kept, hashed per month in bucket mode. Accepted.
+
+**Two traps.** Every leg is a GROUP broadcast, so the pull must carry its target and non-targets must
+ignore it. And the REPLAY path (`historySystemEvents.ts`) must ignore `history_digest` /
+`history_pull` - transient negotiation, meaningless when re-read days later.
+
+**Scope is DMs and groups only.** Channel rows are wiped and re-fetched from the server tally at
+every load, so pooling would fight the refresh (`isChannelConversationId`).
+
+This subsumes the `no-local-history` clause of the current marker: "awaiting history" becomes "my
+diff with at least one peer is non-empty", which empties itself.
+
+### Order of work
+
+1. A pure `historyManifest.ts` plus its tests - the digest build and the diff, no transport.
+2. The wiring: `handleHistoryRequest` sends a digest, `systemMessageHandler` gains the digest and
+   pull branches, `groupActions` gains a bundle filtered by id.
+3. Marker semantics, per the paragraph above.
+4. The three defects below.
+5. Wiki + `CHANGELOG.md`.
+
+### Three defects that belong to this work, or to nothing
+
+Left out of WP-HIST-2 on purpose, because each is only worth fixing once the exchange is a diff:
+
+- **The client ignores the `no_peer_online` the server already returns.** `deliveryKeepalivePost`
+  swallows the response body, so the requester burns a 30 s window waiting on a question that was
+  answered immediately.
+- **Nothing re-solicits when a peer comes back**, even though presence is polled every 10 s. The
+  request is fired once and then only retried on its own timer.
+- **`checkPresenceNow` (`stores/presenceStore.ts`) has no in-flight guard.** On a bad link that
+  stacks 4-5 concurrent `/api/presence` calls, each measured at 32 s.
 
 ## UI features
 

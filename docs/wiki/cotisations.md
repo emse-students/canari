@@ -351,6 +351,25 @@ column rather than by an application check; a forged signature, a negative amoun
 timestamp are refused (401/400/422) with no ledger write. See
 [../PROD-TEST-CERCLE.md](../PROD-TEST-CERCLE.md) for the exact probes.
 
+#### What debugging that link cost, so it is not paid twice
+
+- **`webhookUrl` must be the FINAL https URL.** The dispatcher sets `maxRedirects: 0` and accepts
+  2xx only, so an `http://` value that would redirect fails every delivery.
+- **An undeployed SvelteKit route answers an HTML 404**, which is indistinguishable from a broken
+  receiver: for a webhook, "not working" and "not deployed" are the same status code. Probe the route
+  before reading the code.
+- **A 404 from a real receiver is a failed delivery, not a lost payment**: a user who has never
+  signed into the Cercle does not exist there yet, and the manual retry is what fixes it once they do.
+- **Compare secret FINGERPRINTS before anything else.** Every mismatch on this path presents as "the
+  secrets differ", including the ones that are not - the `sha256=` prefix bug above presented exactly
+  that way while both secrets were identical.
+- **A delivery id is not an authorization.** Retry and delete resolve the product through
+  `associationId` as well, or an admin of any association acts on another's top-up.
+- **Prove idempotency by re-signing a FRESH body** with the same key field, never by replaying the
+  exact bytes: byte-identity would pass even if the deduplication were a checksum of the request.
+- **An integrity check that is permanently red because of fixture data is not a monitor.** Seed rows
+  need the same opening ledger entry real rows get, or nobody can ever act on the alarm.
+
 ### Inbound: Cercle -> Canari (`GET /api/public/cotisant-status`)
 
 Before crediting a recharge or granting a forfait-priced action, Cercle can query a user's live

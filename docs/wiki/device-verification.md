@@ -49,6 +49,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | L | WP-DEV-PANEL-1 | owed | owed |
 | M | WP-POST-DOC-2 | owed (the platform that matters) | n/a |
 | N | Offline unlock + promotion | owed | owed |
+| O | WP-STORE-1 (install source + version gate) | owed | n/a |
 
 For the iOS pass, install the `ios-release` artifact of the run above rather than waiting for
 TestFlight: a dispatch does not upload there, so TestFlight is still on the previous build and check
@@ -297,6 +298,29 @@ unlock offline** - that is the designed behaviour, not a defect.
    network. Expect `[PROMOTE] Session expired while offline - signing out.` and a redirect to
    `/login` - then sign back in and confirm **the full local history is still there**. Losing it
    would mean the logout wiped the encrypted store, which it must not.
+
+## O. The update target, and the blocking version gate - owed on Android
+
+**Proves** WP-STORE-1. The optional nag modal is gone (the version now sits passively in
+`/settings` > A propos), so `minClientVersion` is the only thing that can interrupt a user, and the
+destination it offers is resolved at **run time** from `installer_package.txt` - a Kotlin writer,
+then `get_installer_package`, then `appVersion.ts`. `buildUpdateTarget` and the cross-process
+contract are unit-tested; three things are not, and cannot be.
+
+1. **The Kotlin actually compiles.** A `workflow_dispatch` run of `android-release.yml` is the only
+   real compile of `recordInstallerPackage`. Nothing local exercises it.
+2. **The target follows the install source.** On a **Play-installed** build the blocking gate must
+   offer the Play Store; on a **sideloaded CI APK** it must offer the APK. Capture the verdict line
+   with `test_adb.py`:
+   `[appVersion] install source: ...`
+   Both sides have to be seen - the two paths differ only in that one string.
+3. **The gate itself.** In `/admin/platform`, raise `minClientVersion` above the running version,
+   confirm the app blocks with a button leading to the right destination, and **reset it
+   afterwards**.
+
+**Do not raise `minClientVersion` on prod until a build is actually live on Play.** Raising it
+before the rollout has reached devices locks everyone out behind a button that leads to the version
+they already have.
 
 ## Traps that outlived the work that found them
 

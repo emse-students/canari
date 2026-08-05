@@ -32,6 +32,25 @@ Two traps this runbook exists to catch, both of which DID fire on the first live
    `Buffer.from('sha256=<hex>', 'hex')` yields an empty buffer and every delivery is a 401 - which
    reads exactly like a secret mismatch and sends you comparing secrets that were never wrong.
 
+## The state of that host, as of 2026-08-04
+
+Verified by fingerprint, not assumed. These are things to **raise with Aurel**, not to patch: it is
+his host and his repository.
+
+- **`JWT_SECRET` and `MICONNECT_CLIENT_SECRET` are real random values.** Checked by fingerprint. No
+  placeholder is in play for either.
+- **`JWT_OLD_SECRET` is non-empty outside any rotation**, and the running build keeps accepting it
+  until the value is emptied **and** `cercleapp.service` is restarted. A second valid signing key
+  that nothing is rotating towards is a standing risk with no upside.
+- **`AUTH_SECRET` is still the `.env.example` placeholder.** It is dead config - nothing reads it -
+  but a placeholder sitting in a live `.env` is indistinguishable from one that matters.
+- **`secure: false` on the session cookie is deliberate** while the host is HTTP-only. Do not "fix"
+  it; it breaks sign-in. Same for the session row storing the **whole** `X-Forwarded-For`.
+
+There is also one gap in the ledger that is his call, not ours: `undo` and `cashout` are declared in
+the schema and written by nothing, so a mis-keyed consumption **cannot be corrected**. He declined
+an `adjustment` kind on 2026-07-28, and `bun run db:check` refuses to guess the sign of either.
+
 ## The real addresses
 
 | What | Value |
