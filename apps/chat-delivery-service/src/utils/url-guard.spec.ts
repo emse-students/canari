@@ -8,6 +8,8 @@ import {
   errorCause,
   extractIconUrl,
   buildLinkPreviewPayload,
+  extractOEmbedEndpoint,
+  mergeOEmbedIntoPayload,
 } from './url-guard';
 
 describe('isPrivateIpAddress', () => {
@@ -240,5 +242,101 @@ describe('buildLinkPreviewPayload', () => {
     const payload = buildLinkPreviewPayload(html, new URL('https://sky.mitv.fr/'));
     expect(payload.title).toBe('Sky');
     expect(payload.icon).toBe('https://sky.mitv.fr/icon.png');
+  });
+});
+
+describe('extractOEmbedEndpoint', () => {
+  const page = new URL('https://open.spotify.com/track/abc');
+
+  it('finds the JSON oEmbed declaration and resolves it absolutely', () => {
+    const html = '<link rel="alternate" type="application/json+oembed" href="/oembed?url=track">';
+    expect(extractOEmbedEndpoint(html, page)).toBe('https://open.spotify.com/oembed?url=track');
+  });
+
+  it('accepts the legacy text/json+oembed type', () => {
+    const html = '<link rel="alternate" type="text/json+oembed" href="https://x.test/o.json">';
+    expect(extractOEmbedEndpoint(html, page)).toBe('https://x.test/o.json');
+  });
+
+  it('ignores the XML flavour, which we cannot parse', () => {
+    const html = '<link rel="alternate" type="text/xml+oembed" href="/o.xml">';
+    expect(extractOEmbedEndpoint(html, page)).toBeNull();
+  });
+
+  it('ignores an alternate that is not oEmbed at all', () => {
+    const html = '<link rel="alternate" type="application/rss+xml" href="/feed">';
+    expect(extractOEmbedEndpoint(html, page)).toBeNull();
+  });
+
+  it('refuses a non-http scheme, which new URL() resolves rather than rejects', () => {
+    // Same trap as extractIconUrl: this href becomes an outbound fetch.
+    const html = '<link rel="alternate" type="application/json+oembed" href="javascript:alert(1)">';
+    expect(extractOEmbedEndpoint(html, page)).toBeNull();
+  });
+});
+
+describe('mergeOEmbedIntoPayload', () => {
+  const page = new URL('https://vimeo.com/12345');
+  const base = {
+    url: page.toString(),
+    title: 'Real og:title',
+    description: 'Real og:description',
+    image: 'https://vimeo.com/og.jpg',
+    siteName: 'Vimeo',
+  };
+
+  it('leaves a payload untouched when there is no oEmbed data', () => {
+    expect(mergeOEmbedIntoPayload(base, null, page)).toEqual(base);
+  });
+
+  it('never overwrites what the page already declared', () => {
+    const merged = mergeOEmbedIntoPayload(
+      base,
+      { title: 'oEmbed title', authorName: 'Someone', thumbnailUrl: 'https://x.test/t.jpg' },
+      page
+    );
+    expect(merged.title).toBe('Real og:title');
+    expect(merged.description).toBe('Real og:description');
+    expect(merged.image).toBe('https://vimeo.com/og.jpg');
+  });
+
+  it('supplies the title only when the page fell back to its hostname', () => {
+    const bare = { ...base, title: page.hostname };
+    expect(mergeOEmbedIntoPayload(bare, { title: 'oEmbed title' }, page).title).toBe(
+      'oEmbed title'
+    );
+  });
+
+  it('turns the author into a description when the page has none', () => {
+    const merged = mergeOEmbedIntoPayload(
+      { ...base, description: '' },
+      { authorName: 'Alice', providerName: 'Vimeo' },
+      page
+    );
+    expect(merged.description).toBe('Vimeo • Alice');
+  });
+
+  it('uses the oEmbed thumbnail when the page declared no og:image', () => {
+    const merged = mergeOEmbedIntoPayload(
+      { ...base, image: '' },
+      { thumbnailUrl: '/thumb.jpg' },
+      page
+    );
+    expect(merged.image).toBe('https://vimeo.com/thumb.jpg');
+  });
+
+  it('refuses a thumbnail whose scheme cannot reach an <img src>', () => {
+    const merged = mergeOEmbedIntoPayload(
+      { ...base, image: '' },
+      { thumbnailUrl: 'javascript:alert(1)' },
+      page
+    );
+    expect(merged.image).toBe('');
+  });
+
+  it('names the provider only where the site name was just the hostname', () => {
+    const bare = { ...base, siteName: page.hostname };
+    expect(mergeOEmbedIntoPayload(bare, { providerName: 'Vimeo' }, page).siteName).toBe('Vimeo');
+    expect(mergeOEmbedIntoPayload(base, { providerName: 'Other' }, page).siteName).toBe('Vimeo');
   });
 });

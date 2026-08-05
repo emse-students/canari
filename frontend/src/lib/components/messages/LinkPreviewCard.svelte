@@ -1,11 +1,13 @@
 <script lang="ts">
   import { ArrowUpRight, ExternalLink, Globe } from '@lucide/svelte';
   import CanariLinkPreviewMedia from '$lib/components/shared/CanariLinkPreviewMedia.svelte';
-  import MiGalleryLinkPreview from '$lib/components/messages/MiGalleryLinkPreview.svelte';
+  import EcosystemCoverPreview from '$lib/components/messages/EcosystemCoverPreview.svelte';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
   import { fetchCanariLinkPreview, type CanariLinkPreview } from '$lib/utils/canariLinkPreview';
   import { CANARI_BADGE_LABEL } from '$lib/utils/canariLinkPreviewFormat';
+  import { ecosystemCoverCardFor, ecosystemSiteFor } from '$lib/utils/ecosystemHosts';
   import { faviconCandidates } from '$lib/utils/faviconCandidates';
+  import { proxiedPreviewImageUrl } from '$lib/utils/previewImageProxy';
   import { inAppPathFromHref, isInAppHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
 
   interface Props {
@@ -36,10 +38,13 @@
     }
   });
 
-  /** True if the link points to a MiGallery album (gallery.mitv.fr/albums/[id]). */
-  const isMiGalleryAlbum = $derived(
-    parsed.host === 'gallery.mitv.fr' && /^\/albums\/[0-9a-f-]+\/?$/i.test(parsed.path)
-  );
+  /**
+   * The site behind an external link, when it is one of ours. Both the chip
+   * label and the choice of card come from the registry rather than from a
+   * hostname compared in place, so a fifth site is one entry there.
+   */
+  const ecosystemSite = $derived(ecosystemSiteFor(parsed.host));
+  const coverCard = $derived(ecosystemCoverCardFor(parsed.host, parsed.path));
 
   const fallbackInAppLabel = $derived(publicAppLinkLabel(url));
   const inAppPath = $derived(inAppPathFromHref(url));
@@ -108,9 +113,15 @@
    * to the page title, and a Canari route had nothing but its own label to show, so
    * either way the chip and the title below it printed the same sentence twice. What
    * belongs here is the thing the title does not already say - where the link goes.
+   *
+   * A site of our own ecosystem shows its name instead of its hostname: the rule is
+   * unchanged, the reader simply already knows the destination by that name, and
+   * `sky.mitv.fr` names it to nobody but whoever deployed it.
    */
   const cardCategory = $derived(
-    isInApp ? (canariPreview?.categoryLabel ?? CANARI_BADGE_LABEL) : parsed.host
+    isInApp
+      ? (canariPreview?.categoryLabel ?? CANARI_BADGE_LABEL)
+      : (ecosystemSite?.label ?? parsed.host)
   );
 
   const cardSubtitle = $derived(isInApp ? canariPreview?.subtitle : externalPreview?.description);
@@ -124,8 +135,17 @@
    * why self-hosted sites showed a placeholder - and asking one would hand every
    * browsed hostname to a third party from inside an end-to-end encrypted
    * conversation.
+   *
+   * Every candidate goes through Canari's image proxy, which is what keeps that
+   * last sentence true for the conventional paths too - they are derived here,
+   * so nothing server-side would otherwise have rewritten them.
    */
-  const faviconChain = $derived(faviconCandidates(parsed.href, externalPreview?.icon));
+  const faviconChain = $derived(
+    faviconCandidates(parsed.href, externalPreview?.icon).map(proxiedPreviewImageUrl)
+  );
+
+  /** The Open Graph image, likewise fetched through the proxy rather than from its host. */
+  const previewImageUrl = $derived(proxiedPreviewImageUrl(externalPreview?.image));
 
   /** Resolves once we know whether `src` decodes as an image. Never rejects. */
   function loadsAsImage(src: string): Promise<boolean> {
@@ -185,8 +205,15 @@
   }
 </script>
 
-{#if isMiGalleryAlbum}
-  <MiGalleryLinkPreview url={parsed.href} preview={externalPreview} {isLoading} {standalone} />
+{#if coverCard}
+  <EcosystemCoverPreview
+    url={parsed.href}
+    preview={externalPreview}
+    {isLoading}
+    siteLabel={ecosystemSite?.label ?? parsed.host}
+    fallbackTitle={coverCard.fallbackTitle()}
+    {standalone}
+  />
 {:else}
   <a
     onclick={handleClick}
@@ -204,17 +231,12 @@
     {:else}
       <div
         class="shrink-0 relative overflow-hidden rounded-xl border border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 flex items-center justify-center transition-all duration-300
-      {externalPreview?.image ? 'w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem]' : 'w-12 h-12'}"
+      {previewImageUrl ? 'w-16 h-16 sm:w-[4.5rem] sm:h-[4.5rem]' : 'w-12 h-12'}"
       >
         {#if isLoading}
           <div class="absolute inset-0 bg-black/10 dark:bg-white/10 animate-pulse"></div>
-        {:else if externalPreview?.image}
-          <img
-            src={externalPreview.image}
-            alt=""
-            class="w-full h-full object-cover"
-            loading="lazy"
-          />
+        {:else if previewImageUrl}
+          <img src={previewImageUrl} alt="" class="w-full h-full object-cover" loading="lazy" />
         {:else if faviconUrl}
           <!-- No Open Graph image: the site's own favicon stands in for its logo.
                Already proven loadable by the probe above, so it needs no onerror. -->

@@ -491,6 +491,7 @@ parity row.
 | POST | `/api/mls/security/pin-change` | Change PIN verifier |
 | POST | `/api/mls/security/pin-reset` | Reset PIN (purge devices, keep memberships) |
 | GET | `/api/mls/link-preview` | Fetch safe external URL preview |
+| GET | `/api/mls/link-preview/image?url=` | Proxy a preview's `og:image` or favicon |
 | GET | `/api/mls/gallery-cover/:albumId` | Proxy MiGallery album cover image |
 
 #### Link preview is a user-controlled server-side fetch (SSRF)
@@ -517,6 +518,80 @@ reports it as a bare `TypeError: fetch failed` and the handler answered a generi
 `Link preview failed`. The failure is now logged (`[LINK_PREVIEW] <host> failed: <cause>`), and
 `url-guard.spec.ts` pins the pairing offline: a fetch to `localhost` must fail with `ESSRFBLOCKED`
 (our lookup ran) and nothing else.
+
+#### One fetch per page per six hours, not one per reader per render
+
+`TtlCache` (`utils/ttl-cache.ts`) is a bounded map with a per-entry TTL and LRU eviction, and
+`SecurityController` holds two static instances of it: 500 previews and 200 proxied images.
+
+| | TTL | why |
+|---|---|---|
+| preview, success | 6 h | Open Graph tags change on the scale of an edit, not of a render |
+| preview, failure | 10 min | a site that was merely down is retried the same day, not written off |
+| proxied image | 6 h | and only when the body is <= 256 KB - a favicon is asked for constantly and costs a kilobyte, a full-size `og:image` would evict a hundred of them to save one request |
+
+The endpoint answers cached entries with a matching `Cache-Control: public, max-age=`, which is the
+only way to stop the browser asking at all. Before this, every render of every message re-downloaded
+the remote page: a conversation scrolled back through hammered a site that never agreed to any of
+it, and each of those requests announced that somebody was reading.
+
+The cache is per-process, and deliberately so - chat-delivery runs as a single instance, so a shared
+store would be infrastructure bought for nothing. Replicating the service costs hit rate, never
+correctness, which is what makes the choice reversible.
+
+#### Preview images are proxied, so the site never sees the reader
+
+`/api/mls/link-preview/image?url=` fetches an image server-side and relays it. The card used to
+point an `<img src>` straight at the remote host, so every reader of a message opened a connection
+to a third party **from inside an end-to-end encrypted conversation**: the site learned each
+reader's IP, their user agent, and the moment they scrolled to the message. Encrypting the body and
+then fetching its illustration in clear gives a good part of that back.
+
+- Same SSRF guard as the page fetch - the URL is caller-supplied, so it is exactly as
+  attacker-controlled as the pasted link. Redirects are *followed* here rather than walked by hand
+  (a CDN answers image requests with two or three), which is safe because `ssrfSafeDispatcher`
+  re-validates at every connect.
+- `image/*` only, **SVG excluded**: an SVG is a document that can carry script, and it would be
+  served from our own origin. `X-Content-Type-Options: nosniff` on the way out.
+- 3 MB ceiling, checked on `content-length` *and* on the received body, because the header can be
+  absent or wrong.
+- Unauthenticated, like the preview endpoint it serves: it fetches only public URLs and holds no
+  credential.
+
+Client-side the rewrite is one helper, `frontend/src/lib/utils/previewImageProxy.ts`, applied to the
+`og:image` and to **every** favicon candidate - the conventional paths are derived in the browser, so
+nothing server-side would have rewritten them. It skips URLs already on our own origin, which is
+what keeps the MiGallery cover proxy from being proxied twice.
+
+The CSP `img-src` is deliberately **not** tightened to match: Klipy GIFs and other remote sources
+still need auditing, and that is a separate change.
+
+#### oEmbed discovery covers Spotify, Vimeo, Bandcamp and X in one path
+
+A page that declares `<link rel="alternate" type="application/json+oembed">` is publishing metadata
+*for* embedders, and usually describes itself better there than in its Open Graph tags.
+`extractOEmbedEndpoint` reads the declaration out of the HTML already downloaded, so discovery is
+free; only following it costs a request, through the same SSRF guard (the href is someone else's
+markup, so its scheme is checked, not merely its parse - the `extractIconUrl` trap again).
+
+`mergeOEmbedIntoPayload` is written so it can be applied blindly: **Open Graph wins wherever both
+speak.** oEmbed only fills gaps - a title where the page fell back to its hostname, a
+`thumbnail_url` where there was no `og:image`, a `provider_name` where the site name was just the
+host - and adds the one thing Open Graph has no field for, `author_name`, which becomes the
+description when the page declared none. A site with good tags is never made worse.
+
+The YouTube short-circuit stays ahead of all of it: it needs no HTML fetch at all, so it is strictly
+cheaper.
+
+#### Ecosystem sites are named, not spelled out
+
+`frontend/src/lib/utils/ecosystemHosts.ts` maps the four hosts we share users with -
+`gallery.mitv.fr`, `sky.mitv.fr`, `cercle.canari-emse.fr`, `portail-etu.emse.fr` - to the name the
+reader knows them by. The badge rule below is unchanged; `sky.mitv.fr` simply names the destination
+to nobody but whoever deployed it. The registry also carries the paths worth a cover-first card
+(`EcosystemCoverPreview.svelte`, a MiGallery album today), which is what the hostname compared in
+place used to decide. Adding a fifth site is one entry there. It carries no bundled logos on
+purpose: the card already resolves each site's own favicon, which survives a rebrand.
 
 #### Favicons come from the site, never from an icon service
 
@@ -549,6 +624,7 @@ same on both branches: **the badge must carry what the title does not already sa
 | | badge | title |
 |---|---|---|
 | external | the HOST (`parsed.host`) | `og:title` |
+| external, ecosystem | the site's NAME (`ecosystemSiteFor`) | `og:title` |
 | in-app, typed | the KIND (Publication, Association, Formulaire, Profil) | the entity's name |
 | in-app, plain route | `CANARI_BADGE_LABEL` | `publicAppLinkLabel()` (Accueil, Agenda...) |
 

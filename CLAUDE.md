@@ -187,6 +187,16 @@ reply), L (revoked device re-enrolling), N (offline unlock + promotion), plus M 
 Android. **Open a WP only when a
 check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at the repo root.
 
+- \[ \] **WP-SEO-1 / WP-PREV-2 - two checks owed AFTER the next deploy, neither a code task.**
+  Everything shipped and is green locally (`node build/index.js` probed on 9 path kinds, `nginx -t`
+  on the real image, a no-`BUILD_WEB` build still emitting `build/index.html`). What a curl cannot
+  prove: (1) paste a `/posts/{id}` and a `/c/join/{token}` link into **Discord and Slack** and check
+  the unfurl - that is the only audience the feature has; (2) install the Android build and confirm
+  it still boots, the build-target switch being new. The deploy itself is the risk to watch:
+  `frontend-ssr` must be up or nginx answers 502 on every navigation, and `INTERNAL_SECRET` must
+  reach it or every preview stays generic (both recorded in `infrastructure/MIGRATION.md`).
+  Open a WP only if one of the two FAILS.
+
 - \[ \] **WP-HIST-3 (P2) - Pool history per MESSAGE between devices, not all-or-nothing.** Successor
   to WP-HIST-2 (shipped 2026-08-02), which stopped the blind soliciting but left the exchange itself
   binary: `sendFullHistoryBundle` ships the responder's ENTIRE store and the receiver dedupes by id,
@@ -349,7 +359,37 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 - An API helper ending in `res.json()` throws on the empty body a DELETE/void POST returns - AFTER
   the server acted, so the call that WORKED is the one displayed as failed and the UI never updates.
 
+#### The public head, and the two adapters -> [frontend/architecture](docs/wiki/frontend/architecture.md), [nginx](docs/wiki/infrastructure/nginx.md)
+
+- `transformPageChunk` FIRES with `ssr = false`: a server-rendered `<head>` costs no SSR at all.
+  Nothing renders server-side, `hooks.server.ts` just rewrites two literal markers in `app.html`.
+- Those markers are the whole contract and nothing type-checks them - a test asserts both still
+  exist in `app.html`, or the injector no-ops in silence.
+- `svelte.config.js` picks the adapter from `BUILD_WEB`: web = `adapter-node`, everything else =
+  `adapter-static`. The polarity is the point - a build that forgets it must not produce a server
+  Tauri cannot consume.
+- `adapter-node` emits NO `index.html`, so there is no static fallback: nginx answers 502 when
+  `frontend-ssr` is down. Both images ship from one artifact, together.
+- The SSR process reads services with `X-Internal-Secret`, never `X-Internal-Token` (bound to a
+  user id = impersonation). Any enrichment failure falls back to the baseline: a page must never
+  fail because its preview did.
+- Entity text lands in HTML ATTRIBUTES in the shell - one escaper, applied to every interpolation.
+- `associationLogoSrc()` falls back to `http://localhost:3011` when `window` is undefined, which is
+  exactly the SSR case: build `og:image` from the site origin instead.
+- A crawler never hydrates, but a user does: tag the injected block and remove it on mount.
+
 #### Server-side fetches -> [chat-delivery](docs/wiki/services/chat-delivery.md)
+
+- An `<img src>` at a third party inside an E2E conversation tells that host who read and when.
+  Proxying it is not a nicety - and the proxy is also the only thing checking the bytes are an image.
+- Proxy the favicon CANDIDATES too: the conventional paths are derived client-side, so nothing
+  server-side ever rewrote them.
+- Cache a FAILURE too, for a tenth of the success TTL, or every render of a dead link pays the
+  full timeout.
+- oEmbed only ever FILLS GAPS - Open Graph wins wherever both speak, which is what makes the
+  enrichment safe to apply blindly to any site.
+- Every `href` read out of someone else's markup needs its SCHEME checked, whether it ends in an
+  `<img src>` or in an outbound fetch. `new URL(x, base)` resolves `javascript:` rather than throwing.
 
 - One predicate guards every fetch of a user-supplied URL, before the fetch AND at connect time.
   RFC 1918 is not the whole blocklist: `0.0.0.0`/`::`, IPv4-mapped IPv6, bracketed literals.

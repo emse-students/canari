@@ -28,15 +28,52 @@ import {
   fetchYouTubeOEmbed,
   fetchMiGalleryPreview,
   buildLinkPreviewPayload,
+  extractOEmbedEndpoint,
+  fetchOEmbedData,
+  mergeOEmbedIntoPayload,
   ssrfSafeFetch,
   errorCause,
+  type LinkPreviewPayload,
   type SsrfSafeResponse,
 } from '../utils/url-guard';
+import { TtlCache } from '../utils/ttl-cache';
+
+/** A preview we managed to build, or the fact that we could not. */
+type CachedPreview = { ok: true; payload: LinkPreviewPayload } | { ok: false; message: string };
+
+/** A proxied image, small enough to be worth holding on to. */
+interface CachedImage {
+  contentType: string;
+  body: Buffer;
+}
+
+/**
+ * How long an answer is reused. Six hours for a page that answered, because
+ * Open Graph tags change on the scale of an edit, not of a render; ten minutes
+ * for a failure, so a site that was merely down is retried the same day rather
+ * than written off for six hours.
+ */
+const PREVIEW_TTL_MS = 6 * 60 * 60 * 1000;
+const PREVIEW_FAILURE_TTL_MS = 10 * 60 * 1000;
+const IMAGE_TTL_MS = 6 * 60 * 60 * 1000;
+
+/** Hard ceiling on what an image proxy will download, and on what it will retain. */
+const IMAGE_MAX_BYTES = 3_000_000;
+const IMAGE_CACHEABLE_BYTES = 256_000;
 
 /** PIN verifier and link-preview (SSRF-protected) endpoints. */
 @Controller()
 export class SecurityController {
   private readonly logger = new Logger(SecurityController.name);
+
+  /**
+   * Keyed by the requested URL, and shared by every reader on every device -
+   * one person sharing a link produces a burst of identical requests, which is
+   * exactly the case a cache is for. Static rather than an instance field so
+   * the lifetime is the process's, not the controller's.
+   */
+  private static readonly previewCache = new TtlCache<CachedPreview>(500);
+  private static readonly imageCache = new TtlCache<CachedImage>(200);
 
   constructor(
     @InjectRepository(PinVerifier)
@@ -305,94 +342,260 @@ export class SecurityController {
     return { ok: true, devicesPurged };
   }
 
+  /**
+   * Fetches a safe external URL preview (SSRF-protected: private IPs and
+   * localhost are rejected), answering from cache when it can.
+   *
+   * The cache is what makes this endpoint honest towards the sites it reads:
+   * every render of every message used to re-download the remote page, so a
+   * conversation scrolled back through hammered a site that never agreed to
+   * any of it. `Cache-Control` carries the same decision to the browser, which
+   * is the only way to stop the request being made at all.
+   */
   @Get('mls/link-preview')
-  /** Fetches a safe external URL preview (SSRF-protected: private IPs and localhost are rejected). */
-  async getLinkPreview(@Query('url') url: string) {
+  async getLinkPreview(
+    @Query('url') url: string,
+    @Res({ passthrough: true }) res: ExpressResponse
+  ) {
     if (!url || typeof url !== 'string') {
       throw new BadRequestException('url is required');
     }
 
     const targetUrl = await assertSafeExternalUrl(url);
+    const cacheKey = targetUrl.toString();
+
+    const cached = SecurityController.previewCache.get(cacheKey);
+    if (cached) {
+      this.logger.debug(`[LINK_PREVIEW] cache hit ${targetUrl.hostname} ok=${cached.ok}`);
+      if (cached.ok === false) throw new BadRequestException(cached.message);
+      res.setHeader('Cache-Control', `public, max-age=${Math.floor(PREVIEW_TTL_MS / 1000)}`);
+      return cached.payload;
+    }
+
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), 4000);
 
     try {
-      const oembedPayload = await fetchYouTubeOEmbed(targetUrl);
-      if (oembedPayload) {
-        return oembedPayload;
-      }
-
-      const galleryPayload = await fetchMiGalleryPreview(targetUrl);
-      if (galleryPayload) {
-        return galleryPayload;
-      }
-
-      let currentUrl = targetUrl;
-      let response: SsrfSafeResponse | null = null;
-      let redirectsCount = 0;
-      const MAX_REDIRECTS = 3;
-
-      while (redirectsCount <= MAX_REDIRECTS) {
-        // Security: mitigates CodeQL alerts #2464 and #2479 — re-validate URL immediately
-        // before fetch, then reconstruct the string from validated URL parts to explicitly
-        // break the taint chain for static analysis (CodeQL js/request-forgery).
-        await assertSafeExternalUrl(currentUrl.href);
-        const fetchUrl = new URL(
-          currentUrl.pathname + currentUrl.search + currentUrl.hash,
-          currentUrl.origin
-        ).href;
-        // ssrfSafeFetch pins the connection to a re-validated, public-only IP at
-        // connect time (defends against DNS-rebinding between the check above and
-        // this fetch). It must stay undici's own fetch - see its doc comment.
-        response = await ssrfSafeFetch(fetchUrl, {
-          method: 'GET',
-          redirect: 'manual', // prevent automatic redirects
-          signal: abortController.signal,
-          headers: {
-            'user-agent': 'CanariLinkPreview/1.0',
-            accept: 'text/html,application/xhtml+xml',
-          },
-        });
-
-        // Manually handle redirects.
-        if (response.status >= 300 && response.status <= 399) {
-          const location = response.headers.get('location');
-          if (!location) break;
-          // Re-validate the redirect target against SSRF (e.g. a redirect to localhost).
-          currentUrl = await assertSafeExternalUrl(new URL(location, currentUrl.href).toString());
-          redirectsCount++;
-        } else {
-          break;
-        }
-      }
-
-      if (!response || !response.ok) {
-        throw new BadRequestException('Unable to fetch URL');
-      }
-
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.toLowerCase().includes('text/html')) {
-        throw new BadRequestException('URL is not an HTML page');
-      }
-
-      const contentLength = Number.parseInt(response.headers.get('content-length') || '0', 10);
-      if (Number.isFinite(contentLength) && contentLength > 1_000_000) {
-        throw new BadRequestException('Page is too large to preview');
-      }
-
-      const html = (await response.text()).slice(0, 220_000);
-      return buildLinkPreviewPayload(html, targetUrl);
+      const payload = await this.resolveLinkPreview(targetUrl, abortController.signal);
+      SecurityController.previewCache.set(cacheKey, { ok: true, payload }, PREVIEW_TTL_MS);
+      res.setHeader('Cache-Control', `public, max-age=${Math.floor(PREVIEW_TTL_MS / 1000)}`);
+      return payload;
     } catch (error) {
+      // A refusal is cached too, for a tenth of the time: without it every
+      // render of a message pointing at a dead host pays the full timeout.
+      const message = error instanceof BadRequestException ? error.message : 'Link preview failed';
+      SecurityController.previewCache.set(cacheKey, { ok: false, message }, PREVIEW_FAILURE_TTL_MS);
+
       if (error instanceof BadRequestException) throw error;
       // The client only ever sees "Link preview failed", so without this line a
       // transport-level break (a dispatcher the runtime rejects, a DNS failure)
       // is indistinguishable from a site that simply refused us.
       const cause = errorCause(error) ?? error;
       this.logger.warn(`[LINK_PREVIEW] ${targetUrl.hostname} failed: ${String(cause)}`);
-      throw new BadRequestException('Link preview failed');
+      throw new BadRequestException(message);
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  /**
+   * Builds the preview for an already-validated URL. Split out of the endpoint
+   * so caching and error mapping live in one place and the fetching logic in
+   * another; it throws exactly what the endpoint is written to catch.
+   */
+  private async resolveLinkPreview(
+    targetUrl: URL,
+    signal: AbortSignal
+  ): Promise<LinkPreviewPayload> {
+    // The YouTube short-circuit stays ahead of the generic oEmbed discovery
+    // below: it needs no HTML fetch at all, so it is strictly cheaper.
+    const youtubePayload = await fetchYouTubeOEmbed(targetUrl);
+    if (youtubePayload) {
+      return youtubePayload;
+    }
+
+    const galleryPayload = await fetchMiGalleryPreview(targetUrl);
+    if (galleryPayload) {
+      return galleryPayload;
+    }
+
+    let currentUrl = targetUrl;
+    let response: SsrfSafeResponse | null = null;
+    let redirectsCount = 0;
+    const MAX_REDIRECTS = 3;
+
+    while (redirectsCount <= MAX_REDIRECTS) {
+      // Security: mitigates CodeQL alerts #2464 and #2479 — re-validate URL immediately
+      // before fetch, then reconstruct the string from validated URL parts to explicitly
+      // break the taint chain for static analysis (CodeQL js/request-forgery).
+      await assertSafeExternalUrl(currentUrl.href);
+      const fetchUrl = new URL(
+        currentUrl.pathname + currentUrl.search + currentUrl.hash,
+        currentUrl.origin
+      ).href;
+      // ssrfSafeFetch pins the connection to a re-validated, public-only IP at
+      // connect time (defends against DNS-rebinding between the check above and
+      // this fetch). It must stay undici's own fetch - see its doc comment.
+      response = await ssrfSafeFetch(fetchUrl, {
+        method: 'GET',
+        redirect: 'manual', // prevent automatic redirects
+        signal,
+        headers: {
+          'user-agent': 'CanariLinkPreview/1.0',
+          accept: 'text/html,application/xhtml+xml',
+        },
+      });
+
+      // Manually handle redirects.
+      if (response.status >= 300 && response.status <= 399) {
+        const location = response.headers.get('location');
+        if (!location) break;
+        // Re-validate the redirect target against SSRF (e.g. a redirect to localhost).
+        currentUrl = await assertSafeExternalUrl(new URL(location, currentUrl.href).toString());
+        redirectsCount++;
+      } else {
+        break;
+      }
+    }
+
+    if (!response || !response.ok) {
+      throw new BadRequestException('Unable to fetch URL');
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().includes('text/html')) {
+      throw new BadRequestException('URL is not an HTML page');
+    }
+
+    const contentLength = Number.parseInt(response.headers.get('content-length') || '0', 10);
+    if (Number.isFinite(contentLength) && contentLength > 1_000_000) {
+      throw new BadRequestException('Page is too large to preview');
+    }
+
+    const html = (await response.text()).slice(0, 220_000);
+    const payload = buildLinkPreviewPayload(html, targetUrl);
+
+    // Follow the page's own oEmbed endpoint when it declares one. It is the
+    // contract a site publishes for embedders, so it covers Spotify, Vimeo,
+    // Bandcamp and X through one code path - and it only ever fills gaps, so a
+    // page with good Open Graph tags is never made worse by it.
+    const oembedEndpoint = extractOEmbedEndpoint(html, targetUrl);
+    if (!oembedEndpoint) return payload;
+
+    const oembed = await fetchOEmbedData(oembedEndpoint, signal);
+    if (oembed) {
+      this.logger.debug(`[LINK_PREVIEW] oEmbed enriched ${targetUrl.hostname}`);
+    }
+    return mergeOEmbedIntoPayload(payload, oembed, targetUrl);
+  }
+
+  /**
+   * Proxies the image of a link preview - its `og:image` or its favicon.
+   *
+   * The card used to point an `<img src>` straight at the remote host, so every
+   * reader of a message opened a connection to a third party from inside an
+   * end-to-end encrypted conversation: the site learned each reader's IP, their
+   * user agent, and the moment they scrolled to the message. Encrypting the
+   * body and then fetching the illustration in clear defeats a good part of
+   * what the encryption is for. Fetching it here means the site sees the server
+   * once per six hours instead of every reader every time.
+   *
+   * The URL is caller-supplied, so it goes through the same SSRF guard as the
+   * page fetch, and the answer must actually be an image: a `text/html` body
+   * served to an `<img>` is a site answering something other than what was
+   * asked, and there is no reason to relay it.
+   *
+   * Unauthenticated on purpose, like the preview endpoint it serves: it fetches
+   * only public URLs and holds no credential, so requiring a session would buy
+   * nothing and break the preview for a page rendered before the session is up.
+   */
+  @Get('mls/link-preview/image')
+  async getLinkPreviewImage(@Query('url') url: string, @Res() res: ExpressResponse): Promise<void> {
+    if (!url || typeof url !== 'string') {
+      res.status(400).end('url is required');
+      return;
+    }
+
+    let targetUrl: URL;
+    try {
+      targetUrl = await assertSafeExternalUrl(url);
+    } catch {
+      res.status(400).end('Invalid or blocked URL');
+      return;
+    }
+
+    const cacheKey = targetUrl.toString();
+    const cached = SecurityController.imageCache.get(cacheKey);
+    if (cached) {
+      this.sendProxiedImage(res, cached);
+      return;
+    }
+
+    try {
+      const response = await ssrfSafeFetch(cacheKey, {
+        method: 'GET',
+        // Redirects are followed rather than walked by hand, unlike the page
+        // fetch above: a CDN answers image requests with two or three of them,
+        // and the dispatcher re-validates the resolved address at every connect,
+        // so a redirect to a private host is refused at the socket regardless.
+        redirect: 'follow',
+        signal: AbortSignal.timeout(5000),
+        headers: {
+          'user-agent': 'CanariLinkPreview/1.0',
+          accept: 'image/*',
+        },
+      });
+
+      if (!response.ok) {
+        res.status(response.status === 404 ? 404 : 502).end();
+        return;
+      }
+
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+      // `image/*` only. An SVG is excluded with it: it is a document that can
+      // carry script, and it would be served from our own origin.
+      if (!contentType.startsWith('image/') || contentType.includes('svg')) {
+        res.status(415).end();
+        return;
+      }
+
+      const declaredLength = Number.parseInt(response.headers.get('content-length') || '0', 10);
+      if (Number.isFinite(declaredLength) && declaredLength > IMAGE_MAX_BYTES) {
+        res.status(413).end();
+        return;
+      }
+
+      const body = Buffer.from(await response.arrayBuffer());
+      // A missing or lying `content-length` is why this is checked twice.
+      if (body.length > IMAGE_MAX_BYTES) {
+        res.status(413).end();
+        return;
+      }
+
+      const image: CachedImage = { contentType: contentType.split(';')[0], body };
+      // Only small images are retained: a favicon costs a kilobyte and is asked
+      // for constantly, while a full-size og:image would evict a hundred of
+      // them to save one request.
+      if (body.length <= IMAGE_CACHEABLE_BYTES) {
+        SecurityController.imageCache.set(cacheKey, image, IMAGE_TTL_MS);
+      }
+      this.sendProxiedImage(res, image);
+    } catch (error) {
+      const cause = errorCause(error) ?? error;
+      this.logger.warn(`[LINK_PREVIEW_IMAGE] ${targetUrl.hostname} failed: ${String(cause)}`);
+      res.status(502).end();
+    }
+  }
+
+  /** Writes a proxied image with the headers that let the browser stop asking. */
+  private sendProxiedImage(res: ExpressResponse, image: CachedImage): void {
+    res.setHeader('Content-Type', image.contentType);
+    res.setHeader('Content-Length', image.body.length);
+    res.setHeader('Cache-Control', `public, max-age=${Math.floor(IMAGE_TTL_MS / 1000)}`);
+    // The bytes come from a third party: refuse to let a browser sniff them
+    // into anything other than the image type declared above.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end(image.body);
   }
 
   /**

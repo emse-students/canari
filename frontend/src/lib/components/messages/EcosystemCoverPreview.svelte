@@ -1,6 +1,12 @@
+<!--
+  The cover-first preview card, used for the ecosystem pages whose whole point
+  is an image (a MiGallery album today). Everything site-specific arrives as a
+  prop: the chip label and the fallback title come from `ecosystemHosts.ts`, so
+  adding a site is a registry entry rather than a second copy of this file.
+-->
 <script lang="ts">
   import { ExternalLink, Images } from '@lucide/svelte';
-  import { m } from '$lib/paraglide/messages';
+  import { proxiedPreviewImageUrl } from '$lib/utils/previewImageProxy';
 
   interface ExternalPreviewPayload {
     url: string;
@@ -11,19 +17,24 @@
   }
 
   interface Props {
-    /** MiGallery album URL (used as the link href). */
+    /** The page URL (used as the link href). */
     url: string;
-    /** Preview data fetched from the MiGallery API (og-preview / link-preview). */
+    /** Preview data fetched from the link-preview endpoint. */
     preview: ExternalPreviewPayload | null;
     /** Whether the data is currently loading. */
     isLoading: boolean;
+    /** The site's name, shown in the chip - never its bare hostname. */
+    siteLabel: string;
+    /** Title to show when the page declared none, already localized. */
+    fallbackTitle: string;
     /** When true, removes the top margin (card alone in the bubble). */
     standalone?: boolean;
   }
 
-  let { url, preview, isLoading, standalone = false }: Props = $props();
+  let { url, preview, isLoading, siteLabel, fallbackTitle, standalone = false }: Props = $props();
 
-  const hasImage = $derived(Boolean(preview?.image));
+  /** Fetched through Canari rather than from its host - see `previewImageProxy`. */
+  const coverUrl = $derived(proxiedPreviewImageUrl(preview?.image));
 </script>
 
 <a
@@ -34,13 +45,13 @@
     ? ''
     : 'mt-3'} flex items-stretch rounded-2xl border border-black/5 dark:border-white/10 bg-white/45 dark:bg-black/25 backdrop-blur-xl transition-all duration-300 hover:bg-white/70 dark:hover:bg-black/40 hover:border-amber-500/35 hover:shadow-md overflow-hidden"
 >
-  <!-- Miniature de la couverture -->
+  <!-- Cover thumbnail -->
   <div class="shrink-0 relative w-24 sm:w-28 overflow-hidden bg-black/8 dark:bg-white/8">
     {#if isLoading}
       <div class="absolute inset-0 animate-pulse bg-black/10 dark:bg-white/10"></div>
-    {:else if hasImage}
+    {:else if coverUrl}
       <img
-        src={preview?.image}
+        src={coverUrl}
         alt=""
         class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
         loading="lazy"
@@ -52,12 +63,12 @@
     {/if}
   </div>
 
-  <!-- Métadonnées texte -->
+  <!-- Text metadata -->
   <div class="min-w-0 flex-1 px-3 py-2.5 flex flex-col justify-center gap-0.5">
     <span
-      class="inline-flex self-start items-center rounded-md bg-amber-500/12 dark:bg-amber-400/10 px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wider font-bold text-amber-800 dark:text-amber-300"
+      class="inline-flex self-start max-w-full items-center rounded-md bg-amber-500/12 dark:bg-amber-400/10 px-1.5 py-0.5 text-[0.6rem] tracking-wider font-bold text-amber-800 dark:text-amber-300 truncate"
     >
-      MiGallery
+      {siteLabel}
     </span>
 
     {#if isLoading}
@@ -67,7 +78,7 @@
       <p
         class="text-sm font-bold text-text-main leading-snug line-clamp-2 group-hover:text-amber-700 dark:group-hover:text-amber-300 transition-colors duration-300"
       >
-        {preview?.title || m.migallery_album_fallback()}
+        {preview?.title || fallbackTitle}
       </p>
       {#if preview?.description}
         <p class="text-xs text-text-muted leading-snug line-clamp-1">

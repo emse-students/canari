@@ -379,7 +379,7 @@ export function extractIconUrl(html: string, targetUrl: URL): string {
  * link-preview payload (url, title, description, image, siteName, icon), each
  * field truncated to a safe display length.
  */
-export function buildLinkPreviewPayload(html: string, targetUrl: URL) {
+export function buildLinkPreviewPayload(html: string, targetUrl: URL): LinkPreviewPayload {
   const title = extractMetaContent(html, 'og:title') || extractTitle(html) || targetUrl.hostname;
   const description =
     extractMetaContent(html, 'og:description') || extractMetaContent(html, 'description') || '';
@@ -402,6 +402,159 @@ export function buildLinkPreviewPayload(html: string, targetUrl: URL) {
     image,
     siteName: siteName.slice(0, 120),
     icon: extractIconUrl(html, targetUrl),
+  };
+}
+
+/** The link-preview payload every producer in this file returns. */
+export interface LinkPreviewPayload {
+  url: string;
+  title: string;
+  description: string;
+  image: string;
+  siteName: string;
+  icon?: string;
+}
+
+/**
+ * The `href` of the page's own oEmbed endpoint, or null when it declares none.
+ *
+ * oEmbed is the one metadata contract a site publishes *for* embedders, so a
+ * page that has it usually describes itself better there than in its Open Graph
+ * tags - Spotify, Vimeo, Bandcamp, Flickr and X all do. Discovery is a `<link
+ * rel="alternate" type="application/json+oembed">` in the markup we have
+ * already downloaded, so finding it costs nothing; only following it costs a
+ * request.
+ *
+ * The href comes from someone else's markup, so the scheme is checked rather
+ * than the parse: `new URL(href, base)` happily resolves `javascript:` and
+ * `data:` instead of throwing.
+ */
+export function extractOEmbedEndpoint(html: string, targetUrl: URL): string | null {
+  for (const attrs of extractLinkTags(html)) {
+    if (attrs.rel?.toLowerCase() !== 'alternate') continue;
+
+    const type = attrs.type?.toLowerCase() ?? '';
+    if (type !== 'application/json+oembed' && type !== 'text/json+oembed') continue;
+    if (!attrs.href) continue;
+
+    try {
+      const resolved = new URL(attrs.href, targetUrl);
+      if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') continue;
+      return resolved.toString();
+    } catch {
+      // A malformed declaration is not a reason to fail the whole preview.
+    }
+  }
+
+  return null;
+}
+
+/** The three oEmbed fields worth merging into a preview. All optional, by the spec. */
+export interface OEmbedData {
+  title?: string;
+  authorName?: string;
+  thumbnailUrl?: string;
+  providerName?: string;
+}
+
+/**
+ * Follows a discovered oEmbed endpoint and returns the fields we can use.
+ *
+ * Goes through the same SSRF guard as the page fetch: the endpoint is declared
+ * by the page, so it is exactly as attacker-controlled as the URL that was
+ * pasted. Never throws - a preview that already has Open Graph data must not be
+ * lost because the optional enrichment failed.
+ */
+export async function fetchOEmbedData(
+  endpoint: string,
+  signal?: AbortSignal
+): Promise<OEmbedData | null> {
+  try {
+    const safeUrl = await assertSafeExternalUrl(endpoint);
+    const response = await ssrfSafeFetch(safeUrl.toString(), {
+      method: 'GET',
+      redirect: 'manual',
+      signal,
+      headers: {
+        'user-agent': 'CanariLinkPreview/1.0',
+        accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) return null;
+    if (!(response.headers.get('content-type') || '').toLowerCase().includes('json')) return null;
+
+    const raw = (await response.text()).slice(0, 100_000);
+    const data = JSON.parse(raw) as {
+      title?: unknown;
+      author_name?: unknown;
+      thumbnail_url?: unknown;
+      provider_name?: unknown;
+    };
+
+    const asString = (value: unknown): string | undefined =>
+      typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
+    return {
+      title: asString(data.title),
+      authorName: asString(data.author_name),
+      thumbnailUrl: asString(data.thumbnail_url),
+      providerName: asString(data.provider_name),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Merges oEmbed data into a payload built from the page's meta tags.
+ *
+ * Open Graph wins wherever both speak, because it is what the site chose to
+ * show in a preview; oEmbed only fills gaps and adds the one thing Open Graph
+ * has no field for - the author. That ordering is what keeps the enrichment
+ * safe to apply blindly: a site with good tags is never made worse by it.
+ *
+ * Returns a new payload; the input is not modified.
+ */
+export function mergeOEmbedIntoPayload(
+  payload: LinkPreviewPayload,
+  oembed: OEmbedData | null,
+  targetUrl: URL
+): LinkPreviewPayload {
+  if (!oembed) return payload;
+
+  // `buildLinkPreviewPayload` falls back to the hostname when the page declares
+  // no title, so "the title is the hostname" is how a missing title presents.
+  const titleIsPlaceholder = !payload.title || payload.title === targetUrl.hostname;
+
+  let description = payload.description;
+  if (!description && oembed.authorName) {
+    description = oembed.providerName
+      ? `${oembed.providerName} • ${oembed.authorName}`
+      : oembed.authorName;
+  }
+
+  let image = payload.image;
+  if (!image && oembed.thumbnailUrl) {
+    try {
+      const resolved = new URL(oembed.thumbnailUrl, targetUrl);
+      if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {
+        image = resolved.toString();
+      }
+    } catch {
+      // Keep the empty image rather than a value we could not resolve.
+    }
+  }
+
+  return {
+    ...payload,
+    title: (titleIsPlaceholder && oembed.title ? oembed.title : payload.title).slice(0, 180),
+    description: description.slice(0, 280),
+    image,
+    siteName:
+      payload.siteName === targetUrl.hostname && oembed.providerName
+        ? oembed.providerName.slice(0, 120)
+        : payload.siteName,
   };
 }
 
