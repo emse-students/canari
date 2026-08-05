@@ -1,6 +1,7 @@
 import type { Handle } from '@sveltejs/kit';
 import { renderSeoTags, renderSeoTitle } from '$lib/seo/renderHead';
 import { resolveServerSeo } from '$lib/seo/serverSeo';
+import { SITE } from '$lib/seo/site';
 
 /**
  * Writes the page's Open Graph head into the shell before it is sent.
@@ -15,8 +16,11 @@ import { resolveServerSeo } from '$lib/seo/serverSeo';
  * renamed marker would otherwise turn this into a silent no-op:
  *
  * - `<!--canari-seo-->` receives the meta/link block;
- * - `<title>Canari</title>` is REPLACED rather than added to, because two titles in a document
- *   means the first one wins and the static one is the first.
+ * - `<title>Canari - Mines Saint-Etienne</title>` is REPLACED rather than added to, because two
+ *   titles in a document means the first one wins and the static one is the first. It carries the
+ *   school for the same reason every other title does: it is what a reader sees whenever the
+ *   substitution does not run - the Tauri shell, and the degraded `@app_shell` fallback, which
+ *   nginx now answers with 200 and a crawler will therefore index.
  *
  * The static (Tauri) build runs this too, once, while adapter-static prerenders its `index.html`
  * fallback - so the shipped shell carries the generic site-level head and nothing more, no path
@@ -24,7 +28,7 @@ import { resolveServerSeo } from '$lib/seo/serverSeo';
  * per-request enrichment is by definition only reachable where a server is running.
  */
 const SEO_MARKER = '<!--canari-seo-->';
-const STATIC_TITLE = '<title>Canari</title>';
+const STATIC_TITLE = `<title>${SITE.defaultTitle}</title>`;
 
 export const handle: Handle = async ({ event, resolve }) => {
   const pathname = event.url.pathname;

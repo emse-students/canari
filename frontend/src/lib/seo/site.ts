@@ -10,6 +10,12 @@ export const SITE = {
    * the description. Nothing else on the site can win that word on its own.
    */
   alternateName: 'Canari EMSE',
+  /**
+   * The title of the home page and of anything with nothing more specific to say. It is NOT
+   * `name`: a `<title>` of one word that also names a bird disambiguates nothing, and the home
+   * page is the one whose title matters most. The school travels with it, here as everywhere else.
+   */
+  defaultTitle: 'Canari - Mines Saint-Étienne',
   locale: 'fr_FR',
   language: 'fr',
   /**

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { escapeHtmlAttribute, renderSeoTags, renderSeoTitle } from './renderHead';
+import { SITE } from './site';
 import type { SeoMeta } from './types';
 
 const base: SeoMeta = { title: 'Titre', description: 'Description', path: '/posts/abc' };
@@ -67,8 +68,16 @@ describe('the app.html contract', () => {
   });
 
   it('still carries the static title the rendered title replaces', () => {
-    expect(appHtml).toContain('<title>Canari</title>');
+    // Pinned against SITE.defaultTitle rather than a copy of the string: hooks.server.ts builds
+    // the marker from it, so a change on one side has to be made on the other or this fails.
+    expect(appHtml).toContain(`<title>${SITE.defaultTitle}</title>`);
     expect(renderSeoTitle(base)).toBe('<title>Titre - Canari</title>');
+  });
+
+  it('names the school in the fallback title, which is what an outage indexes', () => {
+    // The @app_shell fallback and the Tauri shell both ship app.html unsubstituted, and nginx now
+    // answers the former with 200 - so this title is indexable. "Canari" alone is a bird.
+    expect(SITE.defaultTitle).toContain(SITE.institutionName);
   });
 });
 

@@ -120,14 +120,14 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
 
   if (path === '/') {
     return {
-      title: SITE.name,
+      title: SITE.defaultTitle,
       description: SITE.defaultDescription,
       path: '/posts',
     };
   }
 
   return {
-    title: SITE.name,
+    title: SITE.defaultTitle,
     description: SITE.defaultDescription,
     path,
     noindex: isPrivatePath(path),
