@@ -7,6 +7,11 @@ Work Packages sit open with correct-looking code that has never executed on hard
 
 This file is the single ordered pass that closes them.
 
+**Its sibling is [cross-client-testing](cross-client-testing.md).** This page asks "does this native
+path work on hardware at all?" - one device, one check. That one asks "does the system stay correct
+when several clients, several lifecycles and a damaged store meet?" - two browsers and a phone at
+once. Checks H, K, L and M below are re-exercised there, in context, rather than in isolation.
+
 **It is the only place they are tracked.** On 2026-08-04 every Work Package whose sole remaining
 debt was "run this on a device" was deleted from `CLAUDE.md` and folded in here - a check owed is
 not a work package, it is a line in this table. The WP ids are kept in the table because commits and

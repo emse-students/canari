@@ -127,6 +127,19 @@ read-only `mysqldump@localhost` that lacks `EVENT` on the `mysql` DB, so `--even
 
 ### CANARI - OPEN WORK PACKAGES
 
+**[campaign] CROSS-CLIENT TEST CAMPAIGN - ACTIVE, started 2026-08-05.** The whole plan (three
+clients, ~60 checks, the phases and their order) is
+**[cross-client-testing](docs/wiki/cross-client-testing.md)**. Do not re-plan it from here. Three
+facts that page depends on and that a compaction must not lose: the campaign runs against
+**PRODUCTION** with two real accounts whose credentials are in `scratchpad/test-accounts.json`
+(**never in the repo**); **W2 is a second Chrome driven by a hand-written CDP client** over Node 24's
+global `WebSocket` (`scratchpad/w2.mjs`) because there is no Playwright/Puppeteer here and the MCP
+bundles its own where nothing can require it; and **Phase 0 must fully pass before any check runs** -
+in particular SETUP-7, the discovery pass, without which every corruption test targets a guessed key
+name and passes silently. A check that FAILS earns a WP with its captured log; a check that passes
+earns a row in section 10 and nothing else. Prime target: **WP-FWD-1**, whose whole point is that it
+has never been reproduced.
+
 **[device] The verification pass is NOT a Work Package.** Everything native is verified by COMPILING,
 which proves nothing about running, and the whole owed list lives in
 **[device-verification](docs/wiki/device-verification.md)** - checks B-N, the build to install, the
