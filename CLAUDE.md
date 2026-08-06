@@ -119,7 +119,44 @@ Prod is `ssh cercle` (10.0.0.6, ProxyJump canari); our audit branch is archived
 
 ---
 
-### PORTAIL-ETU (../refonte-portail-etu) - COMPLETE, nothing open
+### PORTAIL-ETU (../refonte-portail-etu) - ONE WP OPEN: a fix is PUSHED but NEVER DEPLOYED
+
+- \[ \] **WP-PORTAIL-AVATAR-1 (P2) - `2b390c4` is on `main` and has never reached the server.**
+  **The DIAGNOSIS IS CLOSED - do not re-derive it.** 2026-08-06, bursts of HTTP 502 on
+  `/api/users/:id/avatar`: it is the route's own `catch`, not nginx and not a rate limit on the
+  visitor (empty body, while `/api/users/!!!/avatar` answers 400). 479 recorded failures, all one
+  message - `Unable to connect` on a well-formed URL, so neither DNS, TLS nor the secrets - and all
+  inside the last 19k lines of a 1,925,156-line append-only log, in bursts (469 of 478 gaps = exactly
+  6 lines). **ONE episode, not a chronic fault.** The host reaches MiGallery fine over IPv4 (401 in
+  75-127 ms, 8/8 bun calls). **The IPv6 lead is DEAD**: no global IPv6 address, so `AI_ADDRCONFIG`
+  keeps AAAA out of an ordinary lookup. The residual cause is the host's outbound path, NOT an app
+  defect - and the wiki already records that this host cannot reach `canari-emse.fr` server-side
+  (hairpin NAT); the avatar proxy is its ONLY server-side fetch.
+  **What `2b390c4` fixes is the amplification only**: with no cache a page of N members opened N
+  connections per visitor per visit. In-process cache (1 h image / 10 min absence / 500 entries,
+  injected clock), `X-Cache: hit|miss` to verify from outside, `isCacheableAbsence` so only a literal
+  404 is stored (`!res.ok` reads like "no avatar" and is not), and a transport failure stays a 502
+  `no-store`. `9073a03` added `time: true` to `ecosystem.config.cjs`. Gates green, 19/19 tests.
+  **OWED, in order:**
+  1. **Deploy.** GitHub Actions was in a MAJOR OUTAGE from 2026-08-06 15:22 UTC: `Run Tests` was
+     cancelled in queue on two commits (so `Deploy` was `skipped`), and **the fix commit got no run
+     created at all**. A dropped trigger never comes back - it needs a re-push or an empty commit.
+  2. **Verify on prod**: `X-Cache: miss` then `hit`. Prod currently returns **no `X-Cache`**, which is
+     the proof it is not deployed (it still runs the 2026-08-04 build).
+  3. **Clean the pm2 logs - BLOCKED, the classifier denied writing the one-off workflow.** The error
+     log is 117 MB, never rotated, and ~1.9M of its lines belong to the LEGACY portal that ran under
+     the same pm2 app name (`mysql2`, a `/api/users/login/...` route, 74,693 x
+     `Unknown column 'r.hiererarchy'`) - none of it exists in this repo. Plan: archive `tail -n 20000`
+     gzipped, then `pm2 flush` (**never `rm`**: pm2 holds the fd, the space would not come back), then
+     `pm2 install pm2-logrotate` - an unrotated log is the root cause, emptying it once only resets
+     the clock.
+  **Access, which is the whole difficulty:** no SSH to that box; the self-hosted runner is the ONLY
+  way in; the repo is **PUBLIC**, so any run log must redact (`grep -a` is mandatory - the log holds
+  binary bytes, and `grep -c` counted 479 while `grep -A3` printed nothing with its stderr hidden).
+  Precedent for the shape: a one-off dispatch-only workflow, then removed (`d986062`/`d128501`, and
+  mine `928bd0c` -> `2b390c4`).
+
+### PORTAIL-ETU - otherwise COMPLETE
 
 The full legacy dump (12 databases, 24.4 MB) lives at
 `../refonte-portail-etu/data-export/legacy-full-dump-2026-08-04.sql` - gitignored, PII, NEVER commit.
