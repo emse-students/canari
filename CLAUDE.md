@@ -409,9 +409,12 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   [cross-client-testing > verified on the device](docs/wiki/cross-client-testing.md#verified-on-the-device-2026-08-06---and-the-verification-found-a-third-defect);
   the rules are in [sessions](docs/wiki/sessions.md). **OWED: the web deploy only** - GitHub Actions
   was in a major outage 2026-08-06 (`Failed to resolve action download info`), so run 31120637374
-  failed at *Set up job*; rerun the failed jobs, nothing is wrong with the code. **Re-logging the
-  phone in is NOT automatable**: the Android login opens the SYSTEM browser (`openUrl`), so it needs
-  CDP on `localabstract:chrome_devtools_remote`, and the CAS password is the user's to type - ask.
+  failed at *Set up job*; rerun the failed jobs, nothing is wrong with the code. **Re-logging the phone
+  in IS automatable** - the Android login just opens the SYSTEM browser (`openUrl`), so forward CDP
+  to `localabstract:chrome_devtools_remote` and run `login.mjs --match cas.emse.fr` against it. The
+  one trap, which cost a run: never `realClick` the CAS fields (the hit test reaches "mot de passe
+  oublié" on the phone's layout) - focus by element and assert `activeElement`, as `login.mjs` now
+  does.
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent

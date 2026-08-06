@@ -1147,12 +1147,18 @@ still open over the login screen**, covering the sign-in button: signed out, wit
    subscriber is a race**, and a fallback only covers it if it does everything the handler does -
    which it never does, or it would be the handler.
 
-Two things the campaign should carry from this: **a fix's own verification is a check like any
-other**, and its observation log gets read the same way (defect 3 is in the same paragraph as the
-PASS that found it); and **exercising the failure branch cost a real logout** - the phone's re-login
-goes through the SYSTEM browser (`openUrl`, not the WebView), so it needs CDP on
-`localabstract:chrome_devtools_remote`, and the CAS password is the user's to type. Do not automate
-that half.
+Two things the campaign should carry from this. **A fix's own verification is a check like any
+other**, and its observation log gets read the same way - defect 3 is in the same paragraph as the
+PASS that found it. And **exercising the failure branch costs a real logout**, so know the re-login
+path before you take it: it goes through the SYSTEM browser, not the WebView (`auth.ts` launches it
+with `openUrl`), so the CDP port must be forwarded to `localabstract:chrome_devtools_remote` and
+`login.mjs` driven with `--match cas.emse.fr` there. It is ordinary automation - the harness has done
+it repeatedly - with ONE trap that cost a run here: **do not `realClick` the CAS fields.** On the
+phone's narrow layout the hit test resolved to the "mot de passe oublié" link beside the password
+box and navigated away mid-fill, which then surfaced as a null `#username` on the next read rather
+than as a wrong click. CAS is a third-party form, not the system under test, so focus the fields by
+element and assert `document.activeElement` - the same reasoning `login.mjs` already applied to the
+submit button, and had simply not extended to the inputs.
 
 ### Three more harness faults, from the LIFE phase - all in reading the phone
 
