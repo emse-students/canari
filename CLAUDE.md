@@ -159,10 +159,24 @@ Prod is `ssh cercle` (10.0.0.6, ProxyJump canari); our audit branch is archived
   **Rotation is NOT active yet**: `pm2 install pm2-logrotate` died on `ConnectionRefused downloading
   package manifest`; `clean-pm2-logs.yml` now retries it 5 times (`02953af`).
 
-  **NEW EVIDENCE on the residual cause, and it is the thread to pull next:** that `ConnectionRefused`
-  was to the **npm registry**, from **bun**, at a moment when `curl` succeeded in the same run. So the
-  intermittent outbound failure is NOT specific to MiGallery, and may well be specific to bun's HTTP
-  client on that host rather than to the network itself.
+  **THE RESIDUAL CAUSE - best hypothesis, and what is already ruled out.** A second failure was
+  caught live: `pm2 install pm2-logrotate` died on `ConnectionRefused` to the **npm registry**, from
+  **bun**, while `curl` succeeded in the same run. So it is NOT specific to MiGallery - and both
+  destinations sit behind **Cloudflare**.
+  `probe-egress.yml` (dispatch-only, on `main`) then established: **CrowdSec IS installed and active**
+  with a `CROWDSEC_CHAIN`, but **0 live decisions and 0 DROP/REJECT on OUTPUT** (the 6 nft rejects are
+  firewalld's inbound/forward policies); **conntrack 140/262144 and 37 TIME_WAIT, so exhaustion is
+  DEAD**; and **bun agreed with curl 40 times out of 40**, which fails to reproduce the bun-client
+  hypothesis without refuting it (the fault was not occurring).
+  **The hypothesis that fits every observation is CrowdSec by the INBOUND path**: every request
+  reaching this host arrives from Cloudflare, so one scanner behind Cloudflare gets an **edge address
+  banned as a source**, and that ban also drops the SYN-ACK of connections the host *initiates*
+  towards the same address - instant failures, in bursts, on some addresses only (DNS hands out
+  several), clearing on their own when the decision expires. Decisions expire but **alerts are
+  retained**, so `cscli alerts list --since 48h` is the evidence; a probe for it was dispatched
+  2026-08-06 and was still queued when the session ended - **re-dispatch `probe-egress.yml` and read
+  the two counts it prints**. If a Cloudflare edge range appears there, the fix is a CrowdSec
+  whitelist for Cloudflare's published ranges, not anything in the app.
   **Access, which is the whole difficulty:** no SSH to that box; the self-hosted runner is the ONLY
   way in; the repo is **PUBLIC**, so any run log must redact (`grep -a` is mandatory - the log holds
   binary bytes, and `grep -c` counted 479 while `grep -A3` printed nothing with its stderr hidden).
@@ -490,18 +504,25 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   `Uncaught (in promise) The resource id NNNN is invalid` - indistinguishable from a network failure
   by text alone, which is why three runs read as "the phone was offline".
 
-- \[ \] **WP-PENDING-2 (P1) - A MESSAGE PULLED WHILE OFFLINE DECRYPTS, IS ACKED, AND THEN EXISTS
-  NOWHERE. Established 2026-08-06, root cause NOT found.** With the backlog emptied, LIFE-6 still
-  fails: the frame is pulled (`Fetched 2 pending messages`), decrypts (`messageCallback -> true`), is
-  ACKed and DELETED server-side (witness row `eb45c135-5fa2-413e-bdac-4ba38f21589e` gone from
-  `queued_message`), and the message is in no conversation - verified by an accumulating scroll read,
-  not a screenful. **The WP-LOSS-1 ledger never sees it**: no `LOST frame`, no `SecretReuseError`, no
-  `Ciphertext generation out of bounds`, no duplicate line. **Two hypotheses are dead, do not re-open
-  them:** the FCM push did not consume the generation (`CanariFCM: App in foreground -> MLS handled
-  by the foreground (WS), skip background processing` for both frames), and it is not the backlog.
-  What is unknown is where between `messageCallback -> true` and the message store it goes -
-  instrument that seam. Evidence in
-  [cross-client-testing > the LIFE phase](docs/wiki/cross-client-testing.md#the-life-phase-2026-08-06).
+- \[ \] **WP-PENDING-2 (P1) - A FRAME WHOSE GENERATION IS TOO FAR AHEAD IS ACKED OFF THE SERVER AS
+  IF IT HAD BEEN DELIVERED. Found and FIXED 2026-08-06; OWED: the deploy, the phone rebuild and a
+  verification.** The phone's NATIVE log had it all along (the `[MLS]` TS lines never showed it):
+  `Ciphertext generation out of bounds 6110 / TooDistantInTheFuture` with **`msg_epoch=1
+  group_epoch=1`** - identical epochs, so it was never an epoch gap but a SENDER RATCHET gap, caused
+  by the undrainable backlog of WP-PENDING-1 (mostly read receipts, which advance the ratchet like
+  anything else). `mls-core` bucketed it as retryable, `classifyIncomingDecryptError` matched
+  `GAP_QUEUED` before the real error, and `attemptCommitReplay` then applied **0 commits**, computed
+  `healed = epoch >= activeEpoch` -> `1 >= 1` -> **true**, and the handler ACKed. **The generalisable
+  fault: a verdict computed over one dimension answering a question asked about another** - "0
+  commits applied" was the evidence that should have refused the conclusion. Fixed in four places
+  (new `GenerationTooFarAhead` kind before the generic `Process error:` arm; no dead
+  `pending_mls_messages` row; `TooDistantInTheFuture` classified before `GAP_QUEUED`; a
+  `generation-gap` branch that goes straight to `forgetGroup` + `requestReAdd`, no threshold, because
+  every later frame from that sender in that epoch fails identically and only a new epoch resets the
+  ratchets), plus `attemptCommitReplay` refusing to claim it healed a gap it had nothing to replay
+  for. **Deliberately left open:** `map_decrypt_outcome` in `src-tauri/src/state.rs` (the BATCH path,
+  history replay) still answers `ok: true, data: None` on `SecretReuse`. Everything in
+  [cross-client-testing > root cause](docs/wiki/cross-client-testing.md#root-cause-a-generation-gap-answered-by-an-epoch-verdict).
 
 - \[ \] **WP-BANNER-1 (P3) - the sync banners cover the conversation header.** Reported by the user
   2026-08-06 with a screenshot. `isCatchingUpMessages` and `historyPendingLabel` in
@@ -592,6 +613,12 @@ three that must be seen without opening one:
 - An error says what it says: "this generation is consumed" is NOT "I already have this message".
   Keep the evidence that distinguishes them (the frame's own bytes) - and never let a native layer
   answer `Ok(None)` where the shared classifier could have decided.
+- EPOCH and GENERATION are different axes, and so are their repairs: a commit replay heals an epoch
+  gap and can do nothing for a ratchet one (`TooDistantInTheFuture`), which only a new epoch clears.
+  A verdict computed over one axis must never answer a question asked about the other - `epoch >=
+  activeEpoch` after applying ZERO commits is "there was nothing to replay", never "it is healed".
+- A wrapper string carries BOTH markers (`GAP_QUEUED:<group>:<the real OpenMLS error>`), so the order
+  of a substring classifier is a decision, not a formality.
 
 #### Outbound delivery -> [chat](docs/wiki/frontend/modules/chat.md), [mobile](docs/wiki/frontend/mobile.md)
 
