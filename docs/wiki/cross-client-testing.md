@@ -353,9 +353,52 @@ fixed commit, and the results table says which build produced it (`versionName` 
 
 _Filled during execution. One row per check: id, build, verdict, evidence pointer._
 
+Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; captures land in
+`scratchpad/logs/`. The table below is the readable summary.
+
 | Id | Build | Verdict | Evidence |
 | --- | --- | --- | --- |
-| | | | |
+| MSG-1 | web, prod 2026-08-06 | **PASS** | DM W1 -> W2, delivered in 1225 ms, one copy each side, author `Jolan BOUDIN`. Re-proved by 38 consecutive sends below. |
+| MSG-1 (volume) | web, prod 2026-08-06 | **PASS** | 20 sends at 1.2 s spacing: 20/20, latency 177-830 ms. 8 sends each preceded by a receiver reload: 8/8, 493-1191 ms. 10 sends into the receiver's post-reload bootstrap window: 10/10, 505-1170 ms. |
+| **Silent loss** | web, prod 2026-08-06 | **FAIL -> WP-LOSS-1** | Two DMs accepted by the server (`POST /api/mls/send -> 201`), never rendered by the peer, still absent after a reload. See below. |
+
+### The loss this campaign was built to find
+
+**Found on the first real check, in the plainest configuration there is**: a DM, both clients
+foreground, both online, no forwarding involved. Two of the first four messages in a freshly created
+DM were lost. The sender shows them; the receiver has never shown them and no longer can.
+
+The capture (`scratchpad/logs/sendprobe-PROBE-msh25j5eovk.json`) closes the question WP-FWD-1 left
+open, which was whether the sender ever posted:
+
+| Stage | What the capture shows |
+| --- | --- |
+| Sender | `POST /api/mls/send -> 201`. The server accepted it. |
+| Transport | The receiver **received the frame**: `[WS RCV] JSON frame: senderId=d82cd226…, isWelcome=false, protoLen=320`. |
+| Receiver decrypt | `[RUST::DEBUG] Ciphertext generation out of bounds 1 / SecretReuseError` |
+| Receiver policy | `[MLS] Duplicate for 642f389a… - silent ACK`, then `[QUEUE] messageCallback -> true` |
+
+So the message is not lost in transit at all. It is **delivered, then discarded by the client**,
+because `SecretReuseError` is classified as a benign duplicate:
+
+- live path - [`setupMessageHandler.ts`](../../frontend/src/lib/mls-client/messagePipeline/setupMessageHandler.ts)
+  `if (kind === 'secret-reuse') { log(...); return true; }`
+- replay path - [`history.ts`](../../frontend/src/lib/utils/chat/history.ts) adds the fingerprint to
+  `seenCipherHashes`, so the one mechanism that could have recovered it makes the loss permanent.
+
+**Neither path checks whether the message was ever actually delivered.** That is the defect, and it
+is independent of whatever causes the ratchet desync: the client knows the frame's fingerprint and
+knows its own message store, so "the secret for this generation is already consumed" and "the user
+has already seen this message" are two different facts. When they disagree, the truth is a desync,
+not a duplicate - and the existing `unknown` branch already has the right response (`onOutOfSync`).
+
+Not reproducible on demand: **38 subsequent sends were delivered, 38/38**, including 18 that
+deliberately targeted the receiver's reload and bootstrap windows. The desync trigger is still
+unknown. It is worth noting that the two losses were the 3rd and 4th messages of a **brand-new DM**,
+in which a second device of the sender's account (A1) was joining, and that the errors say the
+sender's generation was one the receiver had **already consumed** - so the suspicion is a ratchet
+that goes backwards around early group membership churn, not a random fault. That remains a
+suspicion; only the discard policy is proven.
 
 ---
 
@@ -398,15 +441,47 @@ unresolved, and worth a look on its own: it may be a real defect or it may need 
 
 ### The harness caveat that could have faked every result
 
-**A synthetic click can reach the right element and still do nothing.** `elementFromPoint` returns
-the button, `Input.dispatchMouseEvent` / `dispatchTouchEvent` land on its centre, and the handler
-never fires - observed on the community "Rejoindre" button and on mobile "Déverrouiller". In a test
-campaign that is poison: the check reports a false failure that belongs to the harness.
+**A page Chrome considers hidden discards every input event.** This was first written up as
+"a synthetic click can reach the right element and still do nothing" - `elementFromPoint` returns the
+button, `Input.dispatchMouseEvent` lands on its centre, the handler never fires. That description was
+right about the symptom and **wrong about the cause**, which matters, because the wrong cause led to
+routing around the input path instead of fixing it.
 
-Hence two explicit primitives, never a silent fallback between them:
+The cause is Chrome's **native window-occlusion detection**. A window that is fully covered by
+another window is marked `document.visibilityState === 'hidden'` even though `windowState` is
+`normal` and `document.hasFocus()` is `true`, and the renderer then drops CDP input. Two browsers
+plus an editor on one screen means at least one of them is always covered, so the failure looks
+random. Diagnosis is one line - instrument the target element with capturing listeners for
+`pointerdown/mousedown/pointerup/mouseup/click` and dispatch: **zero events** means occlusion, not a
+framework quirk.
 
-- `realClick()` - real input events, for checks where the INPUT PATH is what is under test.
-- `activate()` - `el.click()`, for plumbing: dialogs, navigation, unlocking.
+The fix belongs at launch, not at the call site. Both browsers now start with
+
+```
+--disable-features=CalculateNativeWinOcclusion,ChromeWhatsNewUI
+--disable-backgrounding-occluded-windows --disable-renderer-backgrounding
+```
+
+after which the same `realClick` produces the full **trusted** event sequence and the button opens
+its dialog. `realClick` also sends a `mouseMoved` before the press, so the element is hovered like a
+user's would be.
+
+This has a direct consequence for the lifecycle checks: **a backgrounded tab must be produced by
+focusing another TAB in the same window**, never by covering the window - the flags now make an
+occluded window report `visible`, and covering it would no longer emulate anything.
+
+Two explicit primitives remain, and the rule for choosing is now about intent rather than
+reliability - never a silent fallback between them:
+
+- `realClick()` - real input events, and the default: it works.
+- `activate()` - `el.click()`, only where the effect is all that matters and the page is
+  deliberately hidden (a backgrounded tab under test).
+
+**The same class of mistake bit the reading side.** The contact autocomplete was recorded in Phase 0
+as "returns nothing for any query". It returns results correctly: `GET /api/users/search?q=Claire`
+answers `200` with both matches, and the list renders in a **portalled dropdown outside
+`[role="dialog"]`** - the read was scoped to the dialog, so it saw an empty one. Scope pane reads to
+the right root, and confirm a negative against `document.body` before believing it.
 
 And on the mobile PIN modal, **prefer `Saisie manuelle` to the keypad**. The keypad has no readable
 buffer, so nothing can assert what it holds; leftovers survive between attempts, and after a failed

@@ -147,9 +147,14 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   only. Section 11 of the wiki page says why; do not re-derive it.
 - **USB ADB drops on this phone** - promote to `adb tcpip 5555` + `adb connect <ip>:5555` at once,
   and never bind a long capture to the USB serial.
-- **A synthetic click can hit the right element and still not fire its handler.** Hence `realClick`
-  (input path under test) vs `activate` (plumbing), never a silent fallback - and on the mobile PIN
-  modal use `Saisie manuelle`, because the keypad has no readable buffer.
+- **A page Chrome considers HIDDEN discards every input event** - and native occlusion detection
+  marks a fully covered window hidden while `windowState` stays `normal`. That, not any framework
+  quirk, was the real cause of "a synthetic click reaches the element and nothing fires" (the older
+  note here said otherwise; it was wrong). Both browsers now launch with
+  `--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows`, after
+  which `realClick` produces the full trusted sequence. Consequence: a backgrounded tab must be made
+  by focusing another TAB, never by covering the window. On the mobile PIN modal still use
+  `Saisie manuelle`, because the keypad has no readable buffer.
 - **Restore Firefox as the device's default browser when the campaign ends**
   (`cmd role add-role-holder android.app.role.BROWSER org.mozilla.firefox`); it was switched to
   Chrome because Firefox exposes no CDP.
@@ -183,6 +188,19 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   **Nothing is open - it only has to be written.** The design, the order of work and the three
   defects that ride with it are all in
   [chat > pooling history between devices](docs/wiki/frontend/modules/chat.md#pooling-history-between-devices-designed-not-built).
+
+- \[ \] **WP-LOSS-1 (P1) - A delivered message is DISCARDED by the receiving client.** Found
+  2026-08-06 on MSG-1, the campaign's first check, in the plainest configuration: DM, both clients
+  foreground and online, no forwarding. Full capture and the two code sites are in
+  [cross-client-testing > the loss this campaign was built to find](docs/wiki/cross-client-testing.md#the-loss-this-campaign-was-built-to-find);
+  do not re-derive them. The one line to carry: the server returned **201**, the receiver **got the
+  WS frame**, MLS raised `SecretReuseError`, and the client logged
+  `[MLS] Duplicate ... - silent ACK` and dropped it - then `history.ts` added the fingerprint to
+  `seenCipherHashes`, making it permanent. **`secret-reuse` is classified as a duplicate without
+  ever checking that the message was in fact already delivered**, in both the live and the replay
+  path. The fix is to reconcile the frame's fingerprint against the local message store and take
+  the existing `onOutOfSync` route when they disagree; the desync's own cause is NOT established
+  (38/38 later sends were fine) and is a separate question. This very likely subsumes WP-FWD-1.
 
 - \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
   2026-07-29, prod, channel -> DM: the toast said success, the echo persisted, the outbox drained -
