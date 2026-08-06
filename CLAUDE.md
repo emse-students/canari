@@ -150,12 +150,7 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   log carried a `400` on `/api/mls/link-preview` - which turned out to be every URL containing a
   closing bracket being truncated, in the rendered `<a href>` as well as in the preview. Read the
   noise; that is the whole point of section 9.
-- **OPEN QUESTION for the user, not a WP: should bare domains be linkified?** They are not today -
-  chat requires `https://`, and posts run GFM which links only `www.` and e-mail (verified against
-  `marked`: "auteur.rice", "cher.e.s", "Bonjour.Comment" produce nothing). Adding it needs a
-  deliberately conservative TLD allowlist, because "known extensions" is not enough in French:
-  `.es` would turn inclusive writing like "cher.es" into a link, and `.it`/`.re`/`.ne` collide the
-  same way. Recommend `com org net fr eu io dev app edu gov` and no other two-letter TLD.
+- Bare-domain linkification is now **WP-LINK-1** below, not an open question.
 - **RECONCILIATION is the only way this campaign's loss class can be SEEN**, and `recon.mjs` does
   it: markers on W1 diffed against markers on W2 for one thread. Re-run it after any batch of sends;
   a green per-check verdict cannot substitute for it - it is what found WP-FWD-1 and WP-ECHO-1.
@@ -284,6 +279,19 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   echo of your own message, so the optimistic update is the only writer, and if it is not persisted
   it dies at the next load. Distinct from WP-FWD-1 and WP-LOSS-1, which lose it at the receiver;
   do not merge them.
+
+- \[ \] **WP-LINK-1 (P3) - Linkify bare domains, without linkifying inclusive writing.** Today a
+  chat link needs its `https://` scheme, and a post runs GFM, which autolinks only `www.`-prefixed
+  hosts and e-mail addresses - verified against `marked`, where "auteur.rice", "cher.e.s" and
+  "Bonjour.Comment" all produce nothing. So `canari-emse.fr` typed bare is dead text on both
+  surfaces, which is the gap to close. **The whole difficulty is that an allowlist of "known
+  extensions" is not enough in French**: `.es` is Spain's, so "cher.es" becomes a link; `.it`,
+  `.re` and `.ne` collide with inclusive and elided forms the same way. Ship a deliberately narrow
+  allowlist - `com org net fr eu io dev app edu gov`, **no other two-letter TLD** - in
+  `messageDisplay.ts` next to `HTTP_URL_RE`, require a label before the dot and a non-word
+  character after the TLD, and reuse `trimUrlTrailingPunctuation`. Same list must gate the post
+  renderer, or the two surfaces disagree. Tests belong with the five that
+  `messageDisplay.test.ts` already carries, and must include the French false positives above.
 
 ---
 
