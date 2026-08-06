@@ -13,6 +13,7 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
+import { RevokedDevice } from '../entities/revoked-device.entity';
 
 describe('MessagingService - commit-log (rung-1 backbone)', () => {
   let service: MessagingService;
@@ -42,6 +43,23 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     create: jest.fn(),
     upsert: jest.fn().mockResolvedValue(undefined),
   };
+  // The addressability guard (WP-GHOST-1): a device may only be promoted to `active` if it is not
+  // on the revocation denylist AND still has a static KeyPackage. Both default to "device exists",
+  // so the promotion tests keep testing promotion; the refusal tests set them explicitly.
+  const keyPackageRepo = {
+    find: jest.fn(),
+    findOne: jest.fn().mockResolvedValue({ id: 'kp-1' }),
+    save: jest.fn(),
+    delete: jest.fn(),
+    create: jest.fn(),
+  };
+  const revokedDeviceRepo = {
+    find: jest.fn(),
+    findOne: jest.fn().mockResolvedValue(null),
+    save: jest.fn(),
+    delete: jest.fn(),
+    create: jest.fn(),
+  };
   const redisStore = new Map<string, string>();
   const redis = {
     set: jest.fn(() => Promise.resolve('OK')),
@@ -66,13 +84,15 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     // Default: the committer is already an active member, so the promotion path stays inert
     // unless a test explicitly makes the row absent.
     deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
+    keyPackageRepo.findOne.mockResolvedValue({ id: 'kp-1' });
+    revokedDeviceRepo.findOne.mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
         { provide: getRepositoryToken(GroupMember), useValue: groupMemberRepo },
         { provide: getRepositoryToken(Group), useValue: groupRepo },
-        { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
+        { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
         {
           provide: getRepositoryToken(OneTimeKeyPackage),
           useValue: emptyRepo(),
@@ -84,6 +104,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         { provide: getRepositoryToken(PushToken), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsCommitLog), useValue: commitLogRepo },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: emptyRepo() },
+        { provide: getRepositoryToken(RevokedDevice), useValue: revokedDeviceRepo },
         { provide: 'REDIS_CLIENT', useValue: redis },
       ],
     }).compile();
@@ -176,6 +197,57 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
         baseEpoch: 5,
         proto: 'Y29tbWl0',
         senderId: 'user-1',
+      });
+
+      expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+    });
+
+    // ── WP-GHOST-1: a device that may not be INVITED may not be ROUTED TO either ──────────────
+    // The commit path promotes the COMMITTING device, so without these two guards a device its
+    // owner had deleted could re-enrol itself in every group it still held MLS state for - and
+    // then be messaged forever, invisible in the device list and uncollectable by the GC.
+    it('refuses to promote a device on the revocation denylist', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 1 });
+      groupRepo.save.mockResolvedValue(undefined);
+      deviceGroupRepo.findOne.mockResolvedValue(null);
+      revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
+      jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+
+      const res = await service.validateCommit({
+        groupId: 'group-1',
+        deviceId: 'device-revoked',
+        baseEpoch: 1,
+        proto: 'Y29tbWl0',
+        senderId: 'user-2',
+      });
+
+      // The COMMIT itself is still accepted - it is cryptographically valid and other members
+      // must apply it. Only the routing membership is refused.
+      expect(res.accepted).toBe(true);
+      expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+      expect(redis.sadd).not.toHaveBeenCalledWith(
+        'group:members:group-1',
+        'user-2:device-revoked'
+      );
+    });
+
+    it('refuses to promote a device with no static KeyPackage', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 1 });
+      groupRepo.save.mockResolvedValue(undefined);
+      deviceGroupRepo.findOne.mockResolvedValue(null);
+      keyPackageRepo.findOne.mockResolvedValue(null);
+      jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+
+      await service.validateCommit({
+        groupId: 'group-1',
+        deviceId: 'device-ghost',
+        baseEpoch: 1,
+        proto: 'Y29tbWl0',
+        senderId: 'user-2',
       });
 
       expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();

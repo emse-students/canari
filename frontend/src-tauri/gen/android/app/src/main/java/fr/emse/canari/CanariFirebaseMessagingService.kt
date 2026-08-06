@@ -1045,6 +1045,29 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             Log.d(TAG, "thread: groupId=$groupId senderName=$senderName silent=$silent inlineProto=${inlineProto != null}")
 
+            // CROSS-DEVICE DISMISSAL, BEFORE ANY DECRYPTION.
+            //
+            // A silent push whose senderId is my own userId means I just read (or sent in) this
+            // conversation from ANOTHER device, so this device's notification for it must go. That
+            // decision needs `groupId`, `senderId` and `silent` - three CLEARTEXT data fields - and
+            // nothing from the plaintext. It used to sit after the decrypt ladder, behind
+            // `if (decrypted == null && silent) return`, so the dismissal was silently conditional
+            // on being able to decrypt the receipt: exactly the case where the app has been killed
+            // and is behind. Measured on device 2026-08-06 (NOTIF-4): the receipt arrived at
+            // 23:33:31 tagged `senderName=Jolan BOUDIN silent=true`, the decrypt gave up 16 s later
+            // with "Silent push decryption failed -> returning silently", and the notification
+            // stayed on screen. Doing it here also spares those 16 s.
+            //
+            // The decrypt still runs afterwards - it is what advances the MLS state - it just no
+            // longer gates the dismissal.
+            if (silent && groupId.isNotEmpty() && senderId.isNotEmpty()) {
+                val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+                if (senderId.equals(myUserId, ignoreCase = true)) {
+                    Log.d(TAG, "FCM silent from self -> cancelling notification for group=${groupId.take(8)}")
+                    cancelConversationNotification(this, groupId)
+                }
+            }
+
             var decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
             if (decrypted == null && !queuedMessageId.isNullOrEmpty()) {
                 val groupLocal = isGroupLocal(groupId)
@@ -1120,17 +1143,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
 
             if (silent) {
-                // A silent push whose senderId == my own userId means I just read or sent in this
-                // conversation from ANOTHER device (read receipt or send echo). We then remove this
-                // conversation's notification on this device: this is the "app killed" part of the
-                // multi-device read-state sync. A peer's senderId (!= my userId) cancels nothing -
-                // their read does not concern me.
-                val myUserId = MlsContextLoader.loadPushContext(this)?.userId
-                if (groupId.isNotEmpty() && senderId.isNotEmpty() && senderId.equals(myUserId, ignoreCase = true)) {
-                    cancelConversationNotification(this, groupId)
-                } else {
-                    Log.d(TAG, "FCM silent -> MLS state updated, no notification shown")
-                }
+                // The self-read dismissal already happened above, on the cleartext fields, whether
+                // or not this frame decrypted. All that is left here is to state that a silent push
+                // shows nothing.
+                Log.d(TAG, "FCM silent -> MLS state updated, no notification shown")
                 return@runWithWakeLock
             }
 

@@ -29,6 +29,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
   private cleanupOrphanedMemberRowsInterval: ReturnType<typeof setInterval>;
   private cleanupStalePendingInvitationsInterval: ReturnType<typeof setInterval>;
+  private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
   /**
    * Message retention / stale device TTL. A device is "stale" once its queued
@@ -37,6 +38,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * stays aligned with the device-list cutoff and key-package retention.
    */
   private static readonly MESSAGE_RETENTION_MS = RETENTION_WINDOW_MS;
+
+  /** Grace period before the boot-time GC sweep, so it never competes with the boot path. */
+  private static readonly INITIAL_SWEEP_DELAY_MS = 60_000;
 
   constructor(
     @InjectRepository(QueuedMessage)
@@ -159,6 +163,40 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'orphaned member rows purge (24h), stale pending invitations purge (24h) scheduled'
     );
+
+    // A `setInterval` FIRES FOR THE FIRST TIME ONE INTERVAL LATER, so a job scheduled every 24 h
+    // never runs at all in a service that is redeployed more often than that - and the daily ones
+    // here are exactly the purges that bound table growth. Kick each one once, after a short delay
+    // so the boot path (migrations, Redis, Firebase) is not competing with a full-table scan.
+    this.initialSweepTimeout = setTimeout(() => {
+      void this.runInitialSweep().catch((e) =>
+        this.logger.error('[CRON] initial sweep failed', e)
+      );
+    }, AppController.INITIAL_SWEEP_DELAY_MS);
+  }
+
+  /**
+   * One pass of every GC job, shortly after boot. Sequential on purpose: these are full-table
+   * scans, and the point is to bound growth, not to be quick about it.
+   */
+  private async runInitialSweep() {
+    this.logger.log('[CRON] initial sweep: running every GC job once');
+    const jobs: [string, () => Promise<unknown>][] = [
+      ['detectStaleDevices', () => this.detectStaleDevices()],
+      ['cleanupExpiredQueuedMessages', () => this.cleanupExpiredQueuedMessages()],
+      ['cleanupStaleDevices', () => this.cleanupStaleDevices()],
+      ['cleanupOrphanedRedisGroups', () => this.cleanupOrphanedRedisGroups()],
+      ['cleanupSoftDeletedGroups', () => this.cleanupSoftDeletedGroups()],
+      ['cleanupStalePushTokens', () => this.cleanupStalePushTokens()],
+      ['cleanupOrphanedMemberRows', () => this.cleanupOrphanedMemberRows()],
+      ['cleanupStalePendingInvitations', () => this.cleanupStalePendingInvitations()],
+      ['pruneExpiredCommitLog', () => this.messagingService.pruneExpiredCommitLog()],
+    ];
+    for (const [name, run] of jobs) {
+      // One failing job must never cost the others their only run of the deployment.
+      await run().catch((e) => this.logger.error(`[CRON] initial sweep: ${name} failed`, e));
+    }
+    this.logger.log('[CRON] initial sweep: done');
   }
 
   private async ensureDeviceMetadataColumns() {
@@ -200,6 +238,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupStalePushTokensInterval);
     clearInterval(this.cleanupOrphanedMemberRowsInterval);
     clearInterval(this.cleanupStalePendingInvitationsInterval);
+    clearTimeout(this.initialSweepTimeout);
   }
 
   /**
@@ -217,8 +256,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * groups every retention window, triggering a needless kick + re-invite epoch churn
    * for the whole group.
    *
-   * The `updatedAt` filter is kept only as a cheap pre-filter: a row touched within
-   * the window is certainly not stale, so it can be skipped without a KeyPackage lookup.
+   * THERE IS NO `updatedAt` PRE-FILTER, and there must never be one again (WP-GHOST-1). It read as
+   * a free optimisation - "a row touched within the window is certainly not stale" - and the
+   * premise is false: `updatedAt` is a TypeORM `@UpdateDateColumn`, so it answers "when was this
+   * row last WRITTEN", and the writers are OTHER people's clients (`sendWelcome`, the commit-path
+   * activation, a peer confirming an invitation). Nine devices that no longer existed were kept
+   * `active` forever that way on production, all nine sharing an `updatedAt` inside a four-second
+   * burst that belonged to somebody else's sync. A liveness clock must be written by the thing
+   * whose liveness it measures - here that is `KeyPackage.createdAt`, and it is the only criterion.
    */
   private async detectStaleDevices() {
     const staleDate = new Date(Date.now() - AppController.MESSAGE_RETENTION_MS);
@@ -226,7 +271,6 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const candidates = await this.deviceGroupRepo
       .createQueryBuilder('dgm')
       .where('dgm.status = :status', { status: 'active' })
-      .andWhere('dgm.updatedAt < :staleDate', { staleDate })
       .getMany();
 
     if (candidates.length === 0) return;
@@ -254,9 +298,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         `${member.userId}:${member.deviceId}`
       );
       reset++;
+      // `lastUpdate` is reported because it is EVIDENCE, not because it decided anything: when a
+      // demotion looks wrong, the first question is whether somebody else's write kept the row
+      // looking fresh, and the answer has to be in the line.
       this.logger.log(
         `[CRON] Stale device reset: device=${member.deviceId} group=${member.groupId} ` +
-          `(lastUpdate=${member.updatedAt.toISOString()})`
+          `(lastUpdate=${member.updatedAt.toISOString()}, no KeyPackage since ${staleDate.toISOString()})`
       );
     }
 
@@ -296,16 +343,36 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       where: { createdAt: LessThan(expiry) },
     });
 
-    if (expiredPackages.length === 0) return;
-
-    // Keep devices that still have an active membership.
-    const deviceIds = [...new Set(expiredPackages.map((kp) => kp.deviceId))];
-    const activeDevices = await this.deviceGroupRepo
+    // A device with NO KeyPackage row at all can never appear in `expiredPackages`, so enumerating
+    // candidates from `key_package` alone made an entire class of device uncollectable - and it is
+    // exactly the class that matters (WP-GHOST-1): a device deleted through the product has its
+    // KeyPackage purged, and if anything later re-creates its membership rows, nothing on the
+    // server can ever reach it again. It is also invisible in `getUserDevices`, which filters on
+    // the same table, so its owner cannot delete it a second time either. Enumerate from the
+    // memberships too, and treat a missing KeyPackage as terminal rather than as unknown.
+    const orphanRows = await this.deviceGroupRepo
       .createQueryBuilder('dgm')
-      .select('DISTINCT dgm.deviceId', 'deviceId')
-      .where('dgm.deviceId IN (:...deviceIds)', { deviceIds })
-      .andWhere('dgm.status = :status', { status: 'active' })
-      .getRawMany<{ deviceId: string }>();
+      .select('DISTINCT dgm.userId', 'userId')
+      .addSelect('dgm.deviceId', 'deviceId')
+      .where(
+        'NOT EXISTS (SELECT 1 FROM key_package kp WHERE kp."deviceId" = dgm."deviceId" AND kp."userId" = dgm."userId")'
+      )
+      .getRawMany<{ userId: string; deviceId: string }>();
+
+    if (expiredPackages.length === 0 && orphanRows.length === 0) return;
+
+    // Keep devices that still have an active membership - but ONLY those that still exist. The
+    // veto is what a live device needs; applying it to a device with no KeyPackage is what let the
+    // ghosts sit `active` forever, vetoing their own collection.
+    const deviceIds = [...new Set(expiredPackages.map((kp) => kp.deviceId))];
+    const activeDevices = deviceIds.length
+      ? await this.deviceGroupRepo
+          .createQueryBuilder('dgm')
+          .select('DISTINCT dgm.deviceId', 'deviceId')
+          .where('dgm.deviceId IN (:...deviceIds)', { deviceIds })
+          .andWhere('dgm.status = :status', { status: 'active' })
+          .getRawMany<{ deviceId: string }>()
+      : [];
 
     const activeDeviceIds = new Set(activeDevices.map((d) => d.deviceId));
 
@@ -319,14 +386,24 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         deviceId: kp.deviceId,
       });
     }
+    for (const orphan of orphanRows) {
+      staleDevices.set(`${orphan.userId}:${orphan.deviceId}`, orphan);
+    }
 
     if (staleDevices.size === 0) return;
 
     for (const { userId, deviceId } of staleDevices.values()) {
-      await this.messagingService.purgeDeviceFootprint(userId, deviceId);
+      const purged = await this.messagingService.purgeDeviceFootprint(userId, deviceId);
+      this.logger.log(
+        `[CRON] cleanupStaleDevices: purged device=${userId}:${deviceId} ` +
+          `groups=${purged.groupsCleaned} queued=${purged.queuedMessagesDeleted}`
+      );
     }
 
-    this.logger.log(`[CRON] cleanupStaleDevices: purged ${staleDevices.size} stale device(s)`);
+    this.logger.log(
+      `[CRON] cleanupStaleDevices: purged ${staleDevices.size} stale device(s) ` +
+        `(${orphanRows.length} of them with no KeyPackage at all)`
+    );
   }
 
   /**

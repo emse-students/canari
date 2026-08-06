@@ -21,6 +21,7 @@ import { DeviceGroupMembership } from '../entities/device-group-membership.entit
 import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
+import { RevokedDevice } from '../entities/revoked-device.entity';
 import { resolveUserDisplayName, resolveUserDisplayNamesBatch } from '../utils/display-name';
 import {
   buildPushDataFields,
@@ -172,8 +173,47 @@ export class MessagingService {
     private commitLogRepo: Repository<MlsCommitLog>,
     @InjectRepository(MlsGroupInfo)
     private groupInfoRepo: Repository<MlsGroupInfo>,
+    @InjectRepository(RevokedDevice)
+    private revokedDeviceRepo: Repository<RevokedDevice>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis
   ) {}
+
+  /**
+   * Whether a device may be given - or keep - an `active` routing membership.
+   *
+   * A device good enough to be MESSAGED must be at least as valid as one good enough to be
+   * INVITED. `getPendingInvitations` already refuses to serve an invitation for a device that is
+   * on the revocation denylist or has no static KeyPackage, and `sendWelcome` hard-fails without
+   * one; the paths that mark a membership `active` checked neither. That asymmetry is WP-GHOST-1:
+   * a device deleted through the product (footprint purged, denylisted) was resurrected as an
+   * `active` membership by a PEER whose local MLS tree still carried its leaf, after which
+   *
+   *   - the fan-out kept queueing every message to it (`status = 'active'`),
+   *   - `getUserDevices` could not list it (it filters on KeyPackage), so its owner could not
+   *     delete it a second time,
+   *   - `cleanupStaleDevices` enumerates candidates FROM `key_package`, so it never saw it,
+   *   - `detectStaleDevices` pre-filtered on `updatedAt`, which peers keep bumping.
+   *
+   * Measured on production 2026-08-06: nine such devices held 97 353 of the 98 210 queued rows.
+   * One of them, `tauri-...-ms8xyqkk-2rwh`, was revoked on 2026-07-31 and its membership rows were
+   * still being written on 2026-08-04.
+   *
+   * Returns a reason rather than throwing: callers differ in what they owe the client (a 403, a
+   * skip, or a log), and every one of them must be able to say WHY in its own log line.
+   */
+  async deviceAddressability(
+    userId: string,
+    deviceId: string
+  ): Promise<{ ok: boolean; reason?: 'revoked' | 'no_key_package' }> {
+    const revoked = await this.revokedDeviceRepo.findOne({ where: { userId, deviceId } });
+    if (revoked) return { ok: false, reason: 'revoked' };
+    const keyPackage = await this.keyPackageRepo.findOne({
+      where: { userId, deviceId },
+      select: { id: true },
+    });
+    if (!keyPackage) return { ok: false, reason: 'no_key_package' };
+    return { ok: true };
+  }
 
   /**
    * Deletes the entire server footprint of a device (per-device state):
@@ -477,11 +517,43 @@ export class MessagingService {
           },
         });
         const excludeSet = new Set<string>(body.excludeDeviceIds ?? []);
+        // A device with no static KeyPackage does not exist server-side: it cannot be invited, it
+        // cannot be Welcomed, and it is not even listed to its own owner - so queueing for it is
+        // storage that nothing will ever collect or read (WP-GHOST-1). This is the path that SEEDS
+        // `group:members:<groupId>`, so filtering here also keeps the Redis fast path clean rather
+        // than paying a lookup on every send. Deliberately narrow: an `active` membership whose
+        // device merely went quiet still has its KeyPackage for the whole 90-day window, so a
+        // legitimately offline device is never dropped.
+        const liveDeviceIds = memberships.length
+          ? new Set(
+              (
+                await this.keyPackageRepo.find({
+                  where: { deviceId: In([...new Set(memberships.map((m) => m.deviceId))]) },
+                  select: { userId: true, deviceId: true },
+                })
+              ).map((kp) => `${kp.userId}:${kp.deviceId}`)
+            )
+          : new Set<string>();
         const fallback = memberships.filter(
           (m) =>
             !(m.userId === body.senderId && m.deviceId === body.senderDeviceId) &&
-            !excludeSet.has(`${m.userId}:${m.deviceId}`)
+            !excludeSet.has(`${m.userId}:${m.deviceId}`) &&
+            liveDeviceIds.has(`${m.userId}:${m.deviceId}`)
         );
+        const ghosts = memberships.filter(
+          (m) =>
+            !(m.userId === body.senderId && m.deviceId === body.senderDeviceId) &&
+            !excludeSet.has(`${m.userId}:${m.deviceId}`) &&
+            !liveDeviceIds.has(`${m.userId}:${m.deviceId}`)
+        );
+        if (ghosts.length > 0) {
+          // The outbox is best-effort at every step, so every swallowed branch logs - that is all
+          // a dropped recipient leaves behind.
+          this.logger.warn(
+            `[SEND][${traceId}] SKIPPED_NO_KEY_PACKAGE group=${fallbackGroupId} ` +
+              `devices=${ghosts.map((m) => `${m.userId}:${m.deviceId}`).join(',')}`
+          );
+        }
         for (const m of fallback) {
           ops.push(
             this.queuedMessageRepo.create({
@@ -1138,6 +1210,19 @@ export class MessagingService {
     groupId: string,
     { redeliverMissed = true }: { redeliverMissed?: boolean } = {}
   ): Promise<void> {
+    // A revoked or key-package-less device must never be routed to (WP-GHOST-1). This path is
+    // reached by the commit fan-out - where the device activating itself is the COMMIT SENDER, so
+    // without this a device its owner explicitly deleted would re-enrol itself in every group it
+    // still holds MLS state for - and by the background push path. Both are best-effort seams, so
+    // the refusal is logged rather than thrown: the caller has no user to tell.
+    const addressable = await this.deviceAddressability(userId, deviceId);
+    if (!addressable.ok) {
+      this.logger.warn(
+        `[MEMBERSHIP_ACTIVE] REFUSED group=${groupId} device=${userId}:${deviceId} reason=${addressable.reason}`
+      );
+      return;
+    }
+
     // Read prior state BEFORE the upsert: missed-message redelivery (DF2) must only
     // happen on a genuine pending->active transition. activateDeviceMembership is also
     // called idempotently on every Welcome re-processing; re-delivering when the device

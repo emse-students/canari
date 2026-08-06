@@ -352,6 +352,23 @@ export class InvitationsController {
       throw new BadRequestException(`status must be one of: ${validStatuses.join(', ')}`);
     }
 
+    // A device that may not be INVITED may not be VOUCHED FOR either (WP-GHOST-1).
+    // `getPendingInvitations` above already filters this exact pair of conditions - the denylist
+    // and the presence of a static KeyPackage - and this endpoint, in the same controller, checked
+    // neither while being able to CREATE a membership row from nothing. That is how a device its
+    // owner had deleted came back `active` in every group a peer still held its leaf for, and then
+    // received every message forever with nothing able to collect it. Only `active` is gated:
+    // demoting to `pending` must always remain possible, it is a step towards cleanup.
+    if (body.status === 'active') {
+      const addressable = await this.messagingService.deviceAddressability(safeUserId, safeDeviceId);
+      if (!addressable.ok) {
+        this.logger.warn(
+          `[INVITATION_STATUS] REFUSED device=${safeDeviceId} user=${safeUserId} group=${safeGroupId} reason=${addressable.reason}`
+        );
+        throw new BadRequestException(`Device is not addressable: ${addressable.reason}`);
+      }
+    }
+
     let membership = await this.deviceGroupRepo.findOne({
       where: { deviceId: safeDeviceId, groupId: safeGroupId },
     });
