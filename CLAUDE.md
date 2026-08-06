@@ -143,7 +143,19 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
 - **PHASE 0 IS COMPLETE, and section 3 is under way (2026-08-06).** PASS so far: **MSG-1** (+38
   volume sends), **MSG-2**, **MSG-3**, **MSG-4** (image + PDF), **MSG-5**, **check M** (PDF preview
   on A1 hardware - `device-verification` updated), **FWD-1**. Rows and evidence are in section 10 of
-  the wiki page. Next: **FWD-2..5**, then MSG-6..10.
+  the wiki page, plus **MSG-6** (link preview proxied, zero third-party `<img src>`) and **MSG-7**
+  (30 rapid sends: 30/30, ordered, no duplicate, no `SecretReuseError`). Next: **MSG-8..10**
+  (backgrounded tab, receiver offline, sender offline), then FWD-3..5.
+- **A green check's observation log is where two shipped bugs came from.** MSG-6 passed while its
+  log carried a `400` on `/api/mls/link-preview` - which turned out to be every URL containing a
+  closing bracket being truncated, in the rendered `<a href>` as well as in the preview. Read the
+  noise; that is the whole point of section 9.
+- **OPEN QUESTION for the user, not a WP: should bare domains be linkified?** They are not today -
+  chat requires `https://`, and posts run GFM which links only `www.` and e-mail (verified against
+  `marked`: "auteur.rice", "cher.e.s", "Bonjour.Comment" produce nothing). Adding it needs a
+  deliberately conservative TLD allowlist, because "known extensions" is not enough in French:
+  `.es` would turn inclusive writing like "cher.es" into a link, and `.it`/`.re`/`.ne` collide the
+  same way. Recommend `com org net fr eu io dev app edu gov` and no other two-letter TLD.
 - **RECONCILIATION is the only way this campaign's loss class can be SEEN**, and `recon.mjs` does
   it: markers on W1 diffed against markers on W2 for one thread. Re-run it after any batch of sends;
   a green per-check verdict cannot substitute for it - it is what found WP-FWD-1 and WP-ECHO-1.

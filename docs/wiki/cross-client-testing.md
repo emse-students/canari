@@ -390,6 +390,8 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | MSG-5 | all three, prod 2026-08-06 | **PASS** | Channel message converged 1/1/1 (W2 741 ms, A1 117 ms). **Zero** `masterSecret`/`webhookSecret` in any `/api/` response body on any client. No errors, no 4xx, nothing unexplained on any of the three. |
 | MSG-4 | web, prod 2026-08-06 | **PASS** | Image 1476 ms, PDF 1113 ms, one copy each, caption present. Receiver decoded the picture (`<img src="blob:">`, `naturalWidth` 64x64) - not merely a bubble. |
 | Check M | A1 0.13.0, prod 2026-08-06 | **PASS** | PDF first page rendered on hardware: two `<img alt="Aperçu de la première page du document">` at `naturalWidth` 116x116 from `blob:`, plus a full-screen affordance. Logcat clean. |
+| MSG-6 | web, prod 2026-08-06 | **PASS** | Preview rendered on the receiver with **zero** third-party `<img src>` - every image same-origin, blob or data URI. Its observation log also carried a `400` on `/api/mls/link-preview`, which turned out to be a shipped bug: see below. |
+| MSG-7 | web, prod 2026-08-06 | **PASS** | 30 rapid sends W2 -> W1: 30/30 received, order preserved, no duplicate, 12.7 s. Clean on both sides - notably **no** `SecretReuseError`, so a burst alone does not provoke the WP-LOSS-1 branch. |
 | FWD-1 | web, prod 2026-08-06 | **PASS** | Channel -> DM forward delivered in 371 ms, one copy. |
 | FWD-2 | web, prod 2026-08-06 | **FAIL -> WP-FWD-1 REPRODUCED** | Three consecutive forwards lost, then 8/8 delivered on a re-run. Sender kept its echo, receiver never had them, the DM was healthy both ways at that moment. See below. |
 | **Reconciliation** | web, prod 2026-08-06 | **method, plus 5 losses** | 54 markers on W1 vs 53 on W2 over a bounded common window: 3 forwards missing from the receiver, 2 sent messages missing from the SENDER. Two different defects. See below. |
@@ -448,6 +450,25 @@ check still passed. Those cost no message: they are the replay path re-encounter
 WERE already delivered, which is the benign half of the very branch WP-LOSS-1 indicts. That is the
 point of the fix being a reconciliation against the local store rather than a change of
 classification - the same error legitimately means "already have it" most of the time.
+
+### The bug found in a PASSING check's log
+
+MSG-6 passed: the preview rendered and no third party was contacted. Its observation carried one
+line that had nothing to do with the assertion -
+
+```
+GET /api/mls/link-preview?url=https%3A%2F%2Ffr.wikipedia.org%2Fwiki%2FSignal_(application -> 400
+```
+
+The URL is cut before its closing parenthesis. `HTTP_URL_RE` excluded `)`, `]` and `}` from the
+match, which is the obvious way to stop `see (https://x.com)` from swallowing its wrapper - and it
+truncates every URL that legitimately contains one. The **rendered `<a href>` was truncated too**,
+so the link a reader clicks leads to a page that does not exist; the 400 was only the visible half.
+Fixed by deciding on balance rather than by exclusion, with a second defect found next to it (the
+splitter resumed after the raw match, deleting whatever the trimmer shed from the message text).
+
+Worth generalising: the check that found it was **green**, and a run reported as `PASS-DIRTY` with
+one 4xx was the only signal. Section 9 exists for this.
 
 ### FWD-1 / FWD-2: the forward loss REPRODUCED, three times
 
