@@ -10,11 +10,45 @@ export function shortenReplyPreview(text: string): string {
   return `${normalized.slice(0, 81)}…`;
 }
 
-const HTTP_URL_RE = /https?:\/\/[^\s<>\])}"']+/gi;
+/**
+ * A URL runs to the next whitespace or angle bracket - closing brackets are NOT a boundary.
+ *
+ * Excluding `)`, `]` and `}` from the match is the obvious way to stop "see (https://x.com)" from
+ * swallowing the closing paren, and it silently truncates every URL that legitimately contains one.
+ * Wikipedia's disambiguation paths are the canonical case: `.../wiki/Signal_(application)` was cut
+ * to `.../wiki/Signal_(application`, so the rendered `<a href>` pointed at a page that does not
+ * exist and the preview endpoint answered 400. Balance decides instead - see below.
+ */
+const HTTP_URL_RE = /https?:\/\/[^\s<>"']+/gi;
 
-/** Trims trailing punctuation often pasted after a URL. */
+/** Closing bracket to its opening counterpart, for the balance test in the trimmer. */
+const BRACKET_PAIRS: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
+
+/**
+ * Trims trailing punctuation often pasted after a URL, KEEPING brackets that belong to it.
+ *
+ * Sentence punctuation always goes. A closing bracket only goes when it is unbalanced - i.e. the
+ * URL contains more of it than of its opening counterpart - which is exactly the "(https://x.com)"
+ * case, while `Signal_(application)` keeps its own. Loops because the two kinds interleave:
+ * `(https://x.com/a_(b)).` has to shed `.`, then `)`, then stop.
+ */
 export function trimUrlTrailingPunctuation(url: string): string {
-  return url.replace(/[),.!?;:>\]]+$/, '');
+  let out = url;
+  for (;;) {
+    const stripped = out.replace(/[,.!?;:>]+$/, '');
+    if (stripped !== out) {
+      out = stripped;
+      continue;
+    }
+    const open = BRACKET_PAIRS[out.at(-1) ?? ''];
+    if (!open) break;
+    const close = out.at(-1) as string;
+    const closes = out.split(close).length - 1;
+    const opens = out.split(open).length - 1;
+    if (closes <= opens) break;
+    out = out.slice(0, -1);
+  }
+  return out;
 }
 
 /** True when the URL is a Markdown autolink (`<https://…>`), which must not trigger embeds. */
@@ -104,7 +138,11 @@ export function splitTextWithLinks(text: string): TextLinkSegment[] {
     }
 
     segments.push({ type: 'link', value: url });
-    lastIndex = end;
+    // Resume after the LINK, not after the raw match: whatever the trimmer shed is sentence
+    // punctuation that belongs to the message, and skipping it deletes it from what the reader
+    // sees. "voir https://x.com." rendered without its full stop; now the regex also captures
+    // closing brackets, so "(https://x.com)" would have lost its ")" the same way.
+    lastIndex = start + url.length;
   }
 
   if (lastIndex < text.length) {
