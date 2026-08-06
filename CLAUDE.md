@@ -545,10 +545,13 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   sat on "Synchronisation des messages" with a live socket. `isDraining` is lowered only when the
   message callback returns, so **any await in it that can hang is a deadlock** - WP-HIDDEN-1's open
   gap reached through the other end of the same drain. All five recovery call sites now go through
-  `startRecovery` (start it, log how it settles, never await). **WHICH CALL HANGS IS STILL UNKNOWN**:
-  `requestReAdd` logged nothing at all, so it now logs its entry, the throttle skip, and every network
-  step + result, and the drain arms a 60 s `[QUEUE] STUCK` watchdog. The next device run answers it -
-  that is the first thing to read after the reflash. Write-up in
+  `startRecovery` (start it, log how it settles, never await). **VERIFIED ON THE DEVICE 21:57 and the
+  cause is settled: a DEADLOCK, not a slow network** - the whole recovery takes ONE SECOND off the
+  drain's thread, and `externalJoin` re-acquires the MLS mutex the drain holds until the callback
+  returns. The codebase already knew: `DeferredRecovery` exists because "the recovery seams
+  re-acquire the same non-reentrant mutex", and the Welcome path defers them for that reason; the
+  known-group path awaited one inline. **The conversation heals** - 3/3 fresh messages at
+  2.9/1.5/4.1 s, one copy each, which also closes WP-PENDING-2's owed verification. Write-up in
   [cross-client-testing > a recovery awaited inside the drain](docs/wiki/cross-client-testing.md#the-verification-found-a-third-defect-a-recovery-awaited-inside-the-drain-wp-drain-1).
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
@@ -650,8 +653,10 @@ carry in the head:
   the follower encrypted anyway. And gating a writer freezes its state - whoever inherits the role
   must reload it, or it resumes exactly as far behind as the tab it replaced had moved on.
 - The inbound drain lowers `isDraining` only when the message callback RETURNS, so every await inside
-  it is a potential freeze of all inbound traffic. A repair whose result nobody reads (a re-add, a
-  Welcome, an external join) must be STARTED, never awaited - and it must log how it settles.
+  it is a potential freeze of all inbound traffic - and the recovery seams re-acquire the MLS mutex
+  the drain already holds, so awaiting one there is a DEADLOCK, not a slow path. A repair whose
+  result nobody reads (a re-add, a Welcome, an external join) must be STARTED, never awaited - and it
+  must log how it settles. `DeferredRecovery` on the Welcome path is the same lesson, learnt earlier.
 - `requestAnimationFrame` NEVER fires in a hidden document, so it can never be the only resolver of
   anything a background path awaits - and a "yield" that can hang is a deadlock, not a delay. Race it
   with a `MessageChannel` message; a timer fallback is clamped to ~1 Hz in the background.

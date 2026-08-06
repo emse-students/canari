@@ -1471,8 +1471,36 @@ self-heal) now go through `startRecovery`, which starts the attempt and logs how
 Two instrumentation changes ride with it, because the failure produced NO line at all: `requestReAdd`
 now logs its entry, the throttle skip (previously a silent `return`), each network step and its
 result; and the drain arms a 60 s watchdog that prints `[QUEUE] STUCK` rather than leaving "still
-working" and "stuck forever" indistinguishable. **Which call hangs is still unknown** - the next run
-with these logs answers it.
+working" and "stuck forever" indistinguishable.
+
+**VERIFIED ON THE DEVICE 2026-08-06 21:57, and the new logs named the cause:**
+
+```
+21:57:33  [QUEUE] Drain start
+21:57:33  [PIPELINE] Out-of-sync for 642f389a… - requestReAdd
+21:57:33  [READD] 642f389a... attempt starting
+21:57:34  [READD] 642f389a... getGroupMeta -> ok
+21:57:34  [READD] 642f389a... externalJoin…
+21:57:34  [MLS] externalJoin succeeded for 642f389a… (base epoch 1)
+21:57:34  [READD] 642f389a... rejoined via external commit (self-service)
+21:57:34  [PIPELINE] Recovery attempt finished for 642f389a…
+21:57:36  [QUEUE] Drain complete            <- and every later drain completes too
+```
+
+The whole recovery takes **one second** off the drain's thread, so it was never hanging on the
+network: it was a **DEADLOCK**. `externalJoin` re-acquires the MLS mutex that the drain holds until
+the callback returns. The codebase already knew - `DeferredRecovery` in this very file exists
+because "the recovery seams re-acquire the same non-reentrant mutex", and the Welcome path defers
+them for exactly that reason. The known-group path awaited one inline.
+
+And the conversation HEALS: three fresh messages after the rejoin arrived in 2.9 s / 1.5 s / 4.1 s,
+one copy each. That closes WP-PENDING-2's owed verification as well - the frame that triggers the
+escalation is unrecoverable by construction, and everything after it is normal.
+
+The LIFE-6 run itself still reports FAIL, correctly: the message sent while the radios were down was
+encrypted at a generation this device can never reach, so it is lost. **Re-run LIFE-6 from here** -
+the group is now rejoined at a fresh epoch, so the next run measures the ordinary offline path
+instead of a two-thousand-generation debt that no longer exists.
 
 #### How big the queue gets, and why that is by design
 
