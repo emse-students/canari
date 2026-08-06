@@ -740,10 +740,23 @@ consecutive successes had no reload between them.
   `visibilitychange`), or stop deferring writes once a message has been encrypted. A ratchet that
   can go backwards is a correctness bug in its own right - it also means two live tabs of the same
   device can diverge.
-- *The consequence*: `secret-reuse` must not mean "duplicate" on its own. The receiver has to
-  reconcile the frame's fingerprint against its own message store and take the existing
-  `onOutOfSync` route when they disagree. Without this half, any future rewind is silent loss
-  again; with only this half, the sender still wastes a message per reload.
+- *The consequence*: `secret-reuse` must not mean "duplicate" on its own. Record the fingerprint of
+  every ciphertext the LIVE path decrypts - today only the replay path in `history.ts` keeps a
+  `seenCipherHashes` set - and on `SecretReuseError` check it: seen means a genuine double delivery
+  (real-time publish plus FCM), unseen means the sender rewound.
+
+  **What to do about an unseen one is NOT `onOutOfSync`, and the first draft of this page said it
+  was.** The message is unrecoverable at the receiver: its ratchet secret is consumed, so no
+  re-fetch, no commit replay and no re-Welcome can ever decrypt those bytes - and a re-add is
+  destructive, it tears down a valid membership to fix nothing. Worse, a false positive is easy:
+  `seenCipherHashes` is capped at 5 000 entries per group and lives in `localStorage`, so a pruned
+  or cleared set turns an ordinary duplicate into a spurious recovery. The useful action is
+  detection and a SIGNAL - log it as a desync rather than a duplicate, and tell the sender, which
+  is the only party that can send the message again. Designing that signal is what is left; do not
+  wire the unseen branch to `onOutOfSync` on the way past.
+
+  Without this half, any future rewind - a crash, two tabs of one device, the mobile background
+  service - is silent loss again. With only this half, the sender still wastes a message per reload.
 
 ### Cutting the network: which side the browser can fake, and which it cannot
 

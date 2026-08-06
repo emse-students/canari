@@ -272,9 +272,13 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   Everything - the tables, the retired hypotheses, both halves of the fix - is in
   [cross-client-testing > root cause](docs/wiki/cross-client-testing.md#root-cause-found-2026-08-06-a-reload-rewinds-the-senders-ratchet).
   Do not re-derive it, and do not re-open the load hypothesis or "forwarding is special": both are
-  dead. **Both halves of the fix are needed** - flush the checkpoint before the page goes away
-  (a ratchet that can go backwards also lets two tabs of one device diverge), AND stop treating
-  `secret-reuse` as proof of a duplicate: reconcile against the local store and take `onOutOfSync`.
+  dead. **The SENDER half is SHIPPED** (`a8cc7027`): `scheduleOutboundMlsPersist` now checkpoints
+  instead of marking dirty, because the `pagehide`/`visibilitychange` hooks can only START an async
+  save and the document dies first - an unload hook is never the guarantee.
+  **The RECEIVER half is what remains, and its remedy is NOT `onOutOfSync`** - the message is
+  cryptographically unrecoverable there, and a re-add destroys a valid membership to fix nothing.
+  Record live-path ciphertext fingerprints, tell a real double delivery from a rewind, and SIGNAL
+  the desync to the sender - the only party that can send it again. Reasoning on the wiki page.
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
