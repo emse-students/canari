@@ -78,10 +78,25 @@ export class MlsDeliveryApi {
     );
   }
 
-  /** Raw JSON rows from `GET /api/mls/messages/:userId/:deviceId` (pending queue). */
-  async pullPendingMessagesJson(signal?: AbortSignal): Promise<unknown[]> {
+  /**
+   * Raw JSON rows from `GET /api/mls/messages/:userId/:deviceId` (pending queue), page by page.
+   *
+   * The deadline is per PAGE and never spans the whole pull. A backlog is drained across as many
+   * requests as it takes, so a budget covering all of them is a budget a device far enough behind
+   * can never meet - and because nothing is ingested or ACKed until the pull returns, its queue then
+   * only grows and it can never catch up (WP-PENDING-1, measured: 5 526 rows = 12 pages, aborted at
+   * 10 s on every reconnect). Each page is therefore handed to `onPage` the moment it lands, so an
+   * attempt that dies half-way still made progress the next one keeps.
+   */
+  async pullPendingMessagesJson(opts?: {
+    /** Deadline for ONE page request. */
+    pageTimeoutMs?: number;
+    /** Receives each page as it lands; when set, pages are not accumulated in memory. */
+    onPage?: (rows: unknown[]) => Promise<void> | void;
+  }): Promise<unknown[]> {
     if (this.userId === 'unknown') return [];
 
+    const pageTimeoutMs = opts?.pageTimeoutMs ?? 10_000;
     const all: unknown[] = [];
     const pageLimit = 500;
     let afterCreatedAt: string | undefined;
@@ -91,16 +106,24 @@ export class MlsDeliveryApi {
       url.searchParams.set('limit', String(pageLimit));
       if (afterCreatedAt) url.searchParams.set('after', afterCreatedAt);
 
-      const res = await this.f(url.toString(), {
-        headers: await this.auth(),
-        signal,
-      });
-      if (!res.ok) break;
-
-      const batch = (await res.json()) as Array<{ createdAt?: string }>;
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), pageTimeoutMs);
+      let batch: Array<{ createdAt?: string }>;
+      try {
+        const res = await this.f(url.toString(), {
+          headers: await this.auth(),
+          signal: ctrl.signal,
+        });
+        if (!res.ok) break;
+        batch = (await res.json()) as Array<{ createdAt?: string }>;
+      } finally {
+        clearTimeout(tid);
+      }
       if (!Array.isArray(batch) || batch.length === 0) break;
 
-      all.push(...batch);
+      if (opts?.onPage) await opts.onPage(batch);
+      else all.push(...batch);
+
       if (batch.length < pageLimit) break;
 
       const lastCreatedAt = batch[batch.length - 1]?.createdAt;

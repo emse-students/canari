@@ -513,84 +513,94 @@ export abstract class BaseMlsService implements IMlsService {
    */
   protected async onMessageProcessed(_groupId: string | undefined): Promise<void> {}
 
-  /** Fetches offline-queued messages from the delivery service and routes each through the priority queue. */
+  /**
+   * Fetches offline-queued messages from the delivery service and routes each through the priority
+   * queue, ONE PAGE AT A TIME: a page is enqueued (and so, later, ACKed) as soon as it lands, so a
+   * pull that dies half-way still shrinks the backlog. Draining the whole queue behind a single
+   * deadline was WP-PENDING-1 - a device far enough behind aborted on every reconnect, ACKed
+   * nothing, and its backlog grew forever.
+   */
   async fetchPendingMessages(): Promise<void> {
     if (this.userId === 'unknown') return;
 
     void this.delivery.ackMessages([]).catch(() => {});
 
-    const FETCH_TIMEOUT = 10_000;
+    /** Per-page deadline: one request's worth of transfer, not the whole backlog's. */
+    const PAGE_TIMEOUT = 10_000;
+    let fetched = 0;
 
     try {
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT);
-      const messages = await this.delivery.pullPendingMessagesJson(ctrl.signal);
-      clearTimeout(tid);
-
-      if (Array.isArray(messages)) {
-        if (messages.length > 0) {
-          recordPendingMessagesFetched(messages.length);
-          console.log(`[PENDING] Fetched ${messages.length} pending messages`);
-
-          // Route all pending messages through the serialized queue so they
-          // never race with live WebSocket messages calling messageCallback.
-          for (const msg of messages as Record<string, unknown>[]) {
-            const msgId = (msg.id || msg._id) as string | undefined;
-            const queuedCreatedAt = parseServerTimestampMs(msg.createdAt);
-            const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
-
-            // ── Control messages (group_reset persisted for offline devices) ──
-            // These have no MLS payload (empty proto). Both platforms ACK and ignore:
-            // WebSocket reconnect is sufficient to re-sync state.
-            if (msg.type === 'group_reset') {
-              this.enqueueMessage({
-                senderId: (msg.senderId as string) || 'unknown',
-                ciphertext: new Uint8Array(0),
-                groupId: (msg.groupId as string) || undefined,
-                isWelcome: false,
-                isCommit: false,
-                queuedMessageId: msgId,
-                type: 'group_reset',
-                queuedCreatedAt,
-              });
-              continue;
-            }
-
-            if (proto) {
-              try {
-                const ciphertext = fromBase64(proto);
-                if (ciphertext.length > 0) {
-                  this.enqueueMessage({
-                    senderId: (msg.senderId as string) || 'unknown',
-                    ciphertext,
-                    groupId: (msg.groupId as string) || undefined,
-                    isWelcome: msg.isWelcome === true,
-                    isCommit: msg.isCommit === true,
-                    ratchetTreeBytes:
-                      typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-                        ? fromBase64(msg.ratchetTree as string)
-                        : undefined,
-                    queuedMessageId: msgId,
-                    queuedCreatedAt,
-                  });
-                }
-              } catch (e) {
-                console.error('[PENDING] Failed to enqueue proto message:', e);
-              }
-            }
-          }
-        } else {
-          console.log(`[PENDING] No pending MLS messages for ${this.userId}:${this.deviceId}`);
-        }
-      } else {
-        console.warn(
-          `[PENDING] Pending message fetch failed or non-array (${this.userId}:${this.deviceId})`
-        );
+      await this.delivery.pullPendingMessagesJson({
+        pageTimeoutMs: PAGE_TIMEOUT,
+        onPage: (rows) => {
+          fetched += rows.length;
+          recordPendingMessagesFetched(rows.length);
+          console.log(`[PENDING] Fetched ${rows.length} pending messages (${fetched} so far)`);
+          this.enqueuePendingRows(rows as Record<string, unknown>[]);
+        },
+      });
+      if (fetched === 0) {
+        console.log(`[PENDING] No pending MLS messages for ${this.userId}:${this.deviceId}`);
       }
     } catch (e) {
-      console.error('[PENDING] Failed to fetch pending messages:', e);
+      // Partial progress is still progress, and saying so is the difference between "the pull
+      // failed" and "the pull failed after draining 4 pages" - the second is what proves the
+      // backlog is shrinking across attempts.
+      console.error(`[PENDING] Pending fetch failed after ${fetched} messages:`, e);
     }
     await this.waitForMessageQueueIdle();
+  }
+
+  /**
+   * Routes one page of raw pending rows through the serialized queue, so they never race with live
+   * WebSocket messages calling messageCallback.
+   */
+  private enqueuePendingRows(rows: Record<string, unknown>[]): void {
+    for (const msg of rows) {
+      const msgId = (msg.id || msg._id) as string | undefined;
+      const queuedCreatedAt = parseServerTimestampMs(msg.createdAt);
+      const proto: string | undefined = typeof msg.proto === 'string' ? msg.proto : undefined;
+
+      // ── Control messages (group_reset persisted for offline devices) ──
+      // These have no MLS payload (empty proto). Both platforms ACK and ignore:
+      // WebSocket reconnect is sufficient to re-sync state.
+      if (msg.type === 'group_reset') {
+        this.enqueueMessage({
+          senderId: (msg.senderId as string) || 'unknown',
+          ciphertext: new Uint8Array(0),
+          groupId: (msg.groupId as string) || undefined,
+          isWelcome: false,
+          isCommit: false,
+          queuedMessageId: msgId,
+          type: 'group_reset',
+          queuedCreatedAt,
+        });
+        continue;
+      }
+
+      if (proto) {
+        try {
+          const ciphertext = fromBase64(proto);
+          if (ciphertext.length > 0) {
+            this.enqueueMessage({
+              senderId: (msg.senderId as string) || 'unknown',
+              ciphertext,
+              groupId: (msg.groupId as string) || undefined,
+              isWelcome: msg.isWelcome === true,
+              isCommit: msg.isCommit === true,
+              ratchetTreeBytes:
+                typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
+                  ? fromBase64(msg.ratchetTree as string)
+                  : undefined,
+              queuedMessageId: msgId,
+              queuedCreatedAt,
+            });
+          }
+        } catch (e) {
+          console.error('[PENDING] Failed to enqueue proto message:', e);
+        }
+      }
+    }
   }
 
   // ── Delivery wrappers ─────────────────────────────────────────────────────

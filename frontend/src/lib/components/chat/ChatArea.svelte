@@ -893,6 +893,36 @@
 
     <!-- Messages (bottom padding so they scroll under the glass composer) -->
     <div class="relative flex-1 min-h-0 flex flex-col">
+      <!-- Sync banners live HERE, not beside the header: `absolute top-0` resolves against the
+           nearest positioned ancestor, and the enclosing <section> is the one that also holds
+           <ChatHeader> - so anchored there they paint over the avatar and the contact name. -->
+      <!-- One column, so two simultaneous banners STACK instead of hiding one another: both were
+           `absolute top-0` and the amber one simply covered the sky one. -->
+      <div class="absolute top-0 inset-x-0 z-40 flex flex-col pointer-events-none">
+        {#if isCatchingUpMessages}
+          <div
+            class="flex items-center justify-center gap-2 py-1.5 px-4 bg-amber-500/15 text-amber-600 dark:text-amber-400 text-xs font-medium border-b border-amber-500/20 pointer-events-none"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <Loader2 size={11} class="animate-spin shrink-0" strokeWidth={2.5} />
+            {m.chat_mls_sync_in_progress()}
+          </div>
+        {/if}
+
+        {#if historyPendingLabel}
+          <div
+            class="flex items-center justify-center gap-2 py-1.5 px-4 bg-sky-500/10 text-sky-600 dark:text-sky-400 text-xs font-medium border-b border-sky-500/20"
+            role="status"
+            aria-live="polite"
+          >
+            <CloudOff size={11} class="shrink-0" strokeWidth={2.5} />
+            {historyPendingLabel}
+          </div>
+        {/if}
+      </div>
+
       <div
         bind:this={chatContainer}
         onscroll={handleScroll}
@@ -1021,29 +1051,6 @@
         onClose={() => (showPollComposer = false)}
         onCreate={onCreatePoll}
       />
-    {/if}
-
-    {#if isCatchingUpMessages}
-      <div
-        class="absolute top-0 inset-x-0 z-40 flex items-center justify-center gap-2 py-1.5 px-4 bg-amber-500/15 text-amber-600 dark:text-amber-400 text-xs font-medium border-b border-amber-500/20 pointer-events-none"
-        role="status"
-        aria-live="polite"
-        aria-busy="true"
-      >
-        <Loader2 size={11} class="animate-spin shrink-0" strokeWidth={2.5} />
-        {m.chat_mls_sync_in_progress()}
-      </div>
-    {/if}
-
-    {#if historyPendingLabel}
-      <div
-        class="absolute top-0 inset-x-0 z-30 flex items-center justify-center gap-2 py-1.5 px-4 bg-sky-500/10 text-sky-600 dark:text-sky-400 text-xs font-medium border-b border-sky-500/20"
-        role="status"
-        aria-live="polite"
-      >
-        <CloudOff size={11} class="shrink-0" strokeWidth={2.5} />
-        {historyPendingLabel}
-      </div>
     {/if}
   {:else}
     {#if onBack}

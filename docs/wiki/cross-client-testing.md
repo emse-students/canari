@@ -1332,6 +1332,19 @@ The remedy is scope, not a bigger number: the deadline belongs to **each page**,
 be ingested and ACKed as it lands, so partial progress is kept. A per-pull deadline can only ever be
 right for a backlog small enough not to need one.
 
+**FIXED 2026-08-06.** `pullPendingMessagesJson` now takes `{ pageTimeoutMs, onPage }`: it builds a
+fresh `AbortController` per page and hands each page to `onPage` the moment it lands, so nothing is
+accumulated and nothing waits on the pull finishing. `fetchPendingMessages` passes
+`enqueuePendingRows` (extracted verbatim from its old body) as `onPage`, and its catch reports how
+many messages were drained before the failure - `[PENDING] Pending fetch failed after N messages` -
+because "the pull failed" and "the pull failed after four pages" describe a stuck device and a
+catching-up one. Four tests in `mlsDeliveryApi.pending.test.ts` pin the behaviour, and the third is
+the one that would have caught the bug: two pages each taking 900 ms complete under a 1 000 ms
+**per-page** budget and would not under a 1 000 ms per-pull one.
+
+Note this is the SAME code on the phone - the Tauri WebView runs the same bundle - so the Android
+half needs no separate fix, only a rebuild.
+
 ### And the frame is lost even when the pull succeeds (WP-PENDING-2)
 
 With the backlog emptied, LIFE-6 still fails. The clean capture:

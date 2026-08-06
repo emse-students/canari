@@ -473,7 +473,9 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
 
 - \[ \] **WP-PENDING-1 (P1) - A DEVICE THAT FALLS FAR ENOUGH BEHIND CAN NEVER CATCH UP: the
   catch-up pull is all-or-nothing under a fixed 10 s deadline, so a backlog bigger than 10 s of
-  transfer aborts forever and only grows.** Found by LIFE-6 2026-08-06, PROVEN, not yet fixed.
+  transfer aborts forever and only grows.** Found by LIFE-6 2026-08-06, PROVEN, **FIXED the same day
+  (`pageTimeoutMs` + `onPage` per page, 4 tests) - OWED: the deploy, a phone rebuild, and the
+  re-verification against a real backlog.**
   `fetchPendingMessages` ([BaseMlsService.ts:516](frontend/src/lib/services/BaseMlsService.ts#L516))
   puts ONE `AbortController(10_000)` around `pullPendingMessagesJson`, which itself loops `limit=500`
   pages behind an `after` cursor - and nothing is enqueued or ACKed unless the WHOLE pull returns. The
@@ -482,7 +484,8 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   cause and the hypothesis is dead**: `EXPLAIN (ANALYZE, BUFFERS)` on prod is **8.909 ms** on the
   composite `(recipientId, deviceId)` index. Proven by experiment: `DELETE 5431` -> 95 rows left ->
   the very next reconnect logged `[PENDING] Fetched 95 pending messages` in **0.6 s**. The remedy is
-  a deadline per PAGE, with each page ingested and ACKed as it lands, so every pull makes progress.
+  a deadline per PAGE, with each page ingested and ACKed as it lands, so every pull makes progress -
+  which is what shipped; the Android half is the same bundle, so it needs a rebuild, not a fix.
   Note the abort surfaces on Android as `TypeError: Failed to fetch` plus orphaned
   `Uncaught (in promise) The resource id NNNN is invalid` - indistinguishable from a network failure
   by text alone, which is why three runs read as "the phone was offline".
@@ -602,6 +605,9 @@ carry in the head:
 - `requestAnimationFrame` NEVER fires in a hidden document, so it can never be the only resolver of
   anything a background path awaits - and a "yield" that can hang is a deadlock, not a delay. Race it
   with a `MessageChannel` message; a timer fallback is clamped to ~1 Hz in the background.
+- A deadline's SCOPE is part of its meaning: one budget over a paginated catch-up is a budget the
+  devices that most need it can never meet, and an all-or-nothing pull makes each failure bigger than
+  the last. Per page, ingested and ACKed as it lands - partial progress must be kept.
 - MLS gives no echo of your OWN message, so the sender's optimistic update is the only writer it
   gets: apply it in memory AND persist it (`persistLocalMutation`), or it dies at the next load.
 - The mirror is READ as well as written: a file one side rewrites wholesale silently deletes
