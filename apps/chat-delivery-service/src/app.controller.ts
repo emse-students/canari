@@ -348,10 +348,15 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // server can ever reach it again. It is also invisible in `getUserDevices`, which filters on
     // the same table, so its owner cannot delete it a second time either. Enumerate from the
     // memberships too, and treat a missing KeyPackage as terminal rather than as unknown.
+    // `.distinct(true)`, NOT `DISTINCT` inside the first select string: TypeORM does not preserve
+    // the order the selects were declared in, so the keyword lands in the middle of the column list
+    // and Postgres rejects it (`syntax error at or near "DISTINCT"`, seen on the prod boot sweep).
+    // The single-column builders below get away with it only because there is nothing to reorder.
     const orphanRows = await this.deviceGroupRepo
       .createQueryBuilder('dgm')
-      .select('DISTINCT dgm.userId', 'userId')
+      .select('dgm.userId', 'userId')
       .addSelect('dgm.deviceId', 'deviceId')
+      .distinct(true)
       .where(
         'NOT EXISTS (SELECT 1 FROM key_package kp WHERE kp."deviceId" = dgm."deviceId" AND kp."userId" = dgm."userId")'
       )
