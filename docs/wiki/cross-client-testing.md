@@ -404,6 +404,7 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | **Reload rewind** | web, prod 2026-08-06 | **FAIL -> WP-LOSS-1, deterministic** | Reload 300 ms after a send loses the next message (twice, generations 118 and 120); reload 20 s after it delivers in 694 ms. Deferred MLS disk writes let a reload restore a ratchet behind the one already used. See below. |
 | MSG-9 | W1 -> A1 0.13.0, prod 2026-08-06 | **PASS** | Phone's radios cut (`svc wifi disable` + `svc data disable`), `navigator.onLine` false in 516 ms. Nothing arrived while down; **one** copy after the radios came back, 26.3 s later. The delay is the app's own keepalive: `[WS] 4 pings without server response - closing zombie connection`, then `Reconnecting...` and `[PENDING] Fetched 3 pending messages`. |
 | MSG-10 | web, prod 2026-08-06 | **PASS** | Sender cut mid-session: composer emptied, the sender rendered its own message immediately, the peer had nothing, `[OUTBOX] Flush skipped - offline; the queue is kept intact`. On reconnect it drained in 1011 ms, one copy each side - **and it survived a reload of the sender**, which is the `persistLocalMutation` predicate WP-ECHO-1 turns on. So the offline path persists correctly; whatever loses the sender's echo is a different route. |
+| **Reload rewind, re-run** | web, prod 2026-08-06 | **PASS - fix verified** | Same reproduction against the deployed `a8cc7027`: **3/3 delivered** after a 300 ms reload, 700 / 681 / 772 ms, receiver log clean. That matches the 694 ms no-reload control, where the pre-fix build lost 2/2. Sender half closed; the receiver half of WP-LOSS-1 stays open. |
 | **WP-KBD-1** | A1 0.13.0, prod 2026-08-06 | **FAIL -> WP-KBD-1** | Tap the composer, HOME, return: the shell is pinned to the visual viewport but starts below the status-bar inset, so it overflows by that inset and the composer sits behind the keyboard. Numbers in [mobile](frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-open). |
 | **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED, VERIFIED ON PROD** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. Re-proved on A1 0.13.0 from a COLD start: `unknown = 0` at 3 s, 6 s and 10 s, six real names. See below. |
 
@@ -736,10 +737,14 @@ consecutive successes had no reload between them.
 
 **The fix has two halves and both are needed.**
 
-- *The cause*: flush the encrypted state checkpoint before the page goes away (`pagehide` /
-  `visibilitychange`), or stop deferring writes once a message has been encrypted. A ratchet that
-  can go backwards is a correctness bug in its own right - it also means two live tabs of the same
-  device can diverge.
+- *The cause*: **SHIPPED and VERIFIED ON PROD** (`a8cc7027`). `scheduleOutboundMlsPersist` now calls
+  `persistNow()` instead of `scheduleDeferred()`, so encrypting a message checkpoints the ratchet at
+  the point it moved. An unload hook cannot carry this: `pagehide` / `visibilitychange` can only
+  *start* an async save (a worker round trip, then IndexedDB) and the document is torn down long
+  before it lands - it is a best-effort extra, never the guarantee. `persistNow` still merges
+  same-tick calls and stays deferred during a bulk ingest, so a burst of sends costs one checkpoint.
+  A ratchet that can go backwards is a correctness bug in its own right - it also means two live tabs
+  of the same device can diverge.
 - *The consequence*: `secret-reuse` must not mean "duplicate" on its own. Record the fingerprint of
   every ciphertext the LIVE path decrypts - today only the replay path in `history.ts` keeps a
   `seenCipherHashes` set - and on `SecretReuseError` check it: seen means a genuine double delivery
@@ -757,6 +762,27 @@ consecutive successes had no reload between them.
 
   Without this half, any future rewind - a crash, two tabs of one device, the mobile background
   service - is silent loss again. With only this half, the sender still wastes a message per reload.
+
+#### Verification of the sender half, on prod, 2026-08-06
+
+Verified with the reproduction that found the bug, not with a new one - `verify-fix.mjs`, three
+rounds of prime -> 300 ms -> reload -> send:
+
+| Build | Rounds at 300 ms | Result |
+|---|---|---|
+| before `a8cc7027` | 2 | **0/2 delivered** (`out of bounds 118`, `out of bounds 120`) |
+| after `a8cc7027` | 3 | **3/3 delivered**, 700 / 681 / 772 ms, receiver log clean |
+
+Those latencies are the 20 s control (694 ms), which is the point: the 300 ms round now behaves like
+a round with no reload at all. No `out of bounds`, no `SecretReuseError`, no silent ACK.
+
+**Proving the clients ran the build under test is part of the check, and the obvious way failed.**
+The script meant to print the entry-bundle hash returned `null` on both sides, so it proved nothing;
+the deployment was established from the outside instead - image built `10:38:59Z`, container
+recreated `10:40:06Z`, both inside the CD run for head SHA `a8cc7027` (`10:36:01Z` -> `10:40:33Z`),
+and the run finished before the harness reloaded either page. **Warm-up is not optional here**: a
+priming send made by the OLD build never wrote its checkpoint, so the first round after a deploy can
+fail for a reason that is already fixed. Both clients are reloaded once before anything is measured.
 
 ### Cutting the network: which side the browser can fake, and which it cannot
 

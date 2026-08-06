@@ -272,9 +272,13 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   Everything - the tables, the retired hypotheses, both halves of the fix - is in
   [cross-client-testing > root cause](docs/wiki/cross-client-testing.md#root-cause-found-2026-08-06-a-reload-rewinds-the-senders-ratchet).
   Do not re-derive it, and do not re-open the load hypothesis or "forwarding is special": both are
-  dead. **The SENDER half is SHIPPED** (`a8cc7027`): `scheduleOutboundMlsPersist` now checkpoints
-  instead of marking dirty, because the `pagehide`/`visibilitychange` hooks can only START an async
-  save and the document dies first - an unload hook is never the guarantee.
+  dead. **The SENDER half is SHIPPED AND VERIFIED ON PROD** (`a8cc7027`, verified 2026-08-06):
+  `scheduleOutboundMlsPersist` now checkpoints instead of marking dirty, because the
+  `pagehide`/`visibilitychange` hooks can only START an async save and the document dies first - an
+  unload hook is never the guarantee. Re-running the reproduction against the deployed build gives
+  **3/3 delivered at 700/681/772 ms** where it lost 2/2, matching the 694 ms no-reload control - do
+  not re-verify it. The trap that verification cost: a priming send made by the OLD build never
+  wrote a checkpoint, so both clients must be RELOADED before a post-deploy round is measured.
   **The RECEIVER half is what remains, and its remedy is NOT `onOutOfSync`** - the message is
   cryptographically unrecoverable there, and a re-add destroys a valid membership to fix nothing.
   Record live-path ciphertext fingerprints, tell a real double delivery from a rewind, and SIGNAL
