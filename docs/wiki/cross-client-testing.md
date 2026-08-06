@@ -1538,18 +1538,70 @@ encrypted at a generation this device can never reach, so it is lost. **Re-run L
 the group is now rejoined at a fresh epoch, so the next run measures the ordinary offline path
 instead of a two-thousand-generation debt that no longer exists.
 
-#### How big the queue gets, and why that is by design
+#### How big the queue gets - and it was NOT by design (WP-GHOST-1)
 
-Prod, 2026-08-06: **97 991 rows, 61 devices, 150 MB**, oldest 2026-06-11, six devices holding ~10 800
-each. That is NOT a leak and there is no work package in it - `RETENTION_WINDOW_MS` is 90 days, and
-`cleanupExpiredQueuedMessages` / `detectStaleDevices` / `cleanupStaleDevices` all key off it, so
-nothing purges a device that is only weeks old. Two test accounts registering a new device id per
-browser profile is what produced 61 of them.
+Prod, 2026-08-06: **98 210 rows, 62 devices, 150 MB**, oldest 2026-06-11. This section first said
+that was the deliberate 90-day retention and carried no work package. **That was wrong**, and the
+measurement that refuted it is below. Retention is real and it IS the size of WP-PENDING-1's
+exposure - an ordinary device coming back to tens of thousands of rows is exactly the case the
+all-or-nothing pull could never serve - but it is not why the table was 150 MB.
 
-What it does mean is that the retention window is the SIZE of the failure WP-PENDING-1 describes: an
-ordinary device that stops connecting for a while comes back to tens of thousands of rows, which is
-precisely the case the all-or-nothing pull could never serve. Read the two together before proposing
-to shorten the window - the per-page drain is the fix, retention is the exposure.
+Grouping by the FULL `deviceId` rather than a prefix is what showed it: **97 353 of the 98 210 rows
+(99.1 %) belonged to nine device ids that no longer exist**, all of them still `status = 'active'`
+in `dm_device_group_memberships`. Claire had **five** such ids each holding exactly 10 810 rows -
+every message sent to her was encrypted and stored five times over. Every other device on the
+platform held at most 84 rows.
+
+**Deleting those devices through the product's own UI** (`/settings` -> "Gérer" -> the trash icon,
+which is `DELETE /api/mls/devices/:userId/:deviceId` -> `purgeDeviceFootprint`) took the table from
+**98 210 rows to 984** and the memberships with it. So the delete PATH is clean; nothing ever calls
+it. That is the defect.
+
+##### Why a dead device is never collected
+
+Three mechanisms lock together, and the third resets the clock the first two depend on:
+
+1. `cleanupStaleDevices` ([app.controller.ts:316](../../apps/chat-delivery-service/src/app.controller.ts#L316))
+   is the only thing that purges, and it **vetoes any device holding an `active` membership**.
+2. `detectStaleDevices` ([app.controller.ts:229](../../apps/chat-delivery-service/src/app.controller.ts#L229))
+   is the only thing that clears `active`, and it pre-filters on `updatedAt < now - 90 days`. Its own
+   comment defends the filter: "a row touched within the window is certainly not stale".
+3. But `updatedAt` is a TypeORM `@UpdateDateColumn` bumped by **other people's clients**, not by the
+   device's liveness: `activateDeviceMembership`'s upsert carries no `skipUpdateIfNoValuesChanged`,
+   `sendWelcome`'s is fanned out in parallel by `deliverWelcomes`, and `processPendingInvitations`
+   re-marks a device `active` from its `ALREADY_MEMBER` branch - a peer may vouch for another user's
+   device by design. All nine ghosts carry `updatedAt` within four seconds of each other (05:05:2x),
+   the signature of exactly such a burst.
+
+So a demotion is undone by the next peer sync, the veto holds forever, and the fan-out
+([messaging.service.ts:471-509](../../apps/chat-delivery-service/src/services/messaging.service.ts#L471))
+mints a row for every `active` membership **with no key-package check at all** - while the
+invitation path does validate key packages and `sendWelcome` hard-fails without one. That asymmetry
+is the whole bug: a device good enough to be messaged forever is not good enough to be invited.
+
+**The generalisable rule: a liveness clock must be written by the thing whose liveness it measures.**
+`updatedAt` answers "when was this row last written", and it was asked "when was this device last
+seen". Same shape as WP-PENDING-2, where an epoch verdict answered a generation question.
+
+##### The 16th and 17th harness faults, both from this hour
+
+- **A run whose progress goes through `| tail -N` is unobservable.** `tail` buffers until EOF, so a
+  check that logs every stage printed nothing at all and looked like a hang; two NOTIF runs were
+  killed on that misreading. Redirect to a file and read the file.
+- **The device panel opens EMPTY and fills in.** Read 2 s after opening, it reported `deletable: 0`
+  for an account holding five deletable devices - "Synchronisation des appareils…" was still on
+  screen. Exactly the family this page keeps re-learning: an assertion made before the thing under
+  test exists yields a confident wrong answer. `purge-devices.mjs` now waits for the loading label to
+  go AND for the count line to appear, and every deletion asserts the row count FELL - the client
+  turns a non-2xx into an in-panel error string and leaves the row in place, so a swallowed 4xx would
+  otherwise read as a success.
+
+##### What survived the purge, deliberately
+
+One orphan remains: `tauri-…-ms8xyqkk-2rwh`, 3 memberships, **no key package at all** - a phone
+install that vanished without ever calling the delete endpoint. It is the whole class in one row and
+is left in place on purpose, as the live reproduction for the fix. Across the platform it is the only
+one (`54` devices hold memberships, `230` hold key packages, exactly `1` holds memberships without).
 
 What happens after the escalation is worth knowing before reading a log: the first bad frame forgets
 the group, so every later queued frame takes the `!inGroup` path, is buffered and **not** ACKed

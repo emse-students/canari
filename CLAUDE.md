@@ -358,6 +358,26 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   ring dies on a reload, and nothing tells the receiver's USER that a message was lost. Reasoning on
   the wiki page.
 
+- \[ \] **WP-GHOST-1 (P1) - A DEVICE THAT DISAPPEARS WITHOUT CALLING THE DELETE ENDPOINT IS MESSAGED
+  FOREVER, AND NOTHING CAN EVER COLLECT IT. Found 2026-08-06, PROVEN on prod, NOT FIXED.** The queue
+  was **98 210 rows / 150 MB**, and **97 353 of them (99.1 %) belonged to nine device ids that no
+  longer exist**, all still `status='active'`; Claire had FIVE, each holding exactly 10 810 rows, so
+  every message to her was stored five times. Every other device on the platform held at most 84.
+  **This corrects the older note in this file claiming the size was the deliberate 90-day retention -
+  it was not.** Deleting them through the product's own UI took the table to **984 rows**, so
+  `purgeDeviceFootprint` is clean; nothing ever calls it. The lock is three-way: `cleanupStaleDevices`
+  vetoes any device with an `active` membership; only `detectStaleDevices` clears `active` and it
+  pre-filters on `updatedAt`; and `updatedAt` is a TypeORM `@UpdateDateColumn` bumped by OTHER
+  people's clients (`activateDeviceMembership`'s upsert has no `skipUpdateIfNoValuesChanged`,
+  `sendWelcome`'s is parallel-fanned by `deliverWelcomes`, and `processPendingInvitations` re-marks a
+  peer's device `active` from its `ALREADY_MEMBER` branch). All nine ghosts share an `updatedAt`
+  within four seconds - that burst. Meanwhile the message fan-out reads `status='active'` with **no
+  key-package check**, while the invitation path validates one and `sendWelcome` hard-fails without
+  one. Full write-up, every figure and every file:line in
+  [cross-client-testing > how big the queue gets](docs/wiki/cross-client-testing.md#how-big-the-queue-gets---and-it-was-not-by-design-wp-ghost-1).
+  **A live reproduction is deliberately left on prod**: `tauri-…-ms8xyqkk-2rwh`, 3 memberships, zero
+  key packages, the only such device on the platform. Do not clean it up before the fix.
+
 - \[ \] **WP-DRAIN-2 (P2) - the inbound drain still has no watchdog, so ANY hung await inside it
   stops every inbound message with no diagnostic.** What is left of WP-HIDDEN-1 and WP-DRAIN-1, both
   shipped and verified (`d1bedee1`, and the deadlock via `startRecovery`) - the stories are in
@@ -504,6 +524,12 @@ three that must be seen without opening one:
   a rotated identity rejoins every group while the browser still holds every message.
 - A durable marker must carry the EVIDENCE that justified it, or nothing can ever revisit the
   diagnosis; one written without evidence is legacy - drop it, do not replay it.
+- A LIVENESS clock must be written by the thing whose liveness it measures. `updatedAt` answers "when
+  was this row last written" and was asked "when was this device last seen" - so a peer's sync kept
+  nine dead devices alive forever (WP-GHOST-1). Same shape as an epoch verdict answering a generation
+  question: a column is only evidence for the question it was written to answer.
+- A device good enough to be MESSAGED must be at least as valid as one good enough to be INVITED. The
+  invitation path checks the key package, the fan-out does not - and the gap is where the ghosts live.
 - An error says what it says: "this generation is consumed" is NOT "I already have this message".
   Keep the evidence that distinguishes them (the frame's own bytes) - and never let a native layer
   answer `Ok(None)` where the shared classifier could have decided.
