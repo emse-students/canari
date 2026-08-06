@@ -233,13 +233,24 @@ The known-hard cases first, because they are documented as hard and therefore fa
 | NOTIF-4 | Read on W1 while A1 is killed | Notification dismissed on A1 (cross-device dismissal) |
 | NOTIF-5 | Per-channel level set to muted on W1 | A1 does not notify; the message still arrives |
 | NOTIF-6 | Notification action: quick reply from the shade | check K - reply delivered, appears on W1/W2 |
-| NOTIF-7 | Notification tap -> deep link into the conversation | check H - correct conversation opens (`notifNav`, not a `/c/<id>` route) |
+| NOTIF-7 | Notification tap -> deep link into the conversation, **run TWICE: app backgrounded, then app KILLED** | check H - correct conversation opens (`notifNav`, not a `/c/<id>` route) |
 | NOTIF-8 | Doze + message | Delivered (high priority) or delivered on wake - record which |
 | NOTIF-9 | Two devices of jolan (W1 open, A1 killed) | Exactly one notification surface behaves; no duplicate for the same message |
 | NOTIF-10 | Airplane mode for 10 min, 5 messages sent, then reconnect | All 5 arrive; no collapse into one, or an explicitly correct summary |
 
 NOTIF-2/3 double as the check that a **silent commit push** does not leave the next message
 permanently unreadable.
+
+**NOTIF-7 has a reported symptom and a suspect, from the user, 2026-08-06** - so it is not an open
+question, it is a hypothesis to falsify. The deep link is believed to work with the app in the
+BACKGROUND and to fail with the app KILLED. Backgrounded, the app is already past authentication and
+`notifNav` publishes into a live router; killed, the tap starts a cold process that has to unlock
+first, and the plausible failure is that the pending navigation is consumed - or dropped - while the
+PIN / unlock screen owns the route. The two states are therefore two separate runs with two verdicts,
+never one row. If the killed run fails, the thing to capture is whether the intent's payload ever
+reached the web layer at all (a native-side loss) or reached it and was discarded by the unlock gate
+(a routing loss): they are different bugs and the log distinguishes them. Deep-link plumbing and the
+unlock paths are in [mobile](frontend/mobile.md) and [auth](frontend/modules/auth.md).
 
 ---
 
@@ -396,7 +407,7 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | FWD-2 | web, prod 2026-08-06 | **FAIL -> WP-FWD-1 REPRODUCED** | Three consecutive forwards lost, then 8/8 delivered on a re-run. Sender kept its echo, receiver never had them, the DM was healthy both ways at that moment. See below. |
 | **Reconciliation** | web, prod 2026-08-06 | **method, plus 5 losses** | 54 markers on W1 vs 53 on W2 over a bounded common window: 3 forwards missing from the receiver, 2 sent messages missing from the SENDER. Two different defects. See below. |
 | **Silent loss** | web, prod 2026-08-06 | **FAIL -> WP-LOSS-1** | Two DMs accepted by the server (`POST /api/mls/send -> 201`), never rendered by the peer, still absent after a reload. See below. |
-| MSG-8 | A1 0.13.0 -> web, prod 2026-08-06 | **PASS** | Sent from the phone while W2's tab was hidden: decrypted while hidden (`[MLS] Message decrypted ... → addMessageToChat`), rendered exactly once on return. Nothing appeared in the DOM until the tab came back - a hidden tab gets no frames, so that is the browser, not the app. |
+| MSG-8 | A1 0.13.0 -> web, prod 2026-08-06 | ~~PASS~~ **-> WRONG VERDICT, see WP-HIDDEN-1** | Sent from the phone while W2's tab was hidden: decrypted while hidden, rendered exactly once on return. The verdict was PASS and the explanation written here - "a hidden tab gets no frames, so that is the browser, not the app" - was **wrong**. Nothing appeared because the drain had HUNG, and the check only ever looked after restoring the tab, which is exactly what released it. One message hides the bug; two expose it. |
 | MSG-8b | A1 0.13.0 -> web, prod 2026-08-06 | **PASS, with a UX note** | W2 on another page and hidden: badge `1 non lus` and `Discussions | 1` on refocus, message present once. **The tab title never changes**, so a backgrounded tab signals nothing until it is looked at - `useNotifications` does blink the title, but only for its own notification path. W2 also logged a `SecretReuseError` on a message it nonetheless rendered: the duplicate branch fires legitimately too, which is exactly why WP-LOSS-1 cannot classify on it alone. |
 | FWD-3 | web, prod 2026-08-06 | **FAIL -> same root cause** | Sender cut right after the picker closed: `POST -> 201` had already gone, receiver never rendered it, `SecretReuseError` on the receiver. Not an outbox failure - the same rewind. |
 | FWD-4 | A1 0.13.0 -> web, prod 2026-08-06 | **PASS** | Sent from the phone and HOME pressed 200 ms later: delivered, one copy, sender kept its echo. Leaving the foreground mid-send costs nothing. |
@@ -404,6 +415,9 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | **Reload rewind** | web, prod 2026-08-06 | **FAIL -> WP-LOSS-1, deterministic** | Reload 300 ms after a send loses the next message (twice, generations 118 and 120); reload 20 s after it delivers in 694 ms. Deferred MLS disk writes let a reload restore a ratchet behind the one already used. See below. |
 | MSG-9 | W1 -> A1 0.13.0, prod 2026-08-06 | **PASS** | Phone's radios cut (`svc wifi disable` + `svc data disable`), `navigator.onLine` false in 516 ms. Nothing arrived while down; **one** copy after the radios came back, 26.3 s later. The delay is the app's own keepalive: `[WS] 4 pings without server response - closing zombie connection`, then `Reconnecting...` and `[PENDING] Fetched 3 pending messages`. |
 | MSG-10 | web, prod 2026-08-06 | **PASS** | Sender cut mid-session: composer emptied, the sender rendered its own message immediately, the peer had nothing, `[OUTBOX] Flush skipped - offline; the queue is kept intact`. On reconnect it drained in 1011 ms, one copy each side - **and it survived a reload of the sender**, which is the `persistLocalMutation` predicate WP-ECHO-1 turns on. So the offline path persists correctly; whatever loses the sender's echo is a different route. |
+| TAB-5 | web, prod 2026-08-06 | **PASS** | Reload fired 30-40 ms after submitting: 7 rounds, exactly one copy on the sender and on the receiver every time. The message is queued in the outbox before the reload and `[OUTBOX] Flushing 1 queued entry` delivers it after - so the outbox survives a reload. Two early rounds carried `out of bounds` + silent ACK on both sides with no loss; not reproduced in 4 further rounds, and never accompanied by a missing message. |
+| TAB-4 | web, prod 2026-08-06 | **FAIL -> WP-HIDDEN-1** | Two tabs of one account: the peer's message reached NEITHER, and a send from the first tab reached nobody. Not a leader-election bug - opening a second tab merely HIDES the first, and a hidden tab stops draining. See below. |
+| **Hidden tab** | web, prod 2026-08-06 | **FAIL -> WP-HIDDEN-1, deterministic** | One tab, backgrounded: message #1 decrypts and never renders, #2 is enqueued and never drained, and both appear at the exact millisecond the tab is refocused (13:10:53 -> 13:11:19). `yieldToMainThread` awaited `requestAnimationFrame`, which never fires in a hidden document. See below. |
 | **Reload rewind, re-run** | web, prod 2026-08-06 | **PASS - fix verified** | Same reproduction against the deployed `a8cc7027`: **3/3 delivered** after a 300 ms reload, 700 / 681 / 772 ms, receiver log clean. That matches the 694 ms no-reload control, where the pre-fix build lost 2/2. Sender half closed; the receiver half of WP-LOSS-1 stays open. |
 | **WP-KBD-1** | A1 0.13.0, prod 2026-08-06 | **FAIL -> WP-KBD-1** | Tap the composer, HOME, return: the shell is pinned to the visual viewport but starts below the status-bar inset, so it overflows by that inset and the composer sits behind the keyboard. Numbers in [mobile](frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-open). |
 | **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED, VERIFIED ON PROD** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. Re-proved on A1 0.13.0 from a COLD start: `unknown = 0` at 3 s, 6 s and 10 s, six real names. See below. |
@@ -783,6 +797,59 @@ recreated `10:40:06Z`, both inside the CD run for head SHA `a8cc7027` (`10:36:01
 and the run finished before the harness reloaded either page. **Warm-up is not optional here**: a
 priming send made by the OLD build never wrote its checkpoint, so the first round after a deploy can
 fail for a reason that is already fixed. Both clients are reloaded once before anything is measured.
+
+### ROOT CAUSE, found 2026-08-06: a BACKGROUNDED tab stops receiving, silently (WP-HIDDEN-1)
+
+TAB-4 opened a second tab of the same account and failed twice: the peer's message reached neither
+tab, and a send from the first tab reached nobody. Empty logs on both sides, which is the shape of a
+harness fault - so it was triaged rather than believed, and the triage found something bigger than
+the check it came from.
+
+**The leader received the frame and never processed it.** `[WS RCV] senderId=… protoLen=348` with no
+`[QUEUE] Drain start` behind it, three runs out of three, still nothing after 90 s. The path
+explains the silence exactly:
+
+- `drain()` sets `isDraining = false` in a `finally`, but **behind** `await hooks.onDrainEnd()`;
+- `onDrainEnd` awaits `endBulkIngest()` -> the persister's `onBulkIngestEnd` -> `runSaveEncrypted`;
+- `enqueueMessage` only starts a drain `if (!this.messageScheduler.draining)` - and logs nothing
+  when it does not. The restart guard at the end of `processQueue` covers messages that arrive while
+  `onDrainEnd` is awaiting, but it lives after `drain()` returns, so it cannot help when `onDrainEnd`
+  is what hangs.
+
+So one stuck await inside the checkpoint stops all message processing forever, without one line of
+output. What hung was the FIRST line of `runSaveEncrypted`: `await yieldToMainThread()`, whose helper
+resolved from `requestAnimationFrame` - **which a browser never fires for a hidden document**.
+
+Two candidates were eliminated by measurement, not by reading: IndexedDB answered an open + read in
+**1 ms** from inside the stuck tab, and the encrypt worker carries a 60 s timeout that would have
+failed loudly and released the drain.
+
+**Two tabs were never the point.** Opening a second tab simply puts the first one in the background.
+One tab, backgrounded, reproduces it on its own:
+
+| Step | Result |
+|---|---|
+| message #1 arrives while hidden | decrypted, `→ addMessageToChat`, then `Bulk ingest done - flushing…` and nothing. It does not even render: the UI flush is buffered by `beginBulkIngest({ bufferUi: true })` and released by the `endBulkIngest` that is stuck |
+| message #2 arrives while hidden | enqueued, no drain, no log |
+| tab refocused | `checkpoint persisted`, `Drain complete`, both messages appear - at the exact millisecond of the refocus (13:10:53 -> 13:11:19) |
+
+That is a Canari tab left in the background receiving nothing at all, with no error and no hint, until
+the user comes back to it - and `yieldToMainThread` is awaited on six paths, including history replay
+and the PIN change batches.
+
+**It also retires a PASS.** MSG-8 asserted after restoring the tab, which is the very act that
+released the drain, and this page then explained the delay as the browser not painting. Wrong on
+both counts. A single message can never expose this; the second one is the whole test.
+
+**The fix** races the frame against a `MessageChannel` round trip instead of choosing between them -
+choosing on `document.visibilityState` would still hang whenever a tab is hidden after the callback
+is queued, which is precisely what a user does. The fallback is a port message rather than
+`setTimeout` because background tabs clamp timers to about 1 Hz, and harder still after a few
+minutes, which would turn a hundred-message catch-up into minutes of stalling.
+
+**What is NOT fixed, and is worth a look on its own:** a single hung await inside `onDrainEnd` can
+still stop every inbound message with no diagnostic. The flush belongs behind `isDraining = false`,
+or the queue needs a watchdog - the yield was one way in, not the only one.
 
 ### Cutting the network: which side the browser can fake, and which it cannot
 
