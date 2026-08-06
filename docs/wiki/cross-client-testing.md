@@ -388,8 +388,39 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | MSG-2 | A1 0.12.0, prod 2026-08-06 | **PASS** | W2 -> A1 with the app foreground: 2665 ms, one copy, no push duplicate. |
 | MSG-3 | web, prod 2026-08-06 | **PASS** | Reply renders with its quoted parent on BOTH sides, 509 ms. Composer showed `Répondre à Jolan BOUDIN parent MSG3P-…`. |
 | MSG-5 | all three, prod 2026-08-06 | **PASS** | Channel message converged 1/1/1 (W2 741 ms, A1 117 ms). **Zero** `masterSecret`/`webhookSecret` in any `/api/` response body on any client. No errors, no 4xx, nothing unexplained on any of the three. |
+| MSG-4 | web, prod 2026-08-06 | **PASS** | Image 1476 ms, PDF 1113 ms, one copy each, caption present. Receiver decoded the picture (`<img src="blob:">`, `naturalWidth` 64x64) - not merely a bubble. |
+| Check M | A1 0.13.0, prod 2026-08-06 | **PASS** | PDF first page rendered on hardware: two `<img alt="Aperçu de la première page du document">` at `naturalWidth` 116x116 from `blob:`, plus a full-screen affordance. Logcat clean. |
+| **Reconciliation** | web, prod 2026-08-06 | **evidence for WP-LOSS-1** | 54 markers on W1 vs 52 on W2 for the same DM, after both scrolled the whole history. The difference is EXACTLY the two already-known losses; nothing else diverges. See below. |
 | **Silent loss** | web, prod 2026-08-06 | **FAIL -> WP-LOSS-1** | Two DMs accepted by the server (`POST /api/mls/send -> 201`), never rendered by the peer, still absent after a reload. See below. |
-| **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED, VERIFIED ON PROD** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. See below. |
+| **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED, VERIFIED ON PROD** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. Re-proved on A1 0.13.0 from a COLD start: `unknown = 0` at 3 s, 6 s and 10 s, six real names. See below. |
+
+### Reconciliation: the only way this class of loss can be seen
+
+A silent loss leaves no mark anywhere a single client can look. The sender keeps its optimistic
+echo, the server answered `201`, and the receiver simply never had the row - so both UIs are
+self-consistent and both are wrong about the conversation. The only evidence is a SET DIFFERENCE
+between the two clients' view of one thread, which is why every campaign message carries a unique
+`PREFIX-<base36>` marker: DOM rows have no id, but the text does.
+
+`scratchpad/recon.mjs` scrolls both panes to the top until history stops growing, extracts the
+markers and diffs them. Run 2026-08-06 (`scratchpad/logs/recon-20260806-1036.json`, reproduced
+twice):
+
+- W1 shows **54** markers, W2 shows **52**.
+- `onlyW1` = `MSG1-msh23b0gp99`, `PROBE-msh25j5eovk`. `onlyW2` = none.
+
+Two things follow. First, **the loss is permanent**: those two are the original WP-LOSS-1 pair, and
+they had not healed hours later, across reloads - exactly what adding the fingerprint to
+`seenCipherHashes` predicts, and the first direct confirmation of it. Second, **nothing else has
+been lost since**: the 38 volume sends, MSG-2..MSG-5 and both MSG-4 media all reconcile, so the
+defect is rare rather than continuous.
+
+It also settles a scare from the MSG-4 run, where the receiver logged four
+`Ciphertext generation out of bounds … SecretReuseError` (generations 49, 50, 52, 53) while the
+check still passed. Those cost no message: they are the replay path re-encountering frames that
+WERE already delivered, which is the benign half of the very branch WP-LOSS-1 indicts. That is the
+point of the fix being a reconciliation against the local store rather than a change of
+classification - the same error legitimately means "already have it" most of the time.
 
 ### The bug that only a click could find
 
@@ -525,6 +556,33 @@ The fix belongs at launch, not at the call site. Both browsers now start with
 after which the same `realClick` produces the full **trusted** event sequence and the button opens
 its dialog. `realClick` also sends a `mouseMoved` before the press, so the element is hovered like a
 user's would be.
+
+### Three more harness faults, found 2026-08-06 - same lesson each time
+
+All three produced a WRONG result that looked like the app's fault, which is why they are written
+down rather than quietly patched. The pattern: **the harness must prove it did what it claims**.
+
+**A synthetic pointer never leaves.** `realClick` moves the mouse onto the target and stops there,
+so anything that opens on hover stays open forever. The collapsed nav rail expanded over the
+conversation list, and from then on every hit-test at a row returned the `NAV`. Read as a layout
+bug in the app - a screenshot showed the drawer simply standing open. `realClick` now parks the
+pointer at a neutral point after the press (`{ park: false }` where sustained hover is the subject).
+
+**Visible text must beat an `aria-label`.** `RESOLVE` sorted candidates by `innerText` length, so
+anything with NO `innerText` won outright - and a DM row ships an avatar labelled
+`Avatar de <name>` whose `innerText` is empty. The click therefore landed on the avatar's centre,
+which sat under the sidebar, and navigated to `/communities`. Matching on `aria-label` still has to
+exist (a community button's `innerText` is its initials); it just must never outrank an element
+that visibly says the thing. `RESOLVE` now also **rejects any hit that does not hit-test to itself**
+and returns `null` instead, so a caller fails loudly rather than clicking into another subtree.
+
+**A `blob:` URL is not a rendered image.** MSG-4 first passed asserting `blobImgs > 0`. The picture
+was in fact broken on every client - the fixture PNG had invalid chunk CRCs, hand-written rather
+than encoded - and a broken image has exactly the same `src`. The check now asserts
+`complete && naturalWidth > 0`, which is the only thing that proves the encrypt-upload-fetch-decrypt
+round trip. The same mistake in the other direction made check M report FAIL on a working surface:
+it looked for a `<canvas>`, while the PDF preview is an `<img>`. **Assert the rendered result, and
+confirm the fixture before blaming the app.**
 
 This has a direct consequence for the lifecycle checks: **a backgrounded tab must be produced by
 focusing another TAB in the same window**, never by covering the window - the flags now make an

@@ -91,12 +91,20 @@
     {#if mediaRef.type === 'image'}
       {#if blobUrl}
         <div class="relative inline-block group/media">
+          <!--
+            `w-56 max-w-full`, never `w-full`: the wrapper is `inline-block`, so its width comes from
+            its content, and a percentage width inside it has nothing definite to resolve against -
+            it collapses to the image's intrinsic size. Above `sm` an explicit `sm:w-56` hid that, so
+            a small picture only looked wrong on a phone: a 64 px thumbnail under a 36 px download
+            button. An explicit width at every breakpoint keeps the box constant whatever the file's
+            own dimensions are.
+          -->
           <button
             type="button"
             onclick={openLightbox}
             onpointerdown={(e) => e.stopPropagation()}
             aria-label={m.msg_open_image_fullscreen_label()}
-            class="block overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5 w-full max-w-[14rem] sm:w-56"
+            class="block overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5 w-56 max-w-full"
             style={imageAspectStyle}
           >
             <img
@@ -121,7 +129,7 @@
         </div>
       {:else if loadError}
         <div
-          class="w-full max-wxs sm:w-64 rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+          class="w-full max-w-xs sm:w-64 rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
           style={imageAspectStyle}
         >
           <CircleAlert size={28} class="opacity-50" />

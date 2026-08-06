@@ -52,7 +52,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | J | WP-VERIF-4 | PASS v0.11.7 | owed |
 | K | WP-NOTIF-1 | owed | owed |
 | L | WP-DEV-PANEL-1 | owed | owed |
-| M | WP-POST-DOC-2 | owed (the platform that matters) | n/a |
+| M | WP-POST-DOC-2 | **PASS** on A1 0.13.0, 2026-08-06 (chat half) | `docs/wiki/cross-client-testing.md` |
 | N | Offline unlock + promotion | owed | owed |
 | O | WP-STORE-1 (install source + version gate) | owed | n/a |
 
@@ -273,6 +273,16 @@ so the worker was served as `application/octet-stream` and the module loader ref
 `ConversationMediaPanel` and `AssociationDocumentManager` show no preview on purpose - they list
 files without fetching them - and a password-protected vault document cannot be decrypted without
 its password at all. Neither is a failure.
+
+**Step 2 PASSED on A1 0.13.0, 2026-08-06** (prod, PDF sent from W1). The rendered first page is an
+`<img alt="Aperçu de la première page du document">` fed from a `blob:`, `naturalWidth` 116x116 in
+a 44 px box - two of them, one per PDF sent. Logcat clean over the whole run.
+
+Two traps this cost, both about ASSERTING the right thing rather than about the app. The preview is
+an `<img>`, **not** a `<canvas>`: a check looking for a canvas reports FAIL on a surface that plainly
+works, which only a screenshot caught. And a mounted `<img>` proves nothing on its own - a broken
+picture keeps its `src` - so the assertion has to be `naturalWidth > 0`. Step 1 (a PDF in a POST) is
+still owed.
 
 ---
 
