@@ -413,10 +413,17 @@ authoritative-looking diff made of noise:
   run did exactly that and reported "W2 is missing `MSG1-msh23b0gp99` and `PROBE-msh25j5eovk`" -
   from which this page concluded the WP-LOSS-1 losses were permanent. **They are not: W2 has both.**
   `collect()` now reads at every scroll position and accumulates.
-- **The two windows do not coincide.** Each side loads whatever its scrolling reached, so a marker
-  absent from one list may simply be older than that side went. Markers carry their own send time
-  (`mark()` = prefix + base36 `Date.now()` + 3 random chars), so the diff is bounded to the range
-  both sides provably cover, and the run reports `windowFrom`.
+- **The two windows do not coincide, and deriving the bound from the data does not fix it.** Each
+  side loads whatever its scrolling reached, so a marker absent from one list may simply be older
+  than that side went. Bounding the diff to "the newer of the two oldest markers" still makes the
+  answer depend on how far each run happened to get: **two consecutive runs disagreed**, one calling
+  a dozen messages lost that the other reconciled. The window is therefore FIXED (90 minutes by
+  default, `RECON_WINDOW_MIN`), and each side must hold at least one marker OLDER than it - that is
+  the only evidence it covered the range. The run reports `covered` and `trustworthy`; a diff
+  without both is not a result.
+
+Markers carry their own send time (`mark()` = prefix + base36 `Date.now()` + 3 random chars), which
+is what makes any of this possible.
 
 Run 2026-08-06 11:0x with both corrections, over a window starting 07:07 local:
 
@@ -462,11 +469,17 @@ And it is not a dead conversation: `dmprobe.mjs` sent a plain composer message e
 afterwards - **W1 -> W2 in 1249 ms, W2 -> W1 in 653 ms, one copy, nothing notable on either side**.
 So the DM was healthy while forwards into it were being lost.
 
-The one correlation worth chasing: the three losses fall inside the window where the machine was
-running the pre-commit sweep and a `git push` - a heavy, sustained CPU load - and every forward
-before and after that window delivered. That is a hypothesis, not a finding; what makes it worth
-testing is that it would explain both the rarity and the burstiness, and it is the first handle
-this bug has ever offered.
+**The load hypothesis was tested, and it does not hold.** The three losses fell inside the window
+where the machine was running the pre-commit sweep and a `git push`, and nothing before or after
+that window was lost - so the obvious guess was CPU starvation. Re-running `bun run check` and
+`bun run lint` in a loop for the whole duration of a **12-iteration** forward batch produced
+**12/12 delivered**, 326-528 ms. The correlation is coincidence, and the only lead this bug had
+offered is closed.
+
+Standing tally for the day: **25 forwards, 3 lost, all three inside one two-minute window, 21
+consecutive successes since.** A final reconciliation over the last 90 minutes (deterministic,
+`trustworthy: true`, run twice) shows W1 with 30 markers and W2 with 27, the difference being
+**exactly those three** and nothing else.
 
 **Still owed on it:** the per-iteration capture of `POST /api/mls/send` was added AFTER the three
 losses, so it is not yet known whether a lost forward reaches the network at all. That single fact

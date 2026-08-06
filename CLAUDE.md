@@ -257,9 +257,11 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   do not re-derive it. What must survive a compaction: the forwards DID reach the intended
   conversation (triaged across every other thread - sender's echo present, receiver has nothing),
   and the DM was **healthy in both directions at that same moment** (plain sends 1249 ms / 653 ms,
-  clean). So the conversation is not desynced and the picker is not mis-clicking. The one lead is
-  that all three fell inside a window of heavy machine load (pre-commit sweep + push) - a
-  hypothesis, but the first handle this bug has offered, and it would explain the burstiness.
+  clean). So the conversation is not desynced and the picker is not mis-clicking. **The load
+  hypothesis is DEAD** - the three losses fell inside a pre-commit sweep + push, but a 12-iteration
+  batch run under exactly that load delivered 12/12. Day's tally: 25 forwards, 3 lost in one
+  two-minute window, 21 consecutive successes since; a deterministic reconciliation over the last
+  90 minutes shows those three and nothing else.
   **The next reproduction must answer one question**, and `fwd.mjs` now captures it per iteration:
   does a lost forward produce `POST /api/mls/send` at all? No request = the client dropped it
   (outbox); a 201 = the receiver did (WP-LOSS-1).
