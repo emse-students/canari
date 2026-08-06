@@ -358,21 +358,16 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   ring dies on a reload, and nothing tells the receiver's USER that a message was lost. Reasoning on
   the wiki page.
 
-- \[ \] **WP-GHOST-1 (P1) - FIXED AND COMMITTED (`5335a71f`), ONLY THE PROD VERIFICATION IS OWED.**
-  A revoked device wrote its own routing membership back and was then messaged forever, uncollectable:
-  the queue was **98 210 rows / 150 MB**, **97 353 of them (99.1 %) for nine device ids that no longer
-  exist**. Root cause is `POST /api/mls/invitations/status`, which minted a membership checking
-  neither the denylist nor the key package while `getPendingInvitations` **in the same file** checked
-  both; the preserved orphan is in `revoked_device` since 2026-07-31 yet has memberships written
-  2026-08-04. The fix is one predicate, `deviceAddressability`, applied at all three minting seams,
-  plus a `detectStaleDevices` that no longer pre-filters on `updatedAt`, a `cleanupStaleDevices` that
-  collects memberships with no key package, and a 60 s boot sweep (`setInterval` never fires at t=0,
-  so a 24 h job in a service redeployed daily had never run). Everything - evidence, table of seams,
-  tests - is in
-  [cross-client-testing > how big the queue gets](docs/wiki/cross-client-testing.md#how-big-the-queue-gets---and-it-was-not-by-design-wp-ghost-1);
-  do not re-derive it. **Owed, once the CD lands:** the orphan `tauri-…-ms8xyqkk-2rwh` must lose its
-  3 memberships to the boot sweep, and `invitations/status` for it must answer `400`. `queued_message`
-  was `VACUUM FULL`ed after the purge - `auth_db` went 103 MB -> **29 MB**.
+**WP-GHOST-1 (P1) is SHIPPED AND VERIFIED ON PROD 2026-08-07** (`5335a71f` + `eed39f51`). A revoked
+device wrote its own routing membership back through `POST /api/mls/invitations/status` and was then
+messaged forever, collectable by nothing: the queue was **98 210 rows / 150 MB**, 99.1 % of it for
+nine device ids that no longer existed. The boot sweep collected the preserved reproduction on its
+first clean run - `purged device=…-ms8xyqkk-2rwh groups=3 queued=124`, and the platform now holds
+**zero** memberships without a key package. `auth_db` is **29 MB** after `VACUUM FULL` (was 103).
+Root cause, the `deviceAddressability` predicate, the three minting seams it guards and the SQL fault
+the first deploy exposed are all in
+[cross-client-testing > how big the queue gets](docs/wiki/cross-client-testing.md#how-big-the-queue-gets---and-it-was-not-by-design-wp-ghost-1).
+The rules it taught are in DURABLE RULES; do not re-derive any of it.
 
 **WP-NOTIF-1 (P2) is SHIPPED and VERIFIED ON THE DEVICE 2026-08-07** (NOTIF-4 PASS, dismissed 263 ms
 after the read, `shadeBefore 1 -> shadeAfter 0`). An Android notification was not dismissed when the

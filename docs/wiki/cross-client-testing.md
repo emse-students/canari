@@ -1720,6 +1720,27 @@ Two things generalise, and they are the useful part:
   must never share one try/catch: one broken job would then hide the other eight, and all nine would
   report the same silence they report when there is nothing to do.
 
+##### VERIFIED, 2026-08-07 00:32 - the reproduction was collected by the fix
+
+`eed39f51` deployed, and the boot sweep 60 s later did the whole job:
+
+```
+[CRON] initial sweep: running every GC job once
+[CRON] cleanupStaleDevices: purged device=d82cd226…:tauri-…-ms8xyqkk-2rwh groups=3 queued=124
+[CRON] cleanupStaleDevices: purged 1 stale device(s) (1 of them with no KeyPackage at all)
+[CRON] initial sweep: done
+```
+
+The device that had been invisible to `getUserDevices`, vetoed out of `cleanupStaleDevices` and
+never selected by `detectStaleDevices` was collected automatically, taking its 3 membership rows and
+124 queued frames with it. Confirmed in the database immediately afterwards: `ghost_memberships 0`,
+`ghost_queued 0`, and - the figure that closes the class rather than the instance -
+**`orphan_rows_left 0` across the entire platform**. `queued_message` is 1 842 rows.
+
+That is the whole ladder demonstrated end to end on production: the creation seams refuse a device
+that is revoked or has no key package, the detector no longer trusts a clock other people write, and
+the collector reaches a device that no longer has a key package to be enumerated from.
+
 ##### The 16th and 17th harness faults, both from this hour
 
 - **A run whose progress goes through `| tail -N` is unobservable.** `tail` buffers until EOF, so a
