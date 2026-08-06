@@ -727,17 +727,26 @@ pub(crate) async fn recevoir_message_bytes(
                 // Corruption detected by mls-core -> unrecoverable state, trigger a re-bootstrap.
                 DecryptErrorKind::Unrecoverable => Err(format!("UNRECOVERABLE:{}", group_id)),
 
-                // SecretReuseError = this message's ratchet key was already consumed (duplicate:
-                // realtime delivery + queue, or a requeue after restart). Unlike a FUTURE
-                // generation gap, it will NEVER decrypt: queueing it in SQLite would loop forever.
-                // Treated as a benign duplicate - Ok(None) -> the frontend ACKs and drops it
-                // (parity with the web WASM path).
+                // SecretReuseError = this message's ratchet key was already consumed. Unlike a
+                // FUTURE generation gap, it will NEVER decrypt: queueing it in SQLite would loop
+                // forever. It is NOT necessarily a duplicate, and this used to answer Ok(None),
+                // which said "nothing to show" and lost the distinction: a sender whose ratchet
+                // rewound (WP-LOSS-1, WP-MULTITAB-1) encrypts a NEW message at a generation the
+                // receiver already consumed, and it read here exactly like a second delivery of one
+                // already displayed. The error is surfaced instead, so the shared frontend
+                // classifier can compare the frame against the ones it has processed and, when it
+                // has never seen this one, ask the sender to send it again. The frontend still
+                // ACKs; only the diagnosis changes. Parity with the web WASM path, which reaches
+                // the same classifier through its own thrown error.
                 DecryptErrorKind::SecretReuse => {
                     log::debug!(
-                        "[DUP] SecretReuseError group={} - already-consumed duplicate, silent ACK",
+                        "[DUP] SecretReuseError group={} - already-consumed generation, handing the classification to the frontend",
                         group_id
                     );
-                    Ok(None)
+                    Err(format!(
+                        "SecretReuseError: already-consumed generation in group {}",
+                        group_id
+                    ))
                 }
 
                 // "Process error:" = OpenMLS error on the same epoch -> likely a Sender Ratchet gap

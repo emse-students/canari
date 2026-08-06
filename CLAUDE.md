@@ -287,10 +287,18 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   **3/3 delivered at 700/681/772 ms** where it lost 2/2, matching the 694 ms no-reload control - do
   not re-verify it. The trap that verification cost: a priming send made by the OLD build never
   wrote a checkpoint, so both clients must be RELOADED before a post-deploy round is measured.
-  **The RECEIVER half is what remains, and its remedy is NOT `onOutOfSync`** - the message is
-  cryptographically unrecoverable there, and a re-add destroys a valid membership to fix nothing.
-  Record live-path ciphertext fingerprints, tell a real double delivery from a rewind, and SIGNAL
-  the desync to the sender - the only party that can send it again. Reasoning on the wiki page.
+  **The RECEIVER half is now SHIPPED too** (2026-08-06), and its remedy was never `onOutOfSync` -
+  the message is cryptographically unrecoverable there, and a re-add destroys a valid membership to
+  fix nothing. `inboundFrameLedger.ts` fingerprints every frame processed, so a consumed generation
+  can be told apart from a real double delivery; a miss is logged as `LOST frame` and emits
+  `decrypt_failed { withinMs }`, which the sender answers from `recentSends.ts` with the exact
+  protos it kept. It asks for a WINDOW because the frame never decrypted so its id was never seen;
+  that is safe only because the receiver dedups on the `messageId` inside the proto, which is also
+  why a false positive costs one frame. Rate-limited to one signal per group per 30 s. **The Rust
+  path had thrown the diagnosis away** (`Ok(None)` on `SecretReuse` read as "nothing to show"), so
+  Android dropped every rewound message with no trace - it now surfaces the error into the same
+  classifier. **Owed: the prod verification, and two deliberate gaps** - the ring dies on a reload,
+  and nothing tells the receiver's USER that a message was lost. Reasoning on the wiki page.
 
 - \[ \] **WP-HIDDEN-1 (P1) - A BACKGROUNDED TAB STOPS RECEIVING MESSAGES ENTIRELY, IN SILENCE.
   Found and FIXED 2026-08-06 (`d1bedee1`); what remains is the prod verification and one deliberate
@@ -401,6 +409,9 @@ three that must be seen without opening one:
   a rotated identity rejoins every group while the browser still holds every message.
 - A durable marker must carry the EVIDENCE that justified it, or nothing can ever revisit the
   diagnosis; one written without evidence is legacy - drop it, do not replay it.
+- An error says what it says: "this generation is consumed" is NOT "I already have this message".
+  Keep the evidence that distinguishes them (the frame's own bytes) - and never let a native layer
+  answer `Ok(None)` where the shared classifier could have decided.
 
 #### Outbound delivery -> [chat](docs/wiki/frontend/modules/chat.md), [mobile](docs/wiki/frontend/mobile.md)
 

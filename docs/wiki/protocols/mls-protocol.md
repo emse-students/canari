@@ -245,11 +245,28 @@ Triggered when `processIncomingMessage` fails with epoch-related errors:
 
 | Error | Condition | Recovery |
 |---|---|---|
-| `TooDistantInThePast` / `CiphertextGenerationOutOfBounds` | Ratchet key consumed | ACK silently (irrecoverable) |
+| `TooDistantInThePast` / `CiphertextGenerationOutOfBounds` | Ratchet key consumed | ACK, then classify - see below |
 | `msg_epoch < group_epoch` | Stale message (already processed) | ACK silently |
 | `msg_epoch > group_epoch` | Local state is behind | `forgetGroup()` + `requestReAdd()` |
 | `SenderDataDecryption` | Sender secrets diverged | `forgetGroup()` + `requestReAdd()` |
 | `WrongEpoch` | No epoch numbers | ACK silently |
+
+**A consumed generation is not evidence of a duplicate.** `SecretReuseError` /
+`CiphertextGenerationOutOfBounds` says only that the generation is spent, and that happens both when
+the same frame arrives twice (real-time publish racing the queue or FCM) and when a sender whose
+state went backwards encrypts a NEW message at a generation we spent on another one. The first is
+benign; the second is a message lost for good on this side, and both used to be dropped in silence.
+`inboundFrameLedger.ts` fingerprints every frame processed (in memory, 200 per group), so the two
+are separated on the only evidence available - the frame's bytes. A miss logs `LOST frame` and emits
+a `decrypt_failed { withinMs }` system event; the sender answers it from `recentSends.ts`, which
+retains the exact protos for 5 minutes. The request names a WINDOW, not a message, because the frame
+never decrypted - safe only because the receiver deduplicates on the `messageId` inside the proto,
+so re-sending something that did arrive is dropped. One signal per group per 30 s. Never
+`onOutOfSync`: the plaintext is unrecoverable whatever we do locally, and a re-add would destroy a
+valid membership for nothing. Both platforms run this classifier - the Tauri command surfaces the
+error rather than answering `Ok(None)`, which used to discard the diagnosis before TypeScript saw
+it. Full write-up in
+[cross-client-testing](../cross-client-testing.md#the-receiver-half-2026-08-06-a-consumed-generation-is-not-evidence-of-a-duplicate).
 
 `requestReAdd(groupId)`: tries `externalJoin(groupId)` first (fetch the stored GroupInfo -> build a native external commit -> submit under the epoch gate -> merge, or discard + retry on an epoch race); falls back to a single `welcome_request` when no GroupInfo is available. Self-throttled to one attempt per `RECOVERY_TIMEOUT_MS`; the SYNC_WATCHDOG drives the cadence. No reboot/CAS/successor.
 

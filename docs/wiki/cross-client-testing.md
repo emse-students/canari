@@ -798,6 +798,56 @@ and the run finished before the harness reloaded either page. **Warm-up is not o
 priming send made by the OLD build never wrote its checkpoint, so the first round after a deploy can
 fail for a reason that is already fixed. Both clients are reloaded once before anything is measured.
 
+#### The receiver half, 2026-08-06: a consumed generation is not evidence of a duplicate
+
+`SecretReuseError` and `Ciphertext generation out of bounds` say exactly one thing - the generation
+this frame was encrypted at has already been consumed - and the client answered with a conclusion
+the error does not support: *this is a second copy of something I already have*. Two opposite
+situations produce that error:
+
+| | What it is | Right answer |
+|---|---|---|
+| The same frame twice | Real-time publish racing the queue or FCM. Identical bytes. | Drop it silently |
+| A rewound sender | A NEW message encrypted at a generation we spent on a different one. Bytes never seen. | It is LOST - say so, and ask for it again |
+
+The frame's own bytes tell them apart, so `inboundFrameLedger.ts` fingerprints every frame this
+device manages to process (FNV-1a over the bytes, in memory, 200 per group) and the two branches
+that used to log `Duplicate … - silent ACK` now ask it first. A hit is a duplicate and behaves
+exactly as before. A miss is a loss, and is logged as `LOST frame` rather than as noise.
+
+**The remedy is on the SENDER, and cannot be anywhere else.** No local recovery brings the plaintext
+back - the generation is spent - and `onOutOfSync` would destroy a valid membership to fix nothing.
+So the receiver emits a `decrypt_failed` system event, which the sender answers by re-sending what
+it kept in `recentSends.ts` (the exact proto bytes, 25 per conversation, 5 minutes).
+
+Three details that make it safe rather than clever:
+
+- **It asks for a WINDOW, not a message.** The frame never decrypted, so the receiver never saw its
+  id; `decrypt_failed { withinMs: 120000 }` is a lookback, evaluated against the sender's own clock,
+  so nothing depends on two devices agreeing on the time.
+- **Answering is idempotent.** The retransmitted proto carries the original `messageId`, and the
+  receiver deduplicates on it - so retransmitting something that did arrive is dropped on arrival.
+  That is what makes it acceptable to answer a request this imprecise, and what makes a false
+  positive cost one frame rather than a duplicate message.
+- **One signal per group per 30 s.** A rewound sender fails every frame it sends until its ratchet
+  passes what we consumed, and each signal asks for a retransmission - answering a storm with a
+  storm.
+
+The ledger is deliberately in memory: the window that matters is seconds, and persisting it would
+put an IndexedDB write on the hot inbound path. The cost is stated where it lands - after a reload a
+genuine duplicate can be reported as a loss, which costs one idempotent retransmission.
+
+**Native parity was a real gap, not a formality.** `recevoir_message_bytes` classified `SecretReuse`
+in Rust and returned `Ok(None)`, which reads to the shared TypeScript pipeline as "nothing to show" -
+so on Android every rewound message was dropped with the diagnosis already thrown away. It now
+surfaces the error, and the same classifier runs on both platforms. The ACK behaviour is unchanged;
+only the diagnosis is.
+
+**Not done, and worth knowing:** the retransmission ring does not survive a reload, so a peer that
+reloaded since the send answers `decrypt_failed` with nothing - it logs that the message cannot be
+recovered rather than reporting success. And nothing yet tells the RECEIVER's user that a message
+was lost; the evidence is in the log.
+
 ### ROOT CAUSE, found 2026-08-06: a BACKGROUNDED tab stops receiving, silently (WP-HIDDEN-1)
 
 TAB-4 opened a second tab of the same account and failed twice: the peer's message reached neither

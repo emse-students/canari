@@ -17,6 +17,12 @@ import {
   resetWasmDuplicateDeliveryFlag,
   consumeWasmDuplicateDeliveryFlag,
 } from '../wasmLogShim';
+import {
+  frameFingerprint,
+  hasFrameBeenProcessed,
+  noteFrameProcessed,
+  shouldSignalDesync,
+} from '../inboundFrameLedger';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { createMlsStatePersister } from '../mlsStatePersister';
@@ -52,6 +58,15 @@ const MAX_NOMATCH_KP_RETRIES = 3;
  * and request a new Welcome to rejoin at the current epoch.
  */
 const EPOCH_GAP_ESCALATION_MS = 30_000;
+
+/**
+ * How far back a peer is asked to look when we report a frame we could not decrypt.
+ *
+ * We cannot name the message, so the request is a window. Wide enough to cover the rewind that
+ * produced the loss (a reload plus the send that follows it, or a switch between two tabs); short
+ * enough that the answer stays a handful of payloads the peer still holds in memory.
+ */
+const DESYNC_RETRANSMIT_WINDOW_MS = 120_000;
 
 /** Per-terminal-group NoMatchingKeyPackage failure counter, used for escalation. */
 const noMatchKpFailures = new Map<string, number>();
@@ -535,6 +550,42 @@ async function handleKnownGroup({
     return false;
   }
 
+  const fingerprint = frameFingerprint(content);
+
+  /**
+   * MLS says this generation is already consumed. That is all it says - and the two situations it
+   * covers are opposites: the same frame delivered twice (benign, drop it), or a NEW frame the
+   * sender encrypted at a generation it had already used because its ratchet went backwards
+   * (WP-LOSS-1, WP-MULTITAB-1 - a real message, lost). The frame's own bytes tell them apart.
+   */
+  const handleConsumedGeneration = (reason: string): void => {
+    if (hasFrameBeenProcessed(groupId, fingerprint)) {
+      log(`[MLS] Duplicate delivery for ${convoKey.slice(0, 8)}… - silent ACK (${reason})`);
+      return;
+    }
+    // Deliberately NOT onOutOfSync: the plaintext is unrecoverable here whatever we do locally, and
+    // a re-add would destroy a valid membership to fix nothing. The sender is the only party that
+    // can still produce this message at a generation we have not consumed.
+    log(
+      `[MLS] LOST frame for ${convoKey.slice(0, 8)}… from ${sender}: generation consumed but this frame was never processed - the sender's ratchet rewound (${reason})`
+    );
+    if (!shouldSignalDesync(groupId)) {
+      log(`[MLS] Desync in ${convoKey.slice(0, 8)}… already signalled recently - not asking again`);
+      return;
+    }
+    // Imported dynamically, and it has to stay that way: the outbox reaches the session singleton,
+    // which reaches `$lib/mls-client` - i.e. back to this file. A static import closes that circle
+    // and leaves whichever module evaluates second holding undefined bindings.
+    void import('$lib/utils/chat/messaging')
+      .then((mod) => mod.signalDecryptFailure(groupId, DESYNC_RETRANSMIT_WINDOW_MS))
+      .then(() =>
+        log(
+          `[MLS] Asked ${convoKey.slice(0, 8)}… to retransmit the last ${DESYNC_RETRANSMIT_WINDOW_MS / 1000}s`
+        )
+      )
+      .catch((e) => log(`[MLS] Could not signal the desync: ${String(e).slice(0, 100)}`));
+  };
+
   try {
     resetWasmDuplicateDeliveryFlag();
     const decrypted = await mlsService.processIncomingMessage(groupId, content);
@@ -552,15 +603,17 @@ async function handleKnownGroup({
     }
 
     if (decrypted === null) {
-      // null can be a structural commit (add/remove) or a legitimate duplicate
+      // null can be a structural commit (add/remove) or a consumed generation.
       if (consumeWasmDuplicateDeliveryFlag()) {
-        log(`[MLS] Duplicate for ${convoKey.slice(0, 8)}… - silent ACK`);
+        handleConsumedGeneration('null payload, WASM duplicate flag');
       } else {
         log(`[MLS] Structural commit for ${convoKey.slice(0, 8)}… - no application payload`);
+        noteFrameProcessed(groupId, fingerprint);
       }
       return true;
     }
 
+    noteFrameProcessed(groupId, fingerprint);
     const msg = decodeAppMessage(decrypted);
     if (!msg) {
       log(`[MLS] Undecodable payload for ${convoKey.slice(0, 8)}… - ACK`);
@@ -682,12 +735,12 @@ async function handleKnownGroup({
       return true;
     }
 
-    // Double delivery (real-time publish + queue/FCM): the message has already been
-    // decrypted and its ratchet secret consumed/deleted. The group is healthy -
-    // do NOT trigger onOutOfSync (which would destroy a valid membership via a
-    // spurious recovery). Simply ACK the duplicate.
+    // The generation is consumed. Either a double delivery (real-time publish + queue/FCM), which
+    // is benign and ACKed, or a message lost to a rewound sender - which is not, and is signalled.
+    // Never onOutOfSync either way: the group is healthy and a re-add would destroy a valid
+    // membership for a message no local recovery can bring back.
     if (kind === 'secret-reuse') {
-      log(`[MLS] SecretReuseError (doublon) pour ${convoKey.slice(0, 8)}… - ACK silencieux`);
+      handleConsumedGeneration('SecretReuseError');
       return true;
     }
 

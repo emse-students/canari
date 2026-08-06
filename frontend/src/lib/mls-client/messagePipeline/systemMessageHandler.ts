@@ -68,6 +68,39 @@ export async function handleSystemEvent(
     deliveryMeta,
   } = ctx;
 
+  // A peer could not decrypt something we sent, because our ratchet went backwards and it consumed
+  // that generation for a different message. Nothing on its side can recover the message - the
+  // generation is spent - so the request is for a retransmission, at a generation it has not used.
+  // It cannot name the message (it never decrypted it), hence the window; answering is safe anyway
+  // because the receiver deduplicates on the messageId inside each proto.
+  if (event === 'decrypt_failed') {
+    const withinMs = Number(data?.withinMs);
+    if (!Number.isFinite(withinMs) || withinMs <= 0) {
+      log(`[MLS] decrypt_failed from ${senderNorm} with no usable window - ignored`);
+      return true;
+    }
+    // Dynamic on purpose: the outbox reaches the session singleton, which reaches
+    // `$lib/mls-client`, which reaches this file. A static import would close that circle.
+    const count = await import('$lib/utils/chat/messaging')
+      .then((mod) => mod.retransmitRecentSends(convoKey, withinMs))
+      .catch((e) => {
+        log(`[MLS] Retransmission for ${senderNorm} failed: ${String(e).slice(0, 100)}`);
+        return -1;
+      });
+    if (count === 0) {
+      // Not a no-op worth hiding: it means the message is now unrecoverable for that peer. The ring
+      // is in memory, so a reload since the send - or a window longer than we retain - empties it.
+      log(
+        `[MLS] ${senderNorm} could not decrypt a message in ${convoKey.slice(0, 8)}… and nothing sent in the last ${Math.round(withinMs / 1000)}s is still retained - it cannot be recovered`
+      );
+    } else if (count > 0) {
+      log(
+        `[MLS] ${senderNorm} could not decrypt a message in ${convoKey.slice(0, 8)}… - retransmitting ${count} payload(s)`
+      );
+    }
+    return true;
+  }
+
   if (event === 'channel_key_distribution') {
     const channelId = String(data.channelId || '');
     const distributionId = String(data.distributionId || '');

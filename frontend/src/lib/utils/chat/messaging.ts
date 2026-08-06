@@ -10,6 +10,7 @@ import {
   isChannelConversationId,
 } from '$lib/utils/chat/channelCrypto';
 import { extractMentionUserIds } from '$lib/utils/mentions';
+import { recentSentSince } from '$lib/utils/chat/recentSends';
 import { m } from '$lib/paraglide/messages';
 
 /**
@@ -182,6 +183,50 @@ async function enqueueControlEvent(conversationId: string, proto: Uint8Array): P
     attempts: 0,
     createdAt: now,
   });
+}
+
+/** Widest lookback a peer may ask us to retransmit. Matches what `recentSends` retains. */
+const MAX_RETRANSMIT_WINDOW_MS = 5 * 60_000;
+
+/**
+ * Tells the group that a frame we just received could not be decrypted, and asks for anything sent
+ * in the last `withinMs` to be sent again.
+ *
+ * A LOOKBACK rather than a timestamp: the window is evaluated against the SENDER's clock, on which
+ * its own `sentAt` values were stamped, so nothing depends on two devices agreeing on the time.
+ * We cannot name the message - it never decrypted, so we never saw its id - which is precisely why
+ * the answer has to be idempotent, and it is: the receiver deduplicates on the `messageId` carried
+ * inside the proto, so a retransmission of something that did arrive is dropped.
+ *
+ * Silent by construction (it is a control event), so a retransmission raises no second push.
+ */
+export async function signalDecryptFailure(
+  conversationId: string,
+  withinMs: number
+): Promise<void> {
+  await enqueueControlEvent(
+    conversationId,
+    encodeAppMessage(mkSystem('decrypt_failed', JSON.stringify({ withinMs })))
+  );
+}
+
+/**
+ * Answers a peer's `decrypt_failed`: re-sends every payload this device sent in the conversation
+ * within the requested window. Returns how many went back out.
+ *
+ * The payloads come from the in-memory ring in `recentSends.ts`, so a reload since the send means
+ * there is nothing to resend - the caller says so in the log rather than reporting success.
+ */
+export async function retransmitRecentSends(
+  conversationId: string,
+  withinMs: number
+): Promise<number> {
+  const window = Math.min(Math.max(withinMs, 1_000), MAX_RETRANSMIT_WINDOW_MS);
+  const sends = recentSentSince(conversationId, Date.now() - window);
+  for (const send of sends) {
+    await enqueueControlEvent(conversationId, send.proto);
+  }
+  return sends.length;
 }
 
 /**
