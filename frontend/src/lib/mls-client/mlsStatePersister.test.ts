@@ -65,12 +65,33 @@ describe('createMlsStatePersister', () => {
     expect(saveState).toHaveBeenCalledTimes(1);
   });
 
-  it('scheduleOutboundMlsPersist does not hit disk immediately', async () => {
+  it('scheduleOutboundMlsPersist checkpoints to disk - a rewound ratchet loses the next message', async () => {
     const { saveState, persister } = makePersister();
     registerMlsStatePersister(persister);
     scheduleOutboundMlsPersist();
     await new Promise((r) => setTimeout(r, 50));
+    expect(saveState).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces a burst of outbound sends into one checkpoint', async () => {
+    const { saveState, persister } = makePersister();
+    registerMlsStatePersister(persister);
+    scheduleOutboundMlsPersist();
+    scheduleOutboundMlsPersist();
+    scheduleOutboundMlsPersist();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(saveState).toHaveBeenCalledTimes(1);
+  });
+
+  it('outbound sends during a bulk ingest wait for the ingest to end', async () => {
+    const { saveState, persister } = makePersister();
+    registerMlsStatePersister(persister);
+    persister.onBulkIngestStart();
+    scheduleOutboundMlsPersist();
+    await new Promise((r) => setTimeout(r, 50));
     expect(saveState).not.toHaveBeenCalled();
+    await persister.onBulkIngestEnd();
+    expect(saveState).toHaveBeenCalledTimes(1);
   });
 
   it('flushEncrypted persists after scheduleDeferred marked dirty', async () => {

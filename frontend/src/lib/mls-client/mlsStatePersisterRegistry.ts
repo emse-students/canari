@@ -22,11 +22,29 @@ export function unregisterMlsStatePersister(): void {
 }
 
 /**
- * Marks MLS ratchet state dirty in RAM after outbound traffic.
- * Disk is touched only on an encrypted checkpoint (background, logout, commits, bulk end).
+ * Checkpoints MLS ratchet state after outbound traffic. Coalesced, but never deferred.
+ *
+ * THIS MUST HIT DISK, and the reason is not performance hygiene - it is correctness. Encrypting a
+ * message advances the sending ratchet, and the moment that message is on the wire the PEER has
+ * consumed that generation. If the advance lives only in RAM and the page goes away before a
+ * checkpoint, the next load restores a ratchet BEHIND the one already used: the next message is
+ * encrypted at a generation the peer has already seen, the peer raises `SecretReuseError`,
+ * classifies it as a duplicate and silently drops it. The message is lost with no error anywhere.
+ *
+ * Measured on prod 2026-08-06, deterministically: reload 300 ms after a send and the next message
+ * dies (twice, at generations 118 and 120); reload 20 s after and it arrives in 694 ms. Forwarding
+ * looked guilty only because opening a fresh session reloads the page - 4 losses out of 4.
+ *
+ * The `pagehide` / `visibilitychange` hooks in `mlsStatePersisterLifecycle` cannot cover this: they
+ * can only start an async save (`saveState` is a worker round trip, then IndexedDB) and the
+ * document is torn down long before it lands. An unload hook is a best-effort extra, never the
+ * guarantee. The guarantee has to be here, at the point the ratchet moved.
+ *
+ * `persistNow` still merges same-tick calls and stays deferred during a bulk ingest, so a burst of
+ * sends costs one checkpoint, not one per message.
  */
 export function scheduleOutboundMlsPersist(): void {
-  activePersister?.scheduleDeferred();
+  activePersister?.persistNow();
 }
 
 /** Flushes the encrypted MLS checkpoint if a persister is registered (logout / background). */
