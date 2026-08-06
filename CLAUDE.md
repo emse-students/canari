@@ -372,6 +372,9 @@ that decide whether you believe a run:
   for `SwiftCompile`/`CompileC` on the file. (iOS only - Gradle cannot skip a source set.)
 - The CD regenerates `infrastructure/.env` from the repo secrets, so a value set over SSH lasts until
   the next deploy. A credential is only real once it is a GitHub secret AND named in `cd.yml`.
+- A generated file the repo COMMITS needs both halves or neither: the bump must patch it, and
+  `.gitignore` must really keep it - a later `*.lock` silently overrode the `!` written above it,
+  and a lock nothing bumps is corrected by whatever unrelated commit next runs cargo.
 
 #### Carte de la Vie Asso -> [carte-vie-asso](docs/wiki/carte-vie-asso.md)
 

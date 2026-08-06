@@ -160,6 +160,25 @@ one for the `Canari` app, one for the `CanariNotifications` notification-service
 at upload. `bump-version.yml` stages an **explicit `git add` list**, so any new file the script
 learns to patch has to be added there too, or the bump silently leaves it uncommitted.
 
+A `Cargo.lock` pins the version of every LOCAL crate as well, and it does **not** live next to the
+crate it pins: `mls-core` is pinned in `frontend/src-tauri/Cargo.lock` **and** in
+`frontend/mls-wasm/Cargo.lock`, `shared-rust` in `apps/chat-gateway/Cargo.lock`. So the script
+collects the `[package] name` of every manifest it bumps and rewrites every matching `[[package]]`
+block in every lock — a per-crate patch, not a per-directory one.
+
+Until 2026-08-06 it patched no lock at all, and the symptom was not a broken build (nothing runs
+`cargo --locked`) but a **misattributed diff**: the entry stayed a release behind until some
+unrelated commit happened to run cargo and the pre-commit sweep carried the regenerated lock in.
+`0.12.0 → 0.13.0` shipped inside a docs commit (`0e86b34c`) that way.
+
+Which locks are committed is a separate decision, kept in `.gitignore`: a lock is committed when the
+package it locks is itself built into a **shipped artefact** (`frontend/src-tauri`, `frontend/mls-wasm`,
+`apps/*`), and ignored when the crate is only ever consumed as a dependency (`mls-core`,
+`shared-rust`) — those resolve inside their consumer's lock. The negations must sit **after** the
+generic `*.lock` line: last matching pattern wins, and for two releases a `*.lock` added lower in the
+file silently overrode the `!apps/*/Cargo.lock` written above it. `frontend/src-tauri/Cargo.lock`
+survived only because a tracked file ignores `.gitignore` entirely.
+
 ## Notable CI gotchas
 
 - iOS `altool` can exit 0 while output says `UPLOAD FAILED` — the workflow greps for failure markers in the transcript.

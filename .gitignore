@@ -60,10 +60,8 @@ pnpm-lock.yaml
 # Rust
 target/
 **/*.rs.bk
-Cargo.lock
-# Keep Cargo.lock for binaries, remove for libraries
-!apps/*/Cargo.lock
-!frontend/src-tauri/Cargo.lock
+# Cargo.lock falls under the *.lock rule further down, which also carries the
+# exceptions - keeping every lockfile decision in one place.
 
 # Svelte / SvelteKit
 .svelte-kit/
@@ -95,9 +93,16 @@ lcov-report/
 *.cache
 
 *.lock
-# Keep the frontend Bun lockfile committed so installs are reproducible (CI
-# builds with the exact resolved dependency tree, not floating ranges).
+# A lockfile is committed when the package it locks is itself built into a SHIPPED
+# artefact, so that CI, Docker and a developer machine all resolve the exact same
+# dependency tree instead of floating ranges. A crate that only ever gets consumed
+# as a dependency (mls-core, shared-rust) resolves inside its consumer's lock and
+# keeps none of its own - hence no exception for those.
+# These negations must stay AFTER the `*.lock` above: the last matching pattern wins.
 !frontend/bun.lock
+!frontend/src-tauri/Cargo.lock
+!frontend/mls-wasm/Cargo.lock
+!apps/*/Cargo.lock
 
 # Apple artefacts
 ._*
