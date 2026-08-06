@@ -851,6 +851,46 @@ minutes, which would turn a hundred-message catch-up into minutes of stalling.
 still stop every inbound message with no diagnostic. The flush belongs behind `isDraining = false`,
 or the queue needs a watchdog - the yield was one way in, not the only one.
 
+### Two tabs of one account diverge their ratchet, and the loser's message is dropped (WP-MULTITAB-1)
+
+Once WP-HIDDEN-1 was fixed, TAB-4a passed - both tabs render an incoming message. **TAB-4c still
+failed, and with the WP-LOSS-1 fingerprint**: the peer never rendered it and logged
+`out of bounds 170` + `SecretReuseError` + silent ACK. Same failure mode as the reload rewind,
+reached from a different direction.
+
+Nine sends alternating between the two tabs, all on the fixed build:
+
+| Round | tab B sends | tab A sends right after | tab A again |
+|---|---|---|---|
+| 0 | delivered 1197 ms | **lost**, `out of bounds 172` | **lost**, `out of bounds 173` |
+| 1 | delivered 475 ms | **lost**, `out of bounds 174` | delivered 519 ms |
+| 2 | **lost**, `out of bounds 175` | delivered 547 ms | delivered 505 ms |
+
+**4 losses out of 9, every one carrying `out of bounds` with a strictly increasing generation.** The
+rule is not "the second tab is special" and not "the switch is special" - round 2 lost tab B's send,
+which followed tab A's. It is: **a send from whichever tab's in-memory ratchet is behind dies**, and
+which one is behind depends on who sent last. A losing send still consumes a generation of its own,
+which is why the tab sometimes recovers on its next attempt and sometimes does not.
+
+The cause is structural. Each tab holds its **own** MLS client in memory, both loaded from the same
+IndexedDB snapshot, and leadership gates the WebSocket and `initializeConnection` - **it does not
+gate sending**. A follower tab encrypts, sends and persists its own checkpoint: the triage caught
+`[OUTBOX] Flushing 1 queued entry` / `sent in 642f389a…` / `Encrypted state checkpoint persisted` in
+the follower for an entry the LEADER had queued. So the follower is read-only in name only, and one
+device's ratchet advances in two places that never learn of each other.
+
+**This is why the single-active-tab design is right and why it is not finished.** One WebSocket and
+one MLS writer per device is the correct rule - the WP-LOSS-1 fix makes it more important, not less,
+since every send now checkpoints. What is missing is the enforcement on the write path: today
+`getIsTabLeader()` guards the connection, and nothing guards encryption. Either the follower must
+not send (hand the message to the leader over the existing `canari-tab-messages` channel, which the
+`tabLeader.ts` header already claims is how followers stay in sync), or leadership must be taken
+before encrypting. A shared-worker MLS client would remove the class entirely, at a much larger cost.
+
+Note this is a genuinely different bug from WP-LOSS-1 even though the peer sees the same three lines:
+there, one client rewound its OWN state across a reload; here, two live clients of one device each
+hold a valid-looking state and overwrite each other. A fix for either does nothing for the other.
+
 ### Cutting the network: which side the browser can fake, and which it cannot
 
 `Network.emulateNetworkConditions { offline: true }` fails every NEW request within ~10 ms, so it

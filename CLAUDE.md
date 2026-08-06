@@ -156,8 +156,11 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   **TAB-4 FAILED and found WP-HIDDEN-1**, a second P1: a backgrounded tab stops receiving
   altogether. **That also RETIRES MSG-8's PASS** - it asserted after restoring the tab, which is the
   act that released the drain; a single message can never expose it, the second one is the test.
-  TAB-1 and TAB-7 are covered by MSG-8/MSG-10 respectively. Left in TAB: 2, 3, 6, and TAB-4 to
-  re-run once WP-HIDDEN-1 is verified on prod. Then LIFE, NOTIF/PIN/MULTI, CORRUPT last.
+  TAB-1 and TAB-7 are covered by MSG-8/MSG-10 respectively. **WP-HIDDEN-1 is FIXED and VERIFIED on
+  prod** (both messages arrive while hidden, drains complete before the refocus); re-running TAB-4
+  then turned 4a green and left 4c failing, which is **WP-MULTITAB-1**. Left in TAB: 2, 3, 6. Then
+  LIFE, NOTIF/PIN/MULTI, CORRUPT last. **Reload BOTH browsers after every deploy before measuring** -
+  a long-lived tab keeps its old bundle, and the first TAB-4 re-run failed for that reason alone.
 - **An offline RECEIVER cannot be faked in the browser** - `emulateNetworkConditions` fails every
   new request in 10 ms and W2 still rendered the message twice over. Cause not established; do not
   re-explain it. MSG-9 belongs on the phone (`svc wifi disable` + `svc data disable`), which needs
@@ -308,6 +311,23 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   **STILL OPEN, on purpose:** any hung await inside `onDrainEnd` can still stop every inbound message
   with no diagnostic - the flush belongs behind `isDraining = false`, or the queue needs a watchdog.
   The yield was one way in, not the only one.
+
+- \[ \] **WP-MULTITAB-1 (P1) - TWO TABS OF ONE ACCOUNT DIVERGE THEIR RATCHET; the message of
+  whichever is behind is dropped. Found 2026-08-06 on the FIXED build, NOT fixed.** 4 losses out of
+  9 alternating sends, every one `out of bounds <N>` + `SecretReuseError` + silent ACK on the peer,
+  N strictly increasing. Not "the second tab" and not "the switch" - **a send from whichever tab's
+  in-memory ratchet is behind dies**, and a losing send consumes a generation of its own, so a tab
+  sometimes recovers on the next try. Cause is structural: each tab holds its OWN MLS client loaded
+  from one snapshot, and leadership gates the WebSocket and `initializeConnection` but **NOT
+  sending** - the follower was caught flushing the LEADER's outbox entry and persisting its own
+  checkpoint. **Same three lines as WP-LOSS-1 but a different bug**: there one client rewound its own
+  state across a reload, here two live clients overwrite each other; a fix for either does nothing
+  for the other. The single-active-tab design is RIGHT and unfinished - the missing half is on the
+  write path (`getIsTabLeader()` guards the connection, nothing guards encryption). Options, cost
+  ascending: follower hands the message to the leader over the `canari-tab-messages` channel that
+  `tabLeader.ts` already claims it uses; or take leadership before encrypting; or one shared-worker
+  MLS client, which removes the class outright. Tables and reasoning in
+  [cross-client-testing > two tabs](docs/wiki/cross-client-testing.md#two-tabs-of-one-account-diverge-their-ratchet-and-the-losers-message-is-dropped-wp-multitab-1).
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
