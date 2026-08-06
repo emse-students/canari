@@ -1687,6 +1687,39 @@ there.
 valid as one good enough to be INVITED.** Two endpoints in one file disagreed about what a valid
 device is, and the gap between them is where 97 353 rows lived.
 
+##### What the first production run of the sweep found - including a fault in the sweep itself
+
+Deployed 2026-08-07 00:16. The boot sweep fired 60 s later and did exactly half its job:
+
+```
+[CRON] initial sweep: running every GC job once
+[CRON] Stale device reset: device=tauri-…-ms8xyqkk-2rwh group=66e1b07e… (lastUpdate=2026-08-06T22:17:51Z, no KeyPackage since 2026-05-08T22:17:51Z)
+[CRON] Stale device reset: device=tauri-…-ms8xyqkk-2rwh group=bee389a8…
+[CRON] Stale device reset: device=tauri-…-ms8xyqkk-2rwh group=4f87267a…
+[CRON] initial sweep: cleanupStaleDevices failed
+[CRON] initial sweep: done
+```
+
+The three resets are the proof that removing the `updatedAt` pre-filter was the right call: that
+device's `lastUpdate` is **the current instant**, so the old query could never have selected it, and
+the reason it is stale is on the same line - `no KeyPackage since`.
+
+Then `cleanupStaleDevices` threw `syntax error at or near "DISTINCT"` (Postgres `42601`).
+**TypeORM does not preserve the order selects are declared in**, so `.select('DISTINCT dgm.userId',
+…).addSelect('dgm.deviceId', …)` emits `SELECT "deviceId" AS …, DISTINCT "userId" AS …`. The
+single-column builders beside it use the same spelling and work only because they have nothing to
+reorder. `.distinct(true)` is the fix (`eed39f51`).
+
+Two things generalise, and they are the useful part:
+
+- **A mocked repository never parses SQL.** All 106 unit tests pass over this query; nothing short of
+  a real Postgres could have rejected it. Where a test cannot reach, the deploy log is the test - so
+  read it, rather than reading the CD's green tick.
+- **The sweep caught per job and logged the failure loudly**, which is the only reason this was a
+  five-minute find rather than a GC that silently did nothing for months. A batch of maintenance jobs
+  must never share one try/catch: one broken job would then hide the other eight, and all nine would
+  report the same silence they report when there is nothing to do.
+
 ##### The 16th and 17th harness faults, both from this hour
 
 - **A run whose progress goes through `| tail -N` is unobservable.** `tail` buffers until EOF, so a

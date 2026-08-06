@@ -643,6 +643,13 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
 - A cross-process contract is only as good as its test: pin the PATHS as well as the field names,
   or a writer on one OS fills a directory nothing ever reads.
 - Never let a capability probe swallow its own failure, and never branch on an error MESSAGE.
+- **A mocked repository never parses SQL**, so a query builder's output is unverified until a real
+  Postgres sees it - and TypeORM does NOT preserve the order selects were declared in, so `DISTINCT`
+  written into a `.select()` string lands mid-list once an `.addSelect()` follows (`.distinct(true)`
+  is the only safe spelling). Where a test cannot reach, the DEPLOY LOG is the test.
+- A batch of maintenance jobs must catch and log PER JOB. Sharing one try/catch means the first
+  failure hides every job after it, and a GC that silently does nothing is indistinguishable from a
+  GC with nothing to do.
 
 #### Mobile and native -> [frontend/mobile](docs/wiki/frontend/mobile.md)
 
