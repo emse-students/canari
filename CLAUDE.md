@@ -149,7 +149,10 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   **MSG-9** (phone's radios cut - nothing while down, one copy 26 s after, the delay being the
   app's own zombie-connection detection) and **MSG-10** (offline sender: queued, drained in 1 s,
   and it SURVIVED a reload - so the offline path persists correctly and WP-ECHO-1 is elsewhere).
-  Next: **FWD-3..5**, then the TAB/LIFE lifecycle checks.
+  **FWD-4** (phone backgrounded 200 ms after the send: delivered). **FWD-3 and FWD-5 FAILED and
+  found the campaign's root cause** - see WP-LOSS-1 below; it is a reload rewinding the sender's
+  MLS ratchet, it is deterministic, and WP-FWD-1 is retired into it. Next: the TAB/LIFE lifecycle
+  checks, then NOTIF/PIN/MULTI, CORRUPT last.
 - **An offline RECEIVER cannot be faked in the browser** - `emulateNetworkConditions` fails every
   new request in 10 ms and W2 still rendered the message twice over. Cause not established; do not
   re-explain it. MSG-9 belongs on the phone (`svc wifi disable` + `svc data disable`), which needs
@@ -162,7 +165,7 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
 - Bare-domain linkification is now **WP-LINK-1** below, not an open question.
 - **RECONCILIATION is the only way this campaign's loss class can be SEEN**, and `recon.mjs` does
   it: markers on W1 diffed against markers on W2 for one thread. Re-run it after any batch of sends;
-  a green per-check verdict cannot substitute for it - it is what found WP-FWD-1 and WP-ECHO-1.
+  a green per-check verdict cannot substitute for it - it is what found WP-LOSS-1 and WP-ECHO-1.
   **Two corrections it needed, and an earlier claim it forced me to retract:** the message list is
   VIRTUALISED, so reading `innerText` once after scrolling to the top returns a single screenful and
   drops the rest (it must accumulate at every scroll position); and each side loads a different
@@ -225,7 +228,8 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   Chrome because Firefox exposes no CDP.
 
 A check that FAILS earns a WP with its captured log; a check that passes earns a row in section 10
-and nothing else. Prime target: **WP-FWD-1**, whose whole point is that it has never been reproduced.
+and nothing else. The campaign's prime target is now SHOT: **WP-LOSS-1 has a deterministic
+reproduction and a root cause.** What is left is to keep the remaining phases honest, and to fix it.
 
 **[device] The verification pass is NOT a Work Package.** Everything native is verified by COMPILING,
 which proves nothing about running, and the whole owed list lives in
@@ -254,45 +258,31 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   defects that ride with it are all in
   [chat > pooling history between devices](docs/wiki/frontend/modules/chat.md#pooling-history-between-devices-designed-not-built).
 
-- \[ \] **WP-LOSS-1 (P1) - A delivered message is DISCARDED by the receiving client.** Found
-  2026-08-06 on MSG-1, the campaign's first check, in the plainest configuration: DM, both clients
-  foreground and online, no forwarding. Full capture and the two code sites are in
-  [cross-client-testing > the loss this campaign was built to find](docs/wiki/cross-client-testing.md#the-loss-this-campaign-was-built-to-find);
-  do not re-derive them. The one line to carry: the server returned **201**, the receiver **got the
-  WS frame**, MLS raised `SecretReuseError`, and the client logged
-  `[MLS] Duplicate ... - silent ACK` and dropped it - then `history.ts` added the fingerprint to
-  `seenCipherHashes`. **`secret-reuse` is classified as a duplicate without
-  ever checking that the message was in fact already delivered**, in both the live and the replay
-  path. The fix is to reconcile the frame's fingerprint against the local message store and take
-  the existing `onOutOfSync` route when they disagree; the desync's own cause is NOT established
-  (38/38 later sends were fine) and is a separate question.
-  **Correction 2026-08-06: the loss is NOT permanent.** A corrected reconciliation shows W2 holds
-  both originally-lost messages; the earlier "still missing hours later" claim came from a diff
-  between two unequal history windows and is withdrawn. So something later re-delivered them, which
-  is itself a lead worth pulling - it means the recovery path exists and simply did not run in time.
-  WP-FWD-1 is now reproduced separately and is NOT assumed to be the same bug.
-
-- \[ \] **WP-FWD-1 (P1) - REPRODUCED 2026-08-06. No longer observational.** Three consecutive
-  channel -> DM forwards lost (10:50-10:52), then 8/8 delivered on a re-run. Everything is in
-  [cross-client-testing > FWD-1 / FWD-2](docs/wiki/cross-client-testing.md#fwd-1--fwd-2-the-forward-loss-reproduced-three-times);
-  do not re-derive it. What must survive a compaction: the forwards DID reach the intended
-  conversation (triaged across every other thread - sender's echo present, receiver has nothing),
-  and the DM was **healthy in both directions at that same moment** (plain sends 1249 ms / 653 ms,
-  clean). So the conversation is not desynced and the picker is not mis-clicking. **The load
-  hypothesis is DEAD** - the three losses fell inside a pre-commit sweep + push, but a 12-iteration
-  batch run under exactly that load delivered 12/12. Day's tally: 25 forwards, 3 lost in one
-  two-minute window, 21 consecutive successes since; a deterministic reconciliation over the last
-  90 minutes shows those three and nothing else.
-  **The next reproduction must answer one question**, and `fwd.mjs` now captures it per iteration:
-  does a lost forward produce `POST /api/mls/send` at all? No request = the client dropped it
-  (outbox); a 201 = the receiver did (WP-LOSS-1).
+- \[ \] **WP-LOSS-1 (P1) - A RELOAD REWINDS THE SENDER'S RATCHET, AND THE RECEIVER SILENTLY DROPS
+  THE NEXT MESSAGE. Root cause found 2026-08-06; DETERMINISTIC.** This supersedes WP-FWD-1, which
+  was the same defect wearing a forward: FWD-5 lost 4/4 and every loss carried the identical
+  fingerprint - `POST /api/mls/send -> 201`, then on the receiver
+  `Ciphertext generation out of bounds <N>` / `SecretReuseError` / `[MLS] Duplicate ... - silent ACK`,
+  with **the same N on all four runs**. Two experiments, neither involving forwarding, settle it:
+  after a reload only the FIRST send dies (#0 lost, #1 630 ms, #2 660 ms); and reloading 300 ms
+  after a send loses the next message twice over while reloading 20 s after it delivers.
+  **MLS disk writes are deferred, so a reload that beats the checkpoint restores a ratchet behind
+  the one already used**, and the next message is encrypted at a generation the peer has consumed.
+  `[MLS] Disk writes deferred` was on the harness's benign list; it was the loudest line in the log.
+  Everything - the tables, the retired hypotheses, both halves of the fix - is in
+  [cross-client-testing > root cause](docs/wiki/cross-client-testing.md#root-cause-found-2026-08-06-a-reload-rewinds-the-senders-ratchet).
+  Do not re-derive it, and do not re-open the load hypothesis or "forwarding is special": both are
+  dead. **Both halves of the fix are needed** - flush the checkpoint before the page goes away
+  (a ratchet that can go backwards also lets two tabs of one device diverge), AND stop treating
+  `secret-reuse` as proof of a duplicate: reconcile against the local store and take `onOutOfSync`.
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
   them. This is the failure the durable rule about `persistLocalMutation` predicts - MLS gives no
   echo of your own message, so the optimistic update is the only writer, and if it is not persisted
-  it dies at the next load. Distinct from WP-FWD-1 and WP-LOSS-1, which lose it at the receiver;
-  do not merge them.
+  it dies at the next load. Distinct from WP-LOSS-1, which loses it at the receiver; do not merge
+  them. **MSG-10 narrows it:** the OFFLINE send path persists correctly - queued offline, drained on
+  reconnect, and still there after a reload - so whatever loses the echo is a different route.
 
 - \[ \] **WP-KBD-1 (P2) - On Android the composer ends up BEHIND the soft keyboard.** Found
   2026-08-06 while chasing a harness fault; reproduced with an ordinary gesture: tap the composer,
