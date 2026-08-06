@@ -65,12 +65,16 @@ rather than rebuilding. Contents:
 
 | File | What |
 | --- | --- |
-| `cdp.mjs` | the CDP driver, both a CLI and an importable module (`connect`, `evaluate`, `until`, `realClick`, `listTargets`, `SNAPSHOT`) |
-| `login.mjs` | MiConnect/CAS login for one account |
-| `pin.mjs` | the encryption-PIN modal, with `--stay` and `--value` for PIN-2/3/9 |
+| `cdp.mjs` | the CDP driver, both a CLI and an importable module (`connect`, `evaluate`, `until`, `realClick`, `activate`, `listTargets`, `SNAPSHOT`) |
+| `login.mjs` | MiConnect/CAS login for one account, `--match` to pick a tab |
+| `pin.mjs` | the encryption-PIN modal, both shapes, with `--stay` and `--value` for PIN-2/3/9 |
+| `console.mjs` | run an action and dump console + failed requests - the web half of the evidence rule |
+| `clip.mjs` | read the clipboard (the invite link is copied, never rendered) |
 | `discover-web.mjs` | SETUP-7 web half |
-| `a1.py` | uiautomator2 driver for the phone's NATIVE surfaces only |
+| `admins.mjs` | which association is administered by whom |
+| `a1.py` | uiautomator2 driver for the phone's NATIVE surfaces only (shade, permission dialogs, keys) |
 | `test-accounts.json` | credentials - never in the repo |
+| `a1-baseline/a1-clean-0.12.0.tar` | SETUP-8 rollback archive |
 | `logs/a1.log` | the whitelisted logcat capture |
 | `chrome-w1/`, `chrome-w2/` | the two persistent Chrome profiles |
 
@@ -279,9 +283,19 @@ test that hardcodes one client's key silently no-ops on the other.
 | Web | last active | `localStorage.canari_last_active:<dev>` | |
 | Web | saved user | `localStorage.canari_saved_user` (64) | |
 | Web | WS auth | cookie `canari_ws_token` - the ONLY cookie readable from JS | the refresh cookie is HttpOnly, as designed |
-| Android | MLS state | `files/mls.bin` | ChaCha20-Poly1305, `[nonce 12 || ct]`, **no version field** |
-| Android | push context | `push_context.json` | see [mobile](frontend/mobile.md) |
-| Android | device key | Keystore alias `mls_device_key_{userId}_{deviceId}` | not a file |
+| Android | MLS state | `mls.bin` (670 KB) - at the app data **ROOT**, NOT under `files/` | ChaCha20-Poly1305, `[nonce 12 \|\| ct]`, **no version field**: first bytes are the nonce, there is no magic to recognise |
+| Android | message store | `canari_<dev>.db` + `.db-wal` + `.db-shm` | **WAL mode**, and the WAL is where the data actually is (1.4 MB of WAL against a 4 KB `.db`). Corrupting the `.db` alone tests NOTHING |
+| Android | pending MLS | `mls_pending.db` | |
+| Android | channel keys | `channel_keys.json` | |
+| Android | push context | `push_context.json` | at the root too; see [mobile](frontend/mobile.md) |
+| Android | device key | `shared_prefs/keystore_aliases.xml` - `<alias>_ct` and `<alias>_iv` | the Keystore-wrapped key; the Android twin of the web vault, and the CORRUPT-3 target on this side |
+| Android | push secret | `pending_push_secret.txt`, `fcm_token.txt` | the FCM token is also mirrored in `shared_prefs/canari_prefs.xml` |
+| Android | native flags | `native_flags.json` | `{"biometricPromptDismissed":true}` - this is what SETUP-6's refusal writes |
+| Android | app log | `logs/Canari.log` | a second evidence source next to logcat |
+| Android | WorkManager | `no_backup/androidx.work.workdb*` | outbox retry / background work state |
+
+`run-as` reaches all of it **only because the installed build is debuggable**. The release build
+that was on the device before refuses it outright.
 
 Note what is NOT there: no access token in any web storage, on either client. That is the
 "access tokens in memory ONLY" rule holding in production.
@@ -354,10 +368,60 @@ _Filled during execution. One row per check: id, build, verdict, evidence pointe
 | SETUP-3 | **RESTART IT** | started against the USB serial, which then dropped - see the ADB note below |
 | SETUP-4 | **DONE** | W1 logged in, PIN accepted, real conversation list rendering |
 | SETUP-5 | **DONE** | W2 logged in, PIN accepted, "Aucune discussion" (Claire has no history) |
-| SETUP-6 | open | app installed and never launched successfully yet |
-| SETUP-7 | **web half DONE** | section 7 above; Android half still owed |
-| SETUP-8 | open | needs the app to have state first |
-| SETUP-9 | open | W1 `/communities` shows association **MiTV** with `canal général` and an **`Ajouter un canal`** button - that is the entry point |
+| SETUP-6 | **DONE** | logged in, PIN accepted, biometrics DECLINED (`native_flags.json` = `{"biometricPromptDismissed":true}`), conversations synced |
+| SETUP-7 | **DONE both halves** | section 7 above carries measured names, web and Android |
+| SETUP-8 | **DONE** | `a1-baseline/a1-clean-0.12.0.tar`, 43 entries, verified to contain `mls.bin`, the three `canari_<dev>.db*` files, `push_context.json`, `channel_keys.json`, `native_flags.json`, `shared_prefs/` |
+| SETUP-9 | **DONE, but not as planned** - see below | community **"Campagne de test"**, channel `general`, exactly two members |
+
+### SETUP-9: why the venue is a COMMUNITY, not a channel in MiTV
+
+The plan said "a dedicated private channel". A private channel is not private enough:
+
+> **"Les administrateurs ont toujours accès à tous les canaux, même privés."**
+
+A private channel inside MiTV was therefore visible to its **five** admins - four real people who
+would have received every burst of thirty messages. And no association in the account has jolan as
+its sole admin (MiTV 5, MITV 2026-2027 5, ERA and Fanfare are administered by someone else).
+
+So the venue is a **new community, `Campagne de test`**, created from `Ajouter une communauté`
+("vous disposerez d'un espace privé pour organiser vos canaux et administrer vos membres"). Its
+creator is its only admin. Members: `jolan.boudin` + `claire.vanruymbeke`, nobody else. The stray
+channel created in MiTV during the investigation was deleted.
+
+Claire was added through the **invitation link**, not the member search:
+`Membres > Générer un lien d'invitation` copies `https://canari-emse.fr/c/join/<token>` to the
+clipboard and never renders it, so read it back with `Browser.grantPermissions` +
+`navigator.clipboard.readText()` (`clip.mjs`). The user autocomplete
+(`#community-invite-autocomplete`, `#user-autocomplete`) returned **nothing** for any query -
+unresolved, and worth a look on its own: it may be a real defect or it may need key events that
+`Input.insertText` does not produce.
+
+### The harness caveat that could have faked every result
+
+**A synthetic click can reach the right element and still do nothing.** `elementFromPoint` returns
+the button, `Input.dispatchMouseEvent` / `dispatchTouchEvent` land on its centre, and the handler
+never fires - observed on the community "Rejoindre" button and on mobile "Déverrouiller". In a test
+campaign that is poison: the check reports a false failure that belongs to the harness.
+
+Hence two explicit primitives, never a silent fallback between them:
+
+- `realClick()` - real input events, for checks where the INPUT PATH is what is under test.
+- `activate()` - `el.click()`, for plumbing: dialogs, navigation, unlocking.
+
+And on the mobile PIN modal, **prefer `Saisie manuelle` to the keypad**. The keypad has no readable
+buffer, so nothing can assert what it holds; leftovers survive between attempts, and after a failed
+try the first tap dismisses the error instead of entering a digit - so four blind taps submit a
+three-digit PIN and the run reports "PIN incorrect" for a PIN that is correct. Switching to the text
+field makes the value settable AND readable.
+
+Two more, cheaper:
+
+- Every CDP call appeared to take **30 s**: an armed 30 s timeout timer keeps Node's event loop
+  alive after the reply arrives. Clear it (and `unref` it). 30 s -> 0.2 s.
+- The device's default browser was Firefox, which exposes no CDP. Chrome is installed, so the login
+  flow is driven by making Chrome the default
+  (`cmd role add-role-holder android.app.role.BROWSER com.android.chrome`) and forwarding
+  `chrome_devtools_remote`. **Restore Firefox at the end of the campaign.**
 
 ### What Phase 0 cost, and must not be re-learnt
 

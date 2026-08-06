@@ -140,13 +140,19 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   `cdp.mjs` drives all three clients (W1 on 9224, W2 on 9223, A1's WebView on 9222 via
   `adb forward`); `a1.py` is only for native surfaces. W1 moved OFF the chrome-devtools MCP on
   purpose, so no password is ever a tool-call argument.
-- **DONE:** SETUP-1, 2, 4, 5, and the web half of 7. **A1 carries a clean 0.12.0 DEBUGGABLE build**
-  (so `run-as` works now). **Owed:** restart the logcat on the WIRELESS serial, then SETUP-6, the
-  Android half of 7, 8, 9.
+- **PHASE 0 IS COMPLETE (SETUP-1..9).** Three clients live, A1 on a clean 0.12.0 DEBUGGABLE build
+  (so `run-as` works). Next action is the first real check, section 3.
+- **The venue is a NEW COMMUNITY, `Campagne de test`, not a channel in MiTV** - a private channel is
+  still readable by every association admin, and no association has jolan as sole admin. Two members
+  only. Section 11 of the wiki page says why; do not re-derive it.
 - **USB ADB drops on this phone** - promote to `adb tcpip 5555` + `adb connect <ip>:5555` at once,
   and never bind a long capture to the USB serial.
-- Phase 0 must fully pass before any check runs, SETUP-7 above all: without it every corruption test
-  targets a guessed key name and passes silently.
+- **A synthetic click can hit the right element and still not fire its handler.** Hence `realClick`
+  (input path under test) vs `activate` (plumbing), never a silent fallback - and on the mobile PIN
+  modal use `Saisie manuelle`, because the keypad has no readable buffer.
+- **Restore Firefox as the device's default browser when the campaign ends**
+  (`cmd role add-role-holder android.app.role.BROWSER org.mozilla.firefox`); it was switched to
+  Chrome because Firefox exposes no CDP.
 
 A check that FAILS earns a WP with its captured log; a check that passes earns a row in section 10
 and nothing else. Prime target: **WP-FWD-1**, whose whole point is that it has never been reproduced.
