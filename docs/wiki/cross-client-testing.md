@@ -390,7 +390,9 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | MSG-5 | all three, prod 2026-08-06 | **PASS** | Channel message converged 1/1/1 (W2 741 ms, A1 117 ms). **Zero** `masterSecret`/`webhookSecret` in any `/api/` response body on any client. No errors, no 4xx, nothing unexplained on any of the three. |
 | MSG-4 | web, prod 2026-08-06 | **PASS** | Image 1476 ms, PDF 1113 ms, one copy each, caption present. Receiver decoded the picture (`<img src="blob:">`, `naturalWidth` 64x64) - not merely a bubble. |
 | Check M | A1 0.13.0, prod 2026-08-06 | **PASS** | PDF first page rendered on hardware: two `<img alt="Aperçu de la première page du document">` at `naturalWidth` 116x116 from `blob:`, plus a full-screen affordance. Logcat clean. |
-| **Reconciliation** | web, prod 2026-08-06 | **evidence for WP-LOSS-1** | 54 markers on W1 vs 52 on W2 for the same DM, after both scrolled the whole history. The difference is EXACTLY the two already-known losses; nothing else diverges. See below. |
+| FWD-1 | web, prod 2026-08-06 | **PASS** | Channel -> DM forward delivered in 371 ms, one copy. |
+| FWD-2 | web, prod 2026-08-06 | **FAIL -> WP-FWD-1 REPRODUCED** | Three consecutive forwards lost, then 8/8 delivered on a re-run. Sender kept its echo, receiver never had them, the DM was healthy both ways at that moment. See below. |
+| **Reconciliation** | web, prod 2026-08-06 | **method, plus 5 losses** | 54 markers on W1 vs 53 on W2 over a bounded common window: 3 forwards missing from the receiver, 2 sent messages missing from the SENDER. Two different defects. See below. |
 | **Silent loss** | web, prod 2026-08-06 | **FAIL -> WP-LOSS-1** | Two DMs accepted by the server (`POST /api/mls/send -> 201`), never rendered by the peer, still absent after a reload. See below. |
 | **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED, VERIFIED ON PROD** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. Re-proved on A1 0.13.0 from a COLD start: `unknown = 0` at 3 s, 6 s and 10 s, six real names. See below. |
 
@@ -402,18 +404,36 @@ self-consistent and both are wrong about the conversation. The only evidence is 
 between the two clients' view of one thread, which is why every campaign message carries a unique
 `PREFIX-<base36>` marker: DOM rows have no id, but the text does.
 
-`scratchpad/recon.mjs` scrolls both panes to the top until history stops growing, extracts the
-markers and diffs them. Run 2026-08-06 (`scratchpad/logs/recon-20260806-1036.json`, reproduced
-twice):
+**Getting the measurement right took two corrections, and the first version of this section stated a
+conclusion that was wrong.** Both faults are recorded because either one silently produces an
+authoritative-looking diff made of noise:
 
-- W1 shows **54** markers, W2 shows **52**.
-- `onlyW1` = `MSG1-msh23b0gp99`, `PROBE-msh25j5eovk`. `onlyW2` = none.
+- **The list is VIRTUALISED.** `innerText` holds only the rows currently rendered, so scrolling to
+  the top and reading once returns the oldest screenful and drops everything in between. The first
+  run did exactly that and reported "W2 is missing `MSG1-msh23b0gp99` and `PROBE-msh25j5eovk`" -
+  from which this page concluded the WP-LOSS-1 losses were permanent. **They are not: W2 has both.**
+  `collect()` now reads at every scroll position and accumulates.
+- **The two windows do not coincide.** Each side loads whatever its scrolling reached, so a marker
+  absent from one list may simply be older than that side went. Markers carry their own send time
+  (`mark()` = prefix + base36 `Date.now()` + 3 random chars), so the diff is bounded to the range
+  both sides provably cover, and the run reports `windowFrom`.
 
-Two things follow. First, **the loss is permanent**: those two are the original WP-LOSS-1 pair, and
-they had not healed hours later, across reloads - exactly what adding the fingerprint to
-`seenCipherHashes` predicts, and the first direct confirmation of it. Second, **nothing else has
-been lost since**: the 38 volume sends, MSG-2..MSG-5 and both MSG-4 media all reconcile, so the
-defect is rare rather than continuous.
+Run 2026-08-06 11:0x with both corrections, over a window starting 07:07 local:
+
+| | W1 | W2 |
+| --- | --- | --- |
+| markers collected | 54 | 53 |
+| reached | top in 10 steps | top in 7 steps |
+
+- `onlyW1` = `FWD-msha08bvsf4`, `FWD-msha18ihdnk`, `FWD-msha28vvm29` - **three forwards the receiver
+  never got**, 10:50-10:52.
+- `onlyW2` = `HUNT06-msh29yxqslj`, `HUNT07-msh2a06i3bj` - two messages **W1 sent and no longer has**.
+
+These are two different defects and must not be merged. The `FWD` three are the WP-FWD-1 shape:
+sender keeps its echo, receiver has nothing. The `HUNT` two are the opposite - the receiver has
+them, the SENDER lost its own copy - which is the failure mode the durable rule about
+`persistLocalMutation` predicts, since MLS gives no echo of your own message and `losshunt.mjs`
+reloads clients. `openChannel` reloads W1 on every iteration, so W1 had ample opportunity.
 
 It also settles a scare from the MSG-4 run, where the receiver logged four
 `Ciphertext generation out of bounds … SecretReuseError` (generations 49, 50, 52, 53) while the
@@ -421,6 +441,38 @@ check still passed. Those cost no message: they are the replay path re-encounter
 WERE already delivered, which is the benign half of the very branch WP-LOSS-1 indicts. That is the
 point of the fix being a reconciliation against the local store rather than a change of
 classification - the same error legitimately means "already have it" most of the time.
+
+### FWD-1 / FWD-2: the forward loss REPRODUCED, three times
+
+WP-FWD-1 had never been reproduced. It now has been, and the profile is sharp enough to act on.
+
+| Run | Result |
+| --- | --- |
+| FWD-1, single | delivered, 371 ms |
+| FWD-2, first iterations | **3 lost in a row** (10:50:47, 10:51:xx, 10:52:xx) |
+| `fwdprobe`, single, right after | delivered, 475 ms, `POST /api/mls/send -> 201` |
+| FWD-2 re-run, 8 iterations | **8/8 delivered**, 432-509 ms |
+
+What the losses are NOT: the forwards reached the intended conversation. `fwd-triage.mjs` searched
+the channel, the DM on both clients and every other DM W1 can open - both markers were in
+**`W1/dm:Claire VAN RUYMBEKE`** and nowhere on W2. The picker was also confirmed to resolve inside
+`[role=dialog]` to the row reading exactly `Claire VAN RUYMBEKE`.
+
+And it is not a dead conversation: `dmprobe.mjs` sent a plain composer message each way immediately
+afterwards - **W1 -> W2 in 1249 ms, W2 -> W1 in 653 ms, one copy, nothing notable on either side**.
+So the DM was healthy while forwards into it were being lost.
+
+The one correlation worth chasing: the three losses fall inside the window where the machine was
+running the pre-commit sweep and a `git push` - a heavy, sustained CPU load - and every forward
+before and after that window delivered. That is a hypothesis, not a finding; what makes it worth
+testing is that it would explain both the rarity and the burstiness, and it is the first handle
+this bug has ever offered.
+
+**Still owed on it:** the per-iteration capture of `POST /api/mls/send` was added AFTER the three
+losses, so it is not yet known whether a lost forward reaches the network at all. That single fact
+splits the diagnosis in two - no request means the client dropped it (the outbox swallowing a
+branch), a `201` means the receiver discarded it (WP-LOSS-1). `fwd.mjs` now records it per
+iteration; the next reproduction answers it.
 
 ### The bug that only a click could find
 

@@ -141,9 +141,25 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   `adb forward`); `a1.py` is only for native surfaces. W1 moved OFF the chrome-devtools MCP on
   purpose, so no password is ever a tool-call argument.
 - **PHASE 0 IS COMPLETE, and section 3 is under way (2026-08-06).** PASS so far: **MSG-1** (+38
-  volume sends), **MSG-2**, **MSG-3**, **MSG-5**. Rows and evidence are in section 10 of the wiki
-  page. Next: MSG-4 (media), MSG-6..10, then **FWD-1..5**, for which the tooling now exists
-  (`clickBubbleAction`, and the forward modal is reachable).
+  volume sends), **MSG-2**, **MSG-3**, **MSG-4** (image + PDF), **MSG-5**, **check M** (PDF preview
+  on A1 hardware - `device-verification` updated), **FWD-1**. Rows and evidence are in section 10 of
+  the wiki page. Next: **FWD-2..5**, then MSG-6..10.
+- **RECONCILIATION is the only way this campaign's loss class can be SEEN**, and `recon.mjs` does
+  it: markers on W1 diffed against markers on W2 for one thread. Re-run it after any batch of sends;
+  a green per-check verdict cannot substitute for it - it is what found WP-FWD-1 and WP-ECHO-1.
+  **Two corrections it needed, and an earlier claim it forced me to retract:** the message list is
+  VIRTUALISED, so reading `innerText` once after scrolling to the top returns a single screenful and
+  drops the rest (it must accumulate at every scroll position); and each side loads a different
+  amount, so the diff must be BOUNDED to the time window both cover, using the timestamp baked into
+  every marker. Before those fixes it reported the two WP-LOSS-1 messages as permanently lost, and
+  this file said so - **wrong: W2 has both.** A diff between unequal windows looks authoritative and
+  is noise.
+- **A1 now runs 0.13.0** (installed 2026-08-06, `adb install -r`, data preserved - `firstInstallTime`
+  unchanged). The DM-name fix is verified there from a COLD start. `openDM()` no longer needs a full
+  load for the phone, though nothing has been changed to rely on that yet.
+- **The phone's IP moves between sessions** (it has already changed subnet). `watch.mjs` therefore
+  RESOLVES the adb serial from `adb devices`, preferring the wireless entry over USB; never
+  hard-code it again.
 - **The two browsers MUST be relaunched with occlusion detection off** if they are ever restarted:
   `--disable-features=CalculateNativeWinOcclusion,ChromeWhatsNewUI --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`,
   plus `--user-data-dir=<scratchpad>/chrome-w1|w2`. Without it every click is silently discarded.
@@ -157,12 +173,19 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   verdict is `PASS` only if the assertions hold AND the run is clean - errors, 4xx, page exceptions,
   WS events, `notable` MLS lines, `stateChanges` and anything `unexplained` are reported next to it.
   A line that turns out to be routine is ADDED to the benign list, never ignored in place.
-- **Two harness faults that produced false results, both fixed - the lesson generalises:** a
-  document-wide `text=Répondre` hits the FIRST message's hidden action row, so it replies to the
-  oldest message in the history and the check still looks green (hence `clickBubbleAction`, scoped
-  to the bubble's own row); and a selector that ties on text picks the scroll CONTAINER over the
-  button inside it, whose centre is empty space (hence RESOLVE now drops any hit containing another
-  hit). Assume a green check is wrong until its evidence says otherwise.
+- **FIVE harness faults have now produced false results, all fixed - the lesson generalises and is
+  written up in the wiki page.** A document-wide `text=Répondre` hits the FIRST message's hidden
+  action row (hence `clickBubbleAction`); a selector that ties on text picks the scroll CONTAINER
+  over its button (hence RESOLVE drops any hit containing another hit); a synthetic pointer NEVER
+  LEAVES, so the hover-expanded nav rail covered the conversation list and read as a layout bug
+  (hence `realClick` parks the pointer afterwards); RESOLVE sorted by `innerText` length, so an
+  avatar with an empty `innerText` and a matching `aria-label` beat the row that visibly carries the
+  name (hence visible text outranks a label, and a hit that does not hit-test to itself is rejected
+  rather than clicked); and **a `blob:` <img> is not a rendered image** - MSG-4 first passed on a
+  fixture whose PNG CRCs were invalid, because a broken picture keeps its `src` (hence assert
+  `naturalWidth > 0`, and CHECK THE FIXTURE before blaming the app). Assume a green check is wrong
+  until its evidence says otherwise - and a FAIL too: check M reported FAIL only because it looked
+  for a `<canvas>` where the PDF preview is an `<img>`.
 - **The venue is a NEW COMMUNITY, `Campagne de test`, not a channel in MiTV** - a private channel is
   still readable by every association admin, and no association has jolan as sole admin. Two members
   only. Section 11 of the wiki page says why; do not re-derive it.
@@ -217,19 +240,36 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   do not re-derive them. The one line to carry: the server returned **201**, the receiver **got the
   WS frame**, MLS raised `SecretReuseError`, and the client logged
   `[MLS] Duplicate ... - silent ACK` and dropped it - then `history.ts` added the fingerprint to
-  `seenCipherHashes`, making it permanent. **`secret-reuse` is classified as a duplicate without
+  `seenCipherHashes`. **`secret-reuse` is classified as a duplicate without
   ever checking that the message was in fact already delivered**, in both the live and the replay
   path. The fix is to reconcile the frame's fingerprint against the local message store and take
   the existing `onOutOfSync` route when they disagree; the desync's own cause is NOT established
-  (38/38 later sends were fine) and is a separate question. This very likely subsumes WP-FWD-1.
+  (38/38 later sends were fine) and is a separate question.
+  **Correction 2026-08-06: the loss is NOT permanent.** A corrected reconciliation shows W2 holds
+  both originally-lost messages; the earlier "still missing hours later" claim came from a diff
+  between two unequal history windows and is withdrawn. So something later re-delivered them, which
+  is itself a lead worth pulling - it means the recovery path exists and simply did not run in time.
+  WP-FWD-1 is now reproduced separately and is NOT assumed to be the same bug.
 
-- \[ \] **WP-FWD-1 (P2) - One forwarded message was silently lost. OBSERVATIONAL, by decision.**
-  2026-07-29, prod, channel -> DM: the toast said success, the echo persisted, the outbox drained -
-  and the peer never received it. Not reproducible (two later attempts delivered), and nothing is
-  specific to forwarding - `forwardMessage` uses the same `sendChatMessage` the composer does. The
-  instrumentation already shipped (`ca8e3ef0` logs every swallowed outbox branch), so the decision is
-  to WAIT for a recurrence rather than audit a working queue blind. If it recurs, capture
-  `[OUTBOX]`/`[QUEUE]` on both sides at the moment of loss.
+- \[ \] **WP-FWD-1 (P1) - REPRODUCED 2026-08-06. No longer observational.** Three consecutive
+  channel -> DM forwards lost (10:50-10:52), then 8/8 delivered on a re-run. Everything is in
+  [cross-client-testing > FWD-1 / FWD-2](docs/wiki/cross-client-testing.md#fwd-1--fwd-2-the-forward-loss-reproduced-three-times);
+  do not re-derive it. What must survive a compaction: the forwards DID reach the intended
+  conversation (triaged across every other thread - sender's echo present, receiver has nothing),
+  and the DM was **healthy in both directions at that same moment** (plain sends 1249 ms / 653 ms,
+  clean). So the conversation is not desynced and the picker is not mis-clicking. The one lead is
+  that all three fell inside a window of heavy machine load (pre-commit sweep + push) - a
+  hypothesis, but the first handle this bug has offered, and it would explain the burstiness.
+  **The next reproduction must answer one question**, and `fwd.mjs` now captures it per iteration:
+  does a lost forward produce `POST /api/mls/send` at all? No request = the client dropped it
+  (outbox); a 201 = the receiver did (WP-LOSS-1).
+
+- \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
+  reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
+  them. This is the failure the durable rule about `persistLocalMutation` predicts - MLS gives no
+  echo of your own message, so the optimistic update is the only writer, and if it is not persisted
+  it dies at the next load. Distinct from WP-FWD-1 and WP-LOSS-1, which lose it at the receiver;
+  do not merge them.
 
 ---
 
