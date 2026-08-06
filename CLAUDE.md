@@ -140,6 +140,16 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   `cdp.mjs` drives all three clients (W1 on 9224, W2 on 9223, A1's WebView on 9222 via
   `adb forward`); `a1.py` is only for native surfaces. W1 moved OFF the chrome-devtools MCP on
   purpose, so no password is ever a tool-call argument.
+- **THE TAB PHASE IS COMPLETE (2026-08-06): 1,2,3,4,5,6,7 all PASS or retired into a shipped fix.**
+  TAB-2 (tab closed, message, reopened - one copy, and the reopened tab does NOT re-ask the PIN),
+  TAB-3 (browser killed, 2 messages, relaunched - no re-login, both present once; cold start renders
+  in ~5 s over five runs, with ONE unexplained 77.7 s run recorded in section 10), TAB-6 (delete
+  `canari_refresh` -> reload -> lands on `/login`, not a silent empty list; the IdP session survives
+  so signing back in needs no credentials). **W1 was logged out and logged back in by TAB-6** -
+  `login.mjs` then `pin.mjs`, both fine. **NEXT: the phone.** A rebuilt debug APK was still compiling
+  when this session ended (`bun tauri android build --target aarch64 --debug`, background task) -
+  A1 must be re-flashed before any LIFE/NOTIF check, because 0.13.0 predates BOTH P1 fixes and the
+  Rust `SecretReuse` change.
 - **PHASE 0 IS COMPLETE, and section 3 is under way (2026-08-06).** PASS so far: **MSG-1** (+38
   volume sends), **MSG-2**, **MSG-3**, **MSG-4** (image + PDF), **MSG-5**, **check M** (PDF preview
   on A1 hardware - `device-verification` updated), **FWD-1**. Rows and evidence are in section 10 of
@@ -200,8 +210,18 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   verdict is `PASS` only if the assertions hold AND the run is clean - errors, 4xx, page exceptions,
   WS events, `notable` MLS lines, `stateChanges` and anything `unexplained` are reported next to it.
   A line that turns out to be routine is ADDED to the benign list, never ignored in place.
-- **SEVEN harness faults have now produced false results, all fixed - the lesson generalises and is
-  written up in the wiki page.** A document-wide `text=Répondre` hits the FIRST message's hidden
+- **ELEVEN harness faults have now produced false results, all fixed - the lesson generalises and is
+  written up in the wiki page.** The four newest are the TAB-2/3/6 batch and all say one thing: an
+  action that cannot prove it took effect still yields a verdict. A kill that killed nothing
+  (PowerShell `-like` does not escape backslashes, and `powershell` is not on this shell's PATH -
+  the ENOENT was swallowed); a "relaunch" that was really a new TAB, because a second `chrome.exe`
+  on a live `--user-data-dir` hands its URL over and exits; `#encryption-pin` scored as a login form
+  because it is `input[type=password]`, failing TAB-3 on the exact distinction it exists to make;
+  and TAB-6 deleting Cloudflare's `cf_clearance` because `canari_refresh` is scoped to `/api/auth`
+  and `Network.getCookies` for the site root never returns it (use `Storage.getCookies`). Plus:
+  `client(port, match)` takes the FIRST matching target and `/json/list` is not creation order, so a
+  leftover tab makes "the leader" a guess - close the extras first. `launch.mjs` now owns kill/start
+  and verifies both. A document-wide `text=Répondre` hits the FIRST message's hidden
   action row (hence `clickBubbleAction`); a selector that ties on text picks the scroll CONTAINER
   over its button (hence RESOLVE drops any hit containing another hit); a synthetic pointer NEVER
   LEAVES, so the hover-expanded nav rail covered the conversation list and read as a layout bug
@@ -297,8 +317,13 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   why a false positive costs one frame. Rate-limited to one signal per group per 30 s. **The Rust
   path had thrown the diagnosis away** (`Ok(None)` on `SecretReuse` read as "nothing to show"), so
   Android dropped every rewound message with no trace - it now surfaces the error into the same
-  classifier. **Owed: the prod verification, and two deliberate gaps** - the ring dies on a reload,
-  and nothing tells the receiver's USER that a message was lost. Reasoning on the wiki page.
+  classifier. **The classifier was SEEN firing on prod the same day**, taking the benign branch on a
+  real double delivery: `Ciphertext generation out of bounds 2393 / SecretReuseError` then
+  `[MLS] Duplicate delivery for 642f389a… - silent ACK (null payload, WASM duplicate flag)` - the new
+  wording, so the ledger recognised the frame. **Owed: a LOSS-branch verification** (no reproduction
+  has produced one since the sender fixes landed, which is itself the point), the **ANDROID** half
+  (needs the rebuilt APK on A1), and two deliberate gaps - the ring dies on a reload, and nothing
+  tells the receiver's USER that a message was lost. Reasoning on the wiki page.
 
 - \[ \] **WP-HIDDEN-1 (P1) - A BACKGROUNDED TAB STOPS RECEIVING MESSAGES ENTIRELY, IN SILENCE.
   Found and FIXED 2026-08-06 (`d1bedee1`); what remains is the prod verification and one deliberate
@@ -321,8 +346,10 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   The yield was one way in, not the only one.
 
 - \[ \] **WP-MULTITAB-1 (P1) - TWO TABS OF ONE ACCOUNT DIVERGE THEIR RATCHET; the message of
-  whichever is behind is dropped. Found 2026-08-06, FIXED the same day; what is owed is the PROD
-  VERIFICATION** (re-run `tab4-cross.mjs`, which lost 4 of 9 alternating sends). Diagnosis, kept
+  whichever is behind is dropped. Found 2026-08-06, FIXED and VERIFIED ON PROD the same day**
+  (`260084c5`): `tab4-cross.mjs` went **9/9** where it had lost 4 of 9, and `tab4-mech.mjs` then
+  read BOTH tabs' logs to prove the delegation rather than infer it from a green result - the
+  follower queues and skips, the leader flushes the same entry id one second later. Diagnosis, kept
   because it is what makes the fix legible: each tab holds its OWN MLS client loaded from one
   snapshot, and leadership gated the WebSocket and `initializeConnection` but **NOT sending** - the
   follower was caught flushing the LEADER's outbox entry and persisting its own checkpoint. **Same

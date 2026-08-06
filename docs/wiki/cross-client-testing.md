@@ -419,6 +419,12 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | TAB-4 | web, prod 2026-08-06 | **FAIL -> WP-HIDDEN-1** | Two tabs of one account: the peer's message reached NEITHER, and a send from the first tab reached nobody. Not a leader-election bug - opening a second tab merely HIDES the first, and a hidden tab stops draining. See below. |
 | **Hidden tab** | web, prod 2026-08-06 | **FAIL -> WP-HIDDEN-1, deterministic** | One tab, backgrounded: message #1 decrypts and never renders, #2 is enqueued and never drained, and both appear at the exact millisecond the tab is refocused (13:10:53 -> 13:11:19). `yieldToMainThread` awaited `requestAnimationFrame`, which never fires in a hidden document. See below. |
 | **Reload rewind, re-run** | web, prod 2026-08-06 | **PASS - fix verified** | Same reproduction against the deployed `a8cc7027`: **3/3 delivered** after a 300 ms reload, 700 / 681 / 772 ms, receiver log clean. That matches the 694 ms no-reload control, where the pre-fix build lost 2/2. Sender half closed; the receiver half of WP-LOSS-1 stays open. |
+| **Two tabs, re-run** | web, prod 2026-08-06 | **PASS - fix verified** | Same script that lost 4 of 9 alternating sends: **9/9 delivered**, 360-1035 ms, nothing notable on the peer. No `out of bounds`, no `SecretReuseError`, no silent ACK. |
+| **Two tabs, mechanism** | web, prod 2026-08-06 | **PASS** | Nine green sends do not prove the follower stopped encrypting - it may simply not have been behind. So the two tabs' own logs were read while the FOLLOWER sent: follower `Queued 3eded7b2… (text)` then `Flush skipped - follower tab; asking the leader to drain the shared queue`, and one second later the LEADER logs `Flush requested by a follower tab` / `Flushing 1 queued entry` / `3eded7b2… sent in 642f389a…`. Same entry id on both sides, which is also the proof that the shared IndexedDB queue is the transfer and the channel only carries the instruction. The follower logged no send of its own; the peer had exactly one copy. |
+| TAB-2 | web, prod 2026-08-06 | **PASS** | App tab closed (proven gone from `/json/list`), peer sends, tab reopened: the message is there **exactly once**, both logs clean. The reopened tab did **not** ask for the PIN - the unlock survives within the same browser instance, which is the vault path, not a gap. |
+| TAB-3 | web, prod 2026-08-06 | **PASS** | Browser killed (port dead in 6 ms), two messages sent while down, relaunched in 611 ms: **no re-login** - the persistent profile carried the session and only the PIN was asked - and both messages present exactly once. |
+| TAB-3 (cold-start timing) | web, prod 2026-08-06 | **PASS, with one unexplained run** | Five timed cold starts: PIN entered at ~3.5 s, message rendered at **4.9 / 5.6 / 5.6 / 5.1 s**. One earlier run took **77.7 s** with everything ready at 6.9 s (`Leadership acquired` 5.9 s, WS open 5.9 s, `[PENDING] Fetched` and `Drain start` 6.9 s) and `[MLS] Message decrypted` only at 77.7 s - a 71 s gap between a drain starting and a message coming out of it. Not reproduced in four further runs. Not a WP without a reproduction; if it recurs, capture everything between `Drain start` and the decrypt. |
+| TAB-6 | web, prod 2026-08-06 | **PASS** | `canari_refresh` deleted, then a reload: the app lands on `/login` with "Se connecter", **not** on a logged-in-looking empty list. Log clean. Note the IdP session survives (`authentik_session`, CAS `TGC`), so signing back in needed no credentials - one click and the app was back. |
 | **WP-KBD-1** | A1 0.13.0, prod 2026-08-06 | **FAIL -> WP-KBD-1** | Tap the composer, HOME, return: the shell is pinned to the visual viewport but starts below the status-bar inset, so it overflows by that inset and the composer sits behind the keyboard. Numbers in [mobile](frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-open). |
 | **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED, VERIFIED ON PROD** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. Re-proved on A1 0.13.0 from a COLD start: `unknown = 0` at 3 s, 6 s and 10 s, six real names. See below. |
 
@@ -967,12 +973,50 @@ untouched, it still queues and nudges, and the leader announces the send) plus
 `composables/tabLeadership.test.ts`, a source guard on the two handlers and on the gate preceding
 every other reason a flush could start.
 
+**Verified on prod the same day, twice over**: the script that lost 4 of 9 went 9/9, and
+`tab4-mech.mjs` then read both tabs' logs while the follower sent, to check the delegation actually
+happened rather than the follower simply not having been behind - see the two rows in section 10.
+That second run also cost a harness fault worth keeping: `client(port, 'canari-emse.fr')` takes the
+first matching target, and `/json/list` is not in creation order, so a leftover second tab made it
+attach to the FOLLOWER and report that the leader had logged nothing. The runner now closes every
+extra app tab before it starts. **"The leader" is never the tab you assume; it is the tab that says
+so in its log.**
+
 **What the gate does not cover, and why it does not need to:** channel messages bypass the outbox
 entirely, but they are not MLS - `sendEncryptedChannelMessage` encrypts under the versioned channel
 key with a fresh nonce, so two tabs sending at once is ordinary AEAD, not a shared ratchet. What
 does remain uncovered is any FUTURE write path that reaches `mlsService` without going through the
 queue: nothing type-checks that. The structural answer to that whole class is one MLS client in a
 SharedWorker - noted in `CLAUDE.md`, not scheduled.
+
+### Three more harness faults, from TAB-2/3/6 - all of them "the check measured nothing"
+
+Every one of these produced a confident verdict about something that never happened. They are listed
+because the shape repeats: **an action that cannot prove it took effect is worth less than no action
+at all**, since it still yields a result.
+
+- **A kill that killed nothing.** `killBrowser` matched on the profile path with the backslashes
+  escaped, and PowerShell `-like` treats a backslash as an ordinary character, so the pattern matched
+  no process. TAB-3 then reported `browserWasDown: true` about a browser that was up throughout - and
+  the "relaunch" was worse than a no-op: a second `chrome.exe` on a live `--user-data-dir` hands its
+  URL to the running instance and exits, so the run silently gained a second TAB. Fixed by verifying
+  the port stops answering, refusing to start over a live instance, and giving the whole PowerShell
+  single quotes (the `-Filter "Name='chrome.exe'"` double quotes do not survive nesting inside
+  `-Command "..."`). And the reason it looked like "nothing to kill": `powershell` is not on this
+  shell's PATH, and the ENOENT was swallowed by a `catch`.
+- **The PIN modal read as a login form.** TAB-3's `LOGIN_SHOWING` tested for
+  `input[type=password]` - which `#encryption-pin` is. The unlock modal therefore scored as a
+  re-login and failed the check on exactly the distinction it exists to make. It now excludes the
+  unlock field and looks for an identifier field or the `/login` route.
+- **TAB-6 deleted Cloudflare's cookie.** `canari_refresh` is scoped to `/api/auth`, so
+  `Network.getCookies { urls: ['https://canari-emse.fr'] }` never returns it; the only httpOnly
+  cookie visible there is `cf_clearance`. The check deleted that, reloaded, saw the app still logged
+  in and called it a silent-empty-list failure. `Storage.getCookies` returns the whole jar, and the
+  cookie is now matched by NAME, with an explicit throw if it is absent or survives the delete.
+
+A fourth, from the same afternoon: `client(port, 'canari-emse.fr')` takes the first matching target
+and `/json/list` is not in creation order, so a leftover second tab made the multi-tab check attach
+to the FOLLOWER and report that the leader had logged nothing.
 
 ### Cutting the network: which side the browser can fake, and which it cannot
 
