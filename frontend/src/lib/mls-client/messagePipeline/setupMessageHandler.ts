@@ -735,6 +735,24 @@ async function handleKnownGroup({
       return true;
     }
 
+    // The frame's generation is further ahead in the sender's ratchet than OpenMLS will derive
+    // forward, i.e. this device missed a long run of that sender's frames - which is what an
+    // undrainable pending queue produces (WP-PENDING-1). Nothing local recovers the plaintext, and
+    // nothing local recovers the STREAM either: every later frame this sender emits in this epoch
+    // fails identically, so unlike `secret-reuse` the group is genuinely broken for us and a
+    // re-Welcome is the cure rather than collateral damage. Forget first, or the Welcome is ignored
+    // as idempotent (the group is still local); the history bundle backfills what was missed.
+    if (kind === 'generation-gap') {
+      log(
+        `[MLS] LOST frame for ${convoKey.slice(0, 8)}… from ${sender}: generation too far ahead of our sender ratchet - we missed too many of their frames to catch up (${err.slice(0, 100)})`
+      );
+      clearEpochGap(groupId);
+      mlsService.forgetGroup(groupId);
+      statePersister.persistNow();
+      await onOutOfSync(groupId);
+      return true;
+    }
+
     // The generation is consumed. Either a double delivery (real-time publish + queue/FCM), which
     // is benign and ACKed, or a message lost to a rewound sender - which is not, and is signalled.
     // Never onOutOfSync either way: the group is healthy and a re-add would destroy a valid

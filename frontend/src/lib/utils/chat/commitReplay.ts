@@ -51,9 +51,17 @@ export async function attemptCommitReplay(
     }
   }
 
-  const healed = mlsService.getEpoch(groupId) >= activeEpoch;
+  // "Nothing to replay" is NOT "the gap is closed". Being already at the server's active epoch when
+  // a frame failed to decrypt means the failure was never an epoch gap, so this replay cannot have
+  // repaired anything - reporting `healed` there is a verdict about EPOCHS answering a question
+  // about something else, and it cost WP-PENDING-2 a silently dropped message: 0 commits applied,
+  // epoch 1 -> 1, `healed=true`, and the frame ACKed off the server.
+  const reachedTarget = mlsService.getEpoch(groupId) >= activeEpoch;
+  const healed = reachedTarget && (applied > 0 || startEpoch < activeEpoch);
   log(
-    `[GAP] ${groupId.slice(0, 8)}… replayed ${applied} commit(s), epoch ${startEpoch}->${mlsService.getEpoch(groupId)} (target ${activeEpoch}), healed=${healed}`
+    `[GAP] ${groupId.slice(0, 8)}… replayed ${applied} commit(s), epoch ${startEpoch}->${mlsService.getEpoch(groupId)} (target ${activeEpoch}), healed=${healed}${
+      reachedTarget && !healed ? ' (nothing to replay - the gap is not an epoch gap)' : ''
+    }`
   );
   return { healed, belowFloor: false, applied };
 }

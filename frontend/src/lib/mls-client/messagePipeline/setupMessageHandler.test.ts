@@ -569,4 +569,45 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
     vi.useRealTimers();
   });
+
+  it('a generation too far ahead escalates at once instead of waiting on a replay that cannot help', async () => {
+    const gid = 'b4444444-4444-4444-8444-444444444444';
+    const deps = baseDeps({
+      conversations: createTestConversations([
+        [gid, emptyConversation(gid, { lifecycle: 'active' })],
+      ]),
+    });
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([gid]);
+    // The native wrapper: `GAP_QUEUED` on the outside, the real cause inside. Same epoch on both
+    // sides, so no commit exists to replay - the old code applied 0, called that healed, and ACKed.
+    mls.processIncomingMessage = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          `GAP_QUEUED:${gid}:Process error: ValidationError(UnableToDecrypt(SecretTreeError(TooDistantInTheFuture))) [msg_epoch=1, group_epoch=1]`
+        )
+      );
+    mls.forgetGroup = vi.fn();
+    mls.fetchCommitsSince = vi.fn();
+    const { requestReAdd } = await import('$lib/utils/chat/recovery');
+    vi.mocked(requestReAdd).mockClear();
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+
+    // No threshold and no replay: every later frame from this sender fails identically, so waiting
+    // 30 s only loses more of them.
+    const ok = await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
+    expect(ok).toBe(true);
+    expect(mls.fetchCommitsSince).not.toHaveBeenCalled();
+    expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
+  });
 });

@@ -1370,8 +1370,69 @@ Two hypotheses are already dead, do not re-open them:
   `App in foreground -> ... skip background processing` for both frames.
 - **It is not the backlog.** The reproduction above ran with an empty queue.
 
-What is NOT yet established is where between `messageCallback -> true` and the store the message
-goes. That is the next thing to instrument.
+#### Root cause: a GENERATION gap answered by an EPOCH verdict
+
+The `[MLS]` lines were not the place to look - the phone's native log was. Between
+`[QUEUE] Processing` and `messageCallback -> true`:
+
+```
+openmls::framing::private_message_in  Ciphertext generation out of bounds 6110
+                                      TooDistantInTheFuture
+mls_core::messaging  MLS decryption failed: group=642f389a… msg_epoch=1 group_epoch=1
+                     err=ValidationError(UnableToDecrypt(SecretTreeError(TooDistantInTheFuture)))
+mines_app_lib::commands::mls  [GAP] Sender Ratchet gap - message queued in SQLite
+sqlx  INSERT OR IGNORE INTO pending_mls_messages …
+[GAP] 642f389a… replayed 0 commit(s), epoch 1->1 (target 1), healed=true
+[QUEUE] messageCallback → true
+```
+
+**`msg_epoch=1 group_epoch=1`.** The epochs match: this was never an epoch gap. It is a SENDER
+RATCHET gap - generation 6110 while this device's ratchet sat thousands of generations behind,
+because it had never drained the 5 526-message backlog (WP-PENDING-1, and most of that backlog is
+read receipts, which advance the ratchet exactly like text). OpenMLS derives forward only up to
+`maximum_forward_distance` and refuses beyond it, so the frame is **cryptographically unrecoverable
+for as long as the epoch does not change**.
+
+The chain that turns that into a silent loss:
+
+1. `mls-core` classified any `Process error:` as `SenderRatchetGap`, so `TooDistantInTheFuture`
+   landed in the retryable bucket and the frame was written to `pending_mls_messages` - a row that
+   can never be retried successfully.
+2. `recevoir_message_bytes` returned `GAP_QUEUED:<group>:<error>`, and
+   `classifyIncomingDecryptError` matched `GAP_QUEUED` first, so the frontend called it an
+   `epoch-gap`.
+3. Rung 1 ran `attemptCommitReplay`, which found **no commit to replay** (there was no epoch gap) and
+   computed `healed = getEpoch() >= activeEpoch` -> `1 >= 1` -> **true**.
+4. `healed` short-circuits the handler: `clearEpochGap`, `return true` - so the queue ACKed it and
+   the server DELETED the message. Rung 2, the only thing that could have helped, never fired.
+
+The generalisable fault is step 3, and it is the campaign's recurring shape: **a verdict computed
+over one dimension, answering a question asked about another.** `epoch >= activeEpoch` is a true
+statement that means nothing when the failure was not about epochs, and "0 commits applied" was the
+evidence that should have refused the conclusion.
+
+**FIXED 2026-08-06**, four places:
+
+- `mls-core`: `DecryptErrorKind::GenerationTooFarAhead`, matched **before** the generic
+  `Process error:` arm.
+- `src-tauri`: that kind is no longer written to `pending_mls_messages` (dead rows) and surfaces the
+  error verbatim, exactly as the `SecretReuse` fix did - the shared classifier decides, not the
+  native layer.
+- `classifyIncomingDecryptError`: `TooDistantInTheFuture` is checked **before** `GAP_QUEUED`, because
+  the native wrapper means both markers are present at once.
+- `handleKnownGroup`: a new `generation-gap` branch logs a `LOST frame`, then goes straight to
+  `forgetGroup` + `requestReAdd`. No threshold and no replay: every later frame from that sender in
+  that epoch fails identically, so waiting only loses more of them, and unlike `secret-reuse` the
+  re-Welcome is the cure rather than collateral damage - it is the only thing that resets the
+  ratchets.
+- `attemptCommitReplay` additionally refuses to report `healed` when it applied nothing and was
+  already at the target epoch, so any future path reaching it with a non-epoch failure gets a
+  truthful answer.
+
+**Still open, deliberately:** `map_decrypt_outcome` (`src-tauri/src/state.rs`, the BATCH path used by
+history replay) still answers `ok: true, data: None` for `SecretReuse` - the same "the native layer
+threw the diagnosis away" that WP-LOSS-1 fixed in the realtime path. It was left alone because
+changing it moves history replay onto the desync signal, which needs its own measurement.
 
 ### Two method corrections this phase cost
 

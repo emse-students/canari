@@ -268,6 +268,20 @@ error rather than answering `Ok(None)`, which used to discard the diagnosis befo
 it. Full write-up in
 [cross-client-testing](../cross-client-testing.md#the-receiver-half-2026-08-06-a-consumed-generation-is-not-evidence-of-a-duplicate).
 
+**And a generation too far AHEAD is the mirror case, with the opposite remedy.**
+`SecretTreeError(TooDistantInTheFuture)` means the frame's generation is beyond what OpenMLS will
+derive forward (`maximum_forward_distance`), i.e. this device missed a long run of that sender's
+frames - which is what an undrainable pending queue produces (WP-PENDING-1). The epochs match on both
+sides, so **no commit replay can help**: only a new epoch resets the sender ratchets. It is therefore
+classified apart (`generation-gap` in TS, `DecryptErrorKind::GenerationTooFarAhead` in `mls-core`,
+both matched BEFORE the generic `Process error:` / `GAP_QUEUED` rule, since the native layer wraps
+one string inside the other), never queued in `pending_mls_messages` (it can never be retried), and
+escalated at once to `forgetGroup()` + `requestReAdd()` with no threshold - unlike `secret-reuse`,
+the group really is broken for us, because every later frame that sender emits in this epoch fails
+identically. Read as an epoch gap it produced the worst possible outcome: a replay that applied zero
+commits, reported `healed=true` because `epoch >= activeEpoch` was trivially satisfied, and ACKed the
+message off the server (WP-PENDING-2).
+
 `requestReAdd(groupId)`: tries `externalJoin(groupId)` first (fetch the stored GroupInfo -> build a native external commit -> submit under the epoch gate -> merge, or discard + retry on an epoch race); falls back to a single `welcome_request` when no GroupInfo is available. Self-throttled to one attempt per `RECOVERY_TIMEOUT_MS`; the SYNC_WATCHDOG drives the cadence. No reboot/CAS/successor.
 
 **Server-side membership on an external join.** `validateCommit` promotes the committing device's `DeviceGroupMembership` to `active` (and adds it to the `group:members:<groupId>` Redis set) when it has no active row yet. An external commit is the ONE join path with no Welcome, so nothing else creates that row - and recipient resolution filters on `status='active'`. Without the promotion the rejoined device is invisible to routing while believing it is a member: its own sends work, but it receives neither the history bundle it solicits nor any later live message. Idempotent, and skipped for ordinary commits from existing members.

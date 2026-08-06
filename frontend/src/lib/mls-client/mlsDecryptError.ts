@@ -20,6 +20,14 @@ export type MlsDecryptErrorKind =
   | 'secret-reuse'
   /** `GAP_QUEUED` (Tauri/SQLite) or `epoch gap` (web): missing commit -> recoverable once commits arrive. */
   | 'epoch-gap'
+  /**
+   * `TooDistantInTheFuture`: the frame's generation is further ahead in the SENDER RATCHET than
+   * OpenMLS will derive forward (`maximum_forward_distance`), which happens when this device missed
+   * a long run of that sender's frames. Same epoch on both sides, so no commit replay can help and
+   * the plaintext is gone: only a new epoch resets the ratchets. Distinct from `epoch-gap`, which
+   * IS repaired by replaying commits, and from `secret-reuse`, which is behind rather than ahead.
+   */
+  | 'generation-gap'
   /** `WrongEpoch`: frame from an epoch not yet reached by THIS stream -> recoverable on a later load. */
   | 'wrong-epoch'
   /** `out of memory` / `unreachable`: WASM panic -> fatal. */
@@ -31,13 +39,18 @@ export type MlsDecryptErrorKind =
  * Classifies an incoming message's decryption error into a {@link MlsDecryptErrorKind}.
  *
  * The recognized substrings are mutually exclusive in practice (an OpenMLS error carries only one
- * of these markers); the order below only exists for stable determinism.
+ * of these markers) EXCEPT one pair, and the order encodes it: the native layer wraps a sender-
+ * ratchet failure in `GAP_QUEUED:<group>:<openmls error>`, so a `TooDistantInTheFuture` frame
+ * carries both markers and must be recognised as the generation gap it is - reading it as an epoch
+ * gap sends it to a commit replay that applies nothing, reports success, and ACKs the frame off the
+ * server (WP-PENDING-2).
  */
 export function classifyIncomingDecryptError(error: unknown): MlsDecryptErrorKind {
   const s = String(error);
   if (s.includes('CannotDecryptOwnMessage')) return 'own-message';
   if (s.includes('SecretReuseError')) return 'secret-reuse';
   if (s.includes('out of memory') || s.includes('unreachable')) return 'oom';
+  if (s.includes('TooDistantInTheFuture')) return 'generation-gap';
   if (s.includes('GAP_QUEUED') || s.includes('epoch gap')) return 'epoch-gap';
   if (s.includes('WrongEpoch')) return 'wrong-epoch';
   return 'unknown';

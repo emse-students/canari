@@ -20,6 +20,19 @@ describe('classifyIncomingDecryptError', () => {
     );
   });
 
+  it('reconnait une generation trop en avance, meme enveloppee dans GAP_QUEUED', () => {
+    // The native layer wraps the OpenMLS error, so both markers are present at once - and reading
+    // this one as an epoch gap sends it to a commit replay that cannot help (WP-PENDING-2).
+    expect(
+      classifyIncomingDecryptError(
+        'GAP_QUEUED:642f389a:Crypto/OpenMLS error: Process error: ValidationError(UnableToDecrypt(SecretTreeError(TooDistantInTheFuture))) [msg_epoch=1, group_epoch=1]'
+      )
+    ).toBe('generation-gap');
+    expect(classifyIncomingDecryptError(new Error('SecretTreeError(TooDistantInTheFuture)'))).toBe(
+      'generation-gap'
+    );
+  });
+
   it('reconnait WrongEpoch', () => {
     expect(classifyIncomingDecryptError('Process error: WrongEpoch')).toBe('wrong-epoch');
   });

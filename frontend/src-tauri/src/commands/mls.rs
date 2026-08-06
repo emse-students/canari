@@ -749,6 +749,22 @@ pub(crate) async fn recevoir_message_bytes(
                     ))
                 }
 
+                // The generation is beyond what OpenMLS will derive forward: this device missed too
+                // many of that sender's frames. Deliberately NOT queued in SQLite - it can never
+                // decrypt, so a retry row is dead weight forever, exactly as for SecretReuse. The
+                // error is surfaced verbatim so the shared frontend classifier recognises
+                // `TooDistantInTheFuture` and escalates to a re-Welcome, which is the only thing
+                // that resets the ratchets. It used to reach the frontend as a plain `GAP_QUEUED`,
+                // which ran a commit replay that applied nothing, declared the gap healed, and ACKed
+                // the message off the server (WP-PENDING-2).
+                DecryptErrorKind::GenerationTooFarAhead => {
+                    log::warn!(
+                        "[GAP] Generation too far ahead for group={} - unrecoverable locally, escalating to the frontend",
+                        group_id
+                    );
+                    Err(err_str)
+                }
+
                 // "Process error:" = OpenMLS error on the same epoch -> likely a Sender Ratchet gap
                 // (future generation received) -> queued in SQLite for retry.
                 DecryptErrorKind::SenderRatchetGap => {

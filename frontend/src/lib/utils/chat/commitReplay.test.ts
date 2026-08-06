@@ -52,6 +52,23 @@ describe('attemptCommitReplay', () => {
     expect(mls.processIncomingMessage).not.toHaveBeenCalled();
   });
 
+  it('does not claim to have healed a gap it had nothing to replay for', async () => {
+    // WP-PENDING-2: the frame failed on a sender-ratchet generation, not on an epoch, so the local
+    // epoch already equals the server's. `epoch >= activeEpoch` is true and means nothing here -
+    // reporting `healed` made the caller ACK a message it had never decrypted.
+    const mls = makeMls({
+      getEpoch: vi.fn().mockReturnValue(1),
+      fetchCommitsSince: vi
+        .fn()
+        .mockResolvedValue({ commits: [], activeEpoch: 1, belowFloor: false }),
+    });
+
+    const res = await attemptCommitReplay(mls, 'g', noop);
+
+    expect(res.applied).toBe(0);
+    expect(res.healed).toBe(false);
+  });
+
   it('stops at the first commit that fails to apply and reports not healed', async () => {
     let epoch = 2;
     const mls = makeMls({

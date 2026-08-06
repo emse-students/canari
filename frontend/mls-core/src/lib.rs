@@ -55,6 +55,11 @@ pub enum DecryptErrorKind {
     SecretReuse,
     /// OpenMLS error on the same epoch: Sender Ratchet gap (future generation) -> queue/retry.
     SenderRatchetGap,
+    /// `TooDistantInTheFuture`: the generation is further ahead than OpenMLS will derive forward
+    /// (`maximum_forward_distance`), because this device missed a long run of that sender's frames.
+    /// Like `SecretReuse` it will NEVER decrypt - queueing it for retry only accumulates dead rows -
+    /// but the cause is the opposite end of the ratchet, and only a new epoch clears it.
+    GenerationTooFarAhead,
     /// Unrecoverable MLS state (corruption/inconsistency): the frontend must re-bootstrap.
     Unrecoverable,
     /// Unclassified.
@@ -68,6 +73,12 @@ impl MlsError {
         match self {
             MlsError::Unrecoverable(_) => DecryptErrorKind::Unrecoverable,
             MlsError::OpenMls(s) if s.contains("SecretReuseError") => DecryptErrorKind::SecretReuse,
+            // Before the generic `Process error:` arm: a too-far-ahead generation IS a process
+            // error, and reading it as a retryable ratchet gap is what queued a frame that could
+            // never decrypt (WP-PENDING-2).
+            MlsError::OpenMls(s) if s.contains("TooDistantInTheFuture") => {
+                DecryptErrorKind::GenerationTooFarAhead
+            }
             MlsError::OpenMls(s) if s.contains("Process error:") => {
                 DecryptErrorKind::SenderRatchetGap
             }
