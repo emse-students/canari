@@ -32,6 +32,26 @@ Channels use server-assisted symmetric encryption (not MLS):
 4. Key rotation increments `keyVersion`; old ciphertexts remain decryptable.
 5. `channel_key_distributions` tracks which devices have received each key version.
 
+## Storage and retention: a channel message costs one row, forever
+
+Two facts that decide every capacity question about communities, both verified against production:
+
+- **A channel message does NOT fan out.** `ChannelService.sendMessage` inserts exactly **one**
+  `channel_messages` row whatever the member or device count; online clients are served over Redis
+  pub/sub and offline ones get a direct FCM push through chat-delivery's
+  `/internal/push/notify`, which never touches `queuedMessageRepo`. Measured on prod:
+  `queued_message` holds **0** rows for any channel id. This is the opposite of a DM, where a copy of
+  the ciphertext is stored per recipient *device* - see [chat-delivery](chat-delivery.md).
+- **Nothing ever GCs `channel_messages`.** There is no cron and no retention window. Deleting a
+  community only sets `archived`; account deletion rewrites `authorId` to `[deleted]` and keeps the
+  row. The only removal is an explicit `deleteChannelMessage`. Community history therefore grows
+  monotonically - cheaply (~960 B/row including indexes, `content` averaging 137 B because a channel
+  ciphertext carries no MLS framing), but forever.
+
+Posts have the same shape: no TTL, no cron, removed only by an explicit delete or account deletion.
+The numbers and what they imply are in
+[storage-forecast](../infrastructure/storage-forecast.md).
+
 ## Routes
 
 ### Posts (`/api/posts`)

@@ -358,25 +358,51 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   ring dies on a reload, and nothing tells the receiver's USER that a message was lost. Reasoning on
   the wiki page.
 
-- \[ \] **WP-GHOST-1 (P1) - A DEVICE THAT DISAPPEARS WITHOUT CALLING THE DELETE ENDPOINT IS MESSAGED
-  FOREVER, AND NOTHING CAN EVER COLLECT IT. Found 2026-08-06, PROVEN on prod, NOT FIXED.** The queue
-  was **98 210 rows / 150 MB**, and **97 353 of them (99.1 %) belonged to nine device ids that no
-  longer exist**, all still `status='active'`; Claire had FIVE, each holding exactly 10 810 rows, so
-  every message to her was stored five times. Every other device on the platform held at most 84.
-  **This corrects the older note in this file claiming the size was the deliberate 90-day retention -
-  it was not.** Deleting them through the product's own UI took the table to **984 rows**, so
-  `purgeDeviceFootprint` is clean; nothing ever calls it. The lock is three-way: `cleanupStaleDevices`
-  vetoes any device with an `active` membership; only `detectStaleDevices` clears `active` and it
-  pre-filters on `updatedAt`; and `updatedAt` is a TypeORM `@UpdateDateColumn` bumped by OTHER
-  people's clients (`activateDeviceMembership`'s upsert has no `skipUpdateIfNoValuesChanged`,
-  `sendWelcome`'s is parallel-fanned by `deliverWelcomes`, and `processPendingInvitations` re-marks a
-  peer's device `active` from its `ALREADY_MEMBER` branch). All nine ghosts share an `updatedAt`
-  within four seconds - that burst. Meanwhile the message fan-out reads `status='active'` with **no
-  key-package check**, while the invitation path validates one and `sendWelcome` hard-fails without
-  one. Full write-up, every figure and every file:line in
-  [cross-client-testing > how big the queue gets](docs/wiki/cross-client-testing.md#how-big-the-queue-gets---and-it-was-not-by-design-wp-ghost-1).
-  **A live reproduction is deliberately left on prod**: `tauri-…-ms8xyqkk-2rwh`, 3 memberships, zero
-  key packages, the only such device on the platform. Do not clean it up before the fix.
+- \[ \] **WP-GHOST-1 (P1) - FIXED AND COMMITTED (`5335a71f`), ONLY THE PROD VERIFICATION IS OWED.**
+  A revoked device wrote its own routing membership back and was then messaged forever, uncollectable:
+  the queue was **98 210 rows / 150 MB**, **97 353 of them (99.1 %) for nine device ids that no longer
+  exist**. Root cause is `POST /api/mls/invitations/status`, which minted a membership checking
+  neither the denylist nor the key package while `getPendingInvitations` **in the same file** checked
+  both; the preserved orphan is in `revoked_device` since 2026-07-31 yet has memberships written
+  2026-08-04. The fix is one predicate, `deviceAddressability`, applied at all three minting seams,
+  plus a `detectStaleDevices` that no longer pre-filters on `updatedAt`, a `cleanupStaleDevices` that
+  collects memberships with no key package, and a 60 s boot sweep (`setInterval` never fires at t=0,
+  so a 24 h job in a service redeployed daily had never run). Everything - evidence, table of seams,
+  tests - is in
+  [cross-client-testing > how big the queue gets](docs/wiki/cross-client-testing.md#how-big-the-queue-gets---and-it-was-not-by-design-wp-ghost-1);
+  do not re-derive it. **Owed, once the CD lands:** the orphan `tauri-…-ms8xyqkk-2rwh` must lose its
+  3 memberships to the boot sweep, and `invitations/status` for it must answer `400`. `queued_message`
+  was `VACUUM FULL`ed after the purge - `auth_db` went 103 MB -> **29 MB**.
+
+**WP-NOTIF-1 (P2) is SHIPPED and VERIFIED ON THE DEVICE 2026-08-07** (NOTIF-4 PASS, dismissed 263 ms
+after the read, `shadeBefore 1 -> shadeAfter 0`). An Android notification was not dismissed when the
+message was read elsewhere, whenever the read receipt failed to decrypt - the dismissal sat BELOW the
+decrypt ladder although it only ever needed the cleartext `silent` + `senderId` fields. iOS was
+already correct. The story, the 18th harness fault (`document.hasFocus()` is false in BOTH browsers,
+so a read receipt could never be emitted - now `Emulation.setFocusEmulationEnabled`) and why that
+fault was NOT the cause are in
+[cross-client-testing > the NOTIF phase](docs/wiki/cross-client-testing.md#the-notif-phase-2026-08-07).
+The rule went to DURABLE RULES. **Owed: NOTIF-1/2/3/5/6/7/8/9/10 have not been run.**
+
+- \[ \] **WP-STORAGE-1 (P2 today, P1 the moment usage grows) - THE BACKUP SCHEME FAILS BEFORE THE DATA
+  DOES.** Answer to the user's question of 2026-08-06 ("can the server hold several hundred users").
+  The whole model, every measured unit cost and the three scenarios are in
+  **[storage-forecast](docs/wiki/infrastructure/storage-forecast.md)** - do not re-derive or re-measure
+  it. The one sentence: `backup.sh` tars the ENTIRE MinIO volume nightly and keeps 15 copies, so every
+  live byte costs **16 bytes** on a 125 GB disk, and at 400 daily users the disk fills in **3 to 27
+  days** in EVERY scenario including the most conservative - before media ever reach their plateau.
+  Media are 87 % of the total; encrypted blobs are incompressible, so gzip buys nothing and dedup buys
+  everything. **Ordered actions, highest leverage first:** (1) stop re-archiving MinIO nightly - use
+  `restic`/`borg`/`rclone sync`, keep the 14-day full scheme for the 29 MB `pg_dump`; this is config
+  only and divides the requirement by ~16; (2) cap + re-encode images CLIENT-SIDE before encryption in
+  `frontend/src/lib/media.ts` (measured p90 4.25 MB, max 8.06 MB - raw phone photos), the only lever
+  that touches the live figure; (3) content-linked media deletion, which does not exist at all today -
+  message delete and account delete leave the blobs, which is a GDPR point as much as a storage one;
+  (4) Redis `maxmemory` + `volatile-lru` (it is `0`/`noeviction` today); (5) autovacuum on
+  `queued_message` (~132 k churn/day at that scale). `docker system prune` frees 5.45 GB right now.
+  **One thing needs the USER, not a fix:** media are GC'd after 30 days of no access, so a new device
+  or a reinstall sees no image older than 30 days, silently. That is what makes the forecast
+  survivable and it may not be intended - section 6 of the page.
 
 - \[ \] **WP-DRAIN-2 (P2) - the inbound drain still has no watchdog, so ANY hung await inside it
   stops every inbound message with no diagnostic.** What is left of WP-HIDDEN-1 and WP-DRAIN-1, both
@@ -635,6 +661,10 @@ page. The five to carry, plus one status line:
 - A path restriction written for iOS has NO effect on Android: the App Link claim lives in a
   different file per platform and `assetlinks.json` has no notion of a path, so the lists are
   GENERATED from one source. A host with no path attribute claims the whole host.
+- A decision reachable from the CLEARTEXT push fields must never sit behind the decrypt ladder: an
+  early return on "could not decrypt" silently swallows every action that never needed the plaintext
+  (WP-NOTIF-1). And parity between the platforms is not parity of declarations - iOS was correct here
+  and Android was not, differing only in WHERE an early return sat.
 
 **Android/iOS native parity is COMPLETE as of v0.12.0** (audited 2026-08-03, file by file), for
 code. The asymmetries are OS-imposed - no boot broadcast on iOS, CallKit vs full-screen intent, no

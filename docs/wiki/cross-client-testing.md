@@ -1326,6 +1326,53 @@ LIFE-3's empty shade is Android policy, not a Canari fault: a force-stopped pack
 STOPPED state and the framework cancels every FCM broadcast to it until a manual launch. "The user
 killed it" is LIFE-8.
 
+## The NOTIF phase, 2026-08-07
+
+| check | verdict | numbers |
+| --- | --- | --- |
+| NOTIF-4 | **FAIL x3**, then **PASS** on the fixed build | see below |
+
+**NOTIF-4 found a real bug and cost the 18th harness fault, in that order** - which is only clear in
+hindsight, and is exactly why the fault was not allowed to end the investigation.
+
+The check: A1 is killed (swipe from recents), a message arrives and notifies, then W1 reads it, and
+A1's notification must disappear. It failed three times. The mechanism it exercises is worth stating
+because it explains the bug: cross-device dismissal does **not** need the plaintext. A read receipt
+is an ordinary E2E message sent with `silent: true`, and Android infers "the user read this
+elsewhere" from two **cleartext** push fields - `silent` and `senderId == self`.
+
+**The harness fault (18th): both browsers report `document.hasFocus() === false`,** because only one
+OS window can hold focus and the harness drives two. W1 could therefore never emit a read receipt at
+all. `chat.mjs` now enables CDP `Emulation.setFocusEmulationEnabled`, which makes the page report
+focused **without** changing `document.visibilityState` - so the TAB phase, which depends on
+visibility, keeps its meaning. NOTIF-4 now *asserts* the focus gate instead of assuming it, and waits
+6 s rather than 2 s for the debounced receipt to ride the outbox.
+
+**That fault was real and was not the cause.** Run 3 had `hasFocus: true` and still failed. The
+logcat showed all three steps: the receipt arrives (`senderName=… silent=true`), the decrypt of it
+fails 16 s later, and `cancelConversationNotification` is never reached. In
+`CanariFirebaseMessagingService.kt` the dismissal sat **below** the decrypt ladder, behind an early
+`return@runWithWakeLock` on `decrypted == null && silent` - so precisely when the receipt could not be
+decrypted, the action that never needed the plaintext was skipped. Hoisting the dismissal above
+`tryDecrypt` is the whole fix (WP-NOTIF-1).
+
+**iOS was already correct**: `canari_push.mm`'s `if (silent)` branch never tested `decrypted`. The
+platforms had diverged only in *where an early return sat* - a divergence the file-by-file parity
+audit of v0.12.0 could not have seen, because both files declare the same things.
+
+**Verified on the device, 2026-08-07 00:12** (APK `lastUpdateTime=2026-08-07 00:09:50`):
+`shadeBefore: 1 -> shadeAfter: 0`, **dismissed 263 ms** after W1 read it, `w1Focus.hasFocus: true`,
+`killedInMs: 77`, notification delivered in 18.05 s. Both browser logs clean.
+
+One `notable` line on W1 is worth recording rather than ignoring: `Ciphertext generation out of
+bounds 246 / SecretReuseError`, immediately followed by `[MLS] Message decrypted … ->
+addMessageToChat` and `readOnW1: 1`. That is the WP-LOSS-1 classifier taking its **benign** branch on
+a genuine double delivery - the frame was recognised by `inboundFrameLedger`, no `LOST frame` was
+emitted, and the message was displayed. The loss branch still has no observed firing, which remains
+the point rather than a gap.
+
+`[SEND] … queued (pending)` on W2 is the outbox queueing a send; it belongs on the benign list.
+
 ### The 15th harness fault: a kill that killed nothing
 
 LIFE-8 first reported FAIL with `pid` identical before, during and after. `am kill` only reclaims a
@@ -1583,6 +1630,63 @@ is the whole bug: a device good enough to be messaged forever is not good enough
 `updatedAt` answers "when was this row last written", and it was asked "when was this device last
 seen". Same shape as WP-PENDING-2, where an epoch verdict answered a generation question.
 
+##### The root cause, found the same night: a REVOKED device writes its own membership back
+
+Everything above explains why a ghost is never *collected*. It does not explain how one is *created*,
+and the preserved reproduction answered that on its own. `tauri-d82cd226…-ms8xyqkk-2rwh` is not a
+device that merely vanished:
+
+- it is in `revoked_device`, **revoked 2026-07-31 13:52:48**;
+- it holds **zero** key packages, and can never regain one - `devices.controller.ts` refuses
+  registration for a revoked id;
+- and it nevertheless carries membership rows written **2026-08-04 18:03:22**, four days *after* the
+  revocation.
+
+Something wrote a routing membership for a device the platform had already disowned. That something
+is `POST /api/mls/invitations/status`
+([invitations.controller.ts](../../apps/chat-delivery-service/src/controllers/invitations.controller.ts)):
+`updateInvitationStatus` upserts a `DeviceGroupMembership` from nothing but the ids in the body,
+checking neither the denylist nor the key package - while `getPendingInvitations`, **the endpoint
+directly beside it in the same file**, checks both before offering a device as an invite candidate.
+One endpoint's admission rule was simply never applied to its neighbour.
+
+The rest follows mechanically. A revoked device cannot re-register, so it never regains a key
+package; with no key package it is invisible to `getUserDevices` (so no human can see it to delete
+it) and invisible to `cleanupStaleDevices` (which enumerates *from* `key_package`); and
+`detectStaleDevices` never selects it because of the `updatedAt` pre-filter above. The device is
+simultaneously unreachable by every collector and freely writable by any peer. Corroborating the
+"peer sync" mechanism: user `9855dfaf…` holds ~8 devices whose `last_touch` is identical to the
+tenth of a second (`2026-08-03 09:03:07.x`) - one client's sync pass, vouching for eight devices at
+once.
+
+##### The fix, 2026-08-06 (`5335a71f`)
+
+One predicate, `MessagingService.deviceAddressability(userId, deviceId)`, is now the single
+definition of *may this device be routed to*: **not on the revocation denylist, and holding a static
+`KeyPackage`**. It is applied at all three places that could mint or honour a routing membership:
+
+| Seam | Behaviour now |
+| --- | --- |
+| `updateInvitationStatus` (`status: 'active'`) | `400`, logged `[INVITATION_STATUS] REFUSED … reason=…`. Demotion to `pending` stays allowed - it is a step *towards* cleanup. |
+| `activateDeviceMembership` (commit fan-out, background push) | returns without writing, logged `[MEMBERSHIP_ACTIVE] REFUSED …`. The commit itself is still `accepted: true` - only the routing row is refused. |
+| the send fan-out's fallback path (which seeds `group:members:<groupId>`) | ghosts filtered out, logged `[SEND][…] SKIPPED_NO_KEY_PACKAGE …`. |
+
+Collection was widened to match creation: `detectStaleDevices` no longer pre-filters on `updatedAt`
+(the premise that "a row touched within the window is certainly not stale" is exactly what was
+false - `lastUpdate` is still *logged*, as evidence, never as a criterion), and `cleanupStaleDevices`
+now enumerates devices holding memberships with **no** `key_package` row and purges them, so the
+ghosts already on disk are collected rather than only being prevented in future. Because
+`setInterval` never fires at t=0 - and this service redeploys far more often than daily, so a 24 h
+job had in practice never run at all - a boot sweep runs all nine GC jobs once, 60 s after start.
+
+Two refusal tests pin the contract in `messaging.commit-log.spec.ts`; the frontend caller
+(`frontend/src/lib/utils/chat/actions.ts`) already swallows the response, so the new `400` is inert
+there.
+
+**The rule, and it is the same one twice: a device good enough to be MESSAGED must be at least as
+valid as one good enough to be INVITED.** Two endpoints in one file disagreed about what a valid
+device is, and the gap between them is where 97 353 rows lived.
+
 ##### The 16th and 17th harness faults, both from this hour
 
 - **A run whose progress goes through `| tail -N` is unobservable.** `tail` buffers until EOF, so a
@@ -1598,10 +1702,12 @@ seen". Same shape as WP-PENDING-2, where an epoch verdict answered a generation 
 
 ##### What survived the purge, deliberately
 
-One orphan remains: `tauri-…-ms8xyqkk-2rwh`, 3 memberships, **no key package at all** - a phone
-install that vanished without ever calling the delete endpoint. It is the whole class in one row and
-is left in place on purpose, as the live reproduction for the fix. Across the platform it is the only
-one (`54` devices hold memberships, `230` hold key packages, exactly `1` holds memberships without).
+One orphan remains: `tauri-…-ms8xyqkk-2rwh`, 3 memberships, **no key package at all**. It was kept as
+the live reproduction, and it is what identified the root cause above - it turned out not to be a
+device that merely vanished but a **revoked** one that wrote itself back. Across the platform it is
+the only one (`54` devices hold memberships, `230` hold key packages, exactly `1` holds memberships
+without). Once `5335a71f` is deployed it is also the verification: the boot sweep should purge its
+three memberships, and any further `invitations/status` for it must answer `400`.
 
 What happens after the escalation is worth knowing before reading a log: the first bad frame forgets
 the group, so every later queued frame takes the `!inGroup` path, is buffered and **not** ACKed

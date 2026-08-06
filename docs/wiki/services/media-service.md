@@ -54,7 +54,36 @@ a prop, but only as a signal that the session is authenticated.
 | POST | `/api/media/upload/chunk/:id/complete` | JWT | Complete chunked upload, return `mediaId` |
 | GET | `/api/media/public/:id` | none | Download public asset (cached 1 year, no auth) |
 | GET | `/api/media/:id` | JWT | Download encrypted blob (no-cache, owner or group member) |
-| DELETE | `/api/media/:id` | JWT | Delete media blob (owner only) |
+| DELETE | `/api/media/:id` | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`) |
+
+`DELETE` is not reachable by a client. Its only callers are
+`AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
+`FormsService`. **Nothing in the chat or channel paths ever calls it** - see retention below.
+
+## Retention: a 30-day IDLE sweep, and it is the only thing that deletes chat media
+
+`MediaService.purgeExpiredMedia` (`media.service.ts`) deletes any object whose `lastAccessAt` is
+older than **`RETENTION_MS` = 30 days**, leaving a tombstone that is itself trimmed after 90 days. It
+runs at boot, hourly (`DEFAULT_SWEEP_MS`, overridable with `MEDIA_RETENTION_SWEEP_MS`) and on every
+`download()`.
+
+Four consequences, all of which matter and none of which are obvious:
+
+- **`lastAccessAt` is refreshed on every download**, so anything still being viewed never expires.
+  The window measures *idleness*, not age.
+- **Public assets are exempt** (`isPublicAssetEntry`) and are therefore permanent.
+- **There is no content-linked deletion whatsoever.** Deleting a message does not delete its blob;
+  deleting a community only archives it; and account deletion calls chat-delivery and social-service
+  but **never** media-service, so a deleted user's images stay. That is a GDPR gap as much as a
+  storage one.
+- **A user-visible effect:** a photo nobody re-opens for 30 days is gone from the server, so a new
+  device or a reinstall can never fetch it, and the conversation does not say so. This is what bounds
+  media storage - see [storage-forecast](../infrastructure/storage-forecast.md), where it is also
+  flagged as a product decision that was never explicitly taken.
+
+The index is a **JSON file** (`media_meta/media_metadata.json`), not a database table. If it is lost,
+`download()`'s `setAccess` re-creates the entry with `createdAt = now`, silently restarting every
+object's 30-day clock.
 
 ## Environment variables
 
@@ -64,6 +93,10 @@ a prop, but only as a signal that the session is authenticated.
 | `MINIO_ENDPOINT` | yes | MinIO server URL |
 | `MINIO_ACCESS_KEY` | yes | MinIO access key |
 | `MINIO_SECRET_KEY` | yes | MinIO secret key |
-| `MINIO_BUCKET` | yes | Bucket name for media blobs |
-| `MINIO_PUBLIC_BUCKET` | yes | Bucket for public assets |
+| `MINIO_BUCKET` | yes | Bucket name for media blobs (default `canari-media`), **also used for public assets** |
 | `MEDIA_MAX_SIZE_MB` | no | Max upload size in MB (default 100, capped at 100) |
+| `MEDIA_RETENTION_SWEEP_MS` | no | Retention sweep interval (default 1 h) |
+
+`MINIO_PUBLIC_BUCKET` used to be listed here and is **not read anywhere** in
+`apps/media-service/src` - `storage.service.ts` puts private and public objects in the single
+`MINIO_BUCKET`. Removed 2026-08-07.
