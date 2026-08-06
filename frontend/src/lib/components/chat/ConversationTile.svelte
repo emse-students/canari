@@ -15,6 +15,12 @@
     contactName: string;
     /** Human-readable display name shown in the tile. */
     displayName: string;
+    /**
+     * Whether {@link displayName} is a real name rather than the "unknown user" placeholder.
+     * When `false`, the tile ignores it and shows its own asynchronously resolved name instead -
+     * a placeholder is non-empty, so without this flag it would win over the real answer forever.
+     */
+    displayNameResolved?: boolean;
     /** Type of conversation, determines avatar and presence display logic. */
     conversationType?: 'direct' | 'group' | 'channel';
     /** Serialised envelope of the last message, used to render the preview text. */
@@ -40,6 +46,7 @@
   let {
     contactName,
     displayName,
+    displayNameResolved = true,
     conversationType = 'group',
     lastMessage,
     isReady,
@@ -59,7 +66,10 @@
   let resolvedDisplayName = $state('');
 
   const effectiveDisplayName = $derived(
-    displayName && displayName !== contactName && !(isDirect && isCanonicalDirectKey(displayName))
+    displayNameResolved &&
+      displayName &&
+      displayName !== contactName &&
+      !(isDirect && isCanonicalDirectKey(displayName))
       ? displayName
       : resolvedDisplayName
   );

@@ -491,6 +491,7 @@
             <ConversationTile
               contactName={resolved.contactId}
               displayName={resolved.displayName}
+              displayNameResolved={resolved.displayNameResolved}
               conversationType={convo.conversationType}
               lastMessage={convo.messages.length > 0
                 ? convo.messages[convo.messages.length - 1].content

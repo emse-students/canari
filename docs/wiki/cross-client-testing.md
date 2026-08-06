@@ -361,6 +361,29 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | MSG-1 | web, prod 2026-08-06 | **PASS** | DM W1 -> W2, delivered in 1225 ms, one copy each side, author `Jolan BOUDIN`. Re-proved by 38 consecutive sends below. |
 | MSG-1 (volume) | web, prod 2026-08-06 | **PASS** | 20 sends at 1.2 s spacing: 20/20, latency 177-830 ms. 8 sends each preceded by a receiver reload: 8/8, 493-1191 ms. 10 sends into the receiver's post-reload bootstrap window: 10/10, 505-1170 ms. |
 | **Silent loss** | web, prod 2026-08-06 | **FAIL -> WP-LOSS-1** | Two DMs accepted by the server (`POST /api/mls/send -> 201`), never rendered by the peer, still absent after a reload. See below. |
+| **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. See below. |
+
+### The bug that only a click could find
+
+Noticed while opening the phone's Discussions tab for MSG-2, and worth recording as a method as much
+as a defect: **it is invisible to anyone who reloads.** A full load of `/chat` shows every name; a
+click on "Discussions" from inside the app leaves all six DMs reading "Utilisateur inconnu"
+indefinitely - measured to 2.5 minutes, and it does not heal.
+
+The sequence that isolated it, each step cheap and each one killing a hypothesis:
+
+| Step | Result | What it eliminated |
+| --- | --- | --- |
+| Same click-navigation on W1 | 6 unknown | not Android - the first suspicion, since it was seen on the phone first |
+| Count `/api/users/<id>` calls in both modes | 6 vs 7, all `200` | not a missing fetch |
+| Read the response BODIES | `"firstName":"Claire","lastName":"VAN RUYMBEKE"` in the failing mode | not a server answer - the name arrives and is discarded |
+| Wait out the 2-min `FAILURE_BACKOFF_MS` | still 6 unknown | not `failedAt` / the retry backoff |
+| Full load, then navigate away and back by click | 0 unknown | the display-name **cache being warm** is the whole variable |
+
+Cause, fix and the general rule are in the `CHANGELOG` entry and in DURABLE RULES. The reusable
+lesson for this campaign is the second row: **reproduce a platform-specific symptom on the other
+platform before believing it is platform-specific.** It cost one command and turned an Android bug
+into a shared one.
 
 ### The loss this campaign was built to find
 

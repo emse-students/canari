@@ -269,6 +269,10 @@ prompt fields are all on those pages. What must not be forgotten between them:
 - Nothing types a string as user-visible, so no compiler enforces Paraglide - and no user-facing
   string names a sensor ("empreinte ou Face ID" is wrong on every device, half the time).
 - Re-run `bun run paraglide:compile` before `bun run test` after any build.
+- A synchronous "unknown" PLACEHOLDER is indistinguishable from an answer once it is stored, so
+  anything that later resolves the real value loses to it - and a module-level cache re-renders
+  nothing when it warms, so whether a user ever sees the truth depends on cache timing. Return the
+  absence (`peekUserDisplayName` -> `null`, or an explicit `*Resolved` flag), never the label.
 
 #### The public head, and the two adapters -> [frontend/seo](docs/wiki/frontend/seo.md), [nginx](docs/wiki/infrastructure/nginx.md)
 

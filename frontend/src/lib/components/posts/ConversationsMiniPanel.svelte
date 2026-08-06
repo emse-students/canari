@@ -19,6 +19,8 @@
     meta: ConversationMeta;
     contactId: string;
     displayName: string;
+    /** See `ConversationListPresentation.displayNameResolved` - false means it is a placeholder. */
+    displayNameResolved: boolean;
     conversationType: 'direct' | 'group';
     isReady: boolean;
     unreadCount: number;
@@ -46,6 +48,7 @@
       meta,
       contactId: pres.contactId,
       displayName: pres.displayName,
+      displayNameResolved: pres.displayNameResolved,
       conversationType: pres.conversationType,
       isReady: meta.lifecycle === 'active',
       unreadCount: 0,
@@ -80,6 +83,7 @@
       },
       contactId: pres.contactId,
       displayName: pres.displayName,
+      displayNameResolved: pres.displayNameResolved,
       conversationType: pres.conversationType,
       isReady: conv.lifecycle === 'active',
       unreadCount: conv.unreadCount ?? baseline?.unreadCount ?? 0,
@@ -208,6 +212,7 @@
           <ConversationTile
             contactName={item.contactId}
             displayName={item.displayName}
+            displayNameResolved={item.displayNameResolved}
             conversationType={item.conversationType}
             lastMessage={item.lastMessageContent}
             isReady={item.isReady}

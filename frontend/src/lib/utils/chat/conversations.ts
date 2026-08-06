@@ -17,7 +17,7 @@ import { buildUserGroupSyncIndex } from './groupSyncEligibility';
 import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
-import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
 import { compareMessageOrder } from './messageOrder';
 import { isUnreadForUser } from './unread';
 import { isChannelConversationId } from './channelCrypto';
@@ -250,6 +250,18 @@ export interface ConversationListPresentation {
   conversationType: 'direct' | 'group';
   contactId: string;
   displayName: string;
+  /**
+   * `false` when `displayName` is only the "unknown user" placeholder because the peer's profile
+   * was not in the cache yet.
+   *
+   * The distinction is not cosmetic. This function is synchronous and the display-name cache is a
+   * plain module Map, so warming it re-renders nothing: a row computed on a cold cache keeps the
+   * placeholder for as long as the row exists. A consumer that cannot tell the placeholder from a
+   * real name therefore has no reason to prefer its own asynchronously resolved value, and shows
+   * "unknown user" forever - which is exactly what the whole DM list did after any client-side
+   * navigation into `/chat`. Same trap `peekUserDisplayName` documents for persisted text.
+   */
+  displayNameResolved: boolean;
 }
 
 /**
@@ -289,6 +301,7 @@ export function resolveConversationListPresentation(
         conversationType: 'group',
         contactId: input.id,
         displayName: input.fallbackDisplayName?.trim() || input.name.trim() || 'Discussion',
+        displayNameResolved: true,
       };
     }
     const peerId = peerRaw.toLowerCase();
@@ -307,10 +320,15 @@ export function resolveConversationListPresentation(
         ? input.fallbackDisplayName
         : undefined;
 
+    // `peek` never invents a label, so `known` is the answer only when there really is one.
+    const known = needsResolve ? (peekUserDisplayName(peerId) ?? fallback?.trim() ?? '') : rawName;
     return {
       conversationType: 'direct',
       contactId: peerId,
-      displayName: needsResolve ? getUserDisplayNameSync(peerId, fallback) : rawName,
+      // Still the placeholder when nothing is known, so consumers that only read `displayName`
+      // keep rendering a label rather than a blank row.
+      displayName: known || getUserDisplayNameSync(peerId, fallback),
+      displayNameResolved: Boolean(known),
     };
   }
 
@@ -321,6 +339,7 @@ export function resolveConversationListPresentation(
         conversationType: 'group',
         contactId: input.id,
         displayName: trimmed,
+        displayNameResolved: true,
       };
     }
   }
@@ -330,6 +349,7 @@ export function resolveConversationListPresentation(
     conversationType: 'group',
     contactId: input.id,
     displayName: fb && !isRawId(fb) ? fb : 'Groupe',
+    displayNameResolved: true,
   };
 }
 
