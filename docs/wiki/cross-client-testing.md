@@ -1056,20 +1056,66 @@ down never appeared, which to a user is indistinguishable from nobody having wri
 That is the failure TAB-6 exists to catch, and the web passes it: deleting `canari_refresh` there
 lands on `/login` with "Se connecter". **The two platforms disagree**, so this is WP-ANDROID-SESS-1.
 
-What is NOT established, and must be before anything is fixed: **why** the refresh token was invalid
-at 15:40 when it was valid at 15:25 (the app authenticated fine right after the re-flash, and the
-smoke test and LIFE-2 both passed in between). Two candidates, and they need different fixes:
+#### Root cause, settled the same day: the on-disk cookie lags one rotation
 
-1. the rotated refresh token is not durably persisted across process death on Android, so a cold
-   start presents a stale one; or
-2. concurrent refreshes replayed one rotating token and the server revoked the session - which is
-   precisely the model in [sessions](sessions.md), and the cold start does fire many API calls at
-   once. Note the first 401 arrives BEFORE any concurrency, which argues against this happening on
-   *this* start, but not against it having happened on the previous one.
+The 401 was a **replay**, and the server says so in its own words - same second as the phone's line
+above:
 
-The decisive evidence is server-side (the session row for that device: revoked, rotated, or simply
-expired). Reproduce first: log the phone back in, force-stop, relaunch, and read whether the FIRST
-refresh of a fresh session survives a process death.
+```
+08/06/2026, 1:40:16 PM  WARN [AuthSessionsService]
+  Refresh token replay detected sid=19c9438d-… user=d82cd226… - session revoked
+```
+
+Corroborated by the table: of the four Pixel 6a rows for that user, none is later than
+2026-08-05 16:43 UTC. The 08-06 row is gone, deleted by the replay branch.
+
+**Why a replay.** The refresh token exists in exactly one place on Android - the WebView's Chromium
+cookie store - and Chromium commits that store on a lazy timer. `MainActivity` calls
+`CookieManager.flush()` from `onPause`/`onStop` and nowhere else, so a rotation performed while the
+app is FOREGROUNDED lives in memory only. `am force-stop` runs no lifecycle callback, so the next
+cold start reads the cookie from before that rotation.
+
+Proven both directions with `sessprobe.mjs`, **without ever reading the token**, by using the
+server's own 60 s grace window as the instrument: force a rotation from the page, kill and relaunch
+inside the window, then read the row back. If the row has not moved, the phone presented the
+superseded token and the server merely re-issued (grace); if it has, the phone presented the current
+one.
+
+| run | before the kill | rotation forced | row afterwards | reading |
+| --- | --- | --- | --- | --- |
+| 1 | nothing | 14:28:38.775 → 200 | `tokenId 63a46f92…`, `rotatedAt 14:28:39` - **only my rotation** | relaunch was a grace REISSUE → **disk was stale** |
+| 2 | HOME (fires `onStop`) | 14:29:29.672 → 200 | `tokenId 5d669b5a…`, `rotatedAt 14:29:37` - a **second, real** rotation | relaunch presented the current token → **disk was current** |
+
+Inside 60 s the grace window hides the whole thing. Outside it, the same stale cookie is a replay and
+the session is destroyed - which is exactly what LIFE-3 walked into, and exactly what the model in
+[sessions](sessions.md) prescribes. Hypothesis 2 (concurrent cold-start refreshes replaying one
+token) is dead: the first 401 precedes any concurrency, and run 1 reproduces the staleness on its
+own.
+
+**There are two defects, and the second is the one the user sees.** They are independent, and the
+second would have been just as wrong if the token had been fine:
+
+1. **Persistence.** The rotated credential is not durably written before it is relied upon. Fixed by
+   flushing the WebView cookie jar after login, after every refresh, and after logout - awaited, via
+   a `flush_webview_cookies` Tauri command that reaches `android.webkit.CookieManager` over JNI.
+2. **Visibility.** A dead session must land on `/login` everywhere. `apiFetch` swallowed
+   `SessionExpiredError` and re-issued the request unauthenticated (`proceeding without auth`); the
+   route guard only redirects when no user id is cached; and the Android reconnect path returned at
+   `No device key in vault` before `getToken()` was ever called, so nothing raised the error that
+   redirects. The web passed by accident - its device key is in the browser vault. The verdict is now
+   announced once from the single place that reaches it (`setSessionExpiredHandler`), and only a
+   TRANSPORT failure earns an anonymous retry.
+
+**Two traps this cost.** Reading the cookie off the device is refused by the classifier, and rightly
+so - it is a live credential; the grace-window probe answers the same question and touches nothing.
+And `ssh canari` is impossible from the Bash tool (Git Bash strips the backslashes out of the
+cloudflared ProxyCommand path): every prod query goes through the PowerShell tool, single-quoted
+outside with SQL literals doubled (`''uuid''`), or the quoting shreds the statement.
+
+**Owed:** the on-device verification. Log in, force a rotation, force-stop, wait past 60 s, relaunch -
+the session must survive, where before it died. Nothing else re-verifies this: it compiles on
+Windows (`cargo check --target aarch64-linux-android` is clean) but a compile proves nothing about
+`FindClass` at runtime.
 
 ### Three more harness faults, from the LIFE phase - all in reading the phone
 

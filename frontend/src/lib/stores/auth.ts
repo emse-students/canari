@@ -18,6 +18,7 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { flushAndroidCookies } from '$lib/utils/androidCookies';
 
 const OIDC_STATE_KEY = 'canari_oidc_state';
 const OIDC_RETURN_KEY = 'canari_oidc_return';
@@ -78,6 +79,44 @@ export class SessionExpiredError extends Error {
 
 const alog = (msg: string) => console.log('[A] ' + msg);
 const awarn = (msg: string) => console.warn('[A] ' + msg);
+
+/** Fires once when the refresh cookie is proven dead. Set by the app shell. */
+type SessionExpiredHandler = () => void;
+let _sessionExpiredHandler: SessionExpiredHandler | null = null;
+let _sessionExpiredNotified = false;
+
+/**
+ * Registers the app-level reaction to a definitively dead session (log out, go to `/login`).
+ *
+ * Every caller of `refresh()`/`getToken()` used to own that decision itself, and each one that
+ * forgot produced a signed-in-looking app with nothing in it: `apiFetch` swallowed the error and
+ * retried anonymously, and the Android reconnect path returned before `getToken()` was ever
+ * called, so nothing raised the error that redirects (WP-ANDROID-SESS-1). The verdict is reached
+ * in exactly one place - here - so it is announced from here too.
+ */
+export function setSessionExpiredHandler(fn: SessionExpiredHandler | null): void {
+  _sessionExpiredHandler = fn;
+}
+
+/**
+ * Announces a dead session, at most once per session.
+ *
+ * Gated on a locally saved user: with no saved user there is nothing to log out OF, and a 401 is
+ * the ordinary answer during the login flow itself, where a forced redirect would be a loop.
+ */
+function notifySessionExpired(): void {
+  if (_sessionExpiredNotified || !currentUserId()) return;
+  _sessionExpiredNotified = true;
+  awarn('session dead → logout');
+  if (_sessionExpiredHandler) {
+    _sessionExpiredHandler();
+    return;
+  }
+  // No handler wired is exactly the silent failure this exists to prevent - say so, and redirect
+  // anyway rather than leave the user on a shell that can no longer load anything.
+  awarn('no session-expired handler registered - redirecting directly');
+  void import('$app/navigation').then(({ goto }) => goto('/login', { replaceState: true }));
+}
 
 /**
  * Writes the access token into the `canari_ws_token` JS-readable cookie used by
@@ -251,6 +290,9 @@ export async function handleOidcCallback(
   console.debug('[auth] got access_token, saving user:', data.user?.id);
   _accessToken = data.access_token;
   setWsSessionCookie(data.access_token);
+  // The response carried the first `canari_refresh` of this session; on Android it is only in
+  // WebView memory until something flushes it.
+  await flushAndroidCookies('login');
 
   saveUserLocally(data.user);
   console.debug('[auth] handleOidcCallback complete');
@@ -314,13 +356,23 @@ async function _doRefresh(): Promise<string> {
     // Only 401/403 prove the refresh cookie is dead. Any other status (e.g. 502/503
     // while the backend restarts during a deploy) is transient: throwing
     // SessionExpiredError there would force a logout + cookie revocation for a hiccup.
-    if (res.status === 401 || res.status === 403) throw new SessionExpiredError();
+    if (res.status === 401 || res.status === 403) {
+      notifySessionExpired();
+      throw new SessionExpiredError();
+    }
     throw new Error(`Token refresh failed (HTTP ${res.status})`);
   }
 
   const data = (await res.json()) as { access_token: string };
   _accessToken = data.access_token;
   setWsSessionCookie(data.access_token);
+  // The refresh token ROTATED: the cookie the server just set is the only one it will accept from
+  // now on, and the previous one becomes a replay 60 s later. On Android that cookie is in WebView
+  // memory only, so a process death before Chromium's own commit timer would hand the next cold
+  // start the superseded value and get the session revoked (WP-ANDROID-SESS-1).
+  await flushAndroidCookies('refresh');
+  // The session answered, so any earlier "session is dead" verdict is void.
+  _sessionExpiredNotified = false;
 
   // Decode claims from the new JWT and keep reactive state in sync.
   let tokenExp: number | null = null;
@@ -401,6 +453,9 @@ export async function clearAuth(): Promise<void> {
     method: 'POST',
     credentials: 'include',
   }).catch((e) => awarn('logout✗ ' + e));
+  // Same reasoning as the rotation: the cookie DELETION must reach disk too, or a process death
+  // resurrects a revoked cookie at the next launch.
+  await flushAndroidCookies('logout');
   clearUserLocally();
 }
 

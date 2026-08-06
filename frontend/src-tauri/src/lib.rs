@@ -24,6 +24,7 @@ use crate::state::{AppState, HttpClient, PendingDb};
 
 // Re-export commands for generate_handler!
 use crate::commands::bootstrap::bootstrap_dead_conversation;
+use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
     creer_groupe, envoyer_message, envoyer_message_bytes, exporter_group_info,
@@ -50,6 +51,38 @@ use crate::commands::storage::{
 // Kept in lib.rs because they use `extern "system"` / `no_mangle` and reference
 // `mobile::background` / `mobile::proto_fields` which are conditionally compiled.
 // PIN-based JNI variants removed: all decrypt paths now use key-based variants.
+
+#[cfg(target_os = "android")]
+static ANDROID_JAVA_VM: std::sync::OnceLock<jni::JavaVM> = std::sync::OnceLock::new();
+
+/// Caches the `JavaVM` when the native library is loaded.
+///
+/// Every other JNI symbol in this file is called FROM Kotlin, so the JVM hands it a `JNIEnv`.
+/// `flush_webview_cookies` is the opposite direction - Rust calling into the framework at a moment
+/// Kotlin knows nothing about - and that needs a `JavaVM` to attach the calling thread to.
+/// `JNI_OnLoad` is the only hook guaranteed to run before any of our Rust code can, because it is
+/// what `System.loadLibrary("mines_app_lib")` invokes (CanariApplication and generated/Rust.kt).
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn JNI_OnLoad(
+    vm: *mut jni::sys::JavaVM,
+    _reserved: *mut std::ffi::c_void,
+) -> jni::sys::jint {
+    match unsafe { jni::JavaVM::from_raw(vm) } {
+        Ok(vm) => {
+            let _ = ANDROID_JAVA_VM.set(vm);
+        }
+        Err(e) => log::error!("[JNI] JNI_OnLoad: JavaVM::from_raw failed: {e}"),
+    }
+    jni::sys::JNI_VERSION_1_6
+}
+
+/// The cached `JavaVM`, or `None` if `JNI_OnLoad` never ran (which would mean the library was not
+/// loaded through `System.loadLibrary` - a case that must be visible, never silently absorbed).
+#[cfg(target_os = "android")]
+pub(crate) fn android_java_vm() -> Option<&'static jni::JavaVM> {
+    ANDROID_JAVA_VM.get()
+}
 
 #[cfg(target_os = "android")]
 #[no_mangle]
@@ -833,7 +866,8 @@ pub fn run() {
             read_and_clear_pending_call_accept,
             get_voip_token,
             store_channel_key,
-            actualiser_cle_keystore_avec_devicekey
+            actualiser_cle_keystore_avec_devicekey,
+            flush_webview_cookies
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

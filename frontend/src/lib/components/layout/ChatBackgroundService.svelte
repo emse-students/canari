@@ -25,7 +25,7 @@
     isRecoverableWithOldPin,
     type LoginErrorCode,
   } from '$lib/composables/session/loginErrors';
-  import { getToken, clearAuth } from '$lib/stores/auth';
+  import { getToken, clearAuth, setSessionExpiredHandler } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
   import {
     globalSession,
@@ -386,6 +386,10 @@
    * the login page so they can sign in again.
    */
   async function handleSessionExpired() {
+    // Several observers can reach the same verdict at once (the global notifier, the promotion
+    // path, a login attempt). One logout is enough.
+    if (_sessionExpiredHandled) return;
+    _sessionExpiredHandled = true;
     appendLog('[AUTH] Session expired - logging out and redirecting to /login.');
     dismissAuthPrompts();
     pinError = '';
@@ -427,6 +431,8 @@
 
   // Guard against concurrent login attempts (e.g. onMount + afterNavigate both firing).
   let _loginInProgress = false;
+  // Guard against several observers reaching the "session is dead" verdict at once.
+  let _sessionExpiredHandled = false;
 
   /** Closes PIN/biometric modals as soon as MLS unlocks; catch-up continues in the background. */
   function dismissAuthPrompts() {
@@ -800,9 +806,16 @@
     window.addEventListener('online', handleOnline);
     document.addEventListener('visibilitychange', handleVisibility);
 
+    // The refresh endpoint is the only place that learns a session is dead, and it can learn it
+    // from any caller - a background poll, a socket reconnect, a native auto-login. Wiring the
+    // reaction once, here, is what makes the logout unmissable instead of depending on which path
+    // happened to observe the 401 (WP-ANDROID-SESS-1).
+    setSessionExpiredHandler(() => void handleSessionExpired());
+
     return () => {
       window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisibility);
+      setSessionExpiredHandler(null);
     };
   });
 

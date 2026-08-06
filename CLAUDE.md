@@ -14,7 +14,11 @@
 - WIKI IS PREFERRED: Always search `docs/wiki/` before reading source code. Update the relevant wiki page alongside code changes — stale wiki is worse than no wiki. Cross-link freely between pages.
 - SERVICE READMES: Each `apps/*/README.md` should stay synced with its wiki counterpart. If you expand the wiki page, reflect the summary in the README.
 - PROD ACCESS: `ssh canari`, `ssh mitv`, `ssh cercle` (Le Cercle, via ProxyJump canari; key installed
-  2026-08-03, no password needed). Postgres db is `auth_db`, not `canari`.
+  2026-08-03, no password needed). Postgres db is `auth_db`, user `canari` (NOT `postgres`, and not
+  the `admin` of `.env.example`, which is local-only). **Use the PowerShell tool, never Bash** - Git
+  Bash strips the backslashes out of the cloudflared ProxyCommand path and the exec fails. Quote SQL
+  with a SINGLE-quoted outer string and doubled literals: `ssh canari 'docker exec … psql -U canari
+  -d auth_db -x -c "SELECT … WHERE id = ''uuid''"'`.
 - CLASSIFIER DOWN: End of session signal. Stop ASAP, prepare compaction + easy resume for next session.
 
 ## **ARCHITECTURE & CONSTRAINTS**
@@ -384,25 +388,27 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   Safari/mobile fallback where `SharedWorker` is absent all have to be redone.
 
 - \[ \] **WP-ANDROID-SESS-1 (P1) - ON ANDROID, A SESSION THAT CANNOT REFRESH LEAVES THE APP LOOKING
-  SIGNED IN, SHOWING NOTHING.** Found 2026-08-06 by LIFE-3, on prod, on the freshly flashed build.
-  After a force-stop and relaunch the FIRST refresh was rejected (`[A] refresh✗401 988ms`), and the
-  app then rendered the ordinary feed shell - no login screen, no PIN modal - while looping one
-  refresh per second and serving every call `proceeding without auth`. The conversation was empty and
-  the DM sent while it was down never appeared, which to a user is nobody having written. **The web
-  passes this exact case** (TAB-6: `/login` with "Se connecter"), so the platforms disagree, and the
-  durable rule about the silent empty list is the one being broken. **What is NOT established, and
-  must be first: why the refresh token was invalid** - it was valid at 15:25 (the app authenticated
-  right after the re-flash; LIFE-1 and LIFE-2 both passed on it) and rejected at 15:40. Two
-  candidates needing different fixes: the rotated token is not durably persisted across process death
-  on Android, or concurrent cold-start refreshes replayed one rotating token and the server revoked
-  the session per [sessions](docs/wiki/sessions.md). The first 401 precedes any concurrency, which
-  argues against the replay happening on THAT start but not on the one before. Decisive evidence is
-  the server's session row (blocked by the classifier this session). Reproduce first: log the phone
-  back in, force-stop, relaunch, and see whether a FRESH session's first refresh survives a process
-  death. Full log excerpt and reasoning in
-  [cross-client-testing > the LIFE phase opens](docs/wiki/cross-client-testing.md#the-life-phase-opens-what-force-stop-actually-tests-and-what-it-found-2026-08-06).
-  **The phone is currently in this state** - session expired, feed rendering, no login prompt - so
-  the next session starts by logging it back in.
+  SIGNED IN, SHOWING NOTHING. Root cause SETTLED and BOTH HALVES WRITTEN 2026-08-06; what is owed is
+  the DEPLOY and the ON-DEVICE verification.** Found by LIFE-3 on prod. The 401 was a **replay** -
+  the server's own log, same second: `Refresh token replay detected sid=19c9438d-… - session
+  revoked`. The phone presented a cookie one rotation behind, because the refresh token lives only in
+  the WebView cookie jar, Chromium commits it lazily, and `MainActivity` flushes only from
+  `onPause`/`onStop` - so a foreground rotation followed by a kill with no lifecycle callback reverts
+  the disk. Proven both ways with `sessprobe.mjs` (grace window as the instrument, the token never
+  read): no flush -> the row had not moved, so the relaunch was a grace REISSUE; `--flush` -> a
+  second real rotation. **Do not re-open the concurrency hypothesis, it is dead.** Everything - the
+  two runs, the table, both fixes - is in
+  [cross-client-testing > the LIFE phase opens](docs/wiki/cross-client-testing.md#the-life-phase-opens-what-force-stop-actually-tests-and-what-it-found-2026-08-06),
+  and the rules it produced are in [sessions](docs/wiki/sessions.md).
+  **Two defects, both now written, neither deployed:** (1) persistence - `flush_webview_cookies`
+  (Rust JNI -> `android.webkit.CookieManager`, VM cached in `JNI_OnLoad`) awaited after login,
+  refresh and logout; (2) visibility - the 401 verdict is announced once from `auth.ts`
+  (`setSessionExpiredHandler`), and `apiFetch` no longer retries a dead session anonymously. Gates
+  green: `check` 7549 files 0 errors, lint, 922/922 tests, `cargo check --target
+  aarch64-linux-android` clean. **OWED, in order: deploy the web, rebuild + reflash the APK, then
+  verify on device** - rotate, force-stop, wait PAST 60 s, relaunch: the session must survive where
+  it died. A compile says nothing about `FindClass` at runtime. **The phone is logged in** (session
+  `c64b1934-0eaf-4738-b237-0a3730ce6949`) on the PREVIOUS build.
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
@@ -636,12 +642,28 @@ rule it cost is on that page - read it before touching any login, cookie or rota
 - A replayed rotating token is TWO holders of one cookie: revoke the session - but only with a grace
   window, and settle the race in ONE conditional `UPDATE`, never read-then-write.
 - An empty key can fail OPEN or CLOSED and you cannot guess which. Decide explicitly.
+- Rotation makes DURABILITY part of the protocol: a client that loses the new token does not just
+  fail to refresh, it gets revoked. Force the write where the rotation happens, and AWAIT it - on
+  Android the cookie jar reaches disk only on `CookieManager.flush()`, and a kill with no lifecycle
+  callback rewinds it one generation.
+- A dead session is an ANSWER: never retry the request anonymously, or "you are logged out" renders
+  as "there is nothing here". Reach the verdict in one place and announce it from there - every
+  caller that re-decides is a path that can forget.
 
 ---
 
 ### SHARED GOTCHAS -> [development](docs/wiki/development.md), [cicd](docs/wiki/cicd.md)
 
 - Bash-tool commit messages: use a heredoc or `git commit -F file`, NOT PowerShell `@'...'@`.
+- MiConnect 2FA remembers the device for 8 h, so a later login only needs the code. If the CAS page
+  stalls after Esup Auth accepts, go BACK to the browser tab and reload; ask the user rather than
+  looping.
+- A live credential is not a debugging input: reading the phone's cookie jar is refused, and the
+  answer came from a probe that never touched the token. Reach for the observable, not the secret.
+- Android Rust compiles from Windows: `NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125`, put
+  `toolchains/llvm/prebuilt/windows-x86_64/bin` on PATH, `CC_aarch64_linux_android=aarch64-linux-android24-clang.cmd`,
+  then `cargo check --target aarch64-linux-android`. It is the only local check of `#[cfg(android)]`
+  code - and it proves compilation, never that a JNI `FindClass` resolves at runtime.
 - Backend lint needs `npm install` in the app dir (bare `oxlint`/`oxfmt` + repo-level configs).
 - The pre-commit hook sweeps the WHOLE frontend and re-stages - isolate unrelated dirty files.
 - Before push: `rm -rf apps/*/dist`, then `git pull --rebase --autostash origin main`.

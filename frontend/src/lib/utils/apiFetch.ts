@@ -4,9 +4,10 @@
  * - Injects the Bearer token automatically.
  * - On a 401 response, attempts one silent token refresh and retries.
  * - On a second 401, clears auth state and rethrows so the caller can redirect.
+ * - Never issues an anonymous request in place of an expired session (see below).
  */
 
-import { getToken, refresh } from '$lib/stores/auth';
+import { getToken, refresh, SessionExpiredError } from '$lib/stores/auth';
 import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
 
 /**
@@ -40,7 +41,15 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
   let token = '';
   try {
     token = await getToken();
-  } catch {
+  } catch (e) {
+    // A dead session is an ANSWER, not a hiccup: retrying anonymously turns "you are logged out"
+    // into "there is nothing here", which is what left Android showing an empty feed for a revoked
+    // session (WP-ANDROID-SESS-1). Only a transport failure earns the unauthenticated attempt -
+    // some routes answer without a token, and offline startup depends on that.
+    if (e instanceof SessionExpiredError) {
+      console.warn(`[API] session expired on ${method} ${logUrl} - no anonymous retry`);
+      throw e;
+    }
     console.warn(`[API] getToken failed for ${method} ${logUrl} - proceeding without auth`);
   }
 

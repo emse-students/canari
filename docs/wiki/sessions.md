@@ -48,6 +48,42 @@ to life by the request that was already in flight.
 signing then fails, the browser still holds the `jti` just recorded as previous, so the next request
 is reissued instead of being read as a replay.
 
+## The rotation has to reach DISK, and on Android nothing guarantees that
+
+Rotation makes the credential's durability part of the protocol: from the instant the server answers,
+the ONLY acceptable token is the one it just set, and the previous one becomes a replay 60 s later.
+A client that loses the new value therefore does not merely fail to refresh - it gets its session
+revoked.
+
+On Android the refresh token lives in exactly one place: the WebView's Chromium cookie store, which
+is committed to disk on a lazy timer. `CookieManager.flush()` is the only way to force it, and
+`MainActivity` called it from `onPause`/`onStop` only. A process death with no lifecycle callback
+(`am force-stop`, a crash, an OS kill, an APK reinstall) therefore reverted the on-disk cookie to the
+generation BEFORE the last rotation, and the next cold start presented it. Inside the 60 s grace
+window the reissue hides the problem completely; outside it, the server reads a replay and deletes
+the session row - permanently, and correctly, by the rule above.
+
+Proven on production 2026-08-06 (WP-ANDROID-SESS-1), in both directions, using the grace window
+itself as the instrument: force a rotation with the app foregrounded, kill it, relaunch inside 60 s
+and read the row back. Without a flush the row had not moved, so the phone had presented the
+superseded token; with a HOME press before the kill it had rotated again, so the phone had presented
+the current one. The server's own log for the original failure says `Refresh token replay detected
+sid=… - session revoked`, in the same second as the phone's `refresh 401`.
+
+Two rules come out of it, and they generalise past Android:
+
+- **A rotating credential must be durably written before it is relied upon.** Every response that may
+  carry a `Set-Cookie` for the refresh cookie - login, refresh, logout - is followed by an awaited
+  `flush_webview_cookies` (`frontend/src/lib/utils/androidCookies.ts`, a Tauri command that reaches
+  `android.webkit.CookieManager` over JNI). Awaited, not fire-and-forget: returning before the bytes
+  are on disk leaves exactly the window it closes.
+- **A dead session must be visible.** The 401 is reached in one place, so the reaction is announced
+  from that one place (`setSessionExpiredHandler` in `frontend/src/lib/stores/auth.ts`) rather than
+  re-decided by each caller. `apiFetch` used to swallow the error and retry the request
+  unauthenticated, which turns "you are logged out" into "there is nothing here" - the app rendered
+  its ordinary shell, empty, with no login screen. Only a TRANSPORT failure now earns the anonymous
+  attempt.
+
 ## Keys
 
 - **An empty key can fail OPEN or CLOSED and you cannot guess which.** `crypto.createHmac('sha256','')`
