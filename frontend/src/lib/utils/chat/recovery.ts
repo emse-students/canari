@@ -102,17 +102,29 @@ export async function requestReAdd(
   // Cap it to one attempt per RECOVERY_TIMEOUT_MS per group. The marker is set only once we commit
   // to an attempt (below), so a first call is never blocked.
   const now = Date.now();
-  if (now - (lastReAddAt.get(groupId) ?? 0) < RECOVERY_TIMEOUT_MS) return;
+  const sinceLast = now - (lastReAddAt.get(groupId) ?? 0);
+  if (sinceLast < RECOVERY_TIMEOUT_MS) {
+    deps.log(`[READD] ${groupId.slice(0, 8)}... throttled (${Math.round(sinceLast / 1000)}s ago)`);
+    return;
+  }
+
+  // Entry log, and it earns its noise: the throttle above returns silently, so an attempt that got
+  // stuck on one of the network calls below was indistinguishable from one that never started.
+  // Measured on the device 2026-08-06 - `requestReAdd` never returned and never logged a thing.
+  deps.log(`[READD] ${groupId.slice(0, 8)}... attempt starting`);
 
   const meta = await deps.mlsService.getGroupMeta(groupId).catch(() => null);
+  deps.log(`[READD] ${groupId.slice(0, 8)}... getGroupMeta -> ${meta === null ? 'null' : 'ok'}`);
 
   // No server metadata: `getGroupMeta` returns null for both absent groups and network errors, so
   // resolve the ambiguity - `getGroupServerStatus` distinguishes a CONFIRMED ABSENT (no dm_groups
   // row) from a transient network error.
   if (meta === null) {
+    deps.log(`[READD] ${groupId.slice(0, 8)}... getGroupServerStatus…`);
     const status = classifyServerStatus(
       await deps.mlsService.getGroupServerStatus(groupId).catch(() => 'error' as const)
     );
+    deps.log(`[READD] ${groupId.slice(0, 8)}... serverStatus -> ${status.kind}`);
     if (status.kind === 'absent') {
       // The group no longer exists AT ALL server-side. Purge the local phantom instead of
       // re-emitting recovery indefinitely for a group that does not exist and is invisible in the UI.
@@ -157,7 +169,13 @@ export async function requestReAdd(
 
   // Self-service external-commit join first (Phase 4): fetch the stored GroupInfo and rejoin at the
   // current epoch without a peer. On success, clear the recovery bookkeeping and return.
-  if (await deps.mlsService.externalJoin(groupId).catch(() => false)) {
+  deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin…`);
+  const joined = await deps.mlsService.externalJoin(groupId).catch((e) => {
+    deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin threw: ${String(e).slice(0, 120)}`);
+    return false;
+  });
+  deps.log(`[READD] ${groupId.slice(0, 8)}... externalJoin -> ${joined}`);
+  if (joined) {
     deps.log(`[READD] ${groupId.slice(0, 8)}... rejoined via external commit (self-service)`);
     clearGroupNotReady(deps.userId, groupId);
     cancelReAdd(groupId, timers);
@@ -181,11 +199,13 @@ export async function requestReAdd(
       groupId,
       log: deps.log,
     });
+    deps.log(`[READD] ${groupId.slice(0, 8)}... external-join path done`);
     return;
   }
 
   // Fallback: no GroupInfo stored yet (or not an authorized member) -> ask a reachable member to
   // re-add us via a Welcome. The SYNC_WATCHDOG re-invokes this on its cadence until we rejoin.
+  deps.log(`[READD] ${groupId.slice(0, 8)}... sendWelcomeRequest…`);
   await deps.mlsService
     .sendWelcomeRequest(groupId)
     .catch((e) =>

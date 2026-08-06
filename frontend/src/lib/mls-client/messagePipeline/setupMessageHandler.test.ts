@@ -570,6 +570,45 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     vi.useRealTimers();
   });
 
+  it('a recovery that never settles does not block the message callback', async () => {
+    // Measured on the device 2026-08-06: `requestReAdd` never returned, the callback never
+    // returned, `isDraining` stayed true and every later inbound message was enqueued and never
+    // processed - no error, no line in the log. The callback must answer ACK/no-ACK on its own.
+    const gid = 'b5555555-5555-4555-8555-555555555555';
+    const deps = baseDeps({
+      conversations: createTestConversations([
+        [gid, emptyConversation(gid, { lifecycle: 'active' })],
+      ]),
+    });
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([gid]);
+    mls.processIncomingMessage = vi
+      .fn()
+      .mockRejectedValue(new Error('SecretTreeError(TooDistantInTheFuture)'));
+    mls.forgetGroup = vi.fn();
+    const { requestReAdd } = await import('$lib/utils/chat/recovery');
+    vi.mocked(requestReAdd).mockClear();
+    vi.mocked(requestReAdd).mockReturnValue(new Promise<void>(() => {}));
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+
+    const verdict = await Promise.race([
+      onMsg('peer', new Uint8Array([1]), gid, false, undefined, false),
+      new Promise((resolve) => setTimeout(() => resolve('BLOCKED'), 500)),
+    ]);
+
+    expect(verdict).toBe(true);
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalled();
+    vi.mocked(requestReAdd).mockResolvedValue(undefined);
+  });
+
   it('a generation too far ahead escalates at once instead of waiting on a replay that cannot help', async () => {
     const gid = 'b4444444-4444-4444-8444-444444444444';
     const deps = baseDeps({

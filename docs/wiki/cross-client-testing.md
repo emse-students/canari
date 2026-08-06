@@ -1429,6 +1429,28 @@ evidence that should have refused the conclusion.
   already at the target epoch, so any future path reaching it with a non-epoch failure gets a
   truthful answer.
 
+The window that produced it is `SenderRatchetConfiguration::new(2000, 2000)` (`mls-core/src/group.rs`),
+so "too far ahead" means **more than 2 000 frames missed from one sender in one epoch** - which only
+an undrainable queue reaches, and is why the two work packages are one story.
+
+#### How big the queue gets, and why that is by design
+
+Prod, 2026-08-06: **97 991 rows, 61 devices, 150 MB**, oldest 2026-06-11, six devices holding ~10 800
+each. That is NOT a leak and there is no work package in it - `RETENTION_WINDOW_MS` is 90 days, and
+`cleanupExpiredQueuedMessages` / `detectStaleDevices` / `cleanupStaleDevices` all key off it, so
+nothing purges a device that is only weeks old. Two test accounts registering a new device id per
+browser profile is what produced 61 of them.
+
+What it does mean is that the retention window is the SIZE of the failure WP-PENDING-1 describes: an
+ordinary device that stops connecting for a while comes back to tens of thousands of rows, which is
+precisely the case the all-or-nothing pull could never serve. Read the two together before proposing
+to shorten the window - the per-page drain is the fix, retention is the exposure.
+
+What happens after the escalation is worth knowing before reading a log: the first bad frame forgets
+the group, so every later queued frame takes the `!inGroup` path, is buffered and **not** ACKed
+(stays server-side). Once the re-add lands, those old-epoch frames fail as `wrong-epoch`, which does
+ACK - so the queue drains rather than growing, but only after the rejoin.
+
 **Still open, deliberately:** `map_decrypt_outcome` (`src-tauri/src/state.rs`, the BATCH path used by
 history replay) still answers `ok: true, data: None` for `SecretReuse` - the same "the native layer
 threw the diagnosis away" that WP-LOSS-1 fixed in the realtime path. It was left alone because

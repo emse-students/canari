@@ -119,6 +119,29 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
     await requestReAdd(groupId, deps, recoveryTimers);
   };
 
+  /**
+   * Starts a recovery WITHOUT blocking the caller, and says so when it settles.
+   *
+   * The message callback runs inside the inbound drain, and the drain's `isDraining` flag is only
+   * lowered once the callback returns - so an `await` here that never settles stops EVERY later
+   * inbound message, in silence, exactly as the hidden-tab deadlock did (WP-HIDDEN-1). Measured on
+   * the device 2026-08-06: one `requestReAdd` that never returned left `Drain start` with no
+   * `Drain complete`, and the next two messages were enqueued and never processed.
+   *
+   * Nothing was ever gained by waiting: the recovery's result is not read, and what it waits for -
+   * a Welcome, an external join - lands long after this frame has been answered. The callback's job
+   * is to decide ACK or no-ACK, not to see the repair through.
+   */
+  const startRecovery = (groupId: string): void => {
+    void onOutOfSync(groupId).then(
+      () => log(`[PIPELINE] Recovery attempt finished for ${groupId.slice(0, 8)}…`),
+      (e) =>
+        log(
+          `[PIPELINE] Recovery attempt FAILED for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`
+        )
+    );
+  };
+
   // Channel events (channel membership, epoch_rejected, etc.)
   mlsService.onChannelEvent = (event) => {
     void handleChannelEvent(event, {
@@ -151,6 +174,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           statePersister,
           pendingBuffer,
           recoveryTimers,
+          startRecovery,
         });
       }
 
@@ -165,7 +189,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           groupId,
           deps,
           pendingBuffer,
-          recoveryTimers,
+          startRecovery,
         });
       }
 
@@ -178,7 +202,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
         deliveryMeta,
         deps,
         statePersister,
-        onOutOfSync,
+        startRecovery,
       });
     }
   );
@@ -195,6 +219,8 @@ interface WelcomeArgs {
   statePersister: ReturnType<typeof createMlsStatePersister>;
   pendingBuffer: Map<string, { msgs: PendingMsg[] }>;
   recoveryTimers: Map<string, ReturnType<typeof setTimeout>>;
+  /** Starts a recovery and returns immediately - never awaited, see `startRecovery`. */
+  startRecovery: (groupId: string) => void;
 }
 
 /**
@@ -212,6 +238,7 @@ async function handleWelcome({
   statePersister,
   pendingBuffer,
   recoveryTimers,
+  startRecovery,
 }: WelcomeArgs): Promise<boolean> {
   const {
     mlsService,
@@ -457,7 +484,8 @@ async function handleWelcome({
       // Reset the counter past the budget so a later desync can republish afresh.
       if (rec.failures > MAX_NOMATCH_KP_RETRIES) noMatchKpFailures.delete(rec.target);
     }
-    await requestReAdd(rec.target, deps, recoveryTimers);
+    // Not awaited: this also runs inside the inbound drain (see `startRecovery`).
+    startRecovery(rec.target);
   }
 
   return true; // Always ACKed
@@ -469,7 +497,8 @@ interface UnknownGroupArgs {
   groupId: string;
   deps: MessageHandlerDeps;
   pendingBuffer: Map<string, { msgs: PendingMsg[] }>;
-  recoveryTimers: Map<string, ReturnType<typeof setTimeout>>;
+  /** Starts a recovery and returns immediately - never awaited, see `startRecovery`. */
+  startRecovery: (groupId: string) => void;
 }
 
 /**
@@ -486,15 +515,17 @@ async function handleUnknownGroup({
   groupId,
   deps,
   pendingBuffer,
-  recoveryTimers,
+  startRecovery,
 }: UnknownGroupArgs): Promise<boolean> {
   const { log } = deps;
 
   let buf = pendingBuffer.get(groupId);
   if (!buf) {
     // Unknown group: one immediate recovery attempt through the seam, then buffer. The
-    // watchdog takes over the cadence (the group is now in the not-ready registry).
-    await requestReAdd(groupId, deps, recoveryTimers);
+    // watchdog takes over the cadence (the group is now in the not-ready registry). NOT awaited -
+    // this runs inside the inbound drain, and an attempt that never settles would stop every later
+    // message (see `startRecovery`).
+    startRecovery(groupId);
     buf = { msgs: [] };
     pendingBuffer.set(groupId, buf);
     log(`[BUFFER] welcome_request sent for unknown group ${groupId.slice(0, 8)}…`);
@@ -513,7 +544,8 @@ interface KnownGroupArgs {
   deliveryMeta: IncomingDeliveryMeta | undefined;
   deps: MessageHandlerDeps;
   statePersister: ReturnType<typeof createMlsStatePersister>;
-  onOutOfSync: (groupId: string) => Promise<void>;
+  /** Starts a recovery and returns immediately - never awaited, see `startRecovery`. */
+  startRecovery: (groupId: string) => void;
 }
 
 /**
@@ -530,7 +562,7 @@ async function handleKnownGroup({
   deliveryMeta,
   deps,
   statePersister,
-  onOutOfSync,
+  startRecovery,
 }: KnownGroupArgs): Promise<boolean> {
   const {
     mlsService,
@@ -730,7 +762,7 @@ async function handleKnownGroup({
         );
         mlsService.forgetGroup(groupId);
         statePersister.persistNow();
-        await onOutOfSync(groupId); // forget done → re-Welcome honoured (group no longer local)
+        startRecovery(groupId); // forget done → re-Welcome honoured (group no longer local)
       }
       return true;
     }
@@ -749,7 +781,7 @@ async function handleKnownGroup({
       clearEpochGap(groupId);
       mlsService.forgetGroup(groupId);
       statePersister.persistNow();
-      await onOutOfSync(groupId);
+      startRecovery(groupId);
       return true;
     }
 
@@ -764,7 +796,7 @@ async function handleKnownGroup({
 
     // Any other failure (`wrong-epoch`, `unknown`) → out-of-sync → requestReAdd + ACK
     log(`[MLS] Decryption error for ${convoKey.slice(0, 8)}…: ${err.slice(0, 100)} → re-add`);
-    await onOutOfSync(groupId);
+    startRecovery(groupId);
     return true;
   }
 }
