@@ -1,8 +1,16 @@
 // ─── Multi-tab coordination ───────────────────────────────────────────────
-// Only one browser tab should hold the WebSocket connection and run MLS
-// operations. Other tabs run in read-only mode and receive message updates via
-// BroadcastChannel (`canari-tab-messages`). Tab leadership uses `canari-mls-tab`.
-// This prevents two tabs from advancing the same MLS ratchet concurrently.
+// Only one browser tab holds the WebSocket connection and runs MLS operations. Other tabs run in
+// read-only mode and receive message updates via BroadcastChannel (`canari-tab-messages`), which
+// also carries outbox coordination: a follower composes and queues, the leader encrypts and sends.
+// Tab leadership itself is negotiated on `canari-mls-tab`.
+//
+// This prevents two tabs from advancing the same MLS ratchet concurrently - which is not a
+// theoretical worry. Both tabs load their MLS client from ONE snapshot, so a send from the tab
+// whose in-memory ratchet is behind is encrypted at a generation the peer has already consumed and
+// is dropped on arrival, silently (WP-MULTITAB-1). Every write path therefore has to be gated, not
+// just the socket: `initializeConnection`, and the outbox flush in `utils/chat/outbox.ts`. For the
+// same reason a follower PROMOTED to leader must not send from the state it loaded - see the
+// promotion handler in `useChatSession.svelte.ts`.
 //
 // Strategy: prefer the Web Locks API (navigator.locks) which guarantees
 // mutual exclusion at the browser level - no read-modify-write race on

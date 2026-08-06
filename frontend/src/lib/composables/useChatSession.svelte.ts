@@ -265,11 +265,23 @@ export function useChatSession() {
 
   // ── Handler promotion tab leader ──────────────────────────────────────────
 
+  // This tab has just been handed leadership: the previous leader advanced the MLS ratchet on disk
+  // for as long as it lived, while this tab's in-memory client still holds the snapshot it loaded.
+  // Sending from it would reuse a generation the peer has already consumed - the message would be
+  // dropped on arrival (WP-MULTITAB-1). A reload is the one thing that provably reloads the state
+  // as it now stands, and it mirrors what the demotion handler below already does; it costs a
+  // second of startup, and the outbox is durable, so nothing queued is lost. A hot
+  // `reloadStateFromDisk` on the web service would be cheaper but has to swap the live WASM client
+  // under any in-flight operation - see WP-MULTITAB-1 in CLAUDE.md.
   setTabLeaderPromotedHandler(() => {
     const cb = tabLeaderSessionCb;
     if (!cb || !isLoggedIn || !getIsTabLeader()) return;
     isTabLeaderState = true;
-    cb.log('[TAB] Leader promoted - connecting WebSocket…');
+    cb.log('[TAB] Leader promoted - reloading to pick up the MLS state left by the old leader.');
+    if (typeof window !== 'undefined') {
+      setTimeout(() => window.location.reload(), 50);
+      return;
+    }
     void attemptReconnectImpl(ctx, cb);
   });
 

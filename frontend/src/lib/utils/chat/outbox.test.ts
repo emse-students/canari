@@ -1,4 +1,25 @@
 import { SvelteMap } from 'svelte/reactivity';
+
+// Encryption is leader-only (WP-MULTITAB-1), so every flush case here is a leader unless it says
+// otherwise. The cross-tab channel is stubbed too: what matters is which side is asked to act,
+// not that a BroadcastChannel exists under happy-dom.
+const isTabLeaderMock = vi.hoisted(() => vi.fn(() => true));
+const tabOutboxMock = vi.hoisted(() => ({
+  requestLeaderOutboxFlush: vi.fn(),
+  publishOutboxEntrySent: vi.fn(),
+  subscribeTabOutboxEvents: vi.fn(() => () => {}),
+}));
+// Only the leadership answer is overridden: this module is pulled in transitively by the session
+// singleton, which registers the promotion/demotion handlers at import time.
+vi.mock('$lib/mls-client/tabLeader', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/tabLeader')>()),
+  getIsTabLeader: () => isTabLeaderMock(),
+}));
+vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/tabMessageSync')>()),
+  ...tabOutboxMock,
+}));
+
 import { createOutbox, buildOutboxProto, type OutboxDeps } from './outbox';
 import { toMirrorEntry } from './outboxMirror';
 import { MediaKind } from '$lib/proto/codec';
@@ -443,5 +464,65 @@ describe('outbox flusher', () => {
     expect(uploadMedia).not.toHaveBeenCalled();
     expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm', false);
     expect(storage._map.has('mm')).toBe(false);
+  });
+});
+
+describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.requestLeaderOutboxFlush.mockClear();
+    tabOutboxMock.publishOutboxEntrySent.mockClear();
+  });
+
+  afterEach(() => {
+    isTabLeaderMock.mockReturnValue(true);
+  });
+
+  it('never encrypts from a follower tab, and asks the leader to drain instead', async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    await outbox.flush();
+
+    // A send from the follower would be encrypted at a generation the peer has already consumed:
+    // it reaches the server (201) and is dropped on arrival as a duplicate. The entry stays queued,
+    // untouched - no attempt, no backoff - because the leader is about to send it.
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.get('m1')!.attempts).toBe(0);
+    expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalledTimes(1);
+  });
+
+  it('queues from a follower and still nudges the leader (the queue is shared storage)', async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const storage = makeStorage();
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    await outbox.enqueue(textEntry('m1', 'g1', 100));
+
+    // The message is durable and visible to the leader tab; only the encryption moved.
+    expect(storage.saveOutboxEntry).toHaveBeenCalledTimes(1);
+    expect(storage._map.has('m1')).toBe(true);
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalled();
+  });
+
+  it('tells the other tabs when an entry has gone out, so a follower can settle its echo', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations: new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]),
+      })
+    );
+
+    await outbox.flush();
+
+    expect(tabOutboxMock.publishOutboxEntrySent).toHaveBeenCalledWith('m1', undefined);
   });
 });

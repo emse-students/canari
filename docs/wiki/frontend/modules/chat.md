@@ -72,6 +72,22 @@ the epoch - is asynchronous. A flush triggered by `online` or `visibilitychange`
 barrier can send at a stale epoch, which up-to-date peers cannot decrypt. That is a silent loss:
 the sender sees a delivered message and the recipient never receives one.
 
+### Only the leader tab flushes
+
+The queue is shared across tabs - it is in IndexedDB - but **encryption belongs to the leader tab
+alone**. `runFlush` returns before anything else when `getIsTabLeader()` is false and posts
+`outbox_flush_request` on `canari-tab-messages`; the leader drains on the follower's behalf and
+answers `outbox_entry_sent` so the follower can settle the echo it is showing as `pending`. Only the
+instruction crosses the channel, never the message, so a lost nudge costs a retry and nothing else.
+
+This is not tidiness. Two tabs hold two MLS clients loaded from one snapshot, so a send from the tab
+whose ratchet is behind is encrypted at a generation the peer has consumed and is dropped on arrival
+as a duplicate - 4 losses in 9 sends when measured (WP-MULTITAB-1, in
+[cross-client-testing](../../cross-client-testing.md#two-tabs-of-one-account-diverge-their-ratchet-and-the-losers-message-is-dropped-wp-multitab-1)).
+The same reasoning is why a follower promoted to leader **reloads** rather than picking up where it
+left off: the gate froze its in-memory state at load time while the leader kept advancing the one on
+disk.
+
 ### The flusher resolves its token, and does not run while offline
 
 Two rules about *when* the queue is allowed to try, both learned from the offline-unlock work

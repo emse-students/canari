@@ -11,6 +11,12 @@ import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterReg
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { getIsTabLeader } from '$lib/mls-client/tabLeader';
+import {
+  requestLeaderOutboxFlush,
+  publishOutboxEntrySent,
+  subscribeTabOutboxEvents,
+} from '$lib/mls-client/tabMessageSync';
 
 /**
  * Backoff schedule (ms) between flush attempts for an entry that keeps failing.
@@ -80,7 +86,7 @@ export interface OutboxDeps {
 export interface OutboxController {
   /** Persist a queued message and schedule a flush. */
   enqueue: (entry: OutboxEntry) => Promise<void>;
-  /** Drain the outbox (tab-leader gated by the caller). Coalesces concurrent calls. */
+  /** Drain the outbox. Gated on tab leadership here, not by the caller. Coalesces concurrent calls. */
   flush: () => Promise<void>;
   /** Mark already-loaded messages whose id is still queued as `pending` (reload / history load). */
   applyPendingStatuses: () => Promise<void>;
@@ -133,6 +139,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     window.addEventListener('online', onOnline);
     document.addEventListener('visibilitychange', onVisible);
   }
+
+  // Cross-tab half of the leader gate: the leader drains on a follower's behalf, and the follower
+  // settles the echo it is still showing as `pending` once the leader reports the send.
+  const unsubscribeTabOutbox = subscribeTabOutboxEvents((event) => {
+    if (event.type === 'outbox_flush_request') {
+      if (!getIsTabLeader()) return;
+      log('[OUTBOX] Flush requested by a follower tab.');
+      runFlush();
+      return;
+    }
+    if (getIsTabLeader()) return;
+    patchStatus(event.messageId, 'sent');
+    if (event.content) updateMessageContent(event.messageId, event.content);
+  });
 
   /** Locate a message by id across all conversations (it may have been re-keyed to a duplicate). */
   function findMessage(
@@ -310,6 +330,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       if (mediaContent) updateMessageContent(entry.id, mediaContent);
       await persistSent(terminalId, entry.id);
       patchStatus(entry.id, 'sent');
+      // The tab that composed this may be a follower, whose own echo is still showing `pending`.
+      publishOutboxEntrySent(entry.id, mediaContent);
       // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
       // The receiver deduplicates on messageId, but the retry is worth seeing in a log.
       await storage
@@ -372,6 +394,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
   async function runFlush(): Promise<void> {
     if (!storage) return;
+    // Encryption belongs to the leader tab, and to it alone. Both tabs of one account hold their
+    // own MLS client loaded from a single snapshot, so a send from the tab whose in-memory ratchet
+    // is behind is encrypted at a generation the peer has already consumed: the peer logs
+    // `Ciphertext generation out of bounds` and drops it as a duplicate, and the message is gone
+    // (WP-MULTITAB-1). Leadership already gated the WebSocket and `initializeConnection`; this is
+    // the write path it never covered - the follower was observed flushing the LEADER's entry.
+    // The entry itself needs no transfer: the queue is in IndexedDB, which both tabs share.
+    if (!getIsTabLeader()) {
+      log('[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.');
+      requestLeaderOutboxFlush();
+      return;
+    }
     // A flush needs a session that can actually send. Two different reasons it may not be able to:
     // there is no network at all, or the session was unlocked offline and holds no token yet
     // (promoteOfflineSession calls back here the moment it does). Attempting anyway is not merely
@@ -469,6 +503,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     dispose(): void {
       if (backoffTimer) clearTimeout(backoffTimer);
       backoffTimer = null;
+      unsubscribeTabOutbox();
       if (typeof window !== 'undefined') {
         window.removeEventListener('online', onOnline);
         document.removeEventListener('visibilitychange', onVisible);

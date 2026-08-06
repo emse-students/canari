@@ -313,21 +313,25 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   The yield was one way in, not the only one.
 
 - \[ \] **WP-MULTITAB-1 (P1) - TWO TABS OF ONE ACCOUNT DIVERGE THEIR RATCHET; the message of
-  whichever is behind is dropped. Found 2026-08-06 on the FIXED build, NOT fixed.** 4 losses out of
-  9 alternating sends, every one `out of bounds <N>` + `SecretReuseError` + silent ACK on the peer,
-  N strictly increasing. Not "the second tab" and not "the switch" - **a send from whichever tab's
-  in-memory ratchet is behind dies**, and a losing send consumes a generation of its own, so a tab
-  sometimes recovers on the next try. Cause is structural: each tab holds its OWN MLS client loaded
-  from one snapshot, and leadership gates the WebSocket and `initializeConnection` but **NOT
-  sending** - the follower was caught flushing the LEADER's outbox entry and persisting its own
-  checkpoint. **Same three lines as WP-LOSS-1 but a different bug**: there one client rewound its own
-  state across a reload, here two live clients overwrite each other; a fix for either does nothing
-  for the other. The single-active-tab design is RIGHT and unfinished - the missing half is on the
-  write path (`getIsTabLeader()` guards the connection, nothing guards encryption). Options, cost
-  ascending: follower hands the message to the leader over the `canari-tab-messages` channel that
-  `tabLeader.ts` already claims it uses; or take leadership before encrypting; or one shared-worker
-  MLS client, which removes the class outright. Tables and reasoning in
+  whichever is behind is dropped. Found 2026-08-06, FIXED the same day; what is owed is the PROD
+  VERIFICATION** (re-run `tab4-cross.mjs`, which lost 4 of 9 alternating sends). Diagnosis, kept
+  because it is what makes the fix legible: each tab holds its OWN MLS client loaded from one
+  snapshot, and leadership gated the WebSocket and `initializeConnection` but **NOT sending** - the
+  follower was caught flushing the LEADER's outbox entry and persisting its own checkpoint. **Same
+  three lines as WP-LOSS-1 but a different bug**: there one client rewound its own state across a
+  reload, here two live clients overwrite each other; a fix for either does nothing for the other.
+  The fix is in two halves, and the second is the one that is easy to miss: the follower's
+  `runFlush` returns before any send and nudges the leader over `canari-tab-messages` (the entry
+  itself never crosses - the outbox is in IndexedDB, which both tabs share), AND a follower
+  PROMOTED to leader reloads instead of merely reconnecting, because gating the flush leaves its
+  in-memory ratchet frozen at load time while the leader advances the one on disk. Both halves,
+  what is guarded and what is not, in
   [cross-client-testing > two tabs](docs/wiki/cross-client-testing.md#two-tabs-of-one-account-diverge-their-ratchet-and-the-losers-message-is-dropped-wp-multitab-1).
+  **Future, NOT scheduled - to evaluate for relevance and cost before anyone starts it:** one MLS
+  client in a SharedWorker, shared by every tab. It removes the class outright rather than gating
+  each write path one at a time, and nothing type-checks that a new path went through the queue.
+  Cost is the reason it is not the fix: the worker transport, startup, the PIN unlock and the
+  Safari/mobile fallback where `SharedWorker` is absent all have to be redone.
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
@@ -404,6 +408,9 @@ The queue, its barrier, the token rules and the native mirror are on those two p
 carry in the head:
 
 - The outbox is best-effort at every step, so every swallowed branch logs - that is all a loss leaves.
+- A tab is "read-only" only where something CHECKS: leadership gated the socket, not the queue, so
+  the follower encrypted anyway. And gating a writer freezes its state - whoever inherits the role
+  must reload it, or it resumes exactly as far behind as the tab it replaced had moved on.
 - `requestAnimationFrame` NEVER fires in a hidden document, so it can never be the only resolver of
   anything a background path awaits - and a "yield" that can hang is a deadlock, not a delay. Race it
   with a `MessageChannel` message; a timer fallback is clamped to ~1 Hz in the background.

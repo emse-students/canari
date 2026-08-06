@@ -879,17 +879,50 @@ gate sending**. A follower tab encrypts, sends and persists its own checkpoint: 
 the follower for an entry the LEADER had queued. So the follower is read-only in name only, and one
 device's ratchet advances in two places that never learn of each other.
 
-**This is why the single-active-tab design is right and why it is not finished.** One WebSocket and
+**This is why the single-active-tab design is right and why it was not finished.** One WebSocket and
 one MLS writer per device is the correct rule - the WP-LOSS-1 fix makes it more important, not less,
-since every send now checkpoints. What is missing is the enforcement on the write path: today
-`getIsTabLeader()` guards the connection, and nothing guards encryption. Either the follower must
-not send (hand the message to the leader over the existing `canari-tab-messages` channel, which the
-`tabLeader.ts` header already claims is how followers stay in sync), or leadership must be taken
-before encrypting. A shared-worker MLS client would remove the class entirely, at a much larger cost.
+since every send now checkpoints. What was missing is the enforcement on the write path:
+`getIsTabLeader()` guarded the connection, and nothing guarded encryption.
 
 Note this is a genuinely different bug from WP-LOSS-1 even though the peer sees the same three lines:
 there, one client rewound its OWN state across a reload; here, two live clients of one device each
 hold a valid-looking state and overwrite each other. A fix for either does nothing for the other.
+
+#### The fix, 2026-08-06: the follower queues, the leader encrypts
+
+Two halves, because there are two ways a stale in-memory ratchet reaches `sendMessage`.
+
+**The follower must not encrypt.** `runFlush` in `utils/chat/outbox.ts` now returns immediately when
+`getIsTabLeader()` is false, before the offline and `canFlush` checks, and posts
+`outbox_flush_request` on `canari-tab-messages`; the leader's subscription drains on its behalf.
+**The message itself is not transferred** - the outbox lives in IndexedDB, which both tabs already
+share, so the follower still writes the entry durably and only the instruction crosses the channel.
+That also makes the failure mode benign: if the nudge is lost, the leader's own backoff timer picks
+the entry up. The leader answers with `outbox_entry_sent` so the follower can settle the optimistic
+echo it is still showing as `pending` - status is derived rather than persisted, so without that
+message the clock icon would never clear in the tab that composed it.
+
+**A promoted follower must not send from the state it loaded.** This is the half that is easy to
+miss: gating the flush leaves the follower's in-memory client frozen at load time while the leader
+advances the ratchet on disk, so the moment the leader tab closes and the follower is promoted, its
+first send is stale by exactly as much as the leader did. `setTabLeaderPromotedHandler` therefore
+reloads the page instead of only reconnecting the WebSocket, mirroring what the demotion handler
+already did. A reload is heavier than a hot `reloadStateFromDisk` - which `TauriMlsService`
+implements and `WebMlsService` does not - but it is the only option that provably reloads the state
+without swapping a live WASM client under an in-flight operation, and nothing queued is lost because
+the outbox is durable.
+
+Guards: three cases in `outbox.test.ts` (a follower never reaches `sendMessage` and leaves the entry
+untouched, it still queues and nudges, and the leader announces the send) plus
+`composables/tabLeadership.test.ts`, a source guard on the two handlers and on the gate preceding
+every other reason a flush could start.
+
+**What the gate does not cover, and why it does not need to:** channel messages bypass the outbox
+entirely, but they are not MLS - `sendEncryptedChannelMessage` encrypts under the versioned channel
+key with a fresh nonce, so two tabs sending at once is ordinary AEAD, not a shared ratchet. What
+does remain uncovered is any FUTURE write path that reaches `mlsService` without going through the
+queue: nothing type-checks that. The structural answer to that whole class is one MLS client in a
+SharedWorker - noted in `CLAUDE.md`, not scheduled.
 
 ### Cutting the network: which side the browser can fake, and which it cannot
 
