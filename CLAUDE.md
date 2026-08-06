@@ -144,8 +144,9 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   volume sends), **MSG-2**, **MSG-3**, **MSG-4** (image + PDF), **MSG-5**, **check M** (PDF preview
   on A1 hardware - `device-verification` updated), **FWD-1**. Rows and evidence are in section 10 of
   the wiki page, plus **MSG-6** (link preview proxied, zero third-party `<img src>`) and **MSG-7**
-  (30 rapid sends: 30/30, ordered, no duplicate, no `SecretReuseError`). Next: **MSG-8..10**
-  (backgrounded tab, receiver offline, sender offline), then FWD-3..5.
+  (30 rapid sends: 30/30, ordered, no duplicate, no `SecretReuseError`), **MSG-8** and **MSG-8b**
+  (backgrounded tab; the tab TITLE never signals an unread, only the badge, and only on refocus).
+  Next: **MSG-9/MSG-10** (receiver offline, sender offline), then FWD-3..5.
 - **A green check's observation log is where two shipped bugs came from.** MSG-6 passed while its
   log carried a `400` on `/api/mls/link-preview` - which turned out to be every URL containing a
   closing bracket being truncated, in the rendered `<a href>` as well as in the preview. Read the
@@ -180,7 +181,7 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   verdict is `PASS` only if the assertions hold AND the run is clean - errors, 4xx, page exceptions,
   WS events, `notable` MLS lines, `stateChanges` and anything `unexplained` are reported next to it.
   A line that turns out to be routine is ADDED to the benign list, never ignored in place.
-- **FIVE harness faults have now produced false results, all fixed - the lesson generalises and is
+- **SEVEN harness faults have now produced false results, all fixed - the lesson generalises and is
   written up in the wiki page.** A document-wide `text=Répondre` hits the FIRST message's hidden
   action row (hence `clickBubbleAction`); a selector that ties on text picks the scroll CONTAINER
   over its button (hence RESOLVE drops any hit containing another hit); a synthetic pointer NEVER
@@ -192,7 +193,12 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   fixture whose PNG CRCs were invalid, because a broken picture keeps its `src` (hence assert
   `naturalWidth > 0`, and CHECK THE FIXTURE before blaming the app). Assume a green check is wrong
   until its evidence says otherwise - and a FAIL too: check M reported FAIL only because it looked
-  for a `<canvas>` where the PDF preview is an `<img>`.
+  for a `<canvas>` where the PDF preview is an `<img>`. The last two invented an app-level loss on
+  MSG-8b: the COMPOSER is inside the pane, so an unsent draft read back as a delivered message; and
+  the soft keyboard moves the send button into the VISUAL viewport while CDP touch coordinates
+  address the LAYOUT one, so the tap lands on `<html>` and the draft stays put. Hence: every action
+  asserts its own post-condition (`send` fails if the composer still holds text), and the phone's
+  submit goes through `activate()`.
 - **The venue is a NEW COMMUNITY, `Campagne de test`, not a channel in MiTV** - a private channel is
   still readable by every association admin, and no association has jolan as sole admin. Two members
   only. Section 11 of the wiki page says why; do not re-derive it.
@@ -279,6 +285,17 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   echo of your own message, so the optimistic update is the only writer, and if it is not persisted
   it dies at the next load. Distinct from WP-FWD-1 and WP-LOSS-1, which lose it at the receiver;
   do not merge them.
+
+- \[ \] **WP-KBD-1 (P2) - On Android the composer ends up BEHIND the soft keyboard.** Found
+  2026-08-06 while chasing a harness fault; reproduced with an ordinary gesture: tap the composer,
+  press HOME, come back. The shell is pinned to `visualViewport.height` but does not start at the
+  viewport's top - an ancestor carries the status-bar inset - so it overflows by exactly that inset
+  and the composer footer goes under the keyboard. Every measured number, the second suspect
+  (`layoutInsetBottom` is 0 precisely when it is needed) and the invariant to restore are in
+  [mobile > the soft keyboard and the app shell](docs/wiki/frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-open).
+  Do not re-derive them. The file is `frontend/src/lib/stores/keyboardViewport.svelte.ts`, whose
+  geometry is already pure and unit-tested - so the fix belongs in `computeSnapshot`'s contract plus
+  a test, not in a component.
 
 - \[ \] **WP-LINK-1 (P3) - Linkify bare domains, without linkifying inclusive writing.** Today a
   chat link needs its `https://` scheme, and a post runs GFM, which autolinks only `www.`-prefixed

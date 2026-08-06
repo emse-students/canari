@@ -339,6 +339,48 @@ Notes on the adoption pass:
 
 `KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events picked up by `MainChatPage` → routed through the normal media pipeline.
 
+### The soft keyboard and the app shell (WP-KBD-1, open)
+
+`keyboardViewport.svelte.ts` pins the shell to the visual viewport while the keyboard is up:
+
+```
+--app-viewport-height: <visualViewport.height>px
+```
+
+**That height is the whole visual viewport, and the shell does not start at its top.** An ancestor
+carries the status-bar inset, so on A1 (Pixel-class, 411x914 CSS, `devicePixelRatio` 2.625) the
+shell begins at y=51 and is then made 571.81 px tall - bottom at 623, i.e. **51 px underneath the
+keyboard**. Everything anchored to the shell's bottom goes with it, and the composer footer
+(`position: absolute; bottom: 0`, height 78) is the one the user notices: they are typing into a
+box the keyboard covers.
+
+Measured on device 2026-08-06, keyboard open:
+
+| | value |
+|---|---|
+| `window.innerHeight` | 914 (the layout viewport does **not** shrink here) |
+| `visualViewport.height` | 571.81 |
+| `--app-viewport-height` | 571.81px |
+| `--keyboard-inset-bottom` | 342.19px |
+| `--keyboard-layout-inset-bottom` | **0px** |
+| `.app-layout` rect | top 51, bottom 623, height 571.81 |
+| composer footer rect | top 545, bottom 623 |
+
+The invariant to restore is `shell bottom <= visual viewport bottom`: the pinned height is the space
+below the shell's own top, not the viewport's full height.
+
+Two other things the measurement settles, both worth keeping:
+
+- **`layoutInsetBottom` is dead on this path.** `computeSnapshot` sets it only when
+  `isOpen && !layoutShrunk`, and `layoutShrunk` is true as soon as `winH - vvHeight > threshold*0.35`
+  - which is precisely what "the keyboard opened without resizing the window" looks like. So
+  `--keyboard-layout-inset-bottom` reads 0 exactly when it is needed. Whether that is the same
+  defect or a second one is not established; do not assume.
+- **How to reach it:** tap the composer (renders correctly), press HOME, return to the app. The
+  keyboard comes back and the shell is never re-laid-out for it. A pure `focus()` from script
+  reaches a different broken state - a large gap between the content and the keyboard - so the
+  variable is mis-set in both directions and the repro that matters is the ordinary gesture.
+
 ## Shared native code
 
 Rust FFI functions shared across both platforms via `frontend/src-tauri/src/mobile/`:

@@ -396,6 +396,9 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | FWD-2 | web, prod 2026-08-06 | **FAIL -> WP-FWD-1 REPRODUCED** | Three consecutive forwards lost, then 8/8 delivered on a re-run. Sender kept its echo, receiver never had them, the DM was healthy both ways at that moment. See below. |
 | **Reconciliation** | web, prod 2026-08-06 | **method, plus 5 losses** | 54 markers on W1 vs 53 on W2 over a bounded common window: 3 forwards missing from the receiver, 2 sent messages missing from the SENDER. Two different defects. See below. |
 | **Silent loss** | web, prod 2026-08-06 | **FAIL -> WP-LOSS-1** | Two DMs accepted by the server (`POST /api/mls/send -> 201`), never rendered by the peer, still absent after a reload. See below. |
+| MSG-8 | A1 0.13.0 -> web, prod 2026-08-06 | **PASS** | Sent from the phone while W2's tab was hidden: decrypted while hidden (`[MLS] Message decrypted ... → addMessageToChat`), rendered exactly once on return. Nothing appeared in the DOM until the tab came back - a hidden tab gets no frames, so that is the browser, not the app. |
+| MSG-8b | A1 0.13.0 -> web, prod 2026-08-06 | **PASS, with a UX note** | W2 on another page and hidden: badge `1 non lus` and `Discussions | 1` on refocus, message present once. **The tab title never changes**, so a backgrounded tab signals nothing until it is looked at - `useNotifications` does blink the title, but only for its own notification path. W2 also logged a `SecretReuseError` on a message it nonetheless rendered: the duplicate branch fires legitimately too, which is exactly why WP-LOSS-1 cannot classify on it alone. |
+| **WP-KBD-1** | A1 0.13.0, prod 2026-08-06 | **FAIL -> WP-KBD-1** | Tap the composer, HOME, return: the shell is pinned to the visual viewport but starts below the status-bar inset, so it overflows by that inset and the composer sits behind the keyboard. Numbers in [mobile](frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-open). |
 | **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED, VERIFIED ON PROD** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. Re-proved on A1 0.13.0 from a COLD start: `unknown = 0` at 3 s, 6 s and 10 s, six real names. See below. |
 
 ### Reconciliation: the only way this class of loss can be seen
@@ -672,7 +675,40 @@ confirm the fixture before blaming the app.**
 
 This has a direct consequence for the lifecycle checks: **a backgrounded tab must be produced by
 focusing another TAB in the same window**, never by covering the window - the flags now make an
-occluded window report `visible`, and covering it would no longer emulate anything.
+occluded window report `visible`, and covering it would no longer emulate anything. And "another
+tab" has to be `window.open(..., '_blank')` from the page: `PUT /json/new` + `/json/activate` opens
+a separate WINDOW, where both pages stay `visible` and only `document.hasFocus()` flips. Measured,
+not assumed; `tabs.mjs` throws rather than run a check that never went to the background.
+
+### Two more, from MSG-8b - and they cost an invented app bug
+
+MSG-8b first reported a message the sender had and neither other device did - the shape of
+WP-LOSS-1, in a check that was not even about loss. Both causes were mine.
+
+**The composer is inside the pane, so its text read back as a delivered message.** `PANE_TEXT` was
+`section.innerText`, and the section contains the composer. A send that never submitted therefore
+"arrived": `countMessage` returned 1, and `awaitMessage` would return instantly on any sender. The
+triage that was supposed to catch it repeated the same mistake and reported the sender as holding
+its message - it was holding a draft. `PANE_TEXT` now subtracts the composer's own text.
+
+**The send button moves 350 px under the measurement, and coordinates cannot follow it.** Focusing
+the composer opens the soft keyboard; on Android that shrinks the VISUAL viewport (914 -> 572) while
+the LAYOUT viewport stays 914. The page positions the composer bar above the keyboard, so
+`getBoundingClientRect` reports the send button at y=511 - correct - while
+`Input.dispatchTouchEvent` addresses the layout viewport. The touch is delivered, lands on `<html>`,
+no click is synthesised, and the draft stays in the box. Re-reading the rect until it is stable and
+hit-testing it does **not** save it: the coordinate systems genuinely differ. So `send()` uses
+`activate()` for the submit control, which is what the rule above already prescribes - the input
+path is not what a delivery check is testing, and it is verified on device separately.
+
+Two consequences worth stating plainly:
+
+- **Every action must assert its own post-condition.** `send()` now fails if the composer still
+  holds text. Three assertions later, the cause is off screen and the verdict is a fiction.
+- **A control that is `disabled` for a tick swallows the click.** Svelte re-enables the send button
+  after the input event, so `send()` waits for the state, not for a delay - and a probe run against
+  an empty composer sees "no click" for that reason alone, which sent this investigation down a
+  false trail for several rounds.
 
 Two explicit primitives remain, and the rule for choosing is now about intent rather than
 reliability - never a silent fallback between them:
