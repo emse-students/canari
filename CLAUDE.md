@@ -384,7 +384,7 @@ The rule went to DURABLE RULES. **Owed: NOTIF-1/2/3/5/6/7/8/9/10 have not been r
   The whole model, every measured unit cost and the three scenarios are in
   **[storage-forecast](docs/wiki/infrastructure/storage-forecast.md)** - do not re-derive or re-measure
   it. The one sentence: `backup.sh` tars the ENTIRE MinIO volume nightly and keeps 15 copies, so every
-  live byte costs **16 bytes** on a 125 GB disk, and at 400 daily users the disk fills in **3 to 27
+  live byte costs **16 bytes** on a 125 GB disk, and at 400 daily users the disk fills in **9 to 34
   days** in EVERY scenario including the most conservative - before media ever reach their plateau.
   Media are 87 % of the total; encrypted blobs are incompressible, so gzip buys nothing and dedup buys
   everything. **Ordered actions, highest leverage first:** (1) stop re-archiving MinIO nightly - use

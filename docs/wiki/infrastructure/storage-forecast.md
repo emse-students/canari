@@ -5,9 +5,9 @@
 
 **Short answer: the data can fit; the BACKUP SCHEME cannot.** Every byte stored costs 16 bytes on
 `canari`'s disk, because the nightly job tars the whole MinIO volume into a fresh archive and keeps
-15 of them. At 400 daily users the disk fills in **3 to 27 days**, and media never even reach their
-plateau first. Fixing the backup is a configuration change and divides the requirement by ~16. Fixing
-it is also *not optional at any scenario*, including the most conservative one.
+15 of them. At 400 daily users the disk fills in **9 to 34 days**, before media even reach the
+plateau their 30-day sweep would give them. Fixing the backup is a configuration change and divides
+the requirement by ~16. It is *not optional at any scenario*, including the most conservative one.
 
 Everything below is measured on production, not estimated, unless a line says otherwise.
 
@@ -190,15 +190,20 @@ full copy of the same immutable, incompressible blobs.
 
 ### When it breaks
 
-87 GB free / 16 = **5.4 GB of live growth before the disk is full.**
+Not simply `87 GB / 16`: while media are still growing, an archive from ten days ago holds ten days
+less media than tonight's. With media growing at `r` GB/day, day `N` occupies
+`r*N` live plus `sum(r*(N-k))` for the 15 kept archives, i.e. **`16*r*N - 105*r`**. Setting that to
+the 87 GB free:
 
-| Scenario | days from 400 users starting |
-| --- | ---: |
-| Low | ~27 days |
-| Central | **~8 days** |
-| High | ~3 days |
+| Scenario | r (GB/day) | days until the disk is full |
+| --- | ---: | ---: |
+| Low | 0.198 | ~34 days |
+| Central | 0.66 | **~15 days** |
+| High | 1.98 | ~9 days |
 
-Media never reach their 30-day plateau: **the disk fills first, in every scenario.**
+Media never reach their 30-40 day plateau in the central or high case: **the disk fills first.** In
+the low case the two happen at about the same time, and the archives then keep growing for another
+14 days as each one in turn is replaced by a full-sized copy - so it overruns shortly after.
 
 ### And if the backup is fixed
 
