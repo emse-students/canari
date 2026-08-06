@@ -4,6 +4,7 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
+  import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import type { Conversation } from '$lib/types';
   import { SvelteMap } from 'svelte/reactivity';
@@ -64,6 +65,43 @@
     community: string | null;
   }
 
+  /**
+   * Peer names fetched for DM rows the synchronous resolver could not name.
+   *
+   * Without this the picker lists "Utilisateur inconnu" for every DM whose profile is not already
+   * cached - and worse, the search box filters on that same label, so the one action the modal
+   * exists for (find a person, forward to them) is impossible. The list is built synchronously
+   * because it must render at once; the names simply arrive after it.
+   */
+  let resolvedPeerNames = $state<Record<string, string>>({});
+  /** Ids already asked for. Kept out of $state so the effect below cannot re-trigger itself. */
+  const requestedPeerIds = new Set<string>();
+
+  const presentationOf = (c: Conversation) =>
+    resolveConversationListPresentation(
+      {
+        id: c.id,
+        name: c.name,
+        contactName: c.contactName ?? c.id,
+        conversationType: c.conversationType,
+        directPeerId: c.directPeerId,
+      },
+      currentUserId
+    );
+
+  $effect(() => {
+    for (const [key, c] of conversations) {
+      if (key === excludeKey) continue;
+      const pres = presentationOf(c);
+      if (pres.displayNameResolved || pres.conversationType !== 'direct') continue;
+      if (requestedPeerIds.has(pres.contactId)) continue;
+      requestedPeerIds.add(pres.contactId);
+      void resolveUserDisplayName(pres.contactId).then((name) => {
+        if (name) resolvedPeerNames = { ...resolvedPeerNames, [pres.contactId]: name };
+      });
+    }
+  });
+
   // All threads (DMs, groups, channels) except the source conversation. Names are resolved via
   // resolveConversationListPresentation so raw IDs are never shown; channels are labelled with
   // their community name because multiple channels can share the same display name.
@@ -75,16 +113,10 @@
         const community = isChannelConversationId(c.id)
           ? (channelCommunity.get(c.id) ?? null)
           : null;
-        const label = resolveConversationListPresentation(
-          {
-            id: c.id,
-            name: c.name,
-            contactName: c.contactName ?? c.id,
-            conversationType: c.conversationType,
-            directPeerId: c.directPeerId,
-          },
-          currentUserId
-        ).displayName;
+        const pres = presentationOf(c);
+        const label = pres.displayNameResolved
+          ? pres.displayName
+          : (resolvedPeerNames[pres.contactId] ?? pres.displayName);
         return { key, conversation: c, label, community };
       })
       .filter((cand) => cand.label.trim().length > 0)
