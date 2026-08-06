@@ -151,8 +151,13 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   and it SURVIVED a reload - so the offline path persists correctly and WP-ECHO-1 is elsewhere).
   **FWD-4** (phone backgrounded 200 ms after the send: delivered). **FWD-3 and FWD-5 FAILED and
   found the campaign's root cause** - see WP-LOSS-1 below; it is a reload rewinding the sender's
-  MLS ratchet, it is deterministic, and WP-FWD-1 is retired into it. Next: the TAB/LIFE lifecycle
-  checks, then NOTIF/PIN/MULTI, CORRUPT last.
+  MLS ratchet, it is deterministic, and WP-FWD-1 is retired into it. **TAB-5 PASS** (7 rounds,
+  reload 30-40 ms after submit, never lost, never doubled - the outbox survives the reload).
+  **TAB-4 FAILED and found WP-HIDDEN-1**, a second P1: a backgrounded tab stops receiving
+  altogether. **That also RETIRES MSG-8's PASS** - it asserted after restoring the tab, which is the
+  act that released the drain; a single message can never expose it, the second one is the test.
+  TAB-1 and TAB-7 are covered by MSG-8/MSG-10 respectively. Left in TAB: 2, 3, 6, and TAB-4 to
+  re-run once WP-HIDDEN-1 is verified on prod. Then LIFE, NOTIF/PIN/MULTI, CORRUPT last.
 - **An offline RECEIVER cannot be faked in the browser** - `emulateNetworkConditions` fails every
   new request in 10 ms and W2 still rendered the message twice over. Cause not established; do not
   re-explain it. MSG-9 belongs on the phone (`svc wifi disable` + `svc data disable`), which needs
@@ -284,6 +289,26 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   Record live-path ciphertext fingerprints, tell a real double delivery from a rewind, and SIGNAL
   the desync to the sender - the only party that can send it again. Reasoning on the wiki page.
 
+- \[ \] **WP-HIDDEN-1 (P1) - A BACKGROUNDED TAB STOPS RECEIVING MESSAGES ENTIRELY, IN SILENCE.
+  Found and FIXED 2026-08-06 (`d1bedee1`); what remains is the prod verification and one deliberate
+  gap.** `yieldToMainThread` resolved from `requestAnimationFrame`, which a browser NEVER fires for a
+  hidden document. It is awaited on the first line of `runSaveEncrypted`, which runs in `onDrainEnd`,
+  which `drain()` awaits in front of `isDraining = false` - so a hidden tab never finishes a drain,
+  `enqueueMessage` then skips starting one (and logs nothing when it does), and every later message
+  piles up unprocessed. The message in flight does not even render: its UI flush is buffered by
+  `beginBulkIngest({ bufferUi: true })` and released by the stuck `endBulkIngest`. Deterministic: one
+  tab backgrounded, #1 invisible, #2 never drained, both appear at the exact millisecond of the
+  refocus (26 s measured on prod). **Two tabs were never the point** - TAB-4 found it only because
+  opening a second tab hides the first; do not re-open "leader election" as a cause. IndexedDB
+  answered in 1 ms from inside the stuck tab and the encrypt worker has a 60 s timeout, so neither is
+  it. The fix RACES the frame against a `MessageChannel` round trip: choosing on `visibilityState`
+  still hangs when the tab is hidden after the callback is queued, and a timer fallback would be
+  clamped to ~1 Hz in the background. Everything is in
+  [cross-client-testing > backgrounded tab](docs/wiki/cross-client-testing.md#root-cause-found-2026-08-06-a-backgrounded-tab-stops-receiving-silently-wp-hidden-1).
+  **STILL OPEN, on purpose:** any hung await inside `onDrainEnd` can still stop every inbound message
+  with no diagnostic - the flush belongs behind `isDraining = false`, or the queue needs a watchdog.
+  The yield was one way in, not the only one.
+
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
   them. This is the failure the durable rule about `persistLocalMutation` predicts - MLS gives no
@@ -359,6 +384,9 @@ The queue, its barrier, the token rules and the native mirror are on those two p
 carry in the head:
 
 - The outbox is best-effort at every step, so every swallowed branch logs - that is all a loss leaves.
+- `requestAnimationFrame` NEVER fires in a hidden document, so it can never be the only resolver of
+  anything a background path awaits - and a "yield" that can hang is a deadlock, not a delay. Race it
+  with a `MessageChannel` message; a timer fallback is clamped to ~1 Hz in the background.
 - MLS gives no echo of your OWN message, so the sender's optimistic update is the only writer it
   gets: apply it in memory AND persist it (`persistLocalMutation`), or it dies at the next load.
 - The mirror is READ as well as written: a file one side rewrites wholesale silently deletes

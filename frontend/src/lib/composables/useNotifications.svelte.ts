@@ -44,6 +44,23 @@ export function useNotifications() {
 
   // ---------- Audio ----------
 
+  /**
+   * Returns the shared {@link AudioContext}, creating it on first use and resuming it if the
+   * browser parked it.
+   *
+   * The resume is the point. A context constructed before the page has had a user gesture is born
+   * `suspended`, and a suspended context accepts every scheduling call without complaint and makes
+   * no sound - so the surrounding try/catch sees nothing to catch and the tone is dropped in
+   * silence. That is the ordinary case for a tab left alone: a message arrives, this is the first
+   * audio the page ever asked for, and it is inaudible. `resume()` may legitimately reject when no
+   * gesture has ever happened, which is the browser's decision to make and not an error to report.
+   */
+  function getAudioContext(): AudioContext {
+    audioContext = audioContext ?? new AudioContext();
+    if (audioContext.state === 'suspended') void audioContext.resume().catch(() => {});
+    return audioContext;
+  }
+
   /** Plays a two-note descending chime (rate-limited to one every 600 ms) when an incoming message arrives. */
   function playNotificationTone() {
     if (typeof window === 'undefined') return;
@@ -53,8 +70,7 @@ export function useNotifications() {
     lastNotificationAt = now;
 
     try {
-      audioContext = audioContext ?? new AudioContext();
-      const ctx = audioContext;
+      const ctx = getAudioContext();
       const startAt = ctx.currentTime + 0.01;
 
       const osc = ctx.createOscillator();
@@ -83,8 +99,7 @@ export function useNotifications() {
     lastSendToneAt = now;
 
     try {
-      audioContext = audioContext ?? new AudioContext();
-      const ctx = audioContext;
+      const ctx = getAudioContext();
       const startAt = ctx.currentTime + 0.01;
 
       const osc = ctx.createOscillator();
@@ -115,8 +130,7 @@ export function useNotifications() {
     if (!settings.soundsEnabled) return;
 
     try {
-      audioContext = audioContext ?? new AudioContext();
-      const ctx = audioContext;
+      const ctx = getAudioContext();
       const startAt = ctx.currentTime + 0.01;
 
       for (const [freq, offset] of [
@@ -290,8 +304,7 @@ export function useNotifications() {
     lastReadToneAt = now;
 
     try {
-      audioContext = audioContext ?? new AudioContext();
-      const ctx = audioContext;
+      const ctx = getAudioContext();
       const startAt = ctx.currentTime + 0.01;
 
       const osc = ctx.createOscillator();
