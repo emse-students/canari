@@ -330,6 +330,33 @@ Note what is NOT there: no access token in any web storage, on either client. Th
 
 CORRUPT-8 and CORRUPT-10 are the two that would be security findings rather than bugs.
 
+### 7.1 HEAL - does a BROKEN GROUP repair itself on the BROWSER? (added 2026-08-06)
+
+Everything WP-PENDING-2 and WP-DRAIN-1 proved was proved **on the phone**. The fixes are shared
+TypeScript, so the browser runs the same classifier, the same `startRecovery` and the same
+generation-gap branch - but "the same code" is an argument, not a measurement, and the two clients
+do not break the same way: the web MLS state is IndexedDB rather than `mls.bin`, the recovery runs
+against a live WebSocket instead of a cold reconnect, and only the browser has a second tab that can
+be holding the leader role while the broken one recovers.
+
+**Gated on the web deploy.** A long-lived tab keeps its old bundle, so both browsers must be
+RELOADED after the CD lands before any of these is measured - the same trap that failed the first
+TAB-4 re-run.
+
+The break is made by RESTORING an older snapshot of `CanariDBMls_<dev>` (store `state`) over the
+current one, which is exactly the rewind the campaign has been chasing, done deliberately. Take the
+snapshot first; without it there is nothing to restore and the only way back is a re-enrolment.
+
+| Id | How the group is broken | Expected |
+| --- | --- | --- |
+| HEAL-W1 | Restore a snapshot from BEFORE a membership commit, then have the peer send | Epoch gap: the commit replay applies >0 commits and the message renders, once. A `healed` verdict after applying ZERO commits is the WP-PENDING-2 fault reappearing on the web |
+| HEAL-W2 | Restore a snapshot from BEFORE the group was joined at all, then have the peer send | Unknown-group path: welcome request or external join, and **`[QUEUE] Drain start` is followed by `Drain complete`** - the drain must never be held by the recovery (WP-DRAIN-1's shape) |
+| HEAL-W3 | Freeze W1 on a snapshot while the peer advances its sender ratchet past 2 000 frames in one epoch (read receipts count, which is how the phone got there) | Generation gap: `LOST frame`, `forgetGroup`, `requestReAdd`, then fresh messages arrive once each. The `TooDistantInTheFuture` classifier must beat `GAP_QUEUED`, as it does on Android |
+| HEAL-W4 | HEAL-W2 with a SECOND tab of the same account open and holding the leader role | The recovering tab must not encrypt, and the leader must not be dragged into the follower's repair - the WP-MULTITAB-1 seam meeting the recovery seam, which nothing has ever exercised together |
+
+HEAL-W4 is the one with no prior art on either client. HEAL-W3 is the expensive one: 2 000 frames is
+a scripted volume run, not a manual one.
+
 ---
 
 ## 8. Multi-device (W1 + A1, same user)

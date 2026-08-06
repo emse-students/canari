@@ -119,71 +119,32 @@ Prod is `ssh cercle` (10.0.0.6, ProxyJump canari); our audit branch is archived
 
 ---
 
-### PORTAIL-ETU (../refonte-portail-etu) - ONE WP OPEN: a fix is PUSHED but NEVER DEPLOYED
+### PORTAIL-ETU (../refonte-portail-etu) - COMPLETE, nothing open
 
-- \[ \] **WP-PORTAIL-AVATAR-1 (P2) - `2b390c4` is on `main` and has never reached the server.**
-  **The DIAGNOSIS IS CLOSED - do not re-derive it.** 2026-08-06, bursts of HTTP 502 on
-  `/api/users/:id/avatar`: it is the route's own `catch`, not nginx and not a rate limit on the
-  visitor (empty body, while `/api/users/!!!/avatar` answers 400). 479 recorded failures, all one
-  message - `Unable to connect` on a well-formed URL, so neither DNS, TLS nor the secrets - and all
-  inside the last 19k lines of a 1,925,156-line append-only log, in bursts (469 of 478 gaps = exactly
-  6 lines). **ONE episode, not a chronic fault.** The host reaches MiGallery fine over IPv4 (401 in
-  75-127 ms, 8/8 bun calls). **The IPv6 lead is DEAD**: no global IPv6 address, so `AI_ADDRCONFIG`
-  keeps AAAA out of an ordinary lookup. The residual cause is the host's outbound path, NOT an app
-  defect - and the wiki already records that this host cannot reach `canari-emse.fr` server-side
-  (hairpin NAT); the avatar proxy is its ONLY server-side fetch.
-  **What `2b390c4` fixes is the amplification only**: with no cache a page of N members opened N
-  connections per visitor per visit. In-process cache (1 h image / 10 min absence / 500 entries,
-  injected clock), `X-Cache: hit|miss` to verify from outside, `isCacheableAbsence` so only a literal
-  404 is stored (`!res.ok` reads like "no avatar" and is not), and a transport failure stays a 502
-  `no-store`. `9073a03` added `time: true` to `ecosystem.config.cjs`. Gates green, 19/19 tests.
-  **OWED - two commands, both refused to me by the classifier, so a HUMAN runs them** (in
-  `../refonte-portail-etu`; a dispatch 500s intermittently during the outage and a 500 STILL creates
-  the run, so check `gh run list` before re-dispatching):
-  1. **`gh workflow run deploy.yml --ref main`** - `deploy.yml` gained `workflow_dispatch` in
-     `02953af` because the outage drops push triggers outright (`Run Tests` cancelled in queue ->
-     `Deploy` skipped -> a lost trigger never comes back). Its `if:` gained a branch with it: a manual
-     run has no `github.event.workflow_run`, so the old condition alone would have skipped the job
-     silently. **This path skips the CI gate on purpose** - the pre-push hook runs lint, format,
-     check, test and build locally.
-  2. **`gh workflow run clean-pm2-logs.yml --ref main`** - to finish the rotation, see below.
-  3. **Then verify**: `X-Cache: miss` then `hit` on the avatar endpoint. Prod currently returns **no
-     `X-Cache`** at all, which is the proof it is not deployed (it still runs the 2026-08-04 build).
-  4. **Then DELETE both one-off workflows** (`clean-pm2-logs.yml`, and `deploy.yml`'s dispatch is a
-     keeper).
+**The avatar 502s are CLOSED 2026-08-06** - fix deployed and verified on prod (`X-Cache` miss then
+hit, the 404 branch carrying `max-age=600`), `pm2-logrotate@3.0.0` installed, one-off workflows
+deleted (`0d3dd93`). The cache, its status table and why only a literal 404 may be stored are in
+that repo's `docs/wiki/architecture.md`. Four facts that survive the WP:
 
-  **LOGS: DONE 2026-08-06.** 117 MB error + 131 MB out flushed to 0 via `pm2 flush` (**never `rm`** -
-  pm2 holds the fd), tail archived at `~/pm2-archive/portail-etu-error-20260806-204729.log.gz`. ~1.9M
-  of those lines were the LEGACY portal's, under the same pm2 app name (`mysql2`,
-  `/api/users/login/...`, 74,693 x `Unknown column 'r.hiererarchy'`) - none of it in this repo.
-  **Rotation is NOT active yet**: `pm2 install pm2-logrotate` died on `ConnectionRefused downloading
-  package manifest`; `clean-pm2-logs.yml` now retries it 5 times (`02953af`).
+- **The residual cause is UNKNOWN and is NOT an app defect**: for ~20 min the host could not open
+  outbound connections at all (479 x bun `Unable to connect` on a well-formed URL, in bursts). Ruled
+  out with measurements, do not re-run any of them: inbound rate-limiting, load (60 concurrent =
+  100%), DNS/TLS/secrets, IPv6 (`AI_ADDRCONFIG`, no global v6 address), conntrack (140/262144),
+  bun-vs-curl (40/40 agreement), and **CrowdSec - refuted by its own evidence**: 7 alerts in 48 h,
+  **0** naming a Cloudflare edge range, none inside the window. What is left is the egress path
+  upstream of the box. A recurrence is now timestamped (`time: true`) in a clean, rotating log.
+- **`deploy.yml` has a `workflow_dispatch`** and it is a keeper. A GitHub Actions outage drops push
+  triggers outright (`Run Tests` cancelled in queue -> `Deploy` skipped, and a lost trigger never
+  comes back), and a dispatch 500s while STILL creating the run - check `gh run list` before
+  re-dispatching. It skips the CI gate on purpose; the pre-push hook runs the gates locally.
+- **No SSH to that box** - the self-hosted runner is the only way in, and the shape is a dispatch-only
+  workflow then removed (`d986062`/`d128501`, `928bd0c`/`2b390c4`, `89ec902`/`0d3dd93`). The repo is
+  **PUBLIC**, so every run log must redact - and `grep -a` is mandatory: the pm2 log holds binary
+  bytes, so `grep -c` counted 479 while `grep -A3` printed nothing with its stderr hidden.
+- **`pm2 flush`, never `rm`** - pm2 holds the fd. 117 MB + 131 MB were flushed this way; ~1.9M of
+  those lines belonged to the LEGACY portal running under the same pm2 app name, none of it this repo.
 
-  **THE RESIDUAL CAUSE - best hypothesis, and what is already ruled out.** A second failure was
-  caught live: `pm2 install pm2-logrotate` died on `ConnectionRefused` to the **npm registry**, from
-  **bun**, while `curl` succeeded in the same run. So it is NOT specific to MiGallery - and both
-  destinations sit behind **Cloudflare**.
-  `probe-egress.yml` (dispatch-only, on `main`) then established: **CrowdSec IS installed and active**
-  with a `CROWDSEC_CHAIN`, but **0 live decisions and 0 DROP/REJECT on OUTPUT** (the 6 nft rejects are
-  firewalld's inbound/forward policies); **conntrack 140/262144 and 37 TIME_WAIT, so exhaustion is
-  DEAD**; and **bun agreed with curl 40 times out of 40**, which fails to reproduce the bun-client
-  hypothesis without refuting it (the fault was not occurring).
-  **The hypothesis that fits every observation is CrowdSec by the INBOUND path**: every request
-  reaching this host arrives from Cloudflare, so one scanner behind Cloudflare gets an **edge address
-  banned as a source**, and that ban also drops the SYN-ACK of connections the host *initiates*
-  towards the same address - instant failures, in bursts, on some addresses only (DNS hands out
-  several), clearing on their own when the decision expires. Decisions expire but **alerts are
-  retained**, so `cscli alerts list --since 48h` is the evidence; a probe for it was dispatched
-  2026-08-06 and was still queued when the session ended - **re-dispatch `probe-egress.yml` and read
-  the two counts it prints**. If a Cloudflare edge range appears there, the fix is a CrowdSec
-  whitelist for Cloudflare's published ranges, not anything in the app.
-  **Access, which is the whole difficulty:** no SSH to that box; the self-hosted runner is the ONLY
-  way in; the repo is **PUBLIC**, so any run log must redact (`grep -a` is mandatory - the log holds
-  binary bytes, and `grep -c` counted 479 while `grep -A3` printed nothing with its stderr hidden).
-  Precedent for the shape: a one-off dispatch-only workflow, then removed (`d986062`/`d128501`, and
-  mine `928bd0c` -> `2b390c4`).
-
-### PORTAIL-ETU - otherwise COMPLETE
+### PORTAIL-ETU - the legacy dump
 
 The full legacy dump (12 databases, 24.4 MB) lives at
 `../refonte-portail-etu/data-export/legacy-full-dump-2026-08-04.sql` - gitignored, PII, NEVER commit.
@@ -195,10 +156,10 @@ read-only `mysqldump@localhost` that lacks `EVENT` on the `mysql` DB, so `--even
 
 ### CANARI - OPEN WORK PACKAGES
 
-**[campaign] CROSS-CLIENT TEST CAMPAIGN - ACTIVE, Phase 0 nearly closed 2026-08-05.** The whole
-plan AND the built harness are **[cross-client-testing](docs/wiki/cross-client-testing.md)** -
-sections 1.1 (harness), 7 (real artefact names) and 11 (Phase 0 progress + what it cost). Do not
-re-plan or re-derive any of it from here. What a compaction must not lose:
+**[campaign] CROSS-CLIENT TEST CAMPAIGN - ACTIVE.** The whole plan AND the built harness are
+**[cross-client-testing](docs/wiki/cross-client-testing.md)** - sections 1.1 (harness), 7 (real
+artefact names), 9 (observation) and 10-11 (every check's row and what it cost). Do not re-plan or
+re-derive any of it from here. What a compaction must not lose:
 
 - Runs against **PRODUCTION**, two real accounts, credentials in the scratchpad
   `test-accounts.json`, **never in the repo**.
@@ -215,14 +176,13 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   `canari_refresh` -> reload -> lands on `/login`, not a silent empty list; the IdP session survives
   so signing back in needs no credentials). **W1 was logged out and logged back in by TAB-6** -
   `login.mjs` then `pin.mjs`, both fine.
-- **A1 runs a build carrying WP-PENDING-1 + WP-PENDING-2** (installed 2026-08-06 21:23, data
-  preserved, `firstInstallTime` unchanged); **a further build with WP-DRAIN-1 was compiling at
-  compaction time** - check `frontend/src-tauri/gen/android/.../app-universal-debug.apk`'s mtime
-  before trusting a run. The phone is signed in and PIN-unlocked. Its device id is
+- **A1 runs a build carrying WP-PENDING-1, WP-PENDING-2 and WP-DRAIN-1** - check
+  `frontend/src-tauri/gen/android/.../app-universal-debug.apk`'s mtime before trusting a run, since
+  the version name no longer moves. The phone is signed in and PIN-unlocked. Its device id is
   `tauri-d82cd226…-msgnk8nf-gyb2`; the DM under test is `642f389a-2800-412d-ab7c-cc521587f97f`
-  (Claire VAN RUYMBEKE), and that group's MLS state on the phone is **more than 2 000 generations
-  behind and cannot catch up** - the frames were deleted from `queued_message` deliberately. It only
-  recovers through the re-add, which is what WP-DRAIN-1 currently blocks.
+  (Claire VAN RUYMBEKE). That group HEALED through the re-add on 2026-08-06 (3/3 fresh messages at
+  2.9/1.5/4.1 s) after being more than 2 000 generations behind - the frames had been deleted from
+  `queued_message` deliberately, so nothing but the re-add could recover it.
 - **THE LIFE PHASE IS DONE EXCEPT LIFE-5 (2026-08-06).** LIFE-3, 4, 7, 8 PASS; **LIFE-6 FAILED 3/3
   and found TWO new P1s** - WP-PENDING-1 and WP-PENDING-2 below. Rows, logs and both root causes are
   in [cross-client-testing > the LIFE phase](docs/wiki/cross-client-testing.md#the-life-phase-2026-08-06);
@@ -243,27 +203,16 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   logcat under `Tauri/Console`, which is how to read it while the WebView is unreachable; a busy
   device overruns the logcat ring in minutes, so capture continuously to a file rather than dumping
   after the fact.
-- **PHASE 0 IS COMPLETE, and section 3 is under way (2026-08-06).** PASS so far: **MSG-1** (+38
-  volume sends), **MSG-2**, **MSG-3**, **MSG-4** (image + PDF), **MSG-5**, **check M** (PDF preview
-  on A1 hardware - `device-verification` updated), **FWD-1**. Rows and evidence are in section 10 of
-  the wiki page, plus **MSG-6** (link preview proxied, zero third-party `<img src>`) and **MSG-7**
-  (30 rapid sends: 30/30, ordered, no duplicate, no `SecretReuseError`), **MSG-8** and **MSG-8b**
-  (backgrounded tab; the tab TITLE never signals an unread, only the badge, and only on refocus),
-  **MSG-9** (phone's radios cut - nothing while down, one copy 26 s after, the delay being the
-  app's own zombie-connection detection) and **MSG-10** (offline sender: queued, drained in 1 s,
-  and it SURVIVED a reload - so the offline path persists correctly and WP-ECHO-1 is elsewhere).
-  **FWD-4** (phone backgrounded 200 ms after the send: delivered). **FWD-3 and FWD-5 FAILED and
-  found the campaign's root cause** - see WP-LOSS-1 below; it is a reload rewinding the sender's
-  MLS ratchet, it is deterministic, and WP-FWD-1 is retired into it. **TAB-5 PASS** (7 rounds,
-  reload 30-40 ms after submit, never lost, never doubled - the outbox survives the reload).
-  **TAB-4 FAILED and found WP-HIDDEN-1**, a second P1: a backgrounded tab stops receiving
-  altogether. **That also RETIRES MSG-8's PASS** - it asserted after restoring the tab, which is the
-  act that released the drain; a single message can never expose it, the second one is the test.
-  TAB-1 and TAB-7 are covered by MSG-8/MSG-10 respectively. **WP-HIDDEN-1 is FIXED and VERIFIED on
-  prod** (both messages arrive while hidden, drains complete before the refocus); re-running TAB-4
-  then turned 4a green and left 4c failing, which is **WP-MULTITAB-1**. Left in TAB: 2, 3, 6. Then
-  LIFE, NOTIF/PIN/MULTI, CORRUPT last. **Reload BOTH browsers after every deploy before measuring** -
-  a long-lived tab keeps its old bundle, and the first TAB-4 re-run failed for that reason alone.
+- **WHERE THE CAMPAIGN STANDS (2026-08-06): Phase 0, the MSG phase, the FWD phase and the TAB phase
+  are ALL COMPLETE; LIFE is done except LIFE-5. NEXT: NOTIF/PIN/MULTI, then CORRUPT last.** Every
+  row, every measurement and every retired hypothesis is in section 10 of the wiki page - do not
+  re-list them here. The four checks that FAILED each became a P1 and each has its own entry below:
+  FWD-3/FWD-5 -> WP-LOSS-1 (which retires WP-FWD-1), TAB-4 -> WP-HIDDEN-1 then WP-MULTITAB-1,
+  LIFE-6 -> WP-PENDING-1 + WP-PENDING-2. **MSG-8's PASS was RETIRED** by TAB-4: it asserted after
+  restoring the tab, which is the very act that released the drain - a single message can never
+  expose that bug, the second one is the test. **Reload BOTH browsers after every deploy before
+  measuring** - a long-lived tab keeps its old bundle, and the first TAB-4 re-run failed for that
+  reason alone.
 - **An offline RECEIVER cannot be faked in the browser** - `emulateNetworkConditions` fails every
   new request in 10 ms and W2 still rendered the message twice over. Cause not established; do not
   re-explain it. MSG-9 belongs on the phone (`svc wifi disable` + `svc data disable`), which needs
@@ -355,6 +304,13 @@ A check that FAILS earns a WP with its captured log; a check that passes earns a
 and nothing else. The campaign's prime target is now SHOT: **WP-LOSS-1 has a deterministic
 reproduction and a root cause.** What is left is to keep the remaining phases honest, and to fix it.
 
+**A BROKEN GROUP HAS ONLY EVER BEEN SEEN HEAL ON THE PHONE.** Asked by the user 2026-08-06: the same
+repair must be measured on the BROWSER. Four checks - epoch gap, unknown group, generation gap, and
+the pair nothing has ever exercised together (a recovery while a SECOND tab holds the leader role) -
+are section 7.1 of [cross-client-testing](docs/wiki/cross-client-testing.md). The break is a RESTORED
+older snapshot of `CanariDBMls_<dev>`; take the snapshot first. Gated on the web deploy, and both
+browsers must be RELOADED after it.
+
 **[device] The verification pass is NOT a Work Package.** Everything native is verified by COMPILING,
 which proves nothing about running, and the whole owed list lives in
 **[device-verification](docs/wiki/device-verification.md)** - checks B-N, the build to install, the
@@ -422,114 +378,65 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   the shipped `.so`) but no phone run has yet exercised either branch - and two deliberate gaps - the ring dies on a reload, and nothing
   tells the receiver's USER that a message was lost. Reasoning on the wiki page.
 
-- \[ \] **WP-HIDDEN-1 (P1) - A BACKGROUNDED TAB STOPS RECEIVING MESSAGES ENTIRELY, IN SILENCE.
-  Found and FIXED 2026-08-06 (`d1bedee1`); what remains is the prod verification and one deliberate
-  gap.** `yieldToMainThread` resolved from `requestAnimationFrame`, which a browser NEVER fires for a
-  hidden document. It is awaited on the first line of `runSaveEncrypted`, which runs in `onDrainEnd`,
-  which `drain()` awaits in front of `isDraining = false` - so a hidden tab never finishes a drain,
-  `enqueueMessage` then skips starting one (and logs nothing when it does), and every later message
-  piles up unprocessed. The message in flight does not even render: its UI flush is buffered by
-  `beginBulkIngest({ bufferUi: true })` and released by the stuck `endBulkIngest`. Deterministic: one
-  tab backgrounded, #1 invisible, #2 never drained, both appear at the exact millisecond of the
-  refocus (26 s measured on prod). **Two tabs were never the point** - TAB-4 found it only because
-  opening a second tab hides the first; do not re-open "leader election" as a cause. IndexedDB
-  answered in 1 ms from inside the stuck tab and the encrypt worker has a 60 s timeout, so neither is
-  it. The fix RACES the frame against a `MessageChannel` round trip: choosing on `visibilityState`
-  still hangs when the tab is hidden after the callback is queued, and a timer fallback would be
-  clamped to ~1 Hz in the background. Everything is in
-  [cross-client-testing > backgrounded tab](docs/wiki/cross-client-testing.md#root-cause-found-2026-08-06-a-backgrounded-tab-stops-receiving-silently-wp-hidden-1).
-  **STILL OPEN, on purpose:** any hung await inside `onDrainEnd` can still stop every inbound message
-  with no diagnostic - the flush belongs behind `isDraining = false`, or the queue needs a watchdog.
-  The yield was one way in, not the only one.
+- \[ \] **WP-DRAIN-2 (P2) - the inbound drain still has no watchdog, so ANY hung await inside it
+  stops every inbound message with no diagnostic.** What is left of WP-HIDDEN-1 and WP-DRAIN-1, both
+  shipped and verified (`d1bedee1`, and the deadlock via `startRecovery`) - the stories are in
+  `CHANGELOG.md` and
+  [cross-client-testing](docs/wiki/cross-client-testing.md#root-cause-found-2026-08-06-a-backgrounded-tab-stops-receiving-silently-wp-hidden-1).
+  `isDraining` is lowered only when the message callback RETURNS, and two different awaits inside it
+  have already frozen all inbound traffic - a `requestAnimationFrame` yield in a hidden document, and
+  a recovery re-acquiring the MLS mutex the drain holds. Each was fixed in place; the SHAPE was not.
+  The flush belongs behind `isDraining = false`, or the queue needs a watchdog that reports a drain
+  that never completed. Nothing type-checks that the next await added there is safe.
 
-- \[ \] **WP-MULTITAB-1 (P1) - TWO TABS OF ONE ACCOUNT DIVERGE THEIR RATCHET; the message of
-  whichever is behind is dropped. Found 2026-08-06, FIXED and VERIFIED ON PROD the same day**
-  (`260084c5`): `tab4-cross.mjs` went **9/9** where it had lost 4 of 9, and `tab4-mech.mjs` then
-  read BOTH tabs' logs to prove the delegation rather than infer it from a green result - the
-  follower queues and skips, the leader flushes the same entry id one second later. Diagnosis, kept
-  because it is what makes the fix legible: each tab holds its OWN MLS client loaded from one
-  snapshot, and leadership gated the WebSocket and `initializeConnection` but **NOT sending** - the
-  follower was caught flushing the LEADER's outbox entry and persisting its own checkpoint. **Same
-  three lines as WP-LOSS-1 but a different bug**: there one client rewound its own state across a
-  reload, here two live clients overwrite each other; a fix for either does nothing for the other.
-  The fix is in two halves, and the second is the one that is easy to miss: the follower's
-  `runFlush` returns before any send and nudges the leader over `canari-tab-messages` (the entry
-  itself never crosses - the outbox is in IndexedDB, which both tabs share), AND a follower
-  PROMOTED to leader reloads instead of merely reconnecting, because gating the flush leaves its
-  in-memory ratchet frozen at load time while the leader advances the one on disk. Both halves,
-  what is guarded and what is not, in
-  [cross-client-testing > two tabs](docs/wiki/cross-client-testing.md#two-tabs-of-one-account-diverge-their-ratchet-and-the-losers-message-is-dropped-wp-multitab-1).
-  **Future, NOT scheduled - to evaluate for relevance and cost before anyone starts it:** one MLS
-  client in a SharedWorker, shared by every tab. It removes the class outright rather than gating
-  each write path one at a time, and nothing type-checks that a new path went through the queue.
-  Cost is the reason it is not the fix: the worker transport, startup, the PIN unlock and the
-  Safari/mobile fallback where `SharedWorker` is absent all have to be redone.
+- **Two tabs (WP-MULTITAB-1) is SHIPPED and VERIFIED ON PROD** (`260084c5`, 9/9 where it lost 4 of 9,
+  with both tabs' logs read to prove the delegation). **Future, NOT scheduled - evaluate relevance
+  and cost before starting:** one MLS client in a SharedWorker, shared by every tab. It removes the
+  class outright rather than gating each write path one at a time, and nothing type-checks that a
+  new path went through the queue. Cost is why it is not the fix: the worker transport, startup, the
+  PIN unlock and the Safari/mobile fallback where `SharedWorker` is absent all have to be redone.
 
-- \[ \] **WP-ANDROID-SESS-1 (P1) - ON ANDROID, A SESSION THAT CANNOT REFRESH LEAVES THE APP LOOKING
-  SIGNED IN, SHOWING NOTHING. THREE defects, all fixed, and ALL VERIFIED ON THE DEVICE 2026-08-06.
-  The only thing owed is the WEB DEPLOY.** The 401 was a **replay**: the phone presented a cookie one
-  rotation behind, because the refresh token lives only in the WebView cookie jar, Chromium commits it
-  lazily, and `MainActivity` flushed only from `onPause`/`onStop`. **Do not re-open the concurrency
-  hypothesis, it is dead.** The three fixes: (1) persistence - `flush_webview_cookies` (Rust JNI ->
-  `android.webkit.CookieManager`, VM cached in `JNI_OnLoad`) awaited after login, refresh and logout;
-  (2) visibility - the verdict is announced once from `auth.ts` (`setSessionExpiredHandler`), and
-  `apiFetch` no longer retries a dead session anonymously; (3) **found BY the verification** - the
-  verdict beat its own handler on a cold start, so the fallback's bare redirect left the PIN modal
-  over `/login` with the sign-in button underneath and no way back in; the verdict is now replayed to
-  a handler that registers after it. **Verified on hardware, do not re-derive:** persistence 2/2
-  (`previousTokenId` was exactly the flushed token, 94 s and 107 s after the rotation, well past the
-  grace window), and `[Cookies] flushed after refresh` in the phone's own log is what proves the JNI
-  `FindClass` resolves at runtime. Every number, both tables and the third defect are in
-  [cross-client-testing > verified on the device](docs/wiki/cross-client-testing.md#verified-on-the-device-2026-08-06---and-the-verification-found-a-third-defect);
-  the rules are in [sessions](docs/wiki/sessions.md). **OWED: the web deploy only** - GitHub Actions
-  was in a major outage 2026-08-06 (`Failed to resolve action download info`), so run 31120637374
-  failed at *Set up job*; rerun the failed jobs, nothing is wrong with the code. **Re-logging the phone
-  in IS automatable** - the Android login just opens the SYSTEM browser (`openUrl`), so forward CDP
-  to `localabstract:chrome_devtools_remote` and run `login.mjs --match cas.emse.fr` against it. The
-  one trap, which cost a run: never `realClick` the CAS fields (the hit test reaches "mot de passe
-  oublié" on the phone's layout) - focus by element and assert `activeElement`, as `login.mjs` now
-  does.
+- \[ \] **WP-DEPLOY-1 (P1) - FOUR P1 FIXES ARE ON `main` AND HAVE NEVER REACHED THE WEB.** The one
+  action that closes it: **rerun the failed jobs of run 31120637374**, which died at *Set up job* on
+  `Failed to resolve action download info` during the GitHub Actions outage of 2026-08-06 - nothing is
+  wrong with the code, and the outage is over (a later dispatch in the same window succeeded). It
+  carries WP-ANDROID-SESS-1, WP-PENDING-1, WP-PENDING-2 and WP-DRAIN-1. **Reload BOTH browsers before
+  measuring anything afterwards** - a long-lived tab keeps its old bundle, and a priming send made by
+  the old build writes no checkpoint.
 
-- \[ \] **WP-PENDING-1 (P1) - A DEVICE THAT FALLS FAR ENOUGH BEHIND CAN NEVER CATCH UP: the
-  catch-up pull is all-or-nothing under a fixed 10 s deadline, so a backlog bigger than 10 s of
-  transfer aborts forever and only grows.** Found by LIFE-6 2026-08-06, PROVEN, **FIXED the same day
-  (`pageTimeoutMs` + `onPage` per page, 4 tests) - OWED: the deploy, a phone rebuild, and the
-  re-verification against a real backlog.**
-  `fetchPendingMessages` ([BaseMlsService.ts:516](frontend/src/lib/services/BaseMlsService.ts#L516))
-  puts ONE `AbortController(10_000)` around `pullPendingMessagesJson`, which itself loops `limit=500`
-  pages behind an `after` cursor - and nothing is enqueued or ACKed unless the WHOLE pull returns. The
-  phone held 5 526 rows = 12 pages of ~465 KB; the abort fired at 10.03 / 10.26 / 10.30 s after each
-  reconnect while the WS was connected and `/api/presence` answered 200. **The server is not the
-  cause and the hypothesis is dead**: `EXPLAIN (ANALYZE, BUFFERS)` on prod is **8.909 ms** on the
-  composite `(recipientId, deviceId)` index. Proven by experiment: `DELETE 5431` -> 95 rows left ->
-  the very next reconnect logged `[PENDING] Fetched 95 pending messages` in **0.6 s**. The remedy is
-  a deadline per PAGE, with each page ingested and ACKed as it lands, so every pull makes progress -
-  which is what shipped; the Android half is the same bundle, so it needs a rebuild, not a fix.
-  Note the abort surfaces on Android as `TypeError: Failed to fetch` plus orphaned
+- **WP-ANDROID-SESS-1 is SHIPPED and ALL THREE defects VERIFIED ON THE DEVICE 2026-08-06** (a dead
+  session no longer looks signed in; the 401 was a cookie replay one rotation behind, not
+  concurrency). Numbers, tables and the third defect - the verdict beating its own handler on a cold
+  start - are in
+  [cross-client-testing](docs/wiki/cross-client-testing.md#verified-on-the-device-2026-08-06---and-the-verification-found-a-third-defect);
+  the rules are in [sessions](docs/wiki/sessions.md). Two facts worth keeping for later runs:
+  `[Cookies] flushed after refresh` in the phone's own log is what proves the JNI `FindClass` resolves
+  at runtime, and **re-logging the phone in IS automatable** - the Android login opens the SYSTEM
+  browser (`openUrl`), so forward CDP to `localabstract:chrome_devtools_remote` and run
+  `login.mjs --match cas.emse.fr`. Never `realClick` the CAS fields (the hit test reaches "mot de
+  passe oublié" on that layout) - focus by element and assert `activeElement`.
+
+- \[ \] **WP-PENDING-1 (P1) - a catch-up pull that can never make partial progress. FIXED, deployed
+  to the phone, and the ONE verification still owed is against a REAL backlog.** A single
+  `AbortController(10_000)` wrapped the whole paginated pull, so a backlog bigger than 10 s of
+  transfer aborted forever, ACKed nothing, and only grew (5 526 rows = 12 pages; aborts at 10.03 /
+  10.26 / 10.30 s). **The server hypothesis is dead** - 8.909 ms on the composite
+  `(recipientId, deviceId)` index, and `DELETE 5431` -> 95 rows -> next reconnect in 0.6 s. Now a
+  deadline per PAGE, each page ingested and ACKed as it lands (`pageTimeoutMs` + `onPage`, 4 tests).
+  **The verification cannot be re-run on A1** - that phone's backlog was deleted to prove the cause,
+  so it needs a device that falls behind again. The trap that cost three runs: the abort surfaces on
+  Android as `TypeError: Failed to fetch` plus orphaned
   `Uncaught (in promise) The resource id NNNN is invalid` - indistinguishable from a network failure
-  by text alone, which is why three runs read as "the phone was offline".
+  by text alone.
 
-- \[ \] **WP-PENDING-2 (P1) - A FRAME WHOSE GENERATION IS TOO FAR AHEAD IS ACKED OFF THE SERVER AS
-  IF IT HAD BEEN DELIVERED. Found and FIXED 2026-08-06; the fix is ON THE PHONE and was SEEN firing
-  end to end (diagnosis, `LOST frame`, `forget_group`, escalation). OWED: the web deploy, and a run
-  where the conversation actually heals - which is blocked on WP-DRAIN-1 below, found by this very
-  verification.** The phone's NATIVE log had it all along (the `[MLS]` TS lines never showed it):
-  `Ciphertext generation out of bounds 6110 / TooDistantInTheFuture` with **`msg_epoch=1
-  group_epoch=1`** - identical epochs, so it was never an epoch gap but a SENDER RATCHET gap, caused
-  by the undrainable backlog of WP-PENDING-1 (mostly read receipts, which advance the ratchet like
-  anything else). `mls-core` bucketed it as retryable, `classifyIncomingDecryptError` matched
-  `GAP_QUEUED` before the real error, and `attemptCommitReplay` then applied **0 commits**, computed
-  `healed = epoch >= activeEpoch` -> `1 >= 1` -> **true**, and the handler ACKed. **The generalisable
-  fault: a verdict computed over one dimension answering a question asked about another** - "0
-  commits applied" was the evidence that should have refused the conclusion. Fixed in four places
-  (new `GenerationTooFarAhead` kind before the generic `Process error:` arm; no dead
-  `pending_mls_messages` row; `TooDistantInTheFuture` classified before `GAP_QUEUED`; a
-  `generation-gap` branch that goes straight to `forgetGroup` + `requestReAdd`, no threshold, because
-  every later frame from that sender in that epoch fails identically and only a new epoch resets the
-  ratchets), plus `attemptCommitReplay` refusing to claim it healed a gap it had nothing to replay
-  for. **Deliberately left open:** `map_decrypt_outcome` in `src-tauri/src/state.rs` (the BATCH path,
-  history replay) still answers `ok: true, data: None` on `SecretReuse`. Everything in
-  [cross-client-testing > root cause](docs/wiki/cross-client-testing.md#root-cause-a-generation-gap-answered-by-an-epoch-verdict).
+- \[ \] **WP-PENDING-2 (P1) - a frame too far ahead was ACKed off the server as delivered. FIXED,
+  SEEN firing end to end on the device, and the conversation HEALED (3/3 at 2.9/1.5/4.1 s) - only
+  the web deploy is owed.** Full write-up in
+  [cross-client-testing > root cause](docs/wiki/cross-client-testing.md#root-cause-a-generation-gap-answered-by-an-epoch-verdict);
+  the rule it taught is in DURABLE RULES (epoch and generation are different axes). **Deliberately
+  left open, the reason this stays a WP:** `map_decrypt_outcome` in `src-tauri/src/state.rs` - the
+  BATCH path used by history replay - still answers `ok: true, data: None` on `SecretReuse`, which is
+  the same "a native layer threw the diagnosis away" that hid this bug for a day.
 
 - \[ \] **WP-BANNER-1 (P3) - the sync banners cover the conversation header.** Reported by the user
   2026-08-06 with a screenshot. `isCatchingUpMessages` and `historyPendingLabel` in
@@ -537,22 +444,6 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   their containing block is the `<section class="relative">` that ALSO holds `<ChatHeader>` - so they
   paint over the avatar and the name instead of stacking under the header. Anchor them to the
   messages container, not the section.
-
-- \[ \] **WP-DRAIN-1 (P1) - A RECOVERY AWAITED INSIDE THE INBOUND DRAIN FREEZES EVERY LATER MESSAGE,
-  IN SILENCE. Found by the WP-PENDING-2 verification 2026-08-06, FIXED, not yet re-verified.** On the
-  device the new generation-gap branch escalated correctly and then `requestReAdd` never returned:
-  `Drain start` with no `Drain complete`, the next messages enqueued and never processed, and the app
-  sat on "Synchronisation des messages" with a live socket. `isDraining` is lowered only when the
-  message callback returns, so **any await in it that can hang is a deadlock** - WP-HIDDEN-1's open
-  gap reached through the other end of the same drain. All five recovery call sites now go through
-  `startRecovery` (start it, log how it settles, never await). **VERIFIED ON THE DEVICE 21:57 and the
-  cause is settled: a DEADLOCK, not a slow network** - the whole recovery takes ONE SECOND off the
-  drain's thread, and `externalJoin` re-acquires the MLS mutex the drain holds until the callback
-  returns. The codebase already knew: `DeferredRecovery` exists because "the recovery seams
-  re-acquire the same non-reentrant mutex", and the Welcome path defers them for that reason; the
-  known-group path awaited one inline. **The conversation heals** - 3/3 fresh messages at
-  2.9/1.5/4.1 s, one copy each, which also closes WP-PENDING-2's owed verification. Write-up in
-  [cross-client-testing > a recovery awaited inside the drain](docs/wiki/cross-client-testing.md#the-verification-found-a-third-defect-a-recovery-awaited-inside-the-drain-wp-drain-1).
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
