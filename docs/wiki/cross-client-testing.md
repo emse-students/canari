@@ -398,6 +398,8 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | **Silent loss** | web, prod 2026-08-06 | **FAIL -> WP-LOSS-1** | Two DMs accepted by the server (`POST /api/mls/send -> 201`), never rendered by the peer, still absent after a reload. See below. |
 | MSG-8 | A1 0.13.0 -> web, prod 2026-08-06 | **PASS** | Sent from the phone while W2's tab was hidden: decrypted while hidden (`[MLS] Message decrypted ... → addMessageToChat`), rendered exactly once on return. Nothing appeared in the DOM until the tab came back - a hidden tab gets no frames, so that is the browser, not the app. |
 | MSG-8b | A1 0.13.0 -> web, prod 2026-08-06 | **PASS, with a UX note** | W2 on another page and hidden: badge `1 non lus` and `Discussions | 1` on refocus, message present once. **The tab title never changes**, so a backgrounded tab signals nothing until it is looked at - `useNotifications` does blink the title, but only for its own notification path. W2 also logged a `SecretReuseError` on a message it nonetheless rendered: the duplicate branch fires legitimately too, which is exactly why WP-LOSS-1 cannot classify on it alone. |
+| MSG-9 | W1 -> A1 0.13.0, prod 2026-08-06 | **PASS** | Phone's radios cut (`svc wifi disable` + `svc data disable`), `navigator.onLine` false in 516 ms. Nothing arrived while down; **one** copy after the radios came back, 26.3 s later. The delay is the app's own keepalive: `[WS] 4 pings without server response - closing zombie connection`, then `Reconnecting...` and `[PENDING] Fetched 3 pending messages`. |
+| MSG-10 | web, prod 2026-08-06 | **PASS** | Sender cut mid-session: composer emptied, the sender rendered its own message immediately, the peer had nothing, `[OUTBOX] Flush skipped - offline; the queue is kept intact`. On reconnect it drained in 1011 ms, one copy each side - **and it survived a reload of the sender**, which is the `persistLocalMutation` predicate WP-ECHO-1 turns on. So the offline path persists correctly; whatever loses the sender's echo is a different route. |
 | **WP-KBD-1** | A1 0.13.0, prod 2026-08-06 | **FAIL -> WP-KBD-1** | Tap the composer, HOME, return: the shell is pinned to the visual viewport but starts below the status-bar inset, so it overflows by that inset and the composer sits behind the keyboard. Numbers in [mobile](frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-open). |
 | **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED, VERIFIED ON PROD** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. Re-proved on A1 0.13.0 from a COLD start: `unknown = 0` at 3 s, 6 s and 10 s, six real names. See below. |
 
@@ -679,6 +681,25 @@ occluded window report `visible`, and covering it would no longer emulate anythi
 tab" has to be `window.open(..., '_blank')` from the page: `PUT /json/new` + `/json/activate` opens
 a separate WINDOW, where both pages stay `visible` and only `document.hasFocus()` flips. Measured,
 not assumed; `tabs.mjs` throws rather than run a check that never went to the background.
+
+### Cutting the network: which side the browser can fake, and which it cannot
+
+`Network.emulateNetworkConditions { offline: true }` fails every NEW request within ~10 ms, so it
+models an offline **sender** exactly - a send is a new request - and MSG-10 runs on it happily,
+including the `webSocketClosed` the sender observes.
+
+It did **not** model an offline **receiver**: MSG-9 twice showed W2 rendering a message while
+`navigator.onLine` was false and a probe `fetch` failed in 3 ms. The cause is not established -
+the mirror-image run on the sender does close its socket - so do not repeat the explanation that
+was first written here. What matters is the rule: **prove the cut, and prove it on the side you are
+cutting**. `net.mjs` returns a `severed` flag from a real failed request rather than trusting the
+command, and MSG-9 moved to the phone, where `svc wifi disable` + `svc data disable` is
+unambiguous and is also what a user actually experiences.
+
+Cutting the phone costs one thing: **adb must be on USB**, because the wireless transport dies with
+the wifi. The USB link on this device drops on its own, so re-establish
+`adb -s <usb> forward tcp:9222 localabstract:webview_devtools_remote_<pid>` before the run, and
+expect `/json/list` to hang if the screen has gone to sleep - wake it and foreground the app first.
 
 ### Two more, from MSG-8b - and they cost an invented app bug
 

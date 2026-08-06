@@ -145,8 +145,16 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   on A1 hardware - `device-verification` updated), **FWD-1**. Rows and evidence are in section 10 of
   the wiki page, plus **MSG-6** (link preview proxied, zero third-party `<img src>`) and **MSG-7**
   (30 rapid sends: 30/30, ordered, no duplicate, no `SecretReuseError`), **MSG-8** and **MSG-8b**
-  (backgrounded tab; the tab TITLE never signals an unread, only the badge, and only on refocus).
-  Next: **MSG-9/MSG-10** (receiver offline, sender offline), then FWD-3..5.
+  (backgrounded tab; the tab TITLE never signals an unread, only the badge, and only on refocus),
+  **MSG-9** (phone's radios cut - nothing while down, one copy 26 s after, the delay being the
+  app's own zombie-connection detection) and **MSG-10** (offline sender: queued, drained in 1 s,
+  and it SURVIVED a reload - so the offline path persists correctly and WP-ECHO-1 is elsewhere).
+  Next: **FWD-3..5**, then the TAB/LIFE lifecycle checks.
+- **An offline RECEIVER cannot be faked in the browser** - `emulateNetworkConditions` fails every
+  new request in 10 ms and W2 still rendered the message twice over. Cause not established; do not
+  re-explain it. MSG-9 belongs on the phone (`svc wifi disable` + `svc data disable`), which needs
+  adb on **USB** - the wireless transport dies with the wifi, and this device's USB link drops on
+  its own, so re-do the `forward` and wake the screen before every phone run.
 - **A green check's observation log is where two shipped bugs came from.** MSG-6 passed while its
   log carried a `400` on `/api/mls/link-preview` - which turned out to be every URL containing a
   closing bracket being truncated, in the rendered `<a href>` as well as in the preview. Read the
