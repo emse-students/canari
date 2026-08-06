@@ -146,10 +146,21 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   in ~5 s over five runs, with ONE unexplained 77.7 s run recorded in section 10), TAB-6 (delete
   `canari_refresh` -> reload -> lands on `/login`, not a silent empty list; the IdP session survives
   so signing back in needs no credentials). **W1 was logged out and logged back in by TAB-6** -
-  `login.mjs` then `pin.mjs`, both fine. **NEXT: the phone.** A rebuilt debug APK was still compiling
-  when this session ended (`bun tauri android build --target aarch64 --debug`, background task) -
-  A1 must be re-flashed before any LIFE/NOTIF check, because 0.13.0 predates BOTH P1 fixes and the
-  Rust `SecretReuse` change.
+  `login.mjs` then `pin.mjs`, both fine.
+- **A1 IS RE-FLASHED (2026-08-06 15:25) and the LIFE phase is OPEN.** The APK carrying both P1 fixes
+  and the Rust `SecretReuse` change is installed, data preserved (`firstInstallTime` unchanged).
+  **The version name is still 0.13.0, so it no longer distinguishes the builds** - the discriminators
+  are `lastUpdateTime` (15:25) and, in the artefacts, `already-consumed generation` inside
+  `libmines_app_lib.so` plus the four fix strings in `frontend/build`. Note the APK is at
+  `frontend/src-tauri/gen/android/...`, NOT `frontend/gen/...`, and web assets are brotli-compressed
+  inside the `.so`, so only RUST strings can be grepped there. **LIFE-1 (smoke, 3/3) and LIFE-2
+  (backgrounded) PASS; LIFE-3 FAILED and found WP-ANDROID-SESS-1** below. Left: LIFE-4 (doze),
+  LIFE-5 (reboot), LIFE-6 (offline, USB adb only), LIFE-7 (notification permission revoked), LIFE-8
+  (`am kill`) - all wired in `life.mjs`, one per run. **`am force-stop` is NOT "the user killed the
+  app"**: Android's STOPPED state cancels every FCM broadcast until a manual launch (proven in
+  logcat), so NOTIF-1 and every killed-app cell must use a SWIPE from recents or `am kill`. The
+  phone's whole web console is in logcat under `Tauri/Console`, which is how to read it while the
+  WebView is unreachable.
 - **PHASE 0 IS COMPLETE, and section 3 is under way (2026-08-06).** PASS so far: **MSG-1** (+38
   volume sends), **MSG-2**, **MSG-3**, **MSG-4** (image + PDF), **MSG-5**, **check M** (PDF preview
   on A1 hardware - `device-verification` updated), **FWD-1**. Rows and evidence are in section 10 of
@@ -191,9 +202,8 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   every marker. Before those fixes it reported the two WP-LOSS-1 messages as permanently lost, and
   this file said so - **wrong: W2 has both.** A diff between unequal windows looks authoritative and
   is noise.
-- **A1 now runs 0.13.0** (installed 2026-08-06, `adb install -r`, data preserved - `firstInstallTime`
-  unchanged). The DM-name fix is verified there from a COLD start. `openDM()` no longer needs a full
-  load for the phone, though nothing has been changed to rely on that yet.
+- The DM-name fix is verified on A1 from a COLD start, so `openDM()` no longer needs a full load for
+  the phone - though nothing has been changed to rely on that yet.
 - **The phone's IP moves between sessions** (it has already changed subnet). `watch.mjs` therefore
   RESOLVES the adb serial from `adb devices`, preferring the wireless entry over USB; never
   hard-code it again.
@@ -201,18 +211,22 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   `--disable-features=CalculateNativeWinOcclusion,ChromeWhatsNewUI --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`,
   plus `--user-data-dir=<scratchpad>/chrome-w1|w2`. Without it every click is silently discarded.
   A relaunch keeps the login (persistent profile) but re-locks the PIN - `pin.mjs` handles it.
-- **A1 still runs the PRE-FIX 0.12.0 build** unless the rebuild started 2026-08-06 was installed:
-  `bun tauri android build --target aarch64 --debug` in `frontend/`, then install
-  `gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk` (NOT `arm64/`, which
-  holds a stale July APK) and re-check its mtime. Until then `openDM()` must keep doing a full load,
-  because the phone's DM rows have no names to click.
+- **To rebuild the phone:** `bun tauri android build --target aarch64 --debug` in `frontend/`, then
+  install `src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk` (NOT
+  `arm64/`, which holds a stale July APK) with `adb install -r`, and check its mtime AND
+  `lastUpdateTime` - the version name does not move.
 - **OBSERVATION IS PART OF EVERY CHECK, not a debugging step** (`watch.mjs`, wiki section 9). A
   verdict is `PASS` only if the assertions hold AND the run is clean - errors, 4xx, page exceptions,
   WS events, `notable` MLS lines, `stateChanges` and anything `unexplained` are reported next to it.
   A line that turns out to be routine is ADDED to the benign list, never ignored in place.
-- **ELEVEN harness faults have now produced false results, all fixed - the lesson generalises and is
-  written up in the wiki page.** The four newest are the TAB-2/3/6 batch and all say one thing: an
-  action that cannot prove it took effect still yields a verdict. A kill that killed nothing
+- **FOURTEEN harness faults have now produced false results, all fixed - the lesson generalises and
+  is written up in the wiki page.** The three newest are all in READING THE PHONE, and all three said
+  "no notification" about a notification that was on screen: a `dumpsys notification --noredact`
+  dump larger than Node's default `maxBuffer` (it throws ENOBUFS, and a dump that cannot be read is
+  not an absent notification); a matcher that only looked at the first 900 characters of each record
+  while the marker sat past it; and `pidof`, which EXITS 1 when the process is gone, so the check
+  died on the very kill it was there to measure. Before them, the TAB-2/3/6 batch, which all say one
+  thing: an action that cannot prove it took effect still yields a verdict. A kill that killed nothing
   (PowerShell `-like` does not escape backslashes, and `powershell` is not on this shell's PATH -
   the ENOENT was swallowed); a "relaunch" that was really a new TAB, because a second `chrome.exe`
   on a live `--user-data-dir` hands its URL over and exits; `#encryption-pin` scored as a login form
@@ -321,8 +335,9 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   real double delivery: `Ciphertext generation out of bounds 2393 / SecretReuseError` then
   `[MLS] Duplicate delivery for 642f389a… - silent ACK (null payload, WASM duplicate flag)` - the new
   wording, so the ledger recognised the frame. **Owed: a LOSS-branch verification** (no reproduction
-  has produced one since the sender fixes landed, which is itself the point), the **ANDROID** half
-  (needs the rebuilt APK on A1), and two deliberate gaps - the ring dies on a reload, and nothing
+  has produced one since the sender fixes landed, which is itself the point), the **ANDROID** half -
+  the code is now ON the device (re-flashed 2026-08-06, `already-consumed generation` verified inside
+  the shipped `.so`) but no phone run has yet exercised either branch - and two deliberate gaps - the ring dies on a reload, and nothing
   tells the receiver's USER that a message was lost. Reasoning on the wiki page.
 
 - \[ \] **WP-HIDDEN-1 (P1) - A BACKGROUNDED TAB STOPS RECEIVING MESSAGES ENTIRELY, IN SILENCE.
@@ -367,6 +382,27 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   each write path one at a time, and nothing type-checks that a new path went through the queue.
   Cost is the reason it is not the fix: the worker transport, startup, the PIN unlock and the
   Safari/mobile fallback where `SharedWorker` is absent all have to be redone.
+
+- \[ \] **WP-ANDROID-SESS-1 (P1) - ON ANDROID, A SESSION THAT CANNOT REFRESH LEAVES THE APP LOOKING
+  SIGNED IN, SHOWING NOTHING.** Found 2026-08-06 by LIFE-3, on prod, on the freshly flashed build.
+  After a force-stop and relaunch the FIRST refresh was rejected (`[A] refresh✗401 988ms`), and the
+  app then rendered the ordinary feed shell - no login screen, no PIN modal - while looping one
+  refresh per second and serving every call `proceeding without auth`. The conversation was empty and
+  the DM sent while it was down never appeared, which to a user is nobody having written. **The web
+  passes this exact case** (TAB-6: `/login` with "Se connecter"), so the platforms disagree, and the
+  durable rule about the silent empty list is the one being broken. **What is NOT established, and
+  must be first: why the refresh token was invalid** - it was valid at 15:25 (the app authenticated
+  right after the re-flash; LIFE-1 and LIFE-2 both passed on it) and rejected at 15:40. Two
+  candidates needing different fixes: the rotated token is not durably persisted across process death
+  on Android, or concurrent cold-start refreshes replayed one rotating token and the server revoked
+  the session per [sessions](docs/wiki/sessions.md). The first 401 precedes any concurrency, which
+  argues against the replay happening on THAT start but not on the one before. Decisive evidence is
+  the server's session row (blocked by the classifier this session). Reproduce first: log the phone
+  back in, force-stop, relaunch, and see whether a FRESH session's first refresh survives a process
+  death. Full log excerpt and reasoning in
+  [cross-client-testing > the LIFE phase opens](docs/wiki/cross-client-testing.md#the-life-phase-opens-what-force-stop-actually-tests-and-what-it-found-2026-08-06).
+  **The phone is currently in this state** - session expired, feed rendering, no login prompt - so
+  the next session starts by logging it back in.
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent

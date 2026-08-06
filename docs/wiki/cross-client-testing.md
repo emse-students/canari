@@ -208,7 +208,7 @@ messages sent vs messages received, asserted programmatically, not by eye.
 | --- | --- | --- |
 | LIFE-1 | Foreground | baseline |
 | LIFE-2 | Background | `input keyevent HOME` |
-| LIFE-3 | Killed | `am force-stop fr.emse.canari` |
+| LIFE-3 | Killed | Swipe from recents, NOT `am force-stop`: a force-stopped package is in Android's STOPPED state and the OS cancels every FCM broadcast to it until a manual launch (measured 2026-08-06, below). Force-stop is still worth running - it is what the settings screen does - but it answers a different question |
 | LIFE-4 | Doze | `dumpsys deviceidle force-idle` |
 | LIFE-5 | After reboot, app never opened | `adb reboot`, then send - exercises `CanariBootReceiver` |
 | LIFE-6 | Offline | `svc wifi disable` + `svc data disable` |
@@ -426,6 +426,9 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | TAB-3 (cold-start timing) | web, prod 2026-08-06 | **PASS, with one unexplained run** | Five timed cold starts: PIN entered at ~3.5 s, message rendered at **4.9 / 5.6 / 5.6 / 5.1 s**. One earlier run took **77.7 s** with everything ready at 6.9 s (`Leadership acquired` 5.9 s, WS open 5.9 s, `[PENDING] Fetched` and `Drain start` 6.9 s) and `[MLS] Message decrypted` only at 77.7 s - a 71 s gap between a drain starting and a message coming out of it. Not reproduced in four further runs. Not a WP without a reproduction; if it recurs, capture everything between `Drain start` and the decrypt. |
 | TAB-6 | web, prod 2026-08-06 | **PASS** | `canari_refresh` deleted, then a reload: the app lands on `/login` with "Se connecter", **not** on a logged-in-looking empty list. Log clean. Note the IdP session survives (`authentik_session`, CAS `TGC`), so signing back in needed no credentials - one click and the app was back. |
 | **WP-KBD-1** | A1 0.13.0, prod 2026-08-06 | **FAIL -> WP-KBD-1** | Tap the composer, HOME, return: the shell is pinned to the visual viewport but starts below the status-bar inset, so it overflows by that inset and the composer sits behind the keyboard. Numbers in [mobile](frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-open). |
+| LIFE-1 (smoke, post-flash) | A1 rebuilt 2026-08-06, prod | **PASS** | First run of the build carrying BOTH P1 fixes and the Rust `SecretReuse` change: 3/3 DMs from W2, 835 / 796 / 654 ms, one copy each, no error. The Rust half is proven present in the APK by `already-consumed generation` in `libmines_app_lib.so`; the TS half by the four fix strings in the bundled `frontend/build`. One notable line, unexplained: `[KP] Publication failed (register-device) - welcome_request deferred to next connection`, a transport error 7 s after unlock, while `needed=0`. |
+| LIFE-2 | A1 rebuilt 2026-08-06, prod | **PASS** | HOME pressed, then a DM: notification in **4.8 s** carrying the real decrypted text (`Claire VAN RUYMBEKE` / the marker), so the background decrypt works. On return the message was **already there** - present 20 ms after the app came back, exactly once, no PIN re-ask. |
+| LIFE-3 | A1 rebuilt 2026-08-06, prod | **FAIL - but read both halves** | `am force-stop`, then a DM: **no notification**, and after the relaunch the message never arrived at all. The first half is Android, not Canari: logcat shows `GCM broadcast intent callback: result=CANCELLED for act=com.google.android.c2dm.intent.RECEIVE pkg=fr.emse.canari` - a force-stopped package is in the STOPPED state and the OS withholds every broadcast until a manual launch. The second half is ours, and it is a new WP: see below. |
 | **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED, VERIFIED ON PROD** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. Re-proved on A1 0.13.0 from a COLD start: `unknown = 0` at 3 s, 6 s and 10 s, six real names. See below. |
 
 ### Reconciliation: the only way this class of loss can be seen
@@ -1017,6 +1020,75 @@ at all**, since it still yields a result.
 A fourth, from the same afternoon: `client(port, 'canari-emse.fr')` takes the first matching target
 and `/json/list` is not in creation order, so a leftover second tab made the multi-tab check attach
 to the FOLLOWER and report that the leader had logged nothing.
+
+### The LIFE phase opens: what `force-stop` actually tests, and what it found (2026-08-06)
+
+**`am force-stop` is not "the user killed the app".** Android puts a force-stopped package into the
+STOPPED state and withholds every broadcast from it - including FCM - until a manual launch. The
+proof is in the log rather than in the app's silence:
+
+```
+15:39:15 W GCM: broadcast intent callback: result=CANCELLED
+                forIntent { act=com.google.android.c2dm.intent.RECEIVE pkg=fr.emse.canari }
+```
+
+The push was delivered TO THE DEVICE and cancelled by the framework. So LIFE-3 as written measures
+an OS policy, not the app: **NOTIF-1 and every other "app killed" cell must use a swipe from
+recents** (which does not set the stopped flag) **or `am kill`** (LIFE-8, the OS reclaiming the
+process). A check that force-stops and then reports "no notification" is reporting Android's
+documented behaviour as a Canari bug.
+
+**The half that is ours, and is new: an unrefreshable session leaves the Android app looking
+signed in.** After that relaunch the very first refresh was rejected -
+
+```
+15:40:16.970  [A] refresh→ https://canari-emse.fr/api/auth/refresh
+15:40:17.959  [A] refresh✗401 988ms
+15:40:18.572  [API] refresh failed on GET /api/users/… - session expired
+15:40:20.138  [PIN] No device key in vault - auto-login impossible
+```
+
+- and the app then rendered the **feed**, not a login screen, while looping one refresh attempt per
+second and serving every request `proceeding without auth`. `pin.mjs` found no unlock modal and the
+body was the ordinary logged-in shell. The conversation was empty: the DM sent while the app was
+down never appeared, which to a user is indistinguishable from nobody having written.
+
+That is the failure TAB-6 exists to catch, and the web passes it: deleting `canari_refresh` there
+lands on `/login` with "Se connecter". **The two platforms disagree**, so this is WP-ANDROID-SESS-1.
+
+What is NOT established, and must be before anything is fixed: **why** the refresh token was invalid
+at 15:40 when it was valid at 15:25 (the app authenticated fine right after the re-flash, and the
+smoke test and LIFE-2 both passed in between). Two candidates, and they need different fixes:
+
+1. the rotated refresh token is not durably persisted across process death on Android, so a cold
+   start presents a stale one; or
+2. concurrent refreshes replayed one rotating token and the server revoked the session - which is
+   precisely the model in [sessions](sessions.md), and the cold start does fire many API calls at
+   once. Note the first 401 arrives BEFORE any concurrency, which argues against this happening on
+   *this* start, but not against it having happened on the previous one.
+
+The decisive evidence is server-side (the session row for that device: revoked, rotated, or simply
+expired). Reproduce first: log the phone back in, force-stop, relaunch, and read whether the FIRST
+refresh of a fresh session survives a process death.
+
+### Three more harness faults, from the LIFE phase - all in reading the phone
+
+- **A dump too big to read is not an absent notification.** `dumpsys notification --noredact` is over
+  a megabyte on this device, which is exactly Node's default `maxBuffer`, so `execFileSync` threw
+  ENOBUFS and LIFE-2 died with a stack trace instead of a verdict.
+- **A truncated dump is not an absent notification either.** The notification reader matched against
+  the first 900 characters of each record; the marker sat past that, so LIFE-2 reported "no
+  notification" while the very same dump carried the title `Claire VAN RUYMBEKE` and the marker in
+  the body. Checks now match on the full record and only PRINT the truncation.
+- **`pidof` exits 1 when the process is gone**, so the un-caught form threw exactly in the case the
+  LIFE phase exists to create: the check died on the kill instead of measuring it.
+
+`--noredact` is not optional, by the way: without it the OS hides the text of notifications it
+considers sensitive, and a decrypted notification then reads as an empty one.
+
+**Reading the phone's web console does not need the WebView to be reachable**: every line reaches
+logcat under the tag `Tauri/Console`, which is the only way to see what the app did while it was
+killed, backgrounded or dozing.
 
 ### Cutting the network: which side the browser can fake, and which it cannot
 
