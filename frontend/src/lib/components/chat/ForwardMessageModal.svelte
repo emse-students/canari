@@ -74,8 +74,6 @@
    * because it must render at once; the names simply arrive after it.
    */
   let resolvedPeerNames = $state<Record<string, string>>({});
-  /** Ids already asked for. Kept out of $state so the effect below cannot re-trigger itself. */
-  const requestedPeerIds = new Set<string>();
 
   const presentationOf = (c: Conversation) =>
     resolveConversationListPresentation(
@@ -94,8 +92,9 @@
       if (key === excludeKey) continue;
       const pres = presentationOf(c);
       if (pres.displayNameResolved || pres.conversationType !== 'direct') continue;
-      if (requestedPeerIds.has(pres.contactId)) continue;
-      requestedPeerIds.add(pres.contactId);
+      // No local de-duplication: resolveUserDisplayName already answers from its cache and shares
+      // one in-flight promise per id, and this effect never reads `resolvedPeerNames`, so writing
+      // it cannot re-trigger the loop.
       void resolveUserDisplayName(pres.contactId).then((name) => {
         if (name) resolvedPeerNames = { ...resolvedPeerNames, [pres.contactId]: name };
       });
