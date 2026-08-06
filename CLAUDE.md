@@ -524,19 +524,6 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   history replay) still answers `ok: true, data: None` on `SecretReuse`. Everything in
   [cross-client-testing > root cause](docs/wiki/cross-client-testing.md#root-cause-a-generation-gap-answered-by-an-epoch-verdict).
 
-- \[ \] **WP-PENDING-2 (P1) - A MESSAGE PULLED WHILE OFFLINE DECRYPTS, IS ACKED, AND THEN EXISTS
-  NOWHERE. Established 2026-08-06, root cause NOT found.** With the backlog emptied, LIFE-6 still
-  fails: the frame is pulled (`Fetched 2 pending messages`), decrypts (`messageCallback -> true`), is
-  ACKed and DELETED server-side (witness row `eb45c135-5fa2-413e-bdac-4ba38f21589e` gone from
-  `queued_message`), and the message is in no conversation - verified by an accumulating scroll read,
-  not a screenful. **The WP-LOSS-1 ledger never sees it**: no `LOST frame`, no `SecretReuseError`, no
-  `Ciphertext generation out of bounds`, no duplicate line. **Two hypotheses are dead, do not re-open
-  them:** the FCM push did not consume the generation (`CanariFCM: App in foreground -> MLS handled
-  by the foreground (WS), skip background processing` for both frames), and it is not the backlog.
-  What is unknown is where between `messageCallback -> true` and the message store it goes -
-  instrument that seam. Evidence in
-  [cross-client-testing > the LIFE phase](docs/wiki/cross-client-testing.md#the-life-phase-2026-08-06).
-
 - \[ \] **WP-BANNER-1 (P3) - the sync banners cover the conversation header.** Reported by the user
   2026-08-06 with a screenshot. `isCatchingUpMessages` and `historyPendingLabel` in
   [ChatArea.svelte](frontend/src/lib/components/chat/ChatArea.svelte) are both `absolute top-0`, and
