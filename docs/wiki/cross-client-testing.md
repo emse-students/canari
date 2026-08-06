@@ -1112,10 +1112,47 @@ And `ssh canari` is impossible from the Bash tool (Git Bash strips the backslash
 cloudflared ProxyCommand path): every prod query goes through the PowerShell tool, single-quoted
 outside with SQL literals doubled (`''uuid''`), or the quoting shreds the statement.
 
-**Owed:** the on-device verification. Log in, force a rotation, force-stop, wait past 60 s, relaunch -
-the session must survive, where before it died. Nothing else re-verifies this: it compiles on
-Windows (`cargo check --target aarch64-linux-android` is clean) but a compile proves nothing about
-`FindClass` at runtime.
+#### Verified on the device, 2026-08-06 - and the verification found a third defect
+
+The APK carrying both halves was flashed at 18:58 (`JNI_OnLoad` exported from `libmines_app_lib.so`,
+`android/webkit/CookieManager` and `flush_webview_cookies` in its strings). A compile could not have
+told us the one thing that mattered, and the first cold start did: **`[Cookies] flushed after
+refresh`** in the app's own console, so `FindClass` resolves and `CookieManager.flush()` returns from
+a native thread.
+
+**Persistence - 2/2.** The reproduction that killed the session, run against the fixed build. Session
+`c64b1934…`, no lifecycle callback at any point (`am force-stop`, never HOME):
+
+| round | rotation flushed | killed | relaunched | row afterwards | verdict |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `917bd5aa…` at 18:59:21 | 19:00:28 | 19:02:11 (**94 s**) | `tokenId fecea263…`, `previousTokenId 917bd5aa…` | the phone presented the CURRENT token → **real rotation**, row alive |
+| 2 | `fecea263…` at 19:02:11 | 19:02:53 | 19:04:40 (**107 s**) | `tokenId 4d80f6a6…`, `previousTokenId fecea263…` | idem |
+
+`previousTokenId` is the whole proof: it is exactly the token the app flushed, so the cookie the
+phone read back after the kill was the current generation, not the one before it. Both gaps are well
+past the 60 s grace window, so neither is a reissue. No `Refresh token replay detected` in the
+server log for the window.
+
+**Visibility - PASS, and it exposed defect 3.** The session was then revoked the way a user would -
+another client's `/settings` → "Connexions actives" → "Déconnecter" on the phone's row - and the
+phone cold-started. It reached `/login`, with `[A] session dead → logout` and
+`[API] session expired on GET /api/users/… - no anonymous retry`. **But the log also said
+`no session-expired handler registered - redirecting directly`, and the encryption-PIN modal was
+still open over the login screen**, covering the sign-in button: signed out, with nothing to press.
+
+3. **The verdict beat its own handler.** `ChatBackgroundService` registers the reaction on mount, and
+   a cold start's first refresh 401s before that - so the fallback ran, and a bare `goto('/login')`
+   is not the reaction: it skips `dismissAuthPrompts()` and `clearAuth()`. `setSessionExpiredHandler`
+   now replays the verdict to a handler that arrives after it. **A one-shot announcement plus a late
+   subscriber is a race**, and a fallback only covers it if it does everything the handler does -
+   which it never does, or it would be the handler.
+
+Two things the campaign should carry from this: **a fix's own verification is a check like any
+other**, and its observation log gets read the same way (defect 3 is in the same paragraph as the
+PASS that found it); and **exercising the failure branch cost a real logout** - the phone's re-login
+goes through the SYSTEM browser (`openUrl`, not the WebView), so it needs CDP on
+`localabstract:chrome_devtools_remote`, and the CAS password is the user's to type. Do not automate
+that half.
 
 ### Three more harness faults, from the LIFE phase - all in reading the phone
 

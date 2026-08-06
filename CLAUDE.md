@@ -151,7 +151,11 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   `canari_refresh` -> reload -> lands on `/login`, not a silent empty list; the IdP session survives
   so signing back in needs no credentials). **W1 was logged out and logged back in by TAB-6** -
   `login.mjs` then `pin.mjs`, both fine.
-- **A1 IS RE-FLASHED (2026-08-06 15:25) and the LIFE phase is OPEN.** The APK carrying both P1 fixes
+- **A1 was RE-FLASHED AGAIN 2026-08-06 18:58** with the WP-ANDROID-SESS-1 build (data preserved,
+  `firstInstallTime` unchanged). **That build predates the third defect's fix, so a reflash is owed
+  before the LIFE phase resumes.** The phone is signed in and PIN-unlocked on a session created
+  19:1x; the previous session was revoked deliberately to exercise the failure branch.
+- **The LIFE phase is OPEN.** The APK carrying both P1 fixes
   and the Rust `SecretReuse` change is installed, data preserved (`firstInstallTime` unchanged).
   **The version name is still 0.13.0, so it no longer distinguishes the builds** - the discriminators
   are `lastUpdateTime` (15:25) and, in the artefacts, `already-consumed generation` inside
@@ -388,27 +392,26 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   Safari/mobile fallback where `SharedWorker` is absent all have to be redone.
 
 - \[ \] **WP-ANDROID-SESS-1 (P1) - ON ANDROID, A SESSION THAT CANNOT REFRESH LEAVES THE APP LOOKING
-  SIGNED IN, SHOWING NOTHING. Root cause SETTLED and BOTH HALVES WRITTEN 2026-08-06; what is owed is
-  the DEPLOY and the ON-DEVICE verification.** Found by LIFE-3 on prod. The 401 was a **replay** -
-  the server's own log, same second: `Refresh token replay detected sid=19c9438d-… - session
-  revoked`. The phone presented a cookie one rotation behind, because the refresh token lives only in
-  the WebView cookie jar, Chromium commits it lazily, and `MainActivity` flushes only from
-  `onPause`/`onStop` - so a foreground rotation followed by a kill with no lifecycle callback reverts
-  the disk. Proven both ways with `sessprobe.mjs` (grace window as the instrument, the token never
-  read): no flush -> the row had not moved, so the relaunch was a grace REISSUE; `--flush` -> a
-  second real rotation. **Do not re-open the concurrency hypothesis, it is dead.** Everything - the
-  two runs, the table, both fixes - is in
-  [cross-client-testing > the LIFE phase opens](docs/wiki/cross-client-testing.md#the-life-phase-opens-what-force-stop-actually-tests-and-what-it-found-2026-08-06),
-  and the rules it produced are in [sessions](docs/wiki/sessions.md).
-  **Two defects, both now written, neither deployed:** (1) persistence - `flush_webview_cookies`
-  (Rust JNI -> `android.webkit.CookieManager`, VM cached in `JNI_OnLoad`) awaited after login,
-  refresh and logout; (2) visibility - the 401 verdict is announced once from `auth.ts`
-  (`setSessionExpiredHandler`), and `apiFetch` no longer retries a dead session anonymously. Gates
-  green: `check` 7549 files 0 errors, lint, 922/922 tests, `cargo check --target
-  aarch64-linux-android` clean. **OWED, in order: deploy the web, rebuild + reflash the APK, then
-  verify on device** - rotate, force-stop, wait PAST 60 s, relaunch: the session must survive where
-  it died. A compile says nothing about `FindClass` at runtime. **The phone is logged in** (session
-  `c64b1934-0eaf-4738-b237-0a3730ce6949`) on the PREVIOUS build.
+  SIGNED IN, SHOWING NOTHING. THREE defects, all fixed, and ALL VERIFIED ON THE DEVICE 2026-08-06.
+  The only thing owed is the WEB DEPLOY.** The 401 was a **replay**: the phone presented a cookie one
+  rotation behind, because the refresh token lives only in the WebView cookie jar, Chromium commits it
+  lazily, and `MainActivity` flushed only from `onPause`/`onStop`. **Do not re-open the concurrency
+  hypothesis, it is dead.** The three fixes: (1) persistence - `flush_webview_cookies` (Rust JNI ->
+  `android.webkit.CookieManager`, VM cached in `JNI_OnLoad`) awaited after login, refresh and logout;
+  (2) visibility - the verdict is announced once from `auth.ts` (`setSessionExpiredHandler`), and
+  `apiFetch` no longer retries a dead session anonymously; (3) **found BY the verification** - the
+  verdict beat its own handler on a cold start, so the fallback's bare redirect left the PIN modal
+  over `/login` with the sign-in button underneath and no way back in; the verdict is now replayed to
+  a handler that registers after it. **Verified on hardware, do not re-derive:** persistence 2/2
+  (`previousTokenId` was exactly the flushed token, 94 s and 107 s after the rotation, well past the
+  grace window), and `[Cookies] flushed after refresh` in the phone's own log is what proves the JNI
+  `FindClass` resolves at runtime. Every number, both tables and the third defect are in
+  [cross-client-testing > verified on the device](docs/wiki/cross-client-testing.md#verified-on-the-device-2026-08-06---and-the-verification-found-a-third-defect);
+  the rules are in [sessions](docs/wiki/sessions.md). **OWED: the web deploy only** - GitHub Actions
+  was in a major outage 2026-08-06 (`Failed to resolve action download info`), so run 31120637374
+  failed at *Set up job*; rerun the failed jobs, nothing is wrong with the code. **Re-logging the
+  phone in is NOT automatable**: the Android login opens the SYSTEM browser (`openUrl`), so it needs
+  CDP on `localabstract:chrome_devtools_remote`, and the CAS password is the user's to type - ask.
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
@@ -428,6 +431,17 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   Do not re-derive them. The file is `frontend/src/lib/stores/keyboardViewport.svelte.ts`, whose
   geometry is already pure and unit-tested - so the fix belongs in `computeSnapshot`'s contract plus
   a test, not in a component.
+
+- \[ \] **WP-OIDC-TAB-1 (P3) - On Android the browser tab opened for the login is NEVER closed.**
+  Reported by the user 2026-08-06 and reproduced during the WP-ANDROID-SESS-1 re-login: the app comes
+  back to the foreground on the deep link, and the system browser is left sitting on the last
+  Authentik page (`auth.canari-emse.fr/if/flow/default-source-authentication/?code=…`), which reads
+  as "the login failed" to anyone who looks at it. Cause: `auth.ts` launches the flow with `openUrl`
+  from `@tauri-apps/plugin-opener`, i.e. a plain browser launch - nothing can dismiss that tab
+  afterwards, from inside or outside. The remedy is a **Chrome Custom Tab**, which the OS closes when
+  the app resumes; that is a native change (the opener plugin has no such affordance), so scope it
+  before starting. iOS has the same shape with `ASWebAuthenticationSession` as the equivalent, and it
+  has never been checked on hardware - see [device-verification](docs/wiki/device-verification.md).
 
 - \[ \] **WP-LINK-1 (P3) - Linkify bare domains, without linkifying inclusive writing.** Today a
   chat link needs its `https://` scheme, and a post runs GFM, which autolinks only `www.`-prefixed
@@ -649,6 +663,9 @@ rule it cost is on that page - read it before touching any login, cookie or rota
 - A dead session is an ANSWER: never retry the request anonymously, or "you are logged out" renders
   as "there is nothing here". Reach the verdict in one place and announce it from there - every
   caller that re-decides is a path that can forget.
+- A one-shot announcement and a late subscriber are a RACE: replay the verdict to whoever registers
+  after it. A fallback only covers the race if it does everything the real handler does, which it
+  never does - ours redirected without closing the PIN modal, so `/login` arrived unusable.
 
 ---
 

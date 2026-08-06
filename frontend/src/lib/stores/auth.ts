@@ -96,6 +96,15 @@ let _sessionExpiredNotified = false;
  */
 export function setSessionExpiredHandler(fn: SessionExpiredHandler | null): void {
   _sessionExpiredHandler = fn;
+  // The verdict can be reached before anything is listening: on a cold start the first refresh
+  // runs before the app shell mounts, so the fallback below is what reacts - and a bare redirect
+  // is NOT the same reaction. It leaves the PIN modal open over `/login`, covering the sign-in
+  // button, and never clears the stale auth state. Measured on Android 2026-08-06. So a handler
+  // that arrives late is told immediately; running it twice is the handler's own problem to guard.
+  if (fn && _sessionExpiredNotified) {
+    awarn('session-expired handler registered after the verdict - replaying it');
+    fn();
+  }
 }
 
 /**

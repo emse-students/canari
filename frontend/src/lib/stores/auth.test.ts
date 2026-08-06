@@ -72,14 +72,27 @@ describe('the session-expired announcement', () => {
   });
 
   it('rearms after a successful refresh - the session answered, so the verdict is void', async () => {
-    const handler = vi.fn();
-    setSessionExpiredHandler(handler);
-
     fetchMock.mockResolvedValue(answer(200));
     await expect(refresh()).resolves.toContain('.');
+
+    // Registered only now, so this asserts what it claims: the 200 really did void the verdict,
+    // rather than the handler simply being replayed the previous test's one.
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    expect(handler).not.toHaveBeenCalled();
 
     fetchMock.mockResolvedValue(answer(401));
     await expect(refresh()).rejects.toThrow();
     expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('replays the verdict to a handler that registers after it', () => {
+    // Deliberately last, and deliberately dependent on the test above leaving the latch armed:
+    // that state IS the case under test. On a cold start the first refresh 401s before the app
+    // shell mounts, so the handler registers second - and on Android that raced exactly wrong,
+    // leaving the PIN modal open over `/login` with the sign-in button underneath it.
+    const late = vi.fn();
+    setSessionExpiredHandler(late);
+    expect(late).toHaveBeenCalledTimes(1);
   });
 });
