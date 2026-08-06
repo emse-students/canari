@@ -73,6 +73,10 @@ rather than rebuilding. Contents:
 | `discover-web.mjs` | SETUP-7 web half |
 | `admins.mjs` | which association is administered by whom |
 | `a1.py` | uiautomator2 driver for the phone's NATIVE surfaces only (shade, permission dialogs, keys) |
+| `chat.mjs` | the chat primitives every check shares: `client`, `openDM`, `openChannel`, `send`, `awaitMessage`, `countMessage`, `markers`, `bubbleCentre`, `hoverBubble`, `clickBubbleAction` |
+| `watch.mjs` | **observation, attached to every check**: console, page exceptions, HTTP, WS, plus `logcatSince` for A1 and `sanity` for the pre-state |
+| `results.mjs` | `record()` / `mark()`; every verdict is appended to `results.ndjson` |
+| `msg1.mjs`, `msg2.mjs`, `msg3.mjs`, `msg5.mjs`, `losshunt.mjs`, `sendprobe.mjs` | the runners built so far |
 | `test-accounts.json` | credentials - never in the repo |
 | `a1-baseline/a1-clean-0.12.0.tar` | SETUP-8 rollback archive |
 | `logs/a1.log` | the whitelisted logcat capture |
@@ -332,6 +336,27 @@ CORRUPT-8 and CORRUPT-10 are the two that would be security findings rather than
 
 ## 9. Evidence and reporting
 
+**Observation is part of the check, not a debugging step** (decided 2026-08-06). A check that only
+asserts its own outcome answers "did the message arrive", never "did it arrive for the right
+reasons" - and a pass sitting on a swallowed exception, an unread 4xx, a request that should not
+have been made or a reconnect mid-measurement is worth nothing. WP-LOSS-1 is exactly a green-looking
+path with a dropped message underneath it.
+
+So `watch.mjs` attaches to every client for the duration of every check and sorts what it saw into
+five buckets, reported next to the verdict:
+
+| Bucket | Meaning |
+| --- | --- |
+| `errors` / `exceptions` / `badHttp` / `wsEvents` | anything here makes the run **not clean**, whatever the assertion said |
+| `notable` | not an error, but it happened: `SecretReuse`, `out of bounds`, `Duplicate`, `silent ACK`, `epoch`, `GAP`, `out-of-sync`, `welcome_request`, `forget`, `revoke` |
+| `stateChanges` | the client changed under the check's feet - gateway reconnect, token refresh, session change. Explains a latency or a retry that would otherwise look like a result |
+| `unexplained` | everything not on the known-benign list, **verbatim**. The point is to see what was not predicted; when a line turns out to be routine it is added to `BENIGN`, never ignored in place |
+
+A verdict is `PASS` only when the assertions hold **and** the run is clean; otherwise
+`PASS-WITH-NOISE`, which is a result that still needs reading. On A1, `logcatSince()` pulls the same
+19-tag whitelist as `test_adb.py` for the same window - `-T "MM-DD hh:mm:ss.mmm"` in the DEVICE's
+local time, not ISO and not UTC.
+
 For every check, capture **before deciding**:
 
 - Android: the logcat window around the action, filtered to the 19 tags.
@@ -360,8 +385,11 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 | --- | --- | --- | --- |
 | MSG-1 | web, prod 2026-08-06 | **PASS** | DM W1 -> W2, delivered in 1225 ms, one copy each side, author `Jolan BOUDIN`. Re-proved by 38 consecutive sends below. |
 | MSG-1 (volume) | web, prod 2026-08-06 | **PASS** | 20 sends at 1.2 s spacing: 20/20, latency 177-830 ms. 8 sends each preceded by a receiver reload: 8/8, 493-1191 ms. 10 sends into the receiver's post-reload bootstrap window: 10/10, 505-1170 ms. |
+| MSG-2 | A1 0.12.0, prod 2026-08-06 | **PASS** | W2 -> A1 with the app foreground: 2665 ms, one copy, no push duplicate. |
+| MSG-3 | web, prod 2026-08-06 | **PASS** | Reply renders with its quoted parent on BOTH sides, 509 ms. Composer showed `Répondre à Jolan BOUDIN parent MSG3P-…`. |
+| MSG-5 | all three, prod 2026-08-06 | **PASS** | Channel message converged 1/1/1 (W2 741 ms, A1 117 ms). **Zero** `masterSecret`/`webhookSecret` in any `/api/` response body on any client. No errors, no 4xx, nothing unexplained on any of the three. |
 | **Silent loss** | web, prod 2026-08-06 | **FAIL -> WP-LOSS-1** | Two DMs accepted by the server (`POST /api/mls/send -> 201`), never rendered by the peer, still absent after a reload. See below. |
-| **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. See below. |
+| **DM names** | web + A1, prod 2026-08-06 | **FAIL -> FIXED, VERIFIED ON PROD** | Every DM row read "Utilisateur inconnu" after a client-side navigation into `/chat`, on both platforms; a full load resolved them. See below. |
 
 ### The bug that only a click could find
 
@@ -384,6 +412,15 @@ Cause, fix and the general rule are in the `CHANGELOG` entry and in DURABLE RULE
 lesson for this campaign is the second row: **reproduce a platform-specific symptom on the other
 platform before believing it is platform-specific.** It cost one command and turned an Android bug
 into a shared one.
+
+**Verified on production after the CD (2026-08-06)**, by re-running the exact reproduction rather
+than trusting a green deploy:
+
+- hard reload of `/communities`, then a **click** on Discussions: `unknown = 0` at 3 s, 6 s and 10 s
+  (it was 6, permanently, before);
+- the forward picker lists all six people by name (five were anonymous), and typing `Arthur` in its
+  search box filters to `Arthur PIZOT` - the action that was impossible, since the filter matches on
+  the same label.
 
 ### The loss this campaign was built to find
 

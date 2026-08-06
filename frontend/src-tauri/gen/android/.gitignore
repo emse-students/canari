@@ -18,6 +18,8 @@ key.properties
 /.tauri
 /tauri.settings.gradle
 keystore.properties
+# Kotlin incremental-compilation session state, written by every local Android build.
+/.kotlin
 *.jks
 *.keystore
 release.jks

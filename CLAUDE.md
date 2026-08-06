@@ -140,8 +140,29 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   `cdp.mjs` drives all three clients (W1 on 9224, W2 on 9223, A1's WebView on 9222 via
   `adb forward`); `a1.py` is only for native surfaces. W1 moved OFF the chrome-devtools MCP on
   purpose, so no password is ever a tool-call argument.
-- **PHASE 0 IS COMPLETE (SETUP-1..9).** Three clients live, A1 on a clean 0.12.0 DEBUGGABLE build
-  (so `run-as` works). Next action is the first real check, section 3.
+- **PHASE 0 IS COMPLETE, and section 3 is under way (2026-08-06).** PASS so far: **MSG-1** (+38
+  volume sends), **MSG-2**, **MSG-3**, **MSG-5**. Rows and evidence are in section 10 of the wiki
+  page. Next: MSG-4 (media), MSG-6..10, then **FWD-1..5**, for which the tooling now exists
+  (`clickBubbleAction`, and the forward modal is reachable).
+- **The two browsers MUST be relaunched with occlusion detection off** if they are ever restarted:
+  `--disable-features=CalculateNativeWinOcclusion,ChromeWhatsNewUI --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`,
+  plus `--user-data-dir=<scratchpad>/chrome-w1|w2`. Without it every click is silently discarded.
+  A relaunch keeps the login (persistent profile) but re-locks the PIN - `pin.mjs` handles it.
+- **A1 still runs the PRE-FIX 0.12.0 build** unless the rebuild started 2026-08-06 was installed:
+  `bun tauri android build --target aarch64 --debug` in `frontend/`, then install
+  `gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk` (NOT `arm64/`, which
+  holds a stale July APK) and re-check its mtime. Until then `openDM()` must keep doing a full load,
+  because the phone's DM rows have no names to click.
+- **OBSERVATION IS PART OF EVERY CHECK, not a debugging step** (`watch.mjs`, wiki section 9). A
+  verdict is `PASS` only if the assertions hold AND the run is clean - errors, 4xx, page exceptions,
+  WS events, `notable` MLS lines, `stateChanges` and anything `unexplained` are reported next to it.
+  A line that turns out to be routine is ADDED to the benign list, never ignored in place.
+- **Two harness faults that produced false results, both fixed - the lesson generalises:** a
+  document-wide `text=Répondre` hits the FIRST message's hidden action row, so it replies to the
+  oldest message in the history and the check still looks green (hence `clickBubbleAction`, scoped
+  to the bubble's own row); and a selector that ties on text picks the scroll CONTAINER over the
+  button inside it, whose centre is empty space (hence RESOLVE now drops any hit containing another
+  hit). Assume a green check is wrong until its evidence says otherwise.
 - **The venue is a NEW COMMUNITY, `Campagne de test`, not a channel in MiTV** - a private channel is
   still readable by every association admin, and no association has jolan as sole admin. Two members
   only. Section 11 of the wiki page says why; do not re-derive it.
