@@ -169,13 +169,9 @@ re-derive any of it from here. What a compaction must not lose:
   `cdp.mjs` drives all three clients (W1 on 9224, W2 on 9223, A1's WebView on 9222 via
   `adb forward`); `a1.py` is only for native surfaces. W1 moved OFF the chrome-devtools MCP on
   purpose, so no password is ever a tool-call argument.
-- **THE TAB PHASE IS COMPLETE (2026-08-06): 1,2,3,4,5,6,7 all PASS or retired into a shipped fix.**
-  TAB-2 (tab closed, message, reopened - one copy, and the reopened tab does NOT re-ask the PIN),
-  TAB-3 (browser killed, 2 messages, relaunched - no re-login, both present once; cold start renders
-  in ~5 s over five runs, with ONE unexplained 77.7 s run recorded in section 10), TAB-6 (delete
-  `canari_refresh` -> reload -> lands on `/login`, not a silent empty list; the IdP session survives
-  so signing back in needs no credentials). **W1 was logged out and logged back in by TAB-6** -
-  `login.mjs` then `pin.mjs`, both fine.
+- **W1 was logged out and logged back in by TAB-6** (`login.mjs` then `pin.mjs`, both fine), and one
+  cold start in five took **77.7 s** for no reason anyone established - recorded in section 10, still
+  unexplained.
 - **A1 runs a build carrying WP-PENDING-1, WP-PENDING-2 and WP-DRAIN-1** - check
   `frontend/src-tauri/gen/android/.../app-universal-debug.apk`'s mtime before trusting a run, since
   the version name no longer moves. The phone is signed in and PIN-unlocked. Its device id is
@@ -183,14 +179,13 @@ re-derive any of it from here. What a compaction must not lose:
   (Claire VAN RUYMBEKE). That group HEALED through the re-add on 2026-08-06 (3/3 fresh messages at
   2.9/1.5/4.1 s) after being more than 2 000 generations behind - the frames had been deleted from
   `queued_message` deliberately, so nothing but the re-add could recover it.
-- **THE LIFE PHASE IS DONE EXCEPT LIFE-5 (2026-08-06).** LIFE-3, 4, 7, 8 PASS; **LIFE-6 FAILED 3/3
-  and found TWO new P1s** - WP-PENDING-1 and WP-PENDING-2 below. Rows, logs and both root causes are
-  in [cross-client-testing > the LIFE phase](docs/wiki/cross-client-testing.md#the-life-phase-2026-08-06);
-  do not re-derive them. **LIFE-5 (reboot) needs the USER**: the device asks for its unlock pattern
-  after a boot and `wm dismiss-keyguard` cannot answer it - pause and ask, never try to work around
-  it. The 15th harness fault is there too: `am kill` does not kill a FOREGROUND app, so LIFE-8
-  measured nothing and still returned a verdict; `enter()` now goes HOME first and the process death
-  is an assertion folded into the verdict.
+- **LIFE-6 PASSES on the re-run (2026-08-06 22:16)**, once the group was rejoined at a fresh epoch:
+  one copy 18 ms after restore, drained by the new per-page path (`Fetched 2 pending messages`) with
+  no `LOST frame`, no `SecretReuse`, no re-add. The three earlier losses were the undrainable
+  2 000-generation debt, nothing else. Row in section 10 of the wiki page.
+- **LIFE-5 (reboot) is the one check left in that phase and it needs the USER**: the device asks for
+  its unlock pattern after a boot and `wm dismiss-keyguard` cannot answer it - pause and ask, never
+  try to work around it.
 - **Reading the phone, and flashing it.** **The version name is still 0.13.0, so it no longer
   distinguishes builds** - the discriminators are `lastUpdateTime` and, in the artefacts,
   `already-consumed generation` inside `libmines_app_lib.so`. The APK is at
@@ -204,7 +199,8 @@ re-derive any of it from here. What a compaction must not lose:
   device overruns the logcat ring in minutes, so capture continuously to a file rather than dumping
   after the fact.
 - **WHERE THE CAMPAIGN STANDS (2026-08-06): Phase 0, the MSG phase, the FWD phase and the TAB phase
-  are ALL COMPLETE; LIFE is done except LIFE-5. NEXT: NOTIF/PIN/MULTI, then CORRUPT last.** Every
+  are ALL COMPLETE; LIFE is done except LIFE-5, which needs the user. NEXT: NOTIF/PIN/MULTI, then
+  CORRUPT last - plus the HEAL checks above, once the web deploy lands.** Every
   row, every measurement and every retired hypothesis is in section 10 of the wiki page - do not
   re-list them here. The four checks that FAILED each became a P1 and each has its own entry below:
   FWD-3/FWD-5 -> WP-LOSS-1 (which retires WP-FWD-1), TAB-4 -> WP-HIDDEN-1 then WP-MULTITAB-1,
@@ -250,39 +246,22 @@ re-derive any of it from here. What a compaction must not lose:
   verdict is `PASS` only if the assertions hold AND the run is clean - errors, 4xx, page exceptions,
   WS events, `notable` MLS lines, `stateChanges` and anything `unexplained` are reported next to it.
   A line that turns out to be routine is ADDED to the benign list, never ignored in place.
-- **FOURTEEN harness faults have now produced false results, all fixed - the lesson generalises and
-  is written up in the wiki page.** The three newest are all in READING THE PHONE, and all three said
-  "no notification" about a notification that was on screen: a `dumpsys notification --noredact`
-  dump larger than Node's default `maxBuffer` (it throws ENOBUFS, and a dump that cannot be read is
-  not an absent notification); a matcher that only looked at the first 900 characters of each record
-  while the marker sat past it; and `pidof`, which EXITS 1 when the process is gone, so the check
-  died on the very kill it was there to measure. Before them, the TAB-2/3/6 batch, which all say one
-  thing: an action that cannot prove it took effect still yields a verdict. A kill that killed nothing
-  (PowerShell `-like` does not escape backslashes, and `powershell` is not on this shell's PATH -
-  the ENOENT was swallowed); a "relaunch" that was really a new TAB, because a second `chrome.exe`
-  on a live `--user-data-dir` hands its URL over and exits; `#encryption-pin` scored as a login form
-  because it is `input[type=password]`, failing TAB-3 on the exact distinction it exists to make;
-  and TAB-6 deleting Cloudflare's `cf_clearance` because `canari_refresh` is scoped to `/api/auth`
-  and `Network.getCookies` for the site root never returns it (use `Storage.getCookies`). Plus:
-  `client(port, match)` takes the FIRST matching target and `/json/list` is not creation order, so a
-  leftover tab makes "the leader" a guess - close the extras first. `launch.mjs` now owns kill/start
-  and verifies both. A document-wide `text=Répondre` hits the FIRST message's hidden
-  action row (hence `clickBubbleAction`); a selector that ties on text picks the scroll CONTAINER
-  over its button (hence RESOLVE drops any hit containing another hit); a synthetic pointer NEVER
-  LEAVES, so the hover-expanded nav rail covered the conversation list and read as a layout bug
-  (hence `realClick` parks the pointer afterwards); RESOLVE sorted by `innerText` length, so an
-  avatar with an empty `innerText` and a matching `aria-label` beat the row that visibly carries the
-  name (hence visible text outranks a label, and a hit that does not hit-test to itself is rejected
-  rather than clicked); and **a `blob:` <img> is not a rendered image** - MSG-4 first passed on a
-  fixture whose PNG CRCs were invalid, because a broken picture keeps its `src` (hence assert
-  `naturalWidth > 0`, and CHECK THE FIXTURE before blaming the app). Assume a green check is wrong
-  until its evidence says otherwise - and a FAIL too: check M reported FAIL only because it looked
-  for a `<canvas>` where the PDF preview is an `<img>`. The last two invented an app-level loss on
-  MSG-8b: the COMPOSER is inside the pane, so an unsent draft read back as a delivered message; and
-  the soft keyboard moves the send button into the VISUAL viewport while CDP touch coordinates
-  address the LAYOUT one, so the tap lands on `<html>` and the draft stays put. Hence: every action
-  asserts its own post-condition (`send` fails if the composer still holds text), and the phone's
-  submit goes through `activate()`.
+- **FIFTEEN harness faults have produced a false result, all fixed, and every one is written up in
+  the wiki page** (search "harness fault"). Do not re-derive them - what they say collectively is
+  three rules, and these are the ones to apply without opening it:
+  - **An action that cannot prove it took effect still yields a verdict**, and that verdict is
+    fiction. Every action asserts its own post-condition (`send` fails if the composer still holds
+    text; a kill asserts the process died), because the faults were a kill that killed nothing, a
+    "relaunch" that was a new tab, a dump too large to read scored as "no notification", and a
+    `pidof` that exits 1 exactly when the thing it measures happens.
+  - **Assume a green check is wrong until its evidence says otherwise - and a FAIL too.** MSG-4
+    passed on a fixture with invalid PNG CRCs (a broken `<img>` keeps its `src`, hence
+    `naturalWidth > 0`); check M failed only because it looked for a `<canvas>` where the preview is
+    an `<img>`; MSG-8b invented an app-level loss out of an unsent draft. **Check the fixture and the
+    selector before blaming the app.**
+  - **A locator is a guess unless it is disambiguated**: `/json/list` is not creation order, a
+    document-wide text match hits the first hidden action row, a tie picks the scroll container over
+    its button, and an `aria-label` must never outrank visible text.
 - **The venue is a NEW COMMUNITY, `Campagne de test`, not a channel in MiTV** - a private channel is
   still readable by every association admin, and no association has jolan as sole admin. Two members
   only. Section 11 of the wiki page says why; do not re-derive it.
@@ -375,8 +354,9 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   wording, so the ledger recognised the frame. **Owed: a LOSS-branch verification** (no reproduction
   has produced one since the sender fixes landed, which is itself the point), the **ANDROID** half -
   the code is now ON the device (re-flashed 2026-08-06, `already-consumed generation` verified inside
-  the shipped `.so`) but no phone run has yet exercised either branch - and two deliberate gaps - the ring dies on a reload, and nothing
-  tells the receiver's USER that a message was lost. Reasoning on the wiki page.
+  the shipped `.so`) but no phone run has yet exercised either branch - and two deliberate gaps: the
+  ring dies on a reload, and nothing tells the receiver's USER that a message was lost. Reasoning on
+  the wiki page.
 
 - \[ \] **WP-DRAIN-2 (P2) - the inbound drain still has no watchdog, so ANY hung await inside it
   stops every inbound message with no diagnostic.** What is left of WP-HIDDEN-1 and WP-DRAIN-1, both

@@ -1312,6 +1312,15 @@ per run, each read next to its own observation log.
 | LIFE-7 | `POST_NOTIFICATIONS` revoked | none, **as expected** | once, 61 ms after restore | PASS |
 | LIFE-8 | `am kill` (from HOME) | decrypted text, 4.7 s | once, 52 ms after restore | PASS |
 | LIFE-6 | radios off (`svc wifi/data disable`) | none | **never - 3 runs, 3 losses** | FAIL |
+| LIFE-6 **re-run**, 2026-08-06 22:16, after all four fixes | radios off | none, as expected | **once, 18 ms after restore** | **PASS** |
+
+The LIFE-6 re-run is what closes the phase, and its log is the point rather than its verdict: the
+message is drained by the new per-page path (`[PENDING] Fetched 2 pending messages (2 so far)`),
+then `Drain start … 2 processed … Drain complete` in 2.8 s, with **no** `LOST frame`, no
+`SecretReuse`, no `out of bounds` and no re-add. The three earlier losses were the 2 000-generation
+debt WP-PENDING-1 had made undrainable; with the group rejoined at a fresh epoch and the drain
+making progress per page, the ordinary offline path is finally what the check measures - which was
+the whole reason to re-run it rather than trust the fix.
 
 LIFE-3's empty shade is Android policy, not a Canari fault: a force-stopped package sits in the
 STOPPED state and the framework cancels every FCM broadcast to it until a manual launch. "The user
