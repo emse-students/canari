@@ -360,7 +360,10 @@ export class InvitationsController {
     // received every message forever with nothing able to collect it. Only `active` is gated:
     // demoting to `pending` must always remain possible, it is a step towards cleanup.
     if (body.status === 'active') {
-      const addressable = await this.messagingService.deviceAddressability(safeUserId, safeDeviceId);
+      const addressable = await this.messagingService.deviceAddressability(
+        safeUserId,
+        safeDeviceId
+      );
       if (!addressable.ok) {
         this.logger.warn(
           `[INVITATION_STATUS] REFUSED device=${safeDeviceId} user=${safeUserId} group=${safeGroupId} reason=${addressable.reason}`

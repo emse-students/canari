@@ -169,9 +169,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     // here are exactly the purges that bound table growth. Kick each one once, after a short delay
     // so the boot path (migrations, Redis, Firebase) is not competing with a full-table scan.
     this.initialSweepTimeout = setTimeout(() => {
-      void this.runInitialSweep().catch((e) =>
-        this.logger.error('[CRON] initial sweep failed', e)
-      );
+      void this.runInitialSweep().catch((e) => this.logger.error('[CRON] initial sweep failed', e));
     }, AppController.INITIAL_SWEEP_DELAY_MS);
   }
 

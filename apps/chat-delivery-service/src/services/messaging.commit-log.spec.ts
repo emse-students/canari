@@ -227,10 +227,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       // must apply it. Only the routing membership is refused.
       expect(res.accepted).toBe(true);
       expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
-      expect(redis.sadd).not.toHaveBeenCalledWith(
-        'group:members:group-1',
-        'user-2:device-revoked'
-      );
+      expect(redis.sadd).not.toHaveBeenCalledWith('group:members:group-1', 'user-2:device-revoked');
     });
 
     it('refuses to promote a device with no static KeyPackage', async () => {
