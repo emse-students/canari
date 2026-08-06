@@ -1433,6 +1433,47 @@ The window that produced it is `SenderRatchetConfiguration::new(2000, 2000)` (`m
 so "too far ahead" means **more than 2 000 frames missed from one sender in one epoch** - which only
 an undrainable queue reaches, and is why the two work packages are one story.
 
+#### The verification found a third defect: a recovery awaited inside the drain (WP-DRAIN-1)
+
+Re-running LIFE-6 on the rebuilt APK showed the new chain firing exactly as designed:
+
+```
+mls_core       MLS decryption failed ... TooDistantInTheFuture   msg_epoch=1 group_epoch=1
+mines_app_lib  [GAP] Generation too far ahead - unrecoverable locally, escalating to the frontend
+Console        [MLS] LOST frame ... generation too far ahead of our sender ratchet
+mls_core       forget_group: 642f389a… forgotten (memory + storage, re-Welcome expected)
+Console        [PIPELINE] Out-of-sync for 642f389a… - requestReAdd
+```
+
+And then nothing. `requestReAdd` never returned and never logged a line, so:
+
+```
+21:25:33  [QUEUE] Drain start (messages=1)      <- never followed by "Drain complete"
+21:28:32  [PENDING] Fetched 2 pending messages  <- enqueued, never processed
+```
+
+Three later messages were queued server-side for the device, arrived over FCM
+(`App in foreground -> MLS handled by the foreground (WS)`), and were never seen again. The user saw
+the app stuck on "Synchronisation des messages" with a working socket - which is what a frozen
+`isDraining` looks like from the outside.
+
+**The message callback runs inside the drain, and `isDraining` is lowered only once it returns**, so
+any await in it that can hang stops every inbound message with no diagnostic. Identical in kind to
+WP-HIDDEN-1, reached by a different door - the deliberate gap that work package left open ("any hung
+await inside `onDrainEnd` can still stop every inbound message") is the same statement about the
+other end of the same drain.
+
+Waiting was never useful: the recovery's result is not read, and a Welcome or an external join lands
+long after this frame has been answered. All five recovery call sites inside the drain (known-group
+rung 2, the generation gap, the generic error branch, the unknown-group buffer, the Welcome
+self-heal) now go through `startRecovery`, which starts the attempt and logs how it settles.
+
+Two instrumentation changes ride with it, because the failure produced NO line at all: `requestReAdd`
+now logs its entry, the throttle skip (previously a silent `return`), each network step and its
+result; and the drain arms a 60 s watchdog that prints `[QUEUE] STUCK` rather than leaving "still
+working" and "stuck forever" indistinguishable. **Which call hangs is still unknown** - the next run
+with these logs answers it.
+
 #### How big the queue gets, and why that is by design
 
 Prod, 2026-08-06: **97 991 rows, 61 devices, 150 MB**, oldest 2026-06-11, six devices holding ~10 800

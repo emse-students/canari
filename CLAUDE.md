@@ -215,9 +215,14 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   `canari_refresh` -> reload -> lands on `/login`, not a silent empty list; the IdP session survives
   so signing back in needs no credentials). **W1 was logged out and logged back in by TAB-6** -
   `login.mjs` then `pin.mjs`, both fine.
-- **A1 runs the 2026-08-06 19:47:48 build** (WP-ANDROID-SESS-1 complete, all three defects), data
-  preserved (`firstInstallTime` unchanged). The phone is signed in and PIN-unlocked; its
-  `queued_message` backlog was emptied deliberately (see WP-PENDING-1) and is 0.
+- **A1 runs a build carrying WP-PENDING-1 + WP-PENDING-2** (installed 2026-08-06 21:23, data
+  preserved, `firstInstallTime` unchanged); **a further build with WP-DRAIN-1 was compiling at
+  compaction time** - check `frontend/src-tauri/gen/android/.../app-universal-debug.apk`'s mtime
+  before trusting a run. The phone is signed in and PIN-unlocked. Its device id is
+  `tauri-d82cd226…-msgnk8nf-gyb2`; the DM under test is `642f389a-2800-412d-ab7c-cc521587f97f`
+  (Claire VAN RUYMBEKE), and that group's MLS state on the phone is **more than 2 000 generations
+  behind and cannot catch up** - the frames were deleted from `queued_message` deliberately. It only
+  recovers through the re-add, which is what WP-DRAIN-1 currently blocks.
 - **THE LIFE PHASE IS DONE EXCEPT LIFE-5 (2026-08-06).** LIFE-3, 4, 7, 8 PASS; **LIFE-6 FAILED 3/3
   and found TWO new P1s** - WP-PENDING-1 and WP-PENDING-2 below. Rows, logs and both root causes are
   in [cross-client-testing > the LIFE phase](docs/wiki/cross-client-testing.md#the-life-phase-2026-08-06);
@@ -505,7 +510,9 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   by text alone, which is why three runs read as "the phone was offline".
 
 - \[ \] **WP-PENDING-2 (P1) - A FRAME WHOSE GENERATION IS TOO FAR AHEAD IS ACKED OFF THE SERVER AS
-  IF IT HAD BEEN DELIVERED. Found and FIXED 2026-08-06; OWED: the deploy, the phone rebuild and a
+  IF IT HAD BEEN DELIVERED. Found and FIXED 2026-08-06; the fix is ON THE PHONE and was SEEN firing
+  end to end (diagnosis, `LOST frame`, `forget_group`, escalation). OWED: the web deploy, and a run
+  where the conversation actually heals - which is blocked on WP-DRAIN-1 below, found by this very
   verification.** The phone's NATIVE log had it all along (the `[MLS]` TS lines never showed it):
   `Ciphertext generation out of bounds 6110 / TooDistantInTheFuture` with **`msg_epoch=1
   group_epoch=1`** - identical epochs, so it was never an epoch gap but a SENDER RATCHET gap, caused
@@ -530,6 +537,19 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   their containing block is the `<section class="relative">` that ALSO holds `<ChatHeader>` - so they
   paint over the avatar and the name instead of stacking under the header. Anchor them to the
   messages container, not the section.
+
+- \[ \] **WP-DRAIN-1 (P1) - A RECOVERY AWAITED INSIDE THE INBOUND DRAIN FREEZES EVERY LATER MESSAGE,
+  IN SILENCE. Found by the WP-PENDING-2 verification 2026-08-06, FIXED, not yet re-verified.** On the
+  device the new generation-gap branch escalated correctly and then `requestReAdd` never returned:
+  `Drain start` with no `Drain complete`, the next messages enqueued and never processed, and the app
+  sat on "Synchronisation des messages" with a live socket. `isDraining` is lowered only when the
+  message callback returns, so **any await in it that can hang is a deadlock** - WP-HIDDEN-1's open
+  gap reached through the other end of the same drain. All five recovery call sites now go through
+  `startRecovery` (start it, log how it settles, never await). **WHICH CALL HANGS IS STILL UNKNOWN**:
+  `requestReAdd` logged nothing at all, so it now logs its entry, the throttle skip, and every network
+  step + result, and the drain arms a 60 s `[QUEUE] STUCK` watchdog. The next device run answers it -
+  that is the first thing to read after the reflash. Write-up in
+  [cross-client-testing > a recovery awaited inside the drain](docs/wiki/cross-client-testing.md#the-verification-found-a-third-defect-a-recovery-awaited-inside-the-drain-wp-drain-1).
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
@@ -629,6 +649,9 @@ carry in the head:
 - A tab is "read-only" only where something CHECKS: leadership gated the socket, not the queue, so
   the follower encrypted anyway. And gating a writer freezes its state - whoever inherits the role
   must reload it, or it resumes exactly as far behind as the tab it replaced had moved on.
+- The inbound drain lowers `isDraining` only when the message callback RETURNS, so every await inside
+  it is a potential freeze of all inbound traffic. A repair whose result nobody reads (a re-add, a
+  Welcome, an external join) must be STARTED, never awaited - and it must log how it settles.
 - `requestAnimationFrame` NEVER fires in a hidden document, so it can never be the only resolver of
   anything a background path awaits - and a "yield" that can hang is a deadlock, not a delay. Race it
   with a `MessageChannel` message; a timer fallback is clamped to ~1 Hz in the background.
