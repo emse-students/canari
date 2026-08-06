@@ -1272,3 +1272,101 @@ Two more, cheaper:
   network; the device IP comes from `adb shell ip route`). Also `adb shell svc power stayon true` and
   a 30-minute `screen_off_timeout`. A background logcat bound to the USB serial dies with the cable.
 - 2FA was asked once, on W1, and answered by hand. Both browser profiles are persistent.
+
+## The LIFE phase, 2026-08-06
+
+Run against the APK reflashed at 19:47:48 (data preserved, `firstInstallTime` unchanged). One check
+per run, each read next to its own observation log.
+
+| check | state entered | notification | in the conversation | verdict |
+| --- | --- | --- | --- | --- |
+| LIFE-3 | `am force-stop` | none, **as expected** | once, 81 ms after restore | PASS |
+| LIFE-4 | doze (`force-idle`, unplugged, screen off) | decrypted text, 4.6 s | once, 26 ms after restore | PASS |
+| LIFE-7 | `POST_NOTIFICATIONS` revoked | none, **as expected** | once, 61 ms after restore | PASS |
+| LIFE-8 | `am kill` (from HOME) | decrypted text, 4.7 s | once, 52 ms after restore | PASS |
+| LIFE-6 | radios off (`svc wifi/data disable`) | none | **never - 3 runs, 3 losses** | FAIL |
+
+LIFE-3's empty shade is Android policy, not a Canari fault: a force-stopped package sits in the
+STOPPED state and the framework cancels every FCM broadcast to it until a manual launch. "The user
+killed it" is LIFE-8.
+
+### The 15th harness fault: a kill that killed nothing
+
+LIFE-8 first reported FAIL with `pid` identical before, during and after. `am kill` only reclaims a
+process the framework considers safe to kill, so a FOREGROUND app survives it silently - the check
+measured the ordinary foreground path and called it a lifecycle result. Two fixes, and the second is
+the general one: `enter()` now goes HOME first, and the process death is an **assertion**
+(`requireDead`) rather than a field printed beside the verdict. `diedAsExpected` is now part of the
+verdict expression, because a check whose state was never entered can satisfy every other condition
+and still be meaningless.
+
+### An offline device cannot catch up, and the reason is a deadline on the wrong scope (WP-PENDING-1)
+
+`fetchPendingMessages` wraps the **entire multi-page pull** in one `AbortController` with
+`FETCH_TIMEOUT = 10_000` (`frontend/src/lib/services/BaseMlsService.ts:522-527`), while
+`pullPendingMessagesJson` loops `limit=500` pages until a short page
+(`frontend/src/lib/mls-client/mlsDeliveryApi.ts:82-112`). The phone had **5 526 queued rows** = 12
+pages, and the abort fired at 10 s every single time:
+
+```
+20:10:11.859  [WS] Connected to Chat Gateway        <- network is up
+20:10:21.220  [API] <- 200 GET /api/presence        <- network is up
+20:10:21.889  [PENDING] Failed to fetch pending messages: TypeError: Failed to fetch
+20:10:21.903  Uncaught (in promise) The resource id 1591651946 is invalid.   (x4)
+```
+
+Three occurrences, 10.03 s / 10.26 s / 10.30 s after their reconnect - the timeout, not the network.
+On Android an aborted Tauri request surfaces as `TypeError: Failed to fetch` plus orphaned
+`resource id … is invalid` rejections, which **reads like a network failure and is not one**.
+
+The failure is self-sustaining: nothing is enqueued and nothing is ACKed unless the whole pull
+completes, so the backlog never shrinks and every later reconnect fails identically. Proven by
+shrinking it - 5 526 -> 95 rows, and the very next reconnect logged
+`[PENDING] Fetched 95 pending messages` in **0.6 s**.
+
+It is NOT the database. `EXPLAIN ANALYZE` of the exact query on prod: **8.9 ms**, using the composite
+`(recipientId, deviceId)` index, top-N heapsort. The cost is 12 sequential round trips of ~465 KB
+each, parsed in a phone WebView, under one 10 s budget.
+
+The remedy is scope, not a bigger number: the deadline belongs to **each page**, and each page should
+be ingested and ACKed as it lands, so partial progress is kept. A per-pull deadline can only ever be
+right for a backlog small enough not to need one.
+
+### And the frame is lost even when the pull succeeds (WP-PENDING-2)
+
+With the backlog emptied, LIFE-6 still fails. The clean capture:
+
+```
+20:31:13.515  CanariFCM: onMessageReceived ... queuedMessageId=1f3cb134… hasInlineProto=true
+20:31:13.515  CanariFCM: App in foreground -> MLS handled by the foreground (WS), skip background processing
+20:31:14.112  [PENDING] Fetched 2 pending messages
+20:31:14.113  [QUEUE] Processing message group=642f389a… qId=1f3cb134…
+20:31:14.333  [QUEUE] messageCallback -> true (group=642f389a…) qId=1f3cb134…
+20:31:17.285  [QUEUE] Drain complete
+```
+
+The frame is pulled, decrypts, is ACKed and **deleted server-side** (verified: the witness row
+`eb45c135-5fa2-413e-bdac-4ba38f21589e` is gone from `queued_message`), and the message is in no
+conversation - checked by an accumulating scroll read, not a single `innerText`. No `LOST frame`, no
+`SecretReuseError`, no `Ciphertext generation out of bounds`, no duplicate line: the WP-LOSS-1 ledger
+does not see this one at all.
+
+Two hypotheses are already dead, do not re-open them:
+
+- **The FCM push did not consume the generation.** The native path logged
+  `App in foreground -> ... skip background processing` for both frames.
+- **It is not the backlog.** The reproduction above ran with an empty queue.
+
+What is NOT yet established is where between `messageCallback -> true` and the store the message
+goes. That is the next thing to instrument.
+
+### Two method corrections this phase cost
+
+- **`countMessage` reads a screenful of a VIRTUALISED list**, so its answer depends on the scroll
+  position - the same trap that once made reconciliation report two live messages as lost. A marker
+  that "appeared after a restart" appeared because the view opens at the bottom. Every presence
+  claim here comes from `probe9.mjs`, which accumulates the text at every scroll position.
+- **Postgres stores UTC and the host is Europe/Paris.** Reading `max(createdAt) = 18:09:47` as
+  "nothing has been queued for two hours" was wrong by exactly the offset: 18:09:47 UTC **is** the
+  20:09:47 send under investigation. The host clock is correct and must not be "fixed" - UTC in the
+  database is the right setting, and changing it would move the crons and break log correlation.

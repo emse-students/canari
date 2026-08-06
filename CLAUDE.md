@@ -151,24 +151,29 @@ re-plan or re-derive any of it from here. What a compaction must not lose:
   `canari_refresh` -> reload -> lands on `/login`, not a silent empty list; the IdP session survives
   so signing back in needs no credentials). **W1 was logged out and logged back in by TAB-6** -
   `login.mjs` then `pin.mjs`, both fine.
-- **A1 was RE-FLASHED AGAIN 2026-08-06 18:58** with the WP-ANDROID-SESS-1 build (data preserved,
-  `firstInstallTime` unchanged). **That build predates the third defect's fix, so a reflash is owed
-  before the LIFE phase resumes.** The phone is signed in and PIN-unlocked on a session created
-  19:1x; the previous session was revoked deliberately to exercise the failure branch.
-- **The LIFE phase is OPEN.** The APK carrying both P1 fixes
-  and the Rust `SecretReuse` change is installed, data preserved (`firstInstallTime` unchanged).
-  **The version name is still 0.13.0, so it no longer distinguishes the builds** - the discriminators
-  are `lastUpdateTime` (15:25) and, in the artefacts, `already-consumed generation` inside
-  `libmines_app_lib.so` plus the four fix strings in `frontend/build`. Note the APK is at
+- **A1 runs the 2026-08-06 19:47:48 build** (WP-ANDROID-SESS-1 complete, all three defects), data
+  preserved (`firstInstallTime` unchanged). The phone is signed in and PIN-unlocked; its
+  `queued_message` backlog was emptied deliberately (see WP-PENDING-1) and is 0.
+- **THE LIFE PHASE IS DONE EXCEPT LIFE-5 (2026-08-06).** LIFE-3, 4, 7, 8 PASS; **LIFE-6 FAILED 3/3
+  and found TWO new P1s** - WP-PENDING-1 and WP-PENDING-2 below. Rows, logs and both root causes are
+  in [cross-client-testing > the LIFE phase](docs/wiki/cross-client-testing.md#the-life-phase-2026-08-06);
+  do not re-derive them. **LIFE-5 (reboot) needs the USER**: the device asks for its unlock pattern
+  after a boot and `wm dismiss-keyguard` cannot answer it - pause and ask, never try to work around
+  it. The 15th harness fault is there too: `am kill` does not kill a FOREGROUND app, so LIFE-8
+  measured nothing and still returned a verdict; `enter()` now goes HOME first and the process death
+  is an assertion folded into the verdict.
+- **Reading the phone, and flashing it.** **The version name is still 0.13.0, so it no longer
+  distinguishes builds** - the discriminators are `lastUpdateTime` and, in the artefacts,
+  `already-consumed generation` inside `libmines_app_lib.so`. The APK is at
   `frontend/src-tauri/gen/android/...`, NOT `frontend/gen/...`, and web assets are brotli-compressed
-  inside the `.so`, so only RUST strings can be grepped there. **LIFE-1 (smoke, 3/3) and LIFE-2
-  (backgrounded) PASS; LIFE-3 FAILED and found WP-ANDROID-SESS-1** below. Left: LIFE-4 (doze),
-  LIFE-5 (reboot), LIFE-6 (offline, USB adb only), LIFE-7 (notification permission revoked), LIFE-8
-  (`am kill`) - all wired in `life.mjs`, one per run. **`am force-stop` is NOT "the user killed the
-  app"**: Android's STOPPED state cancels every FCM broadcast until a manual launch (proven in
-  logcat), so NOTIF-1 and every killed-app cell must use a SWIPE from recents or `am kill`. The
-  phone's whole web console is in logcat under `Tauri/Console`, which is how to read it while the
-  WebView is unreachable.
+  inside the `.so`, so only RUST strings can be grepped there. The package is `fr.emse.canari`, NOT
+  `fr.emse.canari.app`. **`am force-stop` is NOT "the user killed the app"**: Android's STOPPED state
+  cancels every FCM broadcast until a manual launch (proven in logcat), so NOTIF-1 and every
+  killed-app cell must use a SWIPE from recents or `am kill` - and `am kill` does NOT reclaim a
+  FOREGROUND process, so go HOME first and assert the death. The phone's whole web console is in
+  logcat under `Tauri/Console`, which is how to read it while the WebView is unreachable; a busy
+  device overruns the logcat ring in minutes, so capture continuously to a file rather than dumping
+  after the fact.
 - **PHASE 0 IS COMPLETE, and section 3 is under way (2026-08-06).** PASS so far: **MSG-1** (+38
   volume sends), **MSG-2**, **MSG-3**, **MSG-4** (image + PDF), **MSG-5**, **check M** (PDF preview
   on A1 hardware - `device-verification` updated), **FWD-1**. Rows and evidence are in section 10 of
@@ -415,6 +420,42 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   one trap, which cost a run: never `realClick` the CAS fields (the hit test reaches "mot de passe
   oublié" on the phone's layout) - focus by element and assert `activeElement`, as `login.mjs` now
   does.
+
+- \[ \] **WP-PENDING-1 (P1) - A DEVICE THAT FALLS FAR ENOUGH BEHIND CAN NEVER CATCH UP: the
+  catch-up pull is all-or-nothing under a fixed 10 s deadline, so a backlog bigger than 10 s of
+  transfer aborts forever and only grows.** Found by LIFE-6 2026-08-06, PROVEN, not yet fixed.
+  `fetchPendingMessages` ([BaseMlsService.ts:516](frontend/src/lib/services/BaseMlsService.ts#L516))
+  puts ONE `AbortController(10_000)` around `pullPendingMessagesJson`, which itself loops `limit=500`
+  pages behind an `after` cursor - and nothing is enqueued or ACKed unless the WHOLE pull returns. The
+  phone held 5 526 rows = 12 pages of ~465 KB; the abort fired at 10.03 / 10.26 / 10.30 s after each
+  reconnect while the WS was connected and `/api/presence` answered 200. **The server is not the
+  cause and the hypothesis is dead**: `EXPLAIN (ANALYZE, BUFFERS)` on prod is **8.909 ms** on the
+  composite `(recipientId, deviceId)` index. Proven by experiment: `DELETE 5431` -> 95 rows left ->
+  the very next reconnect logged `[PENDING] Fetched 95 pending messages` in **0.6 s**. The remedy is
+  a deadline per PAGE, with each page ingested and ACKed as it lands, so every pull makes progress.
+  Note the abort surfaces on Android as `TypeError: Failed to fetch` plus orphaned
+  `Uncaught (in promise) The resource id NNNN is invalid` - indistinguishable from a network failure
+  by text alone, which is why three runs read as "the phone was offline".
+
+- \[ \] **WP-PENDING-2 (P1) - A MESSAGE PULLED WHILE OFFLINE DECRYPTS, IS ACKED, AND THEN EXISTS
+  NOWHERE. Established 2026-08-06, root cause NOT found.** With the backlog emptied, LIFE-6 still
+  fails: the frame is pulled (`Fetched 2 pending messages`), decrypts (`messageCallback -> true`), is
+  ACKed and DELETED server-side (witness row `eb45c135-5fa2-413e-bdac-4ba38f21589e` gone from
+  `queued_message`), and the message is in no conversation - verified by an accumulating scroll read,
+  not a screenful. **The WP-LOSS-1 ledger never sees it**: no `LOST frame`, no `SecretReuseError`, no
+  `Ciphertext generation out of bounds`, no duplicate line. **Two hypotheses are dead, do not re-open
+  them:** the FCM push did not consume the generation (`CanariFCM: App in foreground -> MLS handled
+  by the foreground (WS), skip background processing` for both frames), and it is not the backlog.
+  What is unknown is where between `messageCallback -> true` and the message store it goes -
+  instrument that seam. Evidence in
+  [cross-client-testing > the LIFE phase](docs/wiki/cross-client-testing.md#the-life-phase-2026-08-06).
+
+- \[ \] **WP-BANNER-1 (P3) - the sync banners cover the conversation header.** Reported by the user
+  2026-08-06 with a screenshot. `isCatchingUpMessages` and `historyPendingLabel` in
+  [ChatArea.svelte](frontend/src/lib/components/chat/ChatArea.svelte) are both `absolute top-0`, and
+  their containing block is the `<section class="relative">` that ALSO holds `<ChatHeader>` - so they
+  paint over the avatar and the name instead of stacking under the header. Anchor them to the
+  messages container, not the section.
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
   reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
@@ -675,6 +716,10 @@ rule it cost is on that page - read it before touching any login, cookie or rota
 ### SHARED GOTCHAS -> [development](docs/wiki/development.md), [cicd](docs/wiki/cicd.md)
 
 - Bash-tool commit messages: use a heredoc or `git commit -F file`, NOT PowerShell `@'...'@`.
+- **Postgres stores UTC and the prod host is `Europe/Paris` (CEST, +0200)**, so a DB timestamp is two
+  hours behind the wall clock a test just wrote down - `18:09:47` in `queued_message` IS the
+  `20:09:47` send. Both are CORRECT (`timedatectl` = CEST, `SHOW timezone` = UTC); do not "fix" the
+  server clock, it would move the 03:30 backup cron and break every log correlation. Convert.
 - MiConnect 2FA remembers the device for 8 h, so a later login only needs the code. If the CAS page
   stalls after Esup Auth accepts, go BACK to the browser tab and reload; ask the user rather than
   looping.
