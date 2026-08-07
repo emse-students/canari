@@ -410,7 +410,13 @@ Notes on the adoption pass:
 
 `KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events picked up by `MainChatPage` → routed through the normal media pipeline.
 
-### The soft keyboard and the app shell (WP-KBD-1, shipped and verified 2026-08-07)
+### OIDC login opens a Chrome Custom Tab (WP-OIDC-TAB-1, shipped and verified 2026-08-08)
+
+`startOidcLogin()` (`auth.ts`) used to open the Authentik login with `openUrl` from `tauri-plugin-opener` on every mobile platform - a plain `ACTION_VIEW` launch. On Android this left the browser tab behind after login: `openUrl` opens in a task with no relationship to the app's own, so once the `fr.emse.canari://callback` deep link brought the app back to the foreground, nothing on either side could close the tab it left sitting on Authentik's last page.
+
+The fix is `tauri-plugin-customtabs` (`frontend/src-tauri/plugins/tauri-plugin-customtabs/`), a small Android-only mobile plugin (one command, `open_custom_tab`) that opens the URL via `androidx.browser.customtabs.CustomTabsIntent` instead. A Custom Tab shares the **launching app's own task**, which is what lets the OS close it automatically the instant that task's activity resumes - confirmed live via `adb shell dumpsys activity activities`: the tab's `ActivityRecord` shared the app's task id right after `startOidcLogin()`, and was gone from that task's history entirely the moment the deep link returned. `auth.ts` now branches on `isAndroidTauriRuntime()` specifically (not the broader `isMobileTauriRuntime()`) - iOS keeps the plain `openUrl` launch, since its equivalent fix (`ASWebAuthenticationSession`) is a separate native surface not built here.
+
+**Why this needed a real plugin and not a few lines of Rust JNI.** This app already has a working Rust → Kotlin JNI call (`flush_webview_cookies` in `commands/cookies.rs`, calling `CookieManager.getInstance()`/`.flush()`), and its own comment explains exactly why that pattern does not generalise: a JNI-attached native thread has no Java frames on its stack, so `FindClass` only reaches boot-classpath **framework** classes. `android.webkit.CookieManager` is one; `androidx.browser.customtabs.CustomTabsIntent` (bundled into the APK's own dex, like `MainActivity` itself) is not, and would fail to resolve the same way calling into `MainActivity` directly would. Tauri's own plugin-invocation mechanism (`@TauriPlugin`, `Plugin(activity)`) runs Kotlin code with the correct classloader context for exactly this reason, which is why the fix is a full (if minimal) mobile plugin, following `patches/tauri-plugin-keystore`'s structure - `Cargo.toml`/`build.rs`/`src/mobile.rs` on the Rust side, `CustomTabsPlugin.kt` + a Gradle module on the Android side - rather than extending the raw-JNI pattern.
 
 `keyboardViewport.svelte.ts` pins the shell to the visual viewport while the keyboard is up:
 

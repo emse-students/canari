@@ -583,6 +583,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-biometric",
+ "tauri-plugin-customtabs",
  "tauri-plugin-deep-link",
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
@@ -5825,6 +5826,16 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_repr",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "tauri-plugin-customtabs"
+version = "0.1.0"
+dependencies = [
+ "serde",
  "tauri",
  "tauri-plugin",
  "thiserror 2.0.18",

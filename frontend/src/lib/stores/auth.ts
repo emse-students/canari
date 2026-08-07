@@ -12,10 +12,11 @@
 
 import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
 import { setGlobalAdmin } from '$lib/stores/userState.svelte';
-import { isTauri } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+import { isAndroidTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
+import { customTabsCommand } from '$lib/services/customTabsCommands';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
@@ -217,11 +218,19 @@ export async function startOidcLogin(
     : `${baseUrl}${authorizePath}`;
   alog(`login returnTo=${returnTo} uri=${redirectUri} flow=${options?.flowSlug ?? 'default'}`);
 
-  // On Tauri mobile (Android + iOS), open in the system browser (Android: Chrome
-  // Custom Tabs; iOS: Safari via SFSafariViewController) so the main WebView is
-  // never navigated away and the Tauri IPC bridge stays intact. The callback
-  // returns via the fr.emse.canari://callback deep link handled by plugin-deep-link.
-  if (isMobileTauriRuntime()) {
+  // On Tauri mobile (Android + iOS), open in the system browser so the main WebView is never
+  // navigated away and the Tauri IPC bridge stays intact. The callback returns via the
+  // fr.emse.canari://callback deep link handled by plugin-deep-link.
+  //
+  // Android uses a Chrome Custom Tab (tauri-plugin-customtabs), which the OS closes
+  // automatically once this app returns to the foreground on that deep link. A plain
+  // system-browser launch (openUrl) is left open afterward with nothing able to dismiss it
+  // from either side, which reads as "the login failed" (WP-OIDC-TAB-1). iOS keeps openUrl for
+  // now - its equivalent would be ASWebAuthenticationSession, a separate native surface not
+  // built here.
+  if (isAndroidTauriRuntime()) {
+    await invoke(customTabsCommand('openCustomTab'), { url: authUrl });
+  } else if (isMobileTauriRuntime()) {
     const { openUrl } = await import('@tauri-apps/plugin-opener');
     await openUrl(authUrl);
   } else {

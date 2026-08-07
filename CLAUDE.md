@@ -213,8 +213,8 @@ predicate) to confirm the platform still holds ZERO memberships without one.
 
 **4. Then the remaining WPs**, which the user wants done "un jour, apres l'audit": WP-VIEWER-1,
 WP-STORAGE-1 (its item 1 is config only and divides the backup requirement by ~16), WP-DRAIN-2,
-WP-ECHO-1's verification, WP-PENDING-1/2's, WP-OIDC-TAB-1. WP-LINK-1 shipped 2026-08-07 (see
-DURABLE RULES / the whitelist entry below) - do not re-add it here.
+WP-ECHO-1's verification, WP-PENDING-1/2's. WP-LINK-1 shipped 2026-08-07 and WP-OIDC-TAB-1 shipped
+2026-08-08 (see DURABLE RULES / CHANGELOG.md) - do not re-add either here.
 
 ---
 
@@ -549,16 +549,6 @@ rollout has not reached devices, and raising it first locks everyone out.
   **Drag panning is still missing on the PDF at zoom > 1** (the scroll container is the only way to
   move), which the shared gesture should bring.
 
-- \[ \] **WP-OIDC-TAB-1 (P3) - On Android the browser tab opened for the login is NEVER closed.**
-  Reported by the user 2026-08-06 and reproduced during the WP-ANDROID-SESS-1 re-login: the app comes
-  back to the foreground on the deep link, and the system browser is left sitting on the last
-  Authentik page, which reads as "the login failed" to anyone who looks at it. Cause: `auth.ts`
-  launches the flow with `openUrl` from `@tauri-apps/plugin-opener`, i.e. a plain browser launch -
-  nothing can dismiss that tab afterwards, from inside or outside. The remedy is a **Chrome Custom
-  Tab**, which the OS closes when the app resumes; that is a native change (the opener plugin has no
-  such affordance), so scope it before starting. iOS has the same shape with
-  `ASWebAuthenticationSession` as the equivalent, and it has never been checked on hardware.
-
 - \[ \] **WP-SAFELINK-1 (P3) - Warn before opening a link Google Safe Browsing flags as unsafe.**
   Asked by the user 2026-08-07. Today `AppLink` (the terminal renderer for every external link in
   chat and posts, including the WP-LINK-1 bare-domain ones) opens whatever `href` it is given with
@@ -808,6 +798,21 @@ page. The five to carry, plus one status line:
   early return on "could not decrypt" silently swallows every action that never needed the plaintext
   (WP-NOTIF-1). And parity between the platforms is not parity of declarations - iOS was correct here
   and Android was not, differing only in WHERE an early return sat.
+- A native thread has NO JAVA FRAMES on its stack, so `FindClass` from a JNI-attached Rust thread
+  only reaches boot-classpath FRAMEWORK classes (`android.webkit.CookieManager`), never an
+  app-bundled class - not `MainActivity`, not an AndroidX library class like
+  `CustomTabsIntent`. Calling one of those reliably needs Tauri's own plugin-invocation path
+  (`@TauriPlugin`/`Plugin(activity)`), which already runs with the right classloader context - not
+  a raw `JNI_OnLoad`-cached `JavaVM` and a hand-rolled `attach_current_thread` (WP-OIDC-TAB-1).
+- A plain system-browser launch (`openUrl`) is an ORPHANED activity on Android: it opens in a
+  separate task the calling app has no relationship to, so nothing on either side can dismiss it
+  once the flow that needed it is done. A Chrome Custom Tab launched via `CustomTabsIntent`
+  shares the LAUNCHING APP'S OWN TASK, which is what lets the OS close it automatically the
+  instant that task's activity resumes to the foreground (confirmed via
+  `dumpsys activity activities`: the tab's `ActivityRecord` shared the app's task id before
+  login, and was gone from the task's history entirely after the deep-link return) - the
+  right fix for "a login tab is left behind" is never a dismiss call, it is putting the tab in
+  the right task to begin with.
 - `getCurrent()` answers "the last deep link this PROCESS was handed", never "the app was just
   started by one" - the Rust plugin holds it for the life of the process, so every re-read must be
   deduplicated. **And STATE WHOSE JOB IS TO SURVIVE AN EVENT MUST NOT LIVE WHERE THAT EVENT DESTROYS

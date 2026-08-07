@@ -602,7 +602,8 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_biometric::init())
         .plugin(tauri_plugin_keystore::init())
-        .plugin(tauri_plugin_deep_link::init());
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_customtabs::init());
 
     builder
         .manage(AppState {
