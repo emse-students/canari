@@ -48,7 +48,7 @@
 </script>
 
 <nav
-  class="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/30 backdrop-blur-2xl shadow-[0_-4px_24px_rgba(0,0,0,0.02)] dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
+  class="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/80 backdrop-blur-2xl shadow-[0_-4px_24px_rgba(0,0,0,0.02)] dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
   style="padding-bottom: env(safe-area-inset-bottom)"
 >
   <div class="flex items-stretch justify-around h-16">
