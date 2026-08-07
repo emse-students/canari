@@ -48,6 +48,7 @@
 
   let videoEl = $state<HTMLVideoElement | null>(null);
   let isScanning = $state(false);
+  let streamReady = $state(false);
   let scanError = $state('');
   let showPayloadFallback = $state(false);
   let historyClose: (() => void) | null = null;
@@ -89,6 +90,7 @@
     }
     detector = null;
     isScanning = false;
+    streamReady = false;
   }
 
   async function scanLoop() {
@@ -185,6 +187,7 @@
 
       videoEl.srcObject = mediaStream;
       await videoEl.play();
+      streamReady = true;
       detector = DetectorCtor ? new DetectorCtor({ formats: ['qr_code'] }) : null;
       if (!detector) {
         scanError = m.sync_compatibility_mode_info();
@@ -340,7 +343,17 @@
             <div
               class="absolute inset-0 pointer-events-none border-[40px] border-black/40 z-10"
             ></div>
-            <video bind:this={videoEl} autoplay playsinline muted class="w-full h-64 object-cover"
+            {#if !streamReady}
+              <div class="absolute inset-0 flex items-center justify-center bg-black z-20">
+                <Loader2 size={28} class="animate-spin text-white/60" />
+              </div>
+            {/if}
+            <video
+              bind:this={videoEl}
+              autoplay
+              playsinline
+              muted
+              class="w-full h-64 object-cover bg-black"
             ></video>
           </div>
         {/if}
