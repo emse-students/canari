@@ -5,7 +5,7 @@ const baseline = 800;
 
 /** Builds a measurement with sensible defaults (at-rest, no keyboard, no zoom). */
 function measure(overrides: Partial<ViewportMeasurement> = {}): ViewportMeasurement {
-  return { winH: baseline, vvHeight: baseline, offsetTop: 0, scale: 1, ...overrides };
+  return { winH: baseline, vvHeight: baseline, offsetTop: 0, scale: 1, shellTop: 0, ...overrides };
 }
 
 describe('computeSnapshot', () => {
@@ -58,5 +58,34 @@ describe('computeSnapshot', () => {
   it('treats a scale barely above 1 as at rest, not zoomed', () => {
     const snap = computeSnapshot(measure({ scale: 1.005 }), baseline, IOS_THRESHOLD);
     expect(snap.zoomed).toBe(false);
+  });
+
+  it('WP-KBD-1: subtracts the shell own top inset, so its bottom lands on the visual viewport bottom', () => {
+    // Measured on device (A1, Pixel-class, keyboard open, adjustPan): the shell starts 51px
+    // down for the status bar, and the layout viewport never shrinks (winH stays 914).
+    const ANDROID_THRESHOLD = 160;
+    const snap = computeSnapshot(
+      measure({ winH: 914, vvHeight: 571.81, offsetTop: 0, shellTop: 51 }),
+      914,
+      ANDROID_THRESHOLD
+    );
+    expect(snap.isOpen).toBe(true);
+    expect(snap.viewportHeight).toBeCloseTo(520.81);
+    // The invariant WP-KBD-1 restores: shell bottom <= visual viewport bottom.
+    expect(51 + snap.viewportHeight).toBeCloseTo(571.81);
+  });
+
+  it('WP-KBD-1: a shell top taller than the visible viewport clamps to zero, never negative', () => {
+    const snap = computeSnapshot(
+      measure({ vvHeight: 200, shellTop: 500 }),
+      baseline,
+      IOS_THRESHOLD
+    );
+    expect(snap.viewportHeight).toBe(0);
+  });
+
+  it('has no effect when the shell has no top inset (shellTop 0, the default)', () => {
+    const snap = computeSnapshot(measure({ winH: 480, vvHeight: 480 }), baseline, IOS_THRESHOLD);
+    expect(snap.viewportHeight).toBe(480);
   });
 });

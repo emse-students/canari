@@ -278,9 +278,12 @@ h6,
 }
 
 .chat-messages-scroll {
-  padding-bottom: calc(var(--chat-composer-height, 7.5rem) + env(safe-area-inset-bottom, 0px));
-  scroll-padding-bottom: calc(
-    var(--chat-composer-height, 7.5rem) + env(safe-area-inset-bottom, 0px)
+  /* --chat-composer-height already includes env(safe-area-inset-bottom) via the footer's own
+     padding-bottom, so it must not be added again here (only the unset-var fallback needs it). */
+  padding-bottom: var(--chat-composer-height, calc(7.5rem + env(safe-area-inset-bottom, 0px)));
+  scroll-padding-bottom: var(
+    --chat-composer-height,
+    calc(7.5rem + env(safe-area-inset-bottom, 0px))
   );
   /* Keep scrolling inside the message list - no chaining/rubber-band to the page that
      would drag content off-screen (notably while the keyboard is open). */
@@ -331,13 +334,14 @@ html.keyboard-open .app-layout {
 }
 
 .keyboard-open .chat-messages-scroll {
+  /* --chat-composer-height already includes its own padding-bottom (set by
+     .keyboard-open .chat-composer-footer above), so only the extra lift from
+     --keyboard-layout-inset-bottom is added on top - never the safe area again. */
   padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px) +
-      max(0.5rem, env(safe-area-inset-bottom, 0px))
+    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px)
   );
   scroll-padding-bottom: calc(
-    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px) +
-      max(0.5rem, env(safe-area-inset-bottom, 0px))
+    var(--chat-composer-height, 6rem) + var(--keyboard-layout-inset-bottom, 0px)
   );
 }
 

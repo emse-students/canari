@@ -391,7 +391,7 @@ Notes on the adoption pass:
 
 `KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events picked up by `MainChatPage` → routed through the normal media pipeline.
 
-### The soft keyboard and the app shell (WP-KBD-1, open)
+### The soft keyboard and the app shell (WP-KBD-1, fixed 2026-08-07 - device verification owed)
 
 `keyboardViewport.svelte.ts` pins the shell to the visual viewport while the keyboard is up:
 
@@ -420,6 +420,28 @@ Measured on device 2026-08-06, keyboard open:
 
 The invariant to restore is `shell bottom <= visual viewport bottom`: the pinned height is the space
 below the shell's own top, not the viewport's full height.
+
+**Fixed 2026-08-07, in `computeSnapshot` rather than in a component**, per the invariant above:
+`ViewportMeasurement` gained a `shellTop` field (the app shell's `getBoundingClientRect().top`,
+read from `.app-layout` in `readSnapshot`), and `--app-viewport-height` is now `offsetTop + vvHeight
+- shellTop` (clamped to zero), not the raw `vvHeight`. On the measured device this yields
+520.81px instead of 571.81px, and `.app-layout`'s own CSS rule needed no change - it already just
+consumes the var. Fixing the var at the source, rather than adding `- env(safe-area-inset-top)` to
+every consumer's own `calc()` (the way the desktop `AppSidebar` already does), keeps one corrected
+value instead of a per-consumer patch that the next new consumer would have to remember too. Unit
+tests pin the invariant with the exact recorded numbers (`keyboardViewport.test.ts`). **Owed: no
+physical device has exercised this build yet** - the repro is the ordinary gesture from the table
+above (composer, HOME, back), not a script `focus()`.
+
+The same investigation also found a second, independent bug in `app.css`'s `.chat-messages-scroll`
+padding: `--chat-composer-height` (the composer footer's real `offsetHeight`, via `ResizeObserver`
+in `ChatComposer.svelte`) already includes the footer's own `env(safe-area-inset-bottom)` padding,
+but the base rule and the `.keyboard-open` rule both added it a second time on top - only the
+`.mobile-convo-open` rule had it right, and it lost to `.keyboard-open` by CSS source order
+whenever both classes were active (mobile chat + keyboard open) - exactly the state a phone is in
+while typing. Fixed by dropping the redundant addition from both rules (`app.css`); the guessed
+fallback constants used only while the var is unset keep their own `env()` addition, since a
+fallback never included it in the first place.
 
 Two other things the measurement settles, both worth keeping:
 

@@ -557,16 +557,22 @@ run there (`check H`).
   `recon.mjs` over a batch of sends made DURING a drain** - and the phone, which shares the
   composable. Distinct from WP-LOSS-1 (which loses it at the receiver); do not merge them.
 
-- \[ \] **WP-KBD-1 (P2) - On Android the composer ends up BEHIND the soft keyboard.** Found
-  2026-08-06 while chasing a harness fault; reproduced with an ordinary gesture: tap the composer,
-  press HOME, come back. The shell is pinned to `visualViewport.height` but does not start at the
-  viewport's top - an ancestor carries the status-bar inset - so it overflows by exactly that inset
-  and the composer footer goes under the keyboard. Every measured number, the second suspect
-  (`layoutInsetBottom` is 0 precisely when it is needed) and the invariant to restore are in
-  [mobile > the soft keyboard and the app shell](docs/wiki/frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-open).
-  Do not re-derive them. The file is `frontend/src/lib/stores/keyboardViewport.svelte.ts`, whose
-  geometry is already pure and unit-tested - so the fix belongs in `computeSnapshot`'s contract plus
-  a test, not in a component.
+- \[ \] **WP-KBD-1 (P2) - On Android the composer ends up BEHIND the soft keyboard. FIXED
+  2026-08-07; what is owed is the ON-DEVICE verification.** Reported originally 2026-08-06 while
+  chasing a harness fault, reproduced with an ordinary gesture: tap the composer, press HOME, come
+  back. Reported again by the user 2026-08-07 as inconsistent spacing between the last message and
+  the composer, worse with the keyboard open - same root cause, found independently. `computeSnapshot`
+  now takes a `shellTop` measurement (`.app-layout`'s own top, read in `readSnapshot`) and pins
+  `--app-viewport-height` to `offsetTop + vvHeight - shellTop` instead of the raw `vvHeight`, per the
+  invariant `shell bottom <= visual viewport bottom` - fixed at the source rather than by patching
+  every CSS consumer with its own `- env(safe-area-inset-top)`. A second, independent bug rode along:
+  `app.css`'s `.chat-messages-scroll` padding double-counted `env(safe-area-inset-bottom)` on top of
+  `--chat-composer-height` (which already includes it) in two of its three rules, and the one correct
+  rule lost to the keyboard-open one by CSS source order whenever both were active. Full story,
+  numbers and the unit tests pinning both in
+  [mobile > the soft keyboard and the app shell](docs/wiki/frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-fixed-2026-08-07---device-verification-owed) -
+  do not re-derive them. **Owed: no physical device has exercised this build yet** - the repro is the
+  ordinary gesture above, not a script `focus()`.
 
 - \[ \] **WP-DL-1 (P1) - EVERY download button in the app was dead on mobile. FIXED 2026-08-07; what
   is owed is the ON-DEVICE verification.** Reported by the user against the PDF on the feed's first

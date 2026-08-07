@@ -34,6 +34,11 @@ export type ViewportMeasurement = {
   offsetTop: number;
   /** Pinch-zoom scale (`visualViewport.scale`); 1 at rest, > 1 when zoomed in. */
   scale: number;
+  /**
+   * Distance (px) from the layout viewport's top to the app shell's own top - the status-bar
+   * inset an ancestor pads in with `env(safe-area-inset-top)`. Zero on routes with no shell.
+   */
+  shellTop: number;
 };
 
 /** A pinch-zoom scale above this counts as "the user zoomed", not "a keyboard opened". */
@@ -51,6 +56,11 @@ function keyboardOpenThresholdPx(): number {
  * Fix (root cause): when `scale > 1` the visual viewport shrank because of a pinch-zoom, not a
  * keyboard - bail out with `zoomed: true` and a full-height, closed snapshot so the shell is
  * left untouched (see the desktop-zoom / iOS-keyboard white-gap bug).
+ * Fix (WP-KBD-1): `viewportHeight` is the space BELOW the shell's own top, not the visual
+ * viewport's raw height - the shell does not start at y=0 when an ancestor carries the
+ * status-bar inset (`shellTop`), so pinning it to the full visual-viewport height overflows
+ * past the keyboard by exactly that inset. The invariant is `shellTop + viewportHeight ==
+ * offsetTop + vvHeight` (the visual viewport's bottom edge in layout-viewport coordinates).
  */
 export function computeSnapshot(
   m: ViewportMeasurement,
@@ -77,12 +87,18 @@ export function computeSnapshot(
 
   return {
     isOpen,
-    viewportHeight: m.vvHeight,
+    viewportHeight: Math.max(0, m.offsetTop + m.vvHeight - m.shellTop),
     offsetTop: m.offsetTop,
     insetBottom,
     layoutInsetBottom,
     zoomed: false,
   };
+}
+
+/** The shell's own top is a fixed ancestor inset (status bar), not affected by keyboard state. */
+function readShellTop(): number {
+  const rect = document.querySelector('.app-layout')?.getBoundingClientRect();
+  return rect ? Math.max(0, rect.top) : 0;
 }
 
 function readSnapshot(baselineHeight: number): KeyboardViewportSnapshot {
@@ -94,6 +110,7 @@ function readSnapshot(baselineHeight: number): KeyboardViewportSnapshot {
       vvHeight: vv?.height ?? winH,
       offsetTop: vv?.offsetTop ?? 0,
       scale: vv?.scale ?? 1,
+      shellTop: readShellTop(),
     },
     baselineHeight,
     keyboardOpenThresholdPx()
