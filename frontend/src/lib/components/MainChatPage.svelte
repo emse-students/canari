@@ -26,7 +26,6 @@
   import { aggregateSharedContent, type SharedContent } from '$lib/utils/chat/sharedContent';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { isMessagePinned, applyPin, setPinnedSet } from '$lib/stores/pinStore.svelte';
-  import { useSyncSession } from '$lib/composables/useSyncSession.svelte';
   import {
     globalSession as session,
     globalConvs as convs,
@@ -41,7 +40,6 @@
   import Sidebar from './sidebar/Sidebar.svelte';
   import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
   import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';
-  import SyncSessionModal from './chat/SyncSessionModal.svelte';
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
@@ -139,9 +137,6 @@
   // every route, and holds the target until it is displayed. A second copy here selected the
   // target and released it early, which is what let the landing be lost.
 
-  // ─── Sync session (local - scoped to /chat, not the global background service) ──
-  const sync = useSyncSession();
-
   let messageText = $state('');
 
   /** Message pending forwarding (opens ForwardMessageModal when non-null). */
@@ -181,20 +176,6 @@
       invalidateChannelHistoryCache: (channelConversationId: string) =>
         convs.invalidateChannelHistoryCache(channelConversationId),
       log,
-    };
-  }
-
-  /** Builds the context object passed to QR sync session operations. */
-  function syncCtx() {
-    return {
-      historyBaseUrl: session.historyBaseUrl,
-      userId: session.userId,
-      myDeviceId: session.myDeviceId,
-      deviceKeyB64: session.deviceKeyB64,
-      storage: session.storage,
-      log,
-      loadExistingConversations: () => convs.loadAndRestoreConversations(convCtx()),
-      processDeviceInvitationsLocally: () => session.processDeviceInvitationsLocally(sessionCb()),
     };
   }
 
@@ -1023,20 +1004,6 @@
           void channels.leaveCurrentChannel(channelId, channelsCtx());
           if (convs.selectedContact === channelId) convs.selectedContact = null;
         }}
-      />
-
-      <SyncSessionModal
-        isOpen={sync.isSyncSessionOpen}
-        mode={sync.syncMode}
-        qrPayload={sync.syncQrPayloadText}
-        qrDataUrl={sync.syncQrDataUrl}
-        joinPayload={sync.syncJoinPayload}
-        statusText={sync.syncStatusText}
-        isBusy={sync.isSyncSessionBusy}
-        onJoinPayloadChange={(value) => (sync.syncJoinPayload = value)}
-        onConfirmJoin={() => sync.handleConfirmJoinSync(syncCtx())}
-        onCopyPayload={sync.copySyncPayload}
-        onClose={sync.closeModal}
       />
 
       <ForwardMessageModal

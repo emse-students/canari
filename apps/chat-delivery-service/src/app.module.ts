@@ -3,7 +3,6 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { HealthController } from './controllers/health.controller';
-import { SyncController } from './controllers/sync.controller';
 import { SecurityController } from './controllers/security.controller';
 import { GroupsController } from './controllers/groups.controller';
 import { MembersController } from './controllers/members.controller';
@@ -89,7 +88,6 @@ const RedisProvider: Provider = {
   controllers: [
     AppController,
     HealthController,
-    SyncController,
     SecurityController,
     GroupsController,
     MembersController,

@@ -93,19 +93,6 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all device memberships |
 | POST | `/api/mls/groups/:groupId/force_leave` | Force device exit from group |
 
-### Sync engine (cross-device QR)
-
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/mls/sync/session/start` | Create QR sync session |
-| POST | `/api/mls/sync/session/join` | Join QR sync session |
-| GET | `/api/mls/sync/session/:sessionId` | Poll sync session state |
-| POST | `/api/mls/sync/session/manifest` | Upload message ID manifest |
-| POST | `/api/mls/sync/session/diff` | Compute sync diff |
-| POST | `/api/mls/sync/session/chunks/upload` | Upload encrypted chunks |
-| GET | `/api/mls/sync/session/:sessionId/chunks/pull` | Download sync chunks |
-| POST | `/api/mls/sync/session/:sessionId/chunks/ack` | Acknowledge pulled chunks |
-
 ### Push notifications
 
 | Method | Path | Auth | Description |

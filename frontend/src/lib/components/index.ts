@@ -12,7 +12,6 @@ export { default as ConversationTile } from './chat/ConversationTile.svelte';
 export { default as ChatArea } from './chat/ChatArea.svelte';
 export { default as ChatHeader } from './chat/ChatHeader.svelte';
 export { default as ChatComposer } from './chat/ChatComposer.svelte';
-export { default as SyncSessionModal } from './chat/SyncSessionModal.svelte';
 export { default as CallOverlay } from './chat/CallOverlay.svelte';
 export { default as MessageBubble } from './messages/MessageBubble.svelte';
 export { default as MainChatPage } from './MainChatPage.svelte';

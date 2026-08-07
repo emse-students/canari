@@ -164,6 +164,13 @@ read-only `mysqldump@localhost` that lacks `EVENT` on the `mysql` DB, so `--even
 
 ### CANARI - OPEN WORK PACKAGES
 
+**QR SYNC IS DELETED 2026-08-07** (user reaffirmed after being told Leon had just polished its UI -
+"c'est juste un choix cosmetique qui n'a plus lieu d'etre"). It never worked: the server required a
+`salt` the frontend never sent, so every non-empty manifest upload 400d, and the two exchanged public
+keys were read by nothing. WP-HIST-3 replaces it by construction. `SettingsSyncSection.svelte` is now
+`SettingsBackupSection.svelte` (`.canari` export/import only) and the `profile_sync_*` keys are
+`profile_backup_*` - the old description literally offered a QR transfer that no longer exists.
+
 **[campaign] CROSS-CLIENT TEST CAMPAIGN - PAUSED ON PURPOSE, pending WP-HIST-3 (below).** The whole
 plan AND the built harness are **[cross-client-testing](docs/wiki/cross-client-testing.md)** - and
 that page now OPENS with a "Where this campaign stands" dashboard (phase table, the eleven defects

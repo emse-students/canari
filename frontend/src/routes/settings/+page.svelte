@@ -6,7 +6,7 @@
   import { currentUserId } from '$lib/stores/user';
   import SettingsPreferencesSection from '$lib/components/settings/SettingsPreferencesSection.svelte';
   import SettingsSecuritySection from '$lib/components/settings/SettingsSecuritySection.svelte';
-  import SettingsSyncSection from '$lib/components/settings/SettingsSyncSection.svelte';
+  import SettingsBackupSection from '$lib/components/settings/SettingsBackupSection.svelte';
   import SettingsPaymentsSection from '$lib/components/settings/SettingsPaymentsSection.svelte';
   import SettingsSubscriptionsSection from '$lib/components/settings/SettingsSubscriptionsSection.svelte';
   import SettingsAboutSection from '$lib/components/settings/SettingsAboutSection.svelte';
@@ -66,7 +66,7 @@
 
   <SettingsPreferencesSection />
   <SettingsSecuritySection />
-  <SettingsSyncSection />
+  <SettingsBackupSection />
   <SettingsPaymentsSection />
   <SettingsSubscriptionsSection />
   <SettingsAboutSection />

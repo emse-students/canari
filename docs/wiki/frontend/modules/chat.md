@@ -366,10 +366,11 @@ store and the receiver deduped by id, one way, with neither side knowing what th
 now a diff. The design was settled on 2026-08-02 by reading the code; what shipped differs from it on
 exactly one point, recorded below.
 
-**The algorithm already existed and was tested.** `sync/syncEngine.ts` has `buildLocalSyncManifest`
-(all message ids per conversation, sorted) and `diffLocalAndRemoteManifest` (symmetric difference).
-What was missing was the TRANSPORT, and that is what `utils/chat/historyManifest.ts` (pure, 42 tests)
-plus `utils/chat/historyDigestRendezvous.ts` (11 tests) now carry.
+**The algorithm already existed and was tested** in the QR sync engine (`sync/syncEngine.ts`, since
+deleted with that feature): a sorted manifest of message ids per conversation, and a symmetric
+difference over two of them. What was missing was the TRANSPORT, and that is what
+`utils/chat/historyManifest.ts` (pure, 42 tests) plus `utils/chat/historyDigestRendezvous.ts`
+(11 tests) now carry - this time between the account's own devices, with no user gesture at all.
 
 **THE DIRECTION IS FLIPPED against the design above - deliberately, do not restore it.** The design
 had the RESPONDER send the digest and the REQUESTER diff. It ships the other way round: the

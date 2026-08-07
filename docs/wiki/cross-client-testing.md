@@ -2247,8 +2247,8 @@ the damage, and none of them is an accident:
 
 A manifest diff has none of the three. The receiver sends what it HAS; the peer computes what is
 missing and holds its id; the exchange reads the durable store; and the responder is elected
-server-side. **That is WP-HIST-3**, already half-built and tested in `sync/syncEngine.ts` - only the
-transport is absent. The conclusion recorded on 2026-08-07 is to build it rather than to keep
+server-side. **That is WP-HIST-3**, whose algorithm was already built and tested inside the QR sync
+engine (since deleted) - only the transport was absent. The conclusion recorded on 2026-08-07 is to build it rather than to keep
 hardening the window-based repair, with a give-up counter as the escalation point from a narrow
 immediate resend to the diff.
 
