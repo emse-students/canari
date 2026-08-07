@@ -254,6 +254,10 @@ if (isTauriRuntime()) {
       // resume when Android has not yet updated the current intent.
       let lastGetCurrentUrl: string | null = null;
 
+      // Distinct failures only: `checkCurrentUrl` runs five times on every start plus once per
+      // foreground resume, and a permanent failure would otherwise bury the log it belongs in.
+      let lastGetCurrentError: string | null = null;
+
       const checkCurrentUrl = () =>
         getCurrent()
           .then((urls) => {
@@ -263,7 +267,22 @@ if (isTauriRuntime()) {
             lastGetCurrentUrl = first;
             processUrls(Array.isArray(urls) ? urls : [urls]);
           })
-          .catch(() => {});
+          .catch((err) => {
+            // NEVER SWALLOW THIS. `getCurrent` is the ONLY path a cold start has: `onOpenUrl` is an
+            // event channel the Rust side registers, so it needs no permission, while `get_current`
+            // is a COMMAND gated by the capability file. `deep-link:default` was missing from it,
+            // so this rejected every single time and the bare `.catch(() => {})` that used to sit
+            // here made that indistinguishable from "the app was not started by a deep link" - a
+            // notification tapped from a KILLED app opened Canari on the default route and stayed
+            // there, with nothing in any log to say why (WP-DEEPLINK-1).
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg === lastGetCurrentError) return;
+            lastGetCurrentError = msg;
+            console.error(
+              '[hooks] deep-link getCurrent() failed - cold-start deep links are LOST:',
+              msg
+            );
+          });
 
       // Handles deep link that cold-started the app (fired before listener could register).
       // Retry a few times: on Android the intent can land after the WebView boots.
