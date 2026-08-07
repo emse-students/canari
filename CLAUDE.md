@@ -96,6 +96,19 @@ discriminator, the version name does not move) and three of the four owed checks
   (`anchorScroll`/`anchorFraction`/`nearestBoxIndex`, 25 tests). Trap it introduced and closes: the
   column animates back to `scale(1)` over 120 ms and `getBoundingClientRect` reports the ANIMATING
   box, so the transition is suppressed while the settle measures.
+- **PDF pinch ANCHOR: PASS on hardware** (build `lastUpdateTime 20:41:25`, commit `b88cf260`), drift
+  **(-0.8, -0.5) px** at a 12 px tolerance, against (395, 1370) with no correction and (-16.8, -48.6)
+  with the ratio one. Corroboration worth keeping: `scrollTop` 1679.24 -> 1631.24 is **48.00 px
+  exactly**, the figure `pinchZoom.test.ts` predicts from the unscaled padding + gutter. Do not
+  re-verify this.
+- **LEON's TWO UI COMMITS: BOTH PASS on hardware.** `6139969d` edge-to-edge - `env(safe-area-inset-*)`
+  resolves to **top 51 px / bottom 24 px**, which is the only real proof since compiling establishes
+  nothing here. `30979c57` nav opacity - the bottom nav computes `oklab(0 0 0 / 0.8)` under
+  `data-theme="dark"`, light untouched at 0.7, theme restored to `light` afterwards. **Two locator
+  faults on the way, both the documented rule:** `document.querySelector('nav')` returns the SIDEBAR
+  (transparent), the bottom nav is `nav.fixed.bottom-0`; and the theme is driven by `data-theme` on
+  `<html>`, NOT by a `.dark` class, so adding the class measures the light rule the commit
+  deliberately left alone. Tailwind 4 emits `oklab`, so the alpha is after a `/`, not a 4th comma.
 - **WP-RELOAD-DL-1 PASS**, with the mechanism visible: cold start on `fr.emse.canari://chat/<dm>`,
   claim `fr.emse.canari://chat/642f389a-...` written to `sessionStorage`, parked on `/posts`,
   reloaded - claim STILL there, route still `/posts` after the 250/750/2000 ms re-checks.
@@ -123,6 +136,20 @@ discriminator, the version name does not move) and three of the four owed checks
   matching the native lib to 0,04 % - the `.so` is physically in the archive twice. Harmless and
   investigated: one ABI only, and the SHIPPED artefacts are 15 MB (`.aab`) / 35 MB (`.apk`). Do not
   re-measure it.
+
+**1bis. OWED RIGHT NOW, and it is the FIRST thing to do (2026-08-07, ~21:00).** The user reported
+that re-rasterising at every zoom step is heavy and "ca peut couper l'image". Fixed by `1637ed39`:
+`RENDER_ZOOMS = [1, last step]` (a pinch through 1.5 and 2 to 3 now costs at most ONE re-render, and
+1.5 -> 2 -> 3 costs none), and the current bitmap is never taken off screen - it is replaced in
+place, an old bitmap being the right image at the wrong resolution. The cutting was the swap: the
+placeholder is an `aspect-ratio` box with `overflow-hidden`. Guard is `renderedAt` (the CSS width a
+page was rendered FOR), never `RenderedPdfPage.width`, which is DEVICE pixels.
+**Gates green, committed, NOT on the phone**: the APK build was still running and the USB link then
+dropped for good (device no longer enumerated - needs a physical re-plug, the user was asked).
+`check-pdf-render.mjs` is WRITTEN but has **never run, not even as a negative control** - run it
+against the OLD build first if the phone still carries it, because its two assertions (never blank
+or clipped, and <= 2 distinct bitmap srcs across the whole ladder) are exactly what the old build
+should fail.
 
 **2. THE AUDIT / CAMPAIGN RESUMES** - the phase dashboard at the top of
 [cross-client-testing](docs/wiki/cross-client-testing.md) is the source of truth, not this file. In
