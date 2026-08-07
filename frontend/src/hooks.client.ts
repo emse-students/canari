@@ -12,6 +12,7 @@ import { navigateInAppFromPublicUrl } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { inAppPathFromPublicUrl, isPublicAppUrl } from '$lib/utils/publicAppUrl';
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
+import { fetchInputUrl, shouldUseNativeFetch } from '$lib/utils/fetchRouting';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones.
@@ -317,35 +318,11 @@ if (isTauriRuntime()) {
     .then(({ fetch: tauriFetch }) => {
       const originalFetch = window.fetch;
       window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
-        // Determine the URL string
-        const url =
-          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-
-        // Keep browser fetch for relative URLs (SvelteKit internal),
-        // Vite dev server, HMR, and data requests.
-        if (
-          !url ||
-          url.startsWith('/') ||
-          url.startsWith('http://127.0.0.1:1420') ||
-          url.startsWith('http://localhost:1420') ||
-          url.includes('__data.json') ||
-          url.includes('@vite') ||
-          url.includes('node_modules')
-        ) {
+        // The plugin is a network client and answers `http(s)` alone; everything else is the
+        // WebView's own. `shouldUseNativeFetch` carries the reasoning and its tests.
+        if (shouldUseNativeFetch(fetchInputUrl(input), init)) {
           return originalFetch.call(window, input, init);
         }
-
-        // Cookie-bearing requests (credentials: 'include') MUST use the
-        // browser's native fetch. The Tauri HTTP plugin runs in a separate
-        // Rust thread whose cookie jar is isolated from the WebView's - it
-        // can't write Set-Cookie responses back to the WebView, which breaks
-        // HttpOnly session cookies (refresh token). Using native fetch here
-        // also prevents a deadlock where the plugin stalls waiting for a
-        // cookie-jar sync that never completes.
-        if ((init as RequestInit | undefined)?.credentials === 'include') {
-          return originalFetch.call(window, input, init);
-        }
-
         return tauriFetch(input, init) as ReturnType<typeof window.fetch>;
       } as typeof window.fetch;
     })

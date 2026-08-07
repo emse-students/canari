@@ -645,23 +645,43 @@ ancestor-chain trace that found the double-subtraction are in
 [mobile > the soft keyboard and the app shell](docs/wiki/frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-shipped-and-verified-2026-08-07) -
 do not re-derive them.
 
-- \[ \] **WP-DL-1 (P1) - EVERY download button in the app was dead on mobile. FIXED 2026-08-07; what
-  is owed is the ON-DEVICE verification.** Reported by the user against the PDF on the feed's first
+- **WP-DL-1 (P1) is SHIPPED, and its ON-DEVICE verification of 2026-08-07 FOUND THE REAL CAUSE.** Reported by the user against the PDF on the feed's first
   post, and it was never about PDFs: `<a download>` is handled by the SHELL, and Tauri installs no
   download handler on either platform, so the click dispatched, succeeded, and produced nothing -
   no file, no error, no log line. Eleven call sites, all now on `$lib/utils/fileDownload.ts`
   (`saveObjectUrlAs` / `saveBlobAs` / `downloadDecryptedFile`), which writes through the native save
   dialog on Tauri and keeps the anchor on the web. The rule is in DURABLE RULES; the reasoning is in
   [mobile > rules that hold across both platforms](docs/wiki/frontend/mobile.md#rules-that-hold-across-both-platforms).
-  **Owed, and none of it is testable from here:** the ACL is granted but only a device proves
-  `fs:allow-write-file` + `dialog:save` actually resolve; Android's `ACTION_CREATE_DOCUMENT` returns
-  a `content://` URI that `fs.writeFile` must accept (verified in the crate source, never on
-  hardware); and the backup export's Tauri branch CHANGED SHAPE - it used to ask for a directory,
-  which SAF does not offer, so its old path may never have worked either. Ships with the next APK
-  and the next web deploy. **In the same change, the in-app PDF reader** (`PdfViewerModal.svelte`,
-  the whole card opens it on both surfaces) - which also needs an Android run, since rasterising is
-  precisely what the platform forced and nothing has rendered a multi-page document there yet. This
-  answers **check M** in [device-verification](docs/wiki/device-verification.md).
+  **The device run of 2026-08-07 then found that the anchor was only HALF the story**, and the
+  suspects listed here were all innocent: the ACL, the SAF dialog and `fs.writeFile` are fine. The
+  real cause is `hooks.client.ts`'s `window.fetch` override rejecting `blob:` - the rule is now in
+  DURABLE RULES and in [mobile](docs/wiki/frontend/mobile.md), the predicate is
+  `utils/fetchRouting.ts` (pure, 12 tests). Captured on hardware: `[download] failed scheme blob not
+  supported`, with a probe proving `window.fetch` is NOT native there while `XMLHttpRequest` reads
+  the same blob URL fine. **Check M PASSES** - a multi-page PDF rasterises on Android.
+
+  **STILL OWED on the next APK** (the fix is committed, the phone runs the build from BEFORE it):
+  re-run the download and assert a file lands, which is also the first real test of
+  `fs:allow-write-file` + the `content://` URI; and the backup export's Tauri branch, which CHANGED
+  SHAPE (it used to ask for a DIRECTORY, which SAF does not offer, so its old path may never have
+  worked).
+
+- \[ \] **WP-VIEWER-1 (P2) - UNIFY THE IMAGE LIGHTBOX AND THE PDF READER.** Asked by the user
+  2026-08-07: "c'est presque la meme interface, ca meriterait d'etre joli, pratique et homogene".
+  Two full-screen modals with the same job and two different implementations of every part of it:
+  `shared/MediaLightbox.svelte` (417 lines) and `shared/PdfViewerModal.svelte` (~380). **The
+  gestures are the concrete debt**: the lightbox has a MATURE pinch/pan - `zoomAt` with a focal
+  point, clamped translation, drag panning, wheel zoom, a percentage readout - while the PDF reader
+  had none at all until 2026-08-07, when it got a deliberately CRUDE one (two-finger distance ratio,
+  live CSS transform, settle to the nearest of four discrete steps). **That crude gesture is to be
+  REPLACED by the extracted shared one, not kept** - it exists only because the user reported that
+  pinching did nothing and the fix could not wait for this WP. The real difference to respect: a
+  photo is one bitmap that may be scaled continuously, a PDF page is RE-RASTERISED per zoom level
+  (sharp text is the whole reason pages are not upscaled), so the shared gesture must expose a
+  continuous live scale AND a settle callback the PDF binds to its step list. Chrome to share
+  besides: the header (title, page/percentage readout, zoom pair, download, close), the safe-area
+  padding, the backdrop + focus trap + Escape, and the download button routing through
+  `utils/fileDownload.ts`.
 
 - \[ \] **WP-OIDC-TAB-1 (P3) - On Android the browser tab opened for the login is NEVER closed.**
   Reported by the user 2026-08-06 and reproduced during the WP-ANDROID-SESS-1 re-login: the app comes
@@ -871,6 +891,14 @@ page. The five to carry, plus one status line:
   (seen on Xiaomi/HyperOS) do not honor consistently for a WebView. Call `enableEdgeToEdge()`
   explicitly in `onCreate` rather than relying on version-gated enforcement to make the insets this
   app's CSS already assumes everywhere actually show up.
+- **`fetch` IS NOT `fetch` in the WebView**: `hooks.client.ts` replaces `window.fetch` with the Tauri
+  HTTP plugin's, which is a NETWORK client and rejects every non-`http(s)` scheme with
+  `scheme <x> not supported` - a bare rejection that reads as a dead network. The routing rule must
+  name what the plugin CAN do, never the exceptions: written as an exception list it missed `blob:`,
+  and since saving an attachment reads its object URL back, EVERY download on both platforms failed
+  while the ACL, the save dialog and `fs.writeFile` were all correct. `utils/fetchRouting.ts`, pure
+  and tested. `XMLHttpRequest` is not patched - a passing XHR beside a failing `fetch` is the
+  fingerprint.
 - A WEBVIEW HAS NO DOWNLOAD MANAGER: `<a download>` is a silent no-op on Android and iOS alike
   (Tauri installs neither a `DownloadListener` nor a `WKDownloadDelegate`), and the click still
   "succeeds", so there is no exception and no log - eleven buttons shipped dead. Everything saving a

@@ -93,6 +93,25 @@ the server PIN check when online**, so nothing is verified less. Full reasoning,
 sequence that runs when connectivity returns, in
 [`modules/auth.md`](modules/auth.md#offline-unlock).
 
+## `fetch` is not `fetch` inside the WebView
+
+On mobile `hooks.client.ts` REPLACES `window.fetch` with the Tauri HTTP plugin's, because the
+WebView's own client cannot reach a third-party origin from under the app's custom protocol. Two
+consequences that nothing type-checks:
+
+- **The plugin is a NETWORK client** in a Rust thread. It implements `http:` and `https:` and
+  answers everything else with `scheme <x> not supported` - a bare rejected promise, which reads
+  exactly like the network being down.
+- **The routing rule must name what the plugin CAN do, never the exceptions.** It was written as an
+  exception list (relative paths, the dev server, cookie-bearing calls), so `blob:` - which nobody
+  had listed - went to the network client. Saving a decrypted attachment reads its object URL back,
+  so **every download on both platforms failed**, showing "le telechargement a echoue" while the
+  ACLs, the save dialog and `fs.writeFile` were all perfectly correct. The predicate is now
+  `shouldUseNativeFetch` in `utils/fetchRouting.ts`, pure and tested.
+
+Also verified on hardware while chasing it: `XMLHttpRequest` is NOT patched and reads a `blob:` URL
+fine, so a passing XHR next to a failing `fetch` is the fingerprint of this class of bug.
+
 ## Rules that hold across both platforms
 
 **Push is all-FCM.** One transport for Android and iOS alike: the backend sends every `PushToken`

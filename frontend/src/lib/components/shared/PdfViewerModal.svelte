@@ -185,6 +185,64 @@
     return knownRatios[index] ?? 1.414;
   }
 
+  /**
+   * Pinch-to-zoom.
+   *
+   * The page is a rasterised bitmap re-rendered per zoom level, so a pinch cannot simply scale a
+   * canvas: the gesture is tracked live as a CSS transform (instant, no rasterising) and SETTLED on
+   * release to the nearest {@link ZOOM_STEPS} entry, which is what triggers the re-render at the
+   * new width. Anything else either stutters - rasterising every frame of a gesture - or leaves the
+   * text blurry, and sharp text is the entire reason pages are re-rendered rather than upscaled.
+   *
+   * The app disables the WebView's own page zoom (it is a phone application, not a document), so
+   * without this the pinch reached nothing at all and the buttons were the only way in.
+   */
+  let pinchStartDistance = 0;
+  let pinchStartZoom = 1;
+  /** Live scale applied during a gesture; 1 whenever no pinch is in progress. */
+  let pinchScale = $state(1);
+
+  function touchDistance(touches: TouchList): number {
+    const [a, b] = [touches[0], touches[1]];
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+
+  function handleTouchStart(e: TouchEvent) {
+    if (e.touches.length !== 2) return;
+    pinchStartDistance = touchDistance(e.touches);
+    pinchStartZoom = zoom;
+    pinchScale = 1;
+  }
+
+  function handleTouchMove(e: TouchEvent) {
+    if (e.touches.length !== 2 || pinchStartDistance === 0) return;
+    // Owning the gesture: otherwise the scroll container pans underneath the pinch.
+    e.preventDefault();
+    const ratio = touchDistance(e.touches) / pinchStartDistance;
+    // Clamped to what the steps can actually settle on, so the preview never promises a zoom the
+    // release cannot deliver.
+    const target = Math.min(
+      ZOOM_STEPS[ZOOM_STEPS.length - 1],
+      Math.max(ZOOM_STEPS[0], pinchStartZoom * ratio)
+    );
+    pinchScale = target / pinchStartZoom;
+  }
+
+  function handleTouchEnd(e: TouchEvent) {
+    if (pinchStartDistance === 0 || e.touches.length >= 2) return;
+    const settled = pinchStartZoom * pinchScale;
+    let nearest = 0;
+    for (let i = 1; i < ZOOM_STEPS.length; i++) {
+      if (Math.abs(ZOOM_STEPS[i] - settled) < Math.abs(ZOOM_STEPS[nearest] - settled)) nearest = i;
+    }
+    pinchStartDistance = 0;
+    pinchScale = 1;
+    if (nearest !== zoomIndex) {
+      console.debug(`[pdfViewer] pinch settled at x${ZOOM_STEPS[nearest]}`);
+      zoomIndex = nearest;
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -273,9 +331,16 @@
       </div>
 
       <!-- Pages -->
+      <!-- `document` rather than a bare div: the pages ARE the document being read, and the pinch
+           handlers below need the element to carry a role. -->
       <div
-        class="flex-1 min-h-0 overflow-auto overscroll-contain px-2 sm:px-4 py-3"
+        role="document"
+        class="flex-1 min-h-0 overflow-auto overscroll-contain px-2 sm:px-4 py-3 touch-pan-x touch-pan-y"
         bind:clientWidth={viewportWidth}
+        ontouchstart={handleTouchStart}
+        ontouchmove={handleTouchMove}
+        ontouchend={handleTouchEnd}
+        ontouchcancel={handleTouchEnd}
       >
         {#if loadError}
           <div class="flex h-full flex-col items-center justify-center gap-3 text-white/70">
@@ -291,9 +356,13 @@
         {:else}
           <!-- Zooming widens the column past the viewport; the scroll container above owns
                the resulting horizontal scroll, so pages never scroll independently. -->
+          <!-- `pinchScale` previews the gesture without rasterising; it is 1 at rest, so the
+               transform is inert outside a pinch and the settled zoom does the real work. -->
           <div
-            class="mx-auto flex flex-col items-center gap-3"
-            style="width: {zoom * 100}%; max-width: {COLUMN_MAX_WIDTH * zoom}px;"
+            class="mx-auto flex flex-col items-center gap-3 origin-top"
+            style="width: {zoom * 100}%; max-width: {COLUMN_MAX_WIDTH * zoom}px;
+                   transform: scale({pinchScale});
+                   transition: {pinchScale === 1 ? 'transform 120ms ease-out' : 'none'};"
           >
             {#each pages as page, index (index)}
               <div
