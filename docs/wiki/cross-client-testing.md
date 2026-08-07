@@ -1348,9 +1348,20 @@ Two observations from the same run ARE real and are the reason to re-run rather 
 a burst to one (which is exactly what the check exists to measure) or something else is undecided.
 
 The re-count that would have settled it also failed: `openDM` from the feed on the phone timed out
-after two minutes. So **presence of the five messages on A1 is currently UNKNOWN**, and the check
-owes: re-point the devtools forward at the new pid (the abstract socket carries it), navigate to the
-conversation and assert arrival there, before counting anything.
+after two minutes. So **presence of the five messages on A1 was UNKNOWN**.
+
+**The 19th harness fault, and it is the archetype.** The check *did* navigate to the conversation -
+`await ensureChat(a1).catch(() => null)` then
+`await openConversation(a1, 'Claire VAN RUYMBEKE').catch(() => null)`. Both swallow their own
+failure, so when navigation did not happen the check carried on and counted anyway. That is the rule
+this page states in its own header, applied to itself: **an action that cannot prove it took effect
+still yields a verdict, and that verdict is fiction.** A restarted process opens on its default route
+(`/posts`), not where it was when it died, so there was nothing to find and the check said so in the
+language of a catastrophic bug.
+
+Fixed: the failure is now reported rather than swallowed, and the count is gated on a **post-
+condition** - the composer must exist on screen, or the check throws instead of producing a verdict.
+`{ focus: false }` on the phone client, since focus emulation is for the browsers.
 
 **NOTIF-4 found a real bug and cost the 18th harness fault, in that order** - which is only clear in
 hindsight, and is exactly why the fault was not allowed to end the investigation.
