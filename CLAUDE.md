@@ -198,9 +198,11 @@ re-derive any of it from here. What a compaction must not lose:
   logcat under `Tauri/Console`, which is how to read it while the WebView is unreachable; a busy
   device overruns the logcat ring in minutes, so capture continuously to a file rather than dumping
   after the fact.
-- **WHERE THE CAMPAIGN STANDS (2026-08-06): Phase 0, the MSG phase, the FWD phase and the TAB phase
-  are ALL COMPLETE; LIFE is done except LIFE-5, which needs the user. NEXT: NOTIF/PIN/MULTI, then
-  CORRUPT last - plus the HEAL checks above, once the web deploy lands.** Every
+- **WHERE THE CAMPAIGN STANDS (2026-08-07): Phase 0, MSG, FWD and TAB are COMPLETE; LIFE is done
+  except LIFE-5, which needs the user. The NOTIF phase has run 4, 9, 10 and 7 (twice) - NOTIF-1 and
+  NOTIF-8 were already answered by LIFE-8 and LIFE-4, so what is LEFT of it is NOTIF-2/3 (silent
+  commit -> epoch gap) and NOTIF-5 (mute) and NOTIF-6 (check K, quick reply from the shade). Then
+  PIN/MULTI, then CORRUPT last - plus the HEAL checks above.** Every
   row, every measurement and every retired hypothesis is in section 10 of the wiki page - do not
   re-list them here. The four checks that FAILED each became a P1 and each has its own entry below:
   FWD-3/FWD-5 -> WP-LOSS-1 (which retires WP-FWD-1), TAB-4 -> WP-HIDDEN-1 then WP-MULTITAB-1,
@@ -246,7 +248,7 @@ re-derive any of it from here. What a compaction must not lose:
   verdict is `PASS` only if the assertions hold AND the run is clean - errors, 4xx, page exceptions,
   WS events, `notable` MLS lines, `stateChanges` and anything `unexplained` are reported next to it.
   A line that turns out to be routine is ADDED to the benign list, never ignored in place.
-- **FIFTEEN harness faults have produced a false result, all fixed, and every one is written up in
+- **TWENTY harness faults have produced a false result, all fixed, and every one is written up in
   the wiki page** (search "harness fault"). Do not re-derive them - what they say collectively is
   three rules, and these are the ones to apply without opening it:
   - **An action that cannot prove it took effect still yields a verdict**, and that verdict is
@@ -261,7 +263,11 @@ re-derive any of it from here. What a compaction must not lose:
     selector before blaming the app.**
   - **A locator is a guess unless it is disambiguated**: `/json/list` is not creation order, a
     document-wide text match hits the first hidden action row, a tie picks the scroll container over
-    its button, and an `aria-label` must never outrank visible text.
+    its button, and an `aria-label` must never outrank visible text. **A selector shared by two
+    surfaces is not a post-condition either**: `.chat-composer-editor` belongs to the shared
+    `MentionComposerInput`, so it is on `/posts` too and "the composer is on screen" was TRUE on the
+    social feed - and `send()` would have typed its marker into a comment box on somebody's post.
+    Every use is now scoped to `.chat-composer-footer .chat-composer-editor` (20th harness fault).
 - **The venue is a NEW COMMUNITY, `Campagne de test`, not a channel in MiTV** - a private channel is
   still readable by every association admin, and no association has jolan as sole admin. Two members
   only. Section 11 of the wiki page says why; do not re-derive it.
@@ -463,6 +469,21 @@ it, asserting the conversation is on screen before counting.** NOTIF-1/2/3/5/6/7
   left open, the reason this stays a WP:** `map_decrypt_outcome` in `src-tauri/src/state.rs` - the
   BATCH path used by history replay - still answers `ok: true, data: None` on `SecretReuse`, which is
   the same "a native layer threw the diagnosis away" that hid this bug for a day.
+
+- \[ \] **WP-DEEPLINK-1 (P1) - tapping a notification while the app is CLOSED opens Canari but not
+  the conversation. FOUND 2026-08-07 by NOTIF-7, NOT FIXED, no root cause yet.** Backgrounded it is
+  perfect (notification decrypted in 18.1 s, tap -> the right conversation in 8.4 s, 1 copy).
+  KILLED (`am kill` from HOME, death asserted) the notification is still decrypted in 7.0 s and the
+  tap still brings the app to the front - and it lands on the FEED and stays there for 69 s, marker
+  absent, `count: 0`. So the PendingIntent fires and the process starts; what is lost is the
+  navigation, which is `notifNav` and not a route. **The obvious suspect is the same shape as
+  WP-ANDROID-SESS-1's third defect: on a cold start the intent is delivered before the shell that
+  subscribes to `notifNav` exists, and a one-shot announcement to a late subscriber is dropped** -
+  the durable rule for that is already in the sessions block (replay the verdict to whoever registers
+  after it). Verify that before assuming anything else. The measurements and the three harness traps
+  that run has already paid for are in
+  [cross-client-testing > NOTIF-7](docs/wiki/cross-client-testing.md#notif-7-the-deep-link-works-from-a-backgrounded-app-and-not-from-a-killed-one).
+  iOS has never been checked at all - it is the same `check H`.
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload. ROOT CAUSE FOUND and
   FIXED 2026-08-07 (`214592e5`); what is owed is the VERIFICATION.** Found by reconciliation:

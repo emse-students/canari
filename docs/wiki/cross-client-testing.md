@@ -1333,6 +1333,64 @@ killed it" is LIFE-8.
 | NOTIF-4 | **FAIL x3**, then **PASS** on the fixed build | dismissed 263 ms after the read |
 | NOTIF-9 | **PASS** | killed in 77 ms, notified in 18.1 s, shade 1, W1 1 |
 | NOTIF-10 | **PASS on delivery** (10/10 across two rounds), with one open observation on the shade | see below |
+| NOTIF-7 (backgrounded) | **PASS** | notification decrypted in 18.1 s, tap -> right conversation in 8.4 s, 1 copy |
+| NOTIF-7 (killed) | **FAIL - a real defect, WP-DEEPLINK-1** | notification decrypted in 7.0 s, tap -> the app opened on the FEED and stayed there for 69 s |
+
+### NOTIF-7: the deep link works from a backgrounded app and NOT from a killed one
+
+This is `check H` of [device-verification](device-verification.md), owed since it has only ever been
+verified by compiling. The product has no `/c/<id>` route - a notification tap publishes to
+`notifNav` - so the only honest test is to tap the real notification and read where the app lands.
+
+**The discriminator, and why it is not optional.** The app is parked on `/posts` before it is
+backgrounded or killed. If A1 were already in the DM, "the DM is on screen afterwards" would be true
+whether the deep link fired or did nothing at all.
+
+| | backgrounded | killed |
+| --- | --- | --- |
+| notification in the shade | 18.07 s | 6.96 s |
+| body decrypted (real text, not the fallback) | yes | yes |
+| app foregrounded by the tap | yes | yes |
+| landed on | `/chat`, marker present | **`/posts`, marker absent after 69 s** |
+| copies of the message | 1 | 0 |
+
+So the notification itself is healthy in both cases - posted, decrypted, tappable, and it does bring
+the app to the front. What is broken is only the **cold-start** leg of the navigation. See
+WP-DEEPLINK-1.
+
+Three things this cost, all of them harness rather than app:
+
+- **The sender must be the PEER.** The first run sent from W1, which is jolan's *other* device, so
+  the phone classified it as the user's own message and suppressed the notification exactly as it
+  should: `senderName=Jolan BOUDIN silent=true` then `FCM silent from self -> cancelling
+  notification`. The check reported "no notification ever reached the shade" against a build that
+  was behaving correctly.
+- **W1 must be OFF the conversation.** Left sitting in the DM it marks the message read on arrival,
+  which pushes a cross-device dismissal to the phone - the very mechanism NOTIF-4 verifies - and
+  that push arrived *before* the message push it was cancelling. It also contends for the MLS state
+  lock: `tryDecrypt: MlsStateLock not acquired after 5s -> abort (another thread is decrypting)`,
+  three times, and the run ended on the generic fallback (`Nouveau message de Claire VAN RUYMBEKE`)
+  where the clean run decrypted. Worth remembering when reading any background-decrypt measurement:
+  **a concurrent silent push can starve the decrypt of its own lock.**
+- **uiautomator2 cannot tap the shade on this device.** Its on-device agent dies with
+  `RemoteDisconnected` right after the shade is expanded, twice out of two, *after* the dump has
+  succeeded. So the dump supplies the coordinates and the tap goes through plain `input tap`, which
+  involves no agent. A tap that finds no row returns `ok: false` rather than a verdict.
+
+#### The 20th harness fault: `.chat-composer-editor` is on the FEED too
+
+The post-condition added after the 19th fault - "the composer must be on screen, or refuse a
+verdict" - was itself unable to tell the two screens apart. `.chat-composer-editor` is a class of the
+**shared** `MentionComposerInput`, which `/posts` uses for its "Ajouter un commentaire…" boxes, so
+`composer: true` was returned while the app sat on the social feed. NOTIF-7 killed only failed
+correctly because `marker` and `count` carried the verdict independently.
+
+The consequence that had not happened yet is the serious one: `send()` uses the same selector, so a
+check that misnavigated would have typed its marker into a **comment box on somebody's post**.
+
+Fixed in `chat.mjs`: every use is now scoped to `.chat-composer-footer .chat-composer-editor`, a
+class that belongs to `ChatComposer.svelte` alone. The general rule, which this page keeps paying
+for: **a selector shared by two surfaces is not a post-condition.**
 
 ### NOTIF-10, settled: every message survives a ten-minute blackout; the SHADE does not show them all
 
