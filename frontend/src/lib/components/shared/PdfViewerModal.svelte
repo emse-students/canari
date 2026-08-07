@@ -11,7 +11,13 @@
    * known once the page object is loaded, and loading every page up front to measure them
    * would defeat the laziness. The scrollbar therefore settles slightly as pages arrive.
    */
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
+  import {
+    focalScroll,
+    nearestStepIndex,
+    touchDistance,
+    touchMidpoint,
+  } from '$lib/utils/pinchZoom';
   import { X, ZoomIn, ZoomOut, Download, FileText } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
@@ -201,24 +207,45 @@
   let pinchStartZoom = 1;
   /** Live scale applied during a gesture; 1 whenever no pinch is in progress. */
   let pinchScale = $state(1);
+  /** The scroll container, which owns the overflow a zoom creates. */
+  let scrollEl = $state<HTMLElement | null>(null);
+  /** The page column, whose transform previews the gesture. */
+  let columnEl = $state<HTMLElement | null>(null);
 
-  function touchDistance(touches: TouchList): number {
-    const [a, b] = [touches[0], touches[1]];
-    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-  }
+  /**
+   * Where the fingers are, in the column's own coordinates, so the live preview scales ABOUT that
+   * point instead of about the top edge. Reported on device 2026-08-07: the zoom worked but "ca
+   * augmente pas a l'endroit qu'on veut" - scaling about `origin-top` slides whatever you pinched
+   * out from under your fingers.
+   */
+  let pinchOrigin = $state<{ x: number; y: number } | null>(null);
+  /** Focal point relative to the scroll container, kept for the settle-time scroll correction. */
+  let pinchFocal: { x: number; y: number } | null = null;
+
+  const pinchOriginCss = $derived(
+    pinchOrigin ? `${pinchOrigin.x}px ${pinchOrigin.y}px` : 'top center'
+  );
 
   function handleTouchStart(e: TouchEvent) {
     if (e.touches.length !== 2) return;
-    pinchStartDistance = touchDistance(e.touches);
+    pinchStartDistance = touchDistance(e.touches[0], e.touches[1]);
     pinchStartZoom = zoom;
     pinchScale = 1;
+
+    // Both are read while `pinchScale` is still 1, so the rects are the untransformed layout -
+    // measuring them mid-gesture would fold the preview's own transform back into the origin.
+    const mid = touchMidpoint(e.touches[0], e.touches[1]);
+    const colRect = columnEl?.getBoundingClientRect();
+    pinchOrigin = colRect ? { x: mid.x - colRect.left, y: mid.y - colRect.top } : null;
+    const boxRect = scrollEl?.getBoundingClientRect();
+    pinchFocal = boxRect ? { x: mid.x - boxRect.left, y: mid.y - boxRect.top } : null;
   }
 
   function handleTouchMove(e: TouchEvent) {
     if (e.touches.length !== 2 || pinchStartDistance === 0) return;
     // Owning the gesture: otherwise the scroll container pans underneath the pinch.
     e.preventDefault();
-    const ratio = touchDistance(e.touches) / pinchStartDistance;
+    const ratio = touchDistance(e.touches[0], e.touches[1]) / pinchStartDistance;
     // Clamped to what the steps can actually settle on, so the preview never promises a zoom the
     // release cannot deliver.
     const target = Math.min(
@@ -228,19 +255,47 @@
     pinchScale = target / pinchStartZoom;
   }
 
-  function handleTouchEnd(e: TouchEvent) {
+  async function handleTouchEnd(e: TouchEvent) {
     if (pinchStartDistance === 0 || e.touches.length >= 2) return;
     const settled = pinchStartZoom * pinchScale;
-    let nearest = 0;
-    for (let i = 1; i < ZOOM_STEPS.length; i++) {
-      if (Math.abs(ZOOM_STEPS[i] - settled) < Math.abs(ZOOM_STEPS[nearest] - settled)) nearest = i;
-    }
+    const nearest = nearestStepIndex(settled, ZOOM_STEPS);
+    const from = pinchStartZoom;
+    const to = ZOOM_STEPS[nearest];
+    const focal = pinchFocal;
+
     pinchStartDistance = 0;
     pinchScale = 1;
-    if (nearest !== zoomIndex) {
-      console.debug(`[pdfViewer] pinch settled at x${ZOOM_STEPS[nearest]}`);
-      zoomIndex = nearest;
+    pinchFocal = null;
+
+    if (nearest === zoomIndex) {
+      pinchOrigin = null;
+      return;
     }
+    console.debug(`[pdfViewer] pinch settled at x${to} (focal ${focal ? 'kept' : 'unavailable'})`);
+    zoomIndex = nearest;
+
+    // The column is re-laid out at the new width on the next flush; only then can the scroll be
+    // corrected, and the correction is what actually keeps the pinched point in place. The live
+    // transform-origin above and this share one focal point, so the preview hands over without a
+    // visible jump.
+    if (!scrollEl || !focal) {
+      pinchOrigin = null;
+      return;
+    }
+    await tick();
+    const next = focalScroll({
+      scrollLeft: scrollEl.scrollLeft,
+      scrollTop: scrollEl.scrollTop,
+      focalX: focal.x,
+      focalY: focal.y,
+      from,
+      to,
+      maxScrollLeft: scrollEl.scrollWidth - scrollEl.clientWidth,
+      maxScrollTop: scrollEl.scrollHeight - scrollEl.clientHeight,
+    });
+    scrollEl.scrollLeft = next.scrollLeft;
+    scrollEl.scrollTop = next.scrollTop;
+    pinchOrigin = null;
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -336,6 +391,7 @@
       <div
         role="document"
         class="flex-1 min-h-0 overflow-auto overscroll-contain px-2 sm:px-4 py-3 touch-pan-x touch-pan-y"
+        bind:this={scrollEl}
         bind:clientWidth={viewportWidth}
         ontouchstart={handleTouchStart}
         ontouchmove={handleTouchMove}
@@ -359,9 +415,11 @@
           <!-- `pinchScale` previews the gesture without rasterising; it is 1 at rest, so the
                transform is inert outside a pinch and the settled zoom does the real work. -->
           <div
-            class="mx-auto flex flex-col items-center gap-3 origin-top"
+            bind:this={columnEl}
+            class="mx-auto flex flex-col items-center gap-3"
             style="width: {zoom * 100}%; max-width: {COLUMN_MAX_WIDTH * zoom}px;
                    transform: scale({pinchScale});
+                   transform-origin: {pinchOriginCss};
                    transition: {pinchScale === 1 ? 'transform 120ms ease-out' : 'none'};"
           >
             {#each pages as page, index (index)}

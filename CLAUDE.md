@@ -398,16 +398,22 @@ rollout has not reached devices, and raising it first locks everyone out.
   `shared/MediaLightbox.svelte` (417 lines) and `shared/PdfViewerModal.svelte` (~380). **The
   gestures are the concrete debt**: the lightbox has a MATURE pinch/pan - `zoomAt` with a focal
   point, clamped translation, drag panning, wheel zoom, a percentage readout - while the PDF reader
-  had none at all until 2026-08-07, when it got a deliberately CRUDE one (two-finger distance ratio,
-  live CSS transform, settle to the nearest of four discrete steps). **That crude gesture is to be
-  REPLACED by the extracted shared one, not kept** - it exists only because the user reported that
-  pinching did nothing and the fix could not wait for this WP. The real difference to respect: a
-  photo is one bitmap that may be scaled continuously, a PDF page is RE-RASTERISED per zoom level
-  (sharp text is the whole reason pages are not upscaled), so the shared gesture must expose a
-  continuous live scale AND a settle callback the PDF binds to its step list. Chrome to share
-  besides: the header (title, page/percentage readout, zoom pair, download, close), the safe-area
-  padding, the backdrop + focus trap + Escape, and the download button routing through
-  `utils/fileDownload.ts`.
+  had none at all until 2026-08-07. **The START of the shared gesture now EXISTS and is the thing to
+  build on, not to redo**: `utils/pinchZoom.ts` (pure, 16 tests) carries `focalScroll`,
+  `nearestStepIndex` and the touch geometry, and the PDF reader consumes it - the user reported the
+  same day that pinching zoomed "pas a l'endroit qu'on veut", which was the missing focal point, and
+  it is fixed on both halves of the gesture (live `transform-origin`, then a scroll correction after
+  `tick()`). Reasoning and the MiGallery equivalence are in
+  [posts > the pinch](docs/wiki/frontend/modules/posts.md#the-pinch-and-why-it-needs-a-focal-point).
+  **What is still owed is the UNIFICATION**, and the real difference to respect while doing it: a
+  photo is one bitmap that may be scaled continuously about its centre, a PDF page is RE-RASTERISED
+  per zoom level (sharp text is the whole reason pages are not upscaled) and lives in a SCROLLING
+  column, so the shared gesture must expose a continuous live scale AND a settle callback the PDF
+  binds to its step list - a single translate model cannot serve both. Chrome to share besides: the
+  header (title, page/percentage readout, zoom pair, download, close), the safe-area padding, the
+  backdrop + focus trap + Escape, and the download button routing through `utils/fileDownload.ts`.
+  **Drag panning is still missing on the PDF at zoom > 1** (the scroll container is the only way to
+  move), which the shared gesture should bring.
 
 - \[ \] **WP-OIDC-TAB-1 (P3) - On Android the browser tab opened for the login is NEVER closed.**
   Reported by the user 2026-08-06 and reproduced during the WP-ANDROID-SESS-1 re-login: the app comes

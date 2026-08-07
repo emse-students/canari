@@ -99,6 +99,43 @@ viewer before it was right:
   stands in meanwhile keeps each page's own proportions once known (A4 until then), which is why
   `renderPage` returns the bitmap's dimensions rather than just its URL.
 
+### The pinch, and why it needs a focal point
+
+A pinch cannot rasterise every frame, so the gesture is previewed as a CSS `transform: scale()` and
+SETTLED on release to the nearest of `ZOOM_STEPS`, which is what triggers the re-render. That much
+was enough to make pinching *do* something, and it shipped that way on 2026-08-07.
+
+It was not enough to make it usable. Reported from the device the same day: the zoom grew but "ca
+augmente pas a l'endroit qu'on veut". The column scaled about `origin-top` and nothing touched the
+scroll, so the paragraph under the fingers slid away exactly as the zoom took hold — on a phone,
+where the pinch IS how you aim, that makes the feature worse than the buttons.
+
+The correction has two halves that must share one focal point, or the preview visibly jumps as it
+hands over to the real zoom:
+
+- **During the gesture**, `transform-origin` is the pinch midpoint in the column's own coordinates.
+  Scaling about a point leaves that point fixed, so the preview tracks the fingers. Both rects are
+  measured at `touchstart`, while `pinchScale` is still 1 — reading them mid-gesture would fold the
+  preview's own transform back into the origin.
+- **On settle**, the column is re-laid out at the new width, and only THEN can the scroll be
+  corrected. `focalScroll` in [`utils/pinchZoom.ts`](../../../../frontend/src/lib/utils/pinchZoom.ts)
+  computes the one pair of offsets that puts the same content point back under the same finger:
+  the content coordinate is `(scroll + focal) / from`, and it lands at `content * to`, so the scroll
+  must become `content * to - focal`. It runs after `await tick()`, because before the flush the
+  column is still the old width.
+
+That module is deliberately pure and tested rather than inlined: it is the seed of the shared
+gesture WP-VIEWER-1 wants, and the arithmetic is the part worth pinning. Its formula is the same
+one MiGallery's `PhotoModal` uses, in scroll coordinates instead of translate ones — with
+`translate = -scroll`, `scroll·k - f·(1-k)` and `translate·k + f·(1-k)` are the same expression. The
+model has to differ because MiGallery scales ONE bitmap about its centre while a PDF is a scrolling
+column of independently rasterised pages: a global translate would fight the scroll container.
+
+`nearestStepIndex` breaks a tie towards the LOWER step, because overshooting into a more expensive
+re-render on an ambiguous gesture is the worse outcome. `focalScroll` returns its input unchanged
+on a non-positive or non-finite scale rather than `NaN` — a `NaN` assigned to `scrollLeft` is
+swallowed by the DOM, which would make the whole correction fail invisibly.
+
 ## Comment media (image + GIF)
 
 A comment can carry one image or GIF (encrypted + uploaded via `MediaService.encryptAndUpload`,
