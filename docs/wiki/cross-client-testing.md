@@ -18,6 +18,70 @@ passes is recorded in the results table and never re-litigated.
 > **Target is PRODUCTION** (`https://canari-emse.fr`). Real accounts, real messages, real FCM. There
 > is no staging that carries push. Everything sent here is visible in the two accounts' real history.
 
+**The rig itself is archived in the repo**: [`tools/cross-client-harness/`](../../tools/cross-client-harness/).
+It is not run by CI and must not become part of it - it drives production with real accounts and
+needs a phone attached. Its README covers the three clients, the launch flags that are load-bearing,
+and the credential rule. This page is the campaign; that directory is the instrument.
+
+## Where this campaign stands
+
+_Read this section first. Everything below it is either the plan (sections 0-9) or the findings, in
+the order they were made (section 10 onwards) - and the findings are long because each one is the
+evidence for a shipped fix._
+
+### Phases
+
+| Phase | State | What is left |
+| --- | --- | --- |
+| **0 - setup** | **COMPLETE** | - |
+| **MSG** - messages | **COMPLETE** | - |
+| **FWD** - forwarding | **COMPLETE** | - |
+| **TAB** - tabs and windows | **COMPLETE** | - |
+| **LIFE** - Android lifecycle | **all but one** | **LIFE-5 (reboot)** - blocked, needs the user: the device asks for its unlock pattern and `wm dismiss-keyguard` cannot answer it. Pause and ask; do not work around it. |
+| **NOTIF** - notifications | **partly** | NOTIF-2/3 (silent commit -> epoch gap), NOTIF-5 (mute), NOTIF-6 (quick reply from the shade, = check K). NOTIF-1 and NOTIF-8 are already answered by LIFE-8 and LIFE-4. |
+| **HEAL** - does a broken group repair itself on the BROWSER? | **not started** | HEAL-W1..W4, section 7.1. Break = restore an older snapshot of `CanariDBMls_<dev>`; take the snapshot first. |
+| **PIN** | **not started** | PIN-1..10 |
+| **MULTI** - one user, two devices | **not started** | MULTI-1..6 |
+| **CORRUPT** - deliberate store damage | **not started, deliberately last** | CORRUPT-1..10 |
+
+Plus **check L** (a revoked device re-enrolling) at the very end, and restoring Firefox as the
+phone's default browser (`cmd role add-role-holder android.app.role.BROWSER org.mozilla.firefox`) -
+it was switched to Chrome only because Firefox exposes no CDP.
+
+### What the campaign has produced
+
+Eleven defects, every one of them found by a check or by the log of a check, and every one shipped.
+The narrative for each is on this page; the rule each taught is in `CLAUDE.md`.
+
+| Defect | Found by | State |
+| --- | --- | --- |
+| **WP-LOSS-1** - a reload rewinds the sender's ratchet, and the receiver silently drops the next message | FWD-3 / FWD-5, then reconciliation | sender half shipped + verified on prod; receiver half shipped; **Android half not yet exercised** |
+| **WP-HIDDEN-1** - a backgrounded tab stops receiving, silently | TAB-4 | shipped, verified |
+| **WP-MULTITAB-1** - two tabs of one account diverge their ratchet | TAB-4 | shipped, verified (9/9 where it lost 4 of 9) |
+| **WP-ECHO-1** - the sender loses its OWN message across a reload | reconciliation | shipped; verified on the web (3 runs, 6 sends provably inside a drain) |
+| **WP-PENDING-1** - a catch-up pull that can never make partial progress | LIFE-6 | shipped; **verification against a real backlog still owed** |
+| **WP-PENDING-2** - a frame too far ahead was ACKed off the server as delivered | LIFE-6 | shipped, seen firing end to end |
+| **WP-DRAIN-1** - a recovery awaited inside the drain, deadlocking it | verifying WP-HIDDEN-1 | shipped |
+| **WP-GHOST-1** - a revoked device wrote its own routing membership back | the queue's size | shipped + verified on prod (98 210 rows -> 0) |
+| **WP-NOTIF-1** - an Android notification not dismissed when read elsewhere | NOTIF-4 | shipped, verified on the device |
+| **WP-DEEPLINK-1** - the deep-link plugin was never granted its permission | NOTIF-7 (killed) | shipped, verified on the device |
+| **WP-RELOAD-DL-1** - a WebView reload replays the launch deep link | the observation log of a PASSING re-run | shipped, verified on the device |
+| **WP-RETRANSMIT-1** - a decrypt-failure repair that fed itself | a user noticing a sync banner | shipped; see [the retransmission storm](#the-retransmission-storm-2026-08-07-a-repair-that-fed-itself) |
+
+Three more were found here and are **open**, because each needs a decision rather than a patch:
+**WP-KBD-1** (the composer behind the soft keyboard), **WP-DRAIN-2** (the inbound drain has no
+watchdog), and the successor to WP-RETRANSMIT-1 below.
+
+### The next piece of work, decided 2026-08-07
+
+**WP-HIST-3 replaces the retransmission mechanism entirely, rather than being patched around it.**
+The reasoning is in [the retransmission storm](#the-retransmission-storm-2026-08-07-a-repair-that-fed-itself):
+`decrypt_failed` cannot name what it is missing, so it asks for a blind time window and every peer
+answers with a broadcast - which is both the amplification class and the reason a loss noticed after
+the sender reloaded is reported as unrecoverable. A manifest diff addresses by identity, reads the
+durable store, and elects one responder. The campaign's remaining phases run **after** it, so they
+test the mechanism that will actually ship.
+
 ## 0. Decisions taken 2026-08-05 - do not re-litigate
 
 - **All channel traffic goes to a dedicated private channel** holding only the two test accounts
@@ -2101,3 +2165,95 @@ changing it moves history replay onto the desync signal, which needs its own mea
   "nothing has been queued for two hours" was wrong by exactly the offset: 18:09:47 UTC **is** the
   20:09:47 send under investigation. The host clock is correct and must not be "fixed" - UTC in the
   database is the right setting, and changing it would move the crons and break log correlation.
+
+## The retransmission storm, 2026-08-07: a repair that fed itself
+
+Found because the user asked an ordinary question - *"there are message-sync banners, I don't know
+if that's normal"* - about something a check would never have flagged. It was normal, and it was the
+symptom of a defect that no check in this campaign was looking for.
+
+### The banner was honest, which is what made it worth following
+
+`isSyncing = session.isMessagingInitializing || messaging.isMessageCatchupActive`, and the second is
+a depth counter raised by every drain that has more than one frame pending. On the phone it was up
+on 20 consecutive samples over 30 s; the two browsers never showed it in the same window (182 drains
+on W2, none of them long enough to matter). The phone's queue on the server was **4 921 rows**, and
+the banner came down by itself the instant that queue reached zero. Nothing was stuck. The phone
+really had been synchronising, for about eighteen minutes.
+
+The interesting question was therefore never the banner. It was: **who queued 4 921 frames into one
+DM in thirteen minutes, with nobody typing?**
+
+| Measurement | Value |
+| --- | --- |
+| Window | 12:59:03 -> 13:12:21 CEST, then it stopped on its own |
+| Rate | ~430 frames/min, flat - a steady state, not a spike |
+| Senders | three web devices (one of each account, plus an older tab of one) |
+| What the phone did with them | decrypted every one, answered each, ACKed at the end of each drain |
+| Residue afterwards | none - the queue drained to 0, and both browsers' outboxes were empty |
+
+### The loop
+
+The trigger is the ordinary WP-LOSS-1 detection: a device that cannot decrypt a frame emits
+`decrypt_failed`, asking peers to resend the last 120 s, because - and this is the crux - **it cannot
+name what it is missing**. The frame never decrypted, so its id was never seen. Peers answer from
+`recentSends`, an in-memory ring of up to 25 payloads with a five-minute retention. That repair is
+meant to expire: five minutes of quiet and there is nothing left to replay.
+
+It never expired. Each replay went out through `enqueueControlEvent`, which mints a fresh
+`crypto.randomUUID()` and `sentAt: now`, and the flusher then called `noteSentFrame` on it like any
+other send. Both bounds of the ring fell at once:
+
+- **the fresh timestamp** pushed the five-minute expiry out indefinitely - the ring never aged;
+- **the fresh id** meant the dedup key no longer matched the payload it should have replaced, so the
+  ring *accumulated* copies instead of replacing them, up to its 25-entry cap.
+
+The ring stopped being a decaying buffer of recent sends and became a permanent playlist, replayed
+in full on every signal. The arithmetic closes: the limiter allows one signal per group per device
+per 30 s, so three devices give 6 signals/min; each is answered by the others with ~25 payloads, and
+each answer is fanned out to every device in the group - **~430 frames/min into the phone**, which is
+what was measured. It ended when a tab reloaded, because the ring is in memory. Nothing had repaired
+it.
+
+**The fix** (`9a0b199a`): a replay carries `isRetransmission`, and the flusher does not retain it.
+A replay is not a send. Two tests pin the halves separately - the flag being set, and the flusher
+honouring it - because a flag nobody reads and a reader with nothing flagged are each green alone and
+useless together. The positive control caught a fixture bug on the way: the existing control fixture
+uses `sentAt: 50`, which the five-minute retention discards, so both assertions read an empty ring
+and the negative one passed for the wrong reason.
+
+### And a second defect, which would have made this invisible
+
+`BaseMlsService.endBulkIngest` awaited its observers in one bare loop, although the code registering
+them says they are "independent subscribers". The encrypted-state persister is registered first and
+rethrows when a checkpoint fails - so any failed disk write would have skipped the UI observer
+entirely. `messageCatchupDepth` never comes back down (the banner stays up for the whole session)
+and `bulkIngestActive` stays raised, so every later inbound message is buffered instead of rendered,
+then discarded by the next drain. That is message loss, not a stuck banner. Now per-observer, with
+every failure logged - the same rule the maintenance jobs already follow.
+
+### What this says about the remedy itself
+
+The storm is fixed, but the shape that produced it is not. Three properties of `decrypt_failed` did
+the damage, and none of them is an accident:
+
+- **It is addressed by TIME, not identity**, because the receiver genuinely cannot name the frame.
+  So the answer must be a window, and a window is a broadcast.
+- **Every peer answers**, so the cost of one signal scales with the group.
+- **It reads an in-memory ring**, so the repair is a race against a reload - which is why the log
+  line the phone emitted thousands of times was *"nothing sent in the last 120s is still retained -
+  it cannot be recovered"*. That case is not rare; it is the normal outcome once the sender has
+  reloaded.
+
+A manifest diff has none of the three. The receiver sends what it HAS; the peer computes what is
+missing and holds its id; the exchange reads the durable store; and the responder is elected
+server-side. **That is WP-HIST-3**, already half-built and tested in `sync/syncEngine.ts` - only the
+transport is absent. The conclusion recorded on 2026-08-07 is to build it rather than to keep
+hardening the window-based repair, with a give-up counter as the escalation point from a narrow
+immediate resend to the diff.
+
+One measurement worth keeping for that work: **the five-minute retention is already dead weight**.
+`DESYNC_RETRANSMIT_WINDOW_MS` is 120 s and `retransmitRecentSends` clamps the replay to what is
+asked, so no Canari client can ever reach beyond two minutes. The extra three minutes shorten no
+replay - they only hold plaintext protos in memory longer than anything can use them. Retention
+should be derived from the request window plus a round-trip margin, not an independent constant.

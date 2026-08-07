@@ -156,19 +156,25 @@ read-only `mysqldump@localhost` that lacks `EVENT` on the `mysql` DB, so `--even
 
 ### CANARI - OPEN WORK PACKAGES
 
-**[campaign] CROSS-CLIENT TEST CAMPAIGN - ACTIVE.** The whole plan AND the built harness are
-**[cross-client-testing](docs/wiki/cross-client-testing.md)** - sections 1.1 (harness), 7 (real
-artefact names), 9 (observation) and 10-11 (every check's row and what it cost). Do not re-plan or
-re-derive any of it from here. What a compaction must not lose:
+**[campaign] CROSS-CLIENT TEST CAMPAIGN - PAUSED ON PURPOSE, pending WP-HIST-3 (below).** The whole
+plan AND the built harness are **[cross-client-testing](docs/wiki/cross-client-testing.md)** - and
+that page now OPENS with a "Where this campaign stands" dashboard (phase table, the eleven defects
+it produced and their state, what is left in order). **Read that dashboard rather than re-deriving
+the state from here.** Sections 1.1 (harness), 7 (real artefact names), 9 (observation) and 10
+onwards (every check's row and what it cost) are unchanged. What a compaction must not lose:
 
 - Runs against **PRODUCTION**, two real accounts, credentials in the scratchpad
   `test-accounts.json`, **never in the repo**.
-- **The harness is BUILT and proven**, at
-  `C:\Users\jolan\AppData\Local\Temp\claude\c--Users-jolan-Documents-Programmation-canari\3dd9d8ba-077b-47ad-9f1d-33bb94f62dcd\scratchpad\`.
-  Those files persist on disk - a later session REUSES them, it does not rebuild them. One
-  `cdp.mjs` drives all three clients (W1 on 9224, W2 on 9223, A1's WebView on 9222 via
-  `adb forward`); `a1.py` is only for native surfaces. W1 moved OFF the chrome-devtools MCP on
-  purpose, so no password is ever a tool-call argument.
+- **The harness is BUILT, proven, and now ARCHIVED IN THE REPO** at
+  **`tools/cross-client-harness/`** (47 files, flat on purpose so every relative import and every
+  `execFileSync('pin.mjs')` still resolves; its README covers the rig). The scratchpad copy is still
+  the working one for a live session
+  (`C:\Users\jolan\AppData\Local\Temp\claude\c--Users-jolan-Documents-Programmation-canari\3dd9d8ba-077b-47ad-9f1d-33bb94f62dcd\scratchpad\`,
+  which also holds the ~60 one-shot `probe-*`/`*-triage` scripts deliberately left out of the
+  archive). A later session REUSES these, it does not rebuild them. One `cdp.mjs` drives all three
+  clients (W1 on 9224, W2 on 9223, A1's WebView on 9222 via `adb forward`); `a1.py` is only for
+  native surfaces. W1 moved OFF the chrome-devtools MCP on purpose, so no password is ever a
+  tool-call argument, and `test-accounts.json` is gitignored in both places.
 - **W1 was logged out and logged back in by TAB-6** (`login.mjs` then `pin.mjs`, both fine), and one
   cold start in five took **77.7 s** for no reason anyone established - recorded in section 10, still
   unexplained.
@@ -198,14 +204,11 @@ re-derive any of it from here. What a compaction must not lose:
   logcat under `Tauri/Console`, which is how to read it while the WebView is unreachable; a busy
   device overruns the logcat ring in minutes, so capture continuously to a file rather than dumping
   after the fact.
-- **WHERE THE CAMPAIGN STANDS (2026-08-07, end of session): Phase 0, MSG, FWD and TAB are COMPLETE;
-  LIFE is done except LIFE-5, which needs the user. The NOTIF phase has run 4, 9, 10 and 7 (three
-  times: bg PASS, killed FAIL, killed re-run PASS on the fix) - NOTIF-1 and
-  NOTIF-8 were already answered by LIFE-8 and LIFE-4, so what is LEFT of it is NOTIF-2/3 (silent
-  commit -> epoch gap) and NOTIF-5 (mute) and NOTIF-6 (check K, quick reply from the shade). Then
-  PIN/MULTI, then CORRUPT last - plus the HEAL checks above.** Every
-  row, every measurement and every retired hypothesis is in section 10 of the wiki page - do not
-  re-list them here. The four checks that FAILED each became a P1 and each has its own entry below:
+- **WHERE THE CAMPAIGN STANDS: the phase table is the DASHBOARD at the top of the wiki page** - do
+  not maintain a second copy here. One line: Phase 0/MSG/FWD/TAB complete, LIFE done except LIFE-5
+  (needs the user), NOTIF partly (2/3, 5, 6 left), then HEAL/PIN/MULTI/CORRUPT - **all of it after
+  WP-HIST-3**, by the decision above. The four checks that FAILED each became a P1 and each has its
+  own entry below:
   FWD-3/FWD-5 -> WP-LOSS-1 (which retires WP-FWD-1), TAB-4 -> WP-HIDDEN-1 then WP-MULTITAB-1,
   LIFE-6 -> WP-PENDING-1 + WP-PENDING-2. **MSG-8's PASS was RETIRED** by TAB-4: it asserted after
   restoring the tab, which is the very act that released the drain - a single message can never
@@ -325,11 +328,46 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   [seo > what no test here can prove](docs/wiki/frontend/seo.md#what-no-test-here-can-prove).
   Open a WP only if one FAILS.
 
-- \[ \] **WP-HIST-3 (P2) - Pool history per MESSAGE between devices, not all-or-nothing.** Successor
-  to WP-HIST-2 (shipped 2026-08-02), which stopped the blind soliciting but left the exchange binary.
-  **Nothing is open - it only has to be written.** The design, the order of work and the three
-  defects that ride with it are all in
-  [chat > pooling history between devices](docs/wiki/frontend/modules/chat.md#pooling-history-between-devices-designed-not-built).
+- \[~\] **WP-HIST-3 (now P1, and the NEXT PIECE OF WORK - decided with the user 2026-08-07) - Pool
+  history per MESSAGE between devices, and RETIRE the window-based retransmission with it.**
+  Successor to WP-HIST-2 (shipped 2026-08-02), which stopped the blind soliciting but left the
+  exchange binary. **Nothing is open in the design - it only has to be written.** The design, the
+  order of work and the three defects that ride with it are all in
+  [chat > pooling history between devices](docs/wiki/frontend/modules/chat.md#pooling-history-between-devices-designed-not-built);
+  `sync/syncEngine.ts` already has `buildLocalSyncManifest` + `diffLocalAndRemoteManifest`, tested -
+  only the TRANSPORT is missing.
+
+  **Why it was promoted, and why the alternatives were rejected as band-aids** (user's call, do not
+  re-litigate): WP-RETRANSMIT-1 below showed that `decrypt_failed` has three properties that cause
+  the harm, and none is an accident - it is addressed by TIME rather than identity (the receiver
+  genuinely cannot name a frame that never decrypted), EVERY peer answers it, and it reads an
+  in-memory ring so the repair races a reload. A manifest diff has none of the three: the receiver
+  sends what it HAS, the peer computes the difference and holds the id, the exchange reads the
+  DURABLE store, and one responder is elected server-side. **The give-up counter is not a separate
+  task - it is the escalation point** from a narrow immediate resend to the diff. Two things fold
+  into this work rather than shipping before it: that counter, and the retention constant
+  (`RETENTION_MS` = 5 min is already dead weight - `DESYNC_RETRANSMIT_WINDOW_MS` is 120 s and the
+  replay is clamped to what is asked, so three of those five minutes shorten nothing and only hold
+  plaintext protos in memory; derive it from the request window plus a round-trip margin).
+
+  **Then re-run the campaign checks that touch it** - the remaining phases run AFTER, so they test
+  the mechanism that will actually ship.
+
+- **WP-RETRANSMIT-1 (P1) is SHIPPED 2026-08-07** (`9a0b199a`) - the decrypt-failure repair fed
+  itself. A replay went out through `enqueueControlEvent` (fresh `randomUUID()`, fresh `sentAt`) and
+  the flusher re-retained it, which defeated BOTH bounds of `recentSends`: the 5-minute window never
+  aged, and the id dedup no longer matched so the ring accumulated copies. Every later signal
+  replayed all 25. Measured on prod: **~430 frames/min for 13 min across three clients, 4 921 queued
+  for one phone**, which then spent 18 min draining them - with nobody typing. It stopped only
+  because the ring is in memory and a tab reloaded. Fixed by `isRetransmission` on the outbox entry;
+  the flusher skips `noteSentFrame` for it. **In the same commit**, `BaseMlsService.endBulkIngest`
+  now isolates its observers per subscriber: they were awaited in one bare loop although the code
+  calls them "independent", so a failed encrypted checkpoint (the FIRST observer, which rethrows)
+  would have skipped the UI one - leaving the sync banner up for the session AND `bulkIngestActive`
+  raised, buffering every inbound message instead of rendering it, then discarding it. Full story in
+  [cross-client-testing > the retransmission storm](docs/wiki/cross-client-testing.md#the-retransmission-storm-2026-08-07-a-repair-that-fed-itself).
+  **Owed: the web deploy.** Found because the user asked whether the sync banners were normal - they
+  were, and the banner was the honest symptom.
 
 - \[ \] **WP-LOSS-1 (P1) - A RELOAD REWINDS THE SENDER'S RATCHET, AND THE RECEIVER SILENTLY DROPS
   THE NEXT MESSAGE. Root cause found 2026-08-06; DETERMINISTIC.** This supersedes WP-FWD-1, which
@@ -652,6 +690,15 @@ carry in the head:
   (WP-ECHO-1). Buffer AFTER the durable write, and make every discard log what it dropped.
 - The mirror is READ as well as written: a file one side rewrites wholesale silently deletes
   whatever the other side appended, so every such pair needs an adoption pass, not just a drain.
+- **A REPAIR THAT RECORDS ITS OWN OUTPUT AS NEW INPUT HAS NO FIXED POINT.** A replay is not a send:
+  re-noting one into `recentSends` under a fresh id and a fresh timestamp defeated the expiry AND
+  the dedup at once, so a five-minute decaying buffer became a permanent playlist and a bounded
+  repair became a standing broadcast (WP-RETRANSMIT-1, ~430 frames/min for 13 min on prod). Ask of
+  every self-healing loop what makes it STOP, and make that the thing a test pins.
+- A repair addressed by TIME is a broadcast, because a window cannot name its target - and it can
+  only be as durable as what it reads. `decrypt_failed` asks for a window precisely because the
+  frame never decrypted, so its id was never seen; that is why WP-HIST-3's manifest diff replaces it
+  rather than being tuned.
 
 #### UI and i18n -> [frontend/architecture](docs/wiki/frontend/architecture.md), [auth](docs/wiki/frontend/modules/auth.md) (native prompts)
 
@@ -715,7 +762,10 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
   is the only safe spelling). Where a test cannot reach, the DEPLOY LOG is the test.
 - A batch of maintenance jobs must catch and log PER JOB. Sharing one try/catch means the first
   failure hides every job after it, and a GC that silently does nothing is indistinguishable from a
-  GC with nothing to do.
+  GC with nothing to do. **The same holds for any observer list, and a COMMENT claiming the
+  subscribers are independent is not independence** - `endBulkIngest` awaited them in one bare loop,
+  so a failing checkpoint would have taken the UI's render buffer down with it (WP-RETRANSMIT-1).
+  Isolation is a `try` per subscriber, or it does not exist.
 
 #### Mobile and native -> [frontend/mobile](docs/wiki/frontend/mobile.md)
 

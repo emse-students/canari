@@ -1,0 +1,10 @@
+# Real credentials for the test accounts. The example file next to this one is the template.
+# This must never be committed: the campaign runs against PRODUCTION with real accounts.
+test-accounts.json
+
+# Run artefacts - captures, verdict dumps, screenshots, logcat.
+*.log
+*.png
+*-run*.json
+chrome-w1/
+chrome-w2/

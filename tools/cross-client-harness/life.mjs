@@ -1,0 +1,251 @@
+/**
+ * LIFE-2..8 - the phone in every state an OS can put it in, one check per run.
+ *
+ * The shape is always the same, and the two assertions are deliberately different in kind:
+ *
+ *   1. the NOTIFICATION carries the real text, which proves the background decrypt worked;
+ *   2. after the app is restored the message is in the conversation EXACTLY ONCE, which proves the
+ *      foreground path did not re-add what the notification path already stored.
+ *
+ * A check that only looked at the conversation would pass on a phone that notified nothing, and a
+ * check that only looked at the shade would pass on a phone that then showed the message twice.
+ *
+ * Usage: node life.mjs 2|3|4|5|6|7|8
+ */
+import { execFileSync } from 'node:child_process';
+import { client, ensureChat, openConversation, countMessage, awaitMessage, send, evaluate } from './chat.mjs';
+import { watch, report } from './watch.mjs';
+import { mark } from './results.mjs';
+import * as phone from './phone.mjs';
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
+const which = String(process.argv[2] || '2');
+
+/** Unlocks the PIN if the modal is up; returns what happened, never throws on "no modal". */
+function unlock(port = 9222) {
+  try {
+    return execFileSync(
+      process.execPath,
+      ['pin.mjs', '--port', String(port), '--account', 'owner', '--match', 'tauri.localhost'],
+      { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
+    )
+      .trim()
+      .split('\n')
+      .pop();
+  } catch (e) {
+    if (e.status === 2) return 'no modal';
+    return `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
+  }
+}
+
+/** Brings the app back, re-points devtools at the new pid, unlocks, and opens the DM. */
+async function restore() {
+  phone.wake();
+  phone.launch();
+  await sleep(6_000);
+  phone.forwardDevtools(9222);
+  await sleep(2_000);
+  const pinResult = unlock();
+  await sleep(3_000);
+  const a1 = await client(9222, 'tauri.localhost');
+  await ensureChat(a1).catch(() => null);
+  await openConversation(a1, 'PEER DISPLAY NAME').catch(() => null);
+  return { a1, pinResult };
+}
+
+const STATES = {
+  2: { name: 'LIFE-2 backgrounded (HOME)', enter: () => phone.home(), processDies: false },
+  3: {
+    name: 'LIFE-3 killed (force-stop)',
+    enter: () => phone.forceStop(),
+    // A force-stopped package sits in Android's STOPPED state and the framework cancels every FCM
+    // broadcast to it until a MANUAL launch - measured in logcat 2026-08-06. So the empty shade is
+    // the documented answer, not a Canari fault, and asserting a notification here would be
+    // asserting against the OS. What this check is really for is the other half: the app must come
+    // back and hold the message exactly once. "The user killed it" is LIFE-8 (`am kill`), which
+    // does not set the flag; force-stop is what the app-info screen does.
+    expectNotification: false,
+    processDies: true,
+  },
+  4: {
+    name: 'LIFE-4 doze (force-idle)',
+    // Doze needs the screen off and the device unplugged as far as the framework is concerned;
+    // `unplug` is what lets `force-idle` take, and it is undone at the end of the run.
+    enter: () => {
+      phone.home();
+      phone.sh('dumpsys battery unplug');
+      phone.sh('input keyevent KEYCODE_SLEEP');
+      phone.sh('dumpsys deviceidle force-idle');
+    },
+    leave: () => {
+      phone.sh('dumpsys deviceidle unforce');
+      phone.sh('dumpsys battery reset');
+      phone.wake();
+    },
+    processDies: false,
+  },
+  5: {
+    name: 'LIFE-5 rebooted, app never opened',
+    // The point is `CanariBootReceiver`: after a reboot the app has not been launched, so whatever
+    // re-registers the push transport has to do it from the boot broadcast alone. Launching the app
+    // here - even to "check it came back" - destroys the very state under test.
+    enter: async () => {
+      phone.adb(['reboot']);
+      await sleep(5_000);
+      phone.adb(['wait-for-device'], 180_000);
+      // `wait-for-device` returns as soon as adbd answers, which is long before the framework is up.
+      for (let i = 0; i < 120; i++) {
+        try {
+          if (phone.sh('getprop sys.boot_completed').trim() === '1') break;
+        } catch {
+          /* adbd is still coming back */
+        }
+        await sleep(2_000);
+      }
+      // FCM re-registers on its own schedule after a boot; a send that beats it measures Google's
+      // reconnect, not Canari's.
+      await sleep(30_000);
+      phone.wake();
+    },
+    processDies: true,
+  },
+  6: {
+    // MUST run over USB: the wireless transport rides the wifi this check switches off, so a
+    // wireless serial disconnects at `enter()` and the run dies before it measures anything.
+    name: 'LIFE-6 offline (radios off)',
+    enter: () => {
+      phone.home();
+      phone.sh('svc wifi disable');
+      phone.sh('svc data disable');
+    },
+    leave: () => {
+      phone.sh('svc wifi enable');
+      phone.sh('svc data enable');
+    },
+    // Nothing can arrive while the radios are down - that is the premise, not the finding. What the
+    // check is really for is what happens AFTER: exactly one copy, once the network returns.
+    expectNotification: false,
+    processDies: false,
+  },
+  7: {
+    name: 'LIFE-7 notifications permission revoked',
+    enter: () => {
+      phone.home();
+      phone.sh(`pm revoke ${phone.PKG} android.permission.POST_NOTIFICATIONS`);
+    },
+    leave: () => phone.sh(`pm grant ${phone.PKG} android.permission.POST_NOTIFICATIONS`),
+    // The shade must stay EMPTY here - that is the check, not a failure.
+    expectNotification: false,
+    processDies: false,
+  },
+  8: {
+    name: 'LIFE-8 process reclaimed (am kill)',
+    // HOME first, and it is not cosmetic: `am kill` only reclaims a process the framework considers
+    // safe to kill, so a foreground app survives it silently. The first run of this check killed
+    // nothing, measured the ordinary foreground path, and reported FAIL - one more instance of the
+    // rule that an action which cannot prove it took effect still yields a verdict.
+    enter: async () => {
+      phone.home();
+      await sleep(2_000);
+      phone.kill();
+      await requireDead('am kill');
+    },
+    processDies: true,
+  },
+};
+
+/** Polls until the app's process is gone; throws rather than let a no-op kill become a verdict. */
+async function requireDead(what, timeoutMs = 20_000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    if (phone.pid() === null) return Date.now() - t0;
+    await sleep(1_000);
+  }
+  throw new Error(`${what} did not kill the app - pid ${phone.pid()} is still alive after ${timeoutMs}ms`);
+}
+
+const state = STATES[which];
+if (!state) throw new Error(`unknown LIFE check ${which}`);
+
+// ── setup: the phone in the conversation, W2 in the DM ───────────────────────
+phone.wake();
+// Start from the FOREGROUND whatever the previous run left behind: entering a state from an app
+// that was already backgrounded measures the wrong transition, and a notification raised before the
+// state was entered would be counted as the state's own.
+phone.launch();
+await sleep(4_000);
+phone.forwardDevtools(9222);
+const a1Setup = await client(9222, 'tauri.localhost');
+await ensureChat(a1Setup).catch(() => null);
+await openConversation(a1Setup, 'PEER DISPLAY NAME').catch(() => null);
+const w2 = await client(9223, 'canari-emse.fr');
+await ensureChat(w2);
+await openConversation(w2, 'OWNER DISPLAY NAME');
+await sleep(1_000);
+
+phone.clearLogcat();
+const oW = await watch(w2, `life${which}-w2`);
+const pidBefore = phone.pid();
+
+// ── the state ────────────────────────────────────────────────────────────────
+// Awaited: LIFE-5 reboots the device, so `enter` is not always instantaneous, and a check that
+// sent its message while the phone was still booting would measure the boot, not the app.
+await state.enter();
+await sleep(4_000);
+const pidDuring = phone.pid();
+
+// ── the message ──────────────────────────────────────────────────────────────
+const m = mark(`LIFE${which}`);
+const sentAt = await send(w2, `${m} sent while ${state.name}`);
+const notifiedInMs = await phone.awaitNotification(m, state.expectNotification === false ? 20_000 : 60_000);
+const shade = phone.notifications().map((n) => `${n.title} | ${n.body}`.slice(0, 120));
+
+// ── back to life ─────────────────────────────────────────────────────────────
+if (state.leave) await state.leave();
+const { a1, pinResult } = await restore();
+// TWO numbers, because they answer different questions: time since the send includes however long
+// this check spent waiting on the shade and unlocking, which is a property of the harness; time
+// since the app came back is the app's own catch-up.
+const restoredAt = Date.now();
+const arrivedInMs = await awaitMessage(a1, m, 90_000).then(() => Date.now() - sentAt, () => null);
+const afterRestoreMs = arrivedInMs === null ? null : arrivedInMs - (restoredAt - sentAt);
+await sleep(3_000);
+const count = await countMessage(a1, m);
+
+const phoneConsole = phone.console_();
+const notable = phoneConsole.filter((l) =>
+  /\[KP\]|SecretReuse|out of bounds|LOST frame|silent ACK|Duplicate|error|failed|epoch/i.test(l)
+);
+
+const wantNotification = state.expectNotification !== false;
+// The lifecycle transition is an ASSERTION, not a note printed beside the verdict: a check whose
+// state was never entered can still satisfy every other condition, and then reads as a real result
+// about a state the phone was never in.
+const diedAsExpected = state.processDies === (pidDuring === null);
+const verdict =
+  count === 1 &&
+  arrivedInMs !== null &&
+  diedAsExpected &&
+  (wantNotification ? notifiedInMs !== null : notifiedInMs === null)
+    ? 'PASS'
+    : 'FAIL';
+
+console.log(
+  JSON.stringify(
+    {
+      check: state.name,
+      marker: m,
+      verdict,
+      pid: { before: pidBefore, during: pidDuring, after: phone.pid(), diedAsExpected },
+      notification: { expected: wantNotification, afterMs: notifiedInMs, shade },
+      conversation: { arrivedInMs, afterRestoreMs, count },
+      pin: pinResult,
+      phoneNotable: notable.slice(-12),
+      w2Notable: (await report(oW)).notable,
+    },
+    null,
+    2
+  )
+);
+process.exit(verdict === 'PASS' ? 0 : 1);

@@ -1,0 +1,20 @@
+{
+  "_comment": "Copy to test-accounts.json and fill in. NEVER commit the filled copy - it is gitignored next to this file, and the campaign's rule is that no credential is ever a tool-call argument, a shell argument or a log line. login.mjs and pin.mjs read this file directly for exactly that reason.",
+  "_target": "https://your-deployment.example.org",
+  "accounts": {
+    "owner": {
+      "username": "<login>",
+      "password": "<password>",
+      "pin": "<4+ digit encryption PIN>",
+      "clients": ["W1 (Chrome, CDP on 9224)", "A1 (Android)"],
+      "twofa": "<how to obtain the 2FA code, or the recovery note - free text, read by a human>"
+    },
+    "peer": {
+      "username": "<login>",
+      "password": "<password>",
+      "pin": "<4+ digit encryption PIN>",
+      "clients": ["W2 (Chrome, CDP on 9223)"],
+      "twofa": "<how to obtain the 2FA code>"
+    }
+  }
+}
