@@ -419,6 +419,25 @@ rollout has not reached devices, and raising it first locks everyone out.
   such affordance), so scope it before starting. iOS has the same shape with
   `ASWebAuthenticationSession` as the equivalent, and it has never been checked on hardware.
 
+- \[ \] **WP-SAFELINK-1 (P3) - Warn before opening a link Google Safe Browsing flags as unsafe.**
+  Asked by the user 2026-08-07. Today `AppLink` (the terminal renderer for every external link in
+  chat and posts, including the WP-LINK-1 bare-domain ones) opens whatever `href` it is given with
+  zero safety check - a phishing or malware link pasted into a message reads identically to a
+  legitimate one. The lookup MUST be server-side: a Safe Browsing API key is a secret and can never
+  ship client-side, and there is already a precedent to extend rather than a new one to invent -
+  `apps/chat-delivery-service/src/controllers/security.controller.ts` and `utils/url-guard.ts`
+  already server-side-fetch and SSRF-guard every URL found in a message for the link-preview
+  pipeline (`docs/wiki/services/chat-delivery.md`), so the server already learns which URLs are
+  shared; a Safe Browsing lookup alongside that fetch is not a new privacy boundary crossed, only a
+  second use of one already crossed. Not to re-litigate when scoping starts: **cache verdicts by
+  URL with a TTL** (Safe Browsing has query quotas, and a per-render or per-click lookup would burn
+  through them on the same handful of links); **decide fail-open vs fail-closed explicitly** for a
+  timed-out or quota-exhausted lookup, the same shape of decision as an empty key elsewhere in this
+  file - blocking every link because the safety service is unreachable is its own outage; and the
+  warning belongs at the point of navigation INTENT (an interstitial only when a link is actually
+  flagged), never decorating every rendered link, which would be alert fatigue for a check that is
+  almost always going to say "fine".
+
 **Known and deliberately NOT a WP yet** (do not "fix" these by reflex):
 
 - A device holding SOME of a conversation, missing older messages, and never failing to decrypt
