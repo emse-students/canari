@@ -323,6 +323,30 @@ it correctly.
 and logs on failure - the control event is already durable in the outbox, so a failed write costs
 a stale local row, never a lost mutation for the group.
 
+#### The same rule applies to the message itself, and a UI buffer broke it (WP-ECHO-1)
+
+`addMessageToChat` is the single writer for the sender's own copy, for the same reason: no echo. It
+opens with a bulk-ingest early return that holds the message in `bulkIngestBuffer` and returns
+**before `saveMessage`**, so that a large inbound drain re-renders the list once instead of per
+message. Three facts turn that optimisation into a loss:
+
+- `bulkIngestActive` is raised by *every* inbound drain, not only a long one, so the window is
+  ordinary rather than exceptional;
+- `beginBulkMessageIngest` and `resetMessageCatchupState` both `clear()` the buffer without
+  flushing, so a second drain starting mid-window discards whatever the first was holding;
+- the outbox cannot repair it, because `persistSent` resolves the message through `findMessage`,
+  which only scans `conversations` - a buffered message was never there, so it returns silently.
+
+Result: a message composed during any drain window was rendered by the peer and gone from the
+sender at its next load, with nothing logged. It also explains why the offline path was always
+correct - offline there is no inbound drain, so the echo took the live path (MSG-10).
+
+Fixed 2026-08-07: `if (bulkIngestActive && !isOwnMessage(senderId, ctx.userId))`. An own message is
+never deferred; one extra rendered item is not what the buffer exists to prevent. Both clear sites
+now call `warnIfDiscardingBuffered`, because a dropped buffer and a message that never arrived are
+otherwise the same observation. **The general rule: a UI buffer in front of a persistence call is a
+persistence bug.** Buffer after the durable write, or the early return skips the writer.
+
 The at-rest projection of a message is shared by both storage backends
 (`db/messagePayload.ts`): a field that is not in `toMessagePayload`/`fromMessagePayload` does not
 survive a reload, whichever backend is in use. `editedAt` was missing from both for exactly as long

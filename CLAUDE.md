@@ -464,20 +464,19 @@ it, asserting the conversation is on screen before counting.** NOTIF-1/2/3/5/6/7
   BATCH path used by history replay - still answers `ok: true, data: None` on `SecretReuse`, which is
   the same "a native layer threw the diagnosis away" that hid this bug for a day.
 
-- \[ \] **WP-BANNER-1 (P3) - the sync banners cover the conversation header.** Reported by the user
-  2026-08-06 with a screenshot. `isCatchingUpMessages` and `historyPendingLabel` in
-  [ChatArea.svelte](frontend/src/lib/components/chat/ChatArea.svelte) are both `absolute top-0`, and
-  their containing block is the `<section class="relative">` that ALSO holds `<ChatHeader>` - so they
-  paint over the avatar and the name instead of stacking under the header. Anchor them to the
-  messages container, not the section.
-
-- \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload.** Found by the same
-  reconciliation: `HUNT06`/`HUNT07` are present on the RECEIVER and absent from the sender that sent
-  them. This is the failure the durable rule about `persistLocalMutation` predicts - MLS gives no
-  echo of your own message, so the optimistic update is the only writer, and if it is not persisted
-  it dies at the next load. Distinct from WP-LOSS-1, which loses it at the receiver; do not merge
-  them. **MSG-10 narrows it:** the OFFLINE send path persists correctly - queued offline, drained on
-  reconnect, and still there after a reload - so whatever loses the echo is a different route.
+- \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload. ROOT CAUSE FOUND and
+  FIXED 2026-08-07 (`214592e5`); what is owed is the VERIFICATION.** Found by reconciliation:
+  `HUNT06`/`HUNT07` present on the RECEIVER, absent from the sender that sent them. The loss is
+  inside `addMessageToChat`, not in any compose path: the `bulkIngestActive` early return buffers and
+  returns BEFORE `saveMessage`, `bulkIngestActive` is raised on EVERY inbound drain (not only a long
+  one), and the buffer is cleared without flushing by a second drain
+  (`beginBulkMessageIngest` clears unconditionally) and by `resetMessageCatchupState`. The outbox
+  cannot repair it: `persistSent` -> `findMessage` only scans `conversations`, which a buffered
+  message never reached, so it returns without writing. That also explains the MSG-10 asymmetry -
+  offline there is no inbound drain, so the echo took the live path and persisted. An own message is
+  now never deferred, and both clear sites log what they discard. **Owed: deploy, then re-run
+  `recon.mjs` over a batch of sends made DURING a drain** - and the phone, which shares the
+  composable. Distinct from WP-LOSS-1 (which loses it at the receiver); do not merge them.
 
 - \[ \] **WP-KBD-1 (P2) - On Android the composer ends up BEHIND the soft keyboard.** Found
   2026-08-06 while chasing a harness fault; reproduced with an ordinary gesture: tap the composer,
@@ -588,6 +587,10 @@ carry in the head:
   the last. Per page, ingested and ACKed as it lands - partial progress must be kept.
 - MLS gives no echo of your OWN message, so the sender's optimistic update is the only writer it
   gets: apply it in memory AND persist it (`persistLocalMutation`), or it dies at the next load.
+- A UI buffer placed IN FRONT of a persistence call is a persistence bug, not a rendering choice:
+  it returns early, so the write never runs, and a buffer that can be cleared without flushing loses
+  it for good. `addMessageToChat`'s bulk-ingest return did exactly this to the sender's own message
+  (WP-ECHO-1). Buffer AFTER the durable write, and make every discard log what it dropped.
 - The mirror is READ as well as written: a file one side rewrites wholesale silently deletes
   whatever the other side appended, so every such pair needs an adoption pass, not just a drain.
 
