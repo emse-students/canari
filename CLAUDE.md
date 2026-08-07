@@ -70,18 +70,49 @@ Every shipped Work Package was deleted from this file on 2026-08-07 - their stor
 narratives are on the wiki pages each one points to. **Do not reconstruct them here.** What remains
 below is only what is still OPEN or still OWED.
 
-**1. THE NEXT APK IS A GATE, and nothing shipped since 2026-08-06 is on the phone.** Everything
-committed is deployed to the WEB (`c53b6077`, CD green, prod `0.13.1`); the device still runs a build
-from before it. **Rebuild and flash first**, then measure, because four separate things wait on it:
+**1. THE APK GATE IS MOSTLY CLEARED (2026-08-07 evening).** A build carrying everything up to
+`c53b6077` was flashed at **18:55:34** (`lastUpdateTime` moved from 12:53:19 - that is the only
+discriminator, the version name does not move) and three of the four owed checks PASSED on hardware:
 
-- **WP-DL-1** - re-run the download and assert a file lands. First real exercise of
-  `fs:allow-write-file` + the `content://` URI. Also the backup export's Tauri branch, which CHANGED
-  SHAPE (it used to ask for a DIRECTORY, which SAF does not offer, so its old path may never have
-  worked at all).
-- **The PDF pinch**, which did not exist before 2026-08-07.
-- **WP-RELOAD-DL-1** - park A1 on `/posts` after a deep-link launch and assert it STAYS parked.
-- **Leon's `6139969d`** edge-to-edge work, on a build that is not the local one WP-KBD-1 was measured
-  against.
+- **WP-DL-1 PASS.** The feed's PDF: log `[download] saving "ParlerMarteau_Rev03.pdf" (tauri=true)`,
+  the SAF dialog opened (`documentsui/PickActivity`) prefilled with the right name, and after
+  ENREGISTRER the file was **absent before / present after** in `/sdcard/Download`, 152 370 bytes,
+  `%PDF-1.6` + `startxref 150485` + `%%EOF`, 166 objects. So `fs:allow-write-file`, the `content://`
+  URI and the whole `blob:` routing fix are all proven. **Still owed on this WP: the backup export's
+  Tauri branch**, which changed shape (it used to ask for a DIRECTORY, which SAF does not offer).
+- **PDF pinch PASS on the narrow assertion** - column width 100 % -> 300 %, page image 395 -> 1186 px
+  (a real 3x, so the page genuinely RE-RASTERISED rather than being CSS-stretched). **But the user
+  then reported it zoomed "pas a l'endroit qu'on veut" and was RIGHT** - the check never asserted the
+  anchor. Fixed by `f218bcc6` (focal point, `utils/pinchZoom.ts`, 16 tests). **That fix is NOT on the
+  phone: the rebuild was blocked by the classifier going down.** Re-flash and re-check the ANCHOR,
+  not just that the zoom changes.
+- **WP-RELOAD-DL-1 PASS**, with the mechanism visible: cold start on `fr.emse.canari://chat/<dm>`,
+  claim `fr.emse.canari://chat/642f389a-...` written to `sessionStorage`, parked on `/posts`,
+  reloaded - claim STILL there, route still `/posts` after the 250/750/2000 ms re-checks.
+- **Leon's `6139969d` edge-to-edge is NOT verified** - the one gate item left, plus his later
+  `30979c57` (dark-mode nav opacity) and `9d636d6a` (which adds WP-SAFELINK-1 to this file).
+
+**What that evening also established about the rig, and must not be re-derived:**
+
+- **`connect()` in `cdp.mjs` is NOT ready-aware** - it does not await the socket open and throws
+  `Sent before connected`. Use `client(port)` from `chat.mjs`. (Cost two runs, twice now.)
+- **Git Bash mangles an absolute device path** in `adb shell`: `/sdcard/ui.xml` became
+  `/Files/Git/sdcard/ui.xml`. Same class as the prod-SSH rule - **use PowerShell for adb shell
+  commands carrying an absolute path**.
+- The PDF reader renders pages as **`<img>`, never `<canvas>`** (blob URLs), and the SETTLED zoom is
+  the page column's inline `width: N%` - `transform: scale()` is the live preview and returns to 1,
+  so asserting on it would pass against a build with no settle at all.
+- **The phone has NO wifi at this location** (`wlan0` carries no address); it is on 4G via `rmnet1`,
+  which is fine for the campaign but makes `adb tcpip` impossible - USB only, and **that USB link
+  drops on its own** (it did twice, killing a logcat capture and the 9222 forward each time). After
+  every drop: re-read the socket (`webview_devtools_remote_<pid>`, the pid changes on a cold start)
+  and re-do the `forward`. adb serial is `2A251JEGR05373` (Pixel 6a).
+- New one-shot scripts in the scratchpad, reuse them: `probe-a1-state.mjs`, `probe-find-pdf.mjs`,
+  `check-dl.mjs`, `check-pdf-pinch.mjs`, `check-reload-dl.mjs`.
+- **A debug APK is now ~644 MB where the content it declares is 331 MB**, the unaccounted 312.7 MB
+  matching the native lib to 0,04 % - the `.so` is physically in the archive twice. Harmless and
+  investigated: one ABI only, and the SHIPPED artefacts are 15 MB (`.aab`) / 35 MB (`.apk`). Do not
+  re-measure it.
 
 **2. THE AUDIT / CAMPAIGN RESUMES** - the phase dashboard at the top of
 [cross-client-testing](docs/wiki/cross-client-testing.md) is the source of truth, not this file. In
