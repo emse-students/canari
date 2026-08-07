@@ -308,7 +308,15 @@ export abstract class BaseMlsService implements IMlsService {
 
   beginBulkIngest(phase: BulkIngestPhase = BaseMlsService.PERSIST_ONLY_PHASE): void {
     this.bulkIngestPhases.push(phase);
-    for (const observer of this.bulkIngestObservers) observer.onBulkIngestStart(phase);
+    for (const observer of this.bulkIngestObservers) {
+      // Isolated for the same reason as the close below: one observer refusing to OPEN its window
+      // must not stop the next from opening one it will be asked to close.
+      try {
+        observer.onBulkIngestStart(phase);
+      } catch (e) {
+        console.error('[QUEUE] bulk-ingest observer failed to start:', e);
+      }
+    }
   }
 
   async endBulkIngest(): Promise<void> {
@@ -318,7 +326,22 @@ export abstract class BaseMlsService implements IMlsService {
       return;
     }
     // Replay the exact phase the matching open used: start and end can never disagree.
-    for (const observer of this.bulkIngestObservers) await observer.onBulkIngestEnd(phase);
+    //
+    // PER OBSERVER, and that is the whole point. These are independent subscribers - the encrypted
+    // state persister and the UI render buffer - and they were being awaited in one bare loop, so
+    // the FIRST to reject cancelled every one after it. The persister is registered first and
+    // rethrows when a checkpoint fails, which would have left the UI observer's window open
+    // forever: `messageCatchupDepth` never comes back down (the sync banner stays up for the rest
+    // of the session) and `bulkIngestActive` stays raised, so every later inbound message is
+    // buffered instead of rendered and is then discarded by the next drain. A failed disk write
+    // must cost a checkpoint, never the message pipeline.
+    for (const observer of this.bulkIngestObservers) {
+      try {
+        await observer.onBulkIngestEnd(phase);
+      } catch (e) {
+        console.error('[QUEUE] bulk-ingest observer failed to end (window closed anyway):', e);
+      }
+    }
   }
 
   // ── Message queue ─────────────────────────────────────────────────────────

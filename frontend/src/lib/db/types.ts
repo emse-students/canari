@@ -133,6 +133,17 @@ export interface OutboxEntry {
    * read-state converge reliably across peers.
    */
   controlProto?: Uint8Array;
+  /**
+   * This entry is a RETRANSMISSION of a payload already sent once, replayed because a peer said it
+   * could not decrypt it. It must not be retained again in `recentSends`: re-retaining refreshes
+   * the ring's `sentAt` under a brand-new entry id, so the retention window never ages out and the
+   * dedup key (the message id) no longer matches - the ring fills with copies of the same payload
+   * and every later `decrypt_failed` costs a full replay, forever. That turns a bounded, one-shot
+   * repair into a standing broadcast that only a reload ends (the ring is in memory).
+   *
+   * A retransmission is not a new send. See `retransmitRecentSends`.
+   */
+  isRetransmission?: boolean;
   status: 'pending' | 'sending';
   attempts: number;
   lastAttemptAt?: number;

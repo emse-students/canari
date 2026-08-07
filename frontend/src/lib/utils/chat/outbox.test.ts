@@ -27,6 +27,29 @@ import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$l
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { OutboxEntry } from '$lib/db';
 import type { Conversation } from '$lib/types';
+import { recentSentSince, resetRecentSendsForTests } from '$lib/utils/chat/recentSends';
+
+/**
+ * A control entry, optionally flagged as the replay of something already sent once.
+ *
+ * `sentAt` is NOW, not the epoch-ish constant the other fixtures use: `recentSends` filters on a
+ * five-minute retention window, so a `sentAt` of 50 is discarded by age and both the positive and
+ * the negative assertion would read an empty ring - the negative one passing for the wrong reason.
+ */
+function controlEntry(id: string, isRetransmission: boolean): OutboxEntry {
+  const now = Date.now();
+  return {
+    id,
+    conversationId: 'g1',
+    sentAt: now,
+    kind: 'control',
+    controlProto: new Uint8Array([9, 8, 7]),
+    isRetransmission,
+    status: 'pending',
+    attempts: 0,
+    createdAt: now,
+  };
+}
 
 function textEntry(id: string, conversationId: string, sentAt: number): OutboxEntry {
   return {
@@ -305,6 +328,32 @@ describe('outbox flusher', () => {
     // 4th arg = silent = true for control events; the verbatim proto is sent under the entry id.
     expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'c1', true);
     expect(storage._map.has('c1')).toBe(false);
+  });
+
+  it('retains an ordinary control entry for a later retransmission', async () => {
+    resetRecentSendsForTests();
+    const storage = makeStorage([controlEntry('c1', false)]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    await outbox.flush();
+
+    // The whole point of the ring: a peer that cannot decrypt this can still be handed it again.
+    expect(recentSentSince('g1', 0)).toHaveLength(1);
+  });
+
+  it('does NOT retain a retransmission - that is what turned one desync into a broadcast', async () => {
+    resetRecentSendsForTests();
+    const storage = makeStorage([controlEntry('c2', true)]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    await outbox.flush();
+
+    // A replay is already retained under its original id and timestamp. Re-noting it minted a
+    // fresh id and a fresh `sentAt`, so the five-minute window never aged out and the id-based
+    // dedup no longer matched - the ring accumulated copies and every later `decrypt_failed`
+    // replayed all of them. Measured on production 2026-08-07: ~430 frames/minute for thirteen
+    // minutes across three clients, 4 921 queued for one phone, with nobody typing.
+    expect(recentSentSince('g1', 0)).toHaveLength(0);
   });
 
   it('drops a channel entry without any MLS call (channels are server-authoritative)', async () => {
