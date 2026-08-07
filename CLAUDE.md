@@ -328,30 +328,49 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   [seo > what no test here can prove](docs/wiki/frontend/seo.md#what-no-test-here-can-prove).
   Open a WP only if one FAILS.
 
-- \[~\] **WP-HIST-3 (now P1, and the NEXT PIECE OF WORK - decided with the user 2026-08-07) - Pool
-  history per MESSAGE between devices, and RETIRE the window-based retransmission with it.**
-  Successor to WP-HIST-2 (shipped 2026-08-02), which stopped the blind soliciting but left the
-  exchange binary. **Nothing is open in the design - it only has to be written.** The design, the
-  order of work and the three defects that ride with it are all in
-  [chat > pooling history between devices](docs/wiki/frontend/modules/chat.md#pooling-history-between-devices-designed-not-built);
-  `sync/syncEngine.ts` already has `buildLocalSyncManifest` + `diffLocalAndRemoteManifest`, tested -
-  only the TRANSPORT is missing.
+- \[~\] **WP-HIST-3 (P1) - LEGS 1-3 SHIPPED 2026-08-07 (`759f4907`), steps 3-4 owed, NOT YET
+  DEPLOYED.** The exchange is a manifest diff instead of a full bundle. Everything about what was
+  built - the flipped direction, the two digest modes, UTC months, the codepoint sort, the
+  rendezvous, `announceComplete`, the null-vs-empty read - is in
+  [chat > pooling history between devices](docs/wiki/frontend/modules/chat.md#pooling-history-between-devices-legs-1-3-built-2026-08-07-steps-3-4-owed).
+  **Read that, do not re-derive it, and above all do not "restore" the design's direction**: the
+  REQUESTER broadcasts the digest and the elected RESPONDER diffs (backwards compatible with no
+  negotiation, one round trip fewer). New files: `utils/chat/historyManifest.ts` (pure, 42 tests),
+  `utils/chat/historyDigestRendezvous.ts` (11 tests); `actions.historyRequest.test.ts` went 3 -> 14.
+  65/65 green, `check` 7571 files 0 errors, lint and format clean.
+
+  **What is OWED, in order:** (3) marker semantics - the `peer-holds-more` reason exists and is
+  written before a pull, but the marker does not yet EMPTY itself when the diff comes back empty;
+  (4a) the give-up counter, which is the escalation point from the narrow `decrypt_failed` resend to
+  this diff (near `shouldSignalDesync` in `inboundFrameLedger.ts`, `LOST frame` at
+  `setupMessageHandler.ts:602,779`); (4b) `RETENTION_MS` in `recentSends.ts` is a bare `5 * 60_000`
+  and must be derived from `DESYNC_RETRANSMIT_WINDOW_MS` (120 s, `setupMessageHandler.ts:69`) plus a
+  round-trip margin - three of those five minutes shorten nothing and only hold plaintext protos in
+  memory; (4c) the three riding defects listed at the end of that wiki section.
 
   **Why it was promoted, and why the alternatives were rejected as band-aids** (user's call, do not
-  re-litigate): WP-RETRANSMIT-1 below showed that `decrypt_failed` has three properties that cause
-  the harm, and none is an accident - it is addressed by TIME rather than identity (the receiver
-  genuinely cannot name a frame that never decrypted), EVERY peer answers it, and it reads an
-  in-memory ring so the repair races a reload. A manifest diff has none of the three: the receiver
-  sends what it HAS, the peer computes the difference and holds the id, the exchange reads the
-  DURABLE store, and one responder is elected server-side. **The give-up counter is not a separate
-  task - it is the escalation point** from a narrow immediate resend to the diff. Two things fold
-  into this work rather than shipping before it: that counter, and the retention constant
-  (`RETENTION_MS` = 5 min is already dead weight - `DESYNC_RETRANSMIT_WINDOW_MS` is 120 s and the
-  replay is clamped to what is asked, so three of those five minutes shorten nothing and only hold
-  plaintext protos in memory; derive it from the request window plus a round-trip margin).
+  re-litigate): WP-RETRANSMIT-1 showed `decrypt_failed` has three harmful properties, none accidental
+  - it is addressed by TIME rather than identity, EVERY peer answers it, and it reads an in-memory
+  ring so the repair races a reload. The diff has none of the three.
 
   **Then re-run the campaign checks that touch it** - the remaining phases run AFTER, so they test
   the mechanism that will actually ship.
+
+- \[ \] **DELETE the QR-code device-sync feature - APPROVED by the user 2026-08-07, not started.**
+  ~2 470 lines (`SyncSessionModal.svelte`, `useSyncSession.svelte.ts`, `sync/syncEngine.ts` and its
+  server side). **PRESERVE the ~55 lines of `.canari` file import/export in
+  `SettingsSyncSection.svelte`** - that is a different feature. Its algorithm is what WP-HIST-3 now
+  carries, so nothing is lost. The evidence, verified by hand and not taken from the audit agent:
+  the server REQUIRES a `salt` field (`sync-types.ts:203`) that the frontend has **zero** occurrences
+  of, so every non-empty upload 400s - the feature is simply broken; and `offerPublicKey` /
+  `answerPublicKey` are generated, sent, stored and echoed back but **never read by any client**,
+  with no ECDH primitive anywhere in the path, so the comments promise a key agreement that does not
+  exist (the transfer works only because `deviceKeyB64` = PBKDF2(userId, pin, per-USER serverSalt),
+  which two devices of one user derive identically). Also: reachable at `/settings` behind no flag, a
+  dead second mount at `MainChatPage.svelte:1028-1040` that ironically holds the CORRECT post-sync
+  callbacks, the server sees conversation names + all message ids and timestamps in plaintext, a
+  mismatched PIN on device B imports permanently undecryptable rows while reporting success,
+  `deviceId` is unauthenticated and `chunks/ack` has no participant check, zero tests. Own commit.
 
 - **WP-RETRANSMIT-1 (P1) is SHIPPED 2026-08-07** (`9a0b199a`) - the decrypt-failure repair fed
   itself. A replay went out through `enqueueControlEvent` (fresh `randomUUID()`, fresh `sentAt`) and
