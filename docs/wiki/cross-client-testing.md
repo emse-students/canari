@@ -1761,6 +1761,14 @@ That is the whole ladder demonstrated end to end on production: the creation sea
 that is revoked or has no key package, the detector no longer trusts a clock other people write, and
 the collector reaches a device that no longer has a key package to be enumerated from.
 
+**And it holds.** Six hours later, with the hourly GC having run repeatedly: `orphan_rows 0` still -
+no new ghost has been created - `queued_message` at 1 860 rows across 55 devices with the busiest
+holding **507** (the nine ghosts held 10 810 *each*), and `auth_db` steady at 29 MB. Zero
+`cleanupStaleDevices: purged` lines in that window, which is the correct output when there is
+nothing left to collect, and zero `REFUSED` / `SKIPPED_NO_KEY_PACKAGE` lines, meaning nothing has
+tried to resurrect a dead device since. A one-shot purge would have shown the same table at
+midnight; only the second measurement distinguishes a fix from a cleanup.
+
 ##### The 16th and 17th harness faults, both from this hour
 
 - **A run whose progress goes through `| tail -N` is unobservable.** `tail` buffers until EOF, so a
