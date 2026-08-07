@@ -64,16 +64,38 @@
    * a page during a zoom keeps that page's real proportions instead of falling back to A4.
    */
   const knownRatios: Record<number, number> = {};
+  /**
+   * CSS width each page's current bitmap was rasterised FOR, per 0-based index.
+   *
+   * Not derivable from the bitmap: `RenderedPdfPage.width` is the canvas size in DEVICE pixels
+   * (`maxWidth * devicePixelRatio`, capped), so comparing it against `renderWidth` would compare
+   * two different units and re-render every page forever on any screen with a dpr above 1.
+   */
+  let renderedAt: Record<number, number> = {};
   /** Width of the scroll viewport, which is what "fit" means at zoom 1. */
   let viewportWidth = $state(0);
 
   const columnWidth = $derived(Math.min(COLUMN_MAX_WIDTH, Math.max(320, viewportWidth)));
 
   /**
-   * Width each page is rasterised at. Zooming re-renders rather than upscaling a bitmap, so
-   * the text stays sharp - which is the point of zooming into a document on a phone.
+   * The only two scales pages are ever rasterised at.
+   *
+   * Rasterising per zoom STEP meant four passes over the document, and a pinch through 1.5 and 2
+   * on the way to 3 paid for all of them - which is heavy on a phone and, since each pass swapped
+   * the bitmaps out, made the page flash empty repeatedly. Two levels bound that to at most one
+   * re-render for any gesture: `1` for the fit-width reading view, and the LARGEST step for
+   * everything above it. The intermediate steps then display a bitmap rasterised bigger than they
+   * need, i.e. downscaled by the browser, which loses nothing visually; only a zoom past the last
+   * step (impossible here, it is the cap) would ever upscale.
    */
-  const renderWidth = $derived(Math.min(MAX_RENDER_WIDTH, columnWidth * zoom));
+  const RENDER_ZOOMS = [ZOOM_STEPS[0], ZOOM_STEPS[ZOOM_STEPS.length - 1]];
+  const renderZoom = $derived(zoom <= RENDER_ZOOMS[0] ? RENDER_ZOOMS[0] : RENDER_ZOOMS[1]);
+
+  /**
+   * Width each page is rasterised at. Zooming re-renders rather than upscaling a bitmap, so the
+   * text stays sharp - which is the point of zooming into a document on a phone.
+   */
+  const renderWidth = $derived(Math.min(MAX_RENDER_WIDTH, columnWidth * renderZoom));
 
   let doc = $state<PdfDocument | null>(null);
 
@@ -86,6 +108,7 @@
     loadError = false;
     pageCount = 0;
     pages = [];
+    renderedAt = {};
 
     openPdfDocument(source)
       .then((handle) => {
@@ -119,17 +142,22 @@
     };
   });
 
-  // A zoom (or a viewport resize) invalidates every bitmap: drop them and re-render whatever
-  // is on screen right now. Same `untrack` reason as above - the dependency is the width, and
-  // only the width. The observer cannot do this on its own: a page that is already
-  // intersecting produces no new callback, so nothing would ever ask for it again.
+  // A zoom (or a viewport resize) makes every bitmap the wrong size, so whatever is on screen is
+  // re-rendered - but the CURRENT bitmaps stay on screen while that happens. Dropping them first
+  // blanked the document mid-gesture, and the placeholder that replaced them is an `aspect-ratio`
+  // box with `overflow-hidden`, so a page whose proportions were not yet known was also visibly
+  // CUT. An old bitmap is simply the right image at the wrong resolution: the browser scales it,
+  // and it is replaced in place the moment the sharp one lands.
+  // Same `untrack` reason as above - the dependency is the width, and only the width. The observer
+  // cannot do this on its own: a page that is already intersecting produces no new callback, so
+  // nothing would ever ask for it again.
   $effect(() => {
     const width = renderWidth;
     untrack(() => {
       if (!pages.some((page) => page !== null)) return;
-      console.debug(`[pdfViewer] re-rendering pages at ${width}px`);
-      for (const page of pages) releasePdfObjectUrl(page?.url ?? null);
-      pages = Array.from({ length: pageCount }, () => null);
+      console.debug(
+        `[pdfViewer] re-rendering visible pages at ${width}px, keeping current bitmaps`
+      );
       for (const [index, isOnScreen] of Object.entries(onScreen)) {
         if (isOnScreen) void renderPage(Number(index));
       }
@@ -141,12 +169,19 @@
   /** 0-based page indices currently within a screen of the viewport. Not reactive either. */
   const onScreen: Record<number, boolean> = {};
 
-  /** Rasterises one 0-based page index, unless it is already rendered or in flight. */
+  /**
+   * Rasterises one 0-based page index, unless it is in flight or already at the wanted width.
+   *
+   * The width is the guard rather than "has a bitmap at all", because a zoom does not remove the
+   * old bitmaps any more: a page held at the previous width must be re-rendered when it comes back
+   * on screen, and one already at this width must not be rendered twice.
+   */
   async function renderPage(index: number) {
     const handle = doc;
-    if (!handle || pages[index] !== null || rendering[index]) return;
-    rendering[index] = true;
+    if (!handle || rendering[index]) return;
     const width = renderWidth;
+    if (pages[index] && renderedAt[index] === width) return;
+    rendering[index] = true;
     try {
       const rendered = await handle.renderPage(index + 1, width);
       knownRatios[index] = rendered.height / rendered.width;
@@ -157,8 +192,16 @@
         return;
       }
       const next = [...pages];
+      const previous = next[index];
       next[index] = rendered;
       pages = next;
+      renderedAt[index] = width;
+      // Only once the swap has been flushed is the old bitmap certainly off screen. Revoking it
+      // before that races the `<img>` still pointing at it.
+      if (previous) {
+        await tick();
+        releasePdfObjectUrl(previous.url);
+      }
     } catch (err) {
       console.error(`[pdfViewer] page ${index + 1} could not be rendered`, err);
     } finally {

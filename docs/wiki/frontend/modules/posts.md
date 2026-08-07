@@ -98,6 +98,20 @@ viewer before it was right:
 - **Zooming re-renders rather than scaling a bitmap**, so text stays sharp; the placeholder that
   stands in meanwhile keeps each page's own proportions once known (A4 until then), which is why
   `renderPage` returns the bitmap's dimensions rather than just its URL.
+- **Pages are rasterised at exactly TWO scales, and the old bitmap is never taken off screen.**
+  Both come from the same report: re-rendering per zoom step made a pinch through 1.5 and 2 on the
+  way to 3 pay for every level, and each pass blanked the document — the placeholder replacing a
+  page is an `aspect-ratio` box with `overflow-hidden`, so a page whose proportions were not yet
+  known was visibly *cut* as well as emptied. `RENDER_ZOOMS` is therefore `[1, last step]`: the
+  intermediate steps display a bitmap rasterised larger than they need, which the browser
+  downscales and which costs nothing visually. A gesture now triggers at most one re-render, and
+  1.5 → 2 → 3 triggers none. The current bitmap stays displayed throughout and is replaced in place
+  when the sharp one lands — an old bitmap is the right image at the wrong resolution, which is
+  strictly better than no image.
+- **The re-render guard is the CSS width a page was rendered FOR, tracked separately in
+  `renderedAt`.** It cannot be read back off the bitmap: `RenderedPdfPage.width` is the canvas size
+  in DEVICE pixels (`maxWidth * devicePixelRatio`, capped), so comparing it against `renderWidth`
+  compares two units and re-renders every page forever on any screen with a dpr above 1.
 
 ### The pinch, and why it needs a focal point
 
