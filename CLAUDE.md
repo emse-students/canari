@@ -70,7 +70,36 @@ Every shipped Work Package was deleted from this file on 2026-08-07 - their stor
 narratives are on the wiki pages each one points to. **Do not reconstruct them here.** What remains
 below is only what is still OPEN or still OWED.
 
-**1. THE APK GATE IS MOSTLY CLEARED (2026-08-07 evening).** A build carrying everything up to
+#### THE RIG WAS LEFT READY - START MEASURING, DO NOT REBUILD IT (closed 2026-08-07 late)
+
+The session closed on the user's call ("on va clore la session tout de suite") **immediately before
+the first HEAL check**, with everything in place for it. Re-verify each line rather than trusting
+it - a night has passed - but do not re-derive any of it:
+
+- **W1 (9224) and W2 (9223) were RELOADED onto the current bundle** and asserted so
+  (`performance.getEntriesByType('navigation')[0].type === 'reload'`, 37 s / 27 s uptime), both on
+  `/chat`, PIN unlocked, occlusion flags intact. That reload was the standing precondition for every
+  repair-mechanism check; a browser left running overnight has NOT kept it - **reload both again.**
+- **A1 carries the current build**: APK from 21:29:49 (`1637ed39` + `cb427031`) installed over the
+  USB serial, launched, PIN unlocked with `pin.mjs --account jolan` (NOT `claire` - the default, and
+  it costs a "PIN incorrect" every time).
+- **adb is on TCP and it is what made this session stable**: `adb tcpip 5555` +
+  `adb connect 172.18.221.86:5555`. Wifi IS available at this location now, unlike earlier sessions.
+  The phone is attached over BOTH transports, so **every `adb` call needs `-s`** or it dies on `more
+  than one device/emulator`. The WebView pid changes on every cold start, so re-read
+  `/proc/net/unix | grep webview_devtools` and re-do `adb -s <tcp> forward tcp:9222 localabstract:…`.
+- Prod answers `{"version":"0.13.1"}` and carries WP-HIST-3.
+
+**START HERE: HEAL-W1..W4** (section 7.1 of the campaign page), then NOTIF-2/3/5/6 + the NOTIF-10
+re-run, then PIN/MULTI/CORRUPT. **Read
+[cross-client-testing > 9.1 reading a repair on the wire](docs/wiki/cross-client-testing.md) FIRST** -
+written at this close precisely for this. Its one load-bearing point: the narrow `decrypt_failed`
+retransmission was NOT deleted by WP-HIST-3, only demoted to first-line, so a repair seen on the wire
+may be either mechanism and **a HEAL check that does not distinguish them has not exercised the
+diff**. The section carries the console prefixes and the four lines that decide a verdict, including
+the one that means the 3 s digest rendezvous lost and the run must be re-done.
+
+**1. THE APK GATE IS CLEARED, except the backup export (2026-08-07 evening).** A build carrying everything up to
 `c53b6077` was flashed at **18:55:34** (`lastUpdateTime` moved from 12:53:19 - that is the only
 discriminator, the version name does not move) and three of the four owed checks PASSED on hardware:
 
@@ -136,13 +165,21 @@ discriminator, the version name does not move) and three of the four owed checks
 - The PDF reader renders pages as **`<img>`, never `<canvas>`** (blob URLs), and the SETTLED zoom is
   the page column's inline `width: N%` - `transform: scale()` is the live preview and returns to 1,
   so asserting on it would pass against a build with no settle at all.
-- **The phone has NO wifi at this location** (`wlan0` carries no address); it is on 4G via `rmnet1`,
-  which is fine for the campaign but makes `adb tcpip` impossible - USB only, and **that USB link
-  drops on its own** (it did twice, killing a logcat capture and the 9222 forward each time). After
+- **The USB link drops on its own** - it did five times over the evening, killing a logcat capture,
+  the 9222 forward, and finally the enumeration itself (the user had to re-plug physically). After
   every drop: re-read the socket (`webview_devtools_remote_<pid>`, the pid changes on a cold start)
-  and re-do the `forward`. adb serial is `2A251JEGR05373` (Pixel 6a).
-- New one-shot scripts in the scratchpad, reuse them: `probe-a1-state.mjs`, `probe-find-pdf.mjs`,
-  `check-dl.mjs`, `check-pdf-pinch.mjs`, `check-reload-dl.mjs`.
+  and re-do the `forward`. **The fix is TCP, and it worked**: wifi IS available at this location now
+  (`172.18.221.86`), so `adb tcpip 5555` + `adb connect 172.18.221.86:5555` - promote at once and
+  never bind a long capture to USB. *(An earlier note here said the phone had no wifi and only 4G via
+  `rmnet1`; that was true of a previous location and is no longer.)* USB serial `2A251JEGR05373`
+  (Pixel 6a) is still the one to use for `install -r`, which is far faster over the cable - and with
+  both transports attached **every `adb` call needs `-s`**.
+- One-shot scripts in the scratchpad, reuse them: `probe-a1-state.mjs`, `probe-find-pdf.mjs`,
+  `check-dl.mjs`, `check-pdf-pinch.mjs`, `check-reload-dl.mjs`. The three that became REGRESSION
+  checks were promoted into `tools/cross-client-harness/`: `check-pdf-anchor.mjs`,
+  `check-pdf-render.mjs`, `check-feed-retry.mjs`.
+- **`bun run test` fails with 7 French/English locale mismatches after an Android build** - it is the
+  documented Paraglide gotcha, not a regression. `bun run paraglide:compile`, re-run, 1113/1113.
 - **A debug APK is now ~644 MB where the content it declares is 331 MB**, the unaccounted 312.7 MB
   matching the native lib to 0,04 % - the `.so` is physically in the archive twice. Harmless and
   investigated: one ABI only, and the SHIPPED artefacts are 15 MB (`.aab`) / 35 MB (`.apk`). Do not
@@ -163,11 +200,9 @@ or clipped, and <= 2 distinct bitmap srcs across the whole ladder) are exactly w
 should fail.
 
 **2. THE AUDIT / CAMPAIGN RESUMES** - the phase dashboard at the top of
-[cross-client-testing](docs/wiki/cross-client-testing.md) is the source of truth, not this file. In
-order: re-run the checks that touch the repair mechanism now that WP-HIST-3 is deployed (**reload
-BOTH browsers first** - a long-lived tab keeps its old bundle), then NOTIF-2/3/5/6 and the NOTIF-10
-re-run, HEAL-W1..W4 (section 7.1), PIN/MULTI/CORRUPT. **LIFE-5 needs the USER** (the unlock pattern
-after a reboot) - pause and ask, never work around it.
+[cross-client-testing](docs/wiki/cross-client-testing.md) is the source of truth, not this file. The
+order and the preconditions are in the START HERE block above; the one thing this line adds is that
+**LIFE-5 needs the USER** (the unlock pattern after a reboot) - pause and ask, never work around it.
 
 **3. CONVERGENCE MEASUREMENTS the user asked for explicitly** (2026-08-07): does it converge, does
 the server's pending-message count match what the clients hold, is the client count right. Three

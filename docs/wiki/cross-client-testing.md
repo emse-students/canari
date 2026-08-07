@@ -495,6 +495,45 @@ Then:
 The campaign is not "done" when the tables are full. It is done when every FAIL is either a WP or a
 fixed commit, and the results table says which build produced it (`versionName` + git SHA).
 
+### 9.1 Reading a repair on the wire
+
+The remaining phases (HEAL, MULTI, CORRUPT) all measure the repair mechanism, and **it is invisible
+to the network panel**: the diff travels as encrypted MLS application frames, so the server sees one
+HTTP call and nothing else. The whole negotiation is only observable in the CONSOLE. The design
+itself is in [chat > pooling history between devices](frontend/modules/chat.md); this is the map
+from that design to what a run can actually grep. Established 2026-08-07 so the next session does not
+re-derive it.
+
+**The only server-visible seam** is `POST /api/mls/history-request`
+(`messaging.controller.ts`), which elects one online member and relays. Server logs
+`[HISTORY_REQ][<trace>] FORWARDED target=… ` or `NO_PEER_ONLINE`. Everything after that is MLS.
+
+| Console prefix | Emitted by | What it tells a check |
+| --- | --- | --- |
+| `[HISTORY_REQ]` | requester + responder | the whole negotiation, both ends |
+| `[HISTORY_DIGEST]` | requester broadcast, responder receipt | leg 2 arrived, and in which mode |
+| `[HISTORY_PULL]` | responder -> requester | the REVERSE direction (the requester holds more) |
+| `[HISTORY_BUNDLE]` | responder | what was actually shipped, filtered by id |
+| `[MLS]` | `setupMessageHandler` | the escalation from the narrow repair into the diff |
+
+The four lines that decide a HEAL verdict, and each says something different:
+
+- `[HISTORY_REQ] …: N to send, M to pull (identical stores)` - the diff RAN. This is the success line.
+- `[HISTORY_REQ] no digest from <identity> … - sending the whole store` - **the fallback fired.** The
+  run is not a failure, but it did not test what it meant to: the 3 s `HISTORY_DIGEST_GRACE_MS`
+  rendezvous lost, so this is the old full dump wearing the new mechanism's name. Re-run it.
+- `[HISTORY_REQ] … store unreadable - staying silent so another member answers` and `… nothing to add
+  and we are awaiting history too - staying silent` - a deliberate silence. **A responder that stays
+  silent looks exactly like a responder that never got the request**, so a check asserting "no repair
+  happened" must read the responder's console too, not only the requester's.
+- `[MLS] Retransmission has not repaired <short>… - escalating to a history diff` - the seam between
+  the two mechanisms.
+
+**The narrow `decrypt_failed` retransmission still exists** - WP-HIST-3 demoted it to the first-line
+repair rather than deleting it (window `DESYNC_RETRANSMIT_WINDOW_MS` 120 s, cap 5 min). So a repair
+seen on the wire may be EITHER mechanism, and a check that does not distinguish them cannot claim to
+have exercised the diff. That distinction is the one thing every HEAL check must assert.
+
 ---
 
 ## 10. Results
