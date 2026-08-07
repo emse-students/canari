@@ -377,7 +377,12 @@ already correct. The story, the 18th harness fault (`document.hasFocus()` is fal
 so a read receipt could never be emitted - now `Emulation.setFocusEmulationEnabled`) and why that
 fault was NOT the cause are in
 [cross-client-testing > the NOTIF phase](docs/wiki/cross-client-testing.md#the-notif-phase-2026-08-07).
-The rule went to DURABLE RULES. **Owed: NOTIF-1/2/3/5/6/7/8/9/10 have not been run.**
+The rule went to DURABLE RULES. **NOTIF-9 also PASSES** (one notification, one copy on W1).
+**NOTIF-10 FAILED and is NOT a bug yet** - its `counts: [0,0,0,0,0]` was read off the phone's FEED,
+because the app had restarted onto `/posts` when the radios came back, so it measured nothing. Real
+from that run and worth the re-run: only 1 of 5 messages notified, and nothing after reconnect.
+Presence of the five on A1 is UNKNOWN - the re-count timed out in `openDM` from the feed. **Re-run
+it, asserting the conversation is on screen before counting.** NOTIF-1/2/3/5/6/7/8 have not been run.
 
 - \[ \] **WP-STORAGE-1 (P2 today, P1 the moment usage grows) - THE BACKUP SCHEME FAILS BEFORE THE DATA
   DOES.** Answer to the user's question of 2026-08-06 ("can the server hold several hundred users").

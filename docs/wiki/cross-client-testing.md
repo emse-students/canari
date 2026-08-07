@@ -1330,7 +1330,27 @@ killed it" is LIFE-8.
 
 | check | verdict | numbers |
 | --- | --- | --- |
-| NOTIF-4 | **FAIL x3**, then **PASS** on the fixed build | see below |
+| NOTIF-4 | **FAIL x3**, then **PASS** on the fixed build | dismissed 263 ms after the read |
+| NOTIF-9 | **PASS** | killed in 77 ms, notified in 18.1 s, shade 1, W1 1 |
+| NOTIF-10 | **FAIL - and NOT established as an app defect. Re-run needed.** | see below |
+
+**NOTIF-10 must be re-run before anyone believes it.** Five messages sent across a ten-minute
+radio blackout; the run reported `counts: [0,0,0,0,0]` on the phone, which reads like a total loss
+of five messages and is **not evidence of one**: when the radios came back the app process had
+restarted and was sitting on `/posts`, so the final count read the FEED, not the conversation. A
+marker cannot appear on a screen that does not show messages. This is the family this page keeps
+re-learning - an assertion made against a page that is not displaying the thing under test - and it
+means the `counts` field measured nothing at all.
+
+Two observations from the same run ARE real and are the reason to re-run rather than dismiss it:
+`shadeHits: [0,0,0,1,0]` - only the fourth of five messages ever raised a notification - and
+`reconnectToShadeMs: null`, no notification at all after reconnecting. Whether that is FCM collapsing
+a burst to one (which is exactly what the check exists to measure) or something else is undecided.
+
+The re-count that would have settled it also failed: `openDM` from the feed on the phone timed out
+after two minutes. So **presence of the five messages on A1 is currently UNKNOWN**, and the check
+owes: re-point the devtools forward at the new pid (the abstract socket carries it), navigate to the
+conversation and assert arrival there, before counting anything.
 
 **NOTIF-4 found a real bug and cost the 18th harness fault, in that order** - which is only clear in
 hindsight, and is exactly why the fault was not allowed to end the investigation.
