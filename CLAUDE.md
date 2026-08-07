@@ -354,17 +354,29 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   `checkPresenceNow` coalesces). **What is OWED is the WEB DEPLOY**, then the campaign checks that
   touch the repair.
 
-  **A GAP THIS WORK EXPOSED AND DID NOT CLOSE, answered to the user 2026-08-07:** the Welcome path is
-  DURABLE when nobody is online and the history path is NOT. `notifyWelcomeRequest` persists to Redis
-  (`pending_welcome:` + `pending_welcome_notify:{userId}`, 24 h) and sends an FCM wake before
-  returning `no_peer_online`; `notifyHistoryRequest` returns the same string and does NOTHING else.
-  So a device can join a group, get its key by the durable path, and hold no history with the server
-  keeping no trace anyone owes it one. **Next piece of work: make `history_request` durable in the
-  shape `welcome_request` already has.** Two more facts from that answer, both in the wiki section:
-  presence is only polled for users DISPLAYED (`ConversationTile`, `ChatHeader`,
-  `ChannelMembersSidebar`), so the new edge covers DMs well and a channel only when its member panel
-  is open; and a device holding SOME of a conversation, missing older messages, and never failing to
-  decrypt carries no marker, so it never asks - it learns only by being someone else's responder.
+  **ANSWERING THE USER'S QUESTION OF 2026-08-07 FOUND A P1, now fixed** (the question: what happens
+  when no peer is online as a device joins, are completeness checks regular, do devices compare
+  COUNTS). `pending` in `historySolicit.ts` was read as `pending.has(groupId)` and NOTHING removes an
+  entry when a burst ends unanswered - so a group whose peers were all offline during its 3-minute
+  burst was "already soliciting" for the life of the tab, and the reconnect, the peer-return edge and
+  the escalation ALL skipped it. **The situation the retries exist for was the one that disabled
+  them.** `isSolicitInFlight` now reads the burst's own schedule. A slow sweep
+  (`startAwaitingHistorySweep`, 15 min, pausable) was added as the floor under the four event
+  triggers. The table of triggers is in the wiki section; do not re-derive it.
+
+  **Three things from that answer that must NOT be re-litigated:** devices compare IDENTITIES (sorted
+  ids under 1000, else per-`YYYY-MM` count AND truncated SHA-256), never counts - a count is a
+  guaranteed false negative. Presence is only polled for DISPLAYED users, so the edge covers DMs on
+  screen and a channel only with its member panel open. And **`history_request` is deliberately NOT
+  made durable** the way `welcome_request` is (Redis + FCM): a stored request drained hours later has
+  no digest (60 s MLS rendezvous), so the responder would fall back to the full-store dump this WP
+  exists to remove, for a device that may need nothing - the requester must reconnect to read
+  anything anyway, and reconnecting re-solicits. The related half (no FCM: a missing Welcome BLOCKS a
+  group, missing history only degrades it) was already recorded on `notifyHistoryRequest`.
+
+  **Still open, and NOT worth a WP yet:** a device holding SOME of a conversation, missing older
+  messages, and never failing to decrypt carries no marker, so it never asks - it learns only by
+  being someone else's elected responder.
 
   **Why it was promoted, and why the alternatives were rejected as band-aids** (user's call, do not
   re-litigate): WP-RETRANSMIT-1 showed `decrypt_failed` has three harmful properties, none accidental

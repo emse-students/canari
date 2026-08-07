@@ -516,6 +516,34 @@ All three are now fixed, and the rule each taught outlives it:
   request rather than turned away, so `await checkPresenceNow()` still means "presence is fresh" for
   everyone.
 
+### When completeness is checked - and the defect that silenced all of it
+
+There is no periodic comparison of histories. There is a durable marker (30 days) written only when
+a client has EVIDENCE it is short, and five things that make it ask again:
+
+| Trigger | Where |
+|---|---|
+| the in-session burst: 2.5 s, then +30 / +90 / +180 s | `historySolicit.ts` |
+| every (re)connect | `initializeConnection.ts` -> `reSolicitAwaitingHistory` |
+| a peer going offline -> online | `onPeersCameOnline` |
+| three decrypt failures in five minutes | `noteDesyncDetected` -> escalation |
+| a slow sweep while the session is open | `startAwaitingHistorySweep`, 15 min |
+
+The sweep is the floor, and it is there because every other row is an EVENT that a long-lived
+session is not guaranteed to see again: presence is only polled for users the UI actually DISPLAYS
+(`ConversationTile`, `ChatHeader`, `ChannelMembersSidebar`), so it covers DMs while the list is on
+screen and a channel only when its member panel is open. It pauses while the document is hidden,
+which also makes returning to the foreground fire it at once.
+
+**The defect that made four of those five rows dead, found 2026-08-07 while answering exactly this
+question.** `pending` was read with `pending.has(groupId)`, and NOTHING removes an entry when a burst
+simply ends without a bundle - only a bundle that ENDS the wait, or a fresh solicitation, calls
+`cancelHistorySolicit`. So a group whose peers were all offline during its three-minute burst kept an
+entry for the life of the tab, and every reconnect, every peer returning and every escalation skipped
+it. The situation the retries exist for was the one situation that disabled them, and a page reload
+was the only cure. `isSolicitInFlight` now answers with the burst's own schedule, which is known up
+front: **the end of a burst is a TIME, not an event to wait for.**
+
 ### What still has no answer: nobody online when a device joins
 
 `notifyHistoryRequest` (`chat-delivery-service`) forwards to a random online member and otherwise
@@ -526,19 +554,20 @@ sleeping peer before returning the same string. So the Welcome survives an empty
 history request does not: a device can be admitted to a group by the durable path and hold no
 history at all, with the server keeping no trace that anyone owes it one.
 
-The client covers part of that gap - the marker is durable for 30 days, and it re-solicits on
-reconnect and on the presence edge - but the recovery then waits for THIS device to notice, never for
-the peer's own return to be enough. Making `history_request` durable in the shape `welcome_request`
-already has is the fix.
+The client covers that gap by asking again rather than by being answered later - the five triggers
+above - so the recovery always waits for THIS device to notice. The symmetric fix would be to store
+the request as `welcome_request` is stored, and it is **deliberately not done**, for a reason worth
+recording so it is not "fixed" later by reflex: a stored request drained hours afterwards arrives
+with no digest, because the digest rides inside MLS with a 60 s rendezvous, so the responder falls
+back to `sendFullHistoryBundle` - the whole-store dump this work exists to remove - for a device that
+may by then need nothing. The requester has to reconnect to READ anything anyway, and reconnecting
+re-solicits. So the gain would be latency, and the cost a full dump. The docstring on
+`notifyHistoryRequest` already recorded the related half of this decision: no FCM wake, because a
+missing Welcome BLOCKS a group while missing history only degrades it.
 
-Two limits of the presence edge, worth knowing before relying on it: presence is only polled for
-users actually DISPLAYED (`ConversationTile`, `ChatHeader`, `ChannelMembersSidebar`), so it covers
-DMs well while the list is on screen and covers a channel only when its member panel is open.
-
-And one gap the diff does not close: a device holding SOME of a conversation, missing older
-messages, and never failing to decrypt anything carries no marker - so it never asks. It learns of
-the difference only opportunistically, when it happens to be the elected responder to someone else's
-solicitation.
+One gap none of this closes: a device holding SOME of a conversation, missing older messages, and
+never failing to decrypt anything carries no marker - so it never asks. It learns of the difference
+only opportunistically, when it happens to be the elected responder to someone else's solicitation.
 
 ### Devices compare identities, never counts
 

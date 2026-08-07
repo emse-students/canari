@@ -29,6 +29,7 @@ import {
   cancelAllHistorySolicit,
   reSolicitAwaitingHistory,
   setHistoryDigestBroadcaster,
+  startAwaitingHistorySweep,
 } from '$lib/utils/chat/historySolicit';
 import { onPeersCameOnline } from '$lib/stores/presenceStore';
 import { sendHistoryDigest } from '$lib/utils/chat/groupActions';
@@ -100,6 +101,9 @@ import { startSyncWatchdogImpl } from './sessionWatchdogs';
  * any one session, so the subscription has to be revocable from logout, which is elsewhere.
  */
 let unregisterPeerReturn: (() => void) | null = null;
+
+/** Stops this session's periodic awaiting-history sweep. Module-level for the same reason. */
+let stopAwaitingSweep: (() => void) | null = null;
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
@@ -918,6 +922,19 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       reSolicitAwaitingHistory(mls, ctx.getUserId(), mls.getLocalGroups(), cb.log);
     });
 
+    // Every other trigger is an event, and a session left open all day is not guaranteed another
+    // one: presence is only polled for peers the UI displays, and a reconnect may never come. This
+    // is the floor under them - see `AWAITING_SWEEP_INTERVAL_MS`. Same live-session guard as above.
+    stopAwaitingSweep?.();
+    stopAwaitingSweep = startAwaitingHistorySweep({
+      mlsService: {
+        sendHistoryRequest: (groupId) => ctx.ensureMls().sendHistoryRequest(groupId),
+      },
+      userId: ctx.getUserId(),
+      getLocalGroups: () => (ctx.getStorage() ? ctx.ensureMls().getLocalGroups() : []),
+      log: cb.log,
+    });
+
     mlsService.onHistoryRequest(
       async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {
         cb.log(
@@ -1347,6 +1364,8 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   // history for the user who just signed out.
   unregisterPeerReturn?.();
   unregisterPeerReturn = null;
+  stopAwaitingSweep?.();
+  stopAwaitingSweep = null;
   historyRequestPendingStore.cancelAll();
   void flushActiveMlsStateEncrypted().finally(() => {
     uninstallMlsStatePersisterLifecycle();

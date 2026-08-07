@@ -5,6 +5,8 @@ import {
   noteHistoryBundleReceived,
   cancelHistorySolicit,
   cancelAllHistorySolicit,
+  isSolicitInFlight,
+  startAwaitingHistorySweep,
 } from './historySolicit';
 import { enumerateAwaitingHistory, markAwaitingHistory } from './awaitingHistoryRegistry';
 import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
@@ -405,5 +407,100 @@ describe('reSolicitAwaitingHistory', () => {
     reSolicitAwaitingHistory(mls, USER, ['g1'], log);
     vi.advanceTimersByTime(INITIAL);
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again once a burst has ENDED without ever being answered', () => {
+    // The case every trigger has to survive: the burst ran while no peer was online, so nothing ever
+    // called `cancelHistorySolicit`. Reading the registry entry as "in flight" made the group
+    // permanently skipped - a reconnect, a peer coming back and an escalation alike - until the tab
+    // was reloaded, which silenced precisely the situation the retries exist for.
+    markAwaitingHistory(USER, 'g1', 'no-local-history');
+    const mls = makeMls();
+    solicitHistory(mls, 'g1', log, [1000]);
+    vi.advanceTimersByTime(INITIAL + 1000);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
+
+    // Past the last attempt plus its response window: no attempt is owed and none is awaited.
+    vi.advanceTimersByTime(30_000 + 1);
+    expect(isSolicitInFlight('g1')).toBe(false);
+
+    reSolicitAwaitingHistory(mls, USER, ['g1'], log);
+    vi.advanceTimersByTime(INITIAL);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(3);
+  });
+
+  it('still counts the burst as in flight while its response window is open', () => {
+    markAwaitingHistory(USER, 'g1', 'no-local-history');
+    const mls = makeMls();
+    solicitHistory(mls, 'g1', log, [1000]);
+    // Last attempt has fired, but a bundle answering it is still possible.
+    vi.advanceTimersByTime(INITIAL + 1000 + 5_000);
+    expect(isSolicitInFlight('g1')).toBe(true);
+  });
+});
+
+describe('startAwaitingHistorySweep', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    localStorage.clear();
+    historyRequestPendingStore.cancelAll();
+  });
+  afterEach(() => {
+    cancelAllHistorySolicit();
+    historyRequestPendingStore.cancelAll();
+    vi.useRealTimers();
+    localStorage.clear();
+  });
+
+  it('keeps asking on its own cadence when no event ever fires again', () => {
+    markAwaitingHistory(USER, 'g1', 'unreadable-frames');
+    const mls = makeMls();
+    // The sweep runs once immediately (createPausableInterval), which is the login pass.
+    const stop = startAwaitingHistorySweep({
+      mlsService: mls,
+      userId: USER,
+      getLocalGroups: () => ['g1'],
+      log,
+      intervalMs: 60_000,
+    });
+    vi.advanceTimersByTime(INITIAL);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+
+    // A whole interval later the burst is over, so the sweep is what asks again - no reconnect, no
+    // peer edge, no escalation involved.
+    vi.advanceTimersByTime(60_000 + INITIAL);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
+  it('asks for nothing when no group carries a marker', () => {
+    const mls = makeMls();
+    const stop = startAwaitingHistorySweep({
+      mlsService: mls,
+      userId: USER,
+      getLocalGroups: () => ['g1'],
+      log,
+      intervalMs: 60_000,
+    });
+    vi.advanceTimersByTime(60_000 * 3 + INITIAL);
+    expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('stops for good once the session is torn down', () => {
+    markAwaitingHistory(USER, 'g1', 'unreadable-frames');
+    const mls = makeMls();
+    const stop = startAwaitingHistorySweep({
+      mlsService: mls,
+      userId: USER,
+      getLocalGroups: () => ['g1'],
+      log,
+      intervalMs: 60_000,
+    });
+    stop();
+    cancelAllHistorySolicit();
+    vi.advanceTimersByTime(60_000 * 3 + INITIAL);
+    // Only the immediate run at registration, never a tick after the stop.
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(0);
   });
 });

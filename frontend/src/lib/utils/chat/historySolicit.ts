@@ -1,6 +1,7 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage } from '$lib/db';
 import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
+import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
 import {
   markAwaitingHistory,
   clearAwaitingHistory,
@@ -30,10 +31,53 @@ const RETRY_DELAYS_MS = [30_000, 90_000, 180_000];
  */
 const INITIAL_SOLICIT_DELAY_MS = 2500;
 
-type PendingSolicit = { timers: ReturnType<typeof setTimeout>[] };
+/**
+ * Grace (ms) added after the last scheduled attempt before a burst counts as over.
+ *
+ * Matches the response window `historyRequestPendingStore` opens per request: until it elapses the
+ * last attempt may still be answered, and re-soliciting on top of it would restart the backoff for
+ * nothing.
+ */
+const BURST_RESPONSE_GRACE_MS = 30_000;
+
+/**
+ * How often the session sweeps its awaiting groups (ms).
+ *
+ * The in-session burst lasts about three minutes and every other trigger is an EVENT - a reconnect,
+ * a peer coming back, a give-up escalation. A tab left open for a day therefore has long stretches
+ * in which nothing would ever ask again, and the events that could cover it are not guaranteed:
+ * presence is only polled for peers the UI is actually displaying. This is the floor under all of
+ * them, deliberately slow - a group carrying a marker has already failed the fast paths.
+ */
+export const AWAITING_SWEEP_INTERVAL_MS = 15 * 60_000;
+
+type PendingSolicit = {
+  timers: ReturnType<typeof setTimeout>[];
+  /** Epoch ms after which no scheduled attempt remains - see {@link isSolicitInFlight}. */
+  burstEndsAt: number;
+};
 
 /** In-memory registry of in-flight history solicitations, keyed by groupId. */
 const pending = new Map<string, PendingSolicit>();
+
+/**
+ * Whether a solicitation burst for `groupId` still has an attempt to make or an answer to wait for.
+ *
+ * The entry itself is NOT the answer, and reading it as one silenced every later trigger: nothing
+ * removes it when the burst simply ends without a bundle (only a bundle that ENDS the wait, or a
+ * fresh solicitation, calls `cancelHistorySolicit`). So a group whose peers were all offline during
+ * its three-minute burst kept a permanent entry, and every reconnect, every peer returning and
+ * every escalation skipped it for the life of the tab - a page reload being the only cure. The
+ * schedule is fully known up front, so the end of the burst is a TIME, not an event to wait for.
+ */
+export function isSolicitInFlight(groupId: string, now: number = Date.now()): boolean {
+  const entry = pending.get(groupId);
+  if (!entry) return false;
+  if (now < entry.burstEndsAt) return true;
+  // Over: drop it so the map tracks live bursts only, rather than growing for the session.
+  pending.delete(groupId);
+  return false;
+}
 
 /**
  * Broadcasts this device's digest for a group, resolving `true` when it went out.
@@ -87,7 +131,11 @@ export function solicitHistory(
 ): void {
   // Restart cleanly if a prior solicitation for this group is still in flight.
   cancelHistorySolicit(groupId);
-  const entry: PendingSolicit = { timers: [] };
+  const lastAttemptAt = initialDelayMs + Math.max(0, ...delaysMs);
+  const entry: PendingSolicit = {
+    timers: [],
+    burstEndsAt: Date.now() + lastAttemptAt + BURST_RESPONSE_GRACE_MS,
+  };
   pending.set(groupId, entry);
 
   const fire = async (attempt: number): Promise<void> => {
@@ -201,7 +249,9 @@ export async function solicitHistoryIfMissing(params: {
  * currently held locally. Called on each (re)connect: it is the cross-session retry seam that
  * survives the ~3 min in-session backoff. Groups NOT in local WASM are skipped here - they are
  * re-joined by the recovery seam, which solicits history itself on a successful join. Groups whose
- * in-session solicitation is still in flight are skipped to avoid restarting the backoff.
+ * in-session solicitation is still in flight are skipped to avoid restarting the backoff - "in
+ * flight" being a live burst, never merely a burst that once started (see
+ * {@link isSolicitInFlight}).
  */
 export function reSolicitAwaitingHistory(
   mlsService: Pick<IMlsService, 'sendHistoryRequest'>,
@@ -211,12 +261,44 @@ export function reSolicitAwaitingHistory(
 ): void {
   const local = localGroupIds instanceof Set ? localGroupIds : new Set(localGroupIds);
   for (const groupId of enumerateAwaitingHistory(userId)) {
-    if (!local.has(groupId) || pending.has(groupId)) continue;
+    if (!local.has(groupId) || isSolicitInFlight(groupId)) continue;
     log(
       `[HISTORY_REQ] re-soliciting bundle for ${groupId.slice(0, 8)}... (awaiting across sessions)`
     );
     solicitHistory(mlsService, groupId, log);
   }
+}
+
+/**
+ * Starts the session-long sweep that re-solicits every group still awaiting history, and returns its
+ * stop function.
+ *
+ * Completeness is otherwise checked only on EVENTS - the join burst, each reconnect, a peer coming
+ * back online, a give-up escalation - and none of them is guaranteed to happen again in a session
+ * that stays open. This is the floor: slow on purpose (see {@link AWAITING_SWEEP_INTERVAL_MS}),
+ * skipping groups whose burst is still live, and doing nothing at all when no marker exists.
+ *
+ * It pauses while the document is hidden, which is both a battery decision and a correctness one:
+ * the sweep exists to run in the tab somebody is actually using, and coming back to the foreground
+ * fires it immediately.
+ */
+export function startAwaitingHistorySweep(params: {
+  mlsService: Pick<IMlsService, 'sendHistoryRequest'>;
+  userId: string;
+  getLocalGroups: () => Iterable<string>;
+  log: (msg: string) => void;
+  intervalMs?: number;
+}): () => void {
+  const {
+    mlsService,
+    userId,
+    getLocalGroups,
+    log,
+    intervalMs = AWAITING_SWEEP_INTERVAL_MS,
+  } = params;
+  return createPausableInterval(() => {
+    reSolicitAwaitingHistory(mlsService, userId, getLocalGroups(), log);
+  }, intervalMs);
 }
 
 /** Cancels any pending retries for `groupId` (bundle arrived, or a fresh solicitation supersedes). */
