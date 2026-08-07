@@ -28,6 +28,7 @@
     ShoppingBag,
     Download,
     Mail,
+    ArrowLeft,
   } from '@lucide/svelte';
   import { exportTrombinoscope } from '$lib/utils/trombinoscope';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
@@ -161,7 +162,11 @@
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-4xl mx-auto space-y-8">
-  <a href={basePath} class="text-sm text-text-muted hover:text-text-main transition-colors">
+  <a
+    href={basePath}
+    class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
+  >
+    <ArrowLeft size={16} />
     {backLabel}
   </a>
 

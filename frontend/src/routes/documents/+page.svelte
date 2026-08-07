@@ -18,6 +18,7 @@
   import { FolderOpen, ChevronDown, Download, FileText, Building2 } from '@lucide/svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
 
   let ready = $state(false);
@@ -78,13 +79,7 @@
       const key = await importRawAesKey(doc.cek);
       const plaintext = await decryptDocument(key, iv, ciphertext);
 
-      const blob = new Blob([plaintext], { type: doc.mimeType });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = downloadName(doc);
-      a.click();
-      URL.revokeObjectURL(url);
+      await downloadDecryptedFile(new Blob([plaintext], { type: doc.mimeType }), downloadName(doc));
       console.log(`[Reviewer] Download complete: ${doc.name}`);
     } catch (e) {
       console.error('[Reviewer] Download error:', e);

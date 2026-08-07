@@ -1,3 +1,5 @@
+import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+
 /** RFC 5545 TEXT escaping for SUMMARY/DESCRIPTION/UID fragments. */
 export function icsEscapeText(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/;/g, '\\;').replace(/,/g, '\\,');
@@ -105,15 +107,10 @@ export function googleCalendarTemplateUrl(ev: AgendaExportEvent): string {
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
+/**
+ * Saves a generated text file (an .ics, in practice). Goes through `fileDownload` because an
+ * anchor download is a no-op inside the Tauri WebView on both mobile platforms.
+ */
 export function downloadTextFile(filename: string, body: string, mime: string) {
-  const blob = new Blob([body], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  void downloadDecryptedFile(new Blob([body], { type: mime }), filename);
 }

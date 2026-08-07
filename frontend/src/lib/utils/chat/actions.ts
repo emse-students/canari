@@ -19,7 +19,7 @@ import {
   decideAbsentGroupFate,
   type GroupServerStatus,
 } from '$lib/utils/chat/groupLifecycle';
-import { isTauriRuntime } from '$lib/utils/openExternal';
+import { saveBlobAs } from '$lib/utils/fileDownload';
 
 /**
  * Process pending device-group invitations.
@@ -544,40 +544,14 @@ export async function exportUserBackup(params: {
   const date = new Date().toISOString().split('T')[0];
   const filename = `canari-backup-${userId}-${date}.canari`;
 
-  if (isTauriRuntime()) {
-    // In Tauri (desktop/mobile) blob URLs and anchor downloads do not work.
-    // Delegate file writing to the Rust side which saves to the Downloads
-    // folder (desktop) or app data dir (mobile).
-
-    const dialog = await import('@tauri-apps/plugin-dialog');
-    const fs = await import('@tauri-apps/plugin-fs');
-    // Dynamic import: avoids bundling @tauri-apps/api/path in the Web build.
-    const { downloadDir } = await import('@tauri-apps/api/path');
-
-    const path = await dialog.open({
-      multiple: false,
-      directory: true,
-      defaultPath: await downloadDir(),
-    });
-    if (path === null) {
-      console.info('directory selection cancelled');
-      return;
-    }
-    const file = await fs.create(`${path}/${filename}`);
-    await file.write(new Uint8Array(blob.buffer as ArrayBuffer));
-    await file.close();
-    log(`[OK] Backup exported: ${filename}`);
-  } else {
-    const url = URL.createObjectURL(
-      new Blob([blob.buffer as ArrayBuffer], { type: 'application/octet-stream' })
-    );
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-    log(`[OK] Backup exported: ${filename}`);
-  }
+  // One path for both runtimes: `saveBlobAs` owns the split, because an anchor download is a
+  // no-op inside the Tauri WebView (no download handler on either mobile platform) and a
+  // directory picker is not something Android's SAF offers in the first place.
+  const saved = await saveBlobAs(
+    new Blob([blob.buffer as ArrayBuffer], { type: 'application/octet-stream' }),
+    filename
+  );
+  log(saved ? `[OK] Backup exported: ${filename}` : '[..] Backup export cancelled');
 }
 
 /** Imports a `.canari` backup file: decrypts conversations/messages, restores the MLS state if this is the same device, then reloads the conversation list. */

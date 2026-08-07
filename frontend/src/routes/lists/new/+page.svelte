@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import { ArrowLeft } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   let name = $state('');
@@ -62,8 +63,12 @@
 
 <div class="px-4 py-6 sm:px-6 max-w-lg mx-auto space-y-6">
   <div>
-    <a href="/lists" class="text-sm text-text-muted hover:text-text-main transition-colors">
-      &#x2190; {m.list_new_back()}
+    <a
+      href="/lists"
+      class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
+    >
+      <ArrowLeft size={16} />
+      {m.list_new_back()}
     </a>
     <h1 class="text-2xl font-extrabold text-text-main tracking-tight mt-2">
       {m.list_new_create_btn()}

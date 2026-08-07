@@ -46,16 +46,24 @@ function pluginsFromCargo(): string[] {
   return [...names].sort();
 }
 
-/** Every permission identifier granted by any capability file, plugin prefix only. */
-function grantedPrefixes(): Set<string> {
-  const prefixes = new Set<string>();
+/** Every permission identifier granted by any capability file, verbatim. */
+function grantedIdentifiers(): Set<string> {
+  const identifiers = new Set<string>();
   for (const file of ['default.json', 'development.json']) {
     const capability = JSON.parse(readFileSync(resolve(SRC_TAURI, 'capabilities', file), 'utf8'));
     for (const permission of capability.permissions as (string | { identifier: string })[]) {
-      const identifier = typeof permission === 'string' ? permission : permission.identifier;
-      const [prefix] = identifier.split(':');
-      if (prefix) prefixes.add(prefix);
+      identifiers.add(typeof permission === 'string' ? permission : permission.identifier);
     }
+  }
+  return identifiers;
+}
+
+/** Every permission identifier granted by any capability file, plugin prefix only. */
+function grantedPrefixes(): Set<string> {
+  const prefixes = new Set<string>();
+  for (const identifier of grantedIdentifiers()) {
+    const [prefix] = identifier.split(':');
+    if (prefix) prefixes.add(prefix);
   }
   return prefixes;
 }
@@ -74,6 +82,22 @@ describe('Tauri capabilities', () => {
     // `get_current` is the only command a cold start can use.
     const granted = grantedPrefixes();
     expect(granted.has('deep-link')).toBe(true);
+  });
+
+  it('grants the commands that saving an attachment to disk goes through', () => {
+    // A GRANTED PREFIX IS NOT A GRANTED COMMAND. `fs:default` is read-only - it allows reading
+    // the app-specific directories and creating them, nothing else - so `fs` appearing in the
+    // capability file says nothing about whether a write is allowed. Saving a decrypted
+    // attachment is the only write path the WebView has, and it is the only download path that
+    // works at all on a phone (Tauri installs no WebView download handler, so `<a download>`
+    // resolves to nothing). Without these three the button fails on the device, not in CI.
+    const granted = grantedIdentifiers();
+    for (const identifier of ['fs:allow-write-file', 'fs:allow-create', 'fs:allow-write']) {
+      expect(granted.has(identifier)).toBe(true);
+    }
+    // `dialog:default` is `allow-save` + `allow-open` + `allow-message`; the save picker is
+    // what puts the chosen destination into the fs scope.
+    expect(granted.has('dialog:default')).toBe(true);
   });
 
   it('never lets the cold-start deep-link probe swallow its own failure', () => {

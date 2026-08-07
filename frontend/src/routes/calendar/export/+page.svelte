@@ -24,6 +24,7 @@
     RotateCcw,
     Check,
     SlidersHorizontal,
+    ArrowLeft,
   } from '@lucide/svelte';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -148,8 +149,12 @@
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-7xl mx-auto space-y-6">
-  <a href={backHref} class="text-sm text-text-muted hover:text-text-main transition-colors">
-    ← {m.calendar_export_back()}
+  <a
+    href={backHref}
+    class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
+  >
+    <ArrowLeft size={16} />
+    {m.calendar_export_back()}
   </a>
 
   <h1 class="text-2xl font-extrabold text-text-main tracking-tight">{m.calendar_export_title()}</h1>

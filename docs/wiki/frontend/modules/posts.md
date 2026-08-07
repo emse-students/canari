@@ -62,15 +62,17 @@ image/video. A grid position is therefore not a lightbox index: each cell resolv
 via `indexOf`, and `-1` doubles as "not lightboxable". Passing the grid index would let one
 document renumber every image after it.
 
-## PDF previews
+## PDF previews, and the in-app reader
 
-`PdfThumbnail.svelte` (shared) renders page 1 of an already-decrypted PDF to a canvas via
-`utils/pdfThumbnail.ts`. Two constraints fix this design:
+`utils/pdfDocument.ts` is the one pdf.js seam: it loads the library once, opens a decrypted
+document, and rasterises any page to a PNG object URL. `PdfThumbnail.svelte` (page 1 only) and
+`PdfViewerModal.svelte` (the whole document) both go through it. Two constraints fix this design:
 
 - **No server-side thumbnail is possible.** Media is encrypted with a per-file CEK before upload;
   the backend only ever holds an opaque blob.
 - **No `<iframe>` either.** Desktop browsers and iOS WKWebView render a PDF natively, Android's
-  WebView does not — it would be blank on the main mobile platform.
+  WebView does not — it would be blank on the main mobile platform. Rasterising is what lets one
+  component serve web, Android, iOS and desktop identically.
 
 pdf.js and its worker load through a dynamic `import()`, so they stay out of the main bundle. The
 preview is a bonus and never a gate: on any failure the file icon and the download button remain.
@@ -78,6 +80,24 @@ A post renders the page full-width under the file row; a chat bubble uses the 44
 List surfaces that do not decrypt their files (`ConversationMediaPanel`, `AssociationDocumentManager`)
 are excluded on purpose — previewing there would mean downloading and decrypting every listed
 document, and a password-protected vault document cannot be decrypted at all without its password.
+
+**The whole card opens the reader**, header row and preview alike — a preview nobody can click is
+decoration. The download button is carved out of that area, which is why the clickable region wraps
+the row's *content* rather than the row (a `<button>` inside a `<button>` is not markup), and the
+preview repeats the header's action with `tabindex="-1"` rather than adding a second tab stop.
+
+Three things in `PdfViewerModal` are not obvious and each one produced a blank or flickering
+viewer before it was right:
+
+- **Its effects must depend on the document URL, and on the render width, and on nothing else.**
+  Reading the page array inside either one makes every arriving page re-run the teardown, which
+  revokes the object URLs the `<img>`s are currently displaying. Both read it under `untrack`.
+- **A page already in view fires no new intersection event.** Lazy rendering is driven by an
+  `IntersectionObserver`, so after a zoom invalidates every bitmap the observer has nothing to say
+  and the viewer would stay empty — the visible indices are tracked separately and re-requested.
+- **Zooming re-renders rather than scaling a bitmap**, so text stays sharp; the placeholder that
+  stands in meanwhile keeps each page's own proportions once known (A4 until then), which is why
+  `renderPage` returns the bitmap's dimensions rather than just its URL.
 
 ## Comment media (image + GIF)
 

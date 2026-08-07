@@ -29,6 +29,9 @@
     "http:allow-fetch-send",
     "http:allow-fetch-read-body",
     "fs:default",
+    "fs:allow-write-file",
+    "fs:allow-create",
+    "fs:allow-write",
     "dialog:default",
     "websocket:default",
     {

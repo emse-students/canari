@@ -2,6 +2,7 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, socialUrl } from '$lib/utils/apiUrl';
 import { setAssociationSuperAdmin } from '$lib/stores/userState.svelte';
+import { downloadDecryptedFile } from '$lib/utils/fileDownload';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
 
@@ -1017,14 +1018,7 @@ async function downloadXlsxFromApi(path: string, fallbackName: string): Promise<
     : asciiMatch
       ? asciiMatch[1]
       : fallbackName;
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.URL.revokeObjectURL(url);
+  await downloadDecryptedFile(blob, filename);
 }
 
 /**

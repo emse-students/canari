@@ -11,6 +11,7 @@
   import type { PendingMediaFile } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
 
   interface ReplyTo {
@@ -102,10 +103,7 @@
     if (!entry) return;
     const url = previewUrls[entry.key];
     if (!url) return;
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = entry.entry.file.name;
-    link.click();
+    void downloadDecryptedFile(url, entry.entry.file.name);
   }
   const hasMediaRecorder =
     typeof window !== 'undefined' &&

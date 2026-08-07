@@ -530,6 +530,24 @@ run there (`check H`).
   geometry is already pure and unit-tested - so the fix belongs in `computeSnapshot`'s contract plus
   a test, not in a component.
 
+- \[ \] **WP-DL-1 (P1) - EVERY download button in the app was dead on mobile. FIXED 2026-08-07; what
+  is owed is the ON-DEVICE verification.** Reported by the user against the PDF on the feed's first
+  post, and it was never about PDFs: `<a download>` is handled by the SHELL, and Tauri installs no
+  download handler on either platform, so the click dispatched, succeeded, and produced nothing -
+  no file, no error, no log line. Eleven call sites, all now on `$lib/utils/fileDownload.ts`
+  (`saveObjectUrlAs` / `saveBlobAs` / `downloadDecryptedFile`), which writes through the native save
+  dialog on Tauri and keeps the anchor on the web. The rule is in DURABLE RULES; the reasoning is in
+  [mobile > rules that hold across both platforms](docs/wiki/frontend/mobile.md#rules-that-hold-across-both-platforms).
+  **Owed, and none of it is testable from here:** the ACL is granted but only a device proves
+  `fs:allow-write-file` + `dialog:save` actually resolve; Android's `ACTION_CREATE_DOCUMENT` returns
+  a `content://` URI that `fs.writeFile` must accept (verified in the crate source, never on
+  hardware); and the backup export's Tauri branch CHANGED SHAPE - it used to ask for a directory,
+  which SAF does not offer, so its old path may never have worked either. Ships with the next APK
+  and the next web deploy. **In the same change, the in-app PDF reader** (`PdfViewerModal.svelte`,
+  the whole card opens it on both surfaces) - which also needs an Android run, since rasterising is
+  precisely what the platform forced and nothing has rendered a multi-page document there yet. This
+  answers **check M** in [device-verification](docs/wiki/device-verification.md).
+
 - \[ \] **WP-OIDC-TAB-1 (P3) - On Android the browser tab opened for the login is NEVER closed.**
   Reported by the user 2026-08-06 and reproduced during the WP-ANDROID-SESS-1 re-login: the app comes
   back to the foreground on the deep link, and the system browser is left sitting on the last
@@ -716,6 +734,12 @@ page. The five to carry, plus one status line:
 - A path restriction written for iOS has NO effect on Android: the App Link claim lives in a
   different file per platform and `assetlinks.json` has no notion of a path, so the lists are
   GENERATED from one source. A host with no path attribute claims the whole host.
+- A WEBVIEW HAS NO DOWNLOAD MANAGER: `<a download>` is a silent no-op on Android and iOS alike
+  (Tauri installs neither a `DownloadListener` nor a `WKDownloadDelegate`), and the click still
+  "succeeds", so there is no exception and no log - eleven buttons shipped dead. Everything saving a
+  file goes through `$lib/utils/fileDownload.ts`. Never ask for a DIRECTORY on mobile (Android's SAF
+  has only a document picker), and remember `fs:default` is READ-ONLY - the plugin being named in
+  the capability file grants no write.
 - A decision reachable from the CLEARTEXT push fields must never sit behind the decrypt ladder: an
   early return on "could not decrypt" silently swallows every action that never needed the plaintext
   (WP-NOTIF-1). And parity between the platforms is not parity of declarations - iOS was correct here

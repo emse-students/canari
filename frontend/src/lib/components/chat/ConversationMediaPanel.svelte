@@ -16,6 +16,7 @@
   import MediaLightbox from '../shared/MediaLightbox.svelte';
   import SharedMediaThumb from './SharedMediaThumb.svelte';
   import type { SharedContent } from '$lib/utils/chat/sharedContent';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { formatFileSize } from '$lib/utils/fileSize';
@@ -118,12 +119,10 @@
   async function downloadFile(ref: (typeof content.files)[number]['media']) {
     try {
       const url = await new MediaService().downloadAndDecrypt(ref);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = ref.fileName ?? 'fichier';
-      a.click();
-    } catch {
-      // best-effort
+      await downloadDecryptedFile(url, ref.fileName ?? 'fichier');
+    } catch (err) {
+      // Best-effort, but never silent: this is the only trace a failed download leaves.
+      console.error('[ConversationMediaPanel] download failed', err);
     }
   }
 

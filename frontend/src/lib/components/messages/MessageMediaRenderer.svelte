@@ -13,7 +13,9 @@
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { formatFileSize } from '$lib/utils/fileSize';
   import { isPdfAttachment } from '$lib/utils/pdfThumbnail';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
+  import PdfViewerModal from '$lib/components/shared/PdfViewerModal.svelte';
   import AppLink from '$lib/components/shared/AppLink.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
 
@@ -48,6 +50,7 @@
   }: Props = $props();
 
   let showLightbox = $state(false);
+  let showPdfViewer = $state(false);
 
   function openLightbox(e: MouseEvent) {
     e.stopPropagation();
@@ -77,11 +80,17 @@
     mediaRef?.type === 'file' && isPdfAttachment(mediaRef.mimeType, mediaRef.fileName)
   );
 
+  /** Saves the decrypted bytes; on Tauri an anchor download would silently do nothing. */
   function downloadBlob(url: string, fileName: string) {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    link.click();
+    void downloadDecryptedFile(url, fileName);
+  }
+
+  /** Opens the in-app PDF reader from the attachment row. */
+  function openPdfViewer(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!blobUrl) return;
+    showPdfViewer = true;
   }
 </script>
 
@@ -242,37 +251,54 @@
         ontouchstart={(e) => e.stopPropagation()}
         ontouchend={(e) => e.stopPropagation()}
       >
-        <!-- File icon, or the PDF's own first page once it is decrypted. -->
-        <div
-          class="w-11 h-11 rounded-xl bg-current/10 flex items-center justify-center shrink-0 overflow-hidden text-current opacity-80"
-        >
-          {#if isPdf && blobUrl}
-            <PdfThumbnail
-              url={blobUrl}
-              maxWidth={44}
-              imgClass="w-full h-full object-cover object-top"
-            >
-              {#snippet fallback()}
-                <FileText size={22} strokeWidth={2} />
-              {/snippet}
-            </PdfThumbnail>
-          {:else}
-            <FileText size={22} strokeWidth={2} />
-          {/if}
-        </div>
+        {#snippet fileRowContent()}
+          <!-- File icon, or the PDF's own first page once it is decrypted. -->
+          <div
+            class="w-11 h-11 rounded-xl bg-current/10 flex items-center justify-center shrink-0 overflow-hidden text-current opacity-80"
+          >
+            {#if isPdf && blobUrl}
+              <PdfThumbnail
+                url={blobUrl}
+                maxWidth={44}
+                imgClass="w-full h-full object-cover object-top"
+              >
+                {#snippet fallback()}
+                  <FileText size={22} strokeWidth={2} />
+                {/snippet}
+              </PdfThumbnail>
+            {:else}
+              <FileText size={22} strokeWidth={2} />
+            {/if}
+          </div>
 
-        <!-- File metadata. -->
-        <div class="flex-1 min-w-0 overflow-hidden">
-          <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
-            {mediaRef.fileName ?? m.msg_attached_file_label()}
-          </p>
-          {#if !mediaPurgedByRetention}
-            <!-- No `uppercase`: it would render the "Ko" unit as "KO". -->
-            <p class="text-[0.65rem] tracking-wider font-semibold opacity-60">
-              {formatFileSize(mediaRef.size)}
+          <!-- File metadata. -->
+          <div class="flex-1 min-w-0 overflow-hidden text-left">
+            <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
+              {mediaRef!.fileName ?? m.msg_attached_file_label()}
             </p>
-          {/if}
-        </div>
+            {#if !mediaPurgedByRetention}
+              <!-- No `uppercase`: it would render the "Ko" unit as "KO". -->
+              <p class="text-[0.65rem] tracking-wider font-semibold opacity-60">
+                {formatFileSize(mediaRef!.size)}
+              </p>
+            {/if}
+          </div>
+        {/snippet}
+
+        {#if isPdf && blobUrl}
+          <!-- The row opens the document; the download button beside it is carved out of the
+               clickable area, which is why this button wraps the content rather than the row. -->
+          <button
+            type="button"
+            onclick={openPdfViewer}
+            class="flex flex-1 min-w-0 items-center gap-3.5 cursor-pointer outline-none rounded-xl focus-visible:ring-2 focus-visible:ring-current"
+            aria-label={m.pdf_open_document_label()}
+          >
+            {@render fileRowContent()}
+          </button>
+        {:else}
+          {@render fileRowContent()}
+        {/if}
 
         <!-- Actions -->
         {#if blobUrl}
@@ -321,6 +347,15 @@
       {/each}
     </p>
   {/if}
+{/if}
+
+{#if showPdfViewer && blobUrl && mediaRef}
+  <PdfViewerModal
+    url={blobUrl}
+    fileName={mediaRef.fileName ?? m.msg_attached_file_label()}
+    onClose={() => (showPdfViewer = false)}
+    onDownload={() => downloadBlob(blobUrl, mediaRef.fileName ?? 'document.pdf')}
+  />
 {/if}
 
 {#if showLightbox && blobUrl && mediaRef && (mediaRef.type === 'image' || mediaRef.type === 'video')}

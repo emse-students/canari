@@ -43,6 +43,7 @@
   import { portal } from '$lib/actions/portal';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
   import { formatFileSize } from '$lib/utils/fileSize';
 
@@ -291,13 +292,7 @@
     const { iv, ciphertext } = unpackEncryptedBlob(packed);
     const plaintext = await decryptDocument(cek, iv, ciphertext);
 
-    const blob = new Blob([plaintext], { type: detail.mimeType });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = detail.name;
-    a.click();
-    URL.revokeObjectURL(url);
+    await downloadDecryptedFile(new Blob([plaintext], { type: detail.mimeType }), detail.name);
     console.log(`[Vault] Download complete: ${detail.name}`);
   }
 

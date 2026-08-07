@@ -13,7 +13,9 @@
   import { resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { formatFileSize } from '$lib/utils/fileSize';
   import { isPdfAttachment } from '$lib/utils/pdfThumbnail';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
+  import PdfViewerModal from '$lib/components/shared/PdfViewerModal.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -108,6 +110,7 @@
   });
 
   let lightboxOpen = $state(false);
+  let pdfViewerOpen = $state(false);
 
   function handleClick(e: MouseEvent) {
     e.preventDefault();
@@ -124,11 +127,17 @@
     lightboxOpen = false;
   }
 
+  /** Saves the decrypted bytes; on Tauri an anchor download would silently do nothing. */
   function downloadBlob(url: string, name: string) {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    a.click();
+    void downloadDecryptedFile(url, name);
+  }
+
+  /** Opens the in-app PDF reader. Bound to the whole card - header and preview alike. */
+  function openPdfViewer(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!blobUrl) return;
+    pdfViewerOpen = true;
   }
 </script>
 
@@ -261,24 +270,41 @@
       </div>
     {:else}
       <!-- ========== GENERIC FILE ========== -->
+      {#snippet fileRowContent()}
+        <div
+          class="w-11 h-11 rounded-xl bg-black/10 dark:bg-white/10 flex items-center justify-center shrink-0"
+        >
+          <FileText size={22} strokeWidth={2} class="text-text-muted" />
+        </div>
+        <div class="flex-1 min-w-0 overflow-hidden text-left">
+          <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
+            {media.fileName ?? m.post_media_file_label()}
+          </p>
+          <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
+          <p class="text-[0.65rem] tracking-wider font-semibold text-text-muted">
+            {formatFileSize(media.size)}
+          </p>
+        </div>
+      {/snippet}
+
       <div
-        class="w-full max-w-full rounded-[1rem] border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/10 backdrop-blur-md overflow-hidden transition-colors group/file"
+        class="w-full max-w-full rounded-2xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/10 backdrop-blur-md overflow-hidden transition-colors group/file"
       >
         <div class="flex items-center gap-3.5 px-3.5 py-3">
-          <div
-            class="w-11 h-11 rounded-xl bg-black/10 dark:bg-white/10 flex items-center justify-center shrink-0"
-          >
-            <FileText size={22} strokeWidth={2} class="text-text-muted" />
-          </div>
-          <div class="flex-1 min-w-0 overflow-hidden">
-            <p class="text-[0.85rem] font-bold truncate leading-tight mb-0.5">
-              {media.fileName ?? m.post_media_file_label()}
-            </p>
-            <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
-            <p class="text-[0.65rem] tracking-wider font-semibold text-text-muted">
-              {formatFileSize(media.size)}
-            </p>
-          </div>
+          {#if isPdf}
+            <!-- The whole header opens the document; only the download button is carved out
+                 of it, which is why it cannot simply wrap the row. -->
+            <button
+              type="button"
+              onclick={openPdfViewer}
+              class="flex flex-1 min-w-0 items-center gap-3.5 cursor-pointer outline-none rounded-xl focus-visible:ring-2 focus-visible:ring-amber-500"
+              aria-label={m.pdf_open_document_label()}
+            >
+              {@render fileRowContent()}
+            </button>
+          {:else}
+            {@render fileRowContent()}
+          {/if}
           <button
             type="button"
             onclick={(e) => {
@@ -297,15 +323,34 @@
         </div>
         {#if isPdf}
           <!-- A post is wide enough to show the page itself; the row keeps its
-               icon so the document is never rendered twice. -->
-          <PdfThumbnail
-            url={blobUrl}
-            maxWidth={640}
-            imgClass="w-full max-h-[22rem] object-contain object-top border-t border-black/5 dark:border-white/10 bg-white"
-          />
+               icon so the document is never rendered twice. The preview repeats the header's
+               action rather than adding a second tab stop, hence tabindex -1. -->
+          <button
+            type="button"
+            onclick={openPdfViewer}
+            tabindex="-1"
+            aria-hidden="true"
+            class="block w-full cursor-pointer"
+          >
+            <PdfThumbnail
+              url={blobUrl}
+              maxWidth={640}
+              imgClass="w-full max-h-[22rem] object-contain object-top border-t border-black/5 dark:border-white/10 bg-white"
+            />
+          </button>
         {/if}
       </div>
     {/if}
+  {/if}
+
+  <!-- In-app PDF reader -->
+  {#if pdfViewerOpen && blobUrl}
+    <PdfViewerModal
+      url={blobUrl}
+      fileName={media.fileName ?? m.post_media_file_label()}
+      onClose={() => (pdfViewerOpen = false)}
+      onDownload={() => downloadBlob(blobUrl!, media.fileName ?? 'document.pdf')}
+    />
   {/if}
 
   <!-- Lightbox for image/video -->

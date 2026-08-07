@@ -33,6 +33,7 @@
     CalendarPlus,
     ShieldAlert,
     FileDown,
+    ArrowLeft,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -358,8 +359,12 @@
 </script>
 
 <div class="px-4 py-6 sm:px-6 max-w-3xl mx-auto space-y-6">
-  <a href="/associations" class="text-sm text-text-muted hover:text-text-main transition-colors">
-    ← {m.calendar_back_associations()}
+  <a
+    href="/associations"
+    class="inline-flex items-center gap-2 text-sm text-text-muted hover:text-text-main transition-colors"
+  >
+    <ArrowLeft size={16} />
+    {m.calendar_back_associations()}
   </a>
 
   <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">

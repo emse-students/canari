@@ -111,6 +111,25 @@ iOS push work there.
 widened to all-mobile afterwards (heartbeat, notification suppression, `reloadStateFromDisk`) —
 when adding one, decide deliberately which of the two it belongs to.
 
+**A WebView has no download manager, so `<a download>` is a silent no-op on both platforms.**
+Saving a file on the web is an instruction to the *shell*, not to the page: Chrome and Safari own a
+download manager, Android's WebView forwards the request to a `DownloadListener` the host app must
+install, iOS needs a `WKDownloadDelegate`. Tauri installs neither. The anchor click still dispatches
+and still "succeeds", so there is no exception to catch and nothing in any log — which is how eleven
+download buttons shipped dead on mobile without a single report until someone tried one. Everything
+that saves a file goes through `utils/fileDownload.ts`, which keeps the anchor on the web and writes
+through the native save dialog on Tauri (`ACTION_CREATE_DOCUMENT` on Android, the document picker on
+iOS, the OS save panel on desktop). Two rules come with it:
+
+- **Never ask for a directory.** Android's storage access framework offers a *document* picker;
+  `dialog.open({ directory: true })` has no equivalent there. `save()` is the portable shape.
+- **`fs:default` is READ-ONLY.** It grants reading the app-specific directories and creating them,
+  nothing more — so `fs` appearing in `capabilities/default.json` says nothing about whether a write
+  is allowed. `fs:allow-write-file` is what makes this work, and like every ACL gap it builds, ships
+  and installs before rejecting on a user's device. `tauriCapabilities.test.ts` pins it by command
+  name. The destination itself needs no broad grant: the dialog plugin adds whatever the user picked
+  to the `fs` scope.
+
 **Kotlin nested types go on the outer class body, never inside a companion object** — declared
 there they are unreachable by class name, and the failure only appears in the release build, which
 is the [first real Kotlin compile](../cicd.md).

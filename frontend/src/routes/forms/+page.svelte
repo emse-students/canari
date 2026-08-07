@@ -25,6 +25,7 @@
     X,
   } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -80,14 +81,7 @@
 
   async function handleExport(id: string) {
     try {
-      const blob = await exportSubmissions(id);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `submissions_${id}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
+      await downloadDecryptedFile(await exportSubmissions(id), `submissions_${id}.xlsx`);
     } catch {
       showToast(m.form_list_error_export());
     }
