@@ -420,87 +420,106 @@
             </div>
           {/if}
 
+          <!-- `postsOverride` is checked BEFORE the await, not inside its `{:then}`.
+               `data.posts` is a streamed promise from the load function, and an `{#await}` on a
+               promise that has REJECTED stays in `{:catch}` for the life of the component - so
+               reading the override only from `{:then}` made it unreachable exactly when it
+               mattered. "Reessayer" fetched the posts (measured: 200 in 326 ms on device) and had
+               nowhere to render them; only leaving the page and coming back, which builds a new
+               promise, appeared to work. A successful refetch must be rendered whatever the
+               initial promise did. -->
           <div class="space-y-5">
-            {#await data.posts}
-              {@render skeletonCards()}
-            {:then initialPosts}
-              {@const resolvedPosts = postsOverride ?? initialPosts}
-              {#if loading}
+            {#if postsOverride}
+              {@render feedList(postsOverride)}
+            {:else}
+              {#await data.posts}
                 {@render skeletonCards()}
-              {:else if resolvedPosts.length === 0}
-                <div
-                  class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border"
-                >
-                  <Inbox size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
-                  <h3 class="text-lg font-bold text-text-main mb-1">{m.posts_empty_title()}</h3>
-                  {#if activeFeed === 'associations'}
-                    <p class="text-text-muted text-sm">
-                      {m.posts_no_results_asso()}
-                    </p>
-                  {:else if activeFeed === 'followed'}
-                    <p class="text-text-muted text-sm">
-                      {m.posts_empty_followed()}
-                      <button
-                        type="button"
-                        class="underline font-medium"
-                        onclick={() => navigateFeed('all')}>{m.posts_tab_all()}</button
-                      >.
-                    </p>
-                  {:else}
-                    <p class="text-text-muted text-sm">
-                      {m.posts_empty_cta()}
-                    </p>
-                  {/if}
-                </div>
-              {:else}
-                {#each resolvedPosts as post (post.id)}
-                  <div class="relative" use:markPostSeen={post}>
-                    {#if isNew(post)}
-                      <span
-                        class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-cn-ink px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30"
-                      >
-                        {m.posts_badge_new()}
-                      </span>
-                    {/if}
-                    <PostCard
-                      {post}
-                      currentUserId={userId}
-                      {authToken}
-                      onRefresh={refreshPosts}
-                      onDelete={() => {
-                        postsOverride = resolvedPosts.filter((p) => p.id !== post.id);
-                      }}
-                    />
+              {:then initialPosts}
+                {@render feedList(initialPosts)}
+              {:catch _err}
+                {#if loading}
+                  {@render skeletonCards()}
+                {:else}
+                  <div
+                    class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border"
+                  >
+                    <Inbox size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
+                    <h3 class="text-lg font-bold text-text-main mb-1">
+                      {m.posts_load_error_title()}
+                    </h3>
+                    <button class="text-text-muted text-sm underline mt-1" onclick={refreshPosts}
+                      >{m.common_retry_button()}</button
+                    >
                   </div>
-                {/each}
-
-                <!-- Sentinel pour l'infinite scroll -->
-                <div bind:this={sentinel} class="h-4"></div>
-
-                {#if loadingMore}
-                  <div class="flex justify-center py-4">
-                    <RefreshCw size={20} class="animate-spin text-text-muted opacity-50" />
-                  </div>
-                {:else if !hasMore && resolvedPosts.length >= PAGE_SIZE}
-                  <p class="text-center text-[0.75rem] text-text-muted opacity-50 py-4">
-                    {m.posts_all_loaded()}
-                  </p>
                 {/if}
-              {/if}
-            {:catch _err}
+              {/await}
+            {/if}
+          </div>
+
+          {#snippet feedList(resolvedPosts: PostEntity[])}
+            {#if loading}
+              {@render skeletonCards()}
+            {:else if resolvedPosts.length === 0}
               <div
                 class="text-center py-16 px-6 bg-[var(--cn-surface)]/50 backdrop-blur-xl rounded-3xl border border-dashed border-cn-border"
               >
                 <Inbox size={48} class="mx-auto mb-3 text-text-muted opacity-40" />
-                <h3 class="text-lg font-bold text-text-main mb-1">
-                  {m.posts_load_error_title()}
-                </h3>
-                <button class="text-text-muted text-sm underline mt-1" onclick={refreshPosts}
-                  >{m.common_retry_button()}</button
-                >
+                <h3 class="text-lg font-bold text-text-main mb-1">{m.posts_empty_title()}</h3>
+                {#if activeFeed === 'associations'}
+                  <p class="text-text-muted text-sm">
+                    {m.posts_no_results_asso()}
+                  </p>
+                {:else if activeFeed === 'followed'}
+                  <p class="text-text-muted text-sm">
+                    {m.posts_empty_followed()}
+                    <button
+                      type="button"
+                      class="underline font-medium"
+                      onclick={() => navigateFeed('all')}>{m.posts_tab_all()}</button
+                    >.
+                  </p>
+                {:else}
+                  <p class="text-text-muted text-sm">
+                    {m.posts_empty_cta()}
+                  </p>
+                {/if}
               </div>
-            {/await}
-          </div>
+            {:else}
+              {#each resolvedPosts as post (post.id)}
+                <div class="relative" use:markPostSeen={post}>
+                  {#if isNew(post)}
+                    <span
+                      class="absolute -top-2 left-4 z-10 text-[0.6rem] font-extrabold uppercase tracking-widest bg-amber-500 text-cn-ink px-2 py-0.5 rounded-full shadow-md shadow-amber-500/30"
+                    >
+                      {m.posts_badge_new()}
+                    </span>
+                  {/if}
+                  <PostCard
+                    {post}
+                    currentUserId={userId}
+                    {authToken}
+                    onRefresh={refreshPosts}
+                    onDelete={() => {
+                      postsOverride = resolvedPosts.filter((p) => p.id !== post.id);
+                    }}
+                  />
+                </div>
+              {/each}
+
+              <!-- Infinite-scroll sentinel -->
+              <div bind:this={sentinel} class="h-4"></div>
+
+              {#if loadingMore}
+                <div class="flex justify-center py-4">
+                  <RefreshCw size={20} class="animate-spin text-text-muted opacity-50" />
+                </div>
+              {:else if !hasMore && resolvedPosts.length >= PAGE_SIZE}
+                <p class="text-center text-[0.75rem] text-text-muted opacity-50 py-4">
+                  {m.posts_all_loaded()}
+                </p>
+              {/if}
+            {/if}
+          {/snippet}
         {/if}
       </section>
     </div>
