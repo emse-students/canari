@@ -66,4 +66,41 @@ describe('splitTextWithLinks', () => {
     expect(segments).toContainEqual({ type: 'link', value: 'https://x.com/a_(b)' });
     expect(segments.map((s) => (s.type === 'text' ? s.value : '')).join('')).toContain(') fin');
   });
+
+  it('linkifies the whitelisted canari-emse.fr with no scheme', () => {
+    const segments = splitTextWithLinks('voir canari-emse.fr stp');
+    expect(segments).toContainEqual({ type: 'link', value: 'https://canari-emse.fr' });
+  });
+
+  it('linkifies the whitelisted gallery.mitv.fr with no scheme', () => {
+    const segments = splitTextWithLinks('photos sur gallery.mitv.fr merci');
+    expect(segments).toContainEqual({ type: 'link', value: 'https://gallery.mitv.fr' });
+  });
+
+  it('linkifies any subdomain of emse.fr, and the bare apex itself', () => {
+    for (const domain of ['emse.fr', 'portail.emse.fr', 'chat.portail.emse.fr']) {
+      const segments = splitTextWithLinks(`voir ${domain} stp`);
+      expect(segments).toContainEqual({ type: 'link', value: `https://${domain}` });
+    }
+  });
+
+  it('does not linkify a bare domain outside the whitelist, even with a common TLD', () => {
+    for (const text of ['example.fr', 'canari-emse.com', 'notemse.fr']) {
+      const segments = splitTextWithLinks(text);
+      expect(segments.some((s) => s.type === 'link')).toBe(false);
+    }
+  });
+
+  it('does not linkify French inclusive writing that looks like a bare domain', () => {
+    for (const text of ['auteur.rice', 'cher.e.s', 'Bonjour.Comment']) {
+      const segments = splitTextWithLinks(text);
+      expect(segments.some((s) => s.type === 'link')).toBe(false);
+    }
+  });
+
+  it('does not re-linkify the host of an already-schemed URL', () => {
+    const segments = splitTextWithLinks('https://canari-emse.fr/chat');
+    const links = segments.filter((s) => s.type === 'link');
+    expect(links).toEqual([{ type: 'link', value: 'https://canari-emse.fr/chat' }]);
+  });
 });

@@ -21,6 +21,29 @@ export function shortenReplyPreview(text: string): string {
  */
 const HTTP_URL_RE = /https?:\/\/[^\s<>"']+/gi;
 
+/** Escapes regex metacharacters so a literal string can be spliced into a larger pattern. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Exact hosts that may be linked WITHOUT a `https://` scheme. Deliberately a whitelist rather
+ * than a TLD heuristic - there is no way to tell "canari-emse.fr" from "cher.e.s" or "auteur.rice"
+ * by shape alone, and a broad "known extension" list (`.fr`, `.io`, ...) would linkify both.
+ */
+const BARE_DOMAIN_WHITELIST = ['canari-emse.fr', 'gallery.mitv.fr'];
+
+/**
+ * Matches one of `BARE_DOMAIN_WHITELIST`, or any subdomain of `emse.fr` (including the bare
+ * apex), typed with no scheme. A non-word character (or start/end of string) on both sides keeps
+ * it from matching inside a longer host or word - "notgallery.mitv.fr" and
+ * "canari-emse.fr.evil.example" never turn the wrong text into a link.
+ */
+export const BARE_DOMAIN_RE = new RegExp(
+  `(?<![\\w./@-])(?:${BARE_DOMAIN_WHITELIST.map(escapeRegExp).join('|')}|(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)*emse\\.fr)(?![a-zA-Z0-9])`,
+  'gi'
+);
+
 /** Closing bracket to its opening counterpart, for the balance test in the trimmer. */
 const BRACKET_PAIRS: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
 
@@ -111,6 +134,41 @@ export type TextLinkSegment =
   /** Clickable URL; may show inline GIF when not `noEmbed`. */
   | { type: 'link'; value: string; noEmbed?: boolean };
 
+/**
+ * Splits plain text (already known to hold no `https://` URL) into text/link segments using
+ * BARE_DOMAIN_RE. A match becomes a link to `https://<domain>` so it navigates like any other
+ * link, even though the domain itself never had a scheme typed in front of it.
+ */
+function splitBareDomains(text: string): TextLinkSegment[] {
+  const regex = new RegExp(BARE_DOMAIN_RE.source, BARE_DOMAIN_RE.flags);
+  const segments: TextLinkSegment[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    const domain = trimUrlTrailingPunctuation(match[0]);
+    const start = match.index;
+
+    if (start > lastIndex) {
+      segments.push({ type: 'text', value: text.slice(lastIndex, start) });
+    }
+    segments.push({ type: 'link', value: `https://${domain}` });
+    lastIndex = start + domain.length;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push({ type: 'text', value: text.slice(lastIndex) });
+  }
+
+  return segments;
+}
+
+/** Pushes plain text onto `segments`, further split into any bare-domain links it contains. */
+function pushPlainText(segments: TextLinkSegment[], value: string): void {
+  if (!value) return;
+  segments.push(...splitBareDomains(value));
+}
+
 /** Splits a text string into alternating text and link segments for inline rendering. */
 export function splitTextWithLinks(text: string): TextLinkSegment[] {
   const regex = new RegExp(HTTP_URL_RE.source, HTTP_URL_RE.flags);
@@ -126,7 +184,7 @@ export function splitTextWithLinks(text: string): TextLinkSegment[] {
     const autolink = isAngleBracketAutolink(text, start, end);
 
     if (start > lastIndex) {
-      segments.push({ type: 'text', value: text.slice(lastIndex, start - (autolink ? 1 : 0)) });
+      pushPlainText(segments, text.slice(lastIndex, start - (autolink ? 1 : 0)));
     }
 
     if (autolink) {
@@ -146,7 +204,7 @@ export function splitTextWithLinks(text: string): TextLinkSegment[] {
   }
 
   if (lastIndex < text.length) {
-    segments.push({ type: 'text', value: text.slice(lastIndex) });
+    pushPlainText(segments, text.slice(lastIndex));
   }
 
   if (segments.length === 0) {

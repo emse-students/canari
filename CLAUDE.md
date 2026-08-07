@@ -47,7 +47,7 @@
 - Package manager: frontend uses bun (committed bun.lock, CI --frozen-lockfile); Makefile shells out to npm - both work. Prefer bun locally.
 - Setup/Dev: make install, make run-services, cd frontend && bun run dev
 - Tests: make test (All), make test-frontend, cargo test
-- Frontend gates (before every commit): bun run check (0 errors), bun run lint, bun run format. Rust >= 1.93 (`rust-toolchain.toml`). cargo clippy for Rust crates. Pre-commit hook runs oxfmt+oxlint+oxvelte+check across WHOLE frontend (~2-3 min) and re-stages - isolate unrelated dirty files before committing. make run-ci runs the full local pipeline.
+- Frontend gates (before every commit): bun run check (0 errors), bun run lint, bun run format. Rust >= 1.97 (`rust-toolchain.toml`). cargo clippy for Rust crates. Pre-commit hook runs oxfmt+oxlint+oxvelte+check across WHOLE frontend (~2-3 min) and re-stages - isolate unrelated dirty files before committing. make run-ci runs the full local pipeline.
 
 ## **SESSION STATE (Active Memory)**
 
@@ -99,7 +99,8 @@ predicate) to confirm the platform still holds ZERO memberships without one.
 
 **4. Then the remaining WPs**, which the user wants done "un jour, apres l'audit": WP-VIEWER-1,
 WP-STORAGE-1 (its item 1 is config only and divides the backup requirement by ~16), WP-DRAIN-2,
-WP-ECHO-1's verification, WP-PENDING-1/2's, WP-LINK-1, WP-OIDC-TAB-1.
+WP-ECHO-1's verification, WP-PENDING-1/2's, WP-OIDC-TAB-1. WP-LINK-1 shipped 2026-08-07 (see
+DURABLE RULES / the whitelist entry below) - do not re-add it here.
 
 ---
 
@@ -418,19 +419,6 @@ rollout has not reached devices, and raising it first locks everyone out.
   such affordance), so scope it before starting. iOS has the same shape with
   `ASWebAuthenticationSession` as the equivalent, and it has never been checked on hardware.
 
-- \[ \] **WP-LINK-1 (P3) - Linkify bare domains, without linkifying inclusive writing.** Today a
-  chat link needs its `https://` scheme, and a post runs GFM, which autolinks only `www.`-prefixed
-  hosts and e-mail addresses - verified against `marked`, where "auteur.rice", "cher.e.s" and
-  "Bonjour.Comment" all produce nothing. So `canari-emse.fr` typed bare is dead text on both
-  surfaces, which is the gap to close. **The whole difficulty is that an allowlist of "known
-  extensions" is not enough in French**: `.es` is Spain's, so "cher.es" becomes a link; `.it`,
-  `.re` and `.ne` collide with inclusive and elided forms the same way. Ship a deliberately narrow
-  allowlist - `com org net fr eu io dev app edu gov`, **no other two-letter TLD** - in
-  `messageDisplay.ts` next to `HTTP_URL_RE`, require a label before the dot and a non-word
-  character after the TLD, and reuse `trimUrlTrailingPunctuation`. Same list must gate the post
-  renderer, or the two surfaces disagree. Tests belong with the five that
-  `messageDisplay.test.ts` already carries, and must include the French false positives above.
-
 **Known and deliberately NOT a WP yet** (do not "fix" these by reflex):
 
 - A device holding SOME of a conversation, missing older messages, and never failing to decrypt
@@ -552,6 +540,10 @@ prompt fields are all on those pages. What must not be forgotten between them:
   anything that later resolves the real value loses to it - and a module-level cache re-renders
   nothing when it warms, so whether a user ever sees the truth depends on cache timing. Return the
   absence (`peekUserDisplayName` -> `null`, or an explicit `*Resolved` flag), never the label.
+- French inclusive writing and elided forms defeat a TLD-shape heuristic for "this looks like a
+  domain" (`.es`/`.it`/`.re`/`.ne` collide with "auteur.rice"/"cher.e.s"-style endings) - an exact
+  WHITELIST of real hosts sidesteps the ambiguity entirely instead of trying to out-narrow it
+  (WP-LINK-1).
 
 #### The public head, and the two adapters -> [frontend/seo](docs/wiki/frontend/seo.md), [nginx](docs/wiki/infrastructure/nginx.md)
 
