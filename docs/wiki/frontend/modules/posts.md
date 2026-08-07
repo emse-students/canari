@@ -69,8 +69,11 @@ from outside the thing that failed.** A retry whose result is only consulted on 
 the failed attempt cannot work by construction.
 
 **This class is not unit-testable here** — the defect is purely *where* the template reads its
-state, and the repo has no component-rendering setup. `check-feed-retry.mjs` in the harness covers
-it, injecting a one-shot `/api/posts` failure and asserting the retry both fetches and renders.
+state, and the repo has no component-rendering setup.
+`tools/cross-client-harness/check-feed-retry.mjs` covers it, injecting a one-shot `/api/posts`
+failure and asserting the retry both fetches and renders. Verified on device: the error screen and
+its button are gone and two cards are back, against a build where the same injection left the error
+screen up after a `200`.
 
 ## Attachment layout (PostContent / PostMedia)
 
@@ -137,7 +140,10 @@ viewer before it was right:
   downscales and which costs nothing visually. A gesture now triggers at most one re-render, and
   1.5 → 2 → 3 triggers none. The current bitmap stays displayed throughout and is replaced in place
   when the sharp one lands — an old bitmap is the right image at the wrong resolution, which is
-  strictly better than no image.
+  strictly better than no image. Measured on device by
+  `tools/cross-client-harness/check-pdf-render.mjs`, which samples the first page every 16 ms while
+  the zoom ladder is walked: **473 blank-or-cut frames out of 475 before, 0 out of 474 after**, and
+  the whole 1 → 1.5 → 2 → 3 walk now costs one rasterisation instead of four.
 - **The re-render guard is the CSS width a page was rendered FOR, tracked separately in
   `renderedAt`.** It cannot be read back off the bitmap: `RenderedPdfPage.width` is the canvas size
   in DEVICE pixels (`maxWidth * devicePixelRatio`, capped), so comparing it against `renderWidth`
@@ -198,10 +204,10 @@ invisibly.
 
 **What the device check must assert is the ANCHOR, never that the zoom changed.** The first run
 here passed on "width% 100 → 300" against a build the user immediately reported as zooming in the
-wrong place. `scratchpad/check-pdf-anchor.mjs` identifies a content point (page index + fraction)
-before the gesture and re-locates it after, and it was validated as a negative control against the
-unfixed build first: drift (395, 1370) px there, (-17, -49) with the ratio correction, and the
-anchor correction is what closes the rest.
+wrong place. `tools/cross-client-harness/check-pdf-anchor.mjs` identifies a content point (page
+index + fraction) before the gesture and re-locates it after, and it was validated as a negative
+control against the unfixed build first: drift (395, 1370) px there, (-17, -49) with the ratio
+correction, and the anchor correction closes the rest — measured (-0.8, -0.5) on device.
 
 ## Comment media (image + GIF)
 

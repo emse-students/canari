@@ -1615,6 +1615,37 @@ error: a ratio-based scroll correction assumes the whole document scales, and th
 page)` - 48 px on page 2 at x3, ~192 px by page 8. **A measurement tight enough to be uncomfortable
 is what found it.**
 
+#### The 24th and 25th harness faults: both locators, opposite verdicts
+
+Both came from the same hour, on the two checks written for the PDF re-render and the feed retry,
+and together they say the thing worth keeping: **a locator failure does not bias a verdict in a
+predictable direction.** One produced a PASS, the other a FAIL, and neither had anything to do with
+the app.
+
+**#24 - a PASS on a ladder that was never walked.** `check-pdf-render.mjs` drives the zoom ladder,
+samples the first page every 16 ms and asserts it is never blank and never re-rasterises more than
+once. It returned `PASS (blank/cut frames 0/478, bitmaps 1)` against the build still carrying the
+defect - because its button selector was `/zoom/i`, and the control's `aria-label` is **`Agrandir`**
+(its sibling is `Reduire`). Nothing was clicked, the document sat perfectly still at 100 %, and
+"never blank, at most one bitmap" was trivially true of a page nobody had touched. The log even said
+so - `clicked: "none"` at all three steps - and the verdict line printed over it anyway. The fix is
+not the selector: **every step now asserts its own post-condition** (the click reports `clicked` AND
+the column's `width%` strictly grew), and a ladder that did not move exits `INVALID` before any
+verdict is computed. The same run against the fixed build then read `473/475 -> 0/474` blank frames,
+which is what the check existed to say.
+
+**#25 - a FAIL against a page that was visibly working.** `check-feed-retry.mjs` counted recovered
+posts with `document.querySelectorAll('[data-post-id], article')`. The feed has neither: `PostCard`'s
+root carries `group/card`. So the check reported `FAIL (posts rendered = false, cards 0)` on a run
+whose own other fields already contradicted it - `errorScreen: false`, `knownPost: true`. Reading the
+evidence next to the verdict, rather than the verdict, is what caught it in one step.
+
+The generalisation, and it is the fourth time this campaign has paid for it: **a selector written
+from the outside is a guess about markup you have not read.** `aria-label` guessed from English,
+`article` guessed from what a feed "should" be - both wrong, both silent. Where a check names an
+element, name it from the component source, and give the check enough post-conditions that a locator
+that matched nothing cannot reach the verdict line.
+
 #### Verified on the device (2026-08-07): the cold-start deep link lands
 
 Captured on the rebuilt APK (`lastUpdateTime 08:55:12`, bundle `app.DR0TKxSY.js`), pid 15059, from a

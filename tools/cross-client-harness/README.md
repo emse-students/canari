@@ -60,6 +60,16 @@ is only for surfaces the WebView cannot reach (the notification shade, the syste
 `recon` `echo1` `reloaddl` `losshunt` `hidden-drain` `reload-loss` are per-defect reproductions,
 each named after the work package it settles.
 
+`check-pdf-anchor` `check-pdf-render` `check-feed-retry` are regression checks for UI fixes that
+**no unit test can cover**, because each defect is a property of a running render: where a zoom
+lands, what is on screen *between* two rasterisations, and which branch of an `{#await}` a template
+reads its state from. Each was validated as a negative control against the unfixed build before its
+green verdict was believed - and each earned that rule the hard way. `check-pdf-render` returned
+PASS on a ladder it had never walked (the zoom control's `aria-label` is `Agrandir`, so a `/zoom/i`
+selector clicked nothing), which is why every step now asserts its own post-condition; and
+`check-feed-retry` reported FAIL against a page that was visibly rendering posts, because it counted
+`article`/`data-post-id`, neither of which the feed has - `PostCard`'s root carries `group/card`.
+
 `recon.mjs` deserves singling out: **it is the only thing that can SEE this codebase's loss class**,
 by diffing the markers W1 shows against the markers W2 shows for one thread. A green per-check
 verdict is not a substitute - reconciliation is what found WP-LOSS-1 and WP-ECHO-1.

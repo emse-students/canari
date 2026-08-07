@@ -84,9 +84,10 @@ discriminator, the version name does not move) and three of the four owed checks
   "column width 100 % -> 300 %, page image 395 -> 1186 px" and the user immediately reported it
   zoomed "pas a l'endroit qu'on veut". **The check asserted that the zoom CHANGED and never that it
   was ANCHORED**, so it would have returned the same PASS against a build with no focal point at
-  all. `check-pdf-anchor.mjs` (scratchpad) replaces it: it identifies a CONTENT point before the
-  gesture (page index + fraction within that page) and re-locates it after, which is the observable
-  the user was describing. **It was validated as a NEGATIVE CONTROL against the unfixed build first**
+  all. `check-pdf-anchor.mjs` (now in `tools/cross-client-harness/`) replaces it: it identifies a
+  CONTENT point before the gesture (page index + fraction within that page) and re-locates it after,
+  which is the observable the user was describing.
+  **It was validated as a NEGATIVE CONTROL against the unfixed build first**
   - drift (395, 1370) px - and that is the only reason its later verdicts mean anything.
   Two fixes followed, and the second is the interesting one: `f218bcc6` added the focal point and
   cut the drift to (-17, -49); `b88cf260` closed the rest. **A ratio-based scroll correction is
@@ -112,8 +113,18 @@ discriminator, the version name does not move) and three of the four owed checks
 - **WP-RELOAD-DL-1 PASS**, with the mechanism visible: cold start on `fr.emse.canari://chat/<dm>`,
   claim `fr.emse.canari://chat/642f389a-...` written to `sessionStorage`, parked on `/posts`,
   reloaded - claim STILL there, route still `/posts` after the 250/750/2000 ms re-checks.
-- **Leon's `6139969d` edge-to-edge is NOT verified** - the one gate item left, plus his later
-  `30979c57` (dark-mode nav opacity) and `9d636d6a` (which adds WP-SAFELINK-1 to this file).
+- **PDF TWO-SCALE RENDER: PASS on hardware** (build 21:29:49, commits `1637ed39` + `cb427031`).
+  `check-pdf-render.mjs` samples the first page every 16 ms while the zoom ladder is walked:
+  **473 blank-or-cut frames out of 475 before, 0 out of 474 after**, and 1 -> 1.5 -> 2 -> 3 now costs
+  ONE rasterisation instead of four. Answers the user's report of 2026-08-07 in full.
+- **FEED RETRY: PASS on hardware** (`cb427031`). `check-feed-retry.mjs` injects a one-shot
+  `/api/posts` failure in-page, clicks Reessayer: the error screen and its button are gone and two
+  cards are back, where the same injection on the previous build left the error screen up after a
+  `200`. **The failure injection must be in-page** - CDP's Network domain is blind to the app's own
+  requests on mobile, since `hooks.client.ts` replaces `window.fetch` with the Tauri plugin's Rust
+  client - and the navigation must stay CLIENT-SIDE or the document reload takes the patch with it.
+- **THE APK GATE IS NOW FULLY CLEARED except the backup export's Tauri branch.** Leon's two UI
+  commits are verified above; `9d636d6a` only adds WP-SAFELINK-1 to this file.
 
 **What that evening also established about the rig, and must not be re-derived:**
 
@@ -330,8 +341,9 @@ lose:
   verdict is `PASS` only if the assertions hold AND the run is clean - errors, 4xx, page exceptions,
   WS events, `notable` MLS lines, `stateChanges` and anything `unexplained` are reported next to it.
   A line that turns out to be routine is ADDED to the benign list, never ignored in place.
-- **TWENTY-TWO harness faults have produced a false result, all fixed, and every one is written up in
-  the wiki page** (search "harness fault"). Do not re-derive them - collectively they say four rules,
+- **TWENTY-FIVE harness faults have produced a false result, all fixed, and every one is written up
+  in the wiki page** (search "harness fault"). Do not re-derive them - collectively they say four
+  rules,
   and these are the ones to apply without opening it:
   - **A check that puts the app through a transition must restore every precondition that transition
     destroys.** A kill, a reboot, a radio cycle and an `install -r` all re-lock the PIN, and #22 read
@@ -369,7 +381,12 @@ lose:
     `.chat-composer-editor` belongs to the shared `MentionComposerInput`, so it is on `/posts` too
     and "the composer is on screen" was TRUE on the social feed - `send()` would have typed its
     marker into a comment box on somebody's post. Every use is now scoped to
-    `.chat-composer-footer .chat-composer-editor`.
+    `.chat-composer-footer .chat-composer-editor`. **And a locator failure does not bias the verdict
+    in a predictable direction** - faults #24/#25 came from the same hour and landed opposite ways: a
+    `/zoom/i` selector matched nothing (the label is `Agrandir`), so a check returned PASS on a zoom
+    ladder it never walked, while `article`/`data-post-id` matched nothing in the feed (`PostCard`'s
+    root is `group/card`), so another returned FAIL against a page that was visibly rendering posts.
+    **Name an element from the component source, never from what the markup ought to be.**
 - **The venue is a NEW COMMUNITY, `Campagne de test`, not a channel in MiTV** - a private channel is
   still readable by every association admin, and no association has jolan as sole admin. Two members
   only. Section 11 of the wiki page says why; do not re-derive it.
