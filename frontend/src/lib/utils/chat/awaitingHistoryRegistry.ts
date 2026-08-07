@@ -29,8 +29,24 @@ const PREFIX = 'mls_awaiting_history_since';
  *   from a missing one - the presumption of a gap, and the only case a blind ask is warranted.
  * - `unreadable-frames`: the replay actually gave up on a frame it could never decrypt (pre-join
  *   or forked epoch). A re-encrypted bundle is the ONLY way to obtain it: a proven gap.
+ * - `peer-holds-more`: a manifest diff named messages a peer holds and we do not (WP-HIST-3). The
+ *   strongest evidence of all - not a presumption from emptiness, nor a frame we failed to read,
+ *   but message ids the other side listed. This is what turns "awaiting history" from a state that
+ *   only a bundle can end into one that empties itself: the marker lasts exactly as long as the
+ *   difference does.
  */
-export type AwaitingHistoryReason = 'no-local-history' | 'unreadable-frames';
+export type AwaitingHistoryReason = 'no-local-history' | 'unreadable-frames' | 'peer-holds-more';
+
+/**
+ * Ranks the evidence behind a marker. A PROOF must never be overwritten by a PRESUMPTION: a device
+ * that knows a specific frame is unreadable, or knows the exact ids a peer holds, has learnt
+ * something a later "my store looks non-empty" cannot unlearn.
+ */
+const REASON_RANK: Record<AwaitingHistoryReason, number> = {
+  'no-local-history': 0,
+  'peer-holds-more': 1,
+  'unreadable-frames': 1,
+};
 
 /** A stored marker: when we started waiting, and the evidence that we are. */
 type AwaitingMarker = { since: number; reason: AwaitingHistoryReason };
@@ -44,7 +60,7 @@ function readMarker(raw: string | null): AwaitingMarker | null {
   try {
     const parsed = JSON.parse(raw) as Partial<AwaitingMarker>;
     if (typeof parsed?.since !== 'number' || !Number.isFinite(parsed.since)) return null;
-    if (parsed.reason !== 'no-local-history' && parsed.reason !== 'unreadable-frames') return null;
+    if (parsed.reason === undefined || !(parsed.reason in REASON_RANK)) return null;
     return { since: parsed.since, reason: parsed.reason };
   } catch {
     return null;

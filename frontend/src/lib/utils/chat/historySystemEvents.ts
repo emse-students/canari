@@ -17,6 +17,13 @@ import {
   channelInviteMessageId,
 } from '$lib/envelope';
 
+/**
+ * System events that are live negotiation only and must never be acted on during a replay.
+ *
+ * See the guard in {@link applyReplaySystemEvent} for why.
+ */
+const REPLAY_IGNORED_EVENTS = new Set(['history_digest', 'history_pull']);
+
 /** One Redis-stream history row as returned by `IMlsService.fetchHistory`. */
 export type HistoryRow = { id?: string; sender_id: string; content: string; timestamp: string };
 
@@ -82,6 +89,14 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
   } = ctx;
 
   if (!parsed.system) return;
+
+  // Transient negotiation, meaningless once re-read from the stream: a digest describes what a
+  // device held at one instant, and a pull asks for something that was either answered days ago or
+  // never will be. Replaying either would diff against a store that has moved on, or broadcast a
+  // bundle nobody is waiting for. They are named here rather than left to fall through the chain
+  // unhandled, so that adding a branch for them later has to be a decision instead of an accident.
+  if (REPLAY_IGNORED_EVENTS.has(parsed.system.event ?? '')) return;
+
   const senderNorm = msg.sender_id.toLowerCase();
   // Plain text for a membership notice, a serialized envelope for a card (channel invitation).
   let systemContent: string | null = null;

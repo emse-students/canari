@@ -24,7 +24,13 @@ import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteO
 import { m } from '$lib/paraglide/messages';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
-import { solicitHistoryIfMissing, cancelAllHistorySolicit } from '$lib/utils/chat/historySolicit';
+import {
+  solicitHistoryIfMissing,
+  cancelAllHistorySolicit,
+  setHistoryDigestBroadcaster,
+} from '$lib/utils/chat/historySolicit';
+import { sendHistoryDigest } from '$lib/utils/chat/groupActions';
+import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -875,6 +881,19 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       }
     );
 
+    // WP-HIST-3: the only place holding the store, the device key and the MLS client at once, so it
+    // is where the digest broadcaster is installed. Every solicitation now says what this device
+    // HOLDS before asking, which is what lets the answer be a difference instead of a whole store.
+    setHistoryDigestBroadcaster(async (groupId: string) => {
+      const mls = ctx.ensureMls();
+      return sendHistoryDigest(groupId, digestIdentity(ctx.getUserId(), mls.getDeviceId()), {
+        storage: ctx.getStorage(),
+        deviceKeyB64: ctx.getDeviceKey(),
+        mlsService: mls,
+        log: cb.log,
+      });
+    });
+
     mlsService.onHistoryRequest(
       async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {
         cb.log(
@@ -888,6 +907,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             conversations: cb.conversations,
             log: cb.log,
             requesterUserId,
+            requesterDeviceId,
             selfUserId: ctx.getUserId(),
             groupId,
           });
@@ -1296,6 +1316,9 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   // longer exists - reopening a WebSocket for the user who just signed out.
   unregisterOfflinePromotion();
   cancelAllHistorySolicit();
+  // The broadcaster closes over this session's storage and device key, so it must not outlive it:
+  // a solicitation from the next login would otherwise describe the previous user's store.
+  setHistoryDigestBroadcaster(null);
   historyRequestPendingStore.cancelAll();
   void flushActiveMlsStateEncrypted().finally(() => {
     uninstallMlsStatePersisterLifecycle();

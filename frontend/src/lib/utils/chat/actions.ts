@@ -6,6 +6,9 @@ import type { Conversation } from '$lib/types';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   sendFullHistoryBundle,
+  sendHistoryBundleForIds,
+  sendHistoryPull,
+  readHistoryEntries,
   persistMlsStateAfterMutation,
   forgetMlsGroupIfPresent,
   purgeLocalConversationRecord,
@@ -13,6 +16,13 @@ import {
   isGroupActiveOnServer,
   handleDuplicateLeafError,
 } from '$lib/utils/chat/groupActions';
+import { awaitDigest, digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
+import {
+  diffHistoryDigest,
+  isEmptyHistoryDiff,
+  selectEntryIdsForMonths,
+} from '$lib/utils/chat/historyManifest';
+import { isAwaitingHistory, markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
 import { resolveDirectPeerId } from '$lib/utils/chat/conversations';
 import {
   classifyServerStatus,
@@ -941,11 +951,31 @@ export async function handleWelcomeRequest(params: {
 }
 
 /**
- * Handles an incoming history_request: a device that self-joined `groupId` via an external commit
- * asks for the pre-join history it cannot decrypt on its own. We are already co-members (it is in
- * the MLS tree), so we only resend the history bundle re-encrypted at the current epoch - no re-add,
- * no commit. Guarded to active members holding the group locally; the delivery service already
- * picks a single online responder, so no throttle is needed here.
+ * How long the elected responder waits for the requester's digest before answering with its whole
+ * store.
+ *
+ * The two halves of a solicitation travel by different transports - the election over the WebSocket,
+ * the digest inside MLS - and nothing orders them, so deciding on arrival would answer roughly half
+ * of them the old way. Long enough to cover that reordering, short enough that a peer running a
+ * version too old to send a digest is not left waiting for its history.
+ */
+const HISTORY_DIGEST_GRACE_MS = 3_000;
+
+/**
+ * Handles an incoming history_request: a device asks for history it cannot decrypt on its own. We
+ * are already co-members (it is in the MLS tree), so we only resend messages re-encrypted at the
+ * current epoch - no re-add, no commit. Guarded to active members holding the group locally; the
+ * delivery service already picks a single online responder, so no throttle is needed here.
+ *
+ * **What is sent is a DIFFERENCE, not a store** (WP-HIST-3). The requester broadcasts what it holds;
+ * we diff it against what we hold and send only the messages it is short of - which is usually
+ * nothing at all, and used to be everything. Because the diff is symmetric, the same exchange also
+ * tells US what the requester has and we do not, so a solicitation repairs both devices at once
+ * instead of pushing history one way.
+ *
+ * A requester that sends NO digest gets the old behaviour. That is the rollout story rather than a
+ * safety net: the web deploys in one step and the phones do not, so both halves of this protocol
+ * have to work against a peer that only speaks the other one.
  */
 export async function handleHistoryRequest(params: {
   mlsService: IMlsService;
@@ -954,9 +984,13 @@ export async function handleHistoryRequest(params: {
   conversations: Map<string, Conversation>;
   log: (msg: string) => void;
   requesterUserId: string;
+  /** The requesting DEVICE - a user with several devices must be answered on the right one. */
+  requesterDeviceId: string;
   /** OUR user id - the responder's, not the requester's. */
   selfUserId: string;
   groupId: string;
+  /** Overridable for tests only. */
+  digestGraceMs?: number;
 }): Promise<void> {
   const {
     mlsService,
@@ -965,23 +999,83 @@ export async function handleHistoryRequest(params: {
     conversations,
     log,
     requesterUserId,
+    requesterDeviceId,
     selfUserId,
     groupId,
+    digestGraceMs = HISTORY_DIGEST_GRACE_MS,
   } = params;
+  const short = groupId.slice(0, 8);
   if (!mlsService.getLocalGroups().includes(groupId)) {
-    log(`[HISTORY_REQ] ${groupId.slice(0, 8)}... not local - cannot serve history, skip`);
+    log(`[HISTORY_REQ] ${short}... not local - cannot serve history, skip`);
     return;
   }
   if (conversations.get(groupId)?.lifecycle !== 'active') {
-    log(`[HISTORY_REQ] ${groupId.slice(0, 8)}... not active locally - skip`);
+    log(`[HISTORY_REQ] ${short}... not active locally - skip`);
     return;
   }
-  log(`[HISTORY_REQ] serving history bundle to ${requesterUserId} for ${groupId.slice(0, 8)}...`);
-  await sendFullHistoryBundle(groupId, {
-    storage,
-    deviceKeyB64,
-    mlsService,
-    log,
-    selfUserId,
-  }).catch((e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`));
+
+  const deps = { storage, deviceKeyB64, mlsService, log };
+  const requesterIdentity = digestIdentity(requesterUserId, requesterDeviceId);
+  const digest = await awaitDigest(groupId, requesterIdentity, digestGraceMs);
+
+  if (!digest) {
+    log(
+      `[HISTORY_REQ] no digest from ${requesterIdentity} for ${short}... - sending the whole store`
+    );
+    await sendFullHistoryBundle(groupId, { ...deps, selfUserId }).catch((e) =>
+      log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
+    );
+    return;
+  }
+
+  const entries = await readHistoryEntries(groupId, deps);
+  if (entries === null) {
+    // A read that FAILED proves nothing about the group. Staying silent lets the requester retry
+    // against another member, where answering "you are missing nothing" would end its solicitation
+    // on the strength of a store we could not open.
+    log(`[HISTORY_REQ] ${short}... store unreadable - staying silent so another member answers`);
+    return;
+  }
+
+  const diff = await diffHistoryDigest(entries, digest);
+  const idsToSend =
+    digest.mode === 'ids' ? diff.missingOnPeer : selectEntryIdsForMonths(entries, diff.pushMonths);
+
+  if (idsToSend.length === 0 && isAwaitingHistory(selfUserId, groupId)) {
+    // We hold nothing the requester lacks, but we are ourselves waiting on this group - so "you are
+    // complete" is a claim we are not entitled to make. Answering it would clear the requester's
+    // marker for good on the word of a device that is itself short.
+    log(
+      `[HISTORY_REQ] ${short}... nothing to add and we are awaiting history too - staying silent`
+    );
+  } else {
+    // `announceComplete`: we compared our WHOLE store against the digest, so an empty result really
+    // does mean the requester is missing nothing - the one place entitled to say so.
+    await sendHistoryBundleForIds(groupId, idsToSend, deps, { announceComplete: true }).catch((e) =>
+      log(`[HISTORY_BUNDLE] Diff send error to ${requesterUserId}: ${String(e)}`)
+    );
+  }
+
+  const idsToPull = digest.mode === 'ids' ? diff.missingLocally : [];
+  if (idsToPull.length > 0 || diff.pullMonths.length > 0) {
+    // The requester listed messages we do not have. That is the strongest evidence of a gap this
+    // client can obtain - not a presumption from an empty store, but ids another device named - so
+    // it is recorded durably before the pull is even sent: if the answer never comes, the reconnect
+    // seam re-solicits, and the marker clears itself the moment a later diff comes back empty.
+    markAwaitingHistory(selfUserId, groupId, 'peer-holds-more');
+    await sendHistoryPull(
+      groupId,
+      {
+        from: digestIdentity(selfUserId, mlsService.getDeviceId()),
+        to: requesterIdentity,
+        ids: idsToPull,
+        months: diff.pullMonths,
+      },
+      deps
+    ).catch((e) => log(`[HISTORY_PULL] Pull send error to ${requesterUserId}: ${String(e)}`));
+  }
+
+  log(
+    `[HISTORY_REQ] ${short}... diff with ${requesterIdentity}: ${idsToSend.length} to send, ${idsToPull.length + diff.pullMonths.length} to pull${isEmptyHistoryDiff(diff) ? ' (identical stores)' : ''}`
+  );
 }

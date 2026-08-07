@@ -11,6 +11,9 @@ import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { messageTime } from '$lib/utils/chat/messageOrder';
 import { noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
+import { digestIdentity, noteDigestReceived } from '$lib/utils/chat/historyDigestRendezvous';
+import { parseHistoryDigest, selectEntryIdsForMonths } from '$lib/utils/chat/historyManifest';
+import { readHistoryEntries, sendHistoryBundleForIds } from '$lib/utils/chat/groupActions';
 import { countUnreadForUser } from '$lib/utils/chat/unread';
 import { applyPin } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -98,6 +101,87 @@ export async function handleSystemEvent(
         `[MLS] ${senderNorm} could not decrypt a message in ${convoKey.slice(0, 8)}… - retransmitting ${count} payload(s)`
       );
     }
+    return true;
+  }
+
+  // A peer is telling us what it holds for this conversation, so that whichever member the server
+  // elects can answer a solicitation with the DIFFERENCE rather than its whole store (WP-HIST-3).
+  // Only recorded here: the election arrives by a different transport, and the two are joined by the
+  // rendezvous so they can land in either order.
+  if (event === 'history_digest') {
+    const from = String(data?.from ?? '');
+    const claimedUser = from.split(':')[0]?.toLowerCase();
+    const deviceId = from.slice(from.indexOf(':') + 1);
+    // MLS authenticates the sending USER; the device half is self-asserted. Cross-checking the user
+    // means the only thing a member can misreport is which of its OWN devices it is - which costs a
+    // mis-addressed bundle its owner can already read, never another member's history.
+    if (!claimedUser || !deviceId || claimedUser !== senderNorm) {
+      log(`[HISTORY_DIGEST] Rejected: "${from}" does not match the MLS sender ${senderNorm}`);
+      return true;
+    }
+    const digest = parseHistoryDigest(data?.digest);
+    if (!digest) {
+      log(`[HISTORY_DIGEST] Malformed digest from ${senderNorm} for ${convoKey.slice(0, 8)}…`);
+      return true;
+    }
+    noteDigestReceived(convoKey, from, digest);
+    const size =
+      digest.mode === 'ids' ? `${digest.ids.length} id(s)` : `${digest.buckets.length} month(s)`;
+    log(
+      `[HISTORY_DIGEST] From ${senderNorm} for ${convoKey.slice(0, 8)}… - ${digest.mode}, ${size}`
+    );
+    return true;
+  }
+
+  // The mirror image: a peer diffed our digest against its own store, found messages IT lacks, and
+  // is asking us for them by name. Every leg of this exchange is a group broadcast, so the first
+  // thing to establish is whether it was meant for us at all.
+  //
+  // This is where the exchange terminates, and that is deliberate: a pull is answered by a bundle,
+  // and a bundle asks for nothing. Nothing here can re-enter the loop it came from.
+  if (event === 'history_pull') {
+    const me = digestIdentity(userId, mlsService.getDeviceId());
+    if (String(data?.to ?? '').toLowerCase() !== me.toLowerCase()) return true;
+
+    const deps = { storage, deviceKeyB64, mlsService, log };
+    const ids = Array.isArray(data?.ids)
+      ? (data.ids as unknown[]).filter((id): id is string => typeof id === 'string' && !!id.trim())
+      : [];
+    const months = Array.isArray(data?.months)
+      ? (data.months as unknown[]).filter(
+          (m): m is string => typeof m === 'string' && /^\d{4}-\d{2}$/.test(m)
+        )
+      : [];
+
+    let wanted = ids;
+    if (wanted.length === 0 && months.length > 0) {
+      // A bucket diff resolves to a month, never to a message, so the asker cannot name what it
+      // wants: it names the month and we send everything we hold in it. The receiver dedupes by id,
+      // so over-sending costs bandwidth and nothing else.
+      const entries = await readHistoryEntries(convoKey, deps);
+      if (entries === null) {
+        log(
+          `[HISTORY_PULL] Store unreadable - cannot answer ${senderNorm} for ${convoKey.slice(0, 8)}…`
+        );
+        return true;
+      }
+      wanted = selectEntryIdsForMonths(entries, months);
+    }
+    if (wanted.length === 0) {
+      log(
+        `[HISTORY_PULL] ${senderNorm} asked for nothing usable in ${convoKey.slice(0, 8)}… - ignored`
+      );
+      return true;
+    }
+
+    log(
+      `[HISTORY_PULL] ${senderNorm} wants ${wanted.length} message(s) from ${convoKey.slice(0, 8)}…`
+    );
+    // `announceComplete: false`: we were asked about a SUBSET, so holding none of it says nothing
+    // about whether the asker is complete - and an empty bundle would end its solicitation for good.
+    await sendHistoryBundleForIds(convoKey, wanted, deps, { announceComplete: false }).catch((e) =>
+      log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`)
+    );
     return true;
   }
 

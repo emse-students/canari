@@ -359,30 +359,59 @@ DM and a DM message into a channel. Only the transport differs (MLS group vs cha
 a media forward re-sends the same envelope in both cases, so no blob is re-uploaded and the CEK
 travels with it.
 
-## Pooling history between devices (designed, not built)
+## Pooling history between devices (legs 1-3 BUILT 2026-08-07, steps 3-4 owed)
 
-Today's exchange is all-or-nothing: `sendFullHistoryBundle` ships the responder's ENTIRE store and
-the receiver dedupes by id, one way, with neither side knowing what the other holds. The design below
-turns that bundle into a diff. It was settled on 2026-08-02 by reading the code - nothing about it is
-open, it only has to be written.
+Today's exchange used to be all-or-nothing: `sendFullHistoryBundle` shipped the responder's ENTIRE
+store and the receiver deduped by id, one way, with neither side knowing what the other held. It is
+now a diff. The design was settled on 2026-08-02 by reading the code; what shipped differs from it on
+exactly one point, recorded below.
 
-**The algorithm already exists and is tested.** `sync/syncEngine.ts` has `buildLocalSyncManifest`
-(all message ids per conversation, sorted) and `diffLocalAndRemoteManifest` (symmetric difference,
-returning `missingOnRequester` AND `missingOnPeer`), computed entirely client-side. What is missing
-is the TRANSPORT: it only runs today over a QR-paired session between two of the user's own devices,
-driven by hand (`SyncSessionModal.svelte`, `useSyncSession.svelte.ts`).
+**The algorithm already existed and was tested.** `sync/syncEngine.ts` has `buildLocalSyncManifest`
+(all message ids per conversation, sorted) and `diffLocalAndRemoteManifest` (symmetric difference).
+What was missing was the TRANSPORT, and that is what `utils/chat/historyManifest.ts` (pure, 42 tests)
+plus `utils/chat/historyDigestRendezvous.ts` (11 tests) now carry.
 
-**Three legs.** Leg 1 is today's WS `history_request`, unchanged - server-side election is what keeps
-one responder instead of a storm. Leg 2: the elected peer answers `history_digest` instead of its
-whole store. Leg 3: the requester - who alone knows both sides - diffs, then sends
-`history_pull {to, ids|buckets}` for what it lacks and a `history_bundle` filtered by id for what the
-peer lacks. No difference means zero traffic, the marker clears, and the empty-bundle hack in
-`sendFullHistoryBundle` retires.
+**THE DIRECTION IS FLIPPED against the design above - deliberately, do not restore it.** The design
+had the RESPONDER send the digest and the REQUESTER diff. It ships the other way round: the
+**requester broadcasts its digest, the elected responder diffs**. Two reasons, both structural. It is
+backwards compatible with no negotiation - an old responder ignores an event it does not know and
+sends a full bundle, which is exactly right; a new responder receiving nothing from an old requester
+falls back to the same. And it costs one round trip fewer, because the responder's reply already
+carries the data instead of asking for it.
 
-**Two digest modes, by size.** `ids` (the sorted id list) below ~1000 ids, `buckets` above it: per
-`YYYY-MM`, a count plus a truncated SHA-256 of that month's sorted ids, ~2 KB for any history. A
-differing bucket over-sends that month; the receiver dedupes by id, so the cost is bandwidth, never
-correctness.
+**The legs as built.** Leg 1 is the WS `history_request`, unchanged - server-side election is what
+keeps one responder instead of a storm. Leg 2 is `history_digest`, broadcast inside MLS by the
+requester (`setHistoryDigestBroadcaster`, awaited by `historySolicit.fire` before the WS request).
+Leg 3 is the responder's answer: it diffs, sends a `history_bundle` filtered by id for what the
+requester lacks, and sends `history_pull {to, ids|months}` for what IT lacks. A pull is answered by a
+bundle and a bundle asks for nothing, so the exchange cannot re-enter itself - the WP-RETRANSMIT-1
+lesson, applied by construction.
+
+**The rendezvous.** The two halves travel by different transports and nothing orders them: the
+elected responder can be handed the WS request before or after the digest reaches its inbound MLS
+queue. So it waits `HISTORY_DIGEST_GRACE_MS` (3 s) for the digest, then falls back to
+`sendFullHistoryBundle`. A stored digest is CONSUMED on take - a later request must diff against a
+fresh snapshot, never a minute-old claim (TTL 60 s).
+
+**Two digest modes, by size.** `ids` (the sorted id list) below `DIGEST_ID_MODE_MAX` (1000), `buckets`
+above it: per `YYYY-MM`, a count plus a truncated SHA-256 of that month's sorted ids, ~2 KB for any
+history. Three details are the whole correctness of it:
+
+- **Months are cut in UTC.** Two devices in different timezones - or one phone that travelled -
+  otherwise disagree about every message near a boundary and re-send that month forever.
+- **Ids sort by CODEPOINT, never `localeCompare`.** The sort feeds the hash, so a locale-dependent
+  comparator makes every bucket disagree between two devices. The sort is part of the protocol.
+- **A differing bucket is requested in BOTH directions.** A fingerprint proves the month is not
+  identical, never which side is short; guessing drops messages, over-asking costs bandwidth and the
+  receiver already dedupes by id.
+
+**`announceComplete` distinguishes two silences.** "I compared my WHOLE store and you are complete"
+may send an empty bundle (it clears the requester's marker); "I was asked about a SUBSET and hold
+none of it" must stay silent, or it would clear a marker it never answered.
+
+**A failed store read is not an empty store.** `readHistoryEntries` returns `null` rather than `[]`
+on a read error, and the responder then says nothing at all - an empty store is a fact worth telling
+a peer, a failed read is a claim we are not entitled to make.
 
 **Deletions are a non-problem**, verified in code: a deletion keeps a TOMBSTONE row (`isDeleted`), so
 the id stays in the manifest, and both stores import non-destructively (`INSERT OR IGNORE` / IDB
@@ -392,9 +421,17 @@ WINS over a body, or a peer that missed the deletion undoes it.
 **Metadata**: the digest rides inside MLS, so the server learns nothing it does not already hold.
 Co-members learn which ids this device kept, hashed per month in bucket mode. Accepted.
 
-**Two traps.** Every leg is a GROUP broadcast, so the pull must carry its target and non-targets must
-ignore it. And the REPLAY path (`historySystemEvents.ts`) must ignore `history_digest` /
-`history_pull` - transient negotiation, meaningless when re-read days later.
+**Two traps, both now handled.** Every leg is a GROUP broadcast, so the pull carries its target
+(`digestIdentity(userId, deviceId)` - the DEVICE, so a user's other two devices do not answer a pull
+addressed to the first) and non-targets ignore it. And the REPLAY path (`historySystemEvents.ts`)
+ignores `history_digest` / `history_pull` through an explicit `REPLAY_IGNORED_EVENTS` set - transient
+negotiation, meaningless when re-read days later, and naming them means adding a branch later has to
+be a decision rather than an accident.
+
+**A digest names a device, and a member can only misreport its OWN.** `systemMessageHandler`
+cross-checks the `userId` a `history_digest` claims against the authenticated MLS sender before
+recording it; the device half is unverifiable and harmless (the worst a member can do is answer for
+the wrong one of its own devices).
 
 **Scope is DMs and groups only.** Channel rows are wiped and re-fetched from the server tally at
 every load, so pooling would fight the refresh (`isChannelConversationId`).
@@ -404,12 +441,19 @@ diff with at least one peer is non-empty", which empties itself.
 
 ### Order of work
 
-1. A pure `historyManifest.ts` plus its tests - the digest build and the diff, no transport.
-2. The wiring: `handleHistoryRequest` sends a digest, `systemMessageHandler` gains the digest and
-   pull branches, `groupActions` gains a bundle filtered by id.
-3. Marker semantics, per the paragraph above.
-4. The three defects below.
-5. Wiki + `CHANGELOG.md`.
+1. **DONE** - the pure `historyManifest.ts` plus its tests: the digest build and the diff, no
+   transport.
+2. **DONE** - the wiring: the requester broadcasts a digest, `handleHistoryRequest` awaits it and
+   diffs, `systemMessageHandler` gained the digest and pull branches, `groupActions` gained
+   `sendHistoryBundleForIds` / `sendHistoryDigest` / `sendHistoryPull` / `readHistoryEntries`.
+3. **OWED** - marker semantics, per the paragraph above. The `peer-holds-more` reason exists and is
+   written before a pull; the clearing path ("the marker empties itself when the diff comes back
+   empty") is not wired yet.
+4. **OWED** - the three defects below, plus the give-up counter (the escalation point from the narrow
+   `decrypt_failed` resend to this diff, near `shouldSignalDesync` in `inboundFrameLedger.ts`) and
+   `RETENTION_MS` in `recentSends.ts`, which is a bare `5 * 60_000` and should be derived from
+   `DESYNC_RETRANSMIT_WINDOW_MS` (120 s) plus a round-trip margin.
+5. Wiki + `CHANGELOG.md` - done for legs 1-3.
 
 ### Three defects that belong to this work, or to nothing
 

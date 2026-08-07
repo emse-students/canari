@@ -34,6 +34,29 @@ type PendingSolicit = { timers: ReturnType<typeof setTimeout>[] };
 const pending = new Map<string, PendingSolicit>();
 
 /**
+ * Broadcasts this device's digest for a group, resolving `true` when it went out.
+ *
+ * Registered by the session rather than threaded through every caller: soliciting is triggered from
+ * four places (a Welcome, an external join, each reconnect, a give-up escalation), and only the
+ * session holds the store, the device key and the MLS client at once. Passing all three down four
+ * call chains to reach one broadcast would put storage knowledge in every one of them.
+ */
+export type HistoryDigestBroadcaster = (groupId: string) => Promise<boolean>;
+
+let broadcastDigest: HistoryDigestBroadcaster | null = null;
+
+/**
+ * Installs the digest broadcaster for this session, or clears it on teardown.
+ *
+ * While none is installed every solicitation degrades to asking for the peer's whole store - correct,
+ * just wasteful - so its absence is LOGGED at the point of use rather than passed over: a session
+ * that silently forgot to register one would look exactly like a fleet of peers too old to answer.
+ */
+export function setHistoryDigestBroadcaster(fn: HistoryDigestBroadcaster | null): void {
+  broadcastDigest = fn;
+}
+
+/**
  * Solicits the pre-join history bundle from one online member after this device freshly joined
  * `groupId` (via an external commit OR a Welcome). Both join paths land the device at the current
  * epoch WITHOUT the pre-join history it cannot decrypt on its own, so it must ask a member to
@@ -64,9 +87,27 @@ export function solicitHistory(
   const entry: PendingSolicit = { timers: [] };
   pending.set(groupId, entry);
 
-  const fire = (attempt: number): Promise<void> => {
+  const fire = async (attempt: number): Promise<void> => {
     // WP-HIST-1: register the start of this attempt with the timeout/retry tracker.
-    historyRequestPendingStore.start(groupId, () => fire(attempt + 1));
+    historyRequestPendingStore.start(groupId, () => void fire(attempt + 1));
+
+    // Say what we HOLD before asking, so the elected member can answer with the difference. Sent
+    // first and awaited: it rides inside MLS while the request goes over the WebSocket, and the
+    // responder only waits a few seconds for it before falling back to its whole store. Failing to
+    // describe ourselves is not a reason to skip the ask - the fallback is exactly the old
+    // behaviour, which is also what a peer running an older build will do anyway.
+    if (broadcastDigest) {
+      await broadcastDigest(groupId).catch((e) =>
+        log(
+          `[HISTORY_REQ] digest broadcast failed for ${groupId.slice(0, 8)}...: ${String(e).slice(0, 120)}`
+        )
+      );
+    } else {
+      log(
+        `[HISTORY_REQ] no digest broadcaster registered - asking ${groupId.slice(0, 8)}... for its whole store`
+      );
+    }
+
     return mlsService
       .sendHistoryRequest(groupId)
       .then(() => log(`[HISTORY_REQ] solicit attempt ${attempt} for ${groupId.slice(0, 8)}...`))

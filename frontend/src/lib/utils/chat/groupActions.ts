@@ -5,6 +5,12 @@ import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 import { isAwaitingHistory } from './awaitingHistoryRegistry';
+import {
+  buildHistoryDigest,
+  chunkIds,
+  type HistoryDigest,
+  type HistoryEntry,
+} from './historyManifest';
 
 /**
  * Reports (log + `console.warn`) devices skipped by `addMembersBulk` because their KeyPackage
@@ -509,10 +515,34 @@ export async function sendFullHistoryBundle(
     return;
   }
 
+  await sendBundleChunks(groupId, messages, { mlsService, log }, chunkSize);
+  log(`[HISTORY_BUNDLE] Full history sent: ${messages.length} message(s)`);
+}
+
+/** Shared deps of every history control frame: the group send and somewhere to say what happened. */
+type HistorySendDeps = { mlsService: IMlsService; log: (msg: string) => void };
+
+/** Everything a device needs to read its own store before it can describe or answer a diff. */
+export type HistoryStoreDeps = HistorySendDeps & {
+  storage: IStorage | null;
+  deviceKeyB64: string;
+};
+
+/**
+ * Chunks `messages` into `history_bundle` frames and sends them, stopping at the first failure.
+ *
+ * Shared by the full bundle and the id-filtered one so a change to the wire shape cannot reach one
+ * path and miss the other - the two differ only in WHICH messages they were handed.
+ */
+async function sendBundleChunks(
+  groupId: string,
+  messages: StoredMessage[],
+  { mlsService, log }: HistorySendDeps,
+  chunkSize: number
+): Promise<void> {
   const totalChunks = Math.ceil(messages.length / chunkSize);
   for (let i = 0; i < messages.length; i += chunkSize) {
-    const chunk = messages.slice(i, i + chunkSize);
-    const payload = chunk.map(serializeForBundle);
+    const payload = messages.slice(i, i + chunkSize).map(serializeForBundle);
     const bytes = encodeAppMessage(
       mkSystem('history_bundle', JSON.stringify({ messages: payload }))
     );
@@ -526,5 +556,169 @@ export async function sendFullHistoryBundle(
       return;
     }
   }
-  log(`[HISTORY_BUNDLE] Full history sent: ${messages.length} message(s)`);
 }
+
+/**
+ * Reads the local store for `groupId` as manifest entries - an id and the instant that buckets it.
+ *
+ * Returns `null` when the store is unreadable, which is NOT the same as an empty conversation: an
+ * empty store is a fact worth telling a peer, a failed read is a claim we are not entitled to make.
+ */
+export async function readHistoryEntries(
+  groupId: string,
+  { storage, deviceKeyB64, log }: HistoryStoreDeps
+): Promise<HistoryEntry[] | null> {
+  if (!storage) return null;
+  try {
+    const messages = await storage.getMessages(groupId, deviceKeyB64);
+    return messages.map((m) => ({
+      id: m.id,
+      timestamp: typeof m.timestamp === 'number' ? m.timestamp : Number(m.timestamp),
+    }));
+  } catch (e) {
+    log(
+      `[HISTORY_DIGEST] Store read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`
+    );
+    return null;
+  }
+}
+
+/**
+ * Broadcasts what this device holds for `groupId`, so whichever member the server elects can answer
+ * with the DIFFERENCE instead of its entire store.
+ *
+ * `from` is carried in the payload because an MLS application message identifies its sender by USER
+ * and this exchange is addressed per DEVICE - a user with three devices must be able to solicit from
+ * one of them without the other two being answered in its place. The receiver checks the claimed
+ * user id against the authenticated MLS sender, so the only thing a device can lie about is which of
+ * its OWNER's devices it is.
+ *
+ * It rides inside MLS, never over the WebSocket: the ids of the messages a device kept are metadata
+ * the server does not hold today and must not learn.
+ */
+export async function sendHistoryDigest(
+  groupId: string,
+  from: string,
+  deps: HistoryStoreDeps
+): Promise<boolean> {
+  const { mlsService, log } = deps;
+  const entries = await readHistoryEntries(groupId, deps);
+  if (entries === null) {
+    log(`[HISTORY_DIGEST] Cannot describe ${groupId.slice(0, 8)}… - no readable store`);
+    return false;
+  }
+
+  const digest = await buildHistoryDigest(entries);
+  const summary =
+    digest.mode === 'ids' ? `${digest.ids.length} id(s)` : `${digest.buckets.length} month(s)`;
+  const bytes = encodeAppMessage(mkSystem('history_digest', JSON.stringify({ from, digest })));
+  try {
+    await mlsService.sendMessage(groupId, bytes, undefined, true);
+    log(`[HISTORY_DIGEST] Sent for ${groupId.slice(0, 8)}… - ${digest.mode} mode, ${summary}`);
+    return true;
+  } catch (e) {
+    log(`[HISTORY_DIGEST] Send failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
+    return false;
+  }
+}
+
+/**
+ * Asks one specific device for the messages this one is missing, by id or - when the digest could
+ * only resolve to the month - by month.
+ *
+ * Split across several frames because a diff is unbounded (a device back after a month away can be
+ * short thousands of messages) while an MLS application message is not.
+ */
+export async function sendHistoryPull(
+  groupId: string,
+  request: { from: string; to: string; ids?: readonly string[]; months?: readonly string[] },
+  { mlsService, log }: HistorySendDeps
+): Promise<void> {
+  const { from, to, ids, months } = request;
+  const frames: Array<Record<string, unknown>> =
+    ids && ids.length > 0
+      ? chunkIds(ids).map((batch) => ({ from, to, ids: batch }))
+      : months && months.length > 0
+        ? [{ from, to, months: [...months] }]
+        : [];
+
+  if (frames.length === 0) return;
+
+  for (const payload of frames) {
+    const bytes = encodeAppMessage(mkSystem('history_pull', JSON.stringify(payload)));
+    try {
+      await mlsService.sendMessage(groupId, bytes, undefined, true);
+    } catch (e) {
+      log(`[HISTORY_PULL] Send failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
+      return;
+    }
+  }
+  log(
+    `[HISTORY_PULL] Asked ${to} for ${ids?.length ?? 0} id(s) / ${months?.length ?? 0} month(s) in ${groupId.slice(0, 8)}… (${frames.length} frame(s))`
+  );
+}
+
+/**
+ * Sends only the messages named by `ids`, which is what a diff resolves to.
+ *
+ * `announceComplete` decides what an EMPTY selection means, and the two answers are not
+ * interchangeable:
+ *
+ * - `true` - we compared our whole store against the peer's digest and it is missing nothing. That
+ *   deserves an empty bundle, because "you are complete" and "nobody answered" must not be the same
+ *   signal: conflating them leaves a device that is already up to date showing the offline banner
+ *   and re-soliciting on every reconnect for the whole 30-day give-up horizon.
+ * - `false` - we were asked for specific messages and hold none of them. Saying "complete" there
+ *   would end the peer's solicitation on the word of a device that was only ever asked about a
+ *   subset, when another member may well hold what it wants. Stay silent and let it retry.
+ */
+export async function sendHistoryBundleForIds(
+  groupId: string,
+  ids: readonly string[],
+  deps: HistoryStoreDeps,
+  opts: { announceComplete: boolean; chunkSize?: number }
+): Promise<void> {
+  const { storage, deviceKeyB64, mlsService, log } = deps;
+  const { announceComplete, chunkSize = 200 } = opts;
+  if (!storage) {
+    log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
+    return;
+  }
+
+  const wanted = new Set(ids);
+  let selected: StoredMessage[] = [];
+  if (wanted.size > 0) {
+    try {
+      selected = (await storage.getMessages(groupId, deviceKeyB64)).filter((m) => wanted.has(m.id));
+    } catch (e) {
+      // A read that FAILED proves nothing about the group: stay silent so the requester retries
+      // against another member rather than concluding it is already complete.
+      log(`[HISTORY_BUNDLE] Read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
+      return;
+    }
+  }
+
+  if (selected.length === 0) {
+    if (!announceComplete) {
+      log(
+        `[HISTORY_BUNDLE] Hold none of the ${wanted.size} message(s) asked for in ${groupId.slice(0, 8)}… - staying silent so another member can answer`
+      );
+      return;
+    }
+    const bytes = encodeAppMessage(mkSystem('history_bundle', JSON.stringify({ messages: [] })));
+    try {
+      await mlsService.sendMessage(groupId, bytes, undefined, true);
+      log(`[HISTORY_BUNDLE] Nothing to add for ${groupId.slice(0, 8)}… - empty bundle sent`);
+    } catch (e) {
+      log(`[HISTORY_BUNDLE] Empty bundle send error: ${String(e).slice(0, 120)}`);
+    }
+    return;
+  }
+
+  await sendBundleChunks(groupId, selected, { mlsService, log }, chunkSize);
+  log(
+    `[HISTORY_BUNDLE] Diff sent for ${groupId.slice(0, 8)}…: ${selected.length} of ${wanted.size} requested message(s)`
+  );
+}
+
+export type { HistoryDigest };
