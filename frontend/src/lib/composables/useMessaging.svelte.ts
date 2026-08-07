@@ -157,8 +157,24 @@ export function useMessaging() {
     if (bufferUi) {
       bulkIngestActive = true;
       bulkIngestSeq = 0;
+      warnIfDiscardingBuffered('beginBulkMessageIngest');
       bulkIngestBuffer.clear();
     }
+  }
+
+  /**
+   * Both clear sites below discard whatever is still buffered, and a drain restarting before the
+   * previous one ended is exactly that shape. Discarding is the deliberate behaviour - a flush here
+   * would re-enter the ingest path from inside its own reset - but it must never be SILENT, because
+   * a dropped buffer is indistinguishable from a message that never arrived. This is the only trace
+   * it leaves.
+   */
+  function warnIfDiscardingBuffered(where: string) {
+    if (bulkIngestBuffer.size === 0) return;
+    const count = [...bulkIngestBuffer.values()].reduce((sum, msgs) => sum + msgs.length, 0);
+    console.warn(
+      `[ADD_MSG] ${where}: discarding ${count} buffered message(s) across ${bulkIngestBuffer.size} conversation(s) - they were never rendered nor persisted`
+    );
   }
 
   /** Clears catch-up UI state (safety net if begin/end ever desync). */
@@ -166,6 +182,7 @@ export function useMessaging() {
     messageCatchupDepth = 0;
     isMessageCatchupActive = false;
     bulkIngestActive = false;
+    warnIfDiscardingBuffered('resetMessageCatchupState');
     bulkIngestBuffer.clear();
   }
 
@@ -231,7 +248,17 @@ export function useMessaging() {
   ) {
     const normalized = contactName.toLowerCase();
 
-    if (bulkIngestActive) {
+    // An OWN message is never deferred, and that is a difference in kind rather than a tuning
+    // choice. The bulk buffer exists to stop a large inbound drain re-rendering the list message by
+    // message - but MLS gives no echo of your own message, so THIS call is the only writer the
+    // sender's copy will ever get, and the buffer is discarded without flushing by a second drain
+    // (`beginBulkMessageIngest` clears unconditionally) and by `resetMessageCatchupState`. The
+    // outbox cannot repair it either: `persistSent` looks the message up in `conversations`, which a
+    // buffered message never reached, and returns without writing. So a send composed during any
+    // drain window died before it was persisted - the receiver had it and the sender lost it at the
+    // next load (WP-ECHO-1). It also explains why the OFFLINE path was always correct: offline there
+    // is no inbound drain, so the echo took the live path. One extra item costs nothing to render.
+    if (bulkIngestActive && !isOwnMessage(senderId, ctx.userId)) {
       const convo = ctx.conversations.get(normalized);
       if (!convo) {
         console.warn(
