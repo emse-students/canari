@@ -320,18 +320,22 @@ h6,
 /* The chat composer is only visible when the BottomNav is unmounted (mobile-convo-open),
    so no extra padding is needed to clear it. */
 
-/* Keyboard open: shell height follows visual viewport; only lift composer when layout did not resize (adjustPan). */
+/* Keyboard open: shell height follows visual viewport; only lift composer when layout did not resize (adjustPan).
+   Same floor as the keyboard-closed rule below - the reserved space must not visibly shrink
+   just because the keyboard opened. */
 .keyboard-open .chat-composer-footer {
   bottom: var(--keyboard-layout-inset-bottom, 0px);
-  padding-bottom: max(0.5rem, env(safe-area-inset-bottom)) !important;
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom)) !important;
 }
 
-/* Keyboard open with adjustPan (the layout viewport does NOT shrink): bound the chat shell
-   to the visible visual-viewport height so messages can't be scrolled off-screen below the
-   keyboard. No-op under adjustResize, where --app-viewport-height already equals the window. */
-html.keyboard-open .app-layout {
-  height: var(--app-viewport-height, 100dvh);
-}
+/* `.app-layout` deliberately has NO keyboard-open height override (WP-KBD-1). Its ancestor
+   chain (routes/+layout.svelte's `h-[var(--app-viewport-height,100dvh)]` wrapper, down through
+   several `flex-1`/`inset-0`/`height:100%` layers) already shrinks to the pinned height, with
+   the status-bar inset subtracted exactly once via that wrapper's own `padding-top`. Pinning
+   `.app-layout` to the SAME variable a second time, independently of its already-shrunk parent
+   chain, double-subtracted that inset and left a gap the height of the status bar between the
+   shell's real bottom and the keyboard - the fix is not re-deriving the correction in JS or CSS,
+   it is not doing it twice. */
 
 .keyboard-open .chat-messages-scroll {
   /* --chat-composer-height already includes its own padding-bottom (set by
@@ -352,7 +356,7 @@ html.keyboard-open .app-layout {
 }
 
 .mobile-convo-open.keyboard-open .chat-composer-footer {
-  padding-bottom: max(0.5rem, env(safe-area-inset-bottom)) !important;
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom)) !important;
 }
 
 /* Chat layout fills the full viewport - no page scroll behind the chat shell. */

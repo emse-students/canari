@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebView
+import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.google.firebase.messaging.FirebaseMessaging
 import java.io.File
@@ -23,6 +24,12 @@ class MainActivity : TauriActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
+        // The web layer reads system-bar insets via env(safe-area-inset-*) everywhere (status
+        // bar, nav bar, keyboard) - without this call that only holds by luck of OS-enforced
+        // edge-to-edge on Android 15+ targetSdk 35+; below that, or on OEMs that don't apply it
+        // consistently (seen on a Xiaomi/HyperOS device), the nav bar sits outside the window and
+        // the insets read back as zero, leaving the composer flush against the nav bar.
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
         // Request the notification permission natively on Android 13+

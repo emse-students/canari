@@ -391,7 +391,7 @@ Notes on the adoption pass:
 
 `KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events picked up by `MainChatPage` → routed through the normal media pipeline.
 
-### The soft keyboard and the app shell (WP-KBD-1, fixed 2026-08-07 - device verification owed)
+### The soft keyboard and the app shell (WP-KBD-1, shipped and verified 2026-08-07)
 
 `keyboardViewport.svelte.ts` pins the shell to the visual viewport while the keyboard is up:
 
@@ -421,27 +421,92 @@ Measured on device 2026-08-06, keyboard open:
 The invariant to restore is `shell bottom <= visual viewport bottom`: the pinned height is the space
 below the shell's own top, not the viewport's full height.
 
-**Fixed 2026-08-07, in `computeSnapshot` rather than in a component**, per the invariant above:
-`ViewportMeasurement` gained a `shellTop` field (the app shell's `getBoundingClientRect().top`,
-read from `.app-layout` in `readSnapshot`), and `--app-viewport-height` is now `offsetTop + vvHeight
-- shellTop` (clamped to zero), not the raw `vvHeight`. On the measured device this yields
-520.81px instead of 571.81px, and `.app-layout`'s own CSS rule needed no change - it already just
-consumes the var. Fixing the var at the source, rather than adding `- env(safe-area-inset-top)` to
-every consumer's own `calc()` (the way the desktop `AppSidebar` already does), keeps one corrected
-value instead of a per-consumer patch that the next new consumer would have to remember too. Unit
-tests pin the invariant with the exact recorded numbers (`keyboardViewport.test.ts`). **Owed: no
-physical device has exercised this build yet** - the repro is the ordinary gesture from the table
-above (composer, HOME, back), not a script `focus()`.
+**First attempt (same day) was wrong and was reverted.** It fixed `computeSnapshot` to subtract a
+new `shellTop` measurement (`.app-layout`'s own `getBoundingClientRect().top`) from
+`--app-viewport-height`, on the reasoning that the var should already be "the space below the
+shell's own top" at the source, rather than patching every CSS consumer with its own
+`- env(safe-area-inset-top)` the way the desktop `AppSidebar` already does. That reasoning was
+right for `.app-layout` **considered alone** and wrong for the system as a whole: `.app-layout`'s
+own ancestor chain - `routes/+layout.svelte`'s `h-[var(--app-viewport-height,100dvh)]` wrapper,
+whose `padding-top: env(safe-area-inset-top)` **already** reduces its content box by the same
+inset, unconditionally, whether or not the keyboard is open - was *already* correctly shrunk by
+that same variable. Subtracting the inset a second time, inside the variable itself, meant
+`.app-layout` (still separately pinned to `height: var(--app-viewport-height)` via
+`html.keyboard-open .app-layout {...}`) ended up **shorter than its own already-shrunk immediate
+parent** by exactly the inset amount - a gap of that size opened between the shell's real bottom
+and the keyboard, revealing the page background behind it (a visibly different color, which is
+what caught this on re-test: the user's screenshot showed a lavender strip above the keyboard that
+had no business being there).
 
-The same investigation also found a second, independent bug in `app.css`'s `.chat-messages-scroll`
+Measured live over CDP (`tools/cross-client-harness/cdp.mjs`, `adb forward tcp:9222
+localabstract:webview_devtools_remote_<pid>`) on a Xiaomi/HyperOS phone, keyboard open, WITH the
+first (wrong) fix applied:
+
+| element | rect | note |
+|---|---|---|
+| `.app-layout` | top 0, bottom 495, height 495 | `--app-viewport-height` = 495px (534 vvHeight - 39 shellTop) |
+| its immediate parent (`page-scroll-wrap`) | top 39, bottom 495, height 456 | sized from the OUTER ancestor's content box: 495 (outer height, same var) - 39 (outer's own padding-top) |
+| visible viewport bottom | 534 (`offsetTop 0 + vvHeight 534`) | |
+
+`.app-layout` (495 tall) was **taller** than the box it sits inside (456 tall) by exactly 39 -
+the double-subtracted inset - and the browser scrolled the (nominally `overflow:hidden`,
+`page-scroll-wrap:has(.app-layout)`-gated) container to its far scroll position to keep the
+focused composer in view, revealing the 39px sliver of empty space above `.app-layout`'s
+now-too-tall box instead of clipping it.
+
+**The real fix (2026-08-07) deletes the redundant CSS rule instead**:
+
+```diff
+- html.keyboard-open .app-layout {
+-   height: var(--app-viewport-height, 100dvh);
+- }
+```
+
+`.app-layout` was never supposed to re-consume `--app-viewport-height` independently of its
+parent chain - every intermediate layer between the outer ancestor and `.app-layout` (`flex-1`,
+`absolute inset-0`, `height: 100%`) is a pure proportional fill, so once the OUTER ancestor shrinks
+(which it already did, unconditionally, before any of today's changes), the shrink cascades down
+correctly on its own with the inset subtracted exactly ONCE, at the top. `computeSnapshot` is back
+to its original, simpler `viewportHeight: m.vvHeight` - the `shellTop` field, `readShellTop()`, and
+the tests pinning them were all removed along with it. Re-measured live after the fix, same device,
+keyboard open: `.app-layout` rect = `{top: 39, bottom: 534, height: 495}` - bottom lands exactly on
+the visible viewport's bottom (534), matching the composer footer's own rect. Confirmed visually by
+the user afterward.
+
+**A second, independent bug found in the same investigation: the phone's system nav bar had NO
+reserved gap at all when the keyboard was closed.** `MainActivity.kt` never called
+`enableEdgeToEdge()`. Targeting `compileSdk`/`targetSdk` 36 means Android 15+ *enforces*
+edge-to-edge regardless of app code, but that enforcement is OS-version-gated and, on this
+Xiaomi/HyperOS device (Android 16), the WebView still reported `env(safe-area-inset-bottom)` as
+`0px` with the keyboard closed - measured directly via CDP, not inferred. Since this app's CSS
+assumes edge-to-edge pervasively already (`env(safe-area-inset-top)` padding on the root layout,
+`env(safe-area-inset-bottom)` on the composer footer, on `LoginForm`, `Sidebar`, `CallOverlay`,
+`MediaLightbox`, `PdfViewerModal`, and more), the fix is to stop depending on OS-enforced defaults
+and just call `enableEdgeToEdge()` explicitly in `onCreate` (before `super.onCreate`, same
+ordering constraint as `installSplashScreen()`). Re-measured after the fix: `env(safe-area-inset-
+bottom)` = `16px` with the keyboard closed on the same device - a real, non-zero gap above the nav
+bar for the first time.
+
+A third, smaller bug rode along in `app.css`: the composer footer's own bottom-padding floor was
+`max(0.75rem, env(safe-area-inset-bottom))` with the keyboard closed but `max(0.5rem, ...)` with it
+open - two different `git blame`d origins, no comment or rationale anywhere, the keyboard-open one
+introduced by a commit literally titled "fix a lot of things". Combined with `env(safe-area-inset-
+bottom)` collapsing to `0px` whenever the keyboard is open (confirmed live: the gesture-bar inset
+doesn't exist once the keyboard covers that area), the composer's reserved space genuinely differed
+between the two states - 12px vs 8px - which read as "the space below the input keeps changing."
+Unified to `0.75rem` in both states (`.chat-composer-footer`, `.keyboard-open .chat-composer-footer`,
+and their `.mobile-convo-open` mirrors) so the reserved space does not visibly shrink just because
+the keyboard opened.
+
+The same investigation also found a fourth, independent bug in `app.css`'s `.chat-messages-scroll`
 padding: `--chat-composer-height` (the composer footer's real `offsetHeight`, via `ResizeObserver`
 in `ChatComposer.svelte`) already includes the footer's own `env(safe-area-inset-bottom)` padding,
 but the base rule and the `.keyboard-open` rule both added it a second time on top - only the
 `.mobile-convo-open` rule had it right, and it lost to `.keyboard-open` by CSS source order
 whenever both classes were active (mobile chat + keyboard open) - exactly the state a phone is in
-while typing. Fixed by dropping the redundant addition from both rules (`app.css`); the guessed
-fallback constants used only while the var is unset keep their own `env()` addition, since a
-fallback never included it in the first place.
+while typing. Fixed by dropping the redundant addition from both rules; the guessed fallback
+constants used only while the var is unset keep their own `env()` addition, since a fallback never
+included it in the first place.
 
 Two other things the measurement settles, both worth keeping:
 

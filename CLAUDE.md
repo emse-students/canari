@@ -606,22 +606,37 @@ run there (`check H`).
   `recon.mjs` over a batch of sends made DURING a drain** - and the phone, which shares the
   composable. Distinct from WP-LOSS-1 (which loses it at the receiver); do not merge them.
 
-- \[ \] **WP-KBD-1 (P2) - On Android the composer ends up BEHIND the soft keyboard. FIXED
-  2026-08-07; what is owed is the ON-DEVICE verification.** Reported originally 2026-08-06 while
-  chasing a harness fault, reproduced with an ordinary gesture: tap the composer, press HOME, come
-  back. Reported again by the user 2026-08-07 as inconsistent spacing between the last message and
-  the composer, worse with the keyboard open - same root cause, found independently. `computeSnapshot`
-  now takes a `shellTop` measurement (`.app-layout`'s own top, read in `readSnapshot`) and pins
-  `--app-viewport-height` to `offsetTop + vvHeight - shellTop` instead of the raw `vvHeight`, per the
-  invariant `shell bottom <= visual viewport bottom` - fixed at the source rather than by patching
-  every CSS consumer with its own `- env(safe-area-inset-top)`. A second, independent bug rode along:
-  `app.css`'s `.chat-messages-scroll` padding double-counted `env(safe-area-inset-bottom)` on top of
-  `--chat-composer-height` (which already includes it) in two of its three rules, and the one correct
-  rule lost to the keyboard-open one by CSS source order whenever both were active. Full story,
-  numbers and the unit tests pinning both in
-  [mobile > the soft keyboard and the app shell](docs/wiki/frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-fixed-2026-08-07---device-verification-owed) -
-  do not re-derive them. **Owed: no physical device has exercised this build yet** - the repro is the
-  ordinary gesture above, not a script `focus()`.
+**WP-KBD-1 is SHIPPED AND VERIFIED ON DEVICE 2026-08-07** (a local Xiaomi/HyperOS build, measured
+live over CDP both before and after). Reported originally 2026-08-06 (composer behind the soft
+keyboard), reported again by the user 2026-08-07 as inconsistent spacing above the composer - same
+shell, two related but distinct bugs. **First fix attempt was wrong and was reverted the same day**:
+subtracting the shell's own top inset inside `computeSnapshot` "fixed" `.app-layout` in isolation but
+double-subtracted the status-bar inset, since `.app-layout`'s own ancestor chain (`+layout.svelte`'s
+`h-[var(--app-viewport-height,100dvh)]` wrapper, already structurally reduced by its own
+`padding-top`) was *already* correctly shrunk - stacking a second, independent subtraction on top
+left a gap the height of the status bar between the shell's real bottom and the keyboard, revealing
+the page background through it (a visibly different color - this is what the user's screenshot
+caught). **The real fix deletes `html.keyboard-open .app-layout { height: var(--app-viewport-height,
+100dvh) }` outright**: `.app-layout` was never supposed to re-consume that variable independently of
+its already-shrunk parent chain, and once it just inherits (plain `height: 100%`), the whole nested
+chain (`flex-1`/`inset-0`/`height:100%` all the way down) shrinks in lockstep with zero double
+counting. `computeSnapshot` is back to the original, simpler `viewportHeight: m.vvHeight`. Confirmed
+live via `tools/cross-client-harness/cdp.mjs` (`adb forward` to the WebView's own devtools socket):
+`.app-layout`'s rect now lands bottom-exact on the visual viewport's bottom, both before and after.
+Second, independent bug found in the same investigation: the phone's nav bar had **no** reserved
+gap at all when the keyboard was closed - `MainActivity.kt` never called `enableEdgeToEdge()`, so
+whether `env(safe-area-inset-bottom)` was populated for the gesture bar depended on OS-enforced
+defaults (Android 15+ only) rather than being guaranteed, and this device's WebView reported 0 for it
+regardless. Fixed by calling `enableEdgeToEdge()` in `onCreate` (before `super.onCreate`, same as
+`installSplashScreen()`) - it is the SAME assumption already baked into `env(safe-area-inset-*)`
+pervasively across this app's CSS, just never made explicit natively. A third, smaller bug rode
+along: the composer's own bottom padding floor was `0.75rem` closed vs an undocumented `0.5rem` open
+(`app.css`, no rationale in the commit that introduced it, message was literally "fix a lot of
+things") - unified to `0.75rem` in both states so the reserved space does not visibly shrink just
+because the keyboard opened. Full narrative, every measured number (both live CDP dumps) and the
+ancestor-chain trace that found the double-subtraction are in
+[mobile > the soft keyboard and the app shell](docs/wiki/frontend/mobile.md#the-soft-keyboard-and-the-app-shell-wp-kbd-1-shipped-and-verified-2026-08-07) -
+do not re-derive them.
 
 - \[ \] **WP-DL-1 (P1) - EVERY download button in the app was dead on mobile. FIXED 2026-08-07; what
   is owed is the ON-DEVICE verification.** Reported by the user against the PDF on the feed's first
@@ -839,6 +854,16 @@ page. The five to carry, plus one status line:
 - A path restriction written for iOS has NO effect on Android: the App Link claim lives in a
   different file per platform and `assetlinks.json` has no notion of a path, so the lists are
   GENERATED from one source. A host with no path attribute claims the whole host.
+- A CSS custom property consumed at TWO nesting depths applies its correction TWICE if both
+  consumers independently subtract the same inset: `.app-layout` re-pinned itself to
+  `--app-viewport-height` even though its own ancestor chain was already correctly shrunk by that
+  same variable structurally (`padding-top`), leaving a gap the height of the status bar (WP-KBD-1).
+  The fix is not making the second consumer's math right - it is deleting the second consumer.
+- Edge-to-edge on Android is NOT guaranteed by `env(safe-area-inset-*)` alone: whether the OS
+  populates it depends on OS-enforced defaults (`targetSdk` 35+ on Android 15+) that some OEMs
+  (seen on Xiaomi/HyperOS) do not honor consistently for a WebView. Call `enableEdgeToEdge()`
+  explicitly in `onCreate` rather than relying on version-gated enforcement to make the insets this
+  app's CSS already assumes everywhere actually show up.
 - A WEBVIEW HAS NO DOWNLOAD MANAGER: `<a download>` is a silent no-op on Android and iOS alike
   (Tauri installs neither a `DownloadListener` nor a `WKDownloadDelegate`), and the click still
   "succeeds", so there is no exception and no log - eleven buttons shipped dead. Everything saving a
