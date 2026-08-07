@@ -332,7 +332,13 @@ lose:
   `src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk` (NOT
   `arm64/`, which holds a stale July APK) with `adb install -r`. Web assets are brotli-compressed
   inside the `.so`, so only RUST strings can be grepped there. The package is `fr.emse.canari`, NOT
-  `fr.emse.canari.app`. **`am force-stop` is NOT "the user killed the app"**: Android's STOPPED state
+  `fr.emse.canari.app`. **Every such build leaves a Gradle daemon running** - it is designed to
+  outlive the build by intent (faster next time), but the shell/agent session that started it
+  usually exits first, so it reparents to PID 1 and looks orphaned. `gen/android/gradle.properties`
+  now sets `org.gradle.daemon.idletimeout` to 10 minutes instead of Gradle's 3-hour default so a
+  forgotten one dies on its own; to end one immediately, `ps aux | grep GradleDaemon` and kill the
+  PID (`./gradlew --stop` only works from the exact same `gen/android` checkout with matching
+  args, which a background build won't have used). **`am force-stop` is NOT "the user killed the app"**: Android's STOPPED state
   cancels every FCM broadcast until a manual launch (proven in logcat), so every killed-app cell must
   use a SWIPE from recents or `am kill` - and `am kill` does NOT reclaim a FOREGROUND process, so go
   HOME first and assert the death. The phone's whole web console is in logcat under `Tauri/Console`,
