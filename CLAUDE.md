@@ -198,8 +198,9 @@ re-derive any of it from here. What a compaction must not lose:
   logcat under `Tauri/Console`, which is how to read it while the WebView is unreachable; a busy
   device overruns the logcat ring in minutes, so capture continuously to a file rather than dumping
   after the fact.
-- **WHERE THE CAMPAIGN STANDS (2026-08-07): Phase 0, MSG, FWD and TAB are COMPLETE; LIFE is done
-  except LIFE-5, which needs the user. The NOTIF phase has run 4, 9, 10 and 7 (twice) - NOTIF-1 and
+- **WHERE THE CAMPAIGN STANDS (2026-08-07, end of session): Phase 0, MSG, FWD and TAB are COMPLETE;
+  LIFE is done except LIFE-5, which needs the user. The NOTIF phase has run 4, 9, 10 and 7 (three
+  times: bg PASS, killed FAIL, killed re-run PASS on the fix) - NOTIF-1 and
   NOTIF-8 were already answered by LIFE-8 and LIFE-4, so what is LEFT of it is NOTIF-2/3 (silent
   commit -> epoch gap) and NOTIF-5 (mute) and NOTIF-6 (check K, quick reply from the shade). Then
   PIN/MULTI, then CORRUPT last - plus the HEAL checks above.** Every
@@ -435,13 +436,14 @@ it, asserting the conversation is on screen before counting.** NOTIF-1/2/3/5/6/7
   new path went through the queue. Cost is why it is not the fix: the worker transport, startup, the
   PIN unlock and the Safari/mobile fallback where `SharedWorker` is absent all have to be redone.
 
-- \[ \] **WP-DEPLOY-1 (P1) - FOUR P1 FIXES ARE ON `main` AND HAVE NEVER REACHED THE WEB.** The one
-  action that closes it: **rerun the failed jobs of run 31120637374**, which died at *Set up job* on
-  `Failed to resolve action download info` during the GitHub Actions outage of 2026-08-06 - nothing is
-  wrong with the code, and the outage is over (a later dispatch in the same window succeeded). It
-  carries WP-ANDROID-SESS-1, WP-PENDING-1, WP-PENDING-2 and WP-DRAIN-1. **Reload BOTH browsers before
-  measuring anything afterwards** - a long-lived tab keeps its old bundle, and a priming send made by
-  the old build writes no checkpoint.
+**WP-DEPLOY-1 is CLOSED**: the GitHub Actions outage of 2026-08-06 is over, the dispatch went green,
+and every CD run since has succeeded. **v0.13.1 was RELEASED 2026-08-07** and all five workflows are
+green - bump 18 s, CD 4m58, AppImage 10m04, iOS 13m32, Android 13m45 - with the four artefacts
+attached (`.aab`, `.apk`, `.ipa`, `.AppImage`), prod answering `{"version":"0.13.1"}` and every path
+shape probed 200 with the right content type. `minClientVersion` stays at **0.13.0** on purpose: the
+store rollout has not reached devices, and raising it first locks everyone out. **Reload BOTH browsers
+before measuring anything** - a long-lived tab keeps its old bundle, and a priming send made by the
+old build writes no checkpoint.
 
 - **WP-ANDROID-SESS-1 is SHIPPED and ALL THREE defects VERIFIED ON THE DEVICE 2026-08-06** (a dead
   session no longer looks signed in; the 401 was a cookie replay one rotation behind, not
