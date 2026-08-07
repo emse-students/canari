@@ -17,7 +17,7 @@ const KEY = 'device-key';
 const INITIAL = 2500;
 
 function makeMls() {
-  return { sendHistoryRequest: vi.fn().mockResolvedValue(undefined) };
+  return { sendHistoryRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }) };
 }
 
 /** Minimal storage double: only `getMessages` is consulted by the decision seam. */
@@ -123,6 +123,42 @@ describe('solicitHistory', () => {
 
     noteHistoryBundleReceived(USER, 'g1', 1);
     expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
+  });
+
+  it('moves straight to pending-offline when the SERVER says no member was online', async () => {
+    const mls = makeMls();
+    mls.sendHistoryRequest.mockResolvedValue({ noPeerOnline: true });
+
+    solicitHistory(mls, 'g1', log, []);
+    await vi.advanceTimersByTimeAsync(INITIAL);
+
+    // The server elects the responder, so it has already answered the question the 30 s window
+    // exists to ask - burning it would show "waiting" for a request nobody received.
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
+  });
+
+  it('keeps waiting when the request could not be answered at all', async () => {
+    const mls = makeMls();
+    // No answer is not a negative answer: a dropped response says nothing about who is reachable.
+    mls.sendHistoryRequest.mockResolvedValue({ noPeerOnline: false });
+
+    solicitHistory(mls, 'g1', log, []);
+    await vi.advanceTimersByTimeAsync(INITIAL);
+
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
+  });
+
+  it('still retries on the backoff after a no-member answer', async () => {
+    const mls = makeMls();
+    mls.sendHistoryRequest.mockResolvedValue({ noPeerOnline: true });
+
+    solicitHistory(mls, 'g1', log, [1000]);
+    await vi.advanceTimersByTimeAsync(INITIAL);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+
+    // "Nobody now" is not "nobody ever": the backoff and the presence edge must still fire.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
   });
 
   it('moves straight to pending-offline when the network is offline', async () => {

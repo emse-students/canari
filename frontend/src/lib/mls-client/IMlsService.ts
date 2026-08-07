@@ -78,6 +78,16 @@ export type GroupMeta = {
   deletedAt?: string | null;
 };
 
+/**
+ * What the server said about a history solicitation.
+ *
+ * `noPeerOnline` is the server's own verdict, not an inference: it elects the responder, so it is
+ * the only party that knows whether one existed. False therefore covers both "a peer was picked"
+ * and "we could not find out", which is why the field names the negative - the caller may act on a
+ * definite NO and must never read silence as one.
+ */
+export type HistoryRequestOutcome = { noPeerOnline: boolean };
+
 export interface IMlsService {
   /** Initialises the MLS identity for the given user, decrypting stored state with the device key. */
   init(
@@ -505,7 +515,7 @@ export interface IMlsService {
    * Ask one online member to resend the history bundle after this device self-joined a group via an
    * external commit. History-only (already a member), never a re-add. Best-effort, online-only.
    */
-  sendHistoryRequest(groupId: string): Promise<void>;
+  sendHistoryRequest(groupId: string): Promise<HistoryRequestOutcome>;
 
   /**
    * Register a callback invoked when a member device receives a history_request for a group it

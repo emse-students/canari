@@ -359,7 +359,7 @@ DM and a DM message into a channel. Only the transport differs (MLS group vs cha
 a media forward re-sends the same envelope in both cases, so no blob is re-uploaded and the CEK
 travels with it.
 
-## Pooling history between devices (legs 1-3 BUILT 2026-08-07, steps 3-4 owed)
+## Pooling history between devices (BUILT 2026-08-07, deploy owed)
 
 Today's exchange used to be all-or-nothing: `sendFullHistoryBundle` shipped the responder's ENTIRE
 store and the receiver deduped by id, one way, with neither side knowing what the other held. It is
@@ -447,9 +447,10 @@ diff with at least one peer is non-empty", which empties itself.
    diffs, `systemMessageHandler` gained the digest and pull branches, `groupActions` gained
    `sendHistoryBundleForIds` / `sendHistoryDigest` / `sendHistoryPull` / `readHistoryEntries`.
 3. **DONE** - marker semantics: see below.
-4. **DONE** - the give-up counter (`noteDesyncDetected`) and the derived `RETENTION_MS`. **OWED** -
-   the three defects at the end of this section.
-5. Wiki + `CHANGELOG.md` - done for legs 1-4.
+4. **DONE** - the give-up counter (`noteDesyncDetected`), the derived `RETENTION_MS`, and the three
+   riding defects at the end of this section.
+5. Wiki + `CHANGELOG.md` - done. **What is left is the web deploy**, then re-running the campaign
+   checks that touch the repair mechanism.
 
 ### What ends the wait, and what merely interrupts it
 
@@ -493,17 +494,59 @@ window itself now lives there - beside the payloads it describes, since a window
 retention asks for what nobody kept. It was a flat five minutes, of which three could never be
 requested by anyone.
 
-### Three defects that belong to this work, or to nothing
+### Three defects that belonged to this work, or to nothing (FIXED 2026-08-07)
 
-Left out of WP-HIST-2 on purpose, because each is only worth fixing once the exchange is a diff:
+Left out of WP-HIST-2 on purpose, because each is only worth fixing once the exchange is a diff.
+All three are now fixed, and the rule each taught outlives it:
 
-- **The client ignores the `no_peer_online` the server already returns.** `deliveryKeepalivePost`
-  swallows the response body, so the requester burns a 30 s window waiting on a question that was
-  answered immediately.
-- **Nothing re-solicits when a peer comes back**, even though presence is polled every 10 s. The
-  request is fired once and then only retried on its own timer.
-- **`checkPresenceNow` (`stores/presenceStore.ts`) has no in-flight guard.** On a bad link that
-  stacks 4-5 concurrent `/api/presence` calls, each measured at 32 s.
+- **The client ignored the `no_peer_online` the server already returns.** `deliveryKeepalivePost`
+  swallowed the response body, so the requester burnt a 30 s window waiting on a question that had
+  been answered immediately. It now returns the parsed body, and `sendHistoryRequest` surfaces
+  `{ noPeerOnline }`. The name matters: the function returns `null` for a transport failure, a
+  non-2xx, a non-JSON body and a JSON array alike, and **`null` means "no answer", never "no"** - a
+  boolean would have made silence read as a negative and cancelled a legitimate retry.
+- **Nothing re-solicited when a peer came back**, even though presence is polled every 10 s.
+  `onPeersCameOnline` now fires `reSolicitAwaitingHistory` for every group still carrying a marker.
+  It is an **EDGE, not a level**: only offline -> online, so a user already known online says
+  nothing new and a user seen online for the FIRST time is not "back" - treating the level as the
+  edge would re-solicit on every page load. Its registration guards on `ctx.getStorage()`, because
+  `ctx.ensureMls()` CREATES the service when absent and a background callback must never do that.
+- **`checkPresenceNow` had no in-flight guard.** On a bad link it stacked 4-5 concurrent
+  `/api/presence` calls, each measured at 32 s. Concurrent callers are now COALESCED onto the running
+  request rather than turned away, so `await checkPresenceNow()` still means "presence is fresh" for
+  everyone.
+
+### What still has no answer: nobody online when a device joins
+
+`notifyHistoryRequest` (`chat-delivery-service`) forwards to a random online member and otherwise
+returns `{ status: 'no_peer_online' }` - **and nothing else**. Compare `notifyWelcomeRequest`, which
+in the same situation persists the demand to Redis (`pending_welcome:<group>` plus
+`pending_welcome_notify:{userId}`, 24 h TTL) and sends `sendFcmWelcomeRequestPending` to wake a
+sleeping peer before returning the same string. So the Welcome survives an empty room and the
+history request does not: a device can be admitted to a group by the durable path and hold no
+history at all, with the server keeping no trace that anyone owes it one.
+
+The client covers part of that gap - the marker is durable for 30 days, and it re-solicits on
+reconnect and on the presence edge - but the recovery then waits for THIS device to notice, never for
+the peer's own return to be enough. Making `history_request` durable in the shape `welcome_request`
+already has is the fix.
+
+Two limits of the presence edge, worth knowing before relying on it: presence is only polled for
+users actually DISPLAYED (`ConversationTile`, `ChatHeader`, `ChannelMembersSidebar`), so it covers
+DMs well while the list is on screen and covers a channel only when its member panel is open.
+
+And one gap the diff does not close: a device holding SOME of a conversation, missing older
+messages, and never failing to decrypt anything carries no marker - so it never asks. It learns of
+the difference only opportunistically, when it happens to be the elected responder to someone else's
+solicitation.
+
+### Devices compare identities, never counts
+
+Worth stating because the intuitive design is a message count, and a count is a guaranteed false
+negative: two devices that each lost a different message agree perfectly on the total. The digest
+carries the sorted ids below 1000 messages, and above that one line per `YYYY-MM` with a count AND a
+truncated SHA-256 of that month's ids. The hash is exactly what catches "same count, different
+messages", and `historyManifest.test.ts` pins that case.
 
 ## UI features
 

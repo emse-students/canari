@@ -27,8 +27,10 @@ import { requestReAdd } from '$lib/utils/chat/recovery';
 import {
   solicitHistoryIfMissing,
   cancelAllHistorySolicit,
+  reSolicitAwaitingHistory,
   setHistoryDigestBroadcaster,
 } from '$lib/utils/chat/historySolicit';
+import { onPeersCameOnline } from '$lib/stores/presenceStore';
 import { sendHistoryDigest } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
@@ -92,6 +94,13 @@ import {
   stopConnectionWatchdogImpl,
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
+
+/**
+ * Unregisters this session's presence listener. Module-level because the presence store outlives
+ * any one session, so the subscription has to be revocable from logout, which is elsewhere.
+ */
+let unregisterPeerReturn: (() => void) | null = null;
+
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
 /**
@@ -894,6 +903,21 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       });
     });
 
+    // A solicitation that found nobody reachable is not retried until its own backoff or the next
+    // reconnect, although presence tells us within ten seconds that a peer is back. This is that
+    // seam: an offline -> online edge re-solicits every group still awaiting history. Groups already
+    // soliciting are skipped inside `reSolicitAwaitingHistory`, so a burst of peers costs one round.
+    unregisterPeerReturn?.();
+    unregisterPeerReturn = onPeersCameOnline(() => {
+      // `ensureMls` CREATES the service when there is none, so it must never be reached from a
+      // background callback: storage is what says a session is live, the same guard `sendDisconnect`
+      // uses. Without it a stray edge after teardown would build an MLS client for nobody.
+      if (!ctx.getStorage()) return;
+      const mls = ctx.ensureMls();
+      cb.log('[HISTORY_REQ] a peer came back online - re-soliciting what is still awaited');
+      reSolicitAwaitingHistory(mls, ctx.getUserId(), mls.getLocalGroups(), cb.log);
+    });
+
     mlsService.onHistoryRequest(
       async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {
         cb.log(
@@ -1319,6 +1343,10 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   // The broadcaster closes over this session's storage and device key, so it must not outlive it:
   // a solicitation from the next login would otherwise describe the previous user's store.
   setHistoryDigestBroadcaster(null);
+  // Same reason, and the presence poll outlives a logout: an edge arriving afterwards would solicit
+  // history for the user who just signed out.
+  unregisterPeerReturn?.();
+  unregisterPeerReturn = null;
   historyRequestPendingStore.cancelAll();
   void flushActiveMlsStateEncrypted().finally(() => {
     uninstallMlsStatePersisterLifecycle();

@@ -74,15 +74,38 @@ describe('deliveryKeepalivePost', () => {
     fetchSpy.mockRestore();
   });
 
-  it('swallows fetch rejections (fire-and-forget)', async () => {
+  it('swallows fetch rejections (fire-and-forget) and reports NO answer', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await expect(
       deliveryKeepalivePost('https://d.test', 'ping', {}, { Authorization: 'Bearer x' })
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
     expect(warn).toHaveBeenCalled();
     fetchSpy.mockRestore();
     warn.mockRestore();
+  });
+
+  it('returns the JSON body, so an endpoint that ANSWERS can be heard', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ status: 'no_peer_online' }), { status: 200 })
+      );
+    await expect(
+      deliveryKeepalivePost('https://d.test', 'history-request', {}, {})
+    ).resolves.toEqual({ status: 'no_peer_online' });
+    fetchSpy.mockRestore();
+  });
+
+  it.each([
+    ['a non-2xx', new Response(JSON.stringify({ status: 'no_peer_online' }), { status: 503 })],
+    ['an empty body', new Response(null, { status: 200 })],
+    ['a non-JSON body', new Response('<html>', { status: 200 })],
+    ['a JSON array', new Response('[1,2]', { status: 200 })],
+  ])('reports NO answer on %s, which is never the same as a negative one', async (_label, res) => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(res);
+    await expect(deliveryKeepalivePost('https://d.test', 'ping', {}, {})).resolves.toBeNull();
+    fetchSpy.mockRestore();
   });
 });
 

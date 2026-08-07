@@ -59,9 +59,15 @@ export class MlsDeliveryApi {
     return toBase64(bytes);
   }
 
-  /** Fire-and-forget POST to the delivery service; throws on non-2xx. */
-  async deliveryPost(path: string, body: Record<string, unknown>): Promise<void> {
-    await deliveryKeepalivePost(
+  /**
+   * Fire-and-forget POST to the delivery service, resolving with the JSON body the server sent, or
+   * `null` when it sent none (transport failure, non-2xx, non-JSON) - see `deliveryKeepalivePost`.
+   */
+  async deliveryPost(
+    path: string,
+    body: Record<string, unknown>
+  ): Promise<Record<string, unknown> | null> {
+    return deliveryKeepalivePost(
       this.historyUrl,
       path,
       body,

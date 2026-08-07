@@ -63,6 +63,14 @@ is broken), **P2** (correctness, nothing at risk), **P3** (hygiene). `[ ]` open,
 Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, the story to
 `CHANGELOG.md`.
 
+**LEON PUSHES TO CANARI's `main` TOO** (asked by the user 2026-08-07). So `git fetch` at the START of
+a session and again before any measurement - never assume the local `main` is the deployed truth. His
+commits are often style/UI and they land in the same files the campaign measures, so what is owed for
+each is a WEB and a MOBILE pass, logged next to our own checks (before or after ours, either way).
+He follows the conventions - his WP-KBD-1 fix (`cc540145`) carried tests, the wiki page, `CHANGELOG.md`
+and the SESSION STATE entry - so a rebase is normally clean; the thing to actually verify is his
+change RUNNING, on both surfaces, which no test of his can establish.
+
 ---
 
 ### LE CERCLE (../le-cercle) - MR !4 PUSHED, AWAITING AUREL
@@ -328,25 +336,35 @@ check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at th
   [seo > what no test here can prove](docs/wiki/frontend/seo.md#what-no-test-here-can-prove).
   Open a WP only if one FAILS.
 
-- \[~\] **WP-HIST-3 (P1) - LEGS 1-3 SHIPPED 2026-08-07 (`759f4907`), steps 3-4 owed, NOT YET
-  DEPLOYED.** The exchange is a manifest diff instead of a full bundle. Everything about what was
-  built - the flipped direction, the two digest modes, UTC months, the codepoint sort, the
-  rendezvous, `announceComplete`, the null-vs-empty read - is in
+- \[~\] **WP-HIST-3 (P1) - ALL STEPS SHIPPED 2026-08-07, NOT YET DEPLOYED.** The exchange is a manifest diff instead of a full bundle. Everything built - the
+  flipped direction, the two digest modes, UTC months, the codepoint sort, the rendezvous,
+  `announceComplete`, the null-vs-empty read, what ends a wait, the give-up counter - is in
   [chat > pooling history between devices](docs/wiki/frontend/modules/chat.md#pooling-history-between-devices-legs-1-3-built-2026-08-07-steps-3-4-owed).
   **Read that, do not re-derive it, and above all do not "restore" the design's direction**: the
   REQUESTER broadcasts the digest and the elected RESPONDER diffs (backwards compatible with no
   negotiation, one round trip fewer). New files: `utils/chat/historyManifest.ts` (pure, 42 tests),
-  `utils/chat/historyDigestRendezvous.ts` (11 tests); `actions.historyRequest.test.ts` went 3 -> 14.
-  65/65 green, `check` 7571 files 0 errors, lint and format clean.
+  `utils/chat/historyDigestRendezvous.ts` (11 tests). 1043/1043 green, `check` 7571 files 0 errors.
+  Two rules it added, each verified by a negative control: **only an EMPTY bundle ends a wait
+  unconditionally** (a non-empty one voids a presumption, never a proof - a chunked history used to
+  end the solicitation on its first chunk), and **`noteDesyncDetected` returns `{signal, escalate}`,
+  never both** - three signals in five minutes hand the group to the diff instead of asking a fourth
+  time. `REASON_RANK` had been declared and never used, so `peer-holds-more` was downgradeable.
 
-  **What is OWED, in order:** (3) marker semantics - the `peer-holds-more` reason exists and is
-  written before a pull, but the marker does not yet EMPTY itself when the diff comes back empty;
-  (4a) the give-up counter, which is the escalation point from the narrow `decrypt_failed` resend to
-  this diff (near `shouldSignalDesync` in `inboundFrameLedger.ts`, `LOST frame` at
-  `setupMessageHandler.ts:602,779`); (4b) `RETENTION_MS` in `recentSends.ts` is a bare `5 * 60_000`
-  and must be derived from `DESYNC_RETRANSMIT_WINDOW_MS` (120 s, `setupMessageHandler.ts:69`) plus a
-  round-trip margin - three of those five minutes shorten nothing and only hold plaintext protos in
-  memory; (4c) the three riding defects listed at the end of that wiki section.
+  The three riding defects are fixed too (`no_peer_online` now heard, a peer's RETURN re-solicits,
+  `checkPresenceNow` coalesces). **What is OWED is the WEB DEPLOY**, then the campaign checks that
+  touch the repair.
+
+  **A GAP THIS WORK EXPOSED AND DID NOT CLOSE, answered to the user 2026-08-07:** the Welcome path is
+  DURABLE when nobody is online and the history path is NOT. `notifyWelcomeRequest` persists to Redis
+  (`pending_welcome:` + `pending_welcome_notify:{userId}`, 24 h) and sends an FCM wake before
+  returning `no_peer_online`; `notifyHistoryRequest` returns the same string and does NOTHING else.
+  So a device can join a group, get its key by the durable path, and hold no history with the server
+  keeping no trace anyone owes it one. **Next piece of work: make `history_request` durable in the
+  shape `welcome_request` already has.** Two more facts from that answer, both in the wiki section:
+  presence is only polled for users DISPLAYED (`ConversationTile`, `ChatHeader`,
+  `ChannelMembersSidebar`), so the new edge covers DMs well and a channel only when its member panel
+  is open; and a device holding SOME of a conversation, missing older messages, and never failing to
+  decrypt carries no marker, so it never asks - it learns only by being someone else's responder.
 
   **Why it was promoted, and why the alternatives were rejected as band-aids** (user's call, do not
   re-litigate): WP-RETRANSMIT-1 showed `decrypt_failed` has three harmful properties, none accidental

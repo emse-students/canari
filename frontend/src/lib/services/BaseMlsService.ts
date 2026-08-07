@@ -12,7 +12,7 @@ import {
   createSequentialDecryptSession,
 } from '$lib/mls-client/mlsDecryptSession';
 import { DeviceRevokedError, type MlsDeliveryFetch } from '$lib/mls-client/mlsDeliveryApi';
-import type { IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
+import type { HistoryRequestOutcome, IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
   shouldAckAfterSuccess,
@@ -653,13 +653,19 @@ export abstract class BaseMlsService implements IMlsService {
   /**
    * Asks one online member to resend the history bundle after this device self-joined `groupId`
    * via an external commit. History-only (we are already a member): no re-add. Best-effort.
+   *
+   * The server elects the responder, so it alone knows whether there was one, and it says so:
+   * `noPeerOnline` reports that answer. It is true ONLY on an explicit `no_peer_online` - a request
+   * that failed to reach the server, or answered something unparseable, proves nothing about who is
+   * reachable, and concluding "nobody" from it would abandon a solicitation on a dropped packet.
    */
-  async sendHistoryRequest(groupId: string): Promise<void> {
-    await this.delivery.deliveryPost('history-request', {
+  async sendHistoryRequest(groupId: string): Promise<HistoryRequestOutcome> {
+    const answer = await this.delivery.deliveryPost('history-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
     });
+    return { noPeerOnline: answer?.status === 'no_peer_online' };
   }
 
   /** Delivers a Welcome message to the target user/device. */

@@ -113,7 +113,17 @@ export function solicitHistory(
 
     return mlsService
       .sendHistoryRequest(groupId)
-      .then(() => log(`[HISTORY_REQ] solicit attempt ${attempt} for ${groupId.slice(0, 8)}...`))
+      .then((outcome) => {
+        if (outcome?.noPeerOnline) {
+          // The server elects the responder, so it already knows there was none. Waiting out the
+          // 30 s response window for an answer nobody was asked for tells the user nothing; the
+          // backoff and the presence edge (`onPeersCameOnline`) are what will retry.
+          log(`[HISTORY_REQ] no member online for ${groupId.slice(0, 8)}... - will retry`);
+          historyRequestPendingStore.markOffline(groupId);
+          return;
+        }
+        log(`[HISTORY_REQ] solicit attempt ${attempt} for ${groupId.slice(0, 8)}...`);
+      })
       .catch((e) => {
         // Network-level failure (offline, fetch abort, etc.): move straight to pending-offline.
         if (typeof navigator !== 'undefined' && !navigator.onLine) {
