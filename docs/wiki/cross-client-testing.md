@@ -1332,9 +1332,43 @@ killed it" is LIFE-8.
 | --- | --- | --- |
 | NOTIF-4 | **FAIL x3**, then **PASS** on the fixed build | dismissed 263 ms after the read |
 | NOTIF-9 | **PASS** | killed in 77 ms, notified in 18.1 s, shade 1, W1 1 |
-| NOTIF-10 | **FAIL - and NOT established as an app defect. Re-run needed.** | see below |
+| NOTIF-10 | **PASS on delivery** (10/10 across two rounds), with one open observation on the shade | see below |
 
-**NOTIF-10 must be re-run before anyone believes it.** Five messages sent across a ten-minute
+### NOTIF-10, settled: every message survives a ten-minute blackout; the SHADE does not show them all
+
+Two independent ten-minute rounds, five messages each, sent while the phone had both radios off.
+Counted on 2026-08-07 06:40 with the conversation asserted on screen (composer present):
+
+| round | markers | count on A1 |
+| --- | --- | --- |
+| A (`msi3g44rb9u` … `msi3huhnhbb`) | 5 | **1 each** |
+| B (`msige1braoq` … `msigfrpvvn4`) | 5 | **1 each** |
+
+So **10/10 delivered, exactly once, no duplicate and no loss** - which is the question the check
+exists to ask. This is also, incidentally, the strongest evidence yet that WP-PENDING-1's per-page
+drain works: a ten-minute backlog is now collected without an abort.
+
+Two things it took to get there, both setup gaps rather than app defects, and both now in the
+harness:
+
+- **The radios coming back RESTARTS the app, and a restarted app re-locks the encryption PIN.** The
+  whole chat then sits behind the modal, so `openConversation` finds nothing. `notif.mjs` now calls
+  `unlock()` (spawning `pin.mjs`, which reads the PIN from `test-accounts.json` and never from
+  argv) immediately after `phone.launch()` in both the setup phase and branch 10's restart phase.
+- **The conversation list is empty for a while after that restart** - "Aucune discussion" plus
+  "Synchronisation des messages…" - so a navigation attempted too early fails for a reason that has
+  nothing to do with the check. The messages were all there once the sync completed.
+
+**Still open, and it is the reason this is not a clean PASS:** `shadeHits: [0,0,0,1,0]` and
+`reconnectToShadeMs: null`. Only the fourth of five messages ever raised a notification, and none
+appeared after reconnecting. The messages arrive; the *notifications* for four of five do not.
+Whether that is FCM collapsing a burst (the platform is entitled to) or Canari's own notification
+path dropping them is undecided - and it needs a run that reads the phone's log during the
+reconnect, not just the shade afterwards. Distinct from NOTIF-9, which passed with one message.
+
+<details><summary>What the first run of NOTIF-10 looked like, and the 19th harness fault</summary>
+
+**The original run had to be discarded.** Five messages sent across a ten-minute
 radio blackout; the run reported `counts: [0,0,0,0,0]` on the phone, which reads like a total loss
 of five messages and is **not evidence of one**: when the radios came back the app process had
 restarted and was sitting on `/posts`, so the final count read the FEED, not the conversation. A
@@ -1361,7 +1395,11 @@ language of a catastrophic bug.
 
 Fixed: the failure is now reported rather than swallowed, and the count is gated on a **post-
 condition** - the composer must exist on screen, or the check throws instead of producing a verdict.
-`{ focus: false }` on the phone client, since focus emulation is for the browsers.
+`{ focus: false }` on the phone client, since focus emulation is for the browsers. The very next run
+threw that assertion - `A1 is not in a conversation (http://tauri.localhost/chat)` - which is the
+post-condition doing exactly its job, and it is what exposed the PIN modal above.
+
+</details>
 
 **NOTIF-4 found a real bug and cost the 18th harness fault, in that order** - which is only clear in
 hindsight, and is exactly why the fault was not allowed to end the investigation.
