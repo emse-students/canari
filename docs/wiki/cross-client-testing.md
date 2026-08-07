@@ -1356,6 +1356,7 @@ killed it" is LIFE-8.
 | NOTIF-10 | **PASS on delivery** (10/10 across two rounds), with one open observation on the shade | see below |
 | NOTIF-7 (backgrounded) | **PASS** | notification decrypted in 18.1 s, tap -> right conversation in 8.4 s, 1 copy |
 | NOTIF-7 (killed) | **FAIL - a real defect, WP-DEEPLINK-1** | notification decrypted in 7.0 s, tap -> the app opened on the FEED and stayed there for 69 s |
+| NOTIF-7 (killed), re-run on the fix | **PASS** | shade in 6.9 s decrypted, tap on a proven target, PIN gate answered in 7.8 s, conversation + marker **6.2 s after the unlock**, 1 copy |
 
 ### NOTIF-7: the deep link works from a backgrounded app and NOT from a killed one
 
@@ -1479,6 +1480,100 @@ cold start needs) is granted, the catch logs, and `tauriCapabilities.test.ts` as
 plugin in `Cargo.toml` exposing commands is granted in a capability file. `localhost` is the single
 exemption, in writing, because it has no JS surface. Negative control: removing the grant fails two
 of its three assertions.
+
+#### The 22nd harness fault: the check measured the screen BEHIND the PIN modal
+
+Raised by the user, looking at the phone while the verification ran: *"le modal PIN est affiché, tu ne
+le tapes pas ?"*
+
+`notif7.mjs` unlocks during setup and then **kills the app**, which spends that unlock: the cold start
+the tap produces re-locks. Nothing in the check typed the PIN afterwards, so `landed.composer`,
+`landed.marker` and `count` were all read through the modal for the full 69 s window - every one of
+them false, for a reason with nothing to do with the deep link. **The verdict would have been
+identical against a fixed build**, which is what makes it a fault and not a detail: it was not
+measuring what it named.
+
+The FAIL it produced was nonetheless real, and the user confirmed it - but only because a *separate*
+instrument said so. `[hooks] onOpenUrl called` is a plain `console.log` that reaches logcat whether or
+not a modal is on screen, and it is absent from the entire capture for pid 10665. **The diagnosis
+survived because it never depended on the broken measurement.**
+
+Two rules, and the second is the one that costs:
+
+- **A check that locks itself out must unlock itself.** Every assertion now waits for the PIN gate or
+  the composer, whichever settles first, and unlocks if it is the gate - so a warm `bg` run pays
+  nothing and a cold `killed` run is measured on the same footing. The elapsed time is split in two,
+  because it answers two questions: `deepLinkMs` is what the user waits from the tap (PIN entry
+  included, honest but uninformative about the deep link), `landedAfterUnlockMs` is the navigation
+  itself, and only the second is comparable between `bg` and `killed`.
+- **This lesson had already been learnt, one script over.** NOTIF-10 recorded it verbatim two sections
+  below - *"the radios coming back RESTARTS the app, and a restarted app re-locks the encryption
+  PIN"* - and the fix went into `notif.mjs` only. A precondition discovered by one check is a
+  precondition of **every** check that puts the app through the same transition; fixing it where it
+  was found and nowhere else guarantees it will be paid for again. A kill, a reboot, a radio cycle and
+  an `install -r` are all the same transition here.
+
+#### Verified on the device (2026-08-07): the cold-start deep link lands
+
+Captured on the rebuilt APK (`lastUpdateTime 08:55:12`, bundle `app.DR0TKxSY.js`), pid 15059, from a
+notification tapped with the app killed:
+
+```
+08:56:32.621  [hooks] Deep-link listener registered
+08:56:32.628  [hooks] onOpenUrl called with 1 URL(s)
+08:56:32.628  [hooks] Processing URL: fr.emse.canari://chat/642f389a...
+08:56:32.630  [notifNav] deep link received: ... -> target 642f389a...
+```
+
+All three lines that were absent before, 7 ms after the listener is registered - i.e. the immediate
+`checkCurrentUrl()`, which is the `getCurrent()` path the grant unblocks, not the event.
+
+The rest of that capture answers a question the check does not ask, and it is worth more than the
+verdict: the PIN modal came up at 08:56:33 and **was not answered until 09:01:41**, five minutes
+later. Four seconds after the unlock, `[OUTBOX] Queued 58870a4f... (control) for 642f389a...` - a read
+receipt in that exact group - and the conversation was on screen. **`notifNav` held its target across
+five minutes of an unrelated modal.** That is the durable-store property being exercised on hardware,
+and it is the final nail in the retired "late subscriber" hypothesis: the target survives an
+arbitrarily late consumer, so a missed announcement was never a possible cause.
+
+The formal re-run then passed on the repaired harness: shade in 6.9 s (decrypted), a tap with a
+proven target, the PIN gate answered in 7.8 s, and the conversation with its marker **6.2 s after
+the unlock**, one copy. Both browsers clean.
+
+#### And the re-run's own log found a second defect: a reload REPLAYS the launch deep link
+
+The setup step parks A1 on the feed - *"so a default route cannot fake the verdict"* - and the run
+reported `beforeUrl: /chat` right after navigating to `/posts`. The parking had not failed; something
+had navigated back. The capture names it, and it is not the process under test:
+
+```
+09:12:02  Tauri/Console(15059): [hooks] onOpenUrl called with 1 URL(s)      <- the OLD process
+09:12:02  Tauri/Console(15059): [notifNav] deep link received: ... 642f389a...
+09:12:27  Tauri/Console(17041): [hooks] onOpenUrl called with 1 URL(s)      <- the tap under test
+```
+
+pid 15059 was launched by a notification at **08:56** and consumed that target at 09:01. The harness
+reloaded its WebView at 09:12 - and `checkCurrentUrl` re-published the same fifteen-minute-old launch
+URL. `getCurrent()` does not mean "this app was just started by a deep link"; it means "the last deep
+link this PROCESS was handed", and the Rust plugin holds that for the life of the process. The guard
+against replaying it was a module variable, which a WebView reload wipes - **erased by precisely the
+event it existed to survive.** The comment above it said it was there to stop a replay on foreground
+resume; that case works, because a resume keeps the bundle alive.
+
+This is not harness-only. The in-app reload paths are `MlsFatalErrorBanner`'s action (the likeliest
+on a phone: a user repairing an MLS error), the version-mismatch reload in `appVersion.ts`,
+tab-leadership demotion in `useChatSession`, and the `Ctrl+Shift+S` sync reset. Any of them, in a
+session that was launched from a notification, silently teleports the user into that conversation.
+
+Fixed by moving the claim into `sessionStorage` (`$lib/mobile/deepLinkClaims.ts`), whose lifetime is
+exactly the plugin's: it survives a reload of the same WebView and is empty in a new one, so a
+genuine cold start still processes its launch URL. Seven unit tests, including both boundaries
+(same storage -> no re-claim; fresh storage -> claim) and a storage-denied fallback. Negative
+control: reverting to memory-only fails the reload test and nothing else.
+
+The rule generalises past deep links: **state whose job is to survive an event must not live where
+that event destroys it** - and "module variable" is a lifetime, not a detail. Same family as the MLS
+disk-write deferral of WP-LOSS-1, where the durable copy lagged the in-memory one.
 
 ### NOTIF-10, settled: every message survives a ten-minute blackout; the SHADE does not show them all
 

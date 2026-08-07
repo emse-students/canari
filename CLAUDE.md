@@ -248,9 +248,14 @@ re-derive any of it from here. What a compaction must not lose:
   verdict is `PASS` only if the assertions hold AND the run is clean - errors, 4xx, page exceptions,
   WS events, `notable` MLS lines, `stateChanges` and anything `unexplained` are reported next to it.
   A line that turns out to be routine is ADDED to the benign list, never ignored in place.
-- **TWENTY-ONE harness faults have produced a false result, all fixed, and every one is written up in
+- **TWENTY-TWO harness faults have produced a false result, all fixed, and every one is written up in
   the wiki page** (search "harness fault"). Do not re-derive them - what they say collectively is
   three rules, and these are the ones to apply without opening it:
+  - **A check that puts the app through a transition must restore every precondition that transition
+    destroys.** A kill, a reboot, a radio cycle and an `install -r` all re-lock the PIN, and #22 read
+    a whole 69 s verdict through the modal - it would have returned the identical FAIL against a
+    fixed build. NOTIF-10 had already learnt this and the fix went into `notif.mjs` alone; **a
+    precondition found by one check belongs to every check sharing the transition.**
   - **An action that cannot prove it took effect still yields a verdict**, and that verdict is
     fiction. Every action asserts its own post-condition (`send` fails if the composer still holds
     text; a kill asserts the process died), because the faults were a kill that killed nothing, a
@@ -472,23 +477,31 @@ it, asserting the conversation is on screen before counting.** NOTIF-1/2/3/5/6/7
   BATCH path used by history replay - still answers `ok: true, data: None` on `SecretReuse`, which is
   the same "a native layer threw the diagnosis away" that hid this bug for a day.
 
-- \[ \] **WP-DEEPLINK-1 (P1) - tapping a notification while the app is CLOSED opened Canari but not
-  the conversation. ROOT CAUSE FOUND and FIXED 2026-08-07 (`916ed696`); what is owed is the
-  ON-DEVICE VERIFICATION, and the iOS half.** This is also what the user reported on 2026-08-01.
-  **`deep-link` had NO entry in `capabilities/default.json`**, so `getCurrent()` - the only path a
-  cold start has - was refused every time: `deep-link.get_current not allowed`. `onOpenUrl` is an
-  event channel the Rust side registers and events are NOT ACL-gated, which is exactly why the
-  backgrounded case was perfect and only the cold start died. `hooks.client.ts` then swallowed the
-  rejection in `.catch(() => {})`, making it indistinguishable from "no launch URL". Fixed: the grant
-  (`deep-link:default` = `allow-get-current`, nothing more), the catch now logs, and
-  `tauriCapabilities.test.ts` fails on any plugin in `Cargo.toml` that exposes commands and is
-  granted nowhere (negative control run). **Do not re-derive it** - the logcat proof, the probe and
-  the two-path table are in
-  [cross-client-testing > root cause](docs/wiki/cross-client-testing.md#root-cause-2026-08-07-the-deep-link-plugin-was-never-granted-its-permission),
-  the model in [mobile](docs/wiki/frontend/mobile.md#how-a-deep-link-actually-reaches-the-app--two-paths-only-one-of-them-gated).
-  **Owed: `node notif7.mjs killed` on a rebuilt APK** (the build carrying the grant), and **iOS**,
-  which runs the same capability file and the same hook and has never been checked - `check H`, whose
-  step 1 already said "kill the app" and was recorded PASS anyway.
+**WP-DEEPLINK-1 (P1) is SHIPPED and VERIFIED ON THE DEVICE 2026-08-07** (`916ed696`; NOTIF-7 killed
+re-run **PASS** - conversation + marker 6.2 s after the unlock, 1 copy). `deep-link` had NO entry in
+`capabilities/default.json`, so `getCurrent()` - the only path a cold start has - was refused every
+time, while `onOpenUrl` (an event, not ACL-gated) kept the backgrounded case perfect. Root cause, the
+logcat proof and the two-path table are in
+[cross-client-testing](docs/wiki/cross-client-testing.md#root-cause-2026-08-07-the-deep-link-plugin-was-never-granted-its-permission);
+the rule went to DURABLE RULES. **Two things survive it.** A fact worth reusing: `notifNav` held its
+target across **five minutes** of an unanswered PIN modal, on hardware - the durable-store property,
+and the final refutation of the "late subscriber" hypothesis. And **iOS is still owed**: it runs the
+same capability file and the same hook, so the fix reaches it by construction, but no check has ever
+run there (`check H`).
+
+- \[ \] **WP-RELOAD-DL-1 (P3) - a WebView RELOAD replays the launch deep link. FIXED 2026-08-07, and
+  the ON-DEVICE verification is what is owed.** Found in the observation log of the NOTIF-7 re-run,
+  not in its verdict: the harness parked A1 on `/posts` and the app was back on `/chat` 4 s later,
+  because `checkCurrentUrl` re-published a launch URL **fifteen minutes old** whose target had
+  already been consumed. `getCurrent()` means "the last deep link this PROCESS was handed" and the
+  Rust plugin holds it for the life of the process; the guard against replaying it was a module
+  variable, which a reload wipes - erased by the very event it existed to survive. Reachable in
+  production through `MlsFatalErrorBanner`'s reload (the likeliest on a phone), `appVersion.ts`,
+  tab-leadership demotion and `Ctrl+Shift+S`. Fixed by `$lib/mobile/deepLinkClaims.ts`
+  (`sessionStorage`, whose lifetime is exactly the plugin's), 7 tests, negative control run. Story in
+  [cross-client-testing](docs/wiki/cross-client-testing.md#and-the-re-runs-own-log-found-a-second-defect-a-reload-replays-the-launch-deep-link).
+  **Owed: it ships with the next APK and the next web deploy; re-park A1 after a deep-link launch and
+  assert it stays parked.**
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload. ROOT CAUSE FOUND and
   FIXED 2026-08-07 (`214592e5`); what is owed is the VERIFICATION.** Found by reconciliation:
@@ -705,6 +718,12 @@ page. The five to carry, plus one status line:
   early return on "could not decrypt" silently swallows every action that never needed the plaintext
   (WP-NOTIF-1). And parity between the platforms is not parity of declarations - iOS was correct here
   and Android was not, differing only in WHERE an early return sat.
+- `getCurrent()` answers "the last deep link this PROCESS was handed", never "the app was just
+  started by one" - the Rust plugin holds it for the life of the process, so every re-read must be
+  deduplicated. **And STATE WHOSE JOB IS TO SURVIVE AN EVENT MUST NOT LIVE WHERE THAT EVENT DESTROYS
+  IT**: the guard was a module variable, which a WebView reload wipes, so the reload replayed a
+  15-minute-old launch URL (WP-RELOAD-DL-1). "Module variable" is a LIFETIME, not a detail - pick it
+  against the event, here `sessionStorage`, which matches the plugin's own boundary.
 
 **Android/iOS parity: CODE audited 2026-08-03 (v0.12.0, file by file), CONFIGURATION audited
 2026-08-07.** Do not re-audit either - the table of every surface, what each is guarded by, and the

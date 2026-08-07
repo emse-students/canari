@@ -7,6 +7,7 @@
  * built-in `fetch` so the client-side router keeps working.
  */
 
+import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
 import { navigateInAppFromPublicUrl } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { inAppPathFromPublicUrl, isPublicAppUrl } from '$lib/utils/publicAppUrl';
@@ -250,9 +251,13 @@ if (isTauriRuntime()) {
       // Handles deep links when the app is already running
       onOpenUrl(processUrls);
 
-      // Last URL seen from getCurrent() - prevents replaying the same URL on foreground
-      // resume when Android has not yet updated the current intent.
-      let lastGetCurrentUrl: string | null = null;
+      // Which launch URL this session has already acted on. NOT a module variable: `getCurrent()`
+      // keeps returning the launch URL for the life of the PROCESS, while a WebView reload wipes
+      // every variable in this bundle - so an in-memory guard is erased by the one event it has to
+      // survive, and the reload replays the deep link (measured 15 min after launch, 2026-08-07).
+      // `deepLinkClaims` holds it in `sessionStorage`, whose lifetime matches the plugin's. It is
+      // imported statically on purpose - see the module-level warning above: nothing on this path
+      // may await, or the listener registers after the event it exists to catch.
 
       // Distinct failures only: `checkCurrentUrl` runs five times on every start plus once per
       // foreground resume, and a permanent failure would otherwise bury the log it belongs in.
@@ -263,8 +268,7 @@ if (isTauriRuntime()) {
           .then((urls) => {
             if (!urls) return;
             const first = Array.isArray(urls) ? urls[0] : String(urls);
-            if (first === lastGetCurrentUrl) return; // already handled
-            lastGetCurrentUrl = first;
+            if (!deepLinkClaims.claim(first)) return; // already handled by this session
             processUrls(Array.isArray(urls) ? urls : [urls]);
           })
           .catch((err) => {
