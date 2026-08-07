@@ -3,6 +3,8 @@ import {
   clearAwaitingHistory,
   enumerateAwaitingHistory,
   isAwaitingHistory,
+  isProvenAwaitingReason,
+  readAwaitingHistoryReason,
 } from './awaitingHistoryRegistry';
 
 describe('awaitingHistoryRegistry', () => {
@@ -59,6 +61,50 @@ describe('awaitingHistoryRegistry', () => {
     expect(JSON.parse(localStorage.getItem('mls_awaiting_history_since:user-a:g1')!).reason).toBe(
       'unreadable-frames'
     );
+  });
+
+  it('protects EVERY proof from a presumption, not just the first one written', () => {
+    // `peer-holds-more` ranks with `unreadable-frames`: ids another device listed are evidence a
+    // later "my store looks non-empty" cannot unlearn either.
+    markAwaitingHistory('user-a', 'g1', 'peer-holds-more');
+    markAwaitingHistory('user-a', 'g1', 'no-local-history');
+    expect(readAwaitingHistoryReason('user-a', 'g1')).toBe('peer-holds-more');
+  });
+
+  it('keeps the proof already recorded when another proof is written', () => {
+    // Neither outranks the other, so the first one holds: both are owed, and the instant must not
+    // move (the give-up horizon is measured from when we started waiting).
+    markAwaitingHistory('user-a', 'g1', 'unreadable-frames');
+    markAwaitingHistory('user-a', 'g1', 'peer-holds-more');
+    expect(readAwaitingHistoryReason('user-a', 'g1')).toBe('unreadable-frames');
+  });
+
+  describe('readAwaitingHistoryReason / isProvenAwaitingReason', () => {
+    it('reads back the recorded evidence, and null when nothing is awaited', () => {
+      markAwaitingHistory('user-a', 'g1', 'peer-holds-more');
+      expect(readAwaitingHistoryReason('user-a', 'g1')).toBe('peer-holds-more');
+      expect(readAwaitingHistoryReason('user-a', 'g2')).toBeNull();
+      expect(readAwaitingHistoryReason('user-b', 'g1')).toBeNull();
+    });
+
+    it('reads null past the give-up horizon, like isAwaitingHistory', () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
+      markAwaitingHistory('user-a', 'g1', 'unreadable-frames');
+      vi.setSystemTime(1_000_000 + 31 * 24 * 60 * 60 * 1000);
+      expect(readAwaitingHistoryReason('user-a', 'g1')).toBeNull();
+    });
+
+    it('reads null for a legacy marker, which carries no evidence', () => {
+      localStorage.setItem('mls_awaiting_history_since:user-a:g1', String(Date.now()));
+      expect(readAwaitingHistoryReason('user-a', 'g1')).toBeNull();
+    });
+
+    it('separates the presumption from the proofs', () => {
+      expect(isProvenAwaitingReason('no-local-history')).toBe(false);
+      expect(isProvenAwaitingReason('peer-holds-more')).toBe(true);
+      expect(isProvenAwaitingReason('unreadable-frames')).toBe(true);
+    });
   });
 
   it('ignores and prunes a legacy marker, which carries no evidence', () => {

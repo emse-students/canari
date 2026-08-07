@@ -2,7 +2,7 @@ import {
   frameFingerprint,
   noteFrameProcessed,
   hasFrameBeenProcessed,
-  shouldSignalDesync,
+  noteDesyncDetected,
   forgetFrameLedger,
   resetFrameLedgerForTests,
 } from './inboundFrameLedger';
@@ -62,14 +62,70 @@ describe('rate-limiting the desync signal', () => {
   it('signals once per group per window, then again after it', () => {
     // A rewound sender fails EVERY frame until its ratchet passes what we consumed, and each
     // signal asks the peer to retransmit - answering a storm with a storm.
-    expect(shouldSignalDesync('g1', 1_000)).toBe(true);
-    expect(shouldSignalDesync('g1', 2_000)).toBe(false);
-    expect(shouldSignalDesync('g1', 30_999)).toBe(false);
-    expect(shouldSignalDesync('g1', 31_000)).toBe(true);
+    expect(noteDesyncDetected('g1', 1_000).signal).toBe(true);
+    expect(noteDesyncDetected('g1', 2_000).signal).toBe(false);
+    expect(noteDesyncDetected('g1', 30_999).signal).toBe(false);
+    expect(noteDesyncDetected('g1', 31_000).signal).toBe(true);
   });
 
   it('rate-limits each group on its own', () => {
-    expect(shouldSignalDesync('g1', 1_000)).toBe(true);
-    expect(shouldSignalDesync('g2', 1_000)).toBe(true);
+    expect(noteDesyncDetected('g1', 1_000).signal).toBe(true);
+    expect(noteDesyncDetected('g2', 1_000).signal).toBe(true);
+  });
+
+  it('does not spend a rate-limited detection on the escalation counter', () => {
+    // Two signals, and a swarm of losses in between that the window swallowed: the third SIGNAL is
+    // what escalates, not the thirtieth frame.
+    expect(noteDesyncDetected('g1', 0)).toEqual({ signal: true, escalate: false });
+    for (let t = 1_000; t < 30_000; t += 1_000) {
+      expect(noteDesyncDetected('g1', t)).toEqual({ signal: false, escalate: false });
+    }
+    expect(noteDesyncDetected('g1', 30_000)).toEqual({ signal: true, escalate: false });
+    expect(noteDesyncDetected('g1', 60_000)).toEqual({ signal: false, escalate: true });
+  });
+});
+
+describe('giving up on the narrow repair', () => {
+  it('escalates on the third signal, and asks for a window on the first two', () => {
+    expect(noteDesyncDetected('g1', 0)).toEqual({ signal: true, escalate: false });
+    expect(noteDesyncDetected('g1', 40_000)).toEqual({ signal: true, escalate: false });
+    // Three signals inside the window: the retransmission is not repairing this group.
+    expect(noteDesyncDetected('g1', 80_000)).toEqual({ signal: false, escalate: true });
+  });
+
+  it('never signals AND escalates at once - a repair shown not to work is not worth sending', () => {
+    const verdicts = [0, 40_000, 80_000].map((t) => noteDesyncDetected('g1', t));
+    expect(verdicts.every((v) => !(v.signal && v.escalate))).toBe(true);
+  });
+
+  it('forgets signals that fall outside the window: unrelated losses are not one failing repair', () => {
+    expect(noteDesyncDetected('g1', 0).escalate).toBe(false);
+    expect(noteDesyncDetected('g1', 40_000).escalate).toBe(false);
+    // Past 5 min the first two have aged out one by one, so what would have been the third and
+    // fourth signal are only the second and first of a fresh episode - no escalation on either.
+    expect(noteDesyncDetected('g1', 320_000)).toEqual({ signal: true, escalate: false });
+    expect(noteDesyncDetected('g1', 360_000)).toEqual({ signal: true, escalate: false });
+    // Three inside one window at last.
+    expect(noteDesyncDetected('g1', 400_000)).toEqual({ signal: false, escalate: true });
+  });
+
+  it('clears the count when it fires, so the escalation gets its own chance', () => {
+    [0, 40_000, 80_000].forEach((t) => noteDesyncDetected('g1', t));
+    // Back to asking for a window: the diff has been started and must be allowed to land.
+    expect(noteDesyncDetected('g1', 120_000)).toEqual({ signal: true, escalate: false });
+    expect(noteDesyncDetected('g1', 160_000)).toEqual({ signal: true, escalate: false });
+    expect(noteDesyncDetected('g1', 200_000)).toEqual({ signal: false, escalate: true });
+  });
+
+  it('counts each group on its own', () => {
+    [0, 40_000].forEach((t) => noteDesyncDetected('g1', t));
+    expect(noteDesyncDetected('g2', 80_000)).toEqual({ signal: true, escalate: false });
+    expect(noteDesyncDetected('g1', 80_000)).toEqual({ signal: false, escalate: true });
+  });
+
+  it('forgets the count with the rest of the group state', () => {
+    [0, 40_000].forEach((t) => noteDesyncDetected('g1', t));
+    forgetFrameLedger('g1');
+    expect(noteDesyncDetected('g1', 80_000)).toEqual({ signal: true, escalate: false });
   });
 });

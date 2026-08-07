@@ -9,6 +9,10 @@ import {
   resetEpochGapRegistry,
 } from '$lib/utils/chat/epochGapRegistry';
 import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
+// The window a peer is asked to look back over is the SENDER's retention contract, so it is defined
+// where the payloads are kept - asking for more than anyone retains would be a request nothing can
+// answer.
+import { DESYNC_RETRANSMIT_WINDOW_MS } from '$lib/utils/chat/recentSends';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
@@ -20,9 +24,11 @@ import {
 import {
   frameFingerprint,
   hasFrameBeenProcessed,
+  noteDesyncDetected,
   noteFrameProcessed,
-  shouldSignalDesync,
 } from '../inboundFrameLedger';
+import { markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
+import { solicitHistory } from '$lib/utils/chat/historySolicit';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { createMlsStatePersister } from '../mlsStatePersister';
@@ -58,15 +64,6 @@ const MAX_NOMATCH_KP_RETRIES = 3;
  * and request a new Welcome to rejoin at the current epoch.
  */
 const EPOCH_GAP_ESCALATION_MS = 30_000;
-
-/**
- * How far back a peer is asked to look when we report a frame we could not decrypt.
- *
- * We cannot name the message, so the request is a window. Wide enough to cover the rewind that
- * produced the loss (a reload plus the send that follows it, or a switch between two tabs); short
- * enough that the answer stays a handful of payloads the peer still holds in memory.
- */
-const DESYNC_RETRANSMIT_WINDOW_MS = 120_000;
 
 /** Per-terminal-group NoMatchingKeyPackage failure counter, used for escalation. */
 const noMatchKpFailures = new Map<string, number>();
@@ -569,6 +566,7 @@ async function handleKnownGroup({
     conversations,
     messageReactions,
     storage,
+    userId,
     deviceKeyB64,
     addMessageToChat,
     onCallSignal,
@@ -601,7 +599,20 @@ async function handleKnownGroup({
     log(
       `[MLS] LOST frame for ${convoKey.slice(0, 8)}… from ${sender}: generation consumed but this frame was never processed - the sender's ratchet rewound (${reason})`
     );
-    if (!shouldSignalDesync(groupId)) {
+    const verdict = noteDesyncDetected(groupId);
+    if (verdict.escalate) {
+      // The narrow repair has been asked for repeatedly and we are still losing frames, so stop
+      // asking for a time window out of a peer's memory and reach for the durable exchange: the
+      // marker is what makes it survive this session, and the solicitation runs the manifest diff
+      // now rather than at the next reconnect. `unreadable-frames` is the literal truth here.
+      markAwaitingHistory(userId, groupId, 'unreadable-frames');
+      solicitHistory(mlsService, groupId, log);
+      log(
+        `[MLS] Retransmission has not repaired ${convoKey.slice(0, 8)}… - escalating to a history diff`
+      );
+      return;
+    }
+    if (!verdict.signal) {
       log(`[MLS] Desync in ${convoKey.slice(0, 8)}… already signalled recently - not asking again`);
       return;
     }

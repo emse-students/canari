@@ -563,9 +563,15 @@ export async function handleSystemEvent(
   }
 
   if (event === 'history_bundle') {
-    // A bundle arrived: stop any in-flight solicitation retries for this group (idempotent) and
-    // clear the durable awaiting-history marker so future sessions no longer re-solicit it.
-    noteHistoryBundleReceived(userId, convoKey);
+    // A bundle arrived: somebody answered, so the offline banner comes down. Whether it also ENDS
+    // the wait depends on what it carries, which is why the count is read before anything is
+    // ingested - an empty bundle is the peer saying "you are missing nothing", a full one is just
+    // messages. `noteHistoryBundleReceived` owns that distinction.
+    noteHistoryBundleReceived(
+      userId,
+      convoKey,
+      Array.isArray(data.messages) ? data.messages.length : 0
+    );
     try {
       type BundleMsg = {
         id: string;

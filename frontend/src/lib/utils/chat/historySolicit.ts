@@ -6,6 +6,8 @@ import {
   clearAwaitingHistory,
   enumerateAwaitingHistory,
   isAwaitingHistory,
+  isProvenAwaitingReason,
+  readAwaitingHistoryReason,
 } from './awaitingHistoryRegistry';
 
 /**
@@ -65,9 +67,10 @@ export function setHistoryDigestBroadcaster(fn: HistoryDigestBroadcaster | null)
  * Best-effort with bounded, receipt-driven retries. The delivery service picks a single online
  * responder per call, so re-sending on a backoff rotates past a peer that holds its WebSocket while
  * backgrounded (frozen-online: `redis.exists` is true but the app cannot process the frame) and
- * cannot answer. Retries stop as soon as a `history_bundle` actually arrives
- * (`noteHistoryBundleReceived`). The bundle receiver deduplicates by message id, so a redundant
- * resend is harmless.
+ * cannot answer. Retries stop when a `history_bundle` ENDS the wait rather than merely arriving -
+ * see {@link noteHistoryBundleReceived}, which keeps them running while a proven gap is only
+ * partially answered, so the remaining difference is asked for again inside the same session. The
+ * bundle receiver deduplicates by message id, so a redundant resend is harmless.
  *
  * Durable across sessions ONLY through the awaiting-history registry, which this function no
  * longer writes: soliciting is the ACTION, deciding that history is missing is a separate
@@ -215,14 +218,38 @@ export function cancelHistorySolicit(groupId: string): void {
 }
 
 /**
- * Signals that a history_bundle was received for `groupId`, so we stop soliciting it (this session
- * and future ones): cancels in-flight retries and clears the durable awaiting-history marker.
+ * Signals that a history_bundle was received for `groupId`.
+ *
+ * A bundle always proves one thing - somebody answered - so the offline banner comes down whatever
+ * it contains. What it does NOT always prove is that the wait is over, and conflating the two is
+ * how a partial answer used to end a solicitation for good (WP-HIST-3):
+ *
+ * - An EMPTY bundle is the only authoritative "you are missing nothing": both senders compare their
+ *   whole store before sending one, and neither sends it while itself awaiting history. It ends the
+ *   wait whatever the evidence behind it was.
+ * - A NON-EMPTY bundle carries messages, and nothing more. It voids a PRESUMPTION - "I hold nothing
+ *   for this group" stops being true the moment a message lands - but it cannot answer a PROOF: the
+ *   peer that listed forty ids we lack is not repaid by a chunk of forty others, and a history big
+ *   enough to be chunked arrives as several non-empty bundles anyway. So a proven marker survives,
+ *   the in-session retries keep running, and the NEXT diff decides. That is what makes the marker
+ *   empty itself: each exchange strictly reduces the difference, so it converges on the empty bundle
+ *   above rather than on a bundle count.
  */
-export function noteHistoryBundleReceived(userId: string, groupId: string): void {
-  cancelHistorySolicit(groupId);
-  clearAwaitingHistory(userId, groupId);
+export function noteHistoryBundleReceived(
+  userId: string,
+  groupId: string,
+  bundleMessageCount: number
+): void {
   // WP-HIST-1: clear the reactive pending state so the UI stops showing the offline banner.
   historyRequestPendingStore.noteReceived(groupId);
+
+  const reason = readAwaitingHistoryReason(userId, groupId);
+  if (bundleMessageCount > 0 && reason !== null && isProvenAwaitingReason(reason)) {
+    return;
+  }
+
+  cancelHistorySolicit(groupId);
+  clearAwaitingHistory(userId, groupId);
 }
 
 /** Cancels every pending solicitation (session teardown / test cleanup). */

@@ -41,12 +41,29 @@ export type AwaitingHistoryReason = 'no-local-history' | 'unreadable-frames' | '
  * Ranks the evidence behind a marker. A PROOF must never be overwritten by a PRESUMPTION: a device
  * that knows a specific frame is unreadable, or knows the exact ids a peer holds, has learnt
  * something a later "my store looks non-empty" cannot unlearn.
+ *
+ * Rank decides two separate things, which is why it is a table rather than a special case: which
+ * reason survives when a marker is written twice, and whether a PARTIAL answer may end the wait -
+ * see {@link isProvenAwaitingReason}.
  */
 const REASON_RANK: Record<AwaitingHistoryReason, number> = {
   'no-local-history': 0,
   'peer-holds-more': 1,
   'unreadable-frames': 1,
 };
+
+/**
+ * Whether the marker rests on PROOF rather than on a presumption.
+ *
+ * A presumption is void as soon as it is contradicted: "I hold nothing" stops being true the moment
+ * any message lands. A proof is not - a peer that listed forty ids we lack, or a frame that could
+ * never be decrypted, is still owed after a chunk of forty other messages arrives. So a proven
+ * marker outlives a partial answer and is ended only by a peer that compared its WHOLE store and
+ * found us complete.
+ */
+export function isProvenAwaitingReason(reason: AwaitingHistoryReason): boolean {
+  return REASON_RANK[reason] > REASON_RANK['no-local-history'];
+}
 
 /** A stored marker: when we started waiting, and the evidence that we are. */
 type AwaitingMarker = { since: number; reason: AwaitingHistoryReason };
@@ -82,9 +99,9 @@ function key(userId: string, groupId: string): string {
  * Records that `groupId` is awaiting its history bundle, with the evidence for it. Idempotent:
  * keeps the earliest instant so the give-up horizon is stable across sessions.
  *
- * A proof outranks a presumption: once the replay has reported `unreadable-frames` the reason is
- * never downgraded, so a later join that happens to find a non-empty store cannot erase the fact
- * that some frame is genuinely unreadable.
+ * A proof outranks a presumption: once the replay has reported `unreadable-frames`, or a peer's
+ * digest has named ids we lack, the reason is never downgraded - so a later join that happens to
+ * find a non-empty store cannot erase the fact that something is genuinely missing.
  */
 export function markAwaitingHistory(
   userId: string,
@@ -96,9 +113,27 @@ export function markAwaitingHistory(
   const existing = readMarker(localStorage.getItem(k));
   const next: AwaitingMarker = {
     since: existing?.since ?? Date.now(),
-    reason: existing?.reason === 'unreadable-frames' ? 'unreadable-frames' : reason,
+    reason:
+      existing && REASON_RANK[existing.reason] >= REASON_RANK[reason] ? existing.reason : reason,
   };
   localStorage.setItem(k, JSON.stringify(next));
+}
+
+/**
+ * The evidence currently recorded for `groupId`, or `null` when nothing is awaited.
+ *
+ * Exposed because the marker's REASON decides what may end the wait, not merely whether one is in
+ * progress: only the caller that is about to clear can weigh a partial answer against a proof.
+ * Honours the same give-up horizon as {@link isAwaitingHistory}.
+ */
+export function readAwaitingHistoryReason(
+  userId: string,
+  groupId: string
+): AwaitingHistoryReason | null {
+  if (typeof localStorage === 'undefined') return null;
+  const marker = readMarker(localStorage.getItem(key(userId, groupId)));
+  if (marker === null || Date.now() - marker.since > MAX_AGE_MS) return null;
+  return marker.reason;
 }
 
 /** Clears the awaiting-history marker for `groupId` (bundle arrived, or the group was dropped). */

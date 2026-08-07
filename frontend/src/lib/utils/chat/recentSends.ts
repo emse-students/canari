@@ -28,8 +28,34 @@ export interface RecentSend {
 /** Retained per conversation. A rewind loses a handful of messages, never dozens. */
 const MAX_PER_CONVERSATION = 25;
 
-/** Older than this and a retransmission is no longer worth the bytes. */
-const RETENTION_MS = 5 * 60_000;
+/**
+ * How far back a peer may ask us to look when it reports a frame it could not decrypt.
+ *
+ * It cannot name the message - the frame never decrypted, so its id was never seen - so the request
+ * is a WINDOW. Wide enough to cover the rewind that produced the loss (a reload plus the send that
+ * follows it, or a switch between two tabs); short enough that the answer stays a handful of
+ * payloads. This is the receiver's half of the contract, kept here beside the sender's half so the
+ * two cannot drift: a window wider than the retention below asks for what nobody kept.
+ */
+export const DESYNC_RETRANSMIT_WINDOW_MS = 120_000;
+
+/**
+ * Slack between the window a peer may ask for and how long we actually keep a payload.
+ *
+ * The peer measures its window from the moment it NOTICES, and its signal then has to reach us: a
+ * frame sent at the very edge of the window is requested a round trip later. Retaining exactly the
+ * window would drop precisely the oldest payload every request asks about.
+ */
+const RETRANSMIT_ROUND_TRIP_MARGIN_MS = 30_000;
+
+/**
+ * Older than this and a retransmission is no longer worth the bytes.
+ *
+ * DERIVED, not chosen: the replay is clamped to what is asked, so retaining beyond the widest
+ * question a peer can pose shortens nothing and only holds plaintext protos in memory for longer.
+ * It was a flat five minutes, of which three could never be requested by anyone.
+ */
+const RETENTION_MS = DESYNC_RETRANSMIT_WINDOW_MS + RETRANSMIT_ROUND_TRIP_MARGIN_MS;
 
 const recent = new Map<string, RecentSend[]>();
 

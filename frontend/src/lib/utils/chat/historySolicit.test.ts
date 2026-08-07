@@ -72,7 +72,7 @@ describe('solicitHistory', () => {
     vi.advanceTimersByTime(INITIAL);
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
 
-    noteHistoryBundleReceived(USER, 'g1');
+    noteHistoryBundleReceived(USER, 'g1', 3);
     vi.advanceTimersByTime(10_000);
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
   });
@@ -121,7 +121,7 @@ describe('solicitHistory', () => {
     vi.advanceTimersByTime(INITIAL);
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
 
-    noteHistoryBundleReceived(USER, 'g1');
+    noteHistoryBundleReceived(USER, 'g1', 1);
     expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
   });
 
@@ -234,6 +234,86 @@ describe('solicitHistoryIfMissing', () => {
 
     vi.advanceTimersByTime(INITIAL);
     expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1');
+  });
+});
+
+describe('noteHistoryBundleReceived', () => {
+  const MARKER = `mls_awaiting_history_since:${USER}:g1`;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    localStorage.clear();
+    historyRequestPendingStore.cancelAll();
+  });
+  afterEach(() => {
+    cancelAllHistorySolicit();
+    historyRequestPendingStore.cancelAll();
+    vi.useRealTimers();
+    localStorage.clear();
+  });
+
+  it('ends a PRESUMED wait on a non-empty bundle: we no longer hold nothing', () => {
+    markAwaitingHistory(USER, 'g1', 'no-local-history');
+    noteHistoryBundleReceived(USER, 'g1', 12);
+    expect(localStorage.getItem(MARKER)).toBeNull();
+  });
+
+  it.each([['peer-holds-more'], ['unreadable-frames']] as const)(
+    'keeps a %s marker across a non-empty bundle: messages are not the proof being answered',
+    (reason) => {
+      markAwaitingHistory(USER, 'g1', reason);
+      noteHistoryBundleReceived(USER, 'g1', 40);
+      expect(localStorage.getItem(MARKER)).not.toBeNull();
+    }
+  );
+
+  it.each([['no-local-history'], ['peer-holds-more'], ['unreadable-frames']] as const)(
+    'an EMPTY bundle ends the wait whatever the evidence was (%s)',
+    (reason) => {
+      markAwaitingHistory(USER, 'g1', reason);
+      noteHistoryBundleReceived(USER, 'g1', 0);
+      expect(localStorage.getItem(MARKER)).toBeNull();
+    }
+  );
+
+  it('keeps the in-session retries running while a proven gap is only partly answered', () => {
+    markAwaitingHistory(USER, 'g1', 'peer-holds-more');
+    const mls = makeMls();
+    solicitHistory(mls, 'g1', log, [1000]);
+    vi.advanceTimersByTime(INITIAL);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+
+    // A chunk lands, but the ids the peer named are not thereby accounted for: ask again.
+    noteHistoryBundleReceived(USER, 'g1', 200);
+    vi.advanceTimersByTime(1000);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
+
+    // The next exchange finds nothing left to send, which is what finally ends it.
+    noteHistoryBundleReceived(USER, 'g1', 0);
+    vi.advanceTimersByTime(10_000);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem(MARKER)).toBeNull();
+  });
+
+  it('takes the offline banner down on ANY bundle, including one that does not end the wait', () => {
+    markAwaitingHistory(USER, 'g1', 'unreadable-frames');
+    const mls = makeMls();
+    solicitHistory(mls, 'g1', log, [1000]);
+    vi.advanceTimersByTime(INITIAL);
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
+
+    noteHistoryBundleReceived(USER, 'g1', 5);
+    expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
+    expect(localStorage.getItem(MARKER)).not.toBeNull();
+  });
+
+  it('clears an expired proof rather than keeping it alive on a partial answer', () => {
+    vi.setSystemTime(1_000_000);
+    markAwaitingHistory(USER, 'g1', 'peer-holds-more');
+    // Past the 30-day give-up horizon: the marker no longer proves anything.
+    vi.setSystemTime(1_000_000 + 31 * 24 * 60 * 60 * 1000);
+    noteHistoryBundleReceived(USER, 'g1', 7);
+    expect(localStorage.getItem(MARKER)).toBeNull();
   });
 });
 

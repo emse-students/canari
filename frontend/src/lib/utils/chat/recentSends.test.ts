@@ -1,4 +1,5 @@
 import {
+  DESYNC_RETRANSMIT_WINDOW_MS,
   noteSentFrame,
   recentSentSince,
   forgetRecentSends,
@@ -49,6 +50,23 @@ describe('what the sender keeps so it can send it again', () => {
     // A window wider than what is retained must not silently return a shorter answer as if it were
     // complete - it returns what exists, and the caller reports the count it actually resent.
     expect(recentSentSince('g1', 0).map((s) => s.messageId)).toEqual(['new']);
+  });
+
+  it('retains everything the widest question a peer can ask about could name', () => {
+    const now = Date.now();
+    // A frame sent at the very edge of the advertised window, whose signal then takes a moment to
+    // reach us: retaining exactly the window would drop precisely what every request asks about.
+    noteSentFrame('g1', 'edge', proto(1), now - DESYNC_RETRANSMIT_WINDOW_MS);
+    expect(
+      recentSentSince('g1', now - DESYNC_RETRANSMIT_WINDOW_MS).map((s) => s.messageId)
+    ).toEqual(['edge']);
+  });
+
+  it('stops retaining once no peer could still be asking - the window plus a round trip', () => {
+    const now = Date.now();
+    noteSentFrame('g1', 'unaskable', proto(1), now - DESYNC_RETRANSMIT_WINDOW_MS - 31_000);
+    noteSentFrame('g1', 'askable', proto(2), now - DESYNC_RETRANSMIT_WINDOW_MS - 29_000);
+    expect(recentSentSince('g1', 0).map((s) => s.messageId)).toEqual(['askable']);
   });
 
   it('caps how much it retains per conversation', () => {

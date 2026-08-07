@@ -446,14 +446,52 @@ diff with at least one peer is non-empty", which empties itself.
 2. **DONE** - the wiring: the requester broadcasts a digest, `handleHistoryRequest` awaits it and
    diffs, `systemMessageHandler` gained the digest and pull branches, `groupActions` gained
    `sendHistoryBundleForIds` / `sendHistoryDigest` / `sendHistoryPull` / `readHistoryEntries`.
-3. **OWED** - marker semantics, per the paragraph above. The `peer-holds-more` reason exists and is
-   written before a pull; the clearing path ("the marker empties itself when the diff comes back
-   empty") is not wired yet.
-4. **OWED** - the three defects below, plus the give-up counter (the escalation point from the narrow
-   `decrypt_failed` resend to this diff, near `shouldSignalDesync` in `inboundFrameLedger.ts`) and
-   `RETENTION_MS` in `recentSends.ts`, which is a bare `5 * 60_000` and should be derived from
-   `DESYNC_RETRANSMIT_WINDOW_MS` (120 s) plus a round-trip margin.
-5. Wiki + `CHANGELOG.md` - done for legs 1-3.
+3. **DONE** - marker semantics: see below.
+4. **DONE** - the give-up counter (`noteDesyncDetected`) and the derived `RETENTION_MS`. **OWED** -
+   the three defects at the end of this section.
+5. Wiki + `CHANGELOG.md` - done for legs 1-4.
+
+### What ends the wait, and what merely interrupts it
+
+The marker (`awaitingHistoryRegistry.ts`) records that a group is short of history AND the evidence
+for it, because the evidence decides what may end it. There are two kinds:
+
+- A **presumption** - `no-local-history`, "I hold nothing for this group, so I cannot tell an empty
+  conversation from a missing one". It is void the moment any message lands.
+- A **proof** - `unreadable-frames` (the replay gave up on a frame it can never decrypt) or
+  `peer-holds-more` (a peer's digest named ids we lack). Neither is unlearnt by other messages
+  arriving.
+
+So a bundle does not end a wait by existing. An EMPTY bundle does, whatever the evidence was: it is
+the only authoritative "you are missing nothing", and both senders compare their whole store before
+sending one - neither sends it while itself awaiting history. A NON-EMPTY bundle carries messages and
+nothing more: it voids a presumption, and against a proof it leaves the marker standing and the
+in-session retries running, so the next exchange asks for what is still missing. That is what makes
+the marker empty ITSELF: each exchange strictly reduces the difference, so it converges on the empty
+bundle rather than on a bundle count. It also fixes a defect that predates the diff - a history big
+enough to be chunked arrives as several non-empty bundles, and the first of them used to end the
+solicitation.
+
+`REASON_RANK` is what keeps a proof from being overwritten by a presumption, in both directions: on
+write (`markAwaitingHistory` keeps the higher rank) and on clear (`isProvenAwaitingReason`).
+
+### When the narrow repair is not working (the give-up counter)
+
+`decrypt_failed` asks a peer for a time WINDOW out of an in-memory ring, so it fails for reasons no
+amount of repetition fixes: the sender reloaded and lost the ring, the payload aged out, or the loss
+is older than the window reaches. `noteDesyncDetected` therefore returns a verdict rather than a
+boolean - `{ signal, escalate }`, and never both. Three signals inside five minutes (so at least a
+minute of continuous loss, the signal itself being rate-limited to one per 30 s) means the narrow
+repair is not repairing this group, and the fourth ask would be a loop rather than persistence. The
+escalation marks `unreadable-frames` durably and starts a solicitation - i.e. it hands the problem to
+the diff, which reads the peer's DURABLE store, is answered by one elected member, and names messages
+by id instead of by time. The count is cleared when it fires, so the escalation gets its own chance
+before anything is concluded again.
+
+`RETENTION_MS` in `recentSends.ts` is DERIVED from that window plus a round-trip margin, and the
+window itself now lives there - beside the payloads it describes, since a window wider than the
+retention asks for what nobody kept. It was a flat five minutes, of which three could never be
+requested by anyone.
 
 ### Three defects that belong to this work, or to nothing
 
