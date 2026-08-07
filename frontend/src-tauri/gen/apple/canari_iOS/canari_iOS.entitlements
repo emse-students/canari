@@ -10,10 +10,14 @@
 	     fails ("profile doesn't include the ... entitlement"). -->
 	<key>com.apple.developer.usernotifications.time-sensitive</key>
 	<true/>
+	<!-- MUST mirror MOBILE_APP_LINK_HOSTS in src/lib/mobile/appSiteAssociation.ts, which is the
+	     canonical host list for BOTH platforms; appSiteAssociation.test.ts fails on drift.
+	     `www` is deliberately absent: it 301-redirects to the apex (including
+	     /.well-known/apple-app-site-association, measured on prod 2026-08-07) and Apple's
+	     association fetch does not follow redirects, so claiming it can never validate. -->
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:canari-emse.fr</string>
-		<string>applinks:www.canari-emse.fr</string>
 	</array>
 	<key>com.apple.security.application-groups</key>
 	<array>

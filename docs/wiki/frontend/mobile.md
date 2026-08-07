@@ -430,6 +430,40 @@ Key FFI functions:
 - `nativeBuildTextMessageProto` / `canari_native_build_text_message_proto` — Reply proto encoder
 - `nativeBuildReadReceiptProto` / `canari_native_build_read_receipt_proto` — Read receipt proto encoder
 
+## Android / iOS parity, and where it is actually guaranteed
+
+**Code parity was audited file by file at v0.12.0 (2026-08-03) and holds.** The residual
+asymmetries are imposed by the operating systems and are not defects: no boot broadcast on iOS,
+CallKit against a full-screen intent, no self `Person` on iOS, and a quick-reply action that
+relaunches a killed process on iOS where Android uses a broadcast receiver.
+
+**That audit read SOURCE files, so it structurally could not see a divergence expressed in
+CONFIGURATION** — and every parity defect found since has been exactly that. A second pass on
+2026-08-07 covered the configuration surface; what it found and what now guards each one:
+
+| Surface | Expressed in | State |
+|---|---|---|
+| Plugin ACL (`deep-link`, and every other plugin) | `capabilities/*.json` — **shared** | Was missing for `deep-link`, breaking **both** platforms' cold-start deep links. Fixed; `tauriCapabilities.test.ts` guards it |
+| App Link **hosts** | `appSiteAssociation.ts`, `AndroidManifest.xml`, `canari_iOS.entitlements` | iOS claimed `applinks:www.canari-emse.fr` alone, which can never validate (`www` 301s, and Apple does not follow redirects). Removed; `appSiteAssociation.test.ts` now asserts all three agree |
+| App Link **paths** | the same three files | Generated from one list, already guarded |
+| Custom URL scheme | `AndroidManifest.xml` (per host), `Info.plist` `CFBundleURLTypes` (per scheme) | Equivalent by construction: iOS claims the scheme, so all five hosts follow |
+| `push_context.json` fields | Rust writer, three native readers | `pushContextFields.test.ts` |
+| FCM manifest entries | `AndroidManifest.xml` | `androidFcmManifest.test.ts` (Android-only by nature) |
+| Cookie-jar durability | `commands/cookies.rs` | Android-only **by API**, not by decision — iOS has no flush to call and has never been observed. `check P` |
+
+Two rules come out of that table, and they are the ones to apply before adding anything native:
+
+- **Parity of code is not parity of the manifests, entitlements and served association files.** Those
+  are a separate surface with its own tests — and it is the surface every divergence has been on.
+- **A no-op on one platform must say WHY.** "Nothing to do here" and "there is no API for this and
+  nobody has looked" are different statements, and only the first is evidence of parity. Where the
+  answer needs hardware, it becomes a lettered check in
+  [`device-verification.md`](../device-verification.md) rather than a comment implying safety.
+
+**iOS has never run a single check on hardware**, so nothing below the test line is verified there.
+Until it can be, parity is maintained by construction — one shared file wherever the platforms can
+share one, and a test reading both trees wherever they cannot.
+
 ## CI/CD
 
 | Workflow | Output |

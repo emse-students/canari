@@ -706,15 +706,19 @@ page. The five to carry, plus one status line:
   (WP-NOTIF-1). And parity between the platforms is not parity of declarations - iOS was correct here
   and Android was not, differing only in WHERE an early return sat.
 
-**Android/iOS native parity is COMPLETE as of v0.12.0** (audited 2026-08-03, file by file), for
-code. The asymmetries are OS-imposed - no boot broadcast on iOS, CallKit vs full-screen intent, no
-self `Person` on iOS. Do not re-audit; extend this line.
-
-**That audit read source files, so it could not see a divergence expressed in CONFIGURATION**: the
-App Link path claim was iOS-only for as long as it existed, and Android captured `/auth/callback`
-out of the browser mid-login (fixed 2026-08-05, `56fc6129`). Parity of code is not parity of the
-manifests, entitlements and served association files - those are a separate surface with its own
-tests.
+**Android/iOS parity: CODE audited 2026-08-03 (v0.12.0, file by file), CONFIGURATION audited
+2026-08-07.** Do not re-audit either - the table of every surface, what each is guarded by, and the
+OS-imposed asymmetries that are NOT defects, is
+[mobile > parity](docs/wiki/frontend/mobile.md#android--ios-parity-and-where-it-is-actually-guaranteed).
+**iOS cannot be tested for a long while (user, 2026-08-07), so parity is maintained BY
+CONSTRUCTION**: one shared file wherever the platforms can share one, a test reading both trees
+wherever they cannot. Every parity defect ever found has been in CONFIGURATION, never in code -
+the `/auth/callback` capture (`56fc6129`), the missing `deep-link` ACL (WP-DEEPLINK-1, which broke
+BOTH platforms), and `applinks:www.canari-emse.fr` claimed on iOS alone though `www` 301s and Apple
+does not follow redirects (fixed 2026-08-07, now asserted by `appSiteAssociation.test.ts`).
+**A no-op on one platform must say WHY**: "nothing to do" and "there is no API and nobody has
+looked" are different, and only the first is evidence - the iOS cookie jar is the second, and is now
+`check P`.
 
 #### Release and CI -> [cicd](docs/wiki/cicd.md)
 

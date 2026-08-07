@@ -52,6 +52,27 @@ Credentials are **not in this repo**. They live in the session scratchpad,
 `scratchpad/test-accounts.json`, written at setup time. Never commit them, never paste them into a
 log excerpt, never echo a password into a shell that gets captured.
 
+### 1.2 A fourth client, one day: iOS
+
+Asked for on 2026-08-07: the same campaign, eventually, with **two PC sessions, one Android and one
+iOS**. It is not scheduled - there is no iOS device available for a long while - but the shape is
+worth fixing now, because it changes what "done" means for everything below.
+
+- **iOS is the only platform where NOT ONE check has ever run on hardware.** Every iOS claim in this
+  repo rests on compiling, and a green CI run does not even prove a given file compiled (the pbxproj
+  is hand-maintained - see [cicd](cicd.md)). Treat every iOS row as unknown, not as passing.
+- **Until then, parity is maintained by construction**, and the surfaces plus their guards are in
+  [mobile > parity](frontend/mobile.md#android--ios-parity-and-where-it-is-actually-guaranteed).
+  Every parity defect found so far has been in configuration, and two of them were found by checks
+  on this page - so a check that fails on Android is worth re-reading as a question about iOS.
+- **The harness generalises, the drivers do not.** `cdp.mjs` drives all three current clients because
+  all three are Chromium; an iOS WKWebView speaks the WebKit remote-debug protocol instead, over
+  `ios_webkit_debug_proxy`, and the native surfaces (`a1.py`, uiautomator2) have no iOS counterpart
+  at all - the equivalent is XCUITest, which needs a Mac. Budget that as real work, not a flag.
+- **A2 would be a THIRD client on jolan's account**, which is a test axis in itself: the multi-device
+  paths (history pooling, cross-device read state, cross-device notification dismissal, revocation)
+  have only ever been exercised with two devices, and several of them fan out per device.
+
 ### 1.1 The harness as BUILT (2026-08-05) - supersedes the plan above where they differ
 
 The harness exists and is proven. It lives OUTSIDE the repo, at

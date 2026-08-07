@@ -1,46 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  ⚠️  CE MANIFEST EST CUSTOM — NE PAS LE LAISSER ÉCRASER PAR `tauri android init`.
-  `tauri android build`/`dev` ne touchent que la section deep-link (marqueurs
-  AUTO-GENERATED). Mais `tauri android init` / `tauri migrate` / une MAJ majeure de
-  Tauri régénèrent gen/android depuis le template et EFFACENT tout ce qui suit.
-  Si ça arrive (cf. régression 53e659a0), RESTAURER impérativement :
-    - <application android:name=".CanariApplication">  (init channels, push secret)
-    - <service .CanariFirebaseMessagingService> + intent-filter MESSAGING_EVENT
-      (SANS lui, Firebase n'appelle jamais onMessageReceived → aucune notif app tuée)
-    - permissions push : POST_NOTIFICATIONS, WAKE_LOCK, c2dm RECEIVE, RECEIVE_BOOT_COMPLETED
+  /!\  THIS MANIFEST IS CUSTOM - DO NOT LET `tauri android init` OVERWRITE IT.
+  `tauri android build`/`dev` only touch the deep-link section (AUTO-GENERATED
+  markers). But `tauri android init` / `tauri migrate` / a major Tauri upgrade
+  regenerate gen/android from the template and ERASE everything below.
+  If that happens (see regression 53e659a0), these MUST be restored:
+    - <application android:name=".CanariApplication">  (channel init, push secret)
+    - <service .CanariFirebaseMessagingService> + MESSAGING_EVENT intent-filter
+      (WITHOUT it, Firebase never calls onMessageReceived -> no notification at all
+      once the app is killed)
+    - push permissions: POST_NOTIFICATIONS, WAKE_LOCK, c2dm RECEIVE, RECEIVE_BOOT_COMPLETED
     - <receiver .CanariBootReceiver> (BOOT_COMPLETED/MY_PACKAGE_REPLACED, WP-XP-4)
     - <receiver .CanariNotificationActionReceiver> (quick actions, WP-XP-1)
-    - retrait AD_ID, networkSecurityConfig, allowBackup=false (+ tools:replace)
-  NE PAS remettre android:debuggable (placeholder ${debuggable} non défini dans
-  build.gradle.kts → merge fail) ni fullBackupContent/dataExtractionRules (conflits merge).
-    - meta-data FCM default_notification_icon / _channel_id (= CHANNEL_MESSAGES Kotlin)
-  Garde-fou CI : src/lib/mobile/androidFcmManifest.test.ts échoue si ces entrées sautent.
+    - the AD_ID removal, networkSecurityConfig, allowBackup=false (+ tools:replace)
+  DO NOT restore android:debuggable (the ${debuggable} placeholder is not defined in
+  build.gradle.kts -> merge failure) nor fullBackupContent/dataExtractionRules (merge
+  conflicts).
+    - FCM meta-data default_notification_icon / _channel_id (= CHANNEL_MESSAGES in Kotlin)
+  CI guardrail: src/lib/mobile/androidFcmManifest.test.ts fails if any of these is dropped.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-    <!-- Supprime la permission AD_ID ajoutée automatiquement par Firebase Analytics -->
+    <!-- Removes the AD_ID permission Firebase Analytics adds automatically -->
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <!-- READ_EXTERNAL_STORAGE n'a plus d'effet depuis API 33 : limité aux API 28-32. -->
+    <!-- READ_EXTERNAL_STORAGE has had no effect since API 33: capped at API 28-32. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <!-- WRITE_EXTERNAL_STORAGE supprimé : sans effet depuis API 29 (scoped storage obligatoire). -->
-    <!-- Accès médias sur Android 13+ (API 33+) -->
+    <!-- WRITE_EXTERNAL_STORAGE removed: no effect since API 29 (scoped storage is mandatory). -->
+    <!-- Media access on Android 13+ (API 33+) -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
-    <!-- Notifications push -->
+    <!-- Push notifications -->
     <uses-permission android:name="com.google.android.c2dm.permission.RECEIVE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- WP-XP-4 : re-enregistrement du token push + drain outbox au boot -->
+    <!-- WP-XP-4: push-token re-registration + outbox drain at boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- WP-XP-5 : sonnerie d'appel entrant plein ecran (CallStyle, verrouille/idle) -->
+    <!-- WP-XP-5: full-screen incoming-call ring (CallStyle, locked/idle) -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -176,8 +178,8 @@
             android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- Réception des messages FCM (push). Sans ce <service> + intent-filter,
-             Firebase n'appelle jamais onMessageReceived → aucune notif app tuée. -->
+        <!-- FCM message reception (push). Without this <service> + intent-filter,
+             Firebase never calls onMessageReceived -> no notification once the app is killed. -->
         <service
             android:name=".CanariFirebaseMessagingService"
             android:exported="false">
@@ -186,7 +188,7 @@
             </intent-filter>
         </service>
 
-        <!-- Icône et canal par défaut des notifications FCM -->
+        <!-- Default icon and channel for FCM notifications -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@drawable/ic_notification" />
@@ -199,9 +201,10 @@
             android:name=".CanariNotificationActionReceiver"
             android:exported="false" />
 
-        <!-- Boot/relaunch re-registration (WP-XP-4) : re-lit le token FCM et draine l'outbox
-             au boot / après MAJ de l'app. exported=false suffit : broadcasts protégés émis
-             par le système uniquement (même pattern que RescheduleReceiver de WorkManager). -->
+        <!-- Boot/relaunch re-registration (WP-XP-4): re-reads the FCM token and drains the outbox
+             at boot / after an app update. exported=false is enough: these are protected
+             broadcasts, emitted by the system only (the same pattern as WorkManager's
+             RescheduleReceiver). -->
         <receiver
             android:name=".CanariBootReceiver"
             android:exported="false">

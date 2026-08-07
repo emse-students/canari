@@ -5,6 +5,7 @@ import {
   androidAppLinkPaths,
   buildAppleAppSiteAssociationJson,
   buildAssetLinksJson,
+  MOBILE_APP_LINK_HOSTS,
   parseAndroidSha256Fingerprints,
 } from './appSiteAssociation';
 
@@ -104,6 +105,35 @@ describe('App Link path claim (iOS / Android parity)', () => {
     // A filter with a host but no path element at all matches every URL on that
     // host - which is the regression this whole block exists to catch.
     expect(webFilter).toMatch(/android:path(Prefix|Pattern)?=/);
+  });
+
+  /**
+   * The claim has a HOST half as well as a path half, and it lives in a FOURTH file the path tests
+   * never open: the iOS entitlements. It drifted there and nowhere else - the entitlement claimed
+   * `applinks:www.canari-emse.fr` while `MOBILE_APP_LINK_HOSTS` excludes `www` on purpose, because
+   * `www` 301-redirects to the apex (including `/.well-known/apple-app-site-association`, measured
+   * on prod) and Apple's association fetch does not follow redirects. So iOS carried a claim that
+   * could never validate and Android carried none, from one list that says neither.
+   *
+   * This is the shape the v0.12.0 native parity audit could not catch: it read SOURCE files, and a
+   * divergence expressed in configuration is invisible to that.
+   */
+  it('the iOS entitlement claims exactly the canonical hosts', () => {
+    const entitlements = readFileSync(
+      resolve(TAURI_ROOT, 'gen/apple/canari_iOS/canari_iOS.entitlements'),
+      'utf8'
+    );
+    const block = entitlements.match(
+      /<key>com\.apple\.developer\.associated-domains<\/key>\s*<array>([\s\S]*?)<\/array>/
+    );
+    expect(block, 'no associated-domains entitlement').toBeTruthy();
+    const claimed = [...block![1].matchAll(/<string>applinks:([^<]+)<\/string>/g)].map((m) => m[1]);
+    expect(claimed.sort()).toEqual([...MOBILE_APP_LINK_HOSTS].sort());
+  });
+
+  it('the Android intent-filter claims exactly the same hosts', () => {
+    const hosts = [...(webFilter ?? '').matchAll(/android:host="([^"]+)"/g)].map((m) => m[1]);
+    expect(hosts.sort()).toEqual([...MOBILE_APP_LINK_HOSTS].sort());
   });
 
   it('claims no path the OIDC round trip or the backend needs', () => {

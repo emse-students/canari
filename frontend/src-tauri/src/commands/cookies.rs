@@ -15,8 +15,16 @@
 
 /// Forces the WebView cookie jar to disk. Returns `false` if the flush could not be performed.
 ///
-/// No-op (and `true`) off Android: every other platform either has no WebView cookie jar of its
-/// own (web) or is not subject to a kill without lifecycle callbacks (desktop).
+/// No-op (and `true`) off Android, but for two DIFFERENT reasons, and only one of them is settled:
+///
+/// - Web has no WebView cookie jar of its own, and desktop is not subject to a kill without
+///   lifecycle callbacks. Nothing to do on either.
+/// - **iOS is an open question, not a decision.** `WKHTTPCookieStore` has no flush API at all, so
+///   there is nothing to call even if the same window exists - and it plausibly does: a suspended
+///   app swiped from the switcher is terminated without `applicationWillTerminate`, which is
+///   exactly the shape that rewound Android's jar by one rotation (WP-ANDROID-SESS-1). It has never
+///   been observed on hardware. Recorded as `check P` in `docs/wiki/device-verification.md`; do not
+///   read this no-op as evidence that iOS is safe.
 #[tauri::command]
 pub(crate) fn flush_webview_cookies() -> bool {
     #[cfg(target_os = "android")]

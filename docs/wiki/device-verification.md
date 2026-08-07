@@ -55,6 +55,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | M | WP-POST-DOC-2 | **PASS** on A1 0.13.0, 2026-08-06 (chat half) | `docs/wiki/cross-client-testing.md` |
 | N | Offline unlock + promotion | owed | owed |
 | O | WP-STORE-1 (install source + version gate) | owed | n/a |
+| P | Cookie durability across a kill (the iOS half of WP-ANDROID-SESS-1) | n/a (fixed + verified) | owed |
 
 For the iOS pass, install the `ios-release` artifact of the run above rather than waiting for
 TestFlight: a dispatch does not upload there, so TestFlight is still on the previous build and check
@@ -350,6 +351,29 @@ contract are unit-tested; three things are not, and cannot be.
 **Do not raise `minClientVersion` on prod until a build is actually live on Play.** Raising it
 before the rollout has reached devices locks everyone out behind a button that leads to the version
 they already have.
+
+## P. The refresh cookie surviving a kill - owed on iOS
+
+**Proves** that the iOS half of WP-ANDROID-SESS-1 does not exist. On Android the WebView cookie jar
+is written lazily, so a kill with no lifecycle callback restored a refresh token one rotation behind
+the one already spent; presenting it is a replay, and the server correctly revoked the session. The
+fix forces `CookieManager.flush()` at the moment of rotation.
+
+**iOS has no equivalent, and that is not the same as not needing one.** `WKHTTPCookieStore` exposes
+no flush API at all, so `flush_webview_cookies` is a no-op there — a fact about the API, not
+evidence about the behaviour. A suspended app swiped out of the switcher is terminated without
+`applicationWillTerminate`, which is precisely the shape that broke Android.
+
+1. Sign in. Use the app long enough for at least one refresh (5 min at the current cadence), so the
+   stored cookie is *not* the one issued at login.
+2. Send the app to the background, wait for it to be suspended, then swipe it out of the switcher.
+3. Relaunch. It must come back **signed in**, first try.
+4. Repeat immediately: a session revoked by a replay looks fine for exactly one launch.
+
+A failure here looks like the login screen, or the app appearing signed in with nothing in it — and
+it is confirmed server-side by a `revokedReason` of replay on the session row. If it fails, the
+remedy is not a flush call (there is none): it is to stop depending on the jar's durability, e.g.
+mirroring the rotation into the keychain the way the device key already is.
 
 ## Traps that outlived the work that found them
 
