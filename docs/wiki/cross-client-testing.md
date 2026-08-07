@@ -1577,6 +1577,44 @@ Two rules, and the second is the one that costs:
   was found and nowhere else guarantees it will be paid for again. A kill, a reboot, a radio cycle and
   an `install -r` are all the same transition here.
 
+#### The 23rd harness fault: the check asserted THAT something changed, never WHERE
+
+Raised by the user, from the phone, minutes after a green verdict: *"pincher augmente le zoom, mais
+ca augmente pas a l'endroit qu'on veut"*.
+
+`check-pdf-pinch.mjs` asserted `width% 100 -> 300` and `imgW 395 -> 1186`. Both true, both real -
+the 3x on the page image even proves the page genuinely re-rasterised rather than being CSS-stretched
+- and both **completely silent about the property the feature exists for**. A pinch that zooms about
+the top edge passes that check identically to one that zooms about your fingers, so the verdict
+carried no information about the thing the user was about to complain about.
+
+This is the same shape as fault #22 (a verdict that would be identical against a fixed build) but
+arrived from the other side: #22 measured the wrong screen, #23 measured the right screen and asked
+it the wrong question. **"Did the state change" is almost never the assertion; "did it change into
+the right state" is.**
+
+The replacement, `check-pdf-anchor.mjs`, is worth copying as a pattern:
+
+- It identifies a **content point** before the gesture - a page index plus the fraction within that
+  page's box - and re-locates the same point afterwards. That formulation survives a re-layout, which
+  is the whole difficulty: the pages are re-rasterised, so nothing about their pixels is comparable.
+- It is deliberately **independent of the implementation's formula**. Re-deriving the app's own
+  arithmetic in the check would only re-test the unit tests; measuring the drift tests the wiring.
+- **It was validated as a NEGATIVE CONTROL first**, against the build still carrying the defect:
+  drift `(395, 1370)` px. Only then were its later verdicts meaningful. A check whose failing case
+  has never been observed is a check that has not been tested.
+- Its tolerance is set from those measurements, not from taste: 12 px, which fails against the
+  no-correction build **and** against the intermediate ratio-based one (49 px). A tolerance chosen
+  loosely enough to pass everything is the fault all over again.
+
+The intermediate result is itself the reason this matters. The first fix cut the drift from 1370 px
+to 49 px - visually a night-and-day improvement, and something a human spot-check would have called
+fixed. The check refused it, and the 49 px turned out to be a real second defect with a growing
+error: a ratio-based scroll correction assumes the whole document scales, and the fixed `py-3` /
+`gap-3` gutters do not, so the overshoot is `(ratio - 1) x (padding + gutters above the pinched
+page)` - 48 px on page 2 at x3, ~192 px by page 8. **A measurement tight enough to be uncomfortable
+is what found it.**
+
 #### Verified on the device (2026-08-07): the cold-start deep link lands
 
 Captured on the rebuilt APK (`lastUpdateTime 08:55:12`, bundle `app.DR0TKxSY.js`), pid 15059, from a

@@ -80,12 +80,22 @@ discriminator, the version name does not move) and three of the four owed checks
   `%PDF-1.6` + `startxref 150485` + `%%EOF`, 166 objects. So `fs:allow-write-file`, the `content://`
   URI and the whole `blob:` routing fix are all proven. **Still owed on this WP: the backup export's
   Tauri branch**, which changed shape (it used to ask for a DIRECTORY, which SAF does not offer).
-- **PDF pinch PASS on the narrow assertion** - column width 100 % -> 300 %, page image 395 -> 1186 px
-  (a real 3x, so the page genuinely RE-RASTERISED rather than being CSS-stretched). **But the user
-  then reported it zoomed "pas a l'endroit qu'on veut" and was RIGHT** - the check never asserted the
-  anchor. Fixed by `f218bcc6` (focal point, `utils/pinchZoom.ts`, 16 tests). **That fix is NOT on the
-  phone: the rebuild was blocked by the classifier going down.** Re-flash and re-check the ANCHOR,
-  not just that the zoom changes.
+- **PDF pinch - the whole story, because it is the session's best lesson.** The first check PASSED on
+  "column width 100 % -> 300 %, page image 395 -> 1186 px" and the user immediately reported it
+  zoomed "pas a l'endroit qu'on veut". **The check asserted that the zoom CHANGED and never that it
+  was ANCHORED**, so it would have returned the same PASS against a build with no focal point at
+  all. `check-pdf-anchor.mjs` (scratchpad) replaces it: it identifies a CONTENT point before the
+  gesture (page index + fraction within that page) and re-locates it after, which is the observable
+  the user was describing. **It was validated as a NEGATIVE CONTROL against the unfixed build first**
+  - drift (395, 1370) px - and that is the only reason its later verdicts mean anything.
+  Two fixes followed, and the second is the interesting one: `f218bcc6` added the focal point and
+  cut the drift to (-17, -49); `b88cf260` closed the rest. **A ratio-based scroll correction is
+  wrong in a paged column** because `py-3` and `gap-3` are fixed CSS lengths that do NOT scale, so
+  the ratio overshoots by `(ratio - 1) x (padding + gutters above the pinched page)` - measured 48 px
+  on page 2 at x3, ~192 px by page 8. The settle now re-measures the pinched PAGE after relayout
+  (`anchorScroll`/`anchorFraction`/`nearestBoxIndex`, 25 tests). Trap it introduced and closes: the
+  column animates back to `scale(1)` over 120 ms and `getBoundingClientRect` reports the ANIMATING
+  box, so the transition is suppressed while the settle measures.
 - **WP-RELOAD-DL-1 PASS**, with the mechanism visible: cold start on `fr.emse.canari://chat/<dm>`,
   claim `fr.emse.canari://chat/642f389a-...` written to `sessionStorage`, parked on `/posts`,
   reloaded - claim STILL there, route still `/posts` after the 250/750/2000 ms re-checks.
@@ -305,6 +315,13 @@ lose:
     text; a kill asserts the process died), because the faults were a kill that killed nothing, a
     "relaunch" that was a new tab, a dump too large to read scored as "no notification", and a
     `pidof` that exits 1 exactly when the thing it measures happens.
+  - **"Did the state change" is almost never the assertion; "did it change into the RIGHT state" is.**
+    The PDF pinch check asserted `width% 100 -> 300` - true, real, and identical for a build that
+    zooms about the top edge and one that zooms about your fingers, which is exactly what the user
+    reported minutes later (fault #23). A check must be validated as a NEGATIVE CONTROL against the
+    unfixed build before its green means anything, and its tolerance set from those two measurements
+    rather than from taste - the intermediate fix here cut the drift from 1370 px to 49 px, which a
+    human spot-check calls fixed and a 12 px tolerance correctly refused.
   - **Assume a green check is wrong until its evidence says otherwise - and a FAIL too.** MSG-4
     passed on a fixture with invalid PNG CRCs (a broken `<img>` keeps its `src`, hence
     `naturalWidth > 0`); check M failed only because it looked for a `<canvas>` where the preview is
