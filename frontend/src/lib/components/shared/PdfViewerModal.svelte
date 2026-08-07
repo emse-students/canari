@@ -13,7 +13,9 @@
    */
   import { tick, untrack } from 'svelte';
   import {
-    focalScroll,
+    anchorFraction,
+    anchorScroll,
+    nearestBoxIndex,
     nearestStepIndex,
     touchDistance,
     touchMidpoint,
@@ -221,10 +223,38 @@
   let pinchOrigin = $state<{ x: number; y: number } | null>(null);
   /** Focal point relative to the scroll container, kept for the settle-time scroll correction. */
   let pinchFocal: { x: number; y: number } | null = null;
+  /**
+   * WHICH page was pinched, and where within it. The settle corrects the scroll by re-measuring
+   * this page's box rather than by multiplying the old scroll by the zoom ratio: the gutters
+   * between pages and the container's padding are fixed CSS lengths that do NOT scale, so a ratio
+   * overshoots by (ratio - 1) x (padding + gutters above the page) - 48 px on page 2 at x3, and
+   * one gutter more for every page deeper in.
+   */
+  let pinchAnchor: { index: number; fracX: number; fracY: number } | null = null;
+  /**
+   * Suppresses the hand-back transition while the settle measures. The transform animates back to
+   * `scale(1)` over 120 ms, and `getBoundingClientRect` reports the ANIMATING box - measuring the
+   * anchor mid-transition would read a box that is still partly the gesture's preview.
+   */
+  let settling = $state(false);
 
   const pinchOriginCss = $derived(
     pinchOrigin ? `${pinchOrigin.x}px ${pinchOrigin.y}px` : 'top center'
   );
+
+  /** A page's box in the scroll container's coordinates, or `null` if it is not laid out. */
+  function pageBox(index: number) {
+    const el = columnEl?.children[index] as HTMLElement | undefined;
+    const boxRect = scrollEl?.getBoundingClientRect();
+    if (!el || !boxRect) return null;
+    const r = el.getBoundingClientRect();
+    return {
+      left: r.left - boxRect.left,
+      top: r.top - boxRect.top,
+      width: r.width,
+      height: r.height,
+    };
+  }
 
   function handleTouchStart(e: TouchEvent) {
     if (e.touches.length !== 2) return;
@@ -239,6 +269,21 @@
     pinchOrigin = colRect ? { x: mid.x - colRect.left, y: mid.y - colRect.top } : null;
     const boxRect = scrollEl?.getBoundingClientRect();
     pinchFocal = boxRect ? { x: mid.x - boxRect.left, y: mid.y - boxRect.top } : null;
+
+    // Which page the fingers are on, so the settle can re-measure that page rather than trust a
+    // scale ratio the surrounding layout does not obey.
+    pinchAnchor = null;
+    const children = columnEl ? Array.from(columnEl.children) : [];
+    if (pinchFocal && children.length > 0 && boxRect) {
+      const boxes = children.map((el) => {
+        const r = el.getBoundingClientRect();
+        return { top: r.top - boxRect.top, height: r.height };
+      });
+      const index = nearestBoxIndex(pinchFocal.y, boxes);
+      const box = index >= 0 ? pageBox(index) : null;
+      const fraction = box ? anchorFraction(pinchFocal, box) : null;
+      if (fraction) pinchAnchor = { index, ...fraction };
+    }
   }
 
   function handleTouchMove(e: TouchEvent) {
@@ -259,42 +304,55 @@
     if (pinchStartDistance === 0 || e.touches.length >= 2) return;
     const settled = pinchStartZoom * pinchScale;
     const nearest = nearestStepIndex(settled, ZOOM_STEPS);
-    const from = pinchStartZoom;
     const to = ZOOM_STEPS[nearest];
     const focal = pinchFocal;
+    const anchor = pinchAnchor;
 
     pinchStartDistance = 0;
     pinchScale = 1;
     pinchFocal = null;
+    pinchAnchor = null;
 
     if (nearest === zoomIndex) {
       pinchOrigin = null;
       return;
     }
-    console.debug(`[pdfViewer] pinch settled at x${to} (focal ${focal ? 'kept' : 'unavailable'})`);
-    zoomIndex = nearest;
+    console.debug(
+      `[pdfViewer] pinch settled at x${to} (anchor ${anchor ? `page ${anchor.index}` : 'unavailable'})`
+    );
 
-    // The column is re-laid out at the new width on the next flush; only then can the scroll be
-    // corrected, and the correction is what actually keeps the pinched point in place. The live
-    // transform-origin above and this share one focal point, so the preview hands over without a
-    // visible jump.
-    if (!scrollEl || !focal) {
+    if (!scrollEl || !focal || !anchor) {
+      zoomIndex = nearest;
       pinchOrigin = null;
       return;
     }
+
+    // The column is re-laid out at the new width on the next flush; only then can the pinched page
+    // be re-measured, and that measurement is what actually keeps the pinched point in place. The
+    // live transform-origin above and this share one focal point, so the preview hands over
+    // without a visible jump.
+    settling = true;
+    zoomIndex = nearest;
     await tick();
-    const next = focalScroll({
-      scrollLeft: scrollEl.scrollLeft,
-      scrollTop: scrollEl.scrollTop,
-      focalX: focal.x,
-      focalY: focal.y,
-      from,
-      to,
-      maxScrollLeft: scrollEl.scrollWidth - scrollEl.clientWidth,
-      maxScrollTop: scrollEl.scrollHeight - scrollEl.clientHeight,
-    });
-    scrollEl.scrollLeft = next.scrollLeft;
-    scrollEl.scrollTop = next.scrollTop;
+    const box = pageBox(anchor.index);
+    if (box) {
+      const next = anchorScroll({
+        scrollLeft: scrollEl.scrollLeft,
+        scrollTop: scrollEl.scrollTop,
+        focalX: focal.x,
+        focalY: focal.y,
+        anchor: box,
+        fracX: anchor.fracX,
+        fracY: anchor.fracY,
+        maxScrollLeft: scrollEl.scrollWidth - scrollEl.clientWidth,
+        maxScrollTop: scrollEl.scrollHeight - scrollEl.clientHeight,
+      });
+      scrollEl.scrollLeft = next.scrollLeft;
+      scrollEl.scrollTop = next.scrollTop;
+    } else {
+      console.debug(`[pdfViewer] anchor page ${anchor.index} vanished on relayout, scroll kept`);
+    }
+    settling = false;
     pinchOrigin = null;
   }
 
@@ -420,7 +478,9 @@
             style="width: {zoom * 100}%; max-width: {COLUMN_MAX_WIDTH * zoom}px;
                    transform: scale({pinchScale});
                    transform-origin: {pinchOriginCss};
-                   transition: {pinchScale === 1 ? 'transform 120ms ease-out' : 'none'};"
+                   transition: {pinchScale === 1 && !settling
+              ? 'transform 120ms ease-out'
+              : 'none'};"
           >
             {#each pages as page, index (index)}
               <div

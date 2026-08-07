@@ -118,23 +118,46 @@ hands over to the real zoom:
   measured at `touchstart`, while `pinchScale` is still 1 — reading them mid-gesture would fold the
   preview's own transform back into the origin.
 - **On settle**, the column is re-laid out at the new width, and only THEN can the scroll be
-  corrected. `focalScroll` in [`utils/pinchZoom.ts`](../../../../frontend/src/lib/utils/pinchZoom.ts)
-  computes the one pair of offsets that puts the same content point back under the same finger:
-  the content coordinate is `(scroll + focal) / from`, and it lands at `content * to`, so the scroll
-  must become `content * to - focal`. It runs after `await tick()`, because before the flush the
-  column is still the old width.
+  corrected. `anchorScroll` in [`utils/pinchZoom.ts`](../../../../frontend/src/lib/utils/pinchZoom.ts)
+  puts the same content point back under the same finger. It runs after `await tick()`, because
+  before the flush the column is still the old width.
 
-That module is deliberately pure and tested rather than inlined: it is the seed of the shared
-gesture WP-VIEWER-1 wants, and the arithmetic is the part worth pinning. Its formula is the same
-one MiGallery's `PhotoModal` uses, in scroll coordinates instead of translate ones — with
-`translate = -scroll`, `scroll·k - f·(1-k)` and `translate·k + f·(1-k)` are the same expression. The
-model has to differ because MiGallery scales ONE bitmap about its centre while a PDF is a scrolling
-column of independently rasterised pages: a global translate would fight the scroll container.
+**The correction anchors on the pinched PAGE, not on the zoom ratio, and that distinction is the
+whole reason this needed a second pass.** A ratio-based correction — content sits at
+`(scroll + focal) / from`, lands at `content * to`, so scroll becomes `content * to - focal` — is
+what shipped first, and it is only exact if every pixel of the document scales together. It does
+not: the scroll container's `py-3` and the column's `gap-3` are fixed CSS lengths. Measured on
+device at x3, page 2 sits at `12 + 1677 + 12 = 1701` where the ratio believes `3 × 583 = 1749`, so
+the correction overshot by **48 px** — and by one more gutter-pair for every page deeper in, ~192 px
+by page 8. So the settle records WHICH page was pinched plus the fraction within it
+(`anchorFraction`, `nearestBoxIndex` for a pinch that lands in a gutter), re-measures that page's
+box after the relayout, and scrolls by the measured difference. That is exact whatever the
+surrounding chrome does, including the `mx-auto` centring margin that the ratio also got wrong
+horizontally.
+
+Two consequences worth keeping:
+
+- **The transform transition must be suppressed while the settle measures.** The column animates
+  back to `scale(1)` over 120 ms and `getBoundingClientRect` reports the *animating* box, so a
+  measurement taken mid-transition reads part of the gesture's own preview. `settling` gates it.
+- The module is deliberately pure and tested rather than inlined: it is the seed of the shared
+  gesture WP-VIEWER-1 wants, and the arithmetic is the part worth pinning. MiGallery's `PhotoModal`
+  can keep the ratio form because it scales ONE bitmap about its centre with no unscaled chrome
+  between content and container; a PDF is a scrolling column of independently rasterised pages, so
+  it needs both the anchor and the scroll model rather than a global translate.
 
 `nearestStepIndex` breaks a tie towards the LOWER step, because overshooting into a more expensive
-re-render on an ambiguous gesture is the worse outcome. `focalScroll` returns its input unchanged
-on a non-positive or non-finite scale rather than `NaN` — a `NaN` assigned to `scrollLeft` is
-swallowed by the DOM, which would make the whole correction fail invisibly.
+re-render on an ambiguous gesture is the worse outcome. `anchorScroll` and `anchorFraction` return
+their input unchanged (respectively `null`) on an area-less or non-finite box rather than `NaN` — a
+`NaN` assigned to `scrollLeft` is swallowed by the DOM, which would make the whole correction fail
+invisibly.
+
+**What the device check must assert is the ANCHOR, never that the zoom changed.** The first run
+here passed on "width% 100 → 300" against a build the user immediately reported as zooming in the
+wrong place. `scratchpad/check-pdf-anchor.mjs` identifies a content point (page index + fraction)
+before the gesture and re-locates it after, and it was validated as a negative control against the
+unfixed build first: drift (395, 1370) px there, (-17, -49) with the ratio correction, and the
+anchor correction is what closes the rest.
 
 ## Comment media (image + GIF)
 
