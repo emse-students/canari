@@ -42,6 +42,36 @@ Posts are loaded via `GET /api/posts` (social-service), paginated with infinite 
 | `PostReactions.svelte` | Emoji reaction bar |
 | `PostComments.svelte` | Comment thread + composer (text, mentions, image/GIF) |
 
+### Why the feed reads `postsOverride` OUTSIDE the `{#await}`
+
+`load` returns `posts: listPosts(...)` **unawaited** — a streamed promise, so the page renders while
+it is still in flight. The consequence is a Svelte semantic worth knowing before writing any
+`{#await}` over route data: **a promise that has REJECTED stays rejected, so the `{#await}` sits in
+`{:catch}` for the life of the component.** Nothing re-enters `{:then}`; only a new promise does,
+which in practice means a remount.
+
+That is what made the feed's "Réessayer" dead. `refreshPosts()` writes `postsOverride`, and the
+template read it only as `postsOverride ?? initialPosts` **inside `{:then}`** — unreachable exactly
+when the retry mattered. Measured on device: the retry's own fetch returned `200` in 326 ms and the
+error screen stayed up with zero cards. Leaving the page and coming back worked, which is why the
+whole thing read as a network problem (it was not — `/api/version` and `/api/posts` both answered
+200 from the same WebView at the time).
+
+So the list rendering lives in a `feedList` snippet consulted **before** the await:
+
+```svelte
+{#if postsOverride}{@render feedList(postsOverride)}
+{:else}{#await data.posts} … {:then initial}{@render feedList(initial)} {:catch} … {/await}{/if}
+```
+
+The generalisation, which applies to every retry in the app: **state a retry writes must be read
+from outside the thing that failed.** A retry whose result is only consulted on the success path of
+the failed attempt cannot work by construction.
+
+**This class is not unit-testable here** — the defect is purely *where* the template reads its
+state, and the repo has no component-rendering setup. `check-feed-retry.mjs` in the harness covers
+it, injecting a one-shot `/api/posts` failure and asserting the retry both fetches and renders.
+
 ## Attachment layout (PostContent / PostMedia)
 
 A post attachment is decrypted client-side, so its container has to hold a shape before the bytes

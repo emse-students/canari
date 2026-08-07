@@ -354,6 +354,13 @@ lose:
     `naturalWidth > 0`); check M failed only because it looked for a `<canvas>` where the preview is
     an `<img>`; MSG-8b invented an app-level loss out of an unsent draft. **Check the fixture and the
     selector before blaming the app.**
+  - **CDP's Network domain is BLIND to the app's own requests on mobile.** `hooks.client.ts`
+    replaces `window.fetch` with the Tauri HTTP plugin's, which is a RUST client, so nothing it
+    sends ever touches the WebView's network stack: `Network.responseReceived` reported NOTHING
+    while the app was demonstrably fetching a 200. Record from INSIDE the page (wrap `window.fetch`
+    and read the log back) - and for the same reason `emulateNetworkConditions` cannot fail an app
+    request either, so inject the failure in the page too. Keep such navigation CLIENT-SIDE, or the
+    document reloads and takes the patch with it.
   - **A locator is a guess unless it is disambiguated - and a DEVICE is a locator**: `u2.connect()`
     with no serial raises the moment the phone is attached over both USB and wifi, which every long
     run makes true; `/json/list` is not creation order, a document-wide text match hits the first
@@ -636,6 +643,14 @@ prompt fields are all on those pages. What must not be forgotten between them:
 - Nothing types a string as user-visible, so no compiler enforces Paraglide - and no user-facing
   string names a sensor ("empreinte ou Face ID" is wrong on every device, half the time).
 - Re-run `bun run paraglide:compile` before `bun run test` after any build.
+- **A promise that has REJECTED stays rejected, so an `{#await}` over one sits in `{:catch}` for the
+  life of the component** - nothing re-enters `{:then}` but a new promise, i.e. a remount. State a
+  RETRY writes must therefore be read from OUTSIDE the thing that failed: the feed read
+  `postsOverride` only inside `{:then}`, so "Reessayer" fetched the posts (200 in 326 ms, measured)
+  and had nowhere to render them, while leaving the page and coming back worked - which reads as a
+  network fault and is not one. A retry whose result is only consulted on the success path of the
+  failed attempt cannot work by construction. Not unit-testable here (the defect is purely WHERE the
+  template reads its state, and there is no component-rendering setup) - `check-feed-retry.mjs`.
 - A synchronous "unknown" PLACEHOLDER is indistinguishable from an answer once it is stored, so
   anything that later resolves the real value loses to it - and a module-level cache re-renders
   nothing when it warms, so whether a user ever sees the truth depends on cache timing. Return the
