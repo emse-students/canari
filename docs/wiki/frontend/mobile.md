@@ -153,6 +153,39 @@ https://digitalassetlinks.googleapis.com/v1/statements:list
 Both association files are prerendered by SvelteKit (`routes/.well-known/`) and served by nginx from
 `build/.well-known/`, so they follow the ordinary deploy — see [`seo.md`](seo.md) for that pipeline.
 
+### How a deep link actually reaches the app — two paths, only one of them gated
+
+Every deep link (`fr.emse.canari://chat/<groupId>`, the OIDC callback, a Stripe return, an App Link)
+enters through `hooks.client.ts`, but **by one of two mechanisms depending on whether the app was
+already running**, and they do not have the same failure modes:
+
+| The app was… | Mechanism | Needs a capability grant |
+|---|---|---|
+| running (foreground or backgrounded) | `onOpenUrl` — an event channel the Rust side registers | **no** |
+| closed | `getCurrent()` — a plugin **command** | **yes** (`deep-link:default`) |
+
+`deep-link` was absent from `capabilities/default.json` entirely, so `getCurrent()` rejected with
+`deep-link.get_current not allowed` on every launch and every cold-start deep link was lost:
+tapping a message notification with the app closed opened Canari on the default route and left it
+there (WP-DEEPLINK-1, fixed `916ed696`). **A plugin declared in `Cargo.toml` and configured in
+`tauri.conf.json` is still granted nothing** — see
+[`development.md`](../development.md#contracts-the-compiler-does-not-check), and
+`tauriCapabilities.test.ts`, which now fails on the gap.
+
+Two consequences worth carrying:
+
+- **The warm path passing says nothing about the cold one.** Anyone checking a deep link has just
+  used the app, so they check the ungated path. `check H` in
+  [`device-verification.md`](../device-verification.md) must be run **twice** — backgrounded and from
+  a killed process — and that is why NOTIF-7 does.
+- **This is not platform-specific.** One capability file, one `hooks.client.ts`: iOS was equally
+  affected and has never been checked on hardware.
+
+The diagnosis is cheap when a cold start misbehaves, because each hop logs separately: the OS prints
+`START ... act=android.intent.action.VIEW dat=fr.emse.canari://chat/...`, the WebView prints
+`[hooks] Deep-link listener registered`, the handoff prints `[hooks] Processing URL`, and the product
+prints `[notifNav] deep link received`. The first absent line names the broken hop.
+
 ## Where an update comes from
 
 Canari ships from three places at once: Google Play (`fr.emse.canari`), the App Store

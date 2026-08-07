@@ -1355,8 +1355,7 @@ whether the deep link fired or did nothing at all.
 | copies of the message | 1 | 0 |
 
 So the notification itself is healthy in both cases - posted, decrypted, tappable, and it does bring
-the app to the front. What is broken is only the **cold-start** leg of the navigation. See
-WP-DEEPLINK-1.
+the app to the front. What is broken is only the **cold-start** leg of the navigation.
 
 Three things this cost, all of them harness rather than app:
 
@@ -1391,6 +1390,74 @@ check that misnavigated would have typed its marker into a **comment box on some
 Fixed in `chat.mjs`: every use is now scoped to `.chat-composer-footer .chat-composer-editor`, a
 class that belongs to `ChatComposer.svelte` alone. The general rule, which this page keeps paying
 for: **a selector shared by two surfaces is not a post-condition.**
+
+#### The 21st harness fault: `a1.py` guessed which device to drive
+
+Promoting the phone to `adb tcpip 5555` - which every long run must do, because its USB link drops on
+its own - leaves **two** transports attached, and `u2.connect()` with no serial delegates to adbutils,
+which raises rather than choosing:
+
+```
+adbutils.errors.AdbError: more than one device/emulator, please specify the serial number
+```
+
+It aborted a NOTIF-7 run *at the tap*, with the notification it was meant to tap already found and
+sitting in the shade - and the same drop later hung two more commands, because `phone.mjs` resolves
+its serial once at import and every `adb -s <dead usb serial>` after that fails. `a1.py` now resolves
+the device explicitly (`ANDROID_SERIAL` if set, else prefer the wireless entry) and `phone.mjs`
+exports its `SERIAL` so the native driver is pointed at the same transport. The rule is the one this
+page keeps restating: **a locator is a guess unless it is disambiguated** - a device is a locator too.
+
+#### Root cause (2026-08-07): the deep-link plugin was never granted its permission
+
+Every hop in the chain is healthy, and the log proves each of them separately. From a run captured
+with a continuous `logcat` while `notif7.mjs killed` executed:
+
+```
+08:01:15.489 WIN DEATH: Window{... fr.emse.canari/fr.emse.canari.MainActivity}   <- the kill
+08:01:28.008 START u0 {act=android.intent.action.VIEW dat=fr.emse.canari://chat/...
+                       cmp=fr.emse.canari/.MainActivity} with LAUNCH_SINGLE_TASK    <- the tap
+08:01:28.104 MainActivity(10665): onResume: isInForeground=true                    <- cold start
+08:01:28.928 Tauri/Console(10665): [hooks] Deep-link listener registered           <- the WebView
+```
+
+The PendingIntent carries the right action and the right data, and the activity is created by it. And
+then nothing: `[hooks] onOpenUrl called`, `[hooks] Processing URL` and `[notifNav] deep link received`
+are **absent from the entire capture**. The URL never crosses into JavaScript, so `notifNav` is never
+published - which also kills the first hypothesis this WP was opened with (a late subscriber missing
+a one-shot announcement). There is no announcement to miss.
+
+Asked directly, over the internal invoke, on the very process the tap had started:
+
+```json
+{ "url": "http://tauri.localhost/posts", "hasInternals": true,
+  "getCurrentThrew": "deep-link.get_current not allowed. Permissions associated with this command:
+                      deep-link:allow-get-current, deep-link:default" }
+```
+
+**`deep-link` had no entry in `capabilities/default.json` at all.** Tauri v2 gates plugin *commands*
+behind an ACL; the dependency in `Cargo.toml` and the five schemes in `tauri.conf.json` grant
+nothing. The asymmetry that hid it for as long as it existed is the interesting part:
+
+| path | mechanism | ACL-gated | worked |
+| --- | --- | --- | --- |
+| app already running | `onOpenUrl` - an event channel the Rust side registers | no | yes |
+| cold start | `getCurrent()` - a plugin **command** | **yes** | no |
+
+So the failure is invisible to every way of checking it that involves having used the app first, and
+it is not Android-specific: iOS runs the same capability file and the same `hooks.client.ts`, and has
+never been checked at all (`check H` in [device-verification](device-verification.md)).
+
+`hooks.client.ts` then made it unobservable: `checkCurrentUrl` ended in `.catch(() => {})`, so a
+rejected invoke and "this launch carried no URL" were the same silent outcome, on a path that runs
+five times per start. That is the durable rule about capability probes, paid for a second time -
+the fix logs the failure once per distinct message.
+
+Fixed in `916ed696`: `deep-link:default` (which is exactly `allow-get-current` - the one command a
+cold start needs) is granted, the catch logs, and `tauriCapabilities.test.ts` asserts that every
+plugin in `Cargo.toml` exposing commands is granted in a capability file. `localhost` is the single
+exemption, in writing, because it has no JS surface. Negative control: removing the grant fails two
+of its three assertions.
 
 ### NOTIF-10, settled: every message survives a ten-minute blackout; the SHADE does not show them all
 

@@ -248,7 +248,7 @@ re-derive any of it from here. What a compaction must not lose:
   verdict is `PASS` only if the assertions hold AND the run is clean - errors, 4xx, page exceptions,
   WS events, `notable` MLS lines, `stateChanges` and anything `unexplained` are reported next to it.
   A line that turns out to be routine is ADDED to the benign list, never ignored in place.
-- **TWENTY harness faults have produced a false result, all fixed, and every one is written up in
+- **TWENTY-ONE harness faults have produced a false result, all fixed, and every one is written up in
   the wiki page** (search "harness fault"). Do not re-derive them - what they say collectively is
   three rules, and these are the ones to apply without opening it:
   - **An action that cannot prove it took effect still yields a verdict**, and that verdict is
@@ -261,7 +261,9 @@ re-derive any of it from here. What a compaction must not lose:
     `naturalWidth > 0`); check M failed only because it looked for a `<canvas>` where the preview is
     an `<img>`; MSG-8b invented an app-level loss out of an unsent draft. **Check the fixture and the
     selector before blaming the app.**
-  - **A locator is a guess unless it is disambiguated**: `/json/list` is not creation order, a
+  - **A locator is a guess unless it is disambiguated - and a DEVICE is a locator**: `u2.connect()`
+    with no serial raises the moment the phone is attached over both USB and wifi, which every long
+    run makes true; `/json/list` is not creation order, a
     document-wide text match hits the first hidden action row, a tie picks the scroll container over
     its button, and an `aria-label` must never outrank visible text. **A selector shared by two
     surfaces is not a post-condition either**: `.chat-composer-editor` belongs to the shared
@@ -470,20 +472,23 @@ it, asserting the conversation is on screen before counting.** NOTIF-1/2/3/5/6/7
   BATCH path used by history replay - still answers `ok: true, data: None` on `SecretReuse`, which is
   the same "a native layer threw the diagnosis away" that hid this bug for a day.
 
-- \[ \] **WP-DEEPLINK-1 (P1) - tapping a notification while the app is CLOSED opens Canari but not
-  the conversation. FOUND 2026-08-07 by NOTIF-7, NOT FIXED, no root cause yet.** Backgrounded it is
-  perfect (notification decrypted in 18.1 s, tap -> the right conversation in 8.4 s, 1 copy).
-  KILLED (`am kill` from HOME, death asserted) the notification is still decrypted in 7.0 s and the
-  tap still brings the app to the front - and it lands on the FEED and stays there for 69 s, marker
-  absent, `count: 0`. So the PendingIntent fires and the process starts; what is lost is the
-  navigation, which is `notifNav` and not a route. **The obvious suspect is the same shape as
-  WP-ANDROID-SESS-1's third defect: on a cold start the intent is delivered before the shell that
-  subscribes to `notifNav` exists, and a one-shot announcement to a late subscriber is dropped** -
-  the durable rule for that is already in the sessions block (replay the verdict to whoever registers
-  after it). Verify that before assuming anything else. The measurements and the three harness traps
-  that run has already paid for are in
-  [cross-client-testing > NOTIF-7](docs/wiki/cross-client-testing.md#notif-7-the-deep-link-works-from-a-backgrounded-app-and-not-from-a-killed-one).
-  iOS has never been checked at all - it is the same `check H`.
+- \[ \] **WP-DEEPLINK-1 (P1) - tapping a notification while the app is CLOSED opened Canari but not
+  the conversation. ROOT CAUSE FOUND and FIXED 2026-08-07 (`916ed696`); what is owed is the
+  ON-DEVICE VERIFICATION, and the iOS half.** This is also what the user reported on 2026-08-01.
+  **`deep-link` had NO entry in `capabilities/default.json`**, so `getCurrent()` - the only path a
+  cold start has - was refused every time: `deep-link.get_current not allowed`. `onOpenUrl` is an
+  event channel the Rust side registers and events are NOT ACL-gated, which is exactly why the
+  backgrounded case was perfect and only the cold start died. `hooks.client.ts` then swallowed the
+  rejection in `.catch(() => {})`, making it indistinguishable from "no launch URL". Fixed: the grant
+  (`deep-link:default` = `allow-get-current`, nothing more), the catch now logs, and
+  `tauriCapabilities.test.ts` fails on any plugin in `Cargo.toml` that exposes commands and is
+  granted nowhere (negative control run). **Do not re-derive it** - the logcat proof, the probe and
+  the two-path table are in
+  [cross-client-testing > root cause](docs/wiki/cross-client-testing.md#root-cause-2026-08-07-the-deep-link-plugin-was-never-granted-its-permission),
+  the model in [mobile](docs/wiki/frontend/mobile.md#how-a-deep-link-actually-reaches-the-app--two-paths-only-one-of-them-gated).
+  **Owed: `node notif7.mjs killed` on a rebuilt APK** (the build carrying the grant), and **iOS**,
+  which runs the same capability file and the same hook and has never been checked - `check H`, whose
+  step 1 already said "kill the app" and was recorded PASS anyway.
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload. ROOT CAUSE FOUND and
   FIXED 2026-08-07 (`214592e5`); what is owed is the VERIFICATION.** Found by reconciliation:
@@ -667,6 +672,10 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
 - A cross-process contract is only as good as its test: pin the PATHS as well as the field names,
   or a writer on one OS fills a directory nothing ever reads.
 - Never let a capability probe swallow its own failure, and never branch on an error MESSAGE.
+- A plugin in `Cargo.toml` is not a plugin the app may CALL: Tauri v2 gates every plugin COMMAND
+  behind `capabilities/`, and an ungranted one builds, ships and installs, then rejects on a real
+  device. EVENTS are not gated - which is how `deep-link` worked warm and was dead cold for as long
+  as the grant was missing. `tauriCapabilities.test.ts` is the guard.
 - **A mocked repository never parses SQL**, so a query builder's output is unverified until a real
   Postgres sees it - and TypeORM does NOT preserve the order selects were declared in, so `DISTINCT`
   written into a `.select()` string lands mid-list once an `.addSelect()` follows (`.distinct(true)`

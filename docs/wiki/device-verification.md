@@ -166,8 +166,19 @@ since migrated).
 notification tap could not be driven from a headless browser. It publishes to `notifNav` exactly like
 the two verified paths.
 
+**RUN IT TWICE - backgrounded, then from a KILLED app.** They are not the same code path and they
+have never both worked: a running app receives the URL over the `onOpenUrl` *event*, a cold start has
+to *ask* for it with `getCurrent()`, and only the second is gated by the Tauri capability file. The
+grant was missing outright, so the cold start failed on every launch while the backgrounded case was
+perfect — see
+[`mobile.md`](frontend/mobile.md#how-a-deep-link-actually-reaches-the-app--two-paths-only-one-of-them-gated).
+This is what the user reported on 2026-08-01 and what NOTIF-7 finally measured on 2026-08-07;
+fixed in `916ed696`. **A pass on the backgrounded case alone proves nothing about the one users hit**,
+which is a tap on a notification that woke them up.
+
 1. Kill the app. Have the peer send a DM, then a channel message.
 2. Tap each notification. Each must land in the right conversation, **not** merely the right tab.
+3. Repeat with the app merely backgrounded (HOME, not killed).
 
 **Read the log, not just the screen.** This check was recorded PASS on v0.11.7 and the DM half was
 broken the whole time: the tap does reach the right tab, and "right tab" is what a pass looks like
@@ -176,7 +187,10 @@ last one you see:
 
 - `[notifNav] deep link received: fr.emse.canari://chat/<id> -> target <id>` - everything native
   worked (PendingIntent, `onNewIntent`, the deep-link plugin, `hooks.client.ts`). Absent: the
-  failure is native, and none of the JS below ever ran.
+  failure is upstream of the product code, and none of the JS below ever ran. Split it further with
+  `[hooks] Deep-link listener registered` (the WebView booted) and
+  `[hooks] deep-link getCurrent() failed` (the cold-start path was refused - a capability gap, not a
+  native one).
 - `[notifNav] routing to /chat|/communities for pending conversation <id>` - only printed when a
   route change was actually needed.
 - The thread on screen, with its history. A DM that lands and then empties is the landing being

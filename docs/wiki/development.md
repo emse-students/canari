@@ -121,6 +121,16 @@ wrong, and each one has already shipped a bug.
 - **A `postMessage` payload is typed by whoever writes the literal — i.e. by nobody.** All three MLS
   worker contracts live in `src/lib/mls-client/mlsWorkerProtocol.ts` and are imported by both ends.
   Add new worker messages there, never as a local interface.
+- **A plugin in `Cargo.toml` is not a plugin the app may CALL.** Tauri v2 gates every plugin *command*
+  behind the capability files, and nothing connects the two: the dependency compiles, the plugin
+  loads, `tauri.conf.json` configures it, and the command still rejects at runtime on a real device
+  with `<plugin>.<command> not allowed`. `deep-link` shipped that way — declared, configured, called
+  from `hooks.client.ts`, granted nowhere — so `getCurrent()` failed on every launch and a
+  notification tapped from a **closed** app never opened its conversation (WP-DEEPLINK-1). The
+  asymmetry is what hid it: *events* (`onOpenUrl`) are not ACL-gated, so the app-already-running path
+  worked and only the cold start was dead. `src/lib/mobile/tauriCapabilities.test.ts` now fails on
+  any plugin that exposes commands and is granted in no capability file; an exemption there must
+  carry its justification in writing.
 
 ### Silent-degradation traps
 
