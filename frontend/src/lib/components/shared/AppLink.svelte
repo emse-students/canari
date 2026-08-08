@@ -2,6 +2,7 @@
   import { ArrowUpRight } from '@lucide/svelte';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
   import { fetchCanariLinkPreview, getCachedCanariLinkPreview } from '$lib/utils/canariLinkPreview';
+  import { confirmUnsafeLinkIfNeeded } from '$lib/utils/checkLinkSafety';
   import { inAppPathFromHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
   import type { Snippet } from 'svelte';
 
@@ -51,6 +52,22 @@
     e.stopPropagation();
     await navigateInAppFromHref(href);
   }
+
+  /**
+   * WP-SAFELINK-1: gates an external navigation behind a Safe Browsing check, warning before
+   * redirecting to a flagged link. Only intercepts a plain left-click - a modified click
+   * (ctrl/cmd/middle-click/shift, used to open in a new tab or window explicitly) is left to the
+   * browser's own native handling, since an async confirm cannot honor those afterward anyway.
+   */
+  async function handleExternalClick(e: MouseEvent) {
+    e.stopPropagation();
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    const proceed = await confirmUnsafeLinkIfNeeded(href);
+    if (proceed) {
+      window.open(href, '_blank', 'noopener,noreferrer');
+    }
+  }
 </script>
 
 {#if isInApp}
@@ -74,7 +91,7 @@
     target="_blank"
     rel="noopener noreferrer"
     class="underline underline-offset-2 decoration-current hover:opacity-80 font-medium transition-opacity {className}"
-    onclick={(e) => e.stopPropagation()}
+    onclick={handleExternalClick}
   >
     {#if children}
       {@render children()}

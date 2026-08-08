@@ -5,6 +5,7 @@
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
   import { fetchCanariLinkPreview, type CanariLinkPreview } from '$lib/utils/canariLinkPreview';
   import { CANARI_BADGE_LABEL } from '$lib/utils/canariLinkPreviewFormat';
+  import { confirmUnsafeLinkIfNeeded } from '$lib/utils/checkLinkSafety';
   import { ecosystemCoverCardFor, ecosystemSiteFor } from '$lib/utils/ecosystemHosts';
   import { faviconCandidates } from '$lib/utils/faviconCandidates';
   import { proxiedPreviewImageUrl } from '$lib/utils/previewImageProxy';
@@ -199,9 +200,20 @@
 
   async function handleClick(e: MouseEvent) {
     e.stopPropagation();
-    if (!isInApp) return;
+    if (isInApp) {
+      e.preventDefault();
+      await navigateInAppFromHref(url);
+      return;
+    }
+
+    // WP-SAFELINK-1: same gate as AppLink's external branch. Only a plain left-click is
+    // intercepted - a modified click (new tab/window) goes through the browser's own handling.
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
-    await navigateInAppFromHref(url);
+    const proceed = await confirmUnsafeLinkIfNeeded(parsed.href);
+    if (proceed) {
+      window.open(parsed.href, '_blank', 'noopener,noreferrer');
+    }
   }
 </script>
 

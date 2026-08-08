@@ -36,6 +36,7 @@ import {
   type LinkPreviewPayload,
   type SsrfSafeResponse,
 } from '../utils/url-guard';
+import { checkSafeBrowsing } from '../utils/safe-browsing';
 import { TtlCache } from '../utils/ttl-cache';
 
 /** A preview we managed to build, or the fact that we could not. */
@@ -74,6 +75,9 @@ export class SecurityController {
    */
   private static readonly previewCache = new TtlCache<CachedPreview>(500);
   private static readonly imageCache = new TtlCache<CachedImage>(200);
+  /** Keyed the same way as previewCache, but independent of it: a Safe Browsing verdict must
+   * survive even when the metadata fetch it would otherwise ride along with fails (WP-SAFELINK-1). */
+  private static readonly safeBrowsingCache = new TtlCache<boolean>(1000);
 
   constructor(
     @InjectRepository(PinVerifier)
@@ -396,6 +400,38 @@ export class SecurityController {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  /**
+   * Whether a URL is flagged by Google Safe Browsing (WP-SAFELINK-1) - deliberately its own
+   * endpoint rather than a field folded into `getLinkPreview`'s response. The two checks have
+   * unrelated failure modes: a page with a broken `<title>` or a redirect loop makes
+   * `getLinkPreview` throw and return nothing at all, which would silently take the safety
+   * verdict down with it if the two were coupled. A caller that only wants "is this safe to
+   * open" (`AppLink`) should never depend on whether the site also has good Open Graph tags.
+   *
+   * Unauthenticated by design, same reasoning as `getLinkPreview`: it only ever answers about a
+   * URL that has already passed `assertSafeExternalUrl`, and the answer itself (a boolean) is not
+   * sensitive.
+   */
+  @Get('mls/link-safety')
+  async getLinkSafety(@Query('url') url: string, @Res({ passthrough: true }) res: ExpressResponse) {
+    if (!url || typeof url !== 'string') {
+      throw new BadRequestException('url is required');
+    }
+
+    const targetUrl = await assertSafeExternalUrl(url);
+    const cacheKey = targetUrl.toString();
+
+    const cached = SecurityController.safeBrowsingCache.get(cacheKey);
+    if (cached !== undefined) {
+      return { unsafe: cached };
+    }
+
+    const verdict = await checkSafeBrowsing(targetUrl.toString());
+    SecurityController.safeBrowsingCache.set(cacheKey, verdict.flagged, verdict.cacheTtlMs);
+    res.setHeader('Cache-Control', `public, max-age=${Math.floor(verdict.cacheTtlMs / 1000)}`);
+    return { unsafe: verdict.flagged };
   }
 
   /**

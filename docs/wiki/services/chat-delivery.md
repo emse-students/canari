@@ -479,6 +479,7 @@ parity row.
 | POST | `/api/mls/security/pin-reset` | Reset PIN (purge devices, keep memberships) |
 | GET | `/api/mls/link-preview` | Fetch safe external URL preview |
 | GET | `/api/mls/link-preview/image?url=` | Proxy a preview's `og:image` or favicon |
+| GET | `/api/mls/link-safety?url=` | Google Safe Browsing verdict for a URL (WP-SAFELINK-1) |
 | GET | `/api/mls/gallery-cover/:albumId` | Proxy MiGallery album cover image |
 
 #### Link preview is a user-controlled server-side fetch (SSRF)
@@ -525,6 +526,40 @@ it, and each of those requests announced that somebody was reading.
 The cache is per-process, and deliberately so - chat-delivery runs as a single instance, so a shared
 store would be infrastructure bought for nothing. Replicating the service costs hit rate, never
 correctness, which is what makes the choice reversible.
+
+#### Link safety is its own endpoint, deliberately not a field on the preview (WP-SAFELINK-1)
+
+`/api/mls/link-safety?url=` answers `{ unsafe: boolean }` from Google Safe Browsing's Lookup API
+(`utils/safe-browsing.ts`), gating navigation client-side: `AppLink` and `LinkPreviewCard` both
+call `checkLinkSafety`/`confirmUnsafeLinkIfNeeded` (`frontend/src/lib/utils/checkLinkSafety.ts`)
+and only show a confirmation (`showConfirm`, danger-styled) at the point of an actual click on a
+flagged link - never a badge decorating every rendered link, which would be alert fatigue for a
+check that is almost always going to say "fine".
+
+- **A separate endpoint from `getLinkPreview` on purpose.** The two checks have unrelated failure
+  modes: a page with a broken `<title>` or a redirect loop makes `getLinkPreview` throw and return
+  nothing at all. Folding the safety verdict into that response would have taken it down with the
+  metadata fetch, and `AppLink` cares only about the verdict, never about whether the site also has
+  good Open Graph tags.
+- **No SSRF guard needed for the Safe Browsing call itself** - unlike the preview fetch, the target
+  of this request is always Google's own fixed endpoint; the caller-supplied URL only ever appears
+  as a JSON string in the POST body, never as something this service connects to. `assertSafeExternalUrl`
+  is still run first, same as the preview endpoint, since the URL has to be validated before being
+  used as a cache key either way.
+- **Fails OPEN at every layer** - no `GOOGLE_SAFE_BROWSING_API_KEY` configured, a network error, a
+  timeout, or a non-2xx response from Google all resolve to "not flagged". A safety check that
+  cannot answer must never become an outage for every link in the app; the config-side warning
+  (`::warning::GOOGLE_SAFE_BROWSING_API_KEY is not set...` in `cd.yml`) is the only trace of it.
+- **Cached in its own `TtlCache<boolean>`**, independent of `previewCache` for the reason above.
+  Google gives no cache guidance for a clean verdict (only a flagged match carries its own
+  `cacheDuration`, e.g. `"300s"` - the longest one wins when several matches disagree), so a clean
+  result gets a conservative 30-minute TTL chosen here; a failed lookup gets 5 minutes, short enough
+  that a transient outage or a bad key self-heals on the next request rather than silently
+  disabling the check for as long as a real answer would be trusted.
+- **Client-side dedup, not a client-side TTL**: `checkLinkSafety` keeps a `Map<string, Promise<boolean>>`
+  for the page's lifetime so `AppLink` and `LinkPreviewCard` asking about the same URL around the
+  same time produce one request, not two - freshness across page loads is entirely the server
+  cache's job.
 
 #### Preview images are proxied, so the site never sees the reader
 

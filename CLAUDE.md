@@ -555,25 +555,6 @@ rollout has not reached devices, and raising it first locks everyone out.
   **Drag panning is still missing on the PDF at zoom > 1** (the scroll container is the only way to
   move), which the shared gesture should bring.
 
-- \[ \] **WP-SAFELINK-1 (P3) - Warn before opening a link Google Safe Browsing flags as unsafe.**
-  Asked by the user 2026-08-07. Today `AppLink` (the terminal renderer for every external link in
-  chat and posts, including the WP-LINK-1 bare-domain ones) opens whatever `href` it is given with
-  zero safety check - a phishing or malware link pasted into a message reads identically to a
-  legitimate one. The lookup MUST be server-side: a Safe Browsing API key is a secret and can never
-  ship client-side, and there is already a precedent to extend rather than a new one to invent -
-  `apps/chat-delivery-service/src/controllers/security.controller.ts` and `utils/url-guard.ts`
-  already server-side-fetch and SSRF-guard every URL found in a message for the link-preview
-  pipeline (`docs/wiki/services/chat-delivery.md`), so the server already learns which URLs are
-  shared; a Safe Browsing lookup alongside that fetch is not a new privacy boundary crossed, only a
-  second use of one already crossed. Not to re-litigate when scoping starts: **cache verdicts by
-  URL with a TTL** (Safe Browsing has query quotas, and a per-render or per-click lookup would burn
-  through them on the same handful of links); **decide fail-open vs fail-closed explicitly** for a
-  timed-out or quota-exhausted lookup, the same shape of decision as an empty key elsewhere in this
-  file - blocking every link because the safety service is unreachable is its own outage; and the
-  warning belongs at the point of navigation INTENT (an interstitial only when a link is actually
-  flagged), never decorating every rendered link, which would be alert fatigue for a check that is
-  almost always going to say "fine".
-
 **Known and deliberately NOT a WP yet** (do not "fix" these by reflex):
 
 - A device holding SOME of a conversation, missing older messages, and never failing to decrypt
@@ -735,6 +716,13 @@ The three that generalise beyond it:
   survive as absolute URLs - so a try/catch around the parse guards nothing. Check the SCHEME.
 - Serving a file is not serving it correctly: check the header, not the status code (nginx
   `mime.types` has no `.mjs`, so every ES-module asset went out as octet-stream).
+- A safety check with an unrelated failure mode from the fetch it would ride along with needs its
+  OWN endpoint, not a field bolted onto the existing response: `getLinkSafety` is decoupled from
+  `getLinkPreview` precisely so a page with a broken `<title>` (which makes the preview throw)
+  cannot take the Safe Browsing verdict down with it (WP-SAFELINK-1). And a check with no cache
+  guidance from the upstream API for the COMMON case (Google gives a `cacheDuration` only for a
+  flagged match, never for "clean") still needs an explicit, own TTL - inventing a number rather
+  than caching it forever or not at all.
 
 #### Contracts the compiler does not check -> [development](docs/wiki/development.md)
 

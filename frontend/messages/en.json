@@ -2251,5 +2251,7 @@
   "link_preview_profile_member": "Canari member",
   "link_preview_join_community": "Join the community",
   "link_preview_join_conversation": "Join the conversation",
-  "link_preview_invite_invalid": "Invalid or expired invite"
+  "link_preview_invite_invalid": "Invalid or expired invite",
+  "link_safety_warning_message": "This link has been flagged as potentially dangerous by Google Safe Browsing. Do you really want to continue?",
+  "link_safety_continue_button": "Continue anyway"
 }
