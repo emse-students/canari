@@ -137,6 +137,9 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
+      # Server-side Safe Browsing lookup for shared links (WP-SAFELINK-1). Optional and
+      # fails open: unset means no check, never a blocked link.
+      GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
     depends_on:
       redis:
         condition: service_healthy

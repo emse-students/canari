@@ -36,7 +36,7 @@
 - Logs: Mandatory (`Log.d`, `appendLog`, `log::debug!`) at function entry, decisions, and error branches.
 - Docs & Comments: JSDoc/Rustdoc required for exports. Explain WHAT and WHY, do not restate types. All documentation files (`docs/`, `*.md` at root) are English except `docs/user-guide/` (French, user-facing).
 - Factorization: Extract and export reusable logic. Zero duplication.
-- Language: Code, comments, docs, and dev-facing strings MUST be English. User-visible strings use Paraglide (`messages/fr.json`, `en.json`) - no inline string literals.
+- Language: Code, comments, docs, and dev-facing strings MUST be English. User-visible strings use Paraglide (`messages/fr.json`, `en.json`) - no inline string literals, ALWAYS, even in a plain `.ts` util with no Svelte in sight, and even when a nearby call site you're extending (e.g. `showConfirm(...)`) has pre-existing raw-string calls elsewhere - that inconsistency is not license to add another one.
 - Punctuation: Normalize to ASCII (`'`, `"`, `-`) everywhere; escape quotes in code (`\'`, `\"`). Preserve French accents (`é`, `à`) ONLY in localized strings/French comments.
 - Tests: Changing logic requires changing the associated test. Stale assertions will fail CI.
 - UI: Single source of truth is `src/app.css` (tokens, `--radius-*`). Use `.btn-glass` with modifiers. Dark-first glassmorphism. Avoid raw hex/px. `lucide-svelte` only (no aliases).
@@ -670,7 +670,11 @@ prompt fields are all on those pages. What must not be forgotten between them:
   sweep left are DELIBERATE (switch thumbs, colour-picker handles, always-dark call/lightbox chrome,
   the white plate behind a QR). Do not "fix" them.
 - Nothing types a string as user-visible, so no compiler enforces Paraglide - and no user-facing
-  string names a sensor ("empreinte ou Face ID" is wrong on every device, half the time).
+  string names a sensor ("empreinte ou Face ID" is wrong on every device, half the time). Default
+  to Paraglide for ANY new user-visible string without being asked, on the first draft, not as a
+  follow-up fix - a `showConfirm(...)` message and its custom button label were shipped as raw
+  French literals (WP-SAFELINK-1), copying the shape of that store's own ~21 other call sites,
+  none of which are Paraglide either; that existing pattern is not a precedent to extend.
 - Re-run `bun run paraglide:compile` before `bun run test` after any build.
 - **A promise that has REJECTED stays rejected, so an `{#await}` over one sits in `{:catch}` for the
   life of the component** - nothing re-enters `{:then}` but a new promise, i.e. a remount. State a
@@ -840,6 +844,13 @@ that decide whether you believe a run:
   for `SwiftCompile`/`CompileC` on the file. (iOS only - Gradle cannot skip a source set.)
 - The CD regenerates `infrastructure/.env` from the repo secrets, so a value set over SSH lasts until
   the next deploy. A credential is only real once it is a GitHub secret AND named in `cd.yml`.
+  **A THIRD place is just as mandatory and easy to forget: the service's own `environment:` block
+  in `infrastructure/docker-compose.prod.yml` (and `.dev.yml` for parity) must also name the var
+  explicitly** (`FOO: ${FOO:-}`) - `.env` having the value proves nothing about whether Compose
+  passes it into the container. `GOOGLE_SAFE_BROWSING_API_KEY` shipped correctly in `cd.yml` and
+  `.env.example` and was still absent from `docker exec ... env` on prod (WP-SAFELINK-1) because
+  this third step was skipped; the endpoint answered 200 with a wrong, silently-fail-open verdict
+  the whole time, not an error - `docker exec <container> env | grep FOO` is the only way to catch it.
 - A generated file the repo COMMITS needs both halves or neither: the bump must patch it, and
   `.gitignore` must really keep it - a later `*.lock` silently overrode the `!` written above it,
   and a lock nothing bumps is corrected by whatever unrelated commit next runs cargo.
