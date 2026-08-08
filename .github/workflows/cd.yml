@@ -500,6 +500,7 @@ jobs:
           MINIO_ROOT_USER: ${{ secrets.MINIO_ROOT_USER }}
           MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
           MIGALLERY_API_KEY: ${{ secrets.MIGALLERY_API_KEY }}
+          GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.GOOGLE_SAFE_BROWSING_API_KEY }}
           CHANNELS_ENCRYPTION_SECRET: ${{ secrets.CHANNELS_ENCRYPTION_SECRET }}
           INTERNAL_SHARED_SECRET: ${{ secrets.INTERNAL_SHARED_SECRET }}
           CALL_ROOM_SECRET: ${{ secrets.CALL_ROOM_SECRET }}
@@ -648,6 +649,15 @@ jobs:
             upsert_env_var "MIGALLERY_API_KEY" "$MIGALLERY_API_KEY"
           else
             echo "::warning::MIGALLERY_API_KEY is not set - avatar service will not work"
+          fi
+
+          # WP-SAFELINK-1: server-side Safe Browsing lookup for links shared in messages/posts.
+          # Optional and fails OPEN when unset - a missing safety key must not become an outage
+          # for every link in the app, same reasoning as the other optional keys above.
+          if [ -n "$GOOGLE_SAFE_BROWSING_API_KEY" ]; then
+            upsert_env_var "GOOGLE_SAFE_BROWSING_API_KEY" "$GOOGLE_SAFE_BROWSING_API_KEY"
+          else
+            echo "::warning::GOOGLE_SAFE_BROWSING_API_KEY is not set - links will not be checked against Safe Browsing"
           fi
 
           if [ -n "$CHANNELS_ENCRYPTION_SECRET" ]; then
