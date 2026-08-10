@@ -116,20 +116,38 @@ and bounded answers - `3 to send, 0 to pull`, then `9 to send, 0 to pull` - wher
 stays benign on purpose. Do not re-run this half; the write-up is
 [cross-client-testing > verified on the phone](docs/wiki/cross-client-testing.md).
 
-**STILL OWED: the BROWSER half of the same re-run** (`HEALED - 14/14`, against `PARTIAL - 9/14`
-before). Four attempts failed at the setup gate today, all harness (faults #28/#29, both fixed in
-the scratchpad `heal-web.mjs`: a virtualised count needs a FRESH MOUNT plus the max over repeated
-polls, and the baseline needs a polled budget rather than a fixed wait). **Do not start the next
-attempt without reading the storm note**: the DM ended the session in a sustained retransmission
-loop (~450 frames/min on W1, ~300-450 control messages per 30 s on W2, 324 `LOST frame` on the
-phone, nothing being repaired), and **every run leaves W1 permanently rewound because the harness
-restores an old snapshot and never restores the current one** - each run compounds the last. Let it
-quiesce, or give W1 a clean state, before believing any measurement. The election is a random
-shuffle (`messaging.service.ts:1372-1382`), so always check WHICH device answered. Also owed:
-`wasmLogShim`'s null+flag route should now be DEAD (the web reaches `handleConsumedGeneration`
-through the thrown error instead) - read W2's console for `(SecretReuseError)` rather than `(null
-payload, WASM duplicate flag)`; if the shim never fires, delete it, with that measurement as the
-evidence.
+**THE STORM THAT RE-RUN PRODUCED IS WHAT THE ARCHITECTURE CHANTIER FIXED (2026-08-10, shipped).**
+The session ended in a sustained retransmission loop - ~450 frames/min on W1, ~300-450 control
+messages per 30 s on W2, 324 `LOST frame` on the phone, nothing being repaired. Cause: **one question
+answered by nine clocks**, two of them retry ladders driving the same request, so the traffic was
+their product; and the cheap rung of the ladder could repair nothing by construction. The user's
+instruction was explicit - architectural, deterministic, reproducible, explicable, and it must work
+at any conversation size, no timeout band-aids. So the ladder was DELETED rather than tuned: one
+repair (the history diff), one request per state edge, idempotence from the durable marker,
+termination from the empty diff. Both rules are in DURABLE RULES; the narrative is
+[chat > there is ONE repair](docs/wiki/frontend/modules/chat.md) and
+[cross-client-testing > DONE 2026-08-10](docs/wiki/cross-client-testing.md).
+
+**STILL OWED, and it is a MEASUREMENT, not a fix:** re-run HEAL on the browser against the new
+architecture (`HEALED - 14/14`, against `PARTIAL - 9/14` before) and check BOTH things - the
+conversation heals AND the frame rate falls back (`storm.mjs` is now the regression probe for the
+broadcast class; the deleted log lines are prefixed `!!` there, meaning "old build or regression").
+Preconditions: the test DM may be deleted and recreated (user authorised it - it holds only our
+tests), and **the harness restores an old W1 snapshot and never restores the current one**, so every
+run leaves W1 permanently rewound and compounds the last - fix that before believing a measurement.
+Harness faults #28/#29 are already fixed in the scratchpad `heal-web.mjs` (a virtualised count needs
+a FRESH MOUNT plus the max over repeated polls; the baseline needs a polled budget, not a fixed
+wait). The election is a random shuffle (`messaging.service.ts:1372-1382`), so always check WHICH
+device answered. Also owed: `wasmLogShim`'s null+flag route should now be DEAD (the web reaches
+`handleConsumedGeneration` through the thrown error instead) - read W2's console for
+`(SecretReuseError)` rather than `(null payload, WASM duplicate flag)`; if the shim never fires,
+delete it, with that measurement as the evidence.
+
+**THE ORDER THE USER SET (2026-08-10), and it governs the next sessions:** (1) finish this chantier,
+(2) do everything in the roadmap below, **the P1s first**, (3) then **re-run the cross-client campaign
+from the START (post-setup)** - the scripts exist now, so it should be fast, and it exercises
+everything. Commit AND push are authorised so prod picks the changes up: **prod is the test server**
+until a `dev.canari-emse.fr` exists.
 
 Also this session: Leon's WP-SAFELINK-1 verified end to end - server on prod with a positive AND a
 negative control (Google's test malware URL `{"unsafe":true}`, `google.com` `{"unsafe":false}`), the
@@ -771,18 +789,27 @@ carry in the head:
   the dedup at once, so a five-minute decaying buffer became a permanent playlist and a bounded
   repair became a standing broadcast (WP-RETRANSMIT-1, ~430 frames/min for 13 min on prod). Ask of
   every self-healing loop what makes it STOP, and make that the thing a test pins.
-- **A REPAIR LADDER MUST BE ORDERED BY WHAT EACH RUNG CAN FIX, NEVER BY WHAT EACH COSTS.**
-  Cheap-first is only sound when the cheap rung has a real chance, and the way to check is to read
-  its TRIGGER: `signalDecryptFailure` has one call site, the rewound-sender branch, so the peer it
-  asks is by construction the peer that cannot answer - it re-encrypts at the same rewound ratchet.
-  Three failures of it were the price of admission to the diff that does work, i.e. 60-90 s of
-  continuous loss, and a shallow rewind clears itself first - partly by burning generations on those
-  very retransmissions, which is recovery by exhaustion, not repair. Messages caught in that window
-  are gone silently. Ask what each rung REPAIRS before asking what it costs.
-- A repair addressed by TIME is a broadcast, because a window cannot name its target - and it can
-  only be as durable as what it reads. `decrypt_failed` asks for a window precisely because the
-  frame never decrypted, so its id was never seen; that is why WP-HIST-3's manifest diff replaces it
-  rather than being tuned.
+- **A REPAIR LADDER MUST BE ORDERED BY WHAT EACH RUNG CAN FIX, NEVER BY WHAT EACH COSTS - and a rung
+  that can fix NOTHING is deleted, not demoted.** Cheap-first is only sound when the cheap rung has a
+  real chance, and the way to check is to read its TRIGGER: `signalDecryptFailure` had one call site,
+  the rewound-sender branch, so the peer it asked was by construction the peer that could not answer
+  - it re-encrypts at the same rewound ratchet. Measured twice on prod: 1, then 5, 15 and 25 payloads,
+  none delivered. Its only success mode was the sender burning past our high-water mark on its own,
+  i.e. recovery by exhaustion. **So the whole ladder is gone (2026-08-10)**: `decrypt_failed`,
+  `retransmitRecentSends`, `recentSends` and the `isRetransmission` flag are deleted, and the
+  history diff - which reads the peer's DURABLE store and names messages by id - is the ONE repair.
+  A repair addressed by TIME is a broadcast, because a window cannot name its target, and it can only
+  be as durable as what it reads.
+- **IDEMPOTENCE COMES FROM DURABLE STATE, TERMINATION FROM A PROOF - never from a clock.** One
+  question ("what am I missing, and who has it") was answered by NINE independent durations across
+  three files, two of them retry ladders driving the same request, so the traffic was their product.
+  The rule that replaced them: one request per STATE EDGE, the durable `awaitingHistory` marker makes
+  a second one a no-op, and each diff exchange strictly reduces the symmetric difference, so the
+  empty diff - the only thing entitled to clear the marker - is reached by construction rather than
+  by budget. A duration is legitimate only when it schedules NO traffic: `REQUEST_TIMEOUT_MS` exists
+  solely to notice an attempt went unanswered, and `INITIAL_SOLICIT_DELAY_MS` is an epoch-ordering
+  constraint, not a backoff. Ask of every timer what it would mean if it were wrong; if the answer is
+  "more traffic", it is load-bearing and it should not be.
 
 #### UI and i18n -> [frontend/architecture](docs/wiki/frontend/architecture.md), [auth](docs/wiki/frontend/modules/auth.md) (native prompts)
 

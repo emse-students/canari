@@ -12,71 +12,51 @@ import {
 } from './awaitingHistoryRegistry';
 
 /**
- * Bounded backoff (ms) for re-soliciting a history bundle after a fresh join. Kept short enough to
- * ride out a peer that is briefly away, bounded so a group whose only other member stays offline
- * does not solicit forever WITHIN one session. Cross-session persistence (the awaiting-history
- * registry) drives the longer-horizon retries on each reconnect.
+ * Delay (ms) between deciding to solicit and actually sending.
  *
- * WP-HIST-1 (Option C): the in-session burst now works together with a request-level timeout/
- * retry tracker (`historyRequestPendingStore`). The tracker is what lets the UI show a
- * `pending-offline` state when no bundle arrived inside the response window.
- */
-const RETRY_DELAYS_MS = [30_000, 90_000, 180_000];
-
-/**
- * Delay (ms) before the FIRST solicitation. An external-commit self-join lands us one epoch ahead
- * of a peer that has not yet applied our commit: a bundle it re-encrypts at its old epoch would be
- * undecryptable to us and wasted. Waiting a beat lets the peer process our fan-out commit first, so
- * the very first bundle is encrypted at an epoch we can actually read.
+ * The ONE delay in this module, and it is an ordering constraint rather than a retry knob: an
+ * external-commit self-join lands us one epoch ahead of a peer that has not yet applied our commit,
+ * and a bundle that peer re-encrypts at its old epoch is undecryptable to us and wasted. Waiting a
+ * beat lets the fan-out commit be processed first.
+ *
+ * It compensates for an epoch ordering this module cannot observe. Anything that made it observable
+ * would replace it outright - it is not tuned, and it must never be repurposed as a backoff.
  */
 const INITIAL_SOLICIT_DELAY_MS = 2500;
 
 /**
- * Grace (ms) added after the last scheduled attempt before a burst counts as over.
- *
- * Matches the response window `historyRequestPendingStore` opens per request: until it elapses the
- * last attempt may still be answered, and re-soliciting on top of it would restart the backoff for
- * nothing.
- */
-const BURST_RESPONSE_GRACE_MS = 30_000;
-
-/**
  * How often the session sweeps its awaiting groups (ms).
  *
- * The in-session burst lasts about three minutes and every other trigger is an EVENT - a reconnect,
- * a peer coming back, a give-up escalation. A tab left open for a day therefore has long stretches
- * in which nothing would ever ask again, and the events that could cover it are not guaranteed:
- * presence is only polled for peers the UI is actually displaying. This is the floor under all of
- * them, deliberately slow - a group carrying a marker has already failed the fast paths.
+ * Every other trigger is an EVENT - a fresh join, a reconnect, a peer coming back online, a newly
+ * detected unreadable frame - and none is guaranteed to happen again in a tab left open for a day.
+ * This is the floor under all of them, deliberately slow: a group still carrying a marker has
+ * already failed the fast paths, and the exchange it starts is a diff that costs nothing when there
+ * is no difference.
  */
 export const AWAITING_SWEEP_INTERVAL_MS = 15 * 60_000;
 
-type PendingSolicit = {
-  timers: ReturnType<typeof setTimeout>[];
-  /** Epoch ms after which no scheduled attempt remains - see {@link isSolicitInFlight}. */
-  burstEndsAt: number;
-};
-
-/** In-memory registry of in-flight history solicitations, keyed by groupId. */
-const pending = new Map<string, PendingSolicit>();
+/**
+ * Groups whose solicitation has been decided but not yet sent, i.e. inside
+ * {@link INITIAL_SOLICIT_DELAY_MS}. Once it is sent, the response window in
+ * `historyRequestPendingStore` is what says an attempt is outstanding - see
+ * {@link isSolicitInFlight}.
+ */
+const scheduled = new Map<string, ReturnType<typeof setTimeout>>();
 
 /**
- * Whether a solicitation burst for `groupId` still has an attempt to make or an answer to wait for.
+ * Whether an attempt for `groupId` is outstanding, i.e. whether soliciting again would duplicate one.
  *
- * The entry itself is NOT the answer, and reading it as one silenced every later trigger: nothing
- * removes it when the burst simply ends without a bundle (only a bundle that ENDS the wait, or a
- * fresh solicitation, calls `cancelHistorySolicit`). So a group whose peers were all offline during
- * its three-minute burst kept a permanent entry, and every reconnect, every peer returning and
- * every escalation skipped it for the life of the tab - a page reload being the only cure. The
- * schedule is fully known up front, so the end of the burst is a TIME, not an event to wait for.
+ * There is no burst any more, so there is no schedule to reason about and no end-of-burst to compute:
+ * an attempt is outstanding exactly while it is waiting to be sent, or waiting to be answered. Both
+ * are STATES ended by an event, never durations compared against a clock. That distinction is the
+ * whole point - the previous version derived the answer from a `burstEndsAt` arithmetic, and a stale
+ * entry it never cleared silenced every later trigger for the life of the tab.
+ *
+ * A group is therefore re-solicitable the instant its response window closes, and what decides
+ * whether it IS re-solicited is the durable marker, not this function.
  */
-export function isSolicitInFlight(groupId: string, now: number = Date.now()): boolean {
-  const entry = pending.get(groupId);
-  if (!entry) return false;
-  if (now < entry.burstEndsAt) return true;
-  // Over: drop it so the map tracks live bursts only, rather than growing for the session.
-  pending.delete(groupId);
-  return false;
+export function isSolicitInFlight(groupId: string): boolean {
+  return scheduled.has(groupId) || historyRequestPendingStore.getPhase(groupId) === 'pending';
 }
 
 /**
@@ -108,39 +88,41 @@ export function setHistoryDigestBroadcaster(fn: HistoryDigestBroadcaster | null)
  * epoch WITHOUT the pre-join history it cannot decrypt on its own, so it must ask a member to
  * re-encrypt and resend it.
  *
- * Best-effort with bounded, receipt-driven retries. The delivery service picks a single online
- * responder per call, so re-sending on a backoff rotates past a peer that holds its WebSocket while
- * backgrounded (frozen-online: `redis.exists` is true but the app cannot process the frame) and
- * cannot answer. Retries stop when a `history_bundle` ENDS the wait rather than merely arriving -
- * see {@link noteHistoryBundleReceived}, which keeps them running while a proven gap is only
- * partially answered, so the remaining difference is asked for again inside the same session. The
- * bundle receiver deduplicates by message id, so a redundant resend is harmless.
+ * EXACTLY ONE request goes out per call, and calling again while one is outstanding does nothing.
+ * There is no backoff ladder here any more, and removing it is the point rather than a
+ * simplification: two independent ladders (this one and the tracker's) drove the same request, so
+ * the traffic a single group could generate was their product and no single place could be read to
+ * predict it.
  *
- * Durable across sessions ONLY through the awaiting-history registry, which this function no
- * longer writes: soliciting is the ACTION, deciding that history is missing is a separate
- * judgement that needs evidence (see {@link solicitHistoryIfMissing}). Once a marker exists the
- * connection sync re-solicits it on every (re)connect (see {@link reSolicitAwaitingHistory}),
- * which is what covers a peer that stayed offline for the whole ~3 min in-session window.
+ * What makes the repair reliable instead is that it CONVERGES rather than repeats. Each exchange is
+ * a diff, so it strictly reduces the difference between the two stores and costs nothing at all when
+ * there is none; and the decision to run one is taken from durable EVIDENCE (the awaiting-history
+ * marker), never from a timer. So the mechanism re-runs on state edges - a reconnect, a peer coming
+ * back online, a newly detected unreadable frame, the slow sweep - and terminates on a proof: a peer
+ * that compared its whole store and found us complete.
+ *
+ * The one timer left is the tracker's response window, and its only job is to decide that an attempt
+ * is OVER, which nothing else can observe. It schedules no traffic of its own.
+ *
+ * The election picks a single online responder per request, so a group whose elected peer was
+ * frozen-online (`redis.exists` true, app unable to process the frame) is covered by the NEXT edge
+ * rotating onto a different member - not by asking the same one faster.
  */
 export function solicitHistory(
   mlsService: Pick<IMlsService, 'sendHistoryRequest'>,
   groupId: string,
   log: (msg: string) => void,
-  delaysMs: number[] = RETRY_DELAYS_MS,
   initialDelayMs: number = INITIAL_SOLICIT_DELAY_MS
 ): void {
-  // Restart cleanly if a prior solicitation for this group is still in flight.
-  cancelHistorySolicit(groupId);
-  const lastAttemptAt = initialDelayMs + Math.max(0, ...delaysMs);
-  const entry: PendingSolicit = {
-    timers: [],
-    burstEndsAt: Date.now() + lastAttemptAt + BURST_RESPONSE_GRACE_MS,
-  };
-  pending.set(groupId, entry);
+  if (isSolicitInFlight(groupId)) {
+    log(`[HISTORY_REQ] ${groupId.slice(0, 8)}... already has an attempt outstanding - not asking`);
+    return;
+  }
 
-  const fire = async (attempt: number): Promise<void> => {
-    // WP-HIST-1: register the start of this attempt with the timeout/retry tracker.
-    historyRequestPendingStore.start(groupId, () => void fire(attempt + 1));
+  const fire = async (): Promise<void> => {
+    scheduled.delete(groupId);
+    // Opens the response window: from here "outstanding" means "waiting for an answer".
+    historyRequestPendingStore.start(groupId);
 
     // Say what we HOLD before asking, so the elected member can answer with the difference. Sent
     // first and awaited: it rides inside MLS while the request goes over the WebSocket, and the
@@ -164,33 +146,31 @@ export function solicitHistory(
       .then((outcome) => {
         if (outcome?.noPeerOnline) {
           // The server elects the responder, so it already knows there was none. Waiting out the
-          // 30 s response window for an answer nobody was asked for tells the user nothing; the
-          // backoff and the presence edge (`onPeersCameOnline`) are what will retry.
-          log(`[HISTORY_REQ] no member online for ${groupId.slice(0, 8)}... - will retry`);
+          // response window for an answer nobody was asked for tells the user nothing; the next
+          // edge - a peer coming online, a reconnect, the sweep - is what asks again.
+          log(`[HISTORY_REQ] no member online for ${groupId.slice(0, 8)}...`);
           historyRequestPendingStore.markOffline(groupId);
           return;
         }
-        log(`[HISTORY_REQ] solicit attempt ${attempt} for ${groupId.slice(0, 8)}...`);
+        log(`[HISTORY_REQ] solicited ${groupId.slice(0, 8)}...`);
       })
       .catch((e) => {
         // Network-level failure (offline, fetch abort, etc.): move straight to pending-offline.
         if (typeof navigator !== 'undefined' && !navigator.onLine) {
-          log(`[HISTORY_REQ] offline during attempt ${attempt} for ${groupId.slice(0, 8)}...`);
+          log(`[HISTORY_REQ] offline while soliciting ${groupId.slice(0, 8)}...`);
           historyRequestPendingStore.markOffline(groupId);
           return;
         }
         log(
-          `[HISTORY_REQ] attempt ${attempt} failed for ${groupId.slice(0, 8)}...: ${String(e).slice(0, 120)}`
+          `[HISTORY_REQ] solicit failed for ${groupId.slice(0, 8)}...: ${String(e).slice(0, 120)}`
         );
       });
   };
 
-  // Attempt 0 is deferred by initialDelayMs so a self-join peer can apply our commit first.
-  entry.timers.push(setTimeout(() => void fire(0), initialDelayMs));
-  delaysMs.forEach((delay, i) => {
-    const timer = setTimeout(() => void fire(i + 1), initialDelayMs + delay);
-    entry.timers.push(timer);
-  });
+  scheduled.set(
+    groupId,
+    setTimeout(() => void fire(), initialDelayMs)
+  );
 }
 
 /**
@@ -301,12 +281,12 @@ export function startAwaitingHistorySweep(params: {
   }, intervalMs);
 }
 
-/** Cancels any pending retries for `groupId` (bundle arrived, or a fresh solicitation supersedes). */
+/** Cancels a solicitation not yet sent (the bundle arrived first, or the group is being dropped). */
 export function cancelHistorySolicit(groupId: string): void {
-  const entry = pending.get(groupId);
-  if (!entry) return;
-  for (const timer of entry.timers) clearTimeout(timer);
-  pending.delete(groupId);
+  const timer = scheduled.get(groupId);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  scheduled.delete(groupId);
 }
 
 /**
@@ -344,7 +324,8 @@ export function noteHistoryBundleReceived(
   clearAwaitingHistory(userId, groupId);
 }
 
-/** Cancels every pending solicitation (session teardown / test cleanup). */
+/** Cancels every solicitation not yet sent (session teardown / test cleanup). */
 export function cancelAllHistorySolicit(): void {
-  for (const groupId of pending.keys()) cancelHistorySolicit(groupId);
+  // Deleting the current key mid-iteration is well defined for a Map, so no copy is needed.
+  for (const groupId of scheduled.keys()) cancelHistorySolicit(groupId);
 }

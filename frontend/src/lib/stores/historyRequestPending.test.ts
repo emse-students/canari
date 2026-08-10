@@ -1,11 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { historyRequestPendingStore, RETRY_DELAYS_MS } from './historyRequestPending.svelte';
+import { historyRequestPendingStore } from './historyRequestPending.svelte';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
+/**
+ * The store tracks ONE attempt per group and drives none.
+ *
+ * It used to own a retry ladder (`RETRY_DELAYS_MS`, `MAX_RETRIES`) while `historySolicit` owned a
+ * second, independent one - two schedules multiplying into traffic no single file could predict.
+ * Asking now belongs entirely to `solicitHistory`, so the property to pin here is a negative one:
+ * nothing this store does ever produces a request.
+ */
 describe('historyRequestPendingStore', () => {
   beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.useFakeTimers();
     historyRequestPendingStore.cancelAll();
   });
 
@@ -14,150 +22,75 @@ describe('historyRequestPendingStore', () => {
     vi.useRealTimers();
   });
 
-  it('starts in pending and moves to pending-offline after the timeout', () => {
-    const retry = vi.fn();
-    historyRequestPendingStore.start('g1', retry);
-
+  it('opens a window on start and closes it when the answer never comes', () => {
+    historyRequestPendingStore.start('g1');
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
 
     vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
-    expect(retry).not.toHaveBeenCalled();
   });
 
-  it('clears the state when the bundle is received before the timeout', () => {
-    const retry = vi.fn();
-    historyRequestPendingStore.start('g1', retry);
+  it('stops tracking once the bundle arrives', () => {
+    historyRequestPendingStore.start('g1');
+    historyRequestPendingStore.noteReceived('g1');
+    expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
 
-    vi.advanceTimersByTime(10_000);
+    // The window must be dead, not merely unread: a stale timer would re-open a phase for a group
+    // whose attempt has settled, and the UI would claim a request is outstanding forever.
+    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS * 10);
+    expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
+  });
+
+  it('reports a request that never left the device as over immediately', () => {
+    historyRequestPendingStore.start('g1');
+    historyRequestPendingStore.markOffline('g1');
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
+  });
+
+  it('NEVER schedules anything: a timed-out attempt stays over', () => {
+    // The regression this exists for. Both ladders re-fired from inside a timer, so one detection
+    // could still be generating traffic minutes later with no further evidence of a problem.
+    historyRequestPendingStore.start('g1');
+    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+
+    vi.advanceTimersByTime(60 * 60_000);
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('clears the offline phase on resume, and asks for nothing', () => {
+    // Resuming means the UI should stop claiming an attempt is outstanding. Re-soliciting is
+    // `reSolicitAwaitingHistory`'s single job, reached through the reconnect this resume triggers.
+    historyRequestPendingStore.start('g1');
+    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+
+    historyRequestPendingStore.onResume();
+    expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('leaves a still-open window alone on resume', () => {
+    historyRequestPendingStore.start('g1');
+    historyRequestPendingStore.onResume();
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
+  });
+
+  it('tracks groups independently', () => {
+    historyRequestPendingStore.start('g1');
+    historyRequestPendingStore.start('g2');
     historyRequestPendingStore.noteReceived('g1');
 
     expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
-    vi.advanceTimersByTime(60_000);
-    expect(retry).not.toHaveBeenCalled();
+    expect(historyRequestPendingStore.getPhase('g2')).toBe('pending');
   });
 
-  it('schedules up to 3 retries with the documented backoff', () => {
-    const retry = vi.fn();
-    const startRetry = () => {
-      retry();
-      historyRequestPendingStore.start('g1', startRetry);
-    };
-    historyRequestPendingStore.start('g1', startRetry);
-
-    // Request window elapses -> first retry scheduled (30 s backoff).
-    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
-
-    vi.advanceTimersByTime(RETRY_DELAYS_MS[0]);
-    expect(retry).toHaveBeenCalledTimes(1);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
-
-    // New request window elapses -> second retry scheduled (2 min backoff).
-    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
-
-    vi.advanceTimersByTime(RETRY_DELAYS_MS[1]);
-    expect(retry).toHaveBeenCalledTimes(2);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
-
-    // New request window elapses -> third retry scheduled (5 min backoff).
-    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
-
-    vi.advanceTimersByTime(RETRY_DELAYS_MS[2]);
-    expect(retry).toHaveBeenCalledTimes(3);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
-
-    // Budget exhausted: the request window can elapse but no further retry is scheduled.
-    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
-    vi.advanceTimersByTime(600_000);
-    expect(retry).toHaveBeenCalledTimes(3);
-  });
-
-  it('moves straight to pending-offline on markOffline and schedules only one retry', () => {
-    const retry = vi.fn();
-    historyRequestPendingStore.start('g1', retry);
-
-    historyRequestPendingStore.markOffline('g1');
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
-
-    // The original 30 s request timer was cancelled; the retry timer has not fired yet.
-    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS - 1);
-    expect(retry).not.toHaveBeenCalled();
-
-    // Retry fires on the documented backoff.
-    vi.advanceTimersByTime(1);
-    expect(retry).toHaveBeenCalledTimes(1);
-
-    // No duplicate retry is scheduled by the cancelled request timeout.
-    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
-    expect(retry).toHaveBeenCalledTimes(1);
-  });
-
-  it('restarts cleanly without resetting the retry budget when start is called again', () => {
-    const firstRetry = vi.fn();
-    const secondRetry = vi.fn();
-    historyRequestPendingStore.start('g1', firstRetry);
-
-    // Consume the first retry.
-    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS + RETRY_DELAYS_MS[0]);
-    expect(firstRetry).toHaveBeenCalledTimes(1);
-
-    // A fresh solicitation for the same group preserves the budget.
-    historyRequestPendingStore.start('g1', secondRetry);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
-
-    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
-
-    // The next scheduled retry uses the second backoff slot, not the first one again.
-    vi.advanceTimersByTime(RETRY_DELAYS_MS[1]);
-    expect(secondRetry).toHaveBeenCalledTimes(1);
-  });
-
-  it('onResume retries pending-offline groups that still have budget', () => {
-    const retry = vi.fn();
-    const startRetry = () => {
-      retry();
-      historyRequestPendingStore.start('g1', startRetry);
-    };
-    historyRequestPendingStore.start('g1', startRetry);
-    historyRequestPendingStore.markOffline('g1');
-
-    vi.advanceTimersByTime(10_000);
-    historyRequestPendingStore.onResume();
-
-    expect(retry).toHaveBeenCalledTimes(1);
-  });
-
-  it('onResume does not retry groups that have exhausted their budget', () => {
-    const retry = vi.fn();
-    const startRetry = () => {
-      retry();
-      historyRequestPendingStore.start('g1', startRetry);
-    };
-    historyRequestPendingStore.start('g1', startRetry);
-
-    // Run through all 3 retries (each retry restarts the 30 s request window).
-    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS + RETRY_DELAYS_MS[0]);
-    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS + RETRY_DELAYS_MS[1]);
-    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS + RETRY_DELAYS_MS[2]);
-    expect(retry).toHaveBeenCalledTimes(3);
-    retry.mockClear();
-
-    historyRequestPendingStore.onResume();
-    expect(retry).not.toHaveBeenCalled();
-  });
-
-  it('cancelAll removes every tracked group', () => {
-    historyRequestPendingStore.start('g1', vi.fn());
-    historyRequestPendingStore.start('g2', vi.fn());
-
+  it('cancels everything on teardown', () => {
+    historyRequestPendingStore.start('g1');
+    historyRequestPendingStore.start('g2');
     historyRequestPendingStore.cancelAll();
 
     expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
     expect(historyRequestPendingStore.getPhase('g2')).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

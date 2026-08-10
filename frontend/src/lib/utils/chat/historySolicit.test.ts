@@ -15,8 +15,10 @@ import type { IStorage } from '$lib/db';
 const log = () => {};
 const USER = 'user-1';
 const KEY = 'device-key';
-// Attempt 0 is deferred by this default; tests advance past it to observe the first fire.
+// The request is deferred by this default; tests advance past it to observe it go out.
 const INITIAL = 2500;
+/** The tracker's response window - the one duration the mechanism cannot do without. */
+const RESPONSE_WINDOW = 30_000;
 
 function makeMls() {
   return { sendHistoryRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }) };
@@ -40,88 +42,88 @@ describe('solicitHistory', () => {
     localStorage.clear();
   });
 
-  it('defers the first request past the initial delay, then re-solicits on the backoff', () => {
+  it('sends exactly ONE request, after the ordering delay, and never repeats it', () => {
     const mls = makeMls();
-    solicitHistory(mls, 'g1', log, [1000, 2000]);
+    solicitHistory(mls, 'g1', log);
 
-    // Attempt 0 is deferred, not synchronous (lets a self-join peer apply our commit first).
+    // Deferred, not synchronous: it lets a self-join peer apply our commit first, so the bundle it
+    // returns is encrypted at an epoch we can read. That is an ordering constraint, not a backoff.
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(0);
 
     vi.advanceTimersByTime(INITIAL);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
     expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1');
 
-    vi.advanceTimersByTime(1000);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
-
-    vi.advanceTimersByTime(1000);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(3);
-
-    // No further retries beyond the provided delays.
-    vi.advanceTimersByTime(10_000);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(3);
+    // The property the whole rewrite exists for: one call produces one request, for good. There
+    // were two independent backoff ladders here, so a single detection kept generating traffic for
+    // minutes - and their schedules multiplied, which no one file could be read to predict.
+    vi.advanceTimersByTime(60 * 60_000);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT record the group as awaiting: asking is not evidence of a gap', () => {
     const mls = makeMls();
-    solicitHistory(mls, 'g1', log, [1000]);
+    solicitHistory(mls, 'g1', log);
     expect(enumerateAwaitingHistory(USER)).toEqual([]);
   });
 
-  it('stops retrying once a history_bundle is received', () => {
+  it('ignores a second call while an attempt is outstanding', () => {
     const mls = makeMls();
-    solicitHistory(mls, 'g1', log, [1000, 2000]);
+    solicitHistory(mls, 'g1', log);
+    solicitHistory(mls, 'g1', log);
     vi.advanceTimersByTime(INITIAL);
+
+    // Idempotent by state, not by a rate limit: what suppresses the second ask is that the first is
+    // still outstanding, so nothing has to be tuned and nothing decays.
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
 
-    noteHistoryBundleReceived(USER, 'g1', 3);
-    vi.advanceTimersByTime(10_000);
+    // Still outstanding (the window is open), so a third call is a no-op too.
+    solicitHistory(mls, 'g1', log);
+    vi.advanceTimersByTime(INITIAL);
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('becomes askable again the moment the window closes - no cooldown of its own', () => {
+    const mls = makeMls();
+    solicitHistory(mls, 'g1', log);
+    vi.advanceTimersByTime(INITIAL);
+    expect(isSolicitInFlight('g1')).toBe(true);
+
+    vi.advanceTimersByTime(RESPONSE_WINDOW);
+    expect(isSolicitInFlight('g1')).toBe(false);
+
+    // Whether it IS asked again is the durable marker's business, reached through an edge - this
+    // module only stops asking twice at once.
+    solicitHistory(mls, 'g1', log);
+    vi.advanceTimersByTime(INITIAL);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
   });
 
   it('cancelHistorySolicit only affects the named group', () => {
     const mls = makeMls();
-    solicitHistory(mls, 'g1', log, [1000]);
-    solicitHistory(mls, 'g2', log, [1000]);
-    vi.advanceTimersByTime(INITIAL);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
+    solicitHistory(mls, 'g1', log);
+    solicitHistory(mls, 'g2', log);
 
     cancelHistorySolicit('g1');
-    vi.advanceTimersByTime(1000);
-    // Only g2's retry fires.
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(3);
-    expect(mls.sendHistoryRequest).toHaveBeenLastCalledWith('g2');
-  });
-
-  it('re-soliciting the same group restarts cleanly without duplicating timers', () => {
-    const mls = makeMls();
-    solicitHistory(mls, 'g1', log, [1000]);
-    solicitHistory(mls, 'g1', log, [1000]);
     vi.advanceTimersByTime(INITIAL);
-    // The first call's timers were cancelled by the second: a single attempt-0 fires.
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
 
-    vi.advanceTimersByTime(1000);
-    // Only the surviving (second) solicitation's single retry fires.
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g2');
   });
-  it('moves the reactive pending state to pending-offline when the response window elapses', () => {
+
+  it('moves the reactive pending state to pending-offline when the window elapses', () => {
     const mls = makeMls();
-    // No burst delays: we only want to observe the single request window.
-    solicitHistory(mls, 'g1', log, []);
+    solicitHistory(mls, 'g1', log);
     vi.advanceTimersByTime(INITIAL);
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
 
-    // WP-HIST-1 response timeout is 30 s from the moment the request fires.
-    vi.advanceTimersByTime(30_000);
+    vi.advanceTimersByTime(RESPONSE_WINDOW);
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
   });
 
   it('clears the reactive pending state when the bundle arrives', () => {
     const mls = makeMls();
-    solicitHistory(mls, 'g1', log, [1000]);
+    solicitHistory(mls, 'g1', log);
     vi.advanceTimersByTime(INITIAL);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
 
     noteHistoryBundleReceived(USER, 'g1', 1);
     expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
@@ -131,36 +133,21 @@ describe('solicitHistory', () => {
     const mls = makeMls();
     mls.sendHistoryRequest.mockResolvedValue({ noPeerOnline: true });
 
-    solicitHistory(mls, 'g1', log, []);
+    solicitHistory(mls, 'g1', log);
     await vi.advanceTimersByTimeAsync(INITIAL);
 
-    // The server elects the responder, so it has already answered the question the 30 s window
-    // exists to ask - burning it would show "waiting" for a request nobody received.
+    // The server elects the responder, so it has already answered the question the window exists to
+    // ask - burning it would show "waiting" for a request nobody received.
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
   });
 
-  it('keeps waiting when the request could not be answered at all', async () => {
+  it('keeps waiting when the request went out and simply has not been answered', async () => {
     const mls = makeMls();
     // No answer is not a negative answer: a dropped response says nothing about who is reachable.
-    mls.sendHistoryRequest.mockResolvedValue({ noPeerOnline: false });
-
-    solicitHistory(mls, 'g1', log, []);
+    solicitHistory(mls, 'g1', log);
     await vi.advanceTimersByTimeAsync(INITIAL);
 
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
-  });
-
-  it('still retries on the backoff after a no-member answer', async () => {
-    const mls = makeMls();
-    mls.sendHistoryRequest.mockResolvedValue({ noPeerOnline: true });
-
-    solicitHistory(mls, 'g1', log, [1000]);
-    await vi.advanceTimersByTimeAsync(INITIAL);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
-
-    // "Nobody now" is not "nobody ever": the backoff and the presence edge must still fire.
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
   });
 
   it('moves straight to pending-offline when the network is offline', async () => {
@@ -168,7 +155,7 @@ describe('solicitHistory', () => {
     mls.sendHistoryRequest.mockRejectedValue(new Error('offline'));
     vi.stubGlobal('navigator', { onLine: false });
 
-    solicitHistory(mls, 'g1', log, []);
+    solicitHistory(mls, 'g1', log);
     await vi.advanceTimersByTimeAsync(INITIAL);
 
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
@@ -314,29 +301,24 @@ describe('noteHistoryBundleReceived', () => {
     }
   );
 
-  it('keeps the in-session retries running while a proven gap is only partly answered', () => {
+  it('keeps a proven marker alive through a partial answer, and lets an empty diff end it', () => {
+    // This is what makes the mechanism terminate without counting anything. A chunk of messages is
+    // not an answer to "you are missing these ids", so the marker survives and the next edge asks
+    // again; each exchange strictly reduces the difference, so it converges on the empty diff below
+    // rather than on a retry budget.
     markAwaitingHistory(USER, 'g1', 'peer-holds-more');
-    const mls = makeMls();
-    solicitHistory(mls, 'g1', log, [1000]);
-    vi.advanceTimersByTime(INITIAL);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
 
-    // A chunk lands, but the ids the peer named are not thereby accounted for: ask again.
     noteHistoryBundleReceived(USER, 'g1', 200);
-    vi.advanceTimersByTime(1000);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem(MARKER)).not.toBeNull();
 
-    // The next exchange finds nothing left to send, which is what finally ends it.
     noteHistoryBundleReceived(USER, 'g1', 0);
-    vi.advanceTimersByTime(10_000);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
     expect(localStorage.getItem(MARKER)).toBeNull();
   });
 
   it('takes the offline banner down on ANY bundle, including one that does not end the wait', () => {
     markAwaitingHistory(USER, 'g1', 'unreadable-frames');
     const mls = makeMls();
-    solicitHistory(mls, 'g1', log, [1000]);
+    solicitHistory(mls, 'g1', log);
     vi.advanceTimersByTime(INITIAL);
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
 
@@ -399,42 +381,42 @@ describe('reSolicitAwaitingHistory', () => {
     expect(localStorage.getItem(`mls_awaiting_history_since:${USER}:g1`)).toBeNull();
   });
 
-  it('does not restart a solicitation that is still in flight', () => {
+  it('does not duplicate an attempt that is still outstanding', () => {
     markAwaitingHistory(USER, 'g1', 'no-local-history');
     const mls = makeMls();
-    solicitHistory(mls, 'g1', log, [1000]);
-    // Still in flight (attempt 0 not yet fired): re-solicit must be a no-op for g1.
+    solicitHistory(mls, 'g1', log);
+    // Decided but not yet sent - already outstanding, so this edge must add nothing.
     reSolicitAwaitingHistory(mls, USER, ['g1'], log);
     vi.advanceTimersByTime(INITIAL);
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('asks again once a burst has ENDED without ever being answered', () => {
-    // The case every trigger has to survive: the burst ran while no peer was online, so nothing ever
-    // called `cancelHistorySolicit`. Reading the registry entry as "in flight" made the group
-    // permanently skipped - a reconnect, a peer coming back and an escalation alike - until the tab
-    // was reloaded, which silenced precisely the situation the retries exist for.
+  it('asks again once an attempt has ENDED without ever being answered', () => {
+    // The case every trigger has to survive: nobody answered, so nothing ever called
+    // `cancelHistorySolicit`. The old code derived "in flight" from a `burstEndsAt` arithmetic and
+    // left the entry behind, so the group was permanently skipped by every later trigger - a
+    // reconnect, a peer coming back, a new detection alike - until the tab was reloaded. Being
+    // outstanding is now a STATE that an event ends, so this cannot recur.
     markAwaitingHistory(USER, 'g1', 'no-local-history');
     const mls = makeMls();
-    solicitHistory(mls, 'g1', log, [1000]);
-    vi.advanceTimersByTime(INITIAL + 1000);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
+    solicitHistory(mls, 'g1', log);
+    vi.advanceTimersByTime(INITIAL);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
 
-    // Past the last attempt plus its response window: no attempt is owed and none is awaited.
-    vi.advanceTimersByTime(30_000 + 1);
+    vi.advanceTimersByTime(RESPONSE_WINDOW);
     expect(isSolicitInFlight('g1')).toBe(false);
 
     reSolicitAwaitingHistory(mls, USER, ['g1'], log);
     vi.advanceTimersByTime(INITIAL);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(3);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
   });
 
-  it('still counts the burst as in flight while its response window is open', () => {
+  it('counts an attempt as outstanding while its response window is open', () => {
     markAwaitingHistory(USER, 'g1', 'no-local-history');
     const mls = makeMls();
-    solicitHistory(mls, 'g1', log, [1000]);
-    // Last attempt has fired, but a bundle answering it is still possible.
-    vi.advanceTimersByTime(INITIAL + 1000 + 5_000);
+    solicitHistory(mls, 'g1', log);
+    // The request has gone out, and a bundle answering it is still possible.
+    vi.advanceTimersByTime(INITIAL + 5_000);
     expect(isSolicitInFlight('g1')).toBe(true);
   });
 });

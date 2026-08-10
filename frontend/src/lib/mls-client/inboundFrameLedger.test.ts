@@ -2,7 +2,6 @@ import {
   frameFingerprint,
   noteFrameProcessed,
   hasFrameBeenProcessed,
-  noteDesyncDetected,
   forgetFrameLedger,
   resetFrameLedgerForTests,
 } from './inboundFrameLedger';
@@ -55,70 +54,5 @@ describe('telling a double delivery from a rewind', () => {
     noteFrameProcessed('g1', fp);
     forgetFrameLedger('g1');
     expect(hasFrameBeenProcessed('g1', fp)).toBe(false);
-  });
-});
-
-describe('rate-limiting the desync signal', () => {
-  it('signals once per group per window, then again after it', () => {
-    // A rewound sender fails EVERY frame until its ratchet passes what we consumed, and each
-    // signal asks the peer to retransmit - answering a storm with a storm.
-    expect(noteDesyncDetected('g1', 1_000).signal).toBe(true);
-    expect(noteDesyncDetected('g1', 2_000).signal).toBe(false);
-    expect(noteDesyncDetected('g1', 30_999).signal).toBe(false);
-    expect(noteDesyncDetected('g1', 31_000).signal).toBe(true);
-  });
-
-  it('rate-limits each group on its own', () => {
-    expect(noteDesyncDetected('g1', 1_000).signal).toBe(true);
-    expect(noteDesyncDetected('g2', 1_000).signal).toBe(true);
-  });
-
-  it('does not spend a rate-limited detection on the episode', () => {
-    // A swarm of losses the rate limit swallowed must not look like a second episode.
-    expect(noteDesyncDetected('g1', 0)).toEqual({ signal: true, escalate: true });
-    for (let t = 1_000; t < 30_000; t += 1_000) {
-      expect(noteDesyncDetected('g1', t)).toEqual({ signal: false, escalate: false });
-    }
-    expect(noteDesyncDetected('g1', 30_000)).toEqual({ signal: true, escalate: false });
-  });
-});
-
-describe('reaching for the history diff', () => {
-  it('solicits the diff on the FIRST detection, not after the narrow repair has failed', () => {
-    // The narrow signal asks a rewound sender to re-encrypt at the same rewound ratchet, so
-    // waiting for it to fail is waiting through the window in which messages are lost. Measured:
-    // a 12-generation rewind lost five messages permanently and never reached a third signal.
-    expect(noteDesyncDetected('g1', 0)).toEqual({ signal: true, escalate: true });
-  });
-
-  it('signals AND escalates at once - the two repairs are not alternatives', () => {
-    const first = noteDesyncDetected('g1', 0);
-    expect(first.signal && first.escalate).toBe(true);
-  });
-
-  it('does not re-solicit for the rest of the episode: the durable marker re-runs it', () => {
-    expect(noteDesyncDetected('g1', 0)).toEqual({ signal: true, escalate: true });
-    expect(noteDesyncDetected('g1', 40_000)).toEqual({ signal: true, escalate: false });
-    expect(noteDesyncDetected('g1', 80_000)).toEqual({ signal: true, escalate: false });
-  });
-
-  it('treats losses past the window as a NEW episode, and escalates again', () => {
-    expect(noteDesyncDetected('g1', 0).escalate).toBe(true);
-    expect(noteDesyncDetected('g1', 40_000).escalate).toBe(false);
-    // Past 5 min both have aged out, so this is a fresh episode rather than the tail of the old one.
-    expect(noteDesyncDetected('g1', 400_000)).toEqual({ signal: true, escalate: true });
-  });
-
-  it('tracks each group on its own', () => {
-    expect(noteDesyncDetected('g1', 0)).toEqual({ signal: true, escalate: true });
-    expect(noteDesyncDetected('g2', 40_000)).toEqual({ signal: true, escalate: true });
-    expect(noteDesyncDetected('g1', 40_000)).toEqual({ signal: true, escalate: false });
-  });
-
-  it('forgets the episode with the rest of the group state', () => {
-    noteDesyncDetected('g1', 0);
-    noteDesyncDetected('g1', 40_000);
-    forgetFrameLedger('g1');
-    expect(noteDesyncDetected('g1', 80_000)).toEqual({ signal: true, escalate: true });
   });
 });

@@ -10,7 +10,6 @@ import {
   isChannelConversationId,
 } from '$lib/utils/chat/channelCrypto';
 import { extractMentionUserIds } from '$lib/utils/mentions';
-import { recentSentSince } from '$lib/utils/chat/recentSends';
 import { m } from '$lib/paraglide/messages';
 
 /**
@@ -171,11 +170,7 @@ interface MessageActionDeps {
  * events converge across peers even if the group was momentarily unsendable, or the app reloaded
  * or was killed before the original direct send could go through.
  */
-async function enqueueControlEvent(
-  conversationId: string,
-  proto: Uint8Array,
-  isRetransmission = false
-): Promise<void> {
+async function enqueueControlEvent(conversationId: string, proto: Uint8Array): Promise<void> {
   const now = Date.now();
   await enqueueOutboxMessage({
     id: crypto.randomUUID(),
@@ -183,63 +178,10 @@ async function enqueueControlEvent(
     sentAt: now,
     kind: 'control',
     controlProto: proto,
-    isRetransmission,
     status: 'pending',
     attempts: 0,
     createdAt: now,
   });
-}
-
-/** Widest lookback a peer may ask us to retransmit. Matches what `recentSends` retains. */
-const MAX_RETRANSMIT_WINDOW_MS = 5 * 60_000;
-
-/**
- * Tells the group that a frame we just received could not be decrypted, and asks for anything sent
- * in the last `withinMs` to be sent again.
- *
- * A LOOKBACK rather than a timestamp: the window is evaluated against the SENDER's clock, on which
- * its own `sentAt` values were stamped, so nothing depends on two devices agreeing on the time.
- * We cannot name the message - it never decrypted, so we never saw its id - which is precisely why
- * the answer has to be idempotent, and it is: the receiver deduplicates on the `messageId` carried
- * inside the proto, so a retransmission of something that did arrive is dropped.
- *
- * Silent by construction (it is a control event), so a retransmission raises no second push.
- */
-export async function signalDecryptFailure(
-  conversationId: string,
-  withinMs: number
-): Promise<void> {
-  await enqueueControlEvent(
-    conversationId,
-    encodeAppMessage(mkSystem('decrypt_failed', JSON.stringify({ withinMs })))
-  );
-}
-
-/**
- * Answers a peer's `decrypt_failed`: re-sends every payload this device sent in the conversation
- * within the requested window. Returns how many went back out.
- *
- * The payloads come from the in-memory ring in `recentSends.ts`, so a reload since the send means
- * there is nothing to resend - the caller says so in the log rather than reporting success.
- *
- * Each replay is flagged `isRetransmission`, which stops the flusher retaining it AGAIN. Without
- * that flag the repair feeds itself: a replayed payload was re-noted under a fresh entry id and a
- * fresh `sentAt`, so the ring never aged out of its 5-minute window and the id-based dedup no
- * longer recognised it - the ring filled with copies of the same payloads and every subsequent
- * `decrypt_failed` replayed all 25 of them. Measured on production 2026-08-07: three web clients
- * held a group at ~430 frames/minute for 13 minutes (4 921 frames queued for one phone) with nobody
- * typing, and it stopped only because the ring is in memory and a tab reloaded.
- */
-export async function retransmitRecentSends(
-  conversationId: string,
-  withinMs: number
-): Promise<number> {
-  const window = Math.min(Math.max(withinMs, 1_000), MAX_RETRANSMIT_WINDOW_MS);
-  const sends = recentSentSince(conversationId, Date.now() - window);
-  for (const send of sends) {
-    await enqueueControlEvent(conversationId, send.proto, true);
-  }
-  return sends.length;
 }
 
 /**

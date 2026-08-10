@@ -9,10 +9,6 @@ import {
   resetEpochGapRegistry,
 } from '$lib/utils/chat/epochGapRegistry';
 import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
-// The window a peer is asked to look back over is the SENDER's retention contract, so it is defined
-// where the payloads are kept - asking for more than anyone retains would be a request nothing can
-// answer.
-import { DESYNC_RETRANSMIT_WINDOW_MS } from '$lib/utils/chat/recentSends';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
@@ -21,13 +17,8 @@ import {
   resetWasmDuplicateDeliveryFlag,
   consumeWasmDuplicateDeliveryFlag,
 } from '../wasmLogShim';
-import {
-  frameFingerprint,
-  hasFrameBeenProcessed,
-  noteDesyncDetected,
-  noteFrameProcessed,
-} from '../inboundFrameLedger';
-import { markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
+import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
+import { isAwaitingHistory, markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
 import { solicitHistory } from '$lib/utils/chat/historySolicit';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
@@ -599,32 +590,20 @@ async function handleKnownGroup({
     log(
       `[MLS] LOST frame for ${convoKey.slice(0, 8)}… from ${sender}: generation consumed but this frame was never processed - the sender's ratchet rewound (${reason})`
     );
-    const verdict = noteDesyncDetected(groupId);
-    if (verdict.escalate) {
-      // Started at the FIRST detection, alongside the narrow signal rather than after it. Asking a
-      // rewound sender to retransmit gets the same rewound ratchet back, so waiting for that to
-      // fail three times is waiting through the whole window in which messages are being lost -
-      // measured, twice, on the browser (see `noteDesyncDetected`). The marker is what makes the
-      // repair survive this session; `unreadable-frames` is the literal truth here.
-      markAwaitingHistory(userId, groupId, 'unreadable-frames');
-      solicitHistory(mlsService, groupId, log);
-      log(`[MLS] Frames are being lost in ${convoKey.slice(0, 8)}… - soliciting a history diff`);
-    }
-    if (!verdict.signal) {
-      log(`[MLS] Desync in ${convoKey.slice(0, 8)}… already signalled recently - not asking again`);
-      return;
-    }
-    // Imported dynamically, and it has to stay that way: the outbox reaches the session singleton,
-    // which reaches `$lib/mls-client` - i.e. back to this file. A static import closes that circle
-    // and leaves whichever module evaluates second holding undefined bindings.
-    void import('$lib/utils/chat/messaging')
-      .then((mod) => mod.signalDecryptFailure(groupId, DESYNC_RETRANSMIT_WINDOW_MS))
-      .then(() =>
-        log(
-          `[MLS] Asked ${convoKey.slice(0, 8)}… to retransmit the last ${DESYNC_RETRANSMIT_WINDOW_MS / 1000}s`
-        )
-      )
-      .catch((e) => log(`[MLS] Could not signal the desync: ${String(e).slice(0, 100)}`));
+    // ONE repair, and it is the id-addressed one. There used to be a narrow rung first - ask the
+    // sender to re-send the last two minutes - and it was deleted rather than tuned: it could not
+    // name what it wanted (the frame never decrypted, so its id was never seen), so it asked for a
+    // time WINDOW, which is a broadcast; and its only mode of success was the sender burning past
+    // our high-water mark while answering, i.e. recovery by exhaustion. The diff dominates it
+    // strictly: we send what we HOLD, the peer computes what we lack and names it from its durable
+    // store, and re-encrypts it at the current generation. See `historyManifest.ts`.
+    //
+    // The marker is the idempotence: while it stands, this group is already being reconciled, so a
+    // second lost frame adds no new work. That is why nothing here is rate-limited by a clock.
+    if (isAwaitingHistory(userId, groupId)) return;
+    markAwaitingHistory(userId, groupId, 'unreadable-frames');
+    solicitHistory(mlsService, groupId, log);
+    log(`[MLS] Frames are being lost in ${convoKey.slice(0, 8)}… - soliciting a history diff`);
   };
 
   try {

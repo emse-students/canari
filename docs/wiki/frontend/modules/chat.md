@@ -448,8 +448,8 @@ diff with at least one peer is non-empty", which empties itself.
    diffs, `systemMessageHandler` gained the digest and pull branches, `groupActions` gained
    `sendHistoryBundleForIds` / `sendHistoryDigest` / `sendHistoryPull` / `readHistoryEntries`.
 3. **DONE** - marker semantics: see below.
-4. **DONE** - the give-up counter (`noteDesyncDetected`), the derived `RETENTION_MS`, and the three
-   riding defects at the end of this section.
+4. **SUPERSEDED 2026-08-10** - the give-up counter and the ring it arbitrated are deleted outright,
+   along with the narrow rung they existed to govern. See the section below: there is one repair now.
 5. Wiki + `CHANGELOG.md` - done. **What is left is the web deploy**, then re-running the campaign
    checks that touch the repair mechanism.
 
@@ -467,8 +467,8 @@ for it, because the evidence decides what may end it. There are two kinds:
 So a bundle does not end a wait by existing. An EMPTY bundle does, whatever the evidence was: it is
 the only authoritative "you are missing nothing", and both senders compare their whole store before
 sending one - neither sends it while itself awaiting history. A NON-EMPTY bundle carries messages and
-nothing more: it voids a presumption, and against a proof it leaves the marker standing and the
-in-session retries running, so the next exchange asks for what is still missing. That is what makes
+nothing more: it voids a presumption, and against a proof it leaves the marker standing, so the next
+edge asks for what is still missing. That is what makes
 the marker empty ITSELF: each exchange strictly reduces the difference, so it converges on the empty
 bundle rather than on a bundle count. It also fixes a defect that predates the diff - a history big
 enough to be chunked arrives as several non-empty bundles, and the first of them used to end the
@@ -477,23 +477,38 @@ solicitation.
 `REASON_RANK` is what keeps a proof from being overwritten by a presumption, in both directions: on
 write (`markAwaitingHistory` keeps the higher rank) and on clear (`isProvenAwaitingReason`).
 
-### When the narrow repair is not working (the give-up counter)
+### There is ONE repair, and deleting the other one is what fixed the escalation (2026-08-10)
 
-`decrypt_failed` asks a peer for a time WINDOW out of an in-memory ring, so it fails for reasons no
-amount of repetition fixes: the sender reloaded and lost the ring, the payload aged out, or the loss
-is older than the window reaches. `noteDesyncDetected` therefore returns a verdict rather than a
-boolean - `{ signal, escalate }`, and never both. Three signals inside five minutes (so at least a
-minute of continuous loss, the signal itself being rate-limited to one per 30 s) means the narrow
-repair is not repairing this group, and the fourth ask would be a loop rather than persistence. The
-escalation marks `unreadable-frames` durably and starts a solicitation - i.e. it hands the problem to
-the diff, which reads the peer's DURABLE store, is answered by one elected member, and names messages
-by id instead of by time. The count is cleared when it fires, so the escalation gets its own chance
-before anything is concluded again.
+For a while there were two, with a ladder between them: a narrow `decrypt_failed` asking peers to
+re-send the last two minutes out of an in-memory ring, and the diff. Every question about the ladder -
+how often may the narrow rung fire, when does it give up, when do we escalate - was answered with a
+duration, and there were nine of them across three files. That is the shape to recognise: **a
+mechanism whose semantics are decided by clocks cannot be reasoned about, only tuned.**
 
-`RETENTION_MS` in `recentSends.ts` is DERIVED from that window plus a round-trip margin, and the
-window itself now lives there - beside the payloads it describes, since a window wider than the
-retention asks for what nobody kept. It was a flat five minutes, of which three could never be
-requested by anyone.
+The ladder is gone because the narrow rung is. Three properties of it, each sufficient on its own:
+
+- It could not NAME what it wanted. The frame never decrypted, so its id was never seen, so the
+  request could only be a period of time - and a request addressed by time is a broadcast.
+- Its single trigger is a sender whose ratchet went backwards, so it asks precisely the peer that
+  cannot answer: the re-encryption happens at the same rewound ratchet and collides identically.
+- Therefore its only mode of success was the sender burning past our high-water mark while answering.
+  That is recovery by exhaustion, and it is indistinguishable from repair in a log.
+
+Measured twice on the browser: it fired with 1, then 5, 15 and 25 payloads and delivered none, while
+the diff repaired the conversation completely (`32 to send, 1 to pull`). Measured on production
+2026-08-10: ~450 frames/min across three devices for over ten minutes, nothing repaired. The
+`decrypt_failed` branch survives only to IGNORE the event from a peer running an older build.
+
+What replaces the ladder is not a better ladder. A detected loss marks `unreadable-frames` durably and
+solicits the diff **unless this group is already being reconciled** - the durable marker IS the
+idempotence, so nothing needs rate-limiting. Termination is then a property rather than a budget:
+each exchange strictly reduces the difference between the two stores, so the sequence converges on
+the empty diff, which is the only thing entitled to clear the marker.
+
+One duration remains in the whole mechanism, the response window in `historyRequestPending.svelte.ts`.
+Its only job is to decide that an attempt went unanswered, which nothing else can observe, and it
+schedules no traffic. Re-asking rides on state EDGES instead: a reconnect, a peer coming back online,
+a newly detected loss, and a slow sweep as the floor under them.
 
 ### Three defects that belonged to this work, or to nothing (FIXED 2026-08-07)
 
@@ -524,26 +539,28 @@ a client has EVIDENCE it is short, and five things that make it ask again:
 
 | Trigger | Where |
 |---|---|
-| the in-session burst: 2.5 s, then +30 / +90 / +180 s | `historySolicit.ts` |
+| a frame proved lost (and no reconciliation running) | `setupMessageHandler.ts` -> `solicitHistory` |
 | every (re)connect | `initializeConnection.ts` -> `reSolicitAwaitingHistory` |
 | a peer going offline -> online | `onPeersCameOnline` |
-| three decrypt failures in five minutes | `noteDesyncDetected` -> escalation |
+| a fresh join with no local history | `solicitHistoryIfMissing` |
 | a slow sweep while the session is open | `startAwaitingHistorySweep`, 15 min |
 
-The sweep is the floor, and it is there because every other row is an EVENT that a long-lived
-session is not guaranteed to see again: presence is only polled for users the UI actually DISPLAYS
-(`ConversationTile`, `ChatHeader`, `ChannelMembersSidebar`), so it covers DMs while the list is on
-screen and a channel only when its member panel is open. It pauses while the document is hidden,
-which also makes returning to the foreground fire it at once.
+Every row is an EDGE. There is no backoff ladder anywhere in this list: one edge produces one
+request, and a second edge while that request is outstanding produces nothing. The sweep is the floor,
+because every other row is an event a long-lived session is not guaranteed to see again - presence is
+only polled for users the UI actually DISPLAYS (`ConversationTile`, `ChatHeader`,
+`ChannelMembersSidebar`), so it covers DMs while the list is on screen and a channel only when its
+member panel is open. It pauses while the document is hidden, which also makes returning to the
+foreground fire it at once.
 
-**The defect that made four of those five rows dead, found 2026-08-07 while answering exactly this
-question.** `pending` was read with `pending.has(groupId)`, and NOTHING removes an entry when a burst
-simply ends without a bundle - only a bundle that ENDS the wait, or a fresh solicitation, calls
-`cancelHistorySolicit`. So a group whose peers were all offline during its three-minute burst kept an
-entry for the life of the tab, and every reconnect, every peer returning and every escalation skipped
-it. The situation the retries exist for was the one situation that disabled them, and a page reload
-was the only cure. `isSolicitInFlight` now answers with the burst's own schedule, which is known up
-front: **the end of a burst is a TIME, not an event to wait for.**
+**Two defects here, and the second is why the first kept happening.** In 2026-08-07 `pending` was read
+with `pending.has(groupId)` and nothing removed an entry when a burst ended unanswered, so a group
+whose peers were all offline during its burst was skipped by every later trigger for the life of the
+tab - the situation the retries exist for was the one that disabled them. It was patched by computing
+the end of the burst up front. The real fault was underneath: **"is an attempt outstanding" was being
+derived by comparing clocks, when it is a STATE that an event ends.** There is no burst now, so there
+is no schedule to reason about: `isSolicitInFlight` reads the response window, which the answer, the
+timeout or a teardown closes. A stale entry cannot outlive the thing it describes.
 
 ### What still has no answer: nobody online when a device joins
 

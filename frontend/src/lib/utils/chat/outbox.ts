@@ -10,7 +10,6 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
-import { noteSentFrame } from '$lib/utils/chat/recentSends';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { getIsTabLeader } from '$lib/mls-client/tabLeader';
 import {
@@ -327,15 +326,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // Control events are MLS state-sync only: send them silent (no push notification).
       await mlsService.sendMessage(terminalId, proto, entry.id, entry.kind === 'control');
       scheduleOutboundMlsPersist();
-      // Keep the payload for a few minutes: if a peer reports it could not decrypt what we sent,
-      // we are the only party that can encrypt it again at a generation it has not consumed.
-      //
-      // NEVER for a retransmission: it is already retained under its original id and timestamp.
-      // Re-noting it minted a fresh entry id and a fresh `sentAt`, which defeated both halves of
-      // the ring - the 5-minute window never aged out, and the dedup key no longer matched, so the
-      // ring accumulated copies instead of replacing them. Every later `decrypt_failed` then
-      // replayed all 25, so a single desync became a standing broadcast that no quiet period ended.
-      if (!entry.isRetransmission) noteSentFrame(terminalId, entry.id, proto, entry.sentAt);
       // Swap the placeholder for the uploaded media before persisting the sent copy.
       if (mediaContent) updateMessageContent(entry.id, mediaContent);
       await persistSent(terminalId, entry.id);

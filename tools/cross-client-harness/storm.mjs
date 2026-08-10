@@ -1,10 +1,13 @@
 /**
- * What is generating ~430 frames/minute into A1's queue, continuously since 12:59 CEST?
+ * Is anything generating frames on its own, and if so what shape are they?
  *
- * A1 DECRYPTS them: the line it spams is `systemMessageHandler`'s answer to an incoming
- * `decrypt_failed` ("nothing retained - it cannot be recovered"). So the senders are W1 and W2, and
- * the question is which of their own log lines dominates - the emitter (`Asked ... to retransmit`),
- * the ledger (`LOST frame`), the rate limiter (`already signalled recently`), or an outbox retry.
+ * Written to diagnose a repair that broadcast (~430 frames/min into one phone, continuously). That
+ * mechanism was deleted on 2026-08-10, so this is now the REGRESSION probe for its class: after any
+ * repair-mechanism change, a quiet conversation must produce a quiet capture.
+ *
+ * The three shapes at the top of the list no longer exist in a current build. They are kept
+ * deliberately, because finding one is itself a finding: either a client is running an old build, or
+ * the deleted rung has come back. An empty tally for them is the expected result, not a broken probe.
  *
  * Pure observation: a 30 s console capture, tallied by shape. Nothing is sent, nothing reloaded.
  */
@@ -14,11 +17,19 @@ const WINDOW_MS = 30_000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SHAPES = [
+  // --- deleted 2026-08-10. Any hit here means an old build, or a regression. ---
+  ['!! asked to retransmit (DELETED)', /Asked .* to retransmit/],
+  ['!! answering decrypt_failed, retransmitting (DELETED)', /retransmitting \d+ payload/],
+  ['!! answering decrypt_failed, nothing retained (DELETED)', /nothing sent in the last .*is still retained/],
+  ['!! narrow-signal rate limit (DELETED)', /already signalled recently/],
+  // --- the current repair: detection, then ONE id-addressed exchange ---
   ['LOST frame', /LOST frame/],
-  ['asked to retransmit', /Asked .* to retransmit/],
-  ['rate-limited', /already signalled recently/],
-  ['answering decrypt_failed (nothing retained)', /nothing sent in the last .*is still retained/],
-  ['answering decrypt_failed (retransmitting)', /retransmitting \d+ payload/],
+  ['soliciting a history diff', /soliciting a history diff/],
+  ['ignoring a legacy decrypt_failed (benign)', /Ignoring a legacy decrypt_failed/],
+  ['history request', /\[HISTORY_REQ\]/],
+  ['history digest', /\[HISTORY_DIGEST\]/],
+  ['history pull', /\[HISTORY_PULL\]/],
+  ['history bundle', /\[HISTORY_BUNDLE\]/],
   ['duplicate delivery', /Duplicate delivery/],
   ['generation out of bounds', /generation out of bounds/],
   ['SecretReuse', /SecretReuse/],

@@ -257,13 +257,21 @@ the same frame arrives twice (real-time publish racing the queue or FCM) and whe
 state went backwards encrypts a NEW message at a generation we spent on another one. The first is
 benign; the second is a message lost for good on this side, and both used to be dropped in silence.
 `inboundFrameLedger.ts` fingerprints every frame processed (in memory, 200 per group), so the two
-are separated on the only evidence available - the frame's bytes. A miss logs `LOST frame` and emits
-a `decrypt_failed { withinMs }` system event; the sender answers it from `recentSends.ts`, which
-retains the exact protos for 5 minutes. The request names a WINDOW, not a message, because the frame
-never decrypted - safe only because the receiver deduplicates on the `messageId` inside the proto,
-so re-sending something that did arrive is dropped. One signal per group per 30 s. Never
-`onOutOfSync`: the plaintext is unrecoverable whatever we do locally, and a re-add would destroy a
-valid membership for nothing. Both platforms run this classifier - the Tauri command surfaces the
+are separated on the only evidence available - the frame's bytes. A miss logs `LOST frame` and
+solicits the **history diff**, which is the single repair for this class: it reads the peer's DURABLE
+store, is answered by one elected member, and names messages by id.
+
+There used to be a narrower rung in front of it - `decrypt_failed { withinMs }`, answered from an
+in-memory ring of the last five minutes of sent protos. It is deleted, and the reasoning generalises:
+a repair that cannot NAME its target can only ask for a period of time, which is a broadcast; and its
+one trigger is a sender whose ratchet went backwards, so what it asks that sender to do is re-encrypt
+at the same rewound ratchet. Its only mode of success was the sender burning past the receiver's
+high-water mark while answering - recovery by exhaustion. Measured on production 2026-08-10: ~450
+frames/min across three devices for over ten minutes, repairing nothing. The receiving branch remains
+only to IGNORE the event from an older peer. Never `onOutOfSync` either: the plaintext is unrecoverable
+whatever we do locally, and a re-add would destroy a valid membership for nothing.
+
+Both platforms run this classifier - the Tauri command surfaces the
 error rather than answering `Ok(None)`, which used to discard the diagnosis before TypeScript saw
 it. Full write-up in
 [cross-client-testing](../cross-client-testing.md#the-receiver-half-2026-08-06-a-consumed-generation-is-not-evidence-of-a-duplicate).

@@ -72,15 +72,23 @@ Three more were found here and are **open**, because each needs a decision rathe
 **WP-KBD-1** (the composer behind the soft keyboard), **WP-DRAIN-2** (the inbound drain has no
 watchdog), and the successor to WP-RETRANSMIT-1 below.
 
-### The next piece of work, decided 2026-08-07
+### DONE 2026-08-10: the retransmission mechanism is deleted, not patched around
 
-**WP-HIST-3 replaces the retransmission mechanism entirely, rather than being patched around it.**
-The reasoning is in [the retransmission storm](#the-retransmission-storm-2026-08-07-a-repair-that-fed-itself):
+Decided 2026-08-07, shipped 2026-08-10. The reasoning is in
+[the retransmission storm](#the-retransmission-storm-2026-08-07-a-repair-that-fed-itself):
 `decrypt_failed` cannot name what it is missing, so it asks for a blind time window and every peer
 answers with a broadcast - which is both the amplification class and the reason a loss noticed after
-the sender reloaded is reported as unrecoverable. A manifest diff addresses by identity, reads the
-durable store, and elects one responder. The campaign's remaining phases run **after** it, so they
-test the mechanism that will actually ship.
+the sender reloaded was reported as unrecoverable. It was demoted to a first-line rung in WP-HIST-3
+and kept; a second storm on 2026-08-10 showed that a rung nothing may wait on, that repairs nothing,
+and that broadcasts, has no first line to occupy. **It is gone, along with the ring behind it and the
+nine durations that arbitrated the ladder** - the manifest diff addresses by identity, reads the
+durable store, and elects one responder, so it is the only repair now. Its own solicitation was
+rebuilt at the same time: one request per state edge, idempotent against the durable marker,
+terminating on an empty diff rather than on a retry budget.
+
+**The campaign therefore re-runs from the start (post-setup), against this mechanism** - that is the
+user's decision of 2026-08-10, and it is also the only honest reading: every earlier HEAL observation
+was made against a repair path that no longer exists.
 
 ## 0. Decisions taken 2026-08-05 - do not re-litigate
 
@@ -571,6 +579,68 @@ one sentence: it needs a per-item verdict rather than a null.
 This also settles an item that was open as "unverified": **WP-LOSS-1's Android receiver half did not
 work.** It was never a matter of the phone not having been exercised - the code could not run there.
 
+#### Verified on the PHONE, 2026-08-10: it detects its own gap now, and repairs with a bounded diff
+
+The fix was deployed (CD on `27f82922`), a clean APK installed at 15:21, and the shallow break run
+again with the phone's logcat captured on-device. The assertion was never "did it heal" alone - it
+was **`LOST frame` lines appearing on the phone where there had been none**, and they did:
+
+```
+15:24:23  [MLS] LOST frame for 642f389a… from d82cd226…: generation consumed but this frame
+                was never processed - the sender's ratchet rewound (SecretReuseError)
+15:24:23  [MLS] Frames are being lost in 642f389a… - soliciting a history diff
+15:24:23  [HISTORY_REQ] started pending timer for 642f389a...
+15:24:59  [HISTORY_REQ] 642f389a... diff with b78568a3…:web-…-vegy: 3 to send, 0 to pull
+15:25:59  [HISTORY_REQ] 642f389a... diff with b78568a3…:web-…-vegy: 9 to send, 0 to pull
+```
+
+**13 `LOST frame` against 0 in the previous run, and exactly one `Benign same-epoch ratchet frame
+dropped` left** - the `TooDistantInThePast`/`NoPastEpochData` branch that stays benign on purpose.
+Where the phone previously answered `0 to send, 0 to pull (identical stores)` and certified the
+conversation complete, it now answers bounded diffs of 3 and 9 messages. The false witness is gone,
+on the platform where the code had never been able to run.
+
+**The APK carrying it would not start, and that is its own lesson.** The first build booted to the
+splash screen and stopped: `TypeError: Cannot read properties of undefined (reading 'data')` inside
+`kit.start()`, because `build/index.html` declared `__sveltekit_5wp7yq` while all four chunks read
+`globalThis.__sveltekit_10pyqm3`. Two `vite build` runs had written `build/` at once. Every gate was
+green and the only symptom was a splash that never went away - see
+[development > silent-degradation traps](development.md#silent-degradation-traps); `bun run build`
+now fails on it.
+
+#### The 28th and 29th harness faults: counting messages in a virtualised list
+
+The browser half of this re-run is **still owed**, and four attempts failed at the setup gate for
+reasons that were all the harness's:
+
+- **#28 - a count read from a virtualised list is only valid while the rows are mounted, and a
+  history ingest moves the window.** The first run's timeline had W2 holding 12/14 and its final
+  read returned 0 forty-five seconds later, with every message present; a run that had absorbed 448
+  messages twice left W2's pane ending on messages from **12:40** with its scroller already at the
+  maximum, so everything newer was invisible. Scrolling to the bottom of the mounted window is not
+  enough - only a fresh mount (a page reload) opens at the newest message. And because delivery is
+  monotone while the reading is not, the estimator is the **maximum over repeated polls**: the same
+  batch measured 12, 12, 12, 0, 0, 0 across six polls thirty seconds apart.
+- **#29 - a fixed wait is a guess, and it declared a healthy link lossy twice.** Six seconds after
+  the last send, then thirty, gave `7 of 12` and `10 of 12` on a link that held all twelve a minute
+  later. In a conversation of ~500 messages, convergence takes longer than any constant anyone
+  would pick; poll to a target with a budget instead.
+- A third, smaller drift worth naming: the verdict's `escalated` test still matched only
+  `escalating to a history diff`, a line the escalation fix **deleted** - the diff is now solicited
+  at the first detection. It reported `escalated=false` on a run whose diff demonstrably ran. **A
+  check's log matchers are part of the check, and a fix that changes a log line breaks them
+  silently.**
+
+**Why it stopped there, and it is a finding of its own.** After those runs the DM entered a
+sustained retransmission storm and stayed in it: measured over four consecutive 30 s windows, W1 saw
+**~450 inbound frames per minute**, W2 queued **~300-450 control messages per 30 s**, both logged
+`retransmitting 25 payload(s)` repeatedly, and the phone recorded **324 `LOST frame` lines** while
+correctly rate-limiting its own signals (`Desync … already signalled recently`). No message was
+being repaired in that window - it is pure churn, the WP-RETRANSMIT-1 shape again. Note what the
+harness contributes: **every run restores an older snapshot of W1 and nothing ever restores the
+current one**, so W1 is left permanently rewound and each run compounds the last. A heal check must
+put the sender back where it found it, or the rig degrades one run at a time.
+
 ---
 
 ## 8. Multi-device (W1 + A1, same user)
@@ -655,13 +725,23 @@ The four lines that decide a HEAL verdict, and each says something different:
   and we are awaiting history too - staying silent` - a deliberate silence. **A responder that stays
   silent looks exactly like a responder that never got the request**, so a check asserting "no repair
   happened" must read the responder's console too, not only the requester's.
-- `[MLS] Retransmission has not repaired <short>… - escalating to a history diff` - the seam between
-  the two mechanisms.
+**The narrow `decrypt_failed` retransmission is GONE (2026-08-10), and that simplifies every HEAL
+check.** Until then a repair seen on the wire could be either mechanism, and a check that did not say
+which one had not exercised the diff - that used to be the hardest assertion in this section. There is
+now exactly one repair, so any repair observed IS the diff, and the lines to read are the
+`[HISTORY_*]` ones. What replaces the old distinction is a different question, and every HEAL check
+must answer it instead: **how much traffic did the repair cost?** The deleted rung was a broadcast
+(~450 frames/min for over ten minutes, repairing nothing), so a run whose frame rate does not fall
+back to the ordinary send rate has found something.
 
-**The narrow `decrypt_failed` retransmission still exists** - WP-HIST-3 demoted it to the first-line
-repair rather than deleting it (window `DESYNC_RETRANSMIT_WINDOW_MS` 120 s, cap 5 min). So a repair
-seen on the wire may be EITHER mechanism, and a check that does not distinguish them cannot claim to
-have exercised the diff. That distinction is the one thing every HEAL check must assert.
+Two lines that no longer exist, and finding either means the client under test is running an OLD
+build - check the deploy before believing anything else the run says:
+
+- `[MLS] … retransmitting N payload(s)`
+- `[MLS] … nothing sent in the last Ns is still retained - it cannot be recovered`
+
+A current build instead logs `[MLS] Ignoring a legacy decrypt_failed from <peer>` when an older peer
+asks, and that line is benign - it is the compatibility branch doing its job.
 
 ---
 
@@ -1109,25 +1189,30 @@ exactly as before. A miss is a loss, and is logged as `LOST frame` rather than a
 
 **The remedy is on the SENDER, and cannot be anywhere else.** No local recovery brings the plaintext
 back - the generation is spent - and `onOutOfSync` would destroy a valid membership to fix nothing.
-So the receiver emits a `decrypt_failed` system event, which the sender answers by re-sending what
-it kept in `recentSends.ts` (the exact proto bytes, 25 per conversation, 5 minutes).
 
-Three details that make it safe rather than clever:
+**How the receiver asks was rebuilt on 2026-08-10, and the first version is worth keeping in view
+because the whole lesson is in the difference.** It emitted a `decrypt_failed { withinMs: 120000 }`
+system event, and every peer answered from an in-memory ring of its last 25 sent protos. It had to
+ask for a WINDOW rather than a message, since the frame never decrypted and its id was never seen -
+and that single fact is what doomed it: **a request that cannot name its target can only be a
+broadcast.** Two rounds of tuning (a rate limit, then an anti-amplification flag) left the rate
+unchanged, because the amplifier was never the point. It is deleted.
 
-- **It asks for a WINDOW, not a message.** The frame never decrypted, so the receiver never saw its
-  id; `decrypt_failed { withinMs: 120000 }` is a lookback, evaluated against the sender's own clock,
-  so nothing depends on two devices agreeing on the time.
-- **Answering is idempotent.** The retransmitted proto carries the original `messageId`, and the
-  receiver deduplicates on it - so retransmitting something that did arrive is dropped on arrival.
-  That is what makes it acceptable to answer a request this imprecise, and what makes a false
-  positive cost one frame rather than a duplicate message.
-- **One signal per group per 30 s.** A rewound sender fails every frame it sends until its ratchet
-  passes what we consumed, and each signal asks for a retransmission - answering a storm with a
-  storm.
+The receiver now solicits the **history diff**, which inverts the direction of the question: instead
+of asking a peer to guess what we lack, we say what we HOLD, and the peer - which does have the
+message, in its durable store - computes the difference and names it. Three consequences, each the
+mirror of a property above:
 
-The ledger is deliberately in memory: the window that matters is seconds, and persisting it would
-put an IndexedDB write on the hot inbound path. The cost is stated where it lands - after a reload a
-genuine duplicate can be reported as a loss, which costs one idempotent retransmission.
+- **Addressed by identity, not time.** The peer names ids; nothing depends on two clocks agreeing,
+  and nothing is asked for that is not actually missing.
+- **One elected responder**, so the cost of a detection does not scale with the group size.
+- **It reads the DURABLE store**, so a reload on either side loses nothing - where the ring's normal
+  outcome after a reload was "it cannot be recovered".
+
+The frame ledger stays in memory, and that is still right: it answers "have I seen these exact bytes",
+whose window is seconds, and persisting it would put an IndexedDB write on the hot inbound path. Its
+cost is stated where it lands - after a reload a genuine duplicate can be reported as a loss, which
+now costs one diff exchange that finds nothing, instead of a retransmission burst.
 
 **Native parity was a real gap, not a formality.** `recevoir_message_bytes` classified `SecretReuse`
 in Rust and returned `Ok(None)`, which reads to the shared TypeScript pipeline as "nothing to show" -
@@ -1135,10 +1220,9 @@ so on Android every rewound message was dropped with the diagnosis already throw
 surfaces the error, and the same classifier runs on both platforms. The ACK behaviour is unchanged;
 only the diagnosis is.
 
-**Not done, and worth knowing:** the retransmission ring does not survive a reload, so a peer that
-reloaded since the send answers `decrypt_failed` with nothing - it logs that the message cannot be
-recovered rather than reporting success. And nothing yet tells the RECEIVER's user that a message
-was lost; the evidence is in the log.
+**Not done, and worth knowing:** nothing yet tells the RECEIVER's user that a message was lost; the
+evidence is in the log. (The other item that stood here - a reload emptying the retransmission ring -
+is void: there is no ring, and the diff reads durable storage.)
 
 ### ROOT CAUSE, found 2026-08-06: a BACKGROUNDED tab stops receiving, silently (WP-HIDDEN-1)
 
@@ -2517,6 +2601,15 @@ the damage, and none of them is an accident:
   line the phone emitted thousands of times was *"nothing sent in the last 120s is still retained -
   it cannot be recovered"*. That case is not rare; it is the normal outcome once the sender has
   reloaded.
+
+**Epilogue, 2026-08-10: the shape was fixed by deleting the mechanism.** `9a0b199a` stopped the ring
+feeding itself, and the storm recurred anyway - same rate, same duration, nothing repaired - because
+the flag fixed the amplifier and left the broadcast. The three properties below are not defects of an
+implementation, they are what a time-addressed repair IS, so `decrypt_failed`, `recentSends` and the
+`isRetransmission` flag are all gone. See
+[chat > there is ONE repair](frontend/modules/chat.md). Kept here because the diagnosis is
+still the lesson: **ask what a rung can REPAIR before asking what it costs**, and a rung whose only
+mode of success is the sender burning past the receiver's high-water mark is not repairing anything.
 
 A manifest diff has none of the three. The receiver sends what it HAS; the peer computes what is
 missing and holds its id; the exchange reads the durable store; and the responder is elected
