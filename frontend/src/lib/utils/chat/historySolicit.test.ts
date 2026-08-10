@@ -110,14 +110,16 @@ describe('solicitHistory', () => {
     expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g2');
   });
 
-  it('moves the reactive pending state to pending-offline when the window elapses', () => {
+  it('moves the reactive pending state to pending-unanswered when the window elapses', () => {
     const mls = makeMls();
     solicitHistory(mls, 'g1', log);
     vi.advanceTimersByTime(INITIAL);
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
 
     vi.advanceTimersByTime(RESPONSE_WINDOW);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
+    // Unanswered, NOT unsent: the request went out and a peer may well have been online. The UI
+    // reads this phase directly, so collapsing the two is a wrong statement to a user.
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unanswered');
   });
 
   it('clears the reactive pending state when the bundle arrives', () => {
@@ -129,7 +131,7 @@ describe('solicitHistory', () => {
     expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
   });
 
-  it('moves straight to pending-offline when the SERVER says no member was online', async () => {
+  it('moves straight to pending-unsent when the SERVER says no member was online', async () => {
     const mls = makeMls();
     mls.sendHistoryRequest.mockResolvedValue({ noPeerOnline: true });
 
@@ -138,7 +140,7 @@ describe('solicitHistory', () => {
 
     // The server elects the responder, so it has already answered the question the window exists to
     // ask - burning it would show "waiting" for a request nobody received.
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unsent');
   });
 
   it('keeps waiting when the request went out and simply has not been answered', async () => {
@@ -150,7 +152,7 @@ describe('solicitHistory', () => {
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
   });
 
-  it('moves straight to pending-offline when the network is offline', async () => {
+  it('moves straight to pending-unsent when the network is offline', async () => {
     const mls = makeMls();
     mls.sendHistoryRequest.mockRejectedValue(new Error('offline'));
     vi.stubGlobal('navigator', { onLine: false });
@@ -158,7 +160,7 @@ describe('solicitHistory', () => {
     solicitHistory(mls, 'g1', log);
     await vi.advanceTimersByTimeAsync(INITIAL);
 
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unsent');
     vi.unstubAllGlobals();
   });
 });

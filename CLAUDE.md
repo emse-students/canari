@@ -96,18 +96,22 @@ Both rules are in DURABLE RULES. **Everything below is a MEASUREMENT that is owe
 #### OWED, in order
 
 1. **Re-measure HEAL on the browser** against the new architecture. TWO assertions, not one: the
-   conversation heals (`HEALED - 14/14`, against `PARTIAL - 9/14` before) **and the frame rate falls
-   back** - `storm.mjs` is the regression probe for the broadcast class, its deleted log shapes
-   prefixed `!!` meaning "old build or regression". Preconditions: the test DM may be deleted and
-   recreated (the user authorised it, it holds only our tests), and **the harness restores an old W1
-   snapshot and never restores the current one**, so every run leaves W1 permanently rewound and
-   compounds the last - fix that first or no measurement means anything. Harness faults #28/#29 are
-   already fixed in the scratchpad `heal-web.mjs`. The responder is elected by a random shuffle
-   (`messaging.service.ts:1372-1382`), so always record WHICH device answered. The BREAK itself is a
-   RESTORED older snapshot of `CanariDBMls_<dev>` (`mlsdb.mjs`) - **take the snapshot first**, and
-   both browsers must be RELOADED onto the current bundle before any of it counts. Four checks are
-   owed, section 7.1: epoch gap, unknown group, generation gap, and the pair nothing has ever
-   exercised together (a recovery while a SECOND tab holds the leader role).
+   conversation heals (`HEALED - 14/14`) **and the frame rate falls back** - `storm.mjs` is the
+   regression probe for the broadcast class, its deleted log shapes prefixed `!!` meaning "old build
+   or regression". The frame-rate half is ALREADY MEASURED and green: 14 console lines / 60 s per
+   browser against ~450 frames/min before. **The last valid run was `PARTIAL - 2/14` and it found a
+   real defect** (the durable marker used as "have I already asked", now deleted and pinned by
+   `setupMessageHandler.lostFrame.test.ts`) - that run's verdict is void, re-run it once the CD is
+   green. Harness faults #28/#29/#30 are all fixed in the scratchpad `heal-web.mjs`; **#30 is the one
+   that made every earlier run meaningless** - the rewind cannot be undone by restoring a state, so
+   the teardown restores the INVARIANT instead (`ensureDeliverable`, runs on every exit path). The
+   responder is elected by a random shuffle (`messaging.service.ts:1372-1382`), so always record WHICH
+   device answered. The BREAK itself is a RESTORED older snapshot of `CanariDBMls_<dev>` (`mlsdb.mjs`),
+   and both browsers must be RELOADED onto the current bundle before any of it counts - `bundle-id.mjs`
+   asserts that rather than assuming it. The test DM may be deleted and recreated (the user authorised
+   it, it holds only our tests). Four checks are owed, section 7.1: epoch gap, unknown group,
+   generation gap, and the pair nothing has ever exercised together (a recovery while a SECOND tab
+   holds the leader role).
 2. **`wasmLogShim`'s null+flag route should now be DEAD** (the web reaches `handleConsumedGeneration`
    through the thrown error). Read W2's console for `(SecretReuseError)` rather than `(null payload,
    WASM duplicate flag)`; if the shim never fires, delete it with that measurement as the evidence.
@@ -277,8 +281,15 @@ What a compaction must not lose:
 - **Re-logging the phone in IS automatable**: the Android login opens the SYSTEM browser, so forward
   CDP to `localabstract:chrome_devtools_remote` and run `login.mjs --match cas.emse.fr`. Never
   `realClick` the CAS fields - focus by element and assert `activeElement`.
-- **TWENTY-NINE harness faults have produced a false result, all fixed and all written up in the wiki
+- **THIRTY harness faults have produced a false result, all fixed and all written up in the wiki
   page** (search "harness fault"). Do not re-derive them; these are the rules they add up to:
+  - **When a check's BREAK is not invertible, the teardown restores a PROPERTY, never a snapshot**
+    (#30). Rewinding a sender cannot be undone by restoring any state - the peer consumed generations
+    off the fork while it was live, so no snapshot is both legitimate and ahead of it. Ask what the
+    next run actually needs ("can W1 deliver?") and assert that, on every exit path.
+  - **A matcher tests one SPELLING; the absence of an entire VOCABULARY is evidence about the app.**
+    A stale matcher is the right first suspicion (#29's third bullet) and it is cheap to rule out -
+    grep the log for every word the mechanism could have used, not for the one string the check does.
   - **A check that puts the app through a transition must restore every precondition that transition
     destroys** - a kill, a reboot, a radio cycle and an `install -r` all re-lock the PIN. A
     precondition found by one check belongs to every check sharing the transition.
@@ -344,13 +355,6 @@ raising it first locks everyone out.
   three runs: the abort surfaces on Android as `TypeError: Failed to fetch` plus orphaned
   `Uncaught (in promise) The resource id NNNN is invalid` - indistinguishable from a network failure
   by text alone.
-
-- \[ \] **WP-PENDING-2 (P1) - fixed, SEEN firing end to end, conversation HEALED.** Write-up in
-  [cross-client-testing](docs/wiki/cross-client-testing.md#root-cause-a-generation-gap-answered-by-an-epoch-verdict);
-  the rule is in DURABLE RULES (epoch and generation are different axes). **The reason this stays
-  open:** `map_decrypt_outcome` in `src-tauri/src/state.rs` - the BATCH path used by history replay -
-  still answers `ok: true, data: None` on `SecretReuse`, the same "a native layer threw the diagnosis
-  away" that hid this bug for a day.
 
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload. FIXED (`214592e5`);
   the VERIFICATION is owed.** The loss is inside `addMessageToChat`: the `bulkIngestActive` early
@@ -555,6 +559,19 @@ carry in the head:
   solely to notice an attempt went unanswered, and `INITIAL_SOLICIT_DELAY_MS` is an epoch-ordering
   constraint, not a backoff. Ask of every timer what it would mean if it were wrong; if the answer is
   "more traffic", it is load-bearing and it should not be.
+- **BUT THE DURABLE STATE IS IDEMPOTENCE ONLY FOR THE QUESTION IT WAS WRITTEN TO ANSWER, AND THE TWO
+  QUESTIONS CAN DIFFER ONLY IN LIFETIME.** The rule above was applied one line too far: the guard
+  became `if (isAwaitingHistory(...)) return` in front of the loss trigger. The marker answers "is
+  this group short of history" (durable, cleared only by an empty diff); it was asked "have I already
+  asked" (30 s). So on any group that had EVER been broken the marker was already standing when the
+  next frame was lost, and the one trigger that fires on the loss itself never fired again - twelve
+  `LOST frame` lines and ZERO solicitations on prod, the 15-minute sweep left pretending to be the
+  mechanism. "Is an attempt outstanding" has exactly one witness, `isSolicitInFlight` (scheduled, or
+  inside the response window). Same family as `updatedAt` and the epoch-verdict rule, with the twist
+  that both answers were TRUE - only the questions differed. `setupMessageHandler.lostFrame.test.ts`.
+- A cause is not a label: `pending-offline` meant both "the request never left" and "it left and
+  nobody answered", and the string named the first, so a silent peer was reported as an empty room.
+  Two causes under one label is a WRONG answer, not a vague one - it points the user at the wrong fix.
 
 #### UI and i18n -> [frontend/architecture](docs/wiki/frontend/architecture.md), [auth](docs/wiki/frontend/modules/auth.md) (native prompts)
 

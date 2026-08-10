@@ -530,10 +530,37 @@ the diff repaired the conversation completely (`32 to send, 1 to pull`). Measure
 `decrypt_failed` branch survives only to IGNORE the event from a peer running an older build.
 
 What replaces the ladder is not a better ladder. A detected loss marks `unreadable-frames` durably and
-solicits the diff **unless this group is already being reconciled** - the durable marker IS the
-idempotence, so nothing needs rate-limiting. Termination is then a property rather than a budget:
+solicits the diff, with nothing rate-limiting it. Termination is a property rather than a budget:
 each exchange strictly reduces the difference between the two stores, so the sequence converges on
 the empty diff, which is the only thing entitled to clear the marker.
+
+#### The idempotence was briefly asked of the wrong witness (FIXED 2026-08-10)
+
+The first cut of the above read "solicit **unless this group is already being reconciled**", and
+implemented "already being reconciled" as `if (isAwaitingHistory(userId, groupId)) return`. The
+reasoning - the durable marker IS the idempotence, so nothing needs rate-limiting - is right about
+the marker and wrong about the question.
+
+**The marker answers "is this group short of history". It was asked "have I already asked".** Those
+differ in exactly the way that matters here: the marker is DURABLE, survives sessions, and is cleared
+only by an empty diff, while an attempt lasts 30 s. So on any group that had ever been broken the
+marker was already standing when the next frame was lost, and this trigger - the only one that fires
+on the loss itself - returned silently. What was left was the 15-minute sweep, i.e. the floor
+pretending to be the mechanism.
+
+Measured on prod 2026-08-10 with `heal-web.mjs`: twelve `LOST frame` lines on the receiver, **zero**
+solicitations in 139 lines of log, `escalated=false, history diff ran=false`, `PARTIAL - 2/14`, and a
+standing "history pending" banner with no attempt behind it.
+
+`isSolicitInFlight` in `historySolicit.ts` is the right witness and already existed - `scheduled.has(groupId) ||
+phase === 'pending'`, i.e. an attempt is scheduled or inside its response window - so the fix is a
+deletion, not an addition. Pinned by `setupMessageHandler.lostFrame.test.ts`, whose negative control
+against the guard is `Number of calls: 0`.
+
+Same class as WP-GHOST-1's `updatedAt` and as an epoch verdict answering a generation question: **a
+piece of durable state is evidence only for the question it was written to answer.** The general form
+is in CLAUDE.md's DURABLE RULES; what this instance adds is that the two questions can differ only in
+their LIFETIME and still make the substitution wrong.
 
 One duration remains in the whole mechanism, the response window in `historyRequestPending.svelte.ts`.
 Its only job is to decide that an attempt went unanswered, which nothing else can observe, and it
@@ -569,7 +596,7 @@ a client has EVIDENCE it is short, and five things that make it ask again:
 
 | Trigger | Where |
 |---|---|
-| a frame proved lost (and no reconciliation running) | `setupMessageHandler.ts` -> `solicitHistory` |
+| a frame proved lost | `setupMessageHandler.ts` -> `solicitHistory` |
 | every (re)connect | `initializeConnection.ts` -> `reSolicitAwaitingHistory` |
 | a peer going offline -> online | `onPeersCameOnline` |
 | a fresh join with no local history | `solicitHistoryIfMissing` |

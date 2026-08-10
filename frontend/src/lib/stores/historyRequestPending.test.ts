@@ -27,7 +27,7 @@ describe('historyRequestPendingStore', () => {
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
 
     vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unanswered');
   });
 
   it('stops tracking once the bundle arrives', () => {
@@ -41,10 +41,12 @@ describe('historyRequestPendingStore', () => {
     expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
   });
 
-  it('reports a request that never left the device as over immediately', () => {
+  it('reports a request that never left the device as over immediately, and says WHY', () => {
     historyRequestPendingStore.start('g1');
-    historyRequestPendingStore.markOffline('g1');
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
+    historyRequestPendingStore.markUnsent('g1');
+    // Not merely "over": `unsent` and `unanswered` are what the UI tells the user, and telling
+    // somebody nobody was online when a peer was online and silent is a wrong answer, not a vague one.
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unsent');
   });
 
   it('NEVER schedules anything: a timed-out attempt stays over', () => {
@@ -54,11 +56,11 @@ describe('historyRequestPendingStore', () => {
     vi.advanceTimersByTime(REQUEST_TIMEOUT_MS);
 
     vi.advanceTimersByTime(60 * 60_000);
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-offline');
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unanswered');
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('clears the offline phase on resume, and asks for nothing', () => {
+  it('clears a finished attempt on resume, and asks for nothing', () => {
     // Resuming means the UI should stop claiming an attempt is outstanding. Re-soliciting is
     // `reSolicitAwaitingHistory`'s single job, reached through the reconnect this resume triggers.
     historyRequestPendingStore.start('g1');

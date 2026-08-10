@@ -55,26 +55,20 @@ pub(crate) fn map_decrypt_outcome(
             data: None,
             error: None,
         },
-        Err(e) => {
-            // A consumed generation during a history REPLAY is expected - a bundle legitimately
-            // re-sends messages this device already read - so it is ACKed and dropped. This is
-            // NO LONGER realtime parity: since 2026-08-10 the realtime path surfaces the error so
-            // the shared ledger can tell a duplicate from a message lost to a rewound sender. The
-            // batch cannot make that distinction while its only vocabulary is `data: None`, which
-            // is precisely the gap WP-PENDING-2 stays open for. Mirrored in `mls-wasm`'s batch. [[S5]]
-            if e.decrypt_kind() == mls_core::DecryptErrorKind::SecretReuse {
-                return BatchDecryptItem {
-                    ok: true,
-                    data: None,
-                    error: None,
-                };
-            }
-            BatchDecryptItem {
-                ok: false,
-                data: None,
-                error: Some(e.to_string()),
-            }
-        }
+        // Every error is REPORTED, `SecretReuse` included. It used to be mapped to
+        // `ok: true, data: None` here, on the argument that a consumed generation during a history
+        // REPLAY is expected - which is true, and was still the wrong place to decide it. "This
+        // generation is consumed" and "I already have this message" are different facts, and the
+        // only evidence that separates them is the frame's own bytes against the seen-frame ledger,
+        // which lives in `history.ts` and not here. A layer that cannot make a distinction must not
+        // make it: this one answered the question anyway and threw the answer away, which is what
+        // let a rewound sender's loss pass for a duplicate for months (WP-PENDING-2). The caller
+        // still ACKs; only the diagnosis reaches it now. Mirrored in `mls-wasm`'s batch. [[S5]]
+        Err(e) => BatchDecryptItem {
+            ok: false,
+            data: None,
+            error: Some(e.to_string()),
+        },
     }
 }
 

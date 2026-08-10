@@ -10,11 +10,25 @@ import { SvelteMap } from 'svelte/reactivity';
  * request per edge and converges because each exchange is a diff - see `solicitHistory`.
  *
  * - `pending`: a request went out and the response window is still open.
- * - `pending-offline`: the window elapsed, or the request never left the device. Nothing is
- *   outstanding; the next state edge - a reconnect, a peer coming online, the awaiting sweep - is
- *   what asks again.
+ * - `pending-unsent`: the request never left the device, because the server elected no responder or
+ *   this device is offline.
+ * - `pending-unanswered`: the request DID go out and the window elapsed with no answer.
+ *
+ * The last two used to be one `pending-offline`, and the UI told the user the first one's story for
+ * both - "no member online sent it" - on a conversation whose peer was demonstrably online and had
+ * simply not answered. Two causes, one label, and the label asserted a fact the state did not carry:
+ * the same shape as a liveness column answering a question it was never written for. Whether anyone
+ * else is reachable is exactly the part a user can act on, so it is the part worth being right about.
+ *
+ * Both are terminal for the attempt: nothing is outstanding, and the next state edge - a reconnect, a
+ * peer coming online, the awaiting sweep - is what asks again.
  */
-export type HistoryRequestPhase = 'pending' | 'pending-offline';
+export type HistoryRequestPhase = 'pending' | 'pending-unsent' | 'pending-unanswered';
+
+/** Whether the attempt is over, whatever ended it. */
+export function isAttemptOver(phase: HistoryRequestPhase | null): boolean {
+  return phase === 'pending-unsent' || phase === 'pending-unanswered';
+}
 
 type PendingEntry = {
   phase: HistoryRequestPhase;
@@ -53,13 +67,13 @@ class HistoryRequestPendingStore {
     console.log(`[HISTORY_REQ] response window open for ${groupId.slice(0, 8)}...`);
   }
 
-  /** The request never left the device (offline, no member online). The attempt is over. */
-  markOffline(groupId: string): void {
+  /** The request never left the device (offline, or no member online). The attempt is over. */
+  markUnsent(groupId: string): void {
     const entry = entries.get(groupId);
-    if (!entry || entry.phase === 'pending-offline') return;
+    if (!entry || isAttemptOver(entry.phase)) return;
     clearTimeout(entry.timeoutId);
-    entry.phase = 'pending-offline';
-    this.phases.set(groupId, 'pending-offline');
+    entry.phase = 'pending-unsent';
+    this.phases.set(groupId, 'pending-unsent');
     console.log(`[HISTORY_REQ] ${groupId.slice(0, 8)}... could not be asked - attempt over`);
   }
 
@@ -93,15 +107,15 @@ class HistoryRequestPendingStore {
   onResume(): void {
     // Deleting the current entry mid-iteration is well defined for a Map, so no copy is needed.
     for (const [groupId, entry] of entries) {
-      if (entry.phase === 'pending-offline') this.noteReceived(groupId);
+      if (isAttemptOver(entry.phase)) this.noteReceived(groupId);
     }
   }
 
   private onTimeout(groupId: string): void {
     const entry = entries.get(groupId);
     if (!entry || entry.phase !== 'pending') return;
-    entry.phase = 'pending-offline';
-    this.phases.set(groupId, 'pending-offline');
+    entry.phase = 'pending-unanswered';
+    this.phases.set(groupId, 'pending-unanswered');
     console.log(`[HISTORY_REQ] no answer for ${groupId.slice(0, 8)}... - attempt over`);
   }
 

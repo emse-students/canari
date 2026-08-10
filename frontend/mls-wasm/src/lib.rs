@@ -479,17 +479,14 @@ impl WasmMlsClient {
                     let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::TRUE);
                     let _ = js_sys::Reflect::set(&obj, &data_key, &JsValue::NULL);
                 }
-                // A consumed generation during a history REPLAY is the expected case, not a
-                // defect: a bundle legitimately re-sends messages this device already read. So the
-                // batch keeps answering "nothing to show", exactly as `map_decrypt_outcome` does
-                // on native - the two paths must not diverge on the same frame. The realtime path
-                // is where the distinction is worth making, because there the frame is new.
-                // That the batch therefore still cannot report a genuine loss is a known gap, not
-                // an oversight: it needs a per-item verdict rather than a null (WP-PENDING-2).
-                Err(e) if e.decrypt_kind() == mls_core::DecryptErrorKind::SecretReuse => {
-                    let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::TRUE);
-                    let _ = js_sys::Reflect::set(&obj, &data_key, &JsValue::NULL);
-                }
+                // Every error is REPORTED, `SecretReuse` included. It used to answer
+                // "nothing to show" here, on the argument that a consumed generation during a
+                // history REPLAY is the expected case - which is true, and was still the wrong
+                // place to decide it. Whether this frame is one already read or one lost to a
+                // rewound sender is settled by its own bytes against the seen-frame ledger, which
+                // lives in `history.ts`; this layer has neither, so it must report and not rule.
+                // Mirrors `map_decrypt_outcome` on native - the two paths must not diverge on the
+                // same frame (WP-PENDING-2).
                 Err(e) => {
                     let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::FALSE);
                     let _ =

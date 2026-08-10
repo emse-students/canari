@@ -406,11 +406,28 @@ export async function replayConversationHistory(params: {
           }
         } catch (err) {
           const kind = classifyIncomingDecryptError(err);
-          if (kind === 'own-message' || kind === 'secret-reuse') {
-            // Non-recoverable - mark as seen to avoid infinite reprocessing.
-            // (Own message we can't decrypt, or a generation key already consumed/jetee.)
+          if (kind === 'own-message') {
+            // MLS gives no echo of our own message; there is nothing to read and nothing is lost.
             seenCipherHashes.add(cipherFingerprint);
             seenUpdated = true;
+            continue;
+          }
+          if (kind === 'secret-reuse') {
+            // The generation is consumed, so this frame will never decrypt - mark it seen or the
+            // replay reprocesses it forever. But WHICH frame consumed it is the whole question, and
+            // this is the one place that holds the evidence to answer it: a frame already read
+            // carries a fingerprint in `seenCipherHashes` and is skipped before ever reaching the
+            // decrypt, so anything arriving HERE is a frame this device has never read, at a
+            // generation something else already spent - the rewound-sender fingerprint (WP-LOSS-1).
+            // That is real loss, and the durable marker is the only thing that will solicit the
+            // history diff able to recover it. A false positive costs exactly one diff exchange:
+            // an empty diff clears the marker, which is what makes recording it on suspicion safe.
+            seenCipherHashes.add(cipherFingerprint);
+            seenUpdated = true;
+            markAwaitingHistory(userId, id, 'unreadable-frames');
+            console.warn(
+              `[History] frame at an already-consumed generation and never read here - a sender rewound; awaiting a history diff (group ${id})`
+            );
             continue;
           }
           if (kind === 'epoch-gap' || kind === 'wrong-epoch') {

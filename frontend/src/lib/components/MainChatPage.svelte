@@ -866,8 +866,9 @@
           conversation={activeConversation}
           {messageText}
           isChannel={isSelectedChannel ?? false}
-          historyRequestPending={!!convs.selectedContact &&
-            historyRequestPendingStore.phases.get(convs.selectedContact) === 'pending-offline'}
+          historyRequestPhase={convs.selectedContact
+            ? (historyRequestPendingStore.phases.get(convs.selectedContact) ?? null)
+            : null}
           imageMediaId={activeConversation?.imageMediaId ?? null}
           onMessageChange={(value) => (messageText = value)}
           onSend={handleSendChat}

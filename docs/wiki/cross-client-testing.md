@@ -60,7 +60,7 @@ The narrative for each is on this page; the rule each taught is in `CLAUDE.md`.
 | **WP-MULTITAB-1** - two tabs of one account diverge their ratchet | TAB-4 | shipped, verified (9/9 where it lost 4 of 9) |
 | **WP-ECHO-1** - the sender loses its OWN message across a reload | reconciliation | shipped; verified on the web (3 runs, 6 sends provably inside a drain) |
 | **WP-PENDING-1** - a catch-up pull that can never make partial progress | LIFE-6 | shipped; **verification against a real backlog still owed** |
-| **WP-PENDING-2** - a frame too far ahead was ACKed off the server as delivered | LIFE-6 | shipped, seen firing end to end |
+| **WP-PENDING-2** - a frame too far ahead was ACKed off the server as delivered | LIFE-6 | shipped, seen firing end to end; the batch/native half closed 2026-08-10 |
 | **WP-DRAIN-1** - a recovery awaited inside the drain, deadlocking it | verifying WP-HIDDEN-1 | shipped |
 | **WP-GHOST-1** - a revoked device wrote its own routing membership back | the queue's size | shipped + verified on prod (98 210 rows -> 0) |
 | **WP-NOTIF-1** - an Android notification not dismissed when read elsewhere | NOTIF-4 | shipped, verified on the device |
@@ -83,8 +83,14 @@ and kept; a second storm on 2026-08-10 showed that a rung nothing may wait on, t
 and that broadcasts, has no first line to occupy. **It is gone, along with the ring behind it and the
 nine durations that arbitrated the ladder** - the manifest diff addresses by identity, reads the
 durable store, and elects one responder, so it is the only repair now. Its own solicitation was
-rebuilt at the same time: one request per state edge, idempotent against the durable marker,
+rebuilt at the same time: one request per state edge, idempotent against an outstanding attempt,
 terminating on an empty diff rather than on a retry budget.
+
+**One correction the first HEAL run against it produced**, and it is the reason a re-run was worth
+doing rather than a formality: "idempotent against the durable marker" was implemented literally, and
+the marker is the wrong witness for "have I already asked" - so the loss trigger went silent on every
+group that had ever been broken. Measured, diagnosed and fixed the same day; see
+[the 30th harness fault and the run that found it](#and-the-run-it-finally-produced-was-partial-214---which-found-the-real-defect-2026-08-10).
 
 **The campaign therefore re-runs from the start (post-setup), against this mechanism** - that is the
 user's decision of 2026-08-10, and it is also the only honest reading: every earlier HEAL observation
@@ -570,6 +576,58 @@ payload(s)` repeatedly, and the phone recorded **324 `LOST frame` lines**. Nothi
 top of this page. Note what the harness contributes: **every run restores an older snapshot of W1 and
 nothing ever restores the current one**, so W1 is left permanently rewound and each run compounds the
 last. A heal check must put the sender back where it found it.
+
+#### The 30th harness fault: a break that CANNOT be undone by restoring a state (FIXED 2026-08-10)
+
+The paragraph above says "put the sender back where it found it", and that is not achievable, which
+is the interesting part. The break is `mlsdb.mjs` restoring an OLD snapshot of `CanariDBMls_<dev>`,
+i.e. deliberately rewinding W1's ratchet. Take the current snapshot first and restore it at the end
+and nothing is fixed: while W1 was rewound it sent frames, so W2 consumed generations off the fork,
+and the "current" snapshot is BEHIND that high-water mark exactly as the old one was. **No snapshot is
+both legitimate and ahead of the peer, because the peer moved while the fork was live.**
+
+So the teardown restores the INVARIANT, not the state: `ensureDeliverable(maxProbes)` sends probes
+into the DM until W2 reads one, which burns generations forward past the collision. It terminates by
+construction (each probe advances the sender's generation by one and the peer's high-water mark is
+finite), the budget is `REWIND_SENDS + BREAK_SENDS + 4`, and it runs on the setup-gate exit AND in a
+`finally` around the measurement, so no exit path leaves W1 broken. Verdict line on the run that
+found the defect below: `teardown: W1 delivers again after 1 probe(s) - the rig is clean`.
+
+The general form: **when a check's break is not invertible, the teardown must restore a property the
+next run depends on, not a snapshot.** Ask what the next run actually needs - here "can W1 deliver?"
+- and assert that, rather than trying to unwind history.
+
+#### And the run it finally produced was PARTIAL 2/14 - which found the real defect (2026-08-10)
+
+With #28, #29 and #30 fixed, the first valid run was **worse** than the last invalid one
+(`PARTIAL - 9/14` before):
+
+```
+[heal] mechanisms: loss detected=true, narrow retransmission=false, escalated=false, history diff ran=false
+[heal] convergence: W1 holds 0/14, W2 holds 2/14
+[heal] VERDICT: PARTIAL - 2/14 of the messages sent from a rewound state reached the peer
+[heal] teardown: W1 delivers again after 1 probe(s) - the rig is clean
+```
+
+The instinct is that a matcher broke again (that is exactly fault #29's third bullet). It had not:
+grepping all 139 lines for `HISTORY|soliciting|awaiting|escalat|announceComplete|responder|digest`
+returned **only the summary line itself**, against twelve `LOST frame` lines. Zero solicitations is
+not a reporting failure, it is the app.
+
+The cause is written up in
+[chat > the idempotence was asked of the wrong witness](frontend/modules/chat.md#the-idempotence-was-briefly-asked-of-the-wrong-witness-fixed-2026-08-10):
+`handleConsumedGeneration` opened with `if (isAwaitingHistory(...)) return`, and the durable marker
+was already standing on this DM from every earlier break - so the one trigger that fires on the loss
+itself never fired, and the conversation was left to the 15-minute sweep. Pinned by
+`setupMessageHandler.lostFrame.test.ts`; its negative control against the guard is `Number of calls: 0`.
+
+**Two method points, both general.** The rule "assume a green check is wrong until its evidence says
+otherwise - and a FAIL too" cuts both ways, and here the FAIL was right and the reflex ("the matcher
+is stale again") was wrong. What distinguished them was cheap: a grep for the whole VOCABULARY of the
+mechanism rather than for the one string the matcher used. **A matcher tests one spelling; the
+absence of an entire vocabulary is evidence about the app.** And this defect was reachable only from
+a real run - no gate could see it, because the guard was correct code with a correct-sounding
+comment, calling a real function that returned a true answer to the wrong question.
 
 ---
 
@@ -2443,10 +2501,24 @@ the group, so every later queued frame takes the `!inGroup` path, is buffered an
 (stays server-side). Once the re-add lands, those old-epoch frames fail as `wrong-epoch`, which does
 ACK - so the queue drains rather than growing, but only after the rejoin.
 
-**Still open, deliberately:** `map_decrypt_outcome` (`src-tauri/src/state.rs`, the BATCH path used by
-history replay) still answers `ok: true, data: None` for `SecretReuse` - the same "the native layer
-threw the diagnosis away" that WP-LOSS-1 fixed in the realtime path. It was left alone because
-changing it moves history replay onto the desync signal, which needs its own measurement.
+**CLOSED 2026-08-10.** `map_decrypt_outcome` (`src-tauri/src/state.rs`, the BATCH path used by
+history replay) answered `ok: true, data: None` for `SecretReuse` - the same "the native layer threw
+the diagnosis away" that WP-LOSS-1 fixed in the realtime path - and `mls-wasm`'s
+`process_incoming_messages_batch` had the identical arm. Both were left alone at the time on the
+reasoning that in a REPLAY an already-seen frame genuinely is the expected case. That is a statement
+about frequency, and the two cases still need telling apart, so both arms are deleted: every error is
+reported, and `history.ts` decides, because it is the only layer holding the seen-frame ledger that
+settles it. It now splits the two terminal branches explicitly:
+
+- `own-message` - MLS gives no echo of our own message. Nothing to read, nothing lost, fingerprint
+  recorded, continue.
+- `secret-reuse` - a frame already read carries a fingerprint in `seenCipherHashes` and is skipped
+  BEFORE the decrypt, so anything reaching this branch is a frame this device has never read at a
+  generation something already spent: the rewound-sender fingerprint. Marks `unreadable-frames`.
+
+The reason this is safe to turn on is the same reason it terminates: a false positive costs exactly
+one diff exchange, and an empty diff clears the marker. The caller still ACKs in both cases - only
+the diagnosis reaches it now.
 
 ### Two method corrections this phase cost
 

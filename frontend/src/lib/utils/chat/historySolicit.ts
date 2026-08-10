@@ -149,16 +149,16 @@ export function solicitHistory(
           // response window for an answer nobody was asked for tells the user nothing; the next
           // edge - a peer coming online, a reconnect, the sweep - is what asks again.
           log(`[HISTORY_REQ] no member online for ${groupId.slice(0, 8)}...`);
-          historyRequestPendingStore.markOffline(groupId);
+          historyRequestPendingStore.markUnsent(groupId);
           return;
         }
         log(`[HISTORY_REQ] solicited ${groupId.slice(0, 8)}...`);
       })
       .catch((e) => {
-        // Network-level failure (offline, fetch abort, etc.): move straight to pending-offline.
+        // Network-level failure (offline, fetch abort, etc.): the request never left the device.
         if (typeof navigator !== 'undefined' && !navigator.onLine) {
           log(`[HISTORY_REQ] offline while soliciting ${groupId.slice(0, 8)}...`);
-          historyRequestPendingStore.markOffline(groupId);
+          historyRequestPendingStore.markUnsent(groupId);
           return;
         }
         log(

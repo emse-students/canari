@@ -32,7 +32,10 @@
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
-  import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
+  import {
+    historyRequestPendingStore,
+    type HistoryRequestPhase,
+  } from '$lib/stores/historyRequestPending.svelte';
 
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
@@ -145,8 +148,8 @@
     isLoadingHistory?: boolean;
     /** Whether MLS is catching up messages after reconnect (shows a blocking overlay). */
     isCatchingUpMessages?: boolean;
-    /** When true, this conversation is waiting for a history bundle that has not arrived. */
-    historyRequestPending?: boolean;
+    /** Phase of this conversation's history solicitation, or null when none is being tracked. */
+    historyRequestPhase?: HistoryRequestPhase | null;
     /** Called when in-memory groups are exhausted; should load older messages from DB. Returns true if more may be available. */
     onLoadOlderMessages?: () => Promise<boolean>;
     /** Exposes the scrollable messages element (for programmatic scroll from messaging). */
@@ -206,7 +209,7 @@
     currentUserId = '',
     isLoadingHistory = false,
     isCatchingUpMessages = false,
-    historyRequestPending = false,
+    historyRequestPhase = null,
     onLoadOlderMessages,
     onMessagesScrollEl,
   }: Props = $props();
@@ -425,10 +428,17 @@
       : text || m.chat_pinned_message_default_label();
   }
 
-  /** Reactive banner text when the history bundle is delayed because no responder is online. */
+  /**
+   * Reactive banner text when a history solicitation ended without an answer.
+   *
+   * The phase, not a boolean: the two ways an attempt ends are different facts and only one of them
+   * is about anybody else being reachable, which is the only part a user can act on.
+   */
   const historyPendingLabel = $derived.by(() => {
-    if (!historyRequestPending) return '';
-    return m.chat_history_request_pending_offline();
+    if (historyRequestPhase === 'pending-unsent') return m.chat_history_request_pending_unsent();
+    if (historyRequestPhase === 'pending-unanswered')
+      return m.chat_history_request_pending_unanswered();
+    return '';
   });
 
   /** Reactive "X is typing…" label for the active conversation, excluding the current user. */

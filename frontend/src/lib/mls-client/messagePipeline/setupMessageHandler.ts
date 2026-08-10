@@ -18,7 +18,7 @@ import {
   consumeWasmDuplicateDeliveryFlag,
 } from '../wasmLogShim';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
-import { isAwaitingHistory, markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
+import { markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
 import { solicitHistory } from '$lib/utils/chat/historySolicit';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
@@ -598,12 +598,21 @@ async function handleKnownGroup({
     // strictly: we send what we HOLD, the peer computes what we lack and names it from its durable
     // store, and re-encrypts it at the current generation. See `historyManifest.ts`.
     //
-    // The marker is the idempotence: while it stands, this group is already being reconciled, so a
-    // second lost frame adds no new work. That is why nothing here is rate-limited by a clock.
-    if (isAwaitingHistory(userId, groupId)) return;
+    // Nothing here is rate-limited by a clock, and nothing here decides whether to ask either:
+    // `solicitHistory` owns that, and it answers it from the only fact that settles it - is an
+    // attempt outstanding, i.e. scheduled or inside its response window.
+    //
+    // There used to be an `if (isAwaitingHistory(...)) return` in front of this, on the reasoning
+    // that the durable marker is the idempotence. It is - for the question "is this group missing
+    // history", which is what it was written to answer. It was being asked "have I already asked",
+    // and it is the wrong witness for that: the marker SURVIVES SESSIONS and is cleared only by an
+    // empty diff, so the first lost frame in any group that had ever been broken found it already
+    // set and returned, and this path never solicited again. Measured on prod 2026-08-10: twelve
+    // `LOST frame` lines on the receiver, zero solicitations, the conversation left to the
+    // fifteen-minute sweep, and a standing "history pending" banner with no attempt behind it.
+    log(`[MLS] Frames are being lost in ${convoKey.slice(0, 8)}… - soliciting a history diff`);
     markAwaitingHistory(userId, groupId, 'unreadable-frames');
     solicitHistory(mlsService, groupId, log);
-    log(`[MLS] Frames are being lost in ${convoKey.slice(0, 8)}… - soliciting a history diff`);
   };
 
   try {
