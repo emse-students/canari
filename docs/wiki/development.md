@@ -151,7 +151,17 @@ wrong, and each one has already shipped a bug.
   2026-08-10: an Android debug APK shipped `__sveltekit_5wp7yq` in the HTML against
   `__sveltekit_10pyqm3` in all four chunks, and was installed before anyone noticed.
   `bun run build` now ends with `scripts/check-bundle-consistency.mjs`, which fails the build
-  instead (validated as a negative control against a hand-patched id). Corollary: **never run an
+  instead (validated as a negative control against a hand-patched id, on both adapters).
+  **The first version of that gate broke the CD, and how is the reusable part:** it asserted
+  `build/index.html` + `build/_app/immutable`, i.e. a LAYOUT, and that layout is adapter-static's —
+  the web build sets `BUILD_WEB=1` and gets adapter-node (`build/client/`, `build/server/`, and a
+  shell rendered per request rather than a file), so a correct build failed outright. A gate must
+  assert the INVARIANT, never the shape one producer happens to write it in. Two corollaries the
+  rewrite had to respect: the id is a NAME, so a loose `__sveltekit_[a-z0-9]+` scan also matches
+  unrelated globals built the same way (`__sveltekit_sw`, the service-worker env payload, which
+  lives only in the server bundle — hence `build/server/` is excluded from the name scan); and
+  adapter-node never writes the name literally on the server side, it interpolates it from
+  `options.version_hash`, so the server half is checked as that value instead. Corollary: **never run an
   Android/iOS build concurrently with anything else that builds the frontend** — `beforeBuildCommand`
   is `bun run build`, writing the very directory a parallel build is writing.
 - **A vendored plugin still ships the sample it was forked from.** `tauri-plugin-keystore` carried
