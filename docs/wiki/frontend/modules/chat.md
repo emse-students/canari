@@ -384,7 +384,7 @@ carries the data instead of asking for it.
 keeps one responder instead of a storm. Leg 2 is `history_digest`, broadcast inside MLS by the
 requester (`setHistoryDigestBroadcaster`, awaited by `historySolicit.fire` before the WS request).
 Leg 3 is the responder's answer: it diffs, sends a `history_bundle` filtered by id for what the
-requester lacks, and sends `history_pull {to, ids|months}` for what IT lacks. A pull is answered by a
+requester lacks, and sends `history_pull {to, ids|prefixes+depth}` for what IT lacks. A pull is answered by a
 bundle and a bundle asks for nothing, so the exchange cannot re-enter itself - the WP-RETRANSMIT-1
 lesson, applied by construction.
 
@@ -394,17 +394,47 @@ queue. So it waits `HISTORY_DIGEST_GRACE_MS` (3 s) for the digest, then falls ba
 `sendFullHistoryBundle`. A stored digest is CONSUMED on take - a later request must diff against a
 fresh snapshot, never a minute-old claim (TTL 60 s).
 
-**Two digest modes, by size.** `ids` (the sorted id list) below `DIGEST_ID_MODE_MAX` (1000), `buckets`
-above it: per `YYYY-MM`, a count plus a truncated SHA-256 of that month's sorted ids, ~2 KB for any
-history. Three details are the whole correctness of it:
+**Two digest modes, by size.** `ids` (the sorted id list) below `DIGEST_ID_MODE_MAX` (1000), `range`
+above it: the id space is cut into `16^depth` slices and each carries a count plus a truncated
+SHA-256 of its sorted ids.
 
-- **Months are cut in UTC.** Two devices in different timezones - or one phone that travelled -
-  otherwise disagree about every message near a boundary and re-send that month forever.
+**The unit is a slice of the ID SPACE, and it used to be a MONTH - that change (2026-08-10) is the
+one thing to understand here.** A month is cut from a message's stored TIMESTAMP, and the two devices
+do not agree on it: the sender's clock against the server's puts a message either side of midnight
+UTC, so on one device it is in July and on the other in August. Both months then read as different,
+both are re-sent wholesale - and they do so again at the next exchange, forever, because nothing the
+exchange does can make the two timestamps agree. The diff therefore never empties, and the empty diff
+is the only thing entitled to clear the durable awaiting-history marker. At a few hundred messages
+that is waste; at scale it is a permanent broadcast that never terminates, which is the same class of
+defect as WP-RETRANSMIT-1. A message id is the same string on every device by construction, so a
+slice of the id space holds the same members on both sides and an exchange that equalises it keeps it
+equal. `historyManifest.test.ts` pins this directly: the same store with wildly skewed timestamps
+produces a byte-identical digest.
+
+Four details are the whole correctness of it:
+
+- **The partition hash and the content hash are different functions on purpose.** `historyRangeOf`
+  is FNV-1a plus a MurmurHash3 finaliser, synchronous, and decides only WHICH SLICE an id is
+  compared in - a collision or an uneven spread there costs a fatter slice, i.e. bandwidth, never a
+  message. `hashIdList` fingerprints a slice's CONTENTS and is SHA-256 truncated to 64 bits, because
+  a collision there declares a slice identical that is not and loses the messages in it silently and
+  permanently. The finaliser is not decoration: without it, 64 ids differing only in a trailing
+  counter landed in 5 of the 16 depth-1 slices.
+- **The DEPTH travels on the wire and the reader re-slices at the SENDER's depth.** Depth is derived
+  from a store's size (`rangeDepthFor`, targeting ~64 messages a slice, capped at 3), the two stores
+  have different sizes, so a reader using its own depth would compare different regions of the id
+  space and everything would disagree. The `history_pull` carries it for the same reason.
 - **Ids sort by CODEPOINT, never `localeCompare`.** The sort feeds the hash, so a locale-dependent
-  comparator makes every bucket disagree between two devices. The sort is part of the protocol.
-- **A differing bucket is requested in BOTH directions.** A fingerprint proves the month is not
+  comparator makes every slice disagree between two devices. The sort is part of the protocol.
+- **A differing slice is requested in BOTH directions.** A fingerprint proves the slice is not
   identical, never which side is short; guessing drops messages, over-asking costs bandwidth and the
   receiver already dedupes by id.
+
+**What the cap buys, and what it costs.** `MAX_RANGE_DEPTH = 3` bounds the digest at 4 096 slices
+(~180 KB for a million messages, ~14 KB for five thousand). Past the cap slices get fatter rather
+than the exchange gaining a round trip: still exactly one, still terminating, just more over-sent per
+difference. That is deliberate - a recursive refinement would be smaller on the wire and would put
+multi-round-trip state back into the one mechanism this whole area was just simplified down to.
 
 **`announceComplete` distinguishes two silences.** "I compared my WHOLE store and you are complete"
 may send an empty bundle (it clears the requester's marker); "I was asked about a SUBSET and hold
@@ -420,7 +450,7 @@ the id stays in the manifest, and both stores import non-destructively (`INSERT 
 WINS over a body, or a peer that missed the deletion undoes it.
 
 **Metadata**: the digest rides inside MLS, so the server learns nothing it does not already hold.
-Co-members learn which ids this device kept, hashed per month in bucket mode. Accepted.
+Co-members learn which ids this device kept, hashed per slice in range mode. Accepted.
 
 **Two traps, both now handled.** Every leg is a GROUP broadcast, so the pull carries its target
 (`digestIdentity(userId, deviceId)` - the DEVICE, so a user's other two devices do not answer a pull
@@ -591,9 +621,9 @@ only opportunistically, when it happens to be the elected responder to someone e
 
 Worth stating because the intuitive design is a message count, and a count is a guaranteed false
 negative: two devices that each lost a different message agree perfectly on the total. The digest
-carries the sorted ids below 1000 messages, and above that one line per `YYYY-MM` with a count AND a
-truncated SHA-256 of that month's ids. The hash is exactly what catches "same count, different
-messages", and `historyManifest.test.ts` pins that case.
+carries the sorted ids below 1000 messages, and above that one line per slice of the id space with a
+count AND a truncated SHA-256 of that slice's ids. The hash is exactly what catches "same count,
+different messages", and `historyManifest.test.ts` pins that case.
 
 ## UI features
 

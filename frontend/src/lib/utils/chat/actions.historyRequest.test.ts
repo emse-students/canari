@@ -16,7 +16,7 @@ vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
 });
 
 import { handleHistoryRequest } from './actions';
-import { buildHistoryDigest, type HistoryEntry } from './historyManifest';
+import { buildHistoryDigest, historyRangeOf, type HistoryEntry } from './historyManifest';
 import {
   digestIdentity,
   noteDigestReceived,
@@ -243,30 +243,36 @@ describe('handleHistoryRequest - with a digest', () => {
     expect(sendHistoryPull).not.toHaveBeenCalled();
   });
 
-  it('resolves a bucket-mode digest to whole MONTHS, in both directions', async () => {
-    // Above the id threshold a digest can only say which month differs, so the answer over-sends
-    // that month. The receiver dedupes by id, making the cost bandwidth rather than correctness.
-    await postDigest([{ id: 'theirs-jan', timestamp: at('2026-01-10T00:00:00Z') }], -1);
+  it('resolves a range-mode digest to whole SLICES of the id space, in both directions', async () => {
+    // Above the id threshold a digest can only say which slice differs, so the answer over-sends
+    // that slice. The receiver dedupes by id, making the cost bandwidth rather than correctness.
+    // The three fixture ids land in three distinct depth-1 slices, which is what makes the
+    // expectations below exact rather than incidental.
+    const sliceOf = (id: string) => historyRangeOf(id, 1);
+    expect(new Set(['theirs', 'ours-a', 'ours-b'].map(sliceOf)).size).toBe(3);
+
+    await postDigest([{ id: 'theirs', timestamp: at('2026-01-10T00:00:00Z') }], -1);
     await handleHistoryRequest(
       baseParams({
         storage: storageWith([
-          { id: 'ours-jan', timestamp: at('2026-01-20T00:00:00Z') },
-          { id: 'ours-feb', timestamp: at('2026-02-10T00:00:00Z') },
+          { id: 'ours-a', timestamp: at('2026-01-20T00:00:00Z') },
+          { id: 'ours-b', timestamp: at('2026-02-10T00:00:00Z') },
         ]),
       })
     );
 
-    // January differs (different ids) and February is ours alone: both are pushed wholesale.
+    // Both our slices are ours alone, so both are pushed wholesale.
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(
       GROUP,
-      ['ours-feb', 'ours-jan'],
+      ['ours-a', 'ours-b'],
       expect.anything(),
       { announceComplete: true }
     );
-    // January differs, so it is also pulled - a fingerprint cannot say which side is short.
+    // Their slice is theirs alone, so it is pulled - and the DEPTH travels with the prefix, or it
+    // names a slice the answering device cannot compute.
     expect(sendHistoryPull).toHaveBeenCalledWith(
       GROUP,
-      expect.objectContaining({ months: ['2026-01'], ids: [] }),
+      expect.objectContaining({ prefixes: [sliceOf('theirs')], depth: 1, ids: [] }),
       expect.anything()
     );
   });

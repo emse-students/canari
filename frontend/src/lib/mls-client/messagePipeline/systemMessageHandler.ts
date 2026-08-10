@@ -12,7 +12,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { messageTime } from '$lib/utils/chat/messageOrder';
 import { noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
 import { digestIdentity, noteDigestReceived } from '$lib/utils/chat/historyDigestRendezvous';
-import { parseHistoryDigest, selectEntryIdsForMonths } from '$lib/utils/chat/historyManifest';
+import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { readHistoryEntries, sendHistoryBundleForIds } from '$lib/utils/chat/groupActions';
 import { countUnreadForUser } from '$lib/utils/chat/unread';
 import { applyPin } from '$lib/stores/pinStore.svelte';
@@ -104,7 +104,9 @@ export async function handleSystemEvent(
     }
     noteDigestReceived(convoKey, from, digest);
     const size =
-      digest.mode === 'ids' ? `${digest.ids.length} id(s)` : `${digest.buckets.length} month(s)`;
+      digest.mode === 'ids'
+        ? `${digest.ids.length} id(s)`
+        : `${digest.ranges.length} slice(s) at depth ${digest.depth}`;
     log(
       `[HISTORY_DIGEST] From ${senderNorm} for ${convoKey.slice(0, 8)}… - ${digest.mode}, ${size}`
     );
@@ -125,17 +127,22 @@ export async function handleSystemEvent(
     const ids = Array.isArray(data?.ids)
       ? (data.ids as unknown[]).filter((id): id is string => typeof id === 'string' && !!id.trim())
       : [];
-    const months = Array.isArray(data?.months)
-      ? (data.months as unknown[]).filter(
-          (m): m is string => typeof m === 'string' && /^\d{4}-\d{2}$/.test(m)
-        )
-      : [];
+    // The depth the prefixes were computed at travels with them: a prefix names a slice of the id
+    // space only relative to a depth, and re-deriving it from our OWN store's size would name a
+    // different slice on each device.
+    const depth = Number(data?.depth);
+    const prefixes =
+      Array.isArray(data?.prefixes) && Number.isInteger(depth) && depth >= 1
+        ? (data.prefixes as unknown[]).filter(
+            (p): p is string => typeof p === 'string' && p.length === depth && /^[0-9a-f]+$/.test(p)
+          )
+        : [];
 
     let wanted = ids;
-    if (wanted.length === 0 && months.length > 0) {
-      // A bucket diff resolves to a month, never to a message, so the asker cannot name what it
-      // wants: it names the month and we send everything we hold in it. The receiver dedupes by id,
-      // so over-sending costs bandwidth and nothing else.
+    if (wanted.length === 0 && prefixes.length > 0) {
+      // A range diff resolves to a slice of the id space, never to a message, so the asker cannot
+      // name what it wants: it names the slice and we send everything we hold in it. The receiver
+      // dedupes by id, so over-sending costs bandwidth and nothing else.
       const entries = await readHistoryEntries(convoKey, deps);
       if (entries === null) {
         log(
@@ -143,7 +150,7 @@ export async function handleSystemEvent(
         );
         return true;
       }
-      wanted = selectEntryIdsForMonths(entries, months);
+      wanted = selectEntryIdsForPrefixes(entries, prefixes, depth);
     }
     if (wanted.length === 0) {
       log(

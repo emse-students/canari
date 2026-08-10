@@ -20,7 +20,7 @@ import { awaitDigest, digestIdentity } from '$lib/utils/chat/historyDigestRendez
 import {
   diffHistoryDigest,
   isEmptyHistoryDiff,
-  selectEntryIdsForMonths,
+  selectEntryIdsForPrefixes,
 } from '$lib/utils/chat/historyManifest';
 import { isAwaitingHistory, markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
 import { resolveDirectPeerId } from '$lib/utils/chat/conversations';
@@ -1039,7 +1039,9 @@ export async function handleHistoryRequest(params: {
 
   const diff = await diffHistoryDigest(entries, digest);
   const idsToSend =
-    digest.mode === 'ids' ? diff.missingOnPeer : selectEntryIdsForMonths(entries, diff.pushMonths);
+    digest.mode === 'ids'
+      ? diff.missingOnPeer
+      : selectEntryIdsForPrefixes(entries, diff.pushPrefixes, digest.depth);
 
   if (idsToSend.length === 0 && isAwaitingHistory(selfUserId, groupId)) {
     // We hold nothing the requester lacks, but we are ourselves waiting on this group - so "you are
@@ -1057,7 +1059,7 @@ export async function handleHistoryRequest(params: {
   }
 
   const idsToPull = digest.mode === 'ids' ? diff.missingLocally : [];
-  if (idsToPull.length > 0 || diff.pullMonths.length > 0) {
+  if (idsToPull.length > 0 || diff.pullPrefixes.length > 0) {
     // The requester listed messages we do not have. That is the strongest evidence of a gap this
     // client can obtain - not a presumption from an empty store, but ids another device named - so
     // it is recorded durably before the pull is even sent: if the answer never comes, the reconnect
@@ -1069,13 +1071,14 @@ export async function handleHistoryRequest(params: {
         from: digestIdentity(selfUserId, mlsService.getDeviceId()),
         to: requesterIdentity,
         ids: idsToPull,
-        months: diff.pullMonths,
+        prefixes: diff.pullPrefixes,
+        depth: digest.mode === 'range' ? digest.depth : undefined,
       },
       deps
     ).catch((e) => log(`[HISTORY_PULL] Pull send error to ${requesterUserId}: ${String(e)}`));
   }
 
   log(
-    `[HISTORY_REQ] ${short}... diff with ${requesterIdentity}: ${idsToSend.length} to send, ${idsToPull.length + diff.pullMonths.length} to pull${isEmptyHistoryDiff(diff) ? ' (identical stores)' : ''}`
+    `[HISTORY_REQ] ${short}... diff with ${requesterIdentity}: ${idsToSend.length} to send, ${idsToPull.length + diff.pullPrefixes.length} to pull${isEmptyHistoryDiff(diff) ? ' (identical stores)' : ''}`
   );
 }

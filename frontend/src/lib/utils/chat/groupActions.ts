@@ -610,7 +610,9 @@ export async function sendHistoryDigest(
 
   const digest = await buildHistoryDigest(entries);
   const summary =
-    digest.mode === 'ids' ? `${digest.ids.length} id(s)` : `${digest.buckets.length} month(s)`;
+    digest.mode === 'ids'
+      ? `${digest.ids.length} id(s)`
+      : `${digest.ranges.length} slice(s) at depth ${digest.depth}`;
   const bytes = encodeAppMessage(mkSystem('history_digest', JSON.stringify({ from, digest })));
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, true);
@@ -624,22 +626,32 @@ export async function sendHistoryDigest(
 
 /**
  * Asks one specific device for the messages this one is missing, by id or - when the digest could
- * only resolve to the month - by month.
+ * only resolve to a slice of the id space - by slice.
+ *
+ * `depth` travels with the prefixes and is not optional for them: a prefix means nothing without the
+ * depth it was computed at, and the answering device must re-slice its own store at exactly that
+ * depth rather than at the one its own size would pick (see `diffHistoryDigest`).
  *
  * Split across several frames because a diff is unbounded (a device back after a month away can be
  * short thousands of messages) while an MLS application message is not.
  */
 export async function sendHistoryPull(
   groupId: string,
-  request: { from: string; to: string; ids?: readonly string[]; months?: readonly string[] },
+  request: {
+    from: string;
+    to: string;
+    ids?: readonly string[];
+    prefixes?: readonly string[];
+    depth?: number;
+  },
   { mlsService, log }: HistorySendDeps
 ): Promise<void> {
-  const { from, to, ids, months } = request;
+  const { from, to, ids, prefixes, depth } = request;
   const frames: Array<Record<string, unknown>> =
     ids && ids.length > 0
       ? chunkIds(ids).map((batch) => ({ from, to, ids: batch }))
-      : months && months.length > 0
-        ? [{ from, to, months: [...months] }]
+      : prefixes && prefixes.length > 0 && depth
+        ? [{ from, to, prefixes: [...prefixes], depth }]
         : [];
 
   if (frames.length === 0) return;
@@ -654,7 +666,7 @@ export async function sendHistoryPull(
     }
   }
   log(
-    `[HISTORY_PULL] Asked ${to} for ${ids?.length ?? 0} id(s) / ${months?.length ?? 0} month(s) in ${groupId.slice(0, 8)}… (${frames.length} frame(s))`
+    `[HISTORY_PULL] Asked ${to} for ${ids?.length ?? 0} id(s) / ${prefixes?.length ?? 0} slice(s) in ${groupId.slice(0, 8)}… (${frames.length} frame(s))`
   );
 }
 
