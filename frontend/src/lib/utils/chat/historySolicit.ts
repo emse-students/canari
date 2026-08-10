@@ -303,7 +303,7 @@ export function cancelHistorySolicit(groupId: string): void {
  *   for this group" stops being true the moment a message lands - but it cannot answer a PROOF: the
  *   peer that listed forty ids we lack is not repaid by a chunk of forty others, and a history big
  *   enough to be chunked arrives as several non-empty bundles anyway. So a proven marker survives,
- *   the in-session retries keep running, and the NEXT diff decides. That is what makes the marker
+ *   the next state edge asks again, and the NEXT diff decides. That is what makes the marker
  *   empty itself: each exchange strictly reduces the difference, so it converges on the empty bundle
  *   above rather than on a bundle count.
  */
@@ -312,7 +312,9 @@ export function noteHistoryBundleReceived(
   groupId: string,
   bundleMessageCount: number
 ): void {
-  // WP-HIST-1: clear the reactive pending state so the UI stops showing the offline banner.
+  // Clear the reactive pending state first, whatever the bundle holds: the banner reports an
+  // ATTEMPT, and an answer arrived. It is deliberately not conditioned on the marker below, which
+  // reports the underlying gap and may legitimately outlive several bundles.
   historyRequestPendingStore.noteReceived(groupId);
 
   const reason = readAwaitingHistoryReason(userId, groupId);

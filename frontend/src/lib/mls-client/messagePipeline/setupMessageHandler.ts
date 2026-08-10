@@ -12,11 +12,6 @@ import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
-import {
-  installWasmDuplicateDeliveryLogInterceptor,
-  resetWasmDuplicateDeliveryFlag,
-  consumeWasmDuplicateDeliveryFlag,
-} from '../wasmLogShim';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
 import { markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
 import { solicitHistory } from '$lib/utils/chat/historySolicit';
@@ -80,8 +75,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   resetEpochGapRegistry();
   // Same rationale for the recovery cooldowns: a re-login must not inherit a stale throttle.
   resetReAddCooldowns();
-
-  installWasmDuplicateDeliveryLogInterceptor();
 
   const statePersister = createMlsStatePersister({ mlsService, deviceKeyB64, userId, log });
   registerMlsStatePersister(statePersister);
@@ -616,7 +609,6 @@ async function handleKnownGroup({
   };
 
   try {
-    resetWasmDuplicateDeliveryFlag();
     const decrypted = await mlsService.processIncomingMessage(groupId, content);
 
     // Persist: immediate for commits (epoch advanced), deferred for application messages.
@@ -632,13 +624,19 @@ async function handleKnownGroup({
     }
 
     if (decrypted === null) {
-      // null can be a structural commit (add/remove) or a consumed generation.
-      if (consumeWasmDuplicateDeliveryFlag()) {
-        handleConsumedGeneration('null payload, WASM duplicate flag');
-      } else {
-        log(`[MLS] Structural commit for ${convoKey.slice(0, 8)}… - no application payload`);
-        noteFrameProcessed(groupId, fingerprint);
-      }
+      // `null` means "no application payload", and `mls-core` is the only thing entitled to say it:
+      // a structural commit, a stale commit another device already applied, or a frame whose
+      // generation is older than the kept ratchet window. None of the three has a plaintext.
+      //
+      // A consumed generation is NOT in that list any more, and that is what deleted `wasmLogShim`
+      // (2026-08-10). The shim monkey-patched `window.wasm_bindings_log` and set a flag when a WASM
+      // line CONTAINED `SecretReuseError`, because `mls-core` used to answer `Ok(None)` there and
+      // the diagnosis reached no caller otherwise. `mls-core` now surfaces that error (see
+      // `same_epoch_ratchet.rs`), so this branch is reached through the `catch` below instead - and
+      // branching on the TEXT of a log line was never a contract, it was a leak. Measured on the
+      // HEAL run of 2026-08-10: eleven arrivals through the thrown error, ZERO through the flag.
+      log(`[MLS] No application payload for ${convoKey.slice(0, 8)}… - commit or dropped frame`);
+      noteFrameProcessed(groupId, fingerprint);
       return true;
     }
 

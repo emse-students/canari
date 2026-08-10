@@ -629,6 +629,77 @@ absence of an entire vocabulary is evidence about the app.** And this defect was
 a real run - no gate could see it, because the guard was correct code with a correct-sounding
 comment, calling a real function that returned a true answer to the wrong question.
 
+#### HEAL, settled: `HEALED - 14/14` (2026-08-10, prod, both browsers on `__sveltekit_10zs9c`)
+
+The re-run after the fix. Both browsers asserted onto the deployed bundle by `bundle-id.mjs` first -
+the first call found both on `__sveltekit_armubb` and refused to measure, which is the whole point of
+that check existing.
+
+```
+[heal] baseline: 12 sent from W1, 12 rendered on W2
+[heal] restore:  CanariDBMls_<dev>::state, 2 rows, from 2026-08-10T21:09:01Z
+[heal] mechanisms: loss detected=true, narrow retransmission=false, escalated=true, history diff ran=true
+[heal] convergence: W1 holds 14/14, W2 holds 14/14
+[heal] VERDICT: HEALED - 14/14 of the messages sent from a rewound state reached the peer
+[heal] teardown: W1 delivers again after 1 probe(s) - the rig is clean
+```
+
+The timeline is the interesting half: messages 1-8 reached W2 **not at all** (`onW2: 0` at each of
+the eight send points), then the diff ran and the count went straight to 9, 10, 11 … 14 - the repair
+back-fills the whole gap in one exchange rather than message by message. And the mechanism trace is
+exactly the intended shape:
+
+```
+21:09:31 [MLS] LOST frame ... the sender's ratchet rewound (SecretReuseError)
+21:09:31 [HISTORY_REQ] 642f389a... already has an attempt outstanding - not asking
+21:09:52 [HISTORY_REQ] no answer for 642f389a... - attempt over
+21:09:53 [MLS] LOST frame ...
+21:09:56 [HISTORY_REQ] response window open for 642f389a...
+21:09:56 [HISTORY_DIGEST] Sent for 642f389a… - ids mode, 554 id(s)
+21:09:56 [HISTORY_REQ] solicited 642f389a...
+```
+
+Every lost frame reaches the trigger; the one that finds no attempt outstanding asks; the rest are
+turned away by `isSolicitInFlight` and say so. `narrow retransmission=false` confirms the deleted
+ladder is gone rather than dormant, and `ids mode, 554 id(s)` confirms the digest names messages by
+identity - the `range` fallback never engaged. The 2.5 s between the lost frame and the open window
+is `INITIAL_SOLICIT_DELAY_MS`, the one duration in the mechanism that schedules no traffic.
+
+**The frame-rate half of the verdict was measured separately and is green**: 14 console lines per
+60 s per browser, against ~450 frames/min during the storm. `storm.mjs` is the standing regression
+probe for that class.
+
+#### The 31st harness fault: a verdict computed over a PROJECTION of its own evidence
+
+That run first reported `escalated=false` while `history diff ran=true` - a contradiction, since the
+diff can only run if something solicited it. The reflex is fault #29's third bullet, a stale matcher,
+and it was wrong: `soliciting a history diff` appeared **nowhere** in the captured log, because
+`repairLines` filtered the console through the `REPAIR` regex and the verdict matchers then ran over
+that filtered text. `REPAIR` does not contain `soliciting`. So a line the matcher accepts but the
+filter drops is invisible, and the check silently answered a question about the app with a fact about
+its own formatting.
+
+**A capture filter is a presentation concern; a verdict must never be computed over a projection of
+its evidence.** `heal-web.mjs` now derives the verdict from `allLines` (every console line since the
+break) and uses `REPAIR` only to shape the printed excerpt. Note how close this came to reading as an
+app defect twice in a row - and that the only reason it did not is the vocabulary grep from #30's
+lesson, applied to the harness this time instead of the app.
+
+#### `wasmLogShim` is DELETED, and by construction rather than by observation
+
+The owed measurement was "does the web still reach `handleConsumedGeneration` through the null+flag
+route". The run answers it: **eleven arrivals through the thrown error, zero through the flag.** But
+the stronger argument is structural, and it is what justifies the deletion. The shim monkey-patched
+`window.wasm_bindings_log` and raised a flag when a WASM line CONTAINED `SecretReuseError` or
+`out of bounds`; the flag is only ever consumed where `processIncomingMessage` returned `null`, and
+after `same_epoch_ratchet.rs` there is no `Ok(None)` path in `mls-core` that logs either string -
+`SecretReuse` is an error now, and the two remaining `Ok(None)` branches (a stale commit, and
+`TooDistantInThePast`) log neither. The route is unreachable, not merely unused.
+
+It also violated a durable rule outright - **never branch on an error MESSAGE** - and a patched
+global log sink is a leak, not a contract. Its `null` branch now logs what the layer actually knows
+(`no application payload - commit or dropped frame`) instead of guessing which of three causes it was.
+
 ---
 
 ## 8. Multi-device (W1 + A1, same user)

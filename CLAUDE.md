@@ -75,6 +75,26 @@ it taught is in DURABLE RULES below, and the narrative is on the wiki page each 
 it should be fast, and it exercises everything. Commit AND push are authorised so prod picks changes
 up: **prod IS the test server** until a `dev.canari-emse.fr` exists.
 
+**FOUR DECISIONS THE USER TOOK 2026-08-10 - do not re-ask, do not re-litigate:**
+
+1. **The orphaned queue: DELETE the rows AND add a TTL.** A targeted `DELETE` scoped to the abandoned
+   profile's `deviceId` (28 136 rows, 96 % of the whole prod queue, last active 2026-08-08), after a
+   row count and a `pg_dump` check - then a maintenance job reaping frames addressed to devices with
+   no key package. The WP-GHOST-1 predicate already proves that set is well-defined.
+2. **WP-STORAGE-1's backup rewrite: BUILD IT AND PROVE A RESTORE, then show the user before any
+   cutover.** The new scheme runs ALONGSIDE the tar; the tar is retired only after a restore has been
+   demonstrated from the new repo. Not a free hand on prod backups.
+3. **The 30-day media GC STAYS, but it must stop being silent.** Render an explicit "this image is no
+   longer available" state instead of a gap. It is a lie today, not a limitation - section 6 of
+   [storage-forecast](docs/wiki/infrastructure/storage-forecast.md).
+4. **The phone is available this session** - the user offered to plug it in, so the Android P1s and
+   LIFE-5 come before the rest of the browser roadmap.
+
+**One observation from the user, NOT yet a WP** (2026-08-10): a conversation HEADER was rendered for
+a conversation they were not actually inside ("l'UI etait trompeuse, on avait le header de la
+conversation avec Claire mais nous n'etions pas dedans"). They were unsure. Check whether
+`selectedContact` and the header can disagree before opening anything.
+
 #### What the escalation chantier settled (2026-08-10, shipped - do not re-derive)
 
 A rewound sender lost frames and the repair for it became a storm on prod: ~450 frames/min on W1,
@@ -95,33 +115,27 @@ Both rules are in DURABLE RULES. **Everything below is a MEASUREMENT that is owe
 
 #### OWED, in order
 
-1. **Re-measure HEAL on the browser** against the new architecture. TWO assertions, not one: the
-   conversation heals (`HEALED - 14/14`) **and the frame rate falls back** - `storm.mjs` is the
-   regression probe for the broadcast class, its deleted log shapes prefixed `!!` meaning "old build
-   or regression". The frame-rate half is ALREADY MEASURED and green: 14 console lines / 60 s per
-   browser against ~450 frames/min before. **The last valid run was `PARTIAL - 2/14` and it found a
-   real defect** (the durable marker used as "have I already asked", now deleted and pinned by
-   `setupMessageHandler.lostFrame.test.ts`) - that run's verdict is void, re-run it once the CD is
-   green. Harness faults #28/#29/#30 are all fixed in the scratchpad `heal-web.mjs`; **#30 is the one
-   that made every earlier run meaningless** - the rewind cannot be undone by restoring a state, so
-   the teardown restores the INVARIANT instead (`ensureDeliverable`, runs on every exit path). The
-   responder is elected by a random shuffle (`messaging.service.ts:1372-1382`), so always record WHICH
-   device answered. The BREAK itself is a RESTORED older snapshot of `CanariDBMls_<dev>` (`mlsdb.mjs`),
-   and both browsers must be RELOADED onto the current bundle before any of it counts - `bundle-id.mjs`
-   asserts that rather than assuming it. The test DM may be deleted and recreated (the user authorised
-   it, it holds only our tests). Four checks are owed, section 7.1: epoch gap, unknown group,
-   generation gap, and the pair nothing has ever exercised together (a recovery while a SECOND tab
-   holds the leader role).
-2. **`wasmLogShim`'s null+flag route should now be DEAD** (the web reaches `handleConsumedGeneration`
-   through the thrown error). Read W2's console for `(SecretReuseError)` rather than `(null payload,
-   WASM duplicate flag)`; if the shim never fires, delete it with that measurement as the evidence.
-3. **The phone: one background/foreground cycle** (WP-RECONNECT, shipped) - watch it re-arm.
-4. **The remaining P1s** in OPEN WORK PACKAGES below.
-5. **Convergence measurements the user asked for explicitly** (2026-08-07): `recon.mjs` for the
+**DONE 2026-08-10, do not re-run:** HEAL on the browser is `HEALED - 14/14` with `history diff
+ran=true`, `narrow retransmission=false` and `ids mode, 554 id(s)`; the frame-rate half is green too
+(14 console lines / 60 s per browser against ~450 frames/min). `wasmLogShim` is DELETED - eleven
+arrivals through the thrown error, zero through the flag, and the route is unreachable by
+construction after `same_epoch_ratchet.rs`. The full trace is in
+[cross-client-testing > HEAL, settled](docs/wiki/cross-client-testing.md). What every future run of
+this check still needs: `bundle-id.mjs` FIRST (it refused to measure twice, correctly); the responder
+is elected by a random shuffle (`messaging.service.ts:1372-1382`), so record WHICH device answered;
+the BREAK is a restored older snapshot of `CanariDBMls_<dev>` (`mlsdb.mjs`) and the teardown restores
+the INVARIANT, never a snapshot (`ensureDeliverable`); the test DM may be deleted and recreated.
+
+1. **Four HEAL checks are still owed**, section 7.1: epoch gap, unknown group, generation gap, and
+   the pair nothing has ever exercised together (a recovery while a SECOND tab holds the leader role).
+2. **The phone: one background/foreground cycle** (WP-RECONNECT, shipped) - watch it re-arm.
+3. **The remaining P1s** in OPEN WORK PACKAGES below.
+4. **Convergence measurements the user asked for explicitly** (2026-08-07): `recon.mjs` for the
    per-thread marker diff W1 vs W2; `SELECT recipientId, deviceId, count(*) FROM queued_message GROUP
    BY 1,2` on prod against what each client shows; `DeviceGroupMembership` against live key packages
-   (the WP-GHOST-1 predicate - the platform should still hold ZERO memberships without one).
-6. **Then the campaign re-run.** The phase dashboard at the top of
+   (the WP-GHOST-1 predicate - the platform should still hold ZERO memberships without one, VERIFIED
+   2026-08-10).
+5. **Then the campaign re-run.** The phase dashboard at the top of
    [cross-client-testing](docs/wiki/cross-client-testing.md) is the source of truth, not this file.
    **LIFE-5 needs the USER** (the unlock pattern after a reboot) - pause and ask, never work around it.
 
@@ -281,8 +295,12 @@ What a compaction must not lose:
 - **Re-logging the phone in IS automatable**: the Android login opens the SYSTEM browser, so forward
   CDP to `localabstract:chrome_devtools_remote` and run `login.mjs --match cas.emse.fr`. Never
   `realClick` the CAS fields - focus by element and assert `activeElement`.
-- **THIRTY harness faults have produced a false result, all fixed and all written up in the wiki
+- **THIRTY-ONE harness faults have produced a false result, all fixed and all written up in the wiki
   page** (search "harness fault"). Do not re-derive them; these are the rules they add up to:
+  - **A VERDICT MUST NEVER BE COMPUTED OVER A PROJECTION OF ITS OWN EVIDENCE** (#31). `heal-web.mjs`
+    filtered the console through a display regex and then ran its matchers over the FILTERED text, so
+    a line the matcher accepts but the filter drops was invisible - `escalated=false` on a run whose
+    diff demonstrably ran. A capture filter is presentation; the verdict reads everything.
   - **When a check's BREAK is not invertible, the teardown restores a PROPERTY, never a snapshot**
     (#30). Rewinding a sender cannot be undone by restoring any state - the peer consumed generations
     off the fork while it was live, so no snapshot is both legitimate and ahead of it. Ask what the
