@@ -41,6 +41,27 @@ describe('checkLinkSafety', () => {
     expect(await checkLinkSafety('https://example.com/4')).toBe(false);
   });
 
+  it('does not cache a failure, so a blip does not disable the check for the page lifetime', async () => {
+    const href = 'https://example.com/4b';
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    expect(await checkLinkSafety(href)).toBe(false);
+
+    // The page may live for days on mobile. A cached failure would answer "safe" for that whole
+    // time; only a real verdict may be reused.
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ unsafe: true }), { status: 200 }));
+    expect(await checkLinkSafety(href)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache a non-ok response either', async () => {
+    const href = 'https://example.com/4c';
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 503 }));
+    expect(await checkLinkSafety(href)).toBe(false);
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ unsafe: true }), { status: 200 }));
+    expect(await checkLinkSafety(href)).toBe(true);
+  });
+
   it('dedupes concurrent calls for the same URL into a single request', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ unsafe: false }), { status: 200 }));
 

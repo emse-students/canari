@@ -70,6 +70,62 @@ Every shipped Work Package was deleted from this file on 2026-08-07 - their stor
 narratives are on the wiki pages each one points to. **Do not reconstruct them here.** What remains
 below is only what is still OPEN or still OWED.
 
+#### 2026-08-10: HEAL RAN ON THE BROWSER, AND IT FOUND A P1 - the fix needs a PROD RE-RUN
+
+The whole story, both runs and the console evidence are in
+[cross-client-testing > 7.1 result](docs/wiki/cross-client-testing.md). One paragraph, because the
+shape recurs: **the escalation ladder gated the repair that works behind three failures of a repair
+that cannot work.** `signalDecryptFailure` has ONE call site - the rewound-sender branch - so it
+always asks a peer whose ratchet is rewound to re-encrypt at that same rewound ratchet. Measured: it
+fired with 1, 5, 15 then 25 payloads and delivered NONE, in either run. A 12-generation rewind lost
+**5 messages permanently** and never reached the 3rd signal; a 60-generation one escalated and healed
+**16/16** via a bounded `ids`-mode diff (`32 to send, 1 to pull`). Fixed by soliciting the diff on the
+FIRST detection alongside the narrow signal (`inboundFrameLedger.ts`, 14 tests).
+
+**OWED, and it is the first thing to do: re-run the SHALLOW break against the deployed fix.** The
+negative control already exists and is the whole point - `REWIND_SENDS=12 node heal-web.mjs` returned
+`PARTIAL - 9/14` before the fix, so it must return `HEALED - 14/14` after, and any other number means
+the fix does not do what the reasoning says. **It cannot be checked until the CD has deployed**, since
+both browsers run against production. `heal-web.mjs` and `mlsdb.mjs` (in-page IndexedDB snapshot and
+restore, bytes never leave the browser) are in the scratchpad - reuse them, do not rebuild them.
+
+Also this session: Leon's WP-SAFELINK-1 verified end to end - server on prod with a positive AND a
+negative control (Google's test malware URL `{"unsafe":true}`, `google.com` `{"unsafe":false}`), the
+web client PASS on five assertions, and **`AppLink` PASS on the PHONE** (correct absolute lookup URL,
+warning shown, no navigation). Owed there: only the `LinkPreviewCard` case, and his WP-OIDC-TAB-1's
+mobile pass. **Two harness faults on the way.** #26: `window.open(href, '_blank', 'noopener')`
+returns `null` BY SPECIFICATION, so it says nothing about whether the popup was blocked - the
+observable is a new page target in `/json/list`. #27, and it is the more expensive shape: **a click
+that opens an external app BACKGROUNDS the WebView, and a backgrounded page is throttled**, so three
+probes' "no lookup, no warning" readings described a FROZEN document and the mobile FAIL was never
+established at all. The user saying "j'ai l'ecran site dangereux de Chrome" is what exposed it.
+Every check whose action can leave the app must assert the foreground before AND after - and a
+capture-phase `preventDefault()` does NOT hold it, because Tauri opens `target="_blank"` natively;
+defang the anchors in the DOM instead. Defang ONCE and keep the element references: re-querying
+`a[target="_blank"]` for a second case finds nothing, the first having stripped that very attribute.
+
+#### 2026-08-10: A PHONE CAN GO PERMANENTLY DISCONNECTED IN SILENCE (P1, FIXED - a device re-check is owed)
+
+From the user asking why the phone showed "En attente de connexion". It was NOT the network: HTTP
+worked throughout (`[API] <- 200 GET /api/presence`) and **logcat carried ZERO reconnect attempts in
+~20 minutes**, then `Reconnecting... -> [WS] Connected` **330 ms** after the wifi was cut. Two causes,
+each disabling the other's remedy, both written up in
+[auth > the pause/resume pair](docs/wiki/frontend/modules/auth.md): `pauseConnection` disarms both
+watchdogs on every background and nothing re-armed them (they are armed once, at login), and the
+reconnect circuit opens after 20 attempts with nothing able to close it - a successful connect resets
+the COUNT, not the circuit, and the watchdog's tick routes through `scheduleReconnectImpl`, which
+returns early while it is open. `resumeConnectionImpl` is now the single resume seam (closes the
+circuit, re-arms both, then reconnects) and `ChatBackgroundService.svelte` calls it instead of
+`attemptReconnect`. `sessionConnection.test.ts`, 4 cases, **validated as a negative control - 3 fail
+against the previous code.** Owed: watch a background/foreground cycle on the phone once deployed.
+
+**Two measurement traps this cost, worth more than the bug.** A close code of **1006 does NOT
+distinguish** an unreachable host from a rejected handshake - a non-101 upgrade response yields 1006
+in every browser - so an unauthenticated `wss://` probe cannot be used as a reachability test, and it
+opened from W1 only because W1 carries the cookie. And `dumpsys connectivity`'s FIRST `CONNECTED`
+line is not the default route: read `Active default network: <id>` and match the id, or a phone on
+wifi reads as a phone on LTE (it did, for two of these steps).
+
 #### THE RIG WAS LEFT READY - START MEASURING, DO NOT REBUILD IT (closed 2026-08-07 late)
 
 The session closed on the user's call ("on va clore la session tout de suite") **immediately before
@@ -656,6 +712,14 @@ carry in the head:
   the dedup at once, so a five-minute decaying buffer became a permanent playlist and a bounded
   repair became a standing broadcast (WP-RETRANSMIT-1, ~430 frames/min for 13 min on prod). Ask of
   every self-healing loop what makes it STOP, and make that the thing a test pins.
+- **A REPAIR LADDER MUST BE ORDERED BY WHAT EACH RUNG CAN FIX, NEVER BY WHAT EACH COSTS.**
+  Cheap-first is only sound when the cheap rung has a real chance, and the way to check is to read
+  its TRIGGER: `signalDecryptFailure` has one call site, the rewound-sender branch, so the peer it
+  asks is by construction the peer that cannot answer - it re-encrypts at the same rewound ratchet.
+  Three failures of it were the price of admission to the diff that does work, i.e. 60-90 s of
+  continuous loss, and a shallow rewind clears itself first - partly by burning generations on those
+  very retransmissions, which is recovery by exhaustion, not repair. Messages caught in that window
+  are gone silently. Ask what each rung REPAIRS before asking what it costs.
 - A repair addressed by TIME is a broadcast, because a window cannot name its target - and it can
   only be as durable as what it reads. `decrypt_failed` asks for a window precisely because the
   frame never decrypted, so its id was never seen; that is why WP-HIST-3's manifest diff replaces it
@@ -811,6 +875,14 @@ page. The five to carry, plus one status line:
   login, and was gone from the task's history entirely after the deep-link return) - the
   right fix for "a login tab is left behind" is never a dismiss call, it is putting the tab in
   the right task to begin with.
+- **A PAUSE MUST HAVE A SYMMETRIC RESUME, and a circuit breaker must never cut the wire to its own
+  reset.** `pauseConnection` stopped both watchdogs on every background; nothing re-armed them, so
+  one background/foreground cycle left a phone with no timer able to notice a dead socket. Then the
+  reconnect circuit latched open with only the login paths able to close it - while the watchdog,
+  the one thing whose job was to notice, reached through `scheduleReconnectImpl`, which the latch
+  turns off. Ask of every breaker WHO closes it, and check that party is not itself disabled by it.
+  Corollary that made this invisible: an app can be fully alive on HTTP and dead on its socket, so
+  "the network works" is never evidence the connection does.
 - `getCurrent()` answers "the last deep link this PROCESS was handed", never "the app was just
   started by one" - the Rust plugin holds it for the life of the process, so every re-read must be
   deduplicated. **And STATE WHOSE JOB IS TO SURVIVE AN EVENT MUST NOT LIVE WHERE THAT EVENT DESTROYS

@@ -1087,10 +1087,12 @@
           // WP-XP-5: the user may have answered a CallKit ring while we were away - record
           // the intent BEFORE the WS reconnect delivers the MLS invite that auto-accepts it.
           await drainNativePendingCallAccept();
-          if (!globalSession.isWsConnected) {
-            appendLog('Page visible again - reconnecting…');
-            void globalSession.attemptReconnect(sessionCb());
-          }
+          // resumeConnection, NOT attemptReconnect: `pauseConnection` stopped the connection and
+          // sync watchdogs on the way out, and only this seam re-arms them - so it must run even
+          // when the socket survived the background, hence no isWsConnected guard here. Calling
+          // attemptReconnect directly left a mobile client with no timer able to notice a later
+          // dead socket, which is exactly what was measured on hardware (see resumeConnectionImpl).
+          void globalSession.resumeConnection(sessionCb());
           checkSiblingCallWarning();
           // Flush FCM messages cached while the app was in the background.
           if (deviceKeyB64 && storage) {

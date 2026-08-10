@@ -16,6 +16,7 @@ import { markConversationDeletedRemotely } from '$lib/utils/chat/conversations';
 import type { IMlsService } from '$lib/mlsService';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps, processDeviceInvitationsLocally } from './sessionAuth';
+import { startSyncWatchdogImpl } from './sessionWatchdogs';
 
 /** Connection watchdog duration - same value as RECOVERY_TIMEOUT_MS. */
 const CONNECTION_WATCHDOG_MS = RECOVERY_TIMEOUT_MS;
@@ -61,8 +62,12 @@ export function scheduleReconnectImpl(ctx: SessionContext, cb: ChatSessionCallba
   if (ctx.isReconnectCircuitOpen()) return;
   if (ctx.getReconnectAttempts() >= ctx.MAX_RECONNECT_ATTEMPTS) {
     ctx.setReconnectCircuitOpen(true);
+    // Say what actually recovers it. This used to read 'Click "Retry" to reconnect' and no such
+    // control exists anywhere in the app - `reconnectCircuitOpen` is read by this function alone -
+    // so the one message a stuck user could see named a button that was never built.
     cb.log(
-      `[WS] Unable to connect after ${ctx.MAX_RECONNECT_ATTEMPTS} attempts. Click "Retry" to reconnect.`
+      `[WS] Unable to connect after ${ctx.MAX_RECONNECT_ATTEMPTS} attempts - pausing retries until ` +
+        `the app returns to the foreground or the network changes.`
     );
     return;
   }
@@ -164,15 +169,35 @@ export function pauseConnectionImpl(ctx: SessionContext): void {
 }
 
 /**
- * Resumes the WebSocket connection after the app comes back to the foreground.
- * Re-arms background timers and triggers a reconnect attempt.
+ * Resumes after a foreground transition: re-arms everything `pauseConnectionImpl` stopped, closes
+ * the reconnect circuit, then reconnects if the socket is down.
+ *
+ * THE RE-ARM IS THE POINT, and it is why this must run even when the socket survived the
+ * background. `pauseConnectionImpl` stops the connection watchdog and the sync watchdog on every
+ * background, and nothing else ever starts them again - they are armed exactly once, at login. So
+ * after a single background/foreground cycle a mobile client had no timer left that could notice a
+ * dead socket, and one that died later stayed dead in silence. Measured on hardware 2026-08-10:
+ * ~20 minutes parked on /chat with the "En attente de connexion" banner up, ZERO reconnect
+ * attempts in logcat, HTTP working throughout, and a reconnect 330 ms after a network change.
+ *
+ * Closing the circuit is the other half. It opens after MAX_RECONNECT_ATTEMPTS and nothing ever
+ * closed it: a successful connect resets the attempt COUNT but not the circuit, and the watchdog
+ * reaches for `scheduleReconnectImpl`, which returns early while it is open - so the one component
+ * whose job is to notice a dead socket was disarmed by the same flag that made noticing matter.
+ * Returning to the foreground is precisely the evidence that conditions may have changed, which is
+ * what makes it the right seam to clear it from.
  */
 export async function resumeConnectionImpl(
   ctx: SessionContext,
   cb: ChatSessionCallbacks
 ): Promise<void> {
   if (!ctx.isLoggedIn()) return;
-  appendLog('[LIFECYCLE] App in foreground - reconnecting...');
+  appendLog('[LIFECYCLE] App in foreground - re-arming watchdogs and reconnecting...');
+  ctx.setReconnectCircuitOpen(false);
+  ctx.setReconnectAttempts(0);
+  startConnectionWatchdogImpl(ctx, cb);
+  startSyncWatchdogImpl(ctx, cb);
+  if (ctx.isWsConnected()) return;
   await attemptReconnectImpl(ctx, cb);
 }
 

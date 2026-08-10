@@ -601,16 +601,14 @@ async function handleKnownGroup({
     );
     const verdict = noteDesyncDetected(groupId);
     if (verdict.escalate) {
-      // The narrow repair has been asked for repeatedly and we are still losing frames, so stop
-      // asking for a time window out of a peer's memory and reach for the durable exchange: the
-      // marker is what makes it survive this session, and the solicitation runs the manifest diff
-      // now rather than at the next reconnect. `unreadable-frames` is the literal truth here.
+      // Started at the FIRST detection, alongside the narrow signal rather than after it. Asking a
+      // rewound sender to retransmit gets the same rewound ratchet back, so waiting for that to
+      // fail three times is waiting through the whole window in which messages are being lost -
+      // measured, twice, on the browser (see `noteDesyncDetected`). The marker is what makes the
+      // repair survive this session; `unreadable-frames` is the literal truth here.
       markAwaitingHistory(userId, groupId, 'unreadable-frames');
       solicitHistory(mlsService, groupId, log);
-      log(
-        `[MLS] Retransmission has not repaired ${convoKey.slice(0, 8)}… - escalating to a history diff`
-      );
-      return;
+      log(`[MLS] Frames are being lost in ${convoKey.slice(0, 8)}… - soliciting a history diff`);
     }
     if (!verdict.signal) {
       log(`[MLS] Desync in ${convoKey.slice(0, 8)}… already signalled recently - not asking again`);

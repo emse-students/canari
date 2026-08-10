@@ -33,20 +33,11 @@ const MAX_FRAMES_PER_GROUP = 200;
 const SIGNAL_INTERVAL_MS = 30_000;
 
 /**
- * How many signals a group may spend on the narrow repair before it is declared insufficient.
+ * How long one episode of loss lasts, for the purpose of not re-soliciting history over and over.
  *
- * Each one asks the peer for a time WINDOW out of an in-memory ring, so it fails for reasons no
- * amount of repetition fixes: the sender reloaded and lost the ring, the payload aged out of it, or
- * the loss is older than the window can reach. Three signals are at least a minute of continuous
- * loss in one group - past that, asking a fourth time is not persistence, it is a loop.
- */
-const ESCALATION_SIGNAL_COUNT = 3;
-
-/**
- * Over how long those signals must fall to count as one failing repair.
- *
- * Without it the counter would be cumulative and a group that lost one frame a week would escalate
- * eventually, on evidence that had nothing to do with each other.
+ * The first detection inside this window escalates; the rest do not, because `markAwaitingHistory`
+ * is durable and the history mechanism runs its own pending timer from there. Without a window the
+ * counter would be cumulative and a group losing one frame a week would look like one episode.
  */
 const ESCALATION_WINDOW_MS = 5 * 60_000;
 
@@ -58,10 +49,23 @@ const signalTimes = new Map<string, number[]>();
  * What to do about a frame we have just established is LOST rather than duplicated.
  *
  * - `signal` - ask the sender to retransmit the recent window (the narrow repair).
- * - `escalate` - that repair has now failed repeatedly, so stop asking for a window and reach for
- *   the history diff instead: it reads the peer's DURABLE store, is answered by ONE elected member,
- *   and names messages by id rather than by time (WP-HIST-3). The two are exclusive - a signal
- *   already shown not to work is not worth sending alongside its own replacement.
+ * - `escalate` - also reach for the history diff, which reads the peer's DURABLE store, is answered
+ *   by ONE elected member, and names messages by id rather than by time (WP-HIST-3).
+ *
+ * Both are set on the FIRST detection, and that is a measured decision, not a cautious one. The
+ * narrow signal has exactly one trigger - this branch, a sender whose ratchet went backwards - and
+ * in that situation it asks the sender to re-encrypt at the SAME rewound ratchet, so the
+ * retransmission collides exactly as the original did. Measured twice on the browser against
+ * production: it fired with 1, then 5, 15 and 25 payloads and delivered none of them, while the
+ * history diff repaired the conversation completely (`32 to send, 1 to pull`). It is kept because
+ * it costs one control frame and does win the narrow band where the sender has burnt past the
+ * receiver's high-water mark by the time the signal lands - but nothing may WAIT on it.
+ *
+ * Waiting on it is what cost real messages: escalating only after three signals needs 60-90 s of
+ * CONTINUOUS loss, and a shallow rewind clears itself before that - by burning generations, partly
+ * on those very retransmissions. A 12-generation rewind lost five messages permanently and never
+ * escalated; a 60-generation one escalated and healed 16/16. The mechanism that repairs this class
+ * must therefore not be gated behind the one that does not.
  */
 export type DesyncVerdict = { signal: boolean; escalate: boolean };
 
@@ -110,10 +114,10 @@ export function hasFrameBeenProcessed(groupId: string, fingerprint: string): boo
  * fail one frame, it fails every frame it sends until its ratchet passes the generations we
  * consumed, and signalling each of them would answer a storm with a storm.
  *
- * The escalation counter deliberately counts SIGNALS, not losses. A repair that works is one whose
- * signal is not followed by more of them, so the thing worth counting is how many times we have
- * asked and still been here - which is also why the count is cleared when it fires: the escalation
- * is a different mechanism, and it must be given its own chance before anything is concluded again.
+ * Escalation is per EPISODE, not per loss: the first detection inside {@link ESCALATION_WINDOW_MS}
+ * asks for the history diff, and the ones that follow do not re-ask. That is not a rate limit for
+ * its own sake - `markAwaitingHistory` is durable and the history mechanism re-solicits on its own
+ * timer, so a second solicitation would only duplicate work already in flight.
  */
 export function noteDesyncDetected(groupId: string, now: number = Date.now()): DesyncVerdict {
   // A group that has never signalled always may - hence the explicit `undefined`, not a `?? 0`,
@@ -126,12 +130,8 @@ export function noteDesyncDetected(groupId: string, now: number = Date.now()): D
   const recent = [...(signalTimes.get(groupId) ?? []), now].filter(
     (t) => now - t < ESCALATION_WINDOW_MS
   );
-  if (recent.length >= ESCALATION_SIGNAL_COUNT) {
-    signalTimes.delete(groupId);
-    return { signal: false, escalate: true };
-  }
   signalTimes.set(groupId, recent);
-  return { signal: true, escalate: false };
+  return { signal: true, escalate: recent.length === 1 };
 }
 
 /** Drops everything for a group (leaving it, or forgetting its state). */

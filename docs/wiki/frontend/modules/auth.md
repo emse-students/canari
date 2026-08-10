@@ -352,8 +352,46 @@ two facts apart for everyone else (`navigator.onLine` is optimistic - a captive 
 An offline session sets `authToken = ''` and `isOfflineSession = true`, and login then skips the
 gateway connect, the push registration, group discovery and **both watchdogs**. The watchdogs are
 the harmful part: left running, the connection watchdog would schedule a reconnect every tick, burn
-`MAX_RECONNECT_ATTEMPTS` against a network that is not there and leave the circuit *open* - so
-regaining signal would land the user on a "Retry" button instead of a working app.
+`MAX_RECONNECT_ATTEMPTS` against a network that is not there and leave the circuit *open* - and
+until 2026-08-10 nothing could close it again (below).
+
+### The pause/resume pair, and why an asymmetric one goes quiet
+
+`pauseConnectionImpl` stops the connection watchdog, the sync watchdog and any pending reconnect
+timer on every background - correct on mobile, where the OS is about to freeze or kill the process.
+The resume side has to give all of it back, and it did not: `resumeConnectionImpl` only attempted a
+reconnect, and the mobile lifecycle handler in `ChatBackgroundService.svelte` did not even call it,
+reaching for `attemptReconnect` directly. The watchdogs are armed exactly once, at login
+(`sessionAuth.ts`) or on `promoteOfflineSession` - so **after a single background/foreground cycle a
+phone had no timer left that could notice a dead socket.**
+
+Two things then compounded, and the second is the sharper one:
+
+- A successful connect resets the attempt COUNT (`setReconnectAttempts(0)` in
+  `openGatewayConnection`) but never `reconnectCircuitOpen`. Nothing outside the login paths did.
+- `startConnectionWatchdogImpl`'s tick reaches for `scheduleReconnectImpl`, which returns early
+  while the circuit is open. **So the one component whose job is to notice a dead socket was
+  disarmed by the same flag that made noticing matter** - a circuit breaker that also cuts the wire
+  to the thing that would have reset it.
+
+Measured on hardware 2026-08-10 (A1, prod): parked on `/chat` with the "En attente de connexion"
+banner up, **zero reconnect attempts in ~20 minutes of logcat** while HTTP kept working throughout
+(`[API] <- 200 GET /api/presence`), then `Reconnecting... -> [WS] Connected` **330 ms** after the
+wifi was cut. The socket had been dead since some earlier outage on a guest network that let HTTPS
+through; nothing in the client was still asking. The user's own report - "pourquoi est-on en attente
+de connexion ?" - is what started the measurement.
+
+`resumeConnectionImpl` is now the single resume seam: it closes the circuit, resets the attempts,
+re-arms both watchdogs (both are idempotent) and only then reconnects if the socket is down - so it
+must run even when the socket survived the background, which is why the `isWsConnected` guard moved
+out of the caller. `sessionConnection.test.ts` pins all of it, validated as a negative control (3 of
+its 4 cases fail against the previous code).
+
+Two notes for whoever touches this next. The circuit's log line used to read `Click "Retry" to
+reconnect` and **no such control has ever existed** - `reconnectCircuitOpen` is read by
+`scheduleReconnectImpl` alone - so the one message a stuck user could see named a button nobody
+built; it now names what actually recovers it. And `ctx.timers.health` is cleared in two places and
+**started nowhere**: it is dead state, not a timer.
 
 ### What happens on reconnect
 

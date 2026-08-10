@@ -442,6 +442,59 @@ snapshot first; without it there is nothing to restore and the only way back is 
 HEAL-W4 is the one with no prior art on either client. HEAL-W3 is the expensive one: 2 000 frames is
 a scripted volume run, not a manual one.
 
+#### Result, 2026-08-10: the diff repairs it, and a SHALLOW break never reaches the diff
+
+Run with `heal-web.mjs`, which breaks the group the way the campaign has been chasing - restore an
+older copy of W1's MLS state (one 2.93 MB `mls_autosave` blob in `CanariDBMls_<dev>`), reload W1 so
+the WASM client picks the rewound state up, then keep sending. The rewind DEPTH is simply how many
+messages W1 sent between the snapshot and the restore, and it turned out to be the variable that
+decides everything:
+
+| Rewind depth | Loss window | Signals | Escalated? | Outcome |
+| --- | --- | --- | --- | --- |
+| 12 generations | ~60 s | 2 | **no** | **5 messages lost permanently**, W1 14/14 vs W2 9/14 |
+| 60 generations | ~150 s | 3 | yes | **healed 16/16** |
+
+Both runs show the break itself exactly as designed: `Ciphertext generation out of bounds 2445`,
+`SecretReuseError`, then `[MLS] LOST frame … the sender's ratchet rewound`.
+
+**The narrow retransmission never delivered anything, in either run.** It fired with 1, then 5, 15
+and 25 payloads - growing, because `recentSentSince` re-sends everything in the last 120 s - and not
+one of those payloads arrived, for a reason that is structural rather than incidental:
+`signalDecryptFailure` has exactly ONE call site, the rewound-sender branch, so the peer it asks is
+by construction the peer whose ratchet is rewound, and the retransmission is encrypted at that same
+rewound ratchet. It collides exactly as the original did.
+
+What it does do is consume generations, and that is what ended the shallow run: 5 real sends plus 7
+retransmitted payloads is 12, precisely the rewind depth. **The conversation recovered by burning
+through the overlap, not by repairing anything**, and the five messages caught inside the overlap
+are gone - the sender shows them, the receiver never had them, and nothing tells either user.
+
+The deep run is the one that reaches the mechanism WP-HIST-3 built, and it works:
+
+```
+[HISTORY_DIGEST] From b78568a3… for 642f389a… - ids, 357 id(s)
+[HISTORY_BUNDLE] Chunk 1/1 - 32 msg → 642f389a…
+[HISTORY_REQ] 642f389a... diff with b78568a3…: 32 to send, 1 to pull
+```
+
+`ids` mode and a bounded diff, not `no digest … sending the whole store` - so the 3 s
+`HISTORY_DIGEST_GRACE_MS` rendezvous was won and the run measured the new mechanism rather than the
+old dump wearing its name. Three diffs, 30 s apart, driven by the durable marker's own pending
+timer (`[HISTORY_REQ] restarted pending timer`, `solicit attempt 2`), and full convergence.
+
+So the escalation ladder had it backwards: it gated the repair that works behind three failures of
+the repair that cannot work. Three signals rate-limited to one per 30 s need 60-90 s of CONTINUOUS
+loss, and a shallow rewind clears itself first - partly by burning generations on those very
+retransmissions. Fixed by soliciting the diff on the FIRST detection, alongside the narrow signal
+instead of after it; the narrow one is kept because it costs one control frame and does win the
+band where the sender has already burnt past the receiver's high-water mark, but nothing waits on
+it now. See `inboundFrameLedger.ts`.
+
+**The lesson generalises past this bug:** a repair ladder must be ordered by what each rung can
+actually FIX, never by what each costs. Cheap-first is only sound when the cheap rung has a real
+chance, and here its single trigger guaranteed it did not.
+
 ---
 
 ## 8. Multi-device (W1 + A1, same user)

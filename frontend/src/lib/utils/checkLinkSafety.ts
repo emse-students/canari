@@ -1,4 +1,5 @@
 import { m } from '$lib/paraglide/messages';
+import { Log } from '$lib/utils/Log';
 
 /**
  * Client side of WP-SAFELINK-1: asks `chat-delivery-service`'s `mls/link-safety` endpoint
@@ -13,6 +14,21 @@ import { m } from '$lib/paraglide/messages';
  */
 const safetyCache = new Map<string, Promise<boolean>>();
 
+/**
+ * Answers "not flagged" for a lookup that could not be made, and FORGETS it.
+ *
+ * The distinction the cache must keep is between an answer and the absence of one. A verdict may
+ * be reused; a failure may not, because caching it converts one network blip into "this URL is
+ * never checked again" - for the whole life of the page, which on mobile is days. The server keeps
+ * the same distinction with a short `FAILURE_TTL_MS`, and a client cache that outlives it would
+ * silently defeat it.
+ */
+function failOpen(href: string, why: string): boolean {
+  safetyCache.delete(href);
+  Log.d('checkLinkSafety', `lookup failed for ${href.slice(0, 60)} (${why}) - failing open`);
+  return false;
+}
+
 /** True if `href` is flagged unsafe. Fails open (returns false) on any network or server error -
  * a safety check that cannot answer must never block a link, only skip the warning. */
 export function checkLinkSafety(href: string): Promise<boolean> {
@@ -24,11 +40,11 @@ export function checkLinkSafety(href: string): Promise<boolean> {
       const baseUrl = import.meta.env.VITE_DELIVERY_URL?.trim() || window.location.origin;
       const endpoint = `${baseUrl}/api/mls/link-safety?url=${encodeURIComponent(href)}`;
       const res = await fetch(endpoint);
-      if (!res.ok) return false;
+      if (!res.ok) return failOpen(href, `status ${res.status}`);
       const data = (await res.json()) as { unsafe?: boolean };
       return data.unsafe === true;
-    } catch {
-      return false;
+    } catch (e) {
+      return failOpen(href, String(e).slice(0, 80));
     }
   })();
 
