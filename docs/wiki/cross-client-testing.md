@@ -450,196 +450,126 @@ snapshot first; without it there is nothing to restore and the only way back is 
 HEAL-W4 is the one with no prior art on either client. HEAL-W3 is the expensive one: 2 000 frames is
 a scripted volume run, not a manual one.
 
-#### Result, 2026-08-10: the diff repairs it, and a SHALLOW break never reaches the diff
+#### Result, 2026-08-10: three runs, and what each one proved
 
-Run with `heal-web.mjs`, which breaks the group the way the campaign has been chasing - restore an
-older copy of W1's MLS state (one 2.93 MB `mls_autosave` blob in `CanariDBMls_<dev>`), reload W1 so
-the WASM client picks the rewound state up, then keep sending. The rewind DEPTH is simply how many
-messages W1 sent between the snapshot and the restore, and it turned out to be the variable that
-decides everything:
+`heal-web.mjs` breaks the group the way the campaign has been chasing - restore an older copy of W1's
+MLS state (one `mls_autosave` blob in `CanariDBMls_<dev>`), reload W1 so the WASM client picks the
+rewound state up, then keep sending. The rewind DEPTH is how many messages W1 sent between snapshot
+and restore, and it decided everything:
 
-| Rewind depth | Loss window | Signals | Escalated? | Outcome |
-| --- | --- | --- | --- | --- |
-| 12 generations | ~60 s | 2 | **no** | **5 messages lost permanently**, W1 14/14 vs W2 9/14 |
-| 60 generations | ~150 s | 3 | yes | **healed 16/16** |
+| Run | Rewind depth | Outcome |
+| --- | --- | --- |
+| 1 | 12 generations | **5 messages lost permanently** - W1 14/14 vs W2 9/14, escalation never reached |
+| 2 | 60 generations | **healed 16/16** via a bounded `ids`-mode diff (`32 to send, 1 to pull`) |
+| 3 | 12, against the escalation fix | `PARTIAL - 8/14` - the fix fired, and the PHONE answered empty |
 
-Both runs show the break itself exactly as designed: `Ciphertext generation out of bounds 2445`,
-`SecretReuseError`, then `[MLS] LOST frame … the sender's ratchet rewound`.
+All three show the break as designed: `Ciphertext generation out of bounds`, `SecretReuseError`, then
+`[MLS] LOST frame … the sender's ratchet rewound`.
 
-**The narrow retransmission never delivered anything, in either run.** It fired with 1, then 5, 15
-and 25 payloads - growing, because `recentSentSince` re-sends everything in the last 120 s - and not
-one of those payloads arrived, for a reason that is structural rather than incidental:
-`signalDecryptFailure` has exactly ONE call site, the rewound-sender branch, so the peer it asks is
-by construction the peer whose ratchet is rewound, and the retransmission is encrypted at that same
-rewound ratchet. It collides exactly as the original did.
+**Finding 1 - the narrow retransmission never delivered anything, in any run.** It fired with 1, then
+5, 15 and 25 payloads (`recentSentSince` re-sends the whole 120 s window) and not one arrived, for a
+structural reason: `signalDecryptFailure` had exactly ONE call site, the rewound-sender branch, so
+the peer it asked was by construction the peer whose ratchet was rewound - the retransmission is
+encrypted at that same rewound ratchet and collides exactly as the original did. What it DOES do is
+consume generations, and that is what ended run 1: 5 real sends plus 7 retransmitted payloads is 12,
+precisely the rewind depth. **The conversation recovered by burning through the overlap, not by
+repairing anything**, and the five messages inside the overlap are gone with nothing telling either
+user. So the ladder had it backwards - it gated the repair that works behind three failures of the
+repair that cannot work, and three signals rate-limited to one per 30 s need 60-90 s of CONTINUOUS
+loss that a shallow rewind clears first. **A repair ladder must be ordered by what each rung can
+FIX, never by what each costs.** The rung is now deleted outright - see
+[the DONE block](#done-2026-08-10-the-retransmission-mechanism-is-deleted-not-patched-around).
 
-What it does do is consume generations, and that is what ended the shallow run: 5 real sends plus 7
-retransmitted payloads is 12, precisely the rewind depth. **The conversation recovered by burning
-through the overlap, not by repairing anything**, and the five messages caught inside the overlap
-are gone - the sender shows them, the receiver never had them, and nothing tells either user.
-
-The deep run is the one that reaches the mechanism WP-HIST-3 built, and it works:
-
-```
-[HISTORY_DIGEST] From b78568a3… for 642f389a… - ids, 357 id(s)
-[HISTORY_BUNDLE] Chunk 1/1 - 32 msg → 642f389a…
-[HISTORY_REQ] 642f389a... diff with b78568a3…: 32 to send, 1 to pull
-```
-
-`ids` mode and a bounded diff, not `no digest … sending the whole store` - so the 3 s
-`HISTORY_DIGEST_GRACE_MS` rendezvous was won and the run measured the new mechanism rather than the
-old dump wearing its name. Three diffs, 30 s apart, driven by the durable marker's own pending
-timer (`[HISTORY_REQ] restarted pending timer`, `solicit attempt 2`), and full convergence.
-
-So the escalation ladder had it backwards: it gated the repair that works behind three failures of
-the repair that cannot work. Three signals rate-limited to one per 30 s need 60-90 s of CONTINUOUS
-loss, and a shallow rewind clears itself first - partly by burning generations on those very
-retransmissions. Fixed by soliciting the diff on the FIRST detection, alongside the narrow signal
-instead of after it; the narrow one is kept because it costs one control frame and does win the
-band where the sender has already burnt past the receiver's high-water mark, but nothing waits on
-it now. See `inboundFrameLedger.ts`.
-
-**The lesson generalises past this bug:** a repair ladder must be ordered by what each rung can
-actually FIX, never by what each costs. Cheap-first is only sound when the cheap rung has a real
-chance, and here its single trigger guaranteed it did not.
-
-#### Re-run, 2026-08-10: the fix works and the conversation still lost 6 - because the PHONE answered
-
-The shallow break was re-run against the deployed fix as its own negative control - `PARTIAL - 9/14`
-before, so anything but `HEALED - 14/14` after means the reasoning was wrong. It came back
-**`PARTIAL - 8/14`**, and the escalation was not what failed:
-
-```
-12:02:49.053  [MLS] LOST frame for 642f389a… - the sender's ratchet rewound
-12:02:49.069  [MLS] Asked 642f389a… to retransmit the last 120s
-12:02:51.567  [HISTORY_REQ] started pending timer for 642f389a...
-12:02:51.662  [HISTORY_DIGEST] Sent for 642f389a… - ids mode, 410 id(s)
-12:02:55.639  [HISTORY_REQ] bundle received for 642f389a..., cleared pending state
-```
-
-The diff was solicited **2.5 s after the first lost frame** instead of never, and a bundle came back
-in four seconds. The fix does exactly what it claims. The bundle was simply empty, and W1 - which
-was holding all six messages, having sent them - never ran the responder at all: its console shows
-the digest arriving and no `[HISTORY_REQ] … diff with …` line.
-
-**The responder was the PHONE**, and its own logcat says what it did:
-
-```
-14:02:52.857  [WS RCV] history_request from b78568a3…:web-…-vegy for group 642f389a…
-14:02:54.888  [HISTORY_DIGEST] From b78568a3… for 642f389a… - ids, 410 id(s)
-14:02:56.420  [HISTORY_BUNDLE] Nothing to add for 642f389a… - empty bundle sent
-14:02:56.421  [HISTORY_REQ] … 0 to send, 0 to pull (identical stores)
-```
-
-Election is a random shuffle over every online device except the requester's own
-(`messaging.service.ts:1372-1382`), so a peer's phone answers as readily as a peer's browser - by
-design, and correct: `actions.ts:1044` already refuses to certify completeness from a device that is
-itself awaiting history. The phone was not awaiting anything, and the reason is one line deeper:
+**Finding 2 - a phone that had lost the same messages certified the conversation complete.** Run 3
+solicited the diff **2.5 s after the first lost frame** instead of never and had a bundle back in
+four seconds, so the escalation fix did exactly what it claimed. The bundle was EMPTY: election is a
+random shuffle over every online device except the requester's own
+(`messaging.service.ts:1372-1382`), the PHONE was elected, and its logcat answered
+`0 to send, 0 to pull (identical stores)` + `announceComplete` - the one claim that clears a proven
+marker. One line deeper:
 
 ```
 D/mls_core::messaging: Benign same-epoch ratchet frame dropped:
-group=642f389a… epoch=3 (ValidationError(UnableToDecrypt(SecretTreeError(SecretReuseError))))
+group=…  epoch=3 (ValidationError(UnableToDecrypt(SecretTreeError(SecretReuseError))))
 ```
 
 **Zero `LOST frame` lines on the phone against thirteen on the browser, for the same frames.**
 `mls-core` classified every rewound frame as a benign duplicate and returned `Ok(None)`, so the
-phone's TS saw a bare `null` - indistinguishable from a structural commit - and never reached the
-fingerprint ledger. It lost the six messages in silence, recorded no gap, and was therefore
-*entitled* to announce `announceComplete`, which is the one claim that clears a requester's marker.
-Being unaware of its own gap is what made it authoritative.
+phone's TS saw a bare `null` and never reached the fingerprint ledger. Having recorded no gap it was
+*entitled* to announce completeness: being unaware of its own gap is what made it authoritative.
 
-The most instructive part: `recevoir_message_bytes` (`commands/mls.rs:741-750`) and
-`map_decrypt_outcome` (`state.rs:60`) **both already classify `DecryptErrorKind::SecretReuse`**,
-with comments citing WP-LOSS-1 and handing the decision to the shared frontend classifier. Both were
-unreachable, because `mls-core` swallowed the error two layers below them. The web escaped only
-through a log-sniffing shim (`wasmLogShim.ts:17`) that has no counterpart on native. Careful native
-handling written for exactly this case had been dead for as long as it had existed, and no test
-noticed, because the test asserted the swallow (`same_epoch_ratchet.rs`, "a same-epoch duplicate is
-a benign drop (`Ok(None)`), never an error").
+The most instructive part: `recevoir_message_bytes` (`commands/mls.rs`) and `map_decrypt_outcome`
+(`state.rs`) **both already classified `DecryptErrorKind::SecretReuse`**, with comments citing
+WP-LOSS-1 - and both were unreachable, because `mls-core` swallowed the error two layers below them.
+The web escaped only through a log-sniffing shim (`wasmLogShim.ts`) with no native counterpart.
+Careful native handling written for exactly this case had been dead for as long as it existed, and no
+test noticed, because **the test asserted the swallow** (`same_epoch_ratchet.rs`). Fixed by dropping
+`SecretReuseError` from the benign set; `TooDistantInThePast`/`NoPastEpochData` stay benign (those
+keys are genuinely gone). Both BATCH paths still map it to "nothing to show" on purpose - during a
+history replay a consumed generation really is expected - which is all that remains of WP-PENDING-2.
+This also settles WP-LOSS-1's Android half: it did not work, and never had.
 
-Fixed in `mls-core/src/messaging.rs`: `SecretReuseError` leaves the benign set and reaches the
-caller. `TooDistantInThePast`/`NoPastEpochData` stay benign - those keys are genuinely gone and no
-peer can re-send readably. Both batch paths (`mls-wasm`, `state.rs`) keep mapping it to "nothing to
-show", because during a history REPLAY a consumed generation really is the expected case; that the
-batch therefore still cannot report a real loss is WP-PENDING-2's remaining item, now narrowed to
-one sentence: it needs a per-item verdict rather than a null.
-
-**Three rules, and the third is the expensive one:**
+Three rules, and the third is the expensive one:
 
 - **A layer that cannot make a distinction must not make it.** "This generation is consumed" is not
   "I already have this message" - only the frame's bytes separate them, and those live one layer up.
 - **A device that has not noticed its own gap will vouch for its store.** Any "I am complete" claim
   must rest on evidence the claimant could actually have collected; silence is not evidence.
-- **Parity between platforms is not parity of the code they share.** Both platforms run the same
-  ledger, the same classifier and the same responder - and one of them could not reach any of it,
-  because a shared Rust crate answered the question before either could ask. Whenever a check runs
-  on one surface, ask what OTHER surface is a participant in the same exchange: this run's verdict
-  was decided by a device that was not under test.
+- **Parity between platforms is not parity of the code they share.** Both run the same ledger, the
+  same classifier and the same responder, and one could not reach any of it because a shared Rust
+  crate answered the question first. Whenever a check runs on one surface, ask what OTHER surface is
+  a participant in the same exchange: this run's verdict was decided by a device not under test.
 
-This also settles an item that was open as "unverified": **WP-LOSS-1's Android receiver half did not
-work.** It was never a matter of the phone not having been exercised - the code could not run there.
+#### Verified on the PHONE, 2026-08-10 - do not re-run this half
 
-#### Verified on the PHONE, 2026-08-10: it detects its own gap now, and repairs with a bounded diff
-
-The fix was deployed (CD on `27f82922`), a clean APK installed at 15:21, and the shallow break run
-again with the phone's logcat captured on-device. The assertion was never "did it heal" alone - it
-was **`LOST frame` lines appearing on the phone where there had been none**, and they did:
+Fix deployed (CD on `27f82922`), clean APK at 15:21, shallow break re-run with logcat captured
+on-device. The assertion was `LOST frame` lines appearing on the phone where there had been none:
 
 ```
-15:24:23  [MLS] LOST frame for 642f389a… from d82cd226…: generation consumed but this frame
-                was never processed - the sender's ratchet rewound (SecretReuseError)
-15:24:23  [MLS] Frames are being lost in 642f389a… - soliciting a history diff
-15:24:23  [HISTORY_REQ] started pending timer for 642f389a...
-15:24:59  [HISTORY_REQ] 642f389a... diff with b78568a3…:web-…-vegy: 3 to send, 0 to pull
-15:25:59  [HISTORY_REQ] 642f389a... diff with b78568a3…:web-…-vegy: 9 to send, 0 to pull
+15:24:23  [MLS] LOST frame … the sender's ratchet rewound (SecretReuseError)
+15:24:23  [MLS] Frames are being lost in … - soliciting a history diff
+15:24:59  [HISTORY_REQ] … 3 to send, 0 to pull
+15:25:59  [HISTORY_REQ] … 9 to send, 0 to pull
 ```
 
-**13 `LOST frame` against 0 in the previous run, and exactly one `Benign same-epoch ratchet frame
-dropped` left** - the `TooDistantInThePast`/`NoPastEpochData` branch that stays benign on purpose.
-Where the phone previously answered `0 to send, 0 to pull (identical stores)` and certified the
-conversation complete, it now answers bounded diffs of 3 and 9 messages. The false witness is gone,
-on the platform where the code had never been able to run.
+**13 `LOST frame` against 0, and exactly one `Benign same-epoch ratchet frame dropped` left** - the
+branch that stays benign on purpose. Where it certified the conversation complete it now answers
+bounded diffs. The false witness is gone, on the platform where the code had never been able to run.
 
 **The APK carrying it would not start, and that is its own lesson.** The first build booted to the
-splash screen and stopped: `TypeError: Cannot read properties of undefined (reading 'data')` inside
+splash and stopped: `TypeError: Cannot read properties of undefined (reading 'data')` inside
 `kit.start()`, because `build/index.html` declared `__sveltekit_5wp7yq` while all four chunks read
-`globalThis.__sveltekit_10pyqm3`. Two `vite build` runs had written `build/` at once. Every gate was
-green and the only symptom was a splash that never went away - see
+`globalThis.__sveltekit_10pyqm3` - two `vite build` runs had written `build/` at once. Every gate was
+green, the only symptom a splash that never went away. See
 [development > silent-degradation traps](development.md#silent-degradation-traps); `bun run build`
 now fails on it.
 
-#### The 28th and 29th harness faults: counting messages in a virtualised list
+#### The 28th and 29th harness faults, and the storm that stopped the browser half
 
-The browser half of this re-run is **still owed**, and four attempts failed at the setup gate for
+The browser half of the re-run is **still owed**, and four attempts failed at the setup gate for
 reasons that were all the harness's:
 
 - **#28 - a count read from a virtualised list is only valid while the rows are mounted, and a
-  history ingest moves the window.** The first run's timeline had W2 holding 12/14 and its final
-  read returned 0 forty-five seconds later, with every message present; a run that had absorbed 448
-  messages twice left W2's pane ending on messages from **12:40** with its scroller already at the
-  maximum, so everything newer was invisible. Scrolling to the bottom of the mounted window is not
-  enough - only a fresh mount (a page reload) opens at the newest message. And because delivery is
-  monotone while the reading is not, the estimator is the **maximum over repeated polls**: the same
+  history ingest moves the window.** One run's final read returned 0 with every message present, the
+  pane ending 45 minutes back with the scroller already at maximum. Scrolling to the bottom of the
+  mounted window is not enough - only a FRESH MOUNT opens at the newest message. And because delivery
+  is monotone while the reading is not, the estimator is the **maximum over repeated polls**: the same
   batch measured 12, 12, 12, 0, 0, 0 across six polls thirty seconds apart.
 - **#29 - a fixed wait is a guess, and it declared a healthy link lossy twice.** Six seconds after
   the last send, then thirty, gave `7 of 12` and `10 of 12` on a link that held all twelve a minute
-  later. In a conversation of ~500 messages, convergence takes longer than any constant anyone
-  would pick; poll to a target with a budget instead.
-- A third, smaller drift worth naming: the verdict's `escalated` test still matched only
-  `escalating to a history diff`, a line the escalation fix **deleted** - the diff is now solicited
-  at the first detection. It reported `escalated=false` on a run whose diff demonstrably ran. **A
-  check's log matchers are part of the check, and a fix that changes a log line breaks them
-  silently.**
+  later. Poll to a target with a budget instead.
+- **A check's log matchers are part of the check, and a fix that changes a log line breaks them
+  silently:** the `escalated` test still matched `escalating to a history diff`, a line the fix had
+  deleted, so it reported `escalated=false` on a run whose diff demonstrably ran.
 
-**Why it stopped there, and it is a finding of its own.** After those runs the DM entered a
-sustained retransmission storm and stayed in it: measured over four consecutive 30 s windows, W1 saw
-**~450 inbound frames per minute**, W2 queued **~300-450 control messages per 30 s**, both logged
-`retransmitting 25 payload(s)` repeatedly, and the phone recorded **324 `LOST frame` lines** while
-correctly rate-limiting its own signals (`Desync … already signalled recently`). No message was
-being repaired in that window - it is pure churn, the WP-RETRANSMIT-1 shape again. Note what the
-harness contributes: **every run restores an older snapshot of W1 and nothing ever restores the
-current one**, so W1 is left permanently rewound and each run compounds the last. A heal check must
-put the sender back where it found it, or the rig degrades one run at a time.
+**Why it stopped there, and it is a finding of its own.** After those runs the DM entered a sustained
+retransmission storm and stayed in it: over four consecutive 30 s windows W1 saw **~450 inbound
+frames per minute**, W2 queued **~300-450 control messages per 30 s**, both logged `retransmitting 25
+payload(s)` repeatedly, and the phone recorded **324 `LOST frame` lines**. Nothing was being repaired
+- pure churn, the WP-RETRANSMIT-1 shape again, and the direct cause of the deletion recorded at the
+top of this page. Note what the harness contributes: **every run restores an older snapshot of W1 and
+nothing ever restores the current one**, so W1 is left permanently rewound and each run compounds the
+last. A heal check must put the sender back where it found it.
 
 ---
 
@@ -725,6 +655,12 @@ The four lines that decide a HEAL verdict, and each says something different:
   and we are awaiting history too - staying silent` - a deliberate silence. **A responder that stays
   silent looks exactly like a responder that never got the request**, so a check asserting "no repair
   happened" must read the responder's console too, not only the requester's.
+
+The digest logs its MODE, and the mode is part of the verdict: `ids, N id(s)` is an exact diff (under
+1 000 messages), `range, N slice(s) at depth D` is the size fallback, which resolves to a slice of the
+id space rather than to a message. A run that reports `range` is testing a different code path from
+one that reports `ids` - say which one it exercised.
+
 **The narrow `decrypt_failed` retransmission is GONE (2026-08-10), and that simplifies every HEAL
 check.** Until then a repair seen on the wire could be either mechanism, and a check that did not say
 which one had not exercised the diff - that used to be the hardest assertion in this section. There is
@@ -2525,101 +2461,62 @@ changing it moves history replay onto the desync signal, which needs its own mea
 
 ## The retransmission storm, 2026-08-07: a repair that fed itself
 
-Found because the user asked an ordinary question - *"there are message-sync banners, I don't know
-if that's normal"* - about something a check would never have flagged. It was normal, and it was the
-symptom of a defect that no check in this campaign was looking for.
+Found because the user asked an ordinary question - *"there are message-sync banners, I don't know if
+that's normal"* - about something no check was looking for. It WAS normal, and it was the symptom.
+The banner is honest (`isMessageCatchupActive`, a depth counter), the phone's server queue was
+**4 921 rows**, and the banner came down the instant that queue reached zero. Nothing was stuck. The
+real question was: **who queued 4 921 frames into one DM in thirteen minutes, with nobody typing?**
 
-### The banner was honest, which is what made it worth following
-
-`isSyncing = session.isMessagingInitializing || messaging.isMessageCatchupActive`, and the second is
-a depth counter raised by every drain that has more than one frame pending. On the phone it was up
-on 20 consecutive samples over 30 s; the two browsers never showed it in the same window (182 drains
-on W2, none of them long enough to matter). The phone's queue on the server was **4 921 rows**, and
-the banner came down by itself the instant that queue reached zero. Nothing was stuck. The phone
-really had been synchronising, for about eighteen minutes.
-
-The interesting question was therefore never the banner. It was: **who queued 4 921 frames into one
-DM in thirteen minutes, with nobody typing?**
-
-| Measurement | Value |
-| --- | --- |
-| Window | 12:59:03 -> 13:12:21 CEST, then it stopped on its own |
-| Rate | ~430 frames/min, flat - a steady state, not a spike |
-| Senders | three web devices (one of each account, plus an older tab of one) |
-| What the phone did with them | decrypted every one, answered each, ACKed at the end of each drain |
-| Residue afterwards | none - the queue drained to 0, and both browsers' outboxes were empty |
+Measured: 12:59:03 -> 13:12:21 CEST, **~430 frames/min, flat** - a steady state, not a spike - from
+three web devices, every frame decrypted and ACKed by the phone, and no residue afterwards.
 
 ### The loop
 
-The trigger is the ordinary WP-LOSS-1 detection: a device that cannot decrypt a frame emits
-`decrypt_failed`, asking peers to resend the last 120 s, because - and this is the crux - **it cannot
-name what it is missing**. The frame never decrypted, so its id was never seen. Peers answer from
-`recentSends`, an in-memory ring of up to 25 payloads with a five-minute retention. That repair is
-meant to expire: five minutes of quiet and there is nothing left to replay.
+The trigger is the ordinary WP-LOSS-1 detection: a device that cannot decrypt a frame emitted
+`decrypt_failed`, asking peers to resend the last 120 s, because - the crux - **it cannot name what
+it is missing**; the frame never decrypted, so its id was never seen. Peers answered from
+`recentSends`, an in-memory ring of up to 25 payloads with a five-minute retention, meant to expire.
 
 It never expired. Each replay went out through `enqueueControlEvent`, which mints a fresh
-`crypto.randomUUID()` and `sentAt: now`, and the flusher then called `noteSentFrame` on it like any
-other send. Both bounds of the ring fell at once:
+`crypto.randomUUID()` and `sentAt: now`, and the flusher then retained it like any other send. Both
+bounds fell at once: **the fresh timestamp** pushed the expiry out indefinitely, and **the fresh id**
+meant the dedup key no longer matched the payload it should have replaced, so the ring *accumulated*
+copies up to its 25-entry cap. It stopped being a decaying buffer and became a permanent playlist.
+The arithmetic closes: one signal per group per device per 30 s x three devices = 6 signals/min, each
+answered with ~25 payloads, each fanned out to every device - **~430 frames/min**. It ended when a
+tab reloaded, because the ring is in memory. Nothing had been repaired.
 
-- **the fresh timestamp** pushed the five-minute expiry out indefinitely - the ring never aged;
-- **the fresh id** meant the dedup key no longer matched the payload it should have replaced, so the
-  ring *accumulated* copies instead of replacing them, up to its 25-entry cap.
+`9a0b199a` made a replay carry `isRetransmission` so the flusher would not re-retain it. Two tests
+pinned the halves separately - the flag being set and the flusher honouring it - because a flag
+nobody reads and a reader with nothing flagged are each green alone and useless together.
 
-The ring stopped being a decaying buffer of recent sends and became a permanent playlist, replayed
-in full on every signal. The arithmetic closes: the limiter allows one signal per group per device
-per 30 s, so three devices give 6 signals/min; each is answered by the others with ~25 payloads, and
-each answer is fanned out to every device in the group - **~430 frames/min into the phone**, which is
-what was measured. It ended when a tab reloaded, because the ring is in memory. Nothing had repaired
-it.
-
-**The fix** (`9a0b199a`): a replay carries `isRetransmission`, and the flusher does not retain it.
-A replay is not a send. Two tests pin the halves separately - the flag being set, and the flusher
-honouring it - because a flag nobody reads and a reader with nothing flagged are each green alone and
-useless together. The positive control caught a fixture bug on the way: the existing control fixture
-uses `sentAt: 50`, which the five-minute retention discards, so both assertions read an empty ring
-and the negative one passed for the wrong reason.
-
-### And a second defect, which would have made this invisible
+### A second defect, which would have made this invisible
 
 `BaseMlsService.endBulkIngest` awaited its observers in one bare loop, although the code registering
 them says they are "independent subscribers". The encrypted-state persister is registered first and
 rethrows when a checkpoint fails - so any failed disk write would have skipped the UI observer
-entirely. `messageCatchupDepth` never comes back down (the banner stays up for the whole session)
-and `bulkIngestActive` stays raised, so every later inbound message is buffered instead of rendered,
-then discarded by the next drain. That is message loss, not a stuck banner. Now per-observer, with
-every failure logged - the same rule the maintenance jobs already follow.
+entirely, leaving `bulkIngestActive` raised so every later inbound message is buffered instead of
+rendered, then discarded by the next drain. That is message loss, not a stuck banner. Now
+per-observer with every failure logged - the same rule the maintenance jobs already follow.
 
-### What this says about the remedy itself
+### The remedy, settled 2026-08-10: the mechanism is deleted, not hardened
 
-The storm is fixed, but the shape that produced it is not. Three properties of `decrypt_failed` did
-the damage, and none of them is an accident:
+`9a0b199a` stopped the ring feeding itself and **the storm recurred anyway** - same rate, same
+duration, nothing repaired - because the flag fixed the amplifier and left the broadcast. Three
+properties of `decrypt_failed` did the damage and none is an implementation accident; they are what a
+time-addressed repair IS:
 
-- **It is addressed by TIME, not identity**, because the receiver genuinely cannot name the frame.
-  So the answer must be a window, and a window is a broadcast.
-- **Every peer answers**, so the cost of one signal scales with the group.
-- **It reads an in-memory ring**, so the repair is a race against a reload - which is why the log
-  line the phone emitted thousands of times was *"nothing sent in the last 120s is still retained -
-  it cannot be recovered"*. That case is not rare; it is the normal outcome once the sender has
-  reloaded.
+- **addressed by TIME, not identity**, because the receiver genuinely cannot name the frame - so the
+  answer is a window, and a window is a broadcast;
+- **every peer answers**, so one signal costs the whole group;
+- **it reads an in-memory ring**, so the repair races a reload - which is why the log line the phone
+  emitted thousands of times was *"nothing sent in the last 120s is still retained - it cannot be
+  recovered"*. That is the NORMAL outcome once the sender has reloaded.
 
-**Epilogue, 2026-08-10: the shape was fixed by deleting the mechanism.** `9a0b199a` stopped the ring
-feeding itself, and the storm recurred anyway - same rate, same duration, nothing repaired - because
-the flag fixed the amplifier and left the broadcast. The three properties below are not defects of an
-implementation, they are what a time-addressed repair IS, so `decrypt_failed`, `recentSends` and the
-`isRetransmission` flag are all gone. See
-[chat > there is ONE repair](frontend/modules/chat.md). Kept here because the diagnosis is
-still the lesson: **ask what a rung can REPAIR before asking what it costs**, and a rung whose only
-mode of success is the sender burning past the receiver's high-water mark is not repairing anything.
-
-A manifest diff has none of the three. The receiver sends what it HAS; the peer computes what is
-missing and holds its id; the exchange reads the durable store; and the responder is elected
-server-side. **That is WP-HIST-3**, whose algorithm was already built and tested inside the QR sync
-engine (since deleted) - only the transport was absent. The conclusion recorded on 2026-08-07 is to build it rather than to keep
-hardening the window-based repair, with a give-up counter as the escalation point from a narrow
-immediate resend to the diff.
-
-One measurement worth keeping for that work: **the five-minute retention is already dead weight**.
-`DESYNC_RETRANSMIT_WINDOW_MS` is 120 s and `retransmitRecentSends` clamps the replay to what is
-asked, so no Canari client can ever reach beyond two minutes. The extra three minutes shorten no
-replay - they only hold plaintext protos in memory longer than anything can use them. Retention
-should be derived from the request window plus a round-trip margin, not an independent constant.
+So `decrypt_failed`, `recentSends` and the `isRetransmission` flag are all gone. A manifest diff has
+none of the three: the receiver sends what it HAS, the peer computes what is missing and holds its
+id, the exchange reads the DURABLE store, and the responder is elected server-side. See
+[the DONE block](#done-2026-08-10-the-retransmission-mechanism-is-deleted-not-patched-around) and
+[chat > there is ONE repair](frontend/modules/chat.md). The diagnosis is kept because it is still the
+lesson: **ask what a rung can REPAIR before asking what it costs**, and a rung whose only mode of
+success is the sender burning past the receiver's high-water mark is not repairing anything.

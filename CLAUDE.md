@@ -63,284 +63,102 @@ is broken), **P2** (correctness, nothing at risk), **P3** (hygiene). `[ ]` open,
 Delete a WP outright once it ships: the rule it taught goes to DURABLE RULES, the story to
 `CHANGELOG.md`.
 
-### NEXT SESSION - START HERE (written 2026-08-07 at the close; this file was PRUNED here)
+### NEXT SESSION - START HERE (pruned 2026-08-10)
 
-Every shipped Work Package was deleted from this file on 2026-08-07 - their stories are all in
-`CHANGELOG.md` under `[Unreleased]`, the rules they taught are in DURABLE RULES below, and the
-narratives are on the wiki pages each one points to. **Do not reconstruct them here.** What remains
-below is only what is still OPEN or still OWED.
+Shipped work is DELETED from this file. Its story is in `CHANGELOG.md` under `[Unreleased]`, the rule
+it taught is in DURABLE RULES below, and the narrative is on the wiki page each entry points to.
+**Do not reconstruct it here.** What follows is only what is OPEN or OWED.
 
-#### 2026-08-10: HEAL RAN ON THE BROWSER, AND IT FOUND A P1 - the fix needs a PROD RE-RUN
+**THE ORDER THE USER SET (2026-08-10) governs the next sessions:** (1) finish the escalation chantier
+- DONE, `3be41156` + `b138f35a`, pushed; (2) do everything in the roadmap below, **the P1s first**;
+(3) then **re-run the cross-client campaign from the START (post-setup)** - the scripts exist now, so
+it should be fast, and it exercises everything. Commit AND push are authorised so prod picks changes
+up: **prod IS the test server** until a `dev.canari-emse.fr` exists.
 
-The whole story, both runs and the console evidence are in
-[cross-client-testing > 7.1 result](docs/wiki/cross-client-testing.md). One paragraph, because the
-shape recurs: **the escalation ladder gated the repair that works behind three failures of a repair
-that cannot work.** `signalDecryptFailure` has ONE call site - the rewound-sender branch - so it
-always asks a peer whose ratchet is rewound to re-encrypt at that same rewound ratchet. Measured: it
-fired with 1, 5, 15 then 25 payloads and delivered NONE, in either run. A 12-generation rewind lost
-**5 messages permanently** and never reached the 3rd signal; a 60-generation one escalated and healed
-**16/16** via a bounded `ids`-mode diff (`32 to send, 1 to pull`). Fixed by soliciting the diff on the
-FIRST detection alongside the narrow signal (`inboundFrameLedger.ts`, 14 tests).
+#### What the escalation chantier settled (2026-08-10, shipped - do not re-derive)
 
-**The re-run was DONE and it returned `PARTIAL - 8/14`, which is how the NEXT P1 was found.** The
-escalation fix works exactly as claimed - the diff was solicited 2.5 s after the first lost frame and
-a bundle came back in 4 s - and the bundle was EMPTY, because the server elected the PHONE to answer
-and the phone had silently lost the same six messages. Full write-up, both consoles, in
-[cross-client-testing > 7.1 re-run](docs/wiki/cross-client-testing.md). `heal-web.mjs` and `mlsdb.mjs`
-(in-page IndexedDB snapshot and restore, bytes never leave the browser) are in the scratchpad - reuse
-them, do not rebuild them.
-
-#### 2026-08-10: A PHONE DROPS REWOUND FRAMES IN SILENCE, THEN CERTIFIES YOUR CONVERSATION COMPLETE (P1, FIXED - verification owed)
-
-`mls-core/src/messaging.rs` classified `SecretReuseError` as a benign duplicate and returned
-`Ok(None)`, so no caller could ever see it. **`recevoir_message_bytes` (`commands/mls.rs:741`) and
-`map_decrypt_outcome` (`state.rs:60`) both already classified `DecryptErrorKind::SecretReuse`, with
-comments citing WP-LOSS-1 - and both were unreachable.** The web escaped only through
-`wasmLogShim.ts:17`, which sniffs the log STRING; native has no such shim, so the phone reached
-neither the ledger nor the classifier: **zero `LOST frame` lines on A1 against thirteen on W2, for
-the same frames.** Having recorded no gap, it was not disqualified by `actions.ts:1044` and answered a
-peer's `history_request` with `0 to send, 0 to pull (identical stores)` + `announceComplete`, which is
-the one claim that clears a proven marker. Fixed by dropping `SecretReuseError` from the benign set
-(`TooDistantInThePast`/`NoPastEpochData` stay - those keys are genuinely gone). Both BATCH paths keep
-mapping it to "nothing to show" on purpose (a replay re-sends what you already read); that they still
-cannot report a real loss is all that is left of WP-PENDING-2.
-
-**This also answers WP-LOSS-1's Android half: it did not work, and never had.** Not "unverified" -
-the receiver-side detection could not run there at all.
-
-**THE PHONE HALF IS VERIFIED (2026-08-10, deployed + clean APK at 15:21):** 13 `LOST frame …
-(SecretReuseError)` lines in logcat where the previous run had ZERO, `soliciting a history diff`,
-and bounded answers - `3 to send, 0 to pull`, then `9 to send, 0 to pull` - where it used to answer
-`0 to send, 0 to pull (identical stores)` and certify the conversation complete. Exactly one
-`Benign same-epoch ratchet frame dropped` remains, which is the `TooDistantInThePast` branch that
-stays benign on purpose. Do not re-run this half; the write-up is
-[cross-client-testing > verified on the phone](docs/wiki/cross-client-testing.md).
-
-**THE STORM THAT RE-RUN PRODUCED IS WHAT THE ARCHITECTURE CHANTIER FIXED (2026-08-10, shipped).**
-The session ended in a sustained retransmission loop - ~450 frames/min on W1, ~300-450 control
-messages per 30 s on W2, 324 `LOST frame` on the phone, nothing being repaired. Cause: **one question
-answered by nine clocks**, two of them retry ladders driving the same request, so the traffic was
-their product; and the cheap rung of the ladder could repair nothing by construction. The user's
-instruction was explicit - architectural, deterministic, reproducible, explicable, and it must work
-at any conversation size, no timeout band-aids. So the ladder was DELETED rather than tuned: one
-repair (the history diff), one request per state edge, idempotence from the durable marker,
-termination from the empty diff. Both rules are in DURABLE RULES; the narrative is
+A rewound sender lost frames and the repair for it became a storm on prod: ~450 frames/min on W1,
+~300-450 control messages per 30 s on W2, 324 `LOST frame` on the phone, nothing being repaired. Two
+causes, both now deleted rather than tuned, both written up in
 [chat > there is ONE repair](docs/wiki/frontend/modules/chat.md) and
-[cross-client-testing > DONE 2026-08-10](docs/wiki/cross-client-testing.md).
+[cross-client-testing > DONE 2026-08-10](docs/wiki/cross-client-testing.md):
 
-**STILL OWED, and it is a MEASUREMENT, not a fix:** re-run HEAL on the browser against the new
-architecture (`HEALED - 14/14`, against `PARTIAL - 9/14` before) and check BOTH things - the
-conversation heals AND the frame rate falls back (`storm.mjs` is now the regression probe for the
-broadcast class; the deleted log lines are prefixed `!!` there, meaning "old build or regression").
-Preconditions: the test DM may be deleted and recreated (user authorised it - it holds only our
-tests), and **the harness restores an old W1 snapshot and never restores the current one**, so every
-run leaves W1 permanently rewound and compounds the last - fix that before believing a measurement.
-Harness faults #28/#29 are already fixed in the scratchpad `heal-web.mjs` (a virtualised count needs
-a FRESH MOUNT plus the max over repeated polls; the baseline needs a polled budget, not a fixed
-wait). The election is a random shuffle (`messaging.service.ts:1372-1382`), so always check WHICH
-device answered. Also owed: `wasmLogShim`'s null+flag route should now be DEAD (the web reaches
-`handleConsumedGeneration` through the thrown error instead) - read W2's console for
-`(SecretReuseError)` rather than `(null payload, WASM duplicate flag)`; if the shim never fires,
-delete it, with that measurement as the evidence.
+1. **One question answered by nine clocks**, two of them retry ladders driving the same request, so
+   traffic was their product - and the cheap rung (`decrypt_failed`) could repair nothing by
+   construction. One repair now (the history diff), one request per state edge, idempotence from the
+   durable marker, termination from the empty diff.
+2. **The diff's fallback mode sliced by MONTH**, i.e. by a value the two devices do not agree on, so
+   a clock skew across a boundary re-sent two whole months on every exchange forever and the diff
+   could never empty. It slices the ID SPACE now (`historyRangeOf`), which is identical on both sides.
 
-**THE ORDER THE USER SET (2026-08-10), and it governs the next sessions:** (1) finish this chantier,
-(2) do everything in the roadmap below, **the P1s first**, (3) then **re-run the cross-client campaign
-from the START (post-setup)** - the scripts exist now, so it should be fast, and it exercises
-everything. Commit AND push are authorised so prod picks the changes up: **prod is the test server**
-until a `dev.canari-emse.fr` exists.
+Both rules are in DURABLE RULES. **Everything below is a MEASUREMENT that is owed, not a fix.**
 
-Also this session: Leon's WP-SAFELINK-1 verified end to end - server on prod with a positive AND a
-negative control (Google's test malware URL `{"unsafe":true}`, `google.com` `{"unsafe":false}`), the
-web client PASS on five assertions, and **`AppLink` PASS on the PHONE** (correct absolute lookup URL,
-warning shown, no navigation). Owed there: only the `LinkPreviewCard` case, and his WP-OIDC-TAB-1's
-mobile pass. **Two harness faults on the way.** #26: `window.open(href, '_blank', 'noopener')`
-returns `null` BY SPECIFICATION, so it says nothing about whether the popup was blocked - the
-observable is a new page target in `/json/list`. #27, and it is the more expensive shape: **a click
-that opens an external app BACKGROUNDS the WebView, and a backgrounded page is throttled**, so three
-probes' "no lookup, no warning" readings described a FROZEN document and the mobile FAIL was never
-established at all. The user saying "j'ai l'ecran site dangereux de Chrome" is what exposed it.
-Every check whose action can leave the app must assert the foreground before AND after - and a
-capture-phase `preventDefault()` does NOT hold it, because Tauri opens `target="_blank"` natively;
-defang the anchors in the DOM instead. Defang ONCE and keep the element references: re-querying
-`a[target="_blank"]` for a second case finds nothing, the first having stripped that very attribute.
+#### OWED, in order
 
-#### 2026-08-10: A PHONE CAN GO PERMANENTLY DISCONNECTED IN SILENCE (P1, FIXED - a device re-check is owed)
+1. **Re-measure HEAL on the browser** against the new architecture. TWO assertions, not one: the
+   conversation heals (`HEALED - 14/14`, against `PARTIAL - 9/14` before) **and the frame rate falls
+   back** - `storm.mjs` is the regression probe for the broadcast class, its deleted log shapes
+   prefixed `!!` meaning "old build or regression". Preconditions: the test DM may be deleted and
+   recreated (the user authorised it, it holds only our tests), and **the harness restores an old W1
+   snapshot and never restores the current one**, so every run leaves W1 permanently rewound and
+   compounds the last - fix that first or no measurement means anything. Harness faults #28/#29 are
+   already fixed in the scratchpad `heal-web.mjs`. The responder is elected by a random shuffle
+   (`messaging.service.ts:1372-1382`), so always record WHICH device answered. The BREAK itself is a
+   RESTORED older snapshot of `CanariDBMls_<dev>` (`mlsdb.mjs`) - **take the snapshot first**, and
+   both browsers must be RELOADED onto the current bundle before any of it counts. Four checks are
+   owed, section 7.1: epoch gap, unknown group, generation gap, and the pair nothing has ever
+   exercised together (a recovery while a SECOND tab holds the leader role).
+2. **`wasmLogShim`'s null+flag route should now be DEAD** (the web reaches `handleConsumedGeneration`
+   through the thrown error). Read W2's console for `(SecretReuseError)` rather than `(null payload,
+   WASM duplicate flag)`; if the shim never fires, delete it with that measurement as the evidence.
+3. **The phone: one background/foreground cycle** (WP-RECONNECT, shipped) - watch it re-arm.
+4. **The remaining P1s** in OPEN WORK PACKAGES below.
+5. **Convergence measurements the user asked for explicitly** (2026-08-07): `recon.mjs` for the
+   per-thread marker diff W1 vs W2; `SELECT recipientId, deviceId, count(*) FROM queued_message GROUP
+   BY 1,2` on prod against what each client shows; `DeviceGroupMembership` against live key packages
+   (the WP-GHOST-1 predicate - the platform should still hold ZERO memberships without one).
+6. **Then the campaign re-run.** The phase dashboard at the top of
+   [cross-client-testing](docs/wiki/cross-client-testing.md) is the source of truth, not this file.
+   **LIFE-5 needs the USER** (the unlock pattern after a reboot) - pause and ask, never work around it.
 
-From the user asking why the phone showed "En attente de connexion". It was NOT the network: HTTP
-worked throughout (`[API] <- 200 GET /api/presence`) and **logcat carried ZERO reconnect attempts in
-~20 minutes**, then `Reconnecting... -> [WS] Connected` **330 ms** after the wifi was cut. Two causes,
-each disabling the other's remedy, both written up in
-[auth > the pause/resume pair](docs/wiki/frontend/modules/auth.md): `pauseConnection` disarms both
-watchdogs on every background and nothing re-armed them (they are armed once, at login), and the
-reconnect circuit opens after 20 attempts with nothing able to close it - a successful connect resets
-the COUNT, not the circuit, and the watchdog's tick routes through `scheduleReconnectImpl`, which
-returns early while it is open. `resumeConnectionImpl` is now the single resume seam (closes the
-circuit, re-arms both, then reconnects) and `ChatBackgroundService.svelte` calls it instead of
-`attemptReconnect`. `sessionConnection.test.ts`, 4 cases, **validated as a negative control - 3 fail
-against the previous code.** Owed: watch a background/foreground cycle on the phone once deployed.
+Small items still owed, each one check: the **backup export's Tauri branch** (WP-DL-1's last case -
+it used to ask for a DIRECTORY, which SAF does not offer); Leon's **WP-SAFELINK-1 `LinkPreviewCard`
+case** and his **WP-OIDC-TAB-1 mobile pass**.
 
-**Two measurement traps this cost, worth more than the bug.** A close code of **1006 does NOT
-distinguish** an unreachable host from a rejected handshake - a non-101 upgrade response yields 1006
-in every browser - so an unauthenticated `wss://` probe cannot be used as a reachability test, and it
-opened from W1 only because W1 carries the cookie. And `dumpsys connectivity`'s FIRST `CONNECTED`
-line is not the default route: read `Active default network: <id>` and match the id, or a phone on
-wifi reads as a phone on LTE (it did, for two of these steps).
+#### The rig - RE-VERIFY each line, do not rebuild it
 
-#### THE RIG WAS LEFT READY - START MEASURING, DO NOT REBUILD IT (closed 2026-08-07 late)
+The harness is archived at `tools/cross-client-harness/` (its README covers the rig) and the working
+copy plus the ~60 one-shot `probe-*` scripts are in the scratchpad. `heal-web.mjs`, `mlsdb.mjs`
+(in-page IndexedDB snapshot/restore, bytes never leave the browser), `recon.mjs`, `storm.mjs`,
+`pin.mjs`, `watch.mjs` all exist - reuse them.
 
-The session closed on the user's call ("on va clore la session tout de suite") **immediately before
-the first HEAL check**, with everything in place for it. Re-verify each line rather than trusting
-it - a night has passed - but do not re-derive any of it:
-
-- **W1 (9224) and W2 (9223) were RELOADED onto the current bundle** and asserted so
-  (`performance.getEntriesByType('navigation')[0].type === 'reload'`, 37 s / 27 s uptime), both on
-  `/chat`, PIN unlocked, occlusion flags intact. That reload was the standing precondition for every
-  repair-mechanism check; a browser left running overnight has NOT kept it - **reload both again.**
-- **A1 carries the current build**: APK from 21:29:49 (`1637ed39` + `cb427031`) installed over the
-  USB serial, launched, PIN unlocked with `pin.mjs --account jolan` (NOT `claire` - the default, and
-  it costs a "PIN incorrect" every time).
-- **adb is on TCP and it is what made this session stable**: `adb tcpip 5555` +
-  `adb connect 172.18.221.86:5555`. Wifi IS available at this location now, unlike earlier sessions.
-  The phone is attached over BOTH transports, so **every `adb` call needs `-s`** or it dies on `more
-  than one device/emulator`. The WebView pid changes on every cold start, so re-read
-  `/proc/net/unix | grep webview_devtools` and re-do `adb -s <tcp> forward tcp:9222 localabstract:…`.
-- Prod answers `{"version":"0.13.1"}` and carries WP-HIST-3.
-
-**START HERE: HEAL-W1..W4** (section 7.1 of the campaign page), then NOTIF-2/3/5/6 + the NOTIF-10
-re-run, then PIN/MULTI/CORRUPT. **Read
-[cross-client-testing > 9.1 reading a repair on the wire](docs/wiki/cross-client-testing.md) FIRST** -
-written at this close precisely for this. Its one load-bearing point: the narrow `decrypt_failed`
-retransmission was NOT deleted by WP-HIST-3, only demoted to first-line, so a repair seen on the wire
-may be either mechanism and **a HEAL check that does not distinguish them has not exercised the
-diff**. The section carries the console prefixes and the four lines that decide a verdict, including
-the one that means the 3 s digest rendezvous lost and the run must be re-done.
-
-**1. THE APK GATE IS CLEARED, except the backup export (2026-08-07 evening).** A build carrying everything up to
-`c53b6077` was flashed at **18:55:34** (`lastUpdateTime` moved from 12:53:19 - that is the only
-discriminator, the version name does not move) and three of the four owed checks PASSED on hardware:
-
-- **WP-DL-1 PASS.** The feed's PDF: log `[download] saving "ParlerMarteau_Rev03.pdf" (tauri=true)`,
-  the SAF dialog opened (`documentsui/PickActivity`) prefilled with the right name, and after
-  ENREGISTRER the file was **absent before / present after** in `/sdcard/Download`, 152 370 bytes,
-  `%PDF-1.6` + `startxref 150485` + `%%EOF`, 166 objects. So `fs:allow-write-file`, the `content://`
-  URI and the whole `blob:` routing fix are all proven. **Still owed on this WP: the backup export's
-  Tauri branch**, which changed shape (it used to ask for a DIRECTORY, which SAF does not offer).
-- **PDF pinch - the whole story, because it is the session's best lesson.** The first check PASSED on
-  "column width 100 % -> 300 %, page image 395 -> 1186 px" and the user immediately reported it
-  zoomed "pas a l'endroit qu'on veut". **The check asserted that the zoom CHANGED and never that it
-  was ANCHORED**, so it would have returned the same PASS against a build with no focal point at
-  all. `check-pdf-anchor.mjs` (now in `tools/cross-client-harness/`) replaces it: it identifies a
-  CONTENT point before the gesture (page index + fraction within that page) and re-locates it after,
-  which is the observable the user was describing.
-  **It was validated as a NEGATIVE CONTROL against the unfixed build first**
-  - drift (395, 1370) px - and that is the only reason its later verdicts mean anything.
-  Two fixes followed, and the second is the interesting one: `f218bcc6` added the focal point and
-  cut the drift to (-17, -49); `b88cf260` closed the rest. **A ratio-based scroll correction is
-  wrong in a paged column** because `py-3` and `gap-3` are fixed CSS lengths that do NOT scale, so
-  the ratio overshoots by `(ratio - 1) x (padding + gutters above the pinched page)` - measured 48 px
-  on page 2 at x3, ~192 px by page 8. The settle now re-measures the pinched PAGE after relayout
-  (`anchorScroll`/`anchorFraction`/`nearestBoxIndex`, 25 tests). Trap it introduced and closes: the
-  column animates back to `scale(1)` over 120 ms and `getBoundingClientRect` reports the ANIMATING
-  box, so the transition is suppressed while the settle measures.
-- **PDF pinch ANCHOR: PASS on hardware** (build `lastUpdateTime 20:41:25`, commit `b88cf260`), drift
-  **(-0.8, -0.5) px** at a 12 px tolerance, against (395, 1370) with no correction and (-16.8, -48.6)
-  with the ratio one. Corroboration worth keeping: `scrollTop` 1679.24 -> 1631.24 is **48.00 px
-  exactly**, the figure `pinchZoom.test.ts` predicts from the unscaled padding + gutter. Do not
-  re-verify this.
-- **LEON's TWO UI COMMITS: BOTH PASS on hardware.** `6139969d` edge-to-edge - `env(safe-area-inset-*)`
-  resolves to **top 51 px / bottom 24 px**, which is the only real proof since compiling establishes
-  nothing here. `30979c57` nav opacity - the bottom nav computes `oklab(0 0 0 / 0.8)` under
-  `data-theme="dark"`, light untouched at 0.7, theme restored to `light` afterwards. **Two locator
-  faults on the way, both the documented rule:** `document.querySelector('nav')` returns the SIDEBAR
-  (transparent), the bottom nav is `nav.fixed.bottom-0`; and the theme is driven by `data-theme` on
-  `<html>`, NOT by a `.dark` class, so adding the class measures the light rule the commit
-  deliberately left alone. Tailwind 4 emits `oklab`, so the alpha is after a `/`, not a 4th comma.
-- **WP-RELOAD-DL-1 PASS**, with the mechanism visible: cold start on `fr.emse.canari://chat/<dm>`,
-  claim `fr.emse.canari://chat/642f389a-...` written to `sessionStorage`, parked on `/posts`,
-  reloaded - claim STILL there, route still `/posts` after the 250/750/2000 ms re-checks.
-- **PDF TWO-SCALE RENDER: PASS on hardware** (build 21:29:49, commits `1637ed39` + `cb427031`).
-  `check-pdf-render.mjs` samples the first page every 16 ms while the zoom ladder is walked:
-  **473 blank-or-cut frames out of 475 before, 0 out of 474 after**, and 1 -> 1.5 -> 2 -> 3 now costs
-  ONE rasterisation instead of four. Answers the user's report of 2026-08-07 in full.
-- **FEED RETRY: PASS on hardware** (`cb427031`). `check-feed-retry.mjs` injects a one-shot
-  `/api/posts` failure in-page, clicks Reessayer: the error screen and its button are gone and two
-  cards are back, where the same injection on the previous build left the error screen up after a
-  `200`. **The failure injection must be in-page** - CDP's Network domain is blind to the app's own
-  requests on mobile, since `hooks.client.ts` replaces `window.fetch` with the Tauri plugin's Rust
-  client - and the navigation must stay CLIENT-SIDE or the document reload takes the patch with it.
-- **THE APK GATE IS NOW FULLY CLEARED except the backup export's Tauri branch.** Leon's two UI
-  commits are verified above; `9d636d6a` only adds WP-SAFELINK-1 to this file.
-
-**What that evening also established about the rig, and must not be re-derived:**
-
-- **`connect()` in `cdp.mjs` is NOT ready-aware** - it does not await the socket open and throws
-  `Sent before connected`. Use `client(port)` from `chat.mjs`. (Cost two runs, twice now.)
-- **Git Bash mangles an absolute device path** in `adb shell`: `/sdcard/ui.xml` became
-  `/Files/Git/sdcard/ui.xml`. Same class as the prod-SSH rule - **use PowerShell for adb shell
-  commands carrying an absolute path**.
-- The PDF reader renders pages as **`<img>`, never `<canvas>`** (blob URLs), and the SETTLED zoom is
-  the page column's inline `width: N%` - `transform: scale()` is the live preview and returns to 1,
-  so asserting on it would pass against a build with no settle at all.
-- **The USB link drops on its own** - it did five times over the evening, killing a logcat capture,
-  the 9222 forward, and finally the enumeration itself (the user had to re-plug physically). After
-  every drop: re-read the socket (`webview_devtools_remote_<pid>`, the pid changes on a cold start)
-  and re-do the `forward`. **The fix is TCP, and it worked**: wifi IS available at this location now
-  (`172.18.221.86`), so `adb tcpip 5555` + `adb connect 172.18.221.86:5555` - promote at once and
-  never bind a long capture to USB. *(An earlier note here said the phone had no wifi and only 4G via
-  `rmnet1`; that was true of a previous location and is no longer.)* USB serial `2A251JEGR05373`
-  (Pixel 6a) is still the one to use for `install -r`, which is far faster over the cable - and with
-  both transports attached **every `adb` call needs `-s`**.
-- One-shot scripts in the scratchpad, reuse them: `probe-a1-state.mjs`, `probe-find-pdf.mjs`,
-  `check-dl.mjs`, `check-pdf-pinch.mjs`, `check-reload-dl.mjs`. The three that became REGRESSION
-  checks were promoted into `tools/cross-client-harness/`: `check-pdf-anchor.mjs`,
-  `check-pdf-render.mjs`, `check-feed-retry.mjs`.
-- **`bun run test` fails with 7 French/English locale mismatches after an Android build** - it is the
-  documented Paraglide gotcha, not a regression. `bun run paraglide:compile`, re-run, 1113/1113.
-- **A debug APK is now ~644 MB where the content it declares is 331 MB**, the unaccounted 312.7 MB
-  matching the native lib to 0,04 % - the `.so` is physically in the archive twice. Harmless and
-  investigated: one ABI only, and the SHIPPED artefacts are 15 MB (`.aab`) / 35 MB (`.apk`). Do not
-  re-measure it.
-
-**1bis. OWED RIGHT NOW, and it is the FIRST thing to do (2026-08-07, ~21:00).** The user reported
-that re-rasterising at every zoom step is heavy and "ca peut couper l'image". Fixed by `1637ed39`:
-`RENDER_ZOOMS = [1, last step]` (a pinch through 1.5 and 2 to 3 now costs at most ONE re-render, and
-1.5 -> 2 -> 3 costs none), and the current bitmap is never taken off screen - it is replaced in
-place, an old bitmap being the right image at the wrong resolution. The cutting was the swap: the
-placeholder is an `aspect-ratio` box with `overflow-hidden`. Guard is `renderedAt` (the CSS width a
-page was rendered FOR), never `RenderedPdfPage.width`, which is DEVICE pixels.
-**Gates green, committed, NOT on the phone**: the APK build was still running and the USB link then
-dropped for good (device no longer enumerated - needs a physical re-plug, the user was asked).
-`check-pdf-render.mjs` is WRITTEN but has **never run, not even as a negative control** - run it
-against the OLD build first if the phone still carries it, because its two assertions (never blank
-or clipped, and <= 2 distinct bitmap srcs across the whole ladder) are exactly what the old build
-should fail.
-
-**2. THE AUDIT / CAMPAIGN RESUMES** - the phase dashboard at the top of
-[cross-client-testing](docs/wiki/cross-client-testing.md) is the source of truth, not this file. The
-order and the preconditions are in the START HERE block above; the one thing this line adds is that
-**LIFE-5 needs the USER** (the unlock pattern after a reboot) - pause and ask, never work around it.
-
-**3. CONVERGENCE MEASUREMENTS the user asked for explicitly** (2026-08-07): does it converge, does
-the server's pending-message count match what the clients hold, is the client count right. Three
-things to reconcile, all reachable: `recon.mjs` for the per-thread marker diff between W1 and W2;
-`SELECT recipientId, deviceId, count(*) FROM queued_message GROUP BY 1,2` on prod against what each
-client actually shows; and `DeviceGroupMembership` against live key packages (the WP-GHOST-1
-predicate) to confirm the platform still holds ZERO memberships without one.
-
-**4. Then the remaining WPs**, which the user wants done "un jour, apres l'audit": WP-VIEWER-1,
-WP-STORAGE-1 (its item 1 is config only and divides the backup requirement by ~16), WP-DRAIN-2,
-WP-ECHO-1's verification, WP-PENDING-1/2's. WP-LINK-1 shipped 2026-08-07 and WP-OIDC-TAB-1 shipped
-2026-08-08 (see DURABLE RULES / CHANGELOG.md) - do not re-add either here.
+- **W1 (9224) / W2 (9223) must be RELOADED onto the current bundle** before any repair check, and
+  relaunched with occlusion detection off if restarted (flags in the campaign page). A relaunch keeps
+  the login but re-locks the PIN - `pin.mjs`, and `--account jolan` for A1, not the default `claire`.
+- **`connect()` in `cdp.mjs` is NOT ready-aware** - use `client(port)` from `chat.mjs`. (Cost two runs.)
+- **A1 over adb TCP is what makes a session stable**: `adb tcpip 5555` + `adb connect <ip>:5555`;
+  wifi IS available at this location. Both transports attached means **every `adb` call needs `-s`**.
+  The WebView pid changes on every cold start - re-read `/proc/net/unix | grep webview_devtools` and
+  re-do `adb -s <tcp> forward tcp:9222 localabstract:…`. USB serial `2A251JEGR05373` (Pixel 6a) is
+  still the fastest for `install -r`, and this device's USB link drops on its own.
+- **Use PowerShell for adb shell commands carrying an absolute device path** - Git Bash rewrites
+  `/sdcard/x` to `/Files/Git/sdcard/x`. Same class as the prod-SSH rule.
+- Rebuild: `bun tauri android build --target aarch64 --debug` in `frontend/`, install
+  `.../apk/universal/debug/app-universal-debug.apk` (NOT `arm64/`, stale). Package `fr.emse.canari`.
+  **The version name no longer moves** - the discriminator is `lastUpdateTime`. Every build leaves a
+  Gradle daemon (idle timeout now 10 min). `bun run test` fails with locale mismatches after an
+  Android build - `bun run paraglide:compile`, re-run.
+- **Never run an Android/iOS build next to anything else that builds the frontend** -
+  `beforeBuildCommand` IS `bun run build`, and two builds writing `build/` ship an app that cannot
+  boot. `scripts/check-bundle-consistency.mjs` now fails the build instead.
 
 ---
 
-**LEON PUSHES TO CANARI's `main` TOO** (asked by the user 2026-08-07). So `git fetch` at the START of
-a session and again before any measurement - never assume the local `main` is the deployed truth. His
-commits are often style/UI and they land in the same files the campaign measures, so what is owed for
-each is a WEB and a MOBILE pass, logged next to our own checks. He follows the conventions - his
-WP-KBD-1 fix (`cc540145`) carried tests, the wiki page, `CHANGELOG.md` and the SESSION STATE entry -
-so a rebase is normally clean; the thing to actually verify is his change RUNNING, on both surfaces,
-which no test of his can establish.
+**LEON PUSHES TO CANARI's `main` TOO.** `git fetch` at the START of a session and again before any
+measurement - never assume the local `main` is the deployed truth. His commits are usually style/UI
+and land in files the campaign measures, so what is owed for each is a WEB and a MOBILE pass logged
+next to our own checks. He follows the conventions, so a rebase is normally clean; the thing to verify
+is his change RUNNING, which no test of his can establish.
 
 ---
 
@@ -420,138 +238,66 @@ lacks `EVENT` on the `mysql` DB, so `--events` must be dropped).
 
 ### CANARI - THE TEST CAMPAIGN
 
-**[campaign] CROSS-CLIENT TEST CAMPAIGN.** The whole plan AND the built harness are
+The plan, the harness, every check and every defect it produced are in
 **[cross-client-testing](docs/wiki/cross-client-testing.md)**, which OPENS with a "Where this campaign
-stands" dashboard (phase table, every defect it produced and its state, what is left in order).
-**Read that dashboard rather than re-deriving the state from here** - do not maintain a second copy.
-One line: Phase 0/MSG/FWD/TAB complete, LIFE done except LIFE-5 (needs the user), NOTIF partly
-(2/3, 5, 6 left, plus the NOTIF-10 re-run), then HEAL/PIN/MULTI/CORRUPT. What a compaction must not
-lose:
+stands" dashboard. **Read that dashboard rather than re-deriving the state here** - do not maintain a
+second copy. State: Phase 0/MSG/FWD/TAB complete, LIFE done except LIFE-5 (needs the user), NOTIF
+partly (2/3, 5, 6 left, plus the NOTIF-10 re-run), then HEAL/PIN/MULTI/CORRUPT - though the user has
+asked for the whole thing to be RE-RUN from the start once the roadmap is clear.
+
+What a compaction must not lose:
 
 - Runs against **PRODUCTION**, two real accounts, credentials in the scratchpad
-  `test-accounts.json`, **never in the repo**.
-- **The harness is BUILT, proven, and ARCHIVED IN THE REPO** at **`tools/cross-client-harness/`**
-  (47 files, flat on purpose so every relative import and every `execFileSync('pin.mjs')` still
-  resolves; its README covers the rig). The scratchpad copy is the working one for a live session,
-  and also holds the ~60 one-shot `probe-*`/`*-triage` scripts deliberately left out of the archive.
-  A later session REUSES these, it does not rebuild them. One `cdp.mjs` drives all three clients
-  (W1 on 9224, W2 on 9223, A1's WebView on 9222 via `adb forward`); `a1.py` is only for native
-  surfaces. W1 moved OFF the chrome-devtools MCP on purpose, so no password is ever a tool-call
-  argument, and `test-accounts.json` is gitignored in both places.
-- **A1 is signed in and PIN-unlocked.** Its device id is `tauri-d82cd226...-msgnk8nf-gyb2`; the DM
-  under test is `642f389a-2800-412d-ab7c-cc521587f97f`. Check the APK's mtime before trusting a run,
-  since the version name no longer moves.
+  `test-accounts.json`, **never in the repo** (gitignored in both copies; no password is ever a
+  tool-call argument, which is why W1 moved off the chrome-devtools MCP).
 - **EVERY test message goes in the two-test-account DM, and NOWHERE else** (user, 2026-08-10). A
   one-off probe run in a colleague's conversation because it was convenient fired a "dangerous link"
   warning into a real person's thread. `openConversation(w1, 'Claire')` / `(w2, 'Jolan')` is what
-  every campaign script already does - keep new probes on it, and use the `Campagne de test`
-  community for anything that needs a channel.
-- **Reading the phone, and flashing it.** **The version name is still 0.13.0, so it no longer
-  distinguishes builds** - the discriminators are `lastUpdateTime` and, in the artefacts, Rust
-  strings inside `libmines_app_lib.so`. Rebuild with `bun tauri android build --target aarch64
-  --debug` in `frontend/`, install
-  `src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk` (NOT
-  `arm64/`, which holds a stale July APK) with `adb install -r`. Web assets are brotli-compressed
-  inside the `.so`, so only RUST strings can be grepped there. The package is `fr.emse.canari`, NOT
-  `fr.emse.canari.app`. **Every such build leaves a Gradle daemon running** - it is designed to
-  outlive the build by intent (faster next time), but the shell/agent session that started it
-  usually exits first, so it reparents to PID 1 and looks orphaned. `gen/android/gradle.properties`
-  now sets `org.gradle.daemon.idletimeout` to 10 minutes instead of Gradle's 3-hour default so a
-  forgotten one dies on its own; to end one immediately, `ps aux | grep GradleDaemon` and kill the
-  PID (`./gradlew --stop` only works from the exact same `gen/android` checkout with matching
-  args, which a background build won't have used). **`am force-stop` is NOT "the user killed the app"**: Android's STOPPED state
-  cancels every FCM broadcast until a manual launch (proven in logcat), so every killed-app cell must
-  use a SWIPE from recents or `am kill` - and `am kill` does NOT reclaim a FOREGROUND process, so go
-  HOME first and assert the death. The phone's whole web console is in logcat under `Tauri/Console`,
-  which is how to read it while the WebView is unreachable; a busy device overruns the logcat ring in
-  minutes, so capture continuously to a file rather than dumping after the fact.
-- **Re-logging the phone in IS automatable**: the Android login opens the SYSTEM browser (`openUrl`),
-  so forward CDP to `localabstract:chrome_devtools_remote` and run `login.mjs --match cas.emse.fr`.
-  Never `realClick` the CAS fields (the hit test reaches "mot de passe oublie" on that layout) -
-  focus by element and assert `activeElement`.
-- **An offline RECEIVER cannot be faked in the browser** - `emulateNetworkConditions` fails every
-  new request in 10 ms and W2 still rendered the message twice over. Cause not established; do not
-  re-explain it. MSG-9 belongs on the phone (`svc wifi disable` + `svc data disable`), which needs
-  adb on **USB** - the wireless transport dies with the wifi, and this device's USB link drops on
-  its own, so re-do the `forward` and wake the screen before every phone run.
-- **A green check's observation log is where two shipped bugs came from.** MSG-6 passed while its
-  log carried a `400` on `/api/mls/link-preview` - which turned out to be every URL containing a
-  closing bracket being truncated. Read the noise; that is the whole point of section 9.
-- **RECONCILIATION is the only way this campaign's loss class can be SEEN**, and `recon.mjs` does
-  it: markers on W1 diffed against markers on W2 for one thread. Re-run it after any batch of sends;
-  a green per-check verdict cannot substitute for it - it is what found WP-LOSS-1 and WP-ECHO-1.
-  **Two corrections it needed:** the message list is VIRTUALISED, so reading `innerText` once after
-  scrolling to the top returns a single screenful and drops the rest (it must accumulate at every
-  scroll position); and each side loads a different amount, so the diff must be BOUNDED to the time
-  window both cover, using the timestamp baked into every marker. Before those fixes it reported two
-  messages as permanently lost when both were present. **A diff between unequal windows looks
-  authoritative and is noise.**
-- **The phone's IP moves between sessions** (it has already changed subnet). `watch.mjs` therefore
-  RESOLVES the adb serial from `adb devices`, preferring the wireless entry over USB; never
-  hard-code it again. **USB ADB drops on this phone** - promote to `adb tcpip 5555` +
-  `adb connect <ip>:5555` at once, and never bind a long capture to the USB serial.
-- **The two browsers MUST be relaunched with occlusion detection off** if they are ever restarted:
-  `--disable-features=CalculateNativeWinOcclusion,ChromeWhatsNewUI --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`,
-  plus `--user-data-dir=<scratchpad>/chrome-w1|w2`. **A page Chrome considers HIDDEN discards every
-  input event**, and native occlusion detection marks a fully covered window hidden while
-  `windowState` stays `normal` - that, not any framework quirk, is why a synthetic click could reach
-  an element and fire nothing. Consequence: a backgrounded tab must be made by focusing another TAB,
-  never by covering the window. A relaunch keeps the login (persistent profile) but re-locks the PIN
-  - `pin.mjs` handles it. On the mobile PIN modal use `Saisie manuelle`, because the keypad has no
-  readable buffer.
+  every campaign script already does. For anything needing a CHANNEL, the venue is the
+  `Campagne de test` community, never MiTV - a private channel is readable by every association
+  admin (section 11 of the wiki page).
 - **OBSERVATION IS PART OF EVERY CHECK, not a debugging step** (`watch.mjs`, wiki section 9). A
-  verdict is `PASS` only if the assertions hold AND the run is clean - errors, 4xx, page exceptions,
-  WS events, `notable` MLS lines, `stateChanges` and anything `unexplained` are reported next to it.
-  A line that turns out to be routine is ADDED to the benign list, never ignored in place.
-- **TWENTY-FIVE harness faults have produced a false result, all fixed, and every one is written up
-  in the wiki page** (search "harness fault"). Do not re-derive them - collectively they say four
-  rules,
-  and these are the ones to apply without opening it:
+  verdict is `PASS` only if the assertions hold AND the run is clean; a line that turns out to be
+  routine is ADDED to the benign list, never ignored in place. Two shipped bugs came out of a green
+  check's noise.
+- **RECONCILIATION is the only way this campaign's loss class can be SEEN** (`recon.mjs`): markers on
+  W1 diffed against markers on W2 for one thread, re-run after any batch of sends. It found WP-LOSS-1
+  and WP-ECHO-1, and no per-check verdict substitutes for it. Two corrections it needed and must keep:
+  the list is VIRTUALISED (accumulate at every scroll position, one read returns a screenful), and
+  the diff must be BOUNDED to the window both sides cover. **A diff between unequal windows looks
+  authoritative and is noise.**
+- **An offline RECEIVER cannot be faked in the browser** - `emulateNetworkConditions` fails new
+  requests in 10 ms and W2 still rendered the message twice. MSG-9 belongs on the phone
+  (`svc wifi disable` + `svc data disable`), which needs adb on **USB**.
+- **`am force-stop` is NOT "the user killed the app"**: Android's STOPPED state cancels every FCM
+  broadcast until a manual launch. Use a SWIPE from recents or `am kill` - and `am kill` does not
+  reclaim a FOREGROUND process, so go HOME first and assert the death. The phone's whole web console
+  is in logcat under `Tauri/Console`; capture continuously to a file, a busy device overruns the ring
+  in minutes.
+- **Re-logging the phone in IS automatable**: the Android login opens the SYSTEM browser, so forward
+  CDP to `localabstract:chrome_devtools_remote` and run `login.mjs --match cas.emse.fr`. Never
+  `realClick` the CAS fields - focus by element and assert `activeElement`.
+- **TWENTY-NINE harness faults have produced a false result, all fixed and all written up in the wiki
+  page** (search "harness fault"). Do not re-derive them; these are the rules they add up to:
   - **A check that puts the app through a transition must restore every precondition that transition
-    destroys.** A kill, a reboot, a radio cycle and an `install -r` all re-lock the PIN, and #22 read
-    a whole 69 s verdict through the modal - it would have returned the identical FAIL against a
-    fixed build. **A precondition found by one check belongs to every check sharing the transition.**
-  - **An action that cannot prove it took effect still yields a verdict**, and that verdict is
-    fiction. Every action asserts its own post-condition (`send` fails if the composer still holds
-    text; a kill asserts the process died), because the faults were a kill that killed nothing, a
-    "relaunch" that was a new tab, a dump too large to read scored as "no notification", and a
-    `pidof` that exits 1 exactly when the thing it measures happens.
+    destroys** - a kill, a reboot, a radio cycle and an `install -r` all re-lock the PIN. A
+    precondition found by one check belongs to every check sharing the transition.
+  - **An action that cannot prove it took effect still yields a verdict, and that verdict is
+    fiction.** Every action asserts its own post-condition.
   - **"Did the state change" is almost never the assertion; "did it change into the RIGHT state" is.**
-    The PDF pinch check asserted `width% 100 -> 300` - true, real, and identical for a build that
-    zooms about the top edge and one that zooms about your fingers, which is exactly what the user
-    reported minutes later (fault #23). A check must be validated as a NEGATIVE CONTROL against the
-    unfixed build before its green means anything, and its tolerance set from those two measurements
-    rather than from taste - the intermediate fix here cut the drift from 1370 px to 49 px, which a
-    human spot-check calls fixed and a 12 px tolerance correctly refused.
-  - **Assume a green check is wrong until its evidence says otherwise - and a FAIL too.** MSG-4
-    passed on a fixture with invalid PNG CRCs (a broken `<img>` keeps its `src`, hence
-    `naturalWidth > 0`); check M failed only because it looked for a `<canvas>` where the preview is
-    an `<img>`; MSG-8b invented an app-level loss out of an unsent draft. **Check the fixture and the
-    selector before blaming the app.**
-  - **CDP's Network domain is BLIND to the app's own requests on mobile.** `hooks.client.ts`
-    replaces `window.fetch` with the Tauri HTTP plugin's, which is a RUST client, so nothing it
-    sends ever touches the WebView's network stack: `Network.responseReceived` reported NOTHING
-    while the app was demonstrably fetching a 200. Record from INSIDE the page (wrap `window.fetch`
-    and read the log back) - and for the same reason `emulateNetworkConditions` cannot fail an app
-    request either, so inject the failure in the page too. Keep such navigation CLIENT-SIDE, or the
-    document reloads and takes the patch with it.
-  - **A locator is a guess unless it is disambiguated - and a DEVICE is a locator**: `u2.connect()`
-    with no serial raises the moment the phone is attached over both USB and wifi, which every long
-    run makes true; `/json/list` is not creation order, a document-wide text match hits the first
-    hidden action row, a tie picks the scroll container over its button, and an `aria-label` must
-    never outrank visible text. **A selector shared by two surfaces is not a post-condition either**:
-    `.chat-composer-editor` belongs to the shared `MentionComposerInput`, so it is on `/posts` too
-    and "the composer is on screen" was TRUE on the social feed - `send()` would have typed its
-    marker into a comment box on somebody's post. Every use is now scoped to
-    `.chat-composer-footer .chat-composer-editor`. **And a locator failure does not bias the verdict
-    in a predictable direction** - faults #24/#25 came from the same hour and landed opposite ways: a
-    `/zoom/i` selector matched nothing (the label is `Agrandir`), so a check returned PASS on a zoom
-    ladder it never walked, while `article`/`data-post-id` matched nothing in the feed (`PostCard`'s
-    root is `group/card`), so another returned FAIL against a page that was visibly rendering posts.
-    **Name an element from the component source, never from what the markup ought to be.**
-- **The venue is a NEW COMMUNITY, `Campagne de test`, not a channel in MiTV** - a private channel is
-  still readable by every association admin, and no association has jolan as sole admin. Two members
-  only. Section 11 of the wiki page says why; do not re-derive it.
+    Validate a check as a NEGATIVE CONTROL against the unfixed build before its green means anything,
+    and set its tolerance from those two measurements rather than from taste.
+  - **Assume a green check is wrong until its evidence says otherwise - and a FAIL too.** Check the
+    fixture and the selector before blaming the app.
+  - **A locator is a guess unless it is disambiguated - and a DEVICE is a locator.** Name an element
+    from the component SOURCE, never from what the markup ought to be, and scope a selector shared by
+    two surfaces (`.chat-composer-footer .chat-composer-editor`, not the bare editor, which is also
+    on `/posts`). A locator failure does not bias the verdict in a predictable direction.
+  - **CDP's Network domain is BLIND to the app's own requests on mobile** - `hooks.client.ts` swaps
+    `window.fetch` for the Tauri plugin's RUST client. Record from INSIDE the page, inject failures
+    there too, and keep such navigation CLIENT-SIDE or the reload takes the patch with it.
+  - **A virtualised count needs a FRESH MOUNT and the max over repeated polls**, and a baseline needs
+    a polled budget rather than a fixed wait (#28/#29).
 - **Restore Firefox as the device's default browser when the campaign ends**
   (`cmd role add-role-holder android.app.role.BROWSER org.mozilla.firefox`); it was switched to
   Chrome because Firefox exposes no CDP.
@@ -559,26 +305,19 @@ lose:
 A check that FAILS earns a WP with its captured log; a check that passes earns a row in section 10
 and nothing else.
 
-**A BROKEN GROUP HAS ONLY EVER BEEN SEEN HEAL ON THE PHONE.** Asked by the user 2026-08-06: the same
-repair must be measured on the BROWSER. Four checks - epoch gap, unknown group, generation gap, and
-the pair nothing has ever exercised together (a recovery while a SECOND tab holds the leader role) -
-are section 7.1 of [cross-client-testing](docs/wiki/cross-client-testing.md). The break is a RESTORED
-older snapshot of `CanariDBMls_<dev>`; take the snapshot first. Both browsers must be RELOADED first.
-
 **[device] The verification pass is NOT a Work Package.** Everything native is verified by COMPILING,
-which proves nothing about running, and the whole owed list lives in
-**[device-verification](docs/wiki/device-verification.md)** - checks B-P, the build to install, the
-verdict log line of each, and the PASS/owed table. Android passed the ladder on v0.11.7; **iOS has
-never run one check on hardware**. Owed on both: H (deep link into the conversation), K (quick
-reply), L (revoked device re-enrolling), N (offline unlock + promotion), O (the store/update
-destination, what is left of WP-STORE-1), P (the iOS cookie jar). **Open a WP only when a check
-FAILS**, and only with its captured log. Capture tool: `test_adb.py` at the repo root.
-The four human checks left from the SEO work are the same shape -
+which proves nothing about running; the owed list is
+**[device-verification](docs/wiki/device-verification.md)** - checks B-P with the verdict line of
+each. Android passed the ladder on v0.11.7; **iOS has never run one check on hardware**. Owed on
+both: H (deep link into the conversation), K (quick reply), L (revoked device re-enrolling), N
+(offline unlock + promotion), O (the store/update destination), P (the iOS cookie jar). **Open a WP
+only when a check FAILS**, and only with its captured log. Capture tool: `test_adb.py` at the repo
+root. The four human checks left from the SEO work are the same shape -
 [seo > what no test here can prove](docs/wiki/frontend/seo.md#what-no-test-here-can-prove).
 
-**Release status:** v0.13.1 released 2026-08-07, all five workflows green, four artefacts attached,
-prod answering `{"version":"0.13.1"}`. **`minClientVersion` stays at 0.13.0 on purpose**: the store
-rollout has not reached devices, and raising it first locks everyone out.
+**Release status:** v0.13.1 released 2026-08-07, prod answering `{"version":"0.13.1"}`.
+**`minClientVersion` stays at 0.13.0 on purpose**: the store rollout has not reached devices, and
+raising it first locks everyone out.
 
 ---
 
@@ -591,9 +330,10 @@ rollout has not reached devices, and raising it first locks everyone out.
   Do not re-derive it, and do not re-open the load hypothesis or "forwarding is special": both are
   dead. The sender half is VERIFIED on prod (3/3 delivered where it lost 2/2) - do not re-verify it.
   **Owed:** a LOSS-branch verification (no reproduction has produced one since the sender fixes
-  landed, which is itself the point); the **ANDROID** half - the code is on the device but no phone
-  run has exercised either branch. **Two deliberate gaps, not defects:** the `recentSends` ring dies
-  on a reload, and nothing tells the receiver's USER that a message was lost.
+  landed, which is itself the point); the **ANDROID** half - the phone's detection is VERIFIED
+  (2026-08-10, 13 `LOST frame … (SecretReuseError)` lines where there were zero) but no phone run has
+  exercised the repair end to end since. **One deliberate gap, not a defect:** nothing tells the
+  receiver's USER that a message was lost.
 
 - \[ \] **WP-PENDING-1 (P1) - fixed and deployed; the ONE verification owed is against a REAL
   backlog.** A single `AbortController(10_000)` wrapped a whole paginated pull, so a backlog bigger
@@ -678,14 +418,19 @@ rollout has not reached devices, and raising it first locks everyone out.
 
 **Known and deliberately NOT a WP yet** (do not "fix" these by reflex):
 
-- A device holding SOME of a conversation, missing older messages, and never failing to decrypt
-  carries no marker, so it never asks for history - it learns only by being someone else's elected
-  responder (WP-HIST-3).
+- **A device only asks for history when something TELLS it to.** The four triggers are a decrypt
+  failure, a fresh join with no local store, being elected as a responder and finding the peer holds
+  more (`peer-holds-more`), and a reconnect re-soliciting an existing marker. So a device holding
+  SOME of a conversation, missing older messages and never failing to decrypt carries no marker and
+  never asks - it converges only once something else has elected it. Narrower than it was (one
+  election now leaves a durable marker that the reconnect seam and the 15-minute sweep keep working),
+  but not closed. Do not "fix" it with a periodic unconditional solicitation: that is a broadcast on
+  a timer, which is the exact shape this area was just cleared of.
 - **`history_request` is deliberately NOT made durable** the way `welcome_request` is (Redis + FCM):
-  a stored request drained hours later has no digest (60 s MLS rendezvous), so the responder would
-  fall back to the full-store dump WP-HIST-3 exists to remove, for a device that may need nothing -
-  and the requester must reconnect to read anything anyway, which re-solicits. The related half: a
-  missing Welcome BLOCKS a group, missing history only degrades it.
+  a stored request drained hours later has no digest (60 s rendezvous TTL), so the responder falls
+  back to the full-store dump the diff exists to remove, for a device that may need nothing - and the
+  requester must reconnect to read anything anyway, which re-solicits. The related half: a missing
+  Welcome BLOCKS a group, missing history only degrades it.
 - **One MLS client in a SharedWorker**, shared by every tab (the successor to WP-MULTITAB-1). It
   would remove the class outright rather than gating each write path one at a time, and nothing
   type-checks that a new path went through the queue. Cost is why it is not the fix: the worker
