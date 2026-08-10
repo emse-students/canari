@@ -413,29 +413,17 @@ raising it first locks everyone out.
   days of no access, so a new device or a reinstall sees no image older than 30 days, silently. That
   is what makes the forecast survivable and it may not be intended - section 6 of the page.
 
-- \[ \] **WP-ANR-1 (P1) - `mls.bin` IS DECODED ONE BYTE AT A TIME, AND IT ANRs THE APP AFTER EVERY
-  STORE UPDATE.** Seen by the user 2026-08-10 ("Canari ne repond pas"), captured in the scratchpad
-  `anr-2347.txt`. The ANR subject is `MY_PACKAGE_REPLACED` -> `CanariBootReceiver`, i.e. it fires
-  **after every Play Store update**, and the receiver is NOT the defect: it is correctly written
-  (`goAsync()`, worker thread, `finish()` in a `finally`). The main thread was IDLE in
-  `nativePollOnce`; the `canari-boot` worker was `state=R` with **58.6 s of CPU** (`schedstat`
-  58611852899 ns) inside `ciborium`, and the stack is unambiguous - `Vec<u8>::deserialize` ->
-  `deserialize_seq` -> `VecVisitor<u8>::visit_seq` -> `SeqAccess::next_element::<u8>` ->
-  `Decoder::pull` -> `Header::try_from`, **one CBOR header parse per byte**, against a 2 667 968-byte
-  `mls.bin`. Root cause: serde's GENERIC `Vec<u8>` path. `mls-core/src/state.rs` declares
-  `identity_bundle: Vec<u8>`, `storage_values: HashMap<Vec<u8>, Vec<u8>>` (the whole OpenMLS
-  keystore), `group_ids: Vec<Vec<u8>>` and `IdentityBundle::{keypair, credential}` as plain
-  `Vec<u8>`, so serde calls `deserialize_seq`, never `deserialize_bytes` - **`serde_bytes` appears
-  NOWHERE in this repo** (grep). The encoding is therefore a CBOR ARRAY OF INTEGERS, which also
-  makes the file roughly TWICE the size of its payload, so the fix wins on disk as well as on CPU.
-  **The fix is `serde_bytes` on those fields, and it is an AT-REST FORMAT CHANGE**, so the durable
-  rule applies without exception: a reader for the array-of-ints format ships in the SAME commit
-  (accept either a byte string or a seq), or every user loses their identity and every group.
-  **Honest caveats on the magnitude, all three to be re-measured on a RELEASE build before sizing
-  it:** this was a debug APK (unoptimized Rust), the outbox was unusually full (the radio had just
-  been down 150 s), and it followed an `install -r`. The per-byte code path is real in both profiles;
-  only the seconds are unproven. Second, smaller half: `drainPendingOutbox` does work proportional to
-  a backlog inside a 60 s `goAsync()` deadline, which is a hard OS limit - it needs a bound.
+- \[ \] **WP-ANR-1 (P1) - FIXED AND PUSHED (`01bc0a13`); what is left is ONE on-device
+  verification.** Both multiplicative causes are gone (the per-byte CBOR decode, and the drain
+  reloading `mls.bin` once per queued message), with the measurements, the one-way rollback
+  constraint and every test in
+  [mls-protocol > how the state is encoded](docs/wiki/protocols/mls-protocol.md) and
+  [mobile > the drain is a BATCH](docs/wiki/frontend/mobile.md). **Do not re-derive any of it.**
+  **Owed:** install a build on A1 and confirm no ANR through `MY_PACKAGE_REPLACED` with a non-empty
+  outbox - which needs a RELEASE build to be worth anything, since the 58.6 s figure came from a
+  debug APK and debug measured ~10x release on the same fixture. Also owed: **the iOS
+  `workflow_dispatch` compile check** - the `.mm` was edited symmetrically and nothing local
+  compiles ObjC.
 
 - \[ \] **WP-DIRECTBOOT-1 (P1) - AFTER EVERY REBOOT THE APP PROCESS IS CREATED BEFORE THE FIRST
   UNLOCK, AND IT SERVES PUSH DEGRADED FOR THE REST OF ITS LIFE.** Found by the OBSERVATION half of
@@ -561,7 +549,14 @@ paragraph belongs in `docs/wiki/` - put it there and leave the pointer here.
 Everything that touches the device key, the PIN, `mls.bin` or an unlock path is on those two pages.
 The four traps worth seeing without opening one:
 
-- An at-rest envelope change needs a reader for the previous format in the SAME commit.
+- An at-rest envelope change needs a reader for the previous format in the SAME commit - and that
+  reader only buys the FORWARD direction. Backwards is a separate promise nobody makes by default:
+  once a device has saved in the new format, every build older than that commit is a total loss of
+  identity and groups for it. Say so at the commit, or a routine rollback destroys users. **The
+  frontend must not be rolled back past `01bc0a13`** (`mls.bin` byte-string encoding, WP-ANR-1).
+- **serde HAS NO `Vec<u8>`**: the derived impls take the generic sequence path, so a `Vec<u8>` field
+  is written as an array of integers and read back one CBOR header per byte - x45 slower and x2
+  larger, measured. `mls-core/src/byte_compat.rs` is the fix; any NEW byte field must use it.
 - `isValidPin` (>= 4 chars) guards setup, change, recovery AND unlock - one rule, or a lockout.
 - A status code is an ANSWER, a transport failure is not: only a 401/403 may log a user out, and
   `navigator.onLine` alone never proves reachability (a captive portal reports `true`).
@@ -641,6 +636,21 @@ carry in the head:
   (WP-ECHO-1). Buffer AFTER the durable write, and make every discard log what it dropped.
 - The mirror is READ as well as written: a file one side rewrites wholesale silently deletes
   whatever the other side appended, so every such pair needs an adoption pass, not just a drain.
+- **A PER-ITEM API MAKES THE PER-ITEM COST INVISIBLE, AND THE LOOP IS WRITTEN WHERE NOBODY CAN SEE
+  IT.** The background drain called a single-message entry point once per queued message, and each
+  call re-read and re-wrote the WHOLE 2.7 MB MLS keystore - `O(N x |file|)` inside a 60 s OS
+  deadline (WP-ANR-1). Nothing in either signature said "this is expensive to call twice". When a
+  loop crosses an FFI/JNI boundary, the batch belongs on the SHARED side of it: one load, one save,
+  per-entry results - which also puts the logic somewhere a host `cargo test` can reach.
+- **BOUND THE WORK THAT CONSUMES AN IRREVERSIBLE RESOURCE, NOT THE WORK THAT COSTS TIME.** Capping a
+  drain by how many messages it POSTs is the wrong axis: encrypting consumes a ratchet generation
+  whether the frame is ever sent or not, so a cap on the POSTs still runs the sender past the peer
+  and ends in `TooDistantInTheFuture`, which no retry repairs. The cap goes on the ENCRYPT; the
+  surplus is not touched at all. A wall-clock budget is then only the safety net, never the plan.
+- **THE RECORD OF WHAT IS STILL OWED IS ONLY AS DURABLE AS ITS LAST WRITE.** The outbox mirror was
+  rewritten once, at the end of the drain, so a kill in the middle re-sent everything already
+  delivered. Ask of any "remove it when done" bookkeeping what a kill between two writes costs, and
+  make that a bounded number rather than the whole backlog.
 - **A REPAIR THAT RECORDS ITS OWN OUTPUT AS NEW INPUT HAS NO FIXED POINT.** A replay is not a send:
   re-noting one into `recentSends` under a fresh id and a fresh timestamp defeated the expiry AND
   the dedup at once, so a five-minute decaying buffer became a permanent playlist and a bounded
