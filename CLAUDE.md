@@ -90,10 +90,16 @@ up: **prod IS the test server** until a `dev.canari-emse.fr` exists.
 4. **The phone is available this session** - the user offered to plug it in, so the Android P1s and
    LIFE-5 come before the rest of the browser roadmap.
 
-**One observation from the user, NOT yet a WP** (2026-08-10): a conversation HEADER was rendered for
-a conversation they were not actually inside ("l'UI etait trompeuse, on avait le header de la
-conversation avec Claire mais nous n'etions pas dedans"). They were unsure. Check whether
-`selectedContact` and the header can disagree before opening anything.
+**One observation from the user, and it is almost certainly a REAL defect** (2026-08-10): a
+conversation showed its HEADER with no messages under it, and **"pour avoir les messages affiches,
+j'ai change de conv, puis je suis revenu dans la precedente et j'ai vu les messages"**. That second
+sentence is the whole diagnosis: **a REMOUNT fixed it, so the messages were already there and the
+open view simply never re-read them.** Exactly the shape of the feed-retry defect already in DURABLE
+RULES - "leaving the page and coming back worked, which reads as a data fault and is not one".
+Suspect the seam between a bulk ingest / history bundle landing and `activeConversation`: `MainChatPage`
+already carries an "explicit derived binding so ChatArea re-renders when the open conversation
+mutates" (line ~106), which says someone has fought this before and did not close it. Reproduce by
+sending into a conversation that is OPEN while a drain is running, not by opening one.
 
 #### What the escalation chantier settled (2026-08-10, shipped - do not re-derive)
 
@@ -406,6 +412,57 @@ raising it first locks everyone out.
   prune` frees 5.45 GB right now. **One thing needs the USER, not a fix:** media are GC'd after 30
   days of no access, so a new device or a reinstall sees no image older than 30 days, silently. That
   is what makes the forecast survivable and it may not be intended - section 6 of the page.
+
+- \[ \] **WP-ANR-1 (P1) - `mls.bin` IS DECODED ONE BYTE AT A TIME, AND IT ANRs THE APP AFTER EVERY
+  STORE UPDATE.** Seen by the user 2026-08-10 ("Canari ne repond pas"), captured in the scratchpad
+  `anr-2347.txt`. The ANR subject is `MY_PACKAGE_REPLACED` -> `CanariBootReceiver`, i.e. it fires
+  **after every Play Store update**, and the receiver is NOT the defect: it is correctly written
+  (`goAsync()`, worker thread, `finish()` in a `finally`). The main thread was IDLE in
+  `nativePollOnce`; the `canari-boot` worker was `state=R` with **58.6 s of CPU** (`schedstat`
+  58611852899 ns) inside `ciborium`, and the stack is unambiguous - `Vec<u8>::deserialize` ->
+  `deserialize_seq` -> `VecVisitor<u8>::visit_seq` -> `SeqAccess::next_element::<u8>` ->
+  `Decoder::pull` -> `Header::try_from`, **one CBOR header parse per byte**, against a 2 667 968-byte
+  `mls.bin`. Root cause: serde's GENERIC `Vec<u8>` path. `mls-core/src/state.rs` declares
+  `identity_bundle: Vec<u8>`, `storage_values: HashMap<Vec<u8>, Vec<u8>>` (the whole OpenMLS
+  keystore), `group_ids: Vec<Vec<u8>>` and `IdentityBundle::{keypair, credential}` as plain
+  `Vec<u8>`, so serde calls `deserialize_seq`, never `deserialize_bytes` - **`serde_bytes` appears
+  NOWHERE in this repo** (grep). The encoding is therefore a CBOR ARRAY OF INTEGERS, which also
+  makes the file roughly TWICE the size of its payload, so the fix wins on disk as well as on CPU.
+  **The fix is `serde_bytes` on those fields, and it is an AT-REST FORMAT CHANGE**, so the durable
+  rule applies without exception: a reader for the array-of-ints format ships in the SAME commit
+  (accept either a byte string or a seq), or every user loses their identity and every group.
+  **Honest caveats on the magnitude, all three to be re-measured on a RELEASE build before sizing
+  it:** this was a debug APK (unoptimized Rust), the outbox was unusually full (the radio had just
+  been down 150 s), and it followed an `install -r`. The per-byte code path is real in both profiles;
+  only the seconds are unproven. Second, smaller half: `drainPendingOutbox` does work proportional to
+  a backlog inside a 60 s `goAsync()` deadline, which is a hard OS limit - it needs a bound.
+
+- \[ \] **WP-HISTBANNER-1 (P2) - the "historique en attente" banner is PERMANENTLY WRONG on a
+  perfectly healed conversation, three defects stacked, all introduced 2026-08-10.** Seen by the
+  user on BOTH browsers; the live state is captured by the scratchpad `hist-phase.mjs`. The
+  conversation is fine - the HEAL run the same evening ended `HEALED 14/14` - so this is bookkeeping
+  outliving the condition it described, which is the worst kind of banner: it trains the user to
+  ignore it.
+  1. **THE MARKERS DEADLOCK EACH OTHER.** Both W1 and W2 hold `mls_awaiting_history_since` for the
+     SAME group, and a marker is cleared ONLY by a peer announcing completeness. `actions.ts:1045`
+     deliberately stays silent when `idsToSend.length === 0 && isAwaitingHistory(self)` - correct in
+     isolation, and the rule it enforces is right. But once BOTH peers carry a marker and their
+     stores are equal, `idsToSend` is 0 on both sides, both stay silent, and **neither marker can
+     ever clear**. The convergence argument ("each exchange strictly reduces the symmetric
+     difference, so the empty diff is reached by construction") holds for the DATA and silently
+     assumes some peer is entitled to vouch; two waiting peers are a fixed point it does not cover.
+     The principled discharge is that an empty SYMMETRIC difference falsifies the very evidence
+     `peer-holds-more` was written on - the peer demonstrably no longer holds more - so that marker
+     is discharged by the measurement itself, whatever the peer's own state. `unreadable-frames` is
+     NOT the same case and must not be swept up with it: a frame both devices lack is still lost,
+     and only a third device can answer. Design the two separately; do not unify them by reflex.
+  2. **THE BANNER LATCHES.** `pending-unanswered` is terminal in `historyRequestPending.svelte.ts`
+     and is dropped only by a bundle arriving or by `onResume()`, which fires on `online` or on
+     `visibilitychange -> visible` - **neither of which ever fires on the tab the user is looking
+     at**. So the attempt ends at 30 s and the banner stays up for the life of the tab.
+  3. **THE STRING IS NOW A LIE.** "Nouvelle tentative automatique" / "Retrying automatically"
+     describes the retry ladder DELETED on 2026-08-10. There is no automatic retry; the next attempt
+     comes on a state edge. Cheapest of the three to fix and the most directly misleading.
 
 - \[ \] **WP-DRAIN-2 (P2) - the inbound drain still has no watchdog, so ANY hung await inside it
   stops every inbound message with no diagnostic.** `isDraining` is lowered only when the message
