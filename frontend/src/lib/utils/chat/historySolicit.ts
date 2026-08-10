@@ -296,9 +296,15 @@ export function cancelHistorySolicit(groupId: string): void {
  * it contains. What it does NOT always prove is that the wait is over, and conflating the two is
  * how a partial answer used to end a solicitation for good (WP-HIST-3):
  *
- * - An EMPTY bundle is the only authoritative "you are missing nothing": both senders compare their
- *   whole store before sending one, and neither sends it while itself awaiting history. It ends the
- *   wait whatever the evidence behind it was.
+ * - An empty VOUCHED bundle is the authoritative "you are missing nothing": the sender compared its
+ *   whole store and was not itself awaiting history. It ends the wait whatever the evidence behind
+ *   it was.
+ * - An empty UNVOUCHED bundle says something strictly weaker and still useful: our two stores are
+ *   identical, from a peer that is itself awaiting. That falsifies exactly one thing - the evidence
+ *   behind `peer-holds-more` was "this peer holds ids I lack", and it demonstrably no longer does.
+ *   It cannot discharge `unreadable-frames`: a frame BOTH devices lack is still lost, and only a
+ *   third device can produce it. Sweeping the two together would silently convert "nobody has it"
+ *   into "you are complete".
  * - A NON-EMPTY bundle carries messages, and nothing more. It voids a PRESUMPTION - "I hold nothing
  *   for this group" stops being true the moment a message lands - but it cannot answer a PROOF: the
  *   peer that listed forty ids we lack is not repaid by a chunk of forty others, and a history big
@@ -310,15 +316,22 @@ export function cancelHistorySolicit(groupId: string): void {
 export function noteHistoryBundleReceived(
   userId: string,
   groupId: string,
-  bundleMessageCount: number
+  bundleMessageCount: number,
+  opts: { vouched?: boolean } = {}
 ): void {
   // Clear the reactive pending state first, whatever the bundle holds: the banner reports an
   // ATTEMPT, and an answer arrived. It is deliberately not conditioned on the marker below, which
-  // reports the underlying gap and may legitimately outlive several bundles.
+  // reports the underlying gap and may legitimately outlive several bundles. This is also the only
+  // thing that ends the attempt on a pair of peers that can never vouch for each other - which is
+  // why the responder must ANSWER rather than stay silent (WP-HISTBANNER-1).
   historyRequestPendingStore.noteReceived(groupId);
 
+  const { vouched = true } = opts;
   const reason = readAwaitingHistoryReason(userId, groupId);
   if (bundleMessageCount > 0 && reason !== null && isProvenAwaitingReason(reason)) {
+    return;
+  }
+  if (bundleMessageCount === 0 && !vouched && reason !== null && reason !== 'peer-holds-more') {
     return;
   }
 

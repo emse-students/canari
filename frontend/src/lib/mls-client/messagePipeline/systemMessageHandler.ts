@@ -162,9 +162,9 @@ export async function handleSystemEvent(
     log(
       `[HISTORY_PULL] ${senderNorm} wants ${wanted.length} message(s) from ${convoKey.slice(0, 8)}…`
     );
-    // `announceComplete: false`: we were asked about a SUBSET, so holding none of it says nothing
-    // about whether the asker is complete - and an empty bundle would end its solicitation for good.
-    await sendHistoryBundleForIds(convoKey, wanted, deps, { announceComplete: false }).catch((e) =>
+    // `silence`: we were asked about a SUBSET, so holding none of it says nothing about whether the
+    // asker is complete - and an empty bundle would end its solicitation for good.
+    await sendHistoryBundleForIds(convoKey, wanted, deps, { emptyMeans: 'silence' }).catch((e) =>
       log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`)
     );
     return true;
@@ -548,14 +548,18 @@ export async function handleSystemEvent(
   }
 
   if (event === 'history_bundle') {
-    // A bundle arrived: somebody answered, so the offline banner comes down. Whether it also ENDS
-    // the wait depends on what it carries, which is why the count is read before anything is
+    // A bundle arrived: somebody answered, so the pending banner comes down. Whether it also ENDS
+    // the wait depends on what it carries, which is why both facts are read before anything is
     // ingested - an empty bundle is the peer saying "you are missing nothing", a full one is just
     // messages. `noteHistoryBundleReceived` owns that distinction.
+    //
+    // An ABSENT `vouched` means vouched: every client shipped before the field existed sent a bare
+    // `{ messages: [] }` when it was entitled to vouch, and only when it was.
     noteHistoryBundleReceived(
       userId,
       convoKey,
-      Array.isArray(data.messages) ? data.messages.length : 0
+      Array.isArray(data.messages) ? data.messages.length : 0,
+      { vouched: data.vouched !== false }
     );
     try {
       type BundleMsg = {

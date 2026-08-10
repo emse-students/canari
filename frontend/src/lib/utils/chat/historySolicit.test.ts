@@ -303,6 +303,43 @@ describe('noteHistoryBundleReceived', () => {
     }
   );
 
+  it('an empty UNVOUCHED bundle discharges peer-holds-more - its evidence is falsified', () => {
+    // The marker was written because that peer listed ids we lacked. An empty symmetric diff with
+    // the same peer says it no longer holds anything we do not, so the evidence is gone. Whether
+    // the peer is itself awaiting is irrelevant to that claim - it is about OUR store, not its.
+    markAwaitingHistory(USER, 'g1', 'peer-holds-more');
+    noteHistoryBundleReceived(USER, 'g1', 0, { vouched: false });
+    expect(localStorage.getItem(MARKER)).toBeNull();
+  });
+
+  it.each([['unreadable-frames'], ['no-local-history']] as const)(
+    'an empty UNVOUCHED bundle does NOT discharge %s - only a third device can answer it',
+    (reason) => {
+      // A frame BOTH devices lack is still lost. Sweeping this up with the case above would
+      // convert "nobody here has it" into "you are complete" and stop the group ever asking the
+      // one device that might still hold it.
+      markAwaitingHistory(USER, 'g1', reason);
+      noteHistoryBundleReceived(USER, 'g1', 0, { vouched: false });
+      expect(localStorage.getItem(MARKER)).not.toBeNull();
+    }
+  );
+
+  it('an empty UNVOUCHED bundle still ends the ATTEMPT, which is what unsticks the banner', () => {
+    // The deadlock's visible symptom: two peers both awaiting answered each other with silence, so
+    // every attempt died on the 30 s window and the banner never came down again (WP-HISTBANNER-1).
+    // The marker legitimately survives here - the banner must not.
+    markAwaitingHistory(USER, 'g1', 'unreadable-frames');
+    const mls = makeMls();
+    solicitHistory(mls, 'g1', log);
+    vi.advanceTimersByTime(INITIAL);
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
+
+    noteHistoryBundleReceived(USER, 'g1', 0, { vouched: false });
+
+    expect(historyRequestPendingStore.getPhase('g1')).toBeNull();
+    expect(localStorage.getItem(MARKER)).not.toBeNull();
+  });
+
   it('keeps a proven marker alive through a partial answer, and lets an empty diff end it', () => {
     // This is what makes the mechanism terminate without counting anything. A chunk of messages is
     // not an answer to "you are missing these ids", so the marker survives and the next edge asks

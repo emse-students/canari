@@ -208,7 +208,7 @@
   "chat_unpin_title": "Désépingler",
   "chat_mls_sync_in_progress": "Synchronisation MLS en cours - envoi temporairement indisponible",
   "chat_history_request_pending_unsent": "L'historique est en attente : aucun autre appareil n'est connecté pour l'envoyer. Nouvelle tentative dès qu'un appareil revient.",
-  "chat_history_request_pending_unanswered": "L'historique est en attente : la demande n'a pas encore reçu de réponse. Nouvelle tentative automatique.",
+  "chat_history_request_pending_unanswered": "L'historique est en attente : aucun appareil n'a répondu. Nouvelle tentative automatique.",
   "chat_conversation_deleted_message": "Cette conversation a été supprimée.",
   "chat_delete_locally_button": "Supprimer localement",
   "chat_typing_one_person": "{names} écrit…",

@@ -484,13 +484,18 @@ raising it first locks everyone out.
      is discharged by the measurement itself, whatever the peer's own state. `unreadable-frames` is
      NOT the same case and must not be swept up with it: a frame both devices lack is still lost,
      and only a third device can answer. Design the two separately; do not unify them by reflex.
-  2. **THE BANNER LATCHES.** `pending-unanswered` is terminal in `historyRequestPending.svelte.ts`
-     and is dropped only by a bundle arriving or by `onResume()`, which fires on `online` or on
-     `visibilitychange -> visible` - **neither of which ever fires on the tab the user is looking
-     at**. So the attempt ends at 30 s and the banner stays up for the life of the tab.
-  3. **THE STRING IS NOW A LIE.** "Nouvelle tentative automatique" / "Retrying automatically"
-     describes the retry ladder DELETED on 2026-08-10. There is no automatic retry; the next attempt
-     comes on a state edge. Cheapest of the three to fix and the most directly misleading.
+  2. ~~THE BANNER LATCHES~~ **- OVERSTATED, corrected 2026-08-11.** `pending-unanswered` is indeed
+     terminal, and `onResume()` indeed never fires on the tab being looked at - but the 15-minute
+     `AWAITING_SWEEP_INTERVAL_MS` sweep re-solicits on a visible tab, which calls `start()` and
+     refreshes the phase. So the stale window is <= 15 min, not "the life of the tab". Not worth a
+     fix on its own once (1) is fixed, because an answer now always arrives.
+  3. ~~THE STRING IS A LIE~~ **- WRONG, retracted 2026-08-11.** "Nouvelle tentative automatique" was
+     accurate: the sweep above IS an automatic retry. Deleting the RETRY LADDER did not delete the
+     sweep, and I read the one as the other. The string was reworded only for clarity of CAUSE
+     ("aucun appareil n'a repondu" rather than "la demande n'a pas encore recu de reponse"); the
+     retry promise is restored verbatim. **The rule this earns:** a claim that a string is stale
+     must name the mechanism that would honour it and show that mechanism gone - here the grep for
+     `AWAITING_SWEEP_INTERVAL_MS` would have taken one minute and refuted it before it was written.
 
 - \[ \] **WP-DRAIN-2 (P2) - the inbound drain still has no watchdog, so ANY hung await inside it
   stops every inbound message with no diagnostic.** `isDraining` is lowered only when the message

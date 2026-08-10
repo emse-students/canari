@@ -162,7 +162,7 @@ describe('handleHistoryRequest - with a digest', () => {
       ['only-ours'],
       expect.anything(),
       // Our whole store was compared, so an empty result here really would mean "you are complete".
-      { announceComplete: true }
+      { emptyMeans: 'complete' }
     );
   });
 
@@ -174,7 +174,7 @@ describe('handleHistoryRequest - with a digest', () => {
     await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
 
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, [], expect.anything(), {
-      announceComplete: true,
+      emptyMeans: 'complete',
     });
     expect(sendHistoryPull).not.toHaveBeenCalled();
   });
@@ -209,15 +209,20 @@ describe('handleHistoryRequest - with a digest', () => {
     expect(isAwaitingHistory(SELF_USER, GROUP)).toBe(true);
   });
 
-  it('stays silent about completeness while it is itself awaiting history', async () => {
-    // "You are missing nothing" is a claim a device that is itself short is not entitled to make:
-    // it would clear the requester's marker for good, and a third member may hold what it wants.
+  it('answers "identical" - never silence - while it is itself awaiting history', async () => {
+    // "You are missing nothing" is a claim a device that is itself short is not entitled to make.
+    // But SILENCE was worse than a wrong claim: with both peers awaiting and their stores equal,
+    // each was the other's only responder and neither answered, so both markers stood for ever and
+    // both banners with them (WP-HISTBANNER-1). `identical` says only what was measured - our
+    // stores match - which the requester weighs against its OWN evidence.
     markAwaitingHistory(SELF_USER, GROUP, 'unreadable-frames');
     const rows = [{ id: 'same', timestamp: at('2026-01-01T00:00:00Z') }];
     await postDigest(rows);
     await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
 
-    expect(sendHistoryBundleForIds).not.toHaveBeenCalled();
+    expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, [], expect.anything(), {
+      emptyMeans: 'identical',
+    });
   });
 
   it('still sends what it holds while awaiting history, since that part is not a claim', async () => {
@@ -228,7 +233,7 @@ describe('handleHistoryRequest - with a digest', () => {
     );
 
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, ['ours'], expect.anything(), {
-      announceComplete: true,
+      emptyMeans: 'identical',
     });
   });
 
@@ -266,7 +271,7 @@ describe('handleHistoryRequest - with a digest', () => {
       GROUP,
       ['ours-a', 'ours-b'],
       expect.anything(),
-      { announceComplete: true }
+      { emptyMeans: 'complete' }
     );
     // Their slice is theirs alone, so it is pulled - and the DEPTH travels with the prefix, or it
     // names a slice the answering device cannot compute.

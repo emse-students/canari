@@ -494,9 +494,9 @@ for it, because the evidence decides what may end it. There are two kinds:
   `peer-holds-more` (a peer's digest named ids we lack). Neither is unlearnt by other messages
   arriving.
 
-So a bundle does not end a wait by existing. An EMPTY bundle does, whatever the evidence was: it is
-the only authoritative "you are missing nothing", and both senders compare their whole store before
-sending one - neither sends it while itself awaiting history. A NON-EMPTY bundle carries messages and
+So a bundle does not end a wait by existing. An empty **vouched** bundle does, whatever the evidence
+was: it is the authoritative "you are missing nothing", sent by a responder that compared its whole
+store and was not itself awaiting history. A NON-EMPTY bundle carries messages and
 nothing more: it voids a presumption, and against a proof it leaves the marker standing, so the next
 edge asks for what is still missing. That is what makes
 the marker empty ITSELF: each exchange strictly reduces the difference, so it converges on the empty
@@ -506,6 +506,47 @@ solicitation.
 
 `REASON_RANK` is what keeps a proof from being overwritten by a presumption, in both directions: on
 write (`markAwaitingHistory` keeps the higher rank) and on clear (`isProvenAwaitingReason`).
+
+#### Two waiting peers were a fixed point the convergence argument did not cover (WP-HISTBANNER-1, FIXED 2026-08-11)
+
+The convergence above is an argument about the DATA, and it quietly assumes some peer is entitled to
+vouch. A responder that is itself awaiting is correctly forbidden from claiming completeness - but
+that was implemented as SILENCE, and silence is not an answer. Once both peers carried a marker and
+their stores were equal, `idsToSend` was 0 on both sides, both stayed silent, and neither marker
+could ever clear. Seen live on both browsers over a conversation that had healed 14/14 the same
+evening: a permanent "historique en attente" over a complete conversation, which is the worst kind of
+notice because it teaches the user to ignore every future one.
+
+The fix is to separate what a responder MEASURED from what it is entitled to CLAIM, which a boolean
+could not express - hence `EmptyBundleMeaning` (`groupActions.ts`) with three values, one per call
+site: `complete` (whole store compared, not awaiting, may vouch), `identical` (whole store compared,
+awaiting, may state only that the two stores match) and `silence` (a pull asked about a SUBSET, or
+the local read failed - nothing about the peer was measured). Only `identical` puts anything new on
+the wire, `{ messages: [], vouched: false }`; an ABSENT `vouched` means vouched, which is exactly
+what every client shipped before the field assumed, so an old responder stays correctly read by a
+new requester.
+
+What the requester does with it is the subtle half, and the two proofs must NOT be swept together:
+
+- `peer-holds-more` is **discharged**. Its evidence was "this peer listed ids I lack", and an empty
+  symmetric difference with that same peer falsifies it outright - whether the peer is itself
+  awaiting is irrelevant, because the claim is about OUR store, not its.
+- `unreadable-frames` and `no-local-history` **survive**. A frame both devices lack is still lost,
+  and only a third device can produce it. Discharging them here would convert "nobody present has
+  it" into "you are complete" and stop the group ever asking the one device that might still hold it.
+
+The banner comes down in every case, because an answer arrived - and that, not the marker, was the
+visible symptom. Pinned by `historySolicit.test.ts` (the discharge table) and
+`actions.historyRequest.test.ts` (the responder now answers `identical` instead of staying silent);
+both were validated as negative controls against the unfixed code first.
+
+**Two claims made about this defect were wrong and are recorded because the error is instructive.**
+The banner was said to latch "for the life of the tab": it does not, because the 15-minute
+`AWAITING_SWEEP_INTERVAL_MS` sweep re-solicits on a visible tab and refreshes the phase, bounding the
+stale window. And "Nouvelle tentative automatique" was called a lie left over from the deleted retry
+ladder: deleting the LADDER did not delete the SWEEP, and the string was accurate throughout. **A
+claim that a user-facing string is stale must name the mechanism that would honour it and show that
+mechanism gone** - one grep for the sweep constant would have refuted both before they were written.
 
 ### There is ONE repair, and deleting the other one is what fixed the escalation (2026-08-10)
 

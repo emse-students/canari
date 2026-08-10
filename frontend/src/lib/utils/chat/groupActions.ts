@@ -671,27 +671,39 @@ export async function sendHistoryPull(
 }
 
 /**
+ * What an EMPTY selection means, which is a property of what the responder COMPARED - never of how
+ * much it happens to be sending. The three answers are not interchangeable and a boolean could only
+ * carry two of them, which is how the third came to be expressed as silence and deadlocked a pair of
+ * peers (WP-HISTBANNER-1).
+ *
+ * - `complete` - we compared our WHOLE store against the peer's digest and it is missing nothing,
+ *   and we are not ourselves awaiting, so we may vouch for that. "You are complete" and "nobody
+ *   answered" must not be the same signal: conflating them leaves a device that is already up to
+ *   date showing the pending banner and re-soliciting for the whole 30-day give-up horizon.
+ * - `identical` - we compared our WHOLE store and the peer lacks nothing we hold, but we are
+ *   ourselves awaiting history, so we cannot vouch for completeness. We can still state the fact we
+ *   DID measure - our stores are identical - which is exactly enough to falsify `peer-holds-more`
+ *   on the requester and nothing more. Silence here is what let two waiting peers wait on each
+ *   other for ever: each was entitled to answer and neither did.
+ * - `silence` - we were asked for a SUBSET (a pull) and hold none of it, or our own read failed.
+ *   Either way we measured nothing about the peer's completeness, so we say nothing and let another
+ *   member answer.
+ */
+export type EmptyBundleMeaning = 'complete' | 'identical' | 'silence';
+
+/**
  * Sends only the messages named by `ids`, which is what a diff resolves to.
  *
- * `announceComplete` decides what an EMPTY selection means, and the two answers are not
- * interchangeable:
- *
- * - `true` - we compared our whole store against the peer's digest and it is missing nothing. That
- *   deserves an empty bundle, because "you are complete" and "nobody answered" must not be the same
- *   signal: conflating them leaves a device that is already up to date showing the offline banner
- *   and re-soliciting on every reconnect for the whole 30-day give-up horizon.
- * - `false` - we were asked for specific messages and hold none of them. Saying "complete" there
- *   would end the peer's solicitation on the word of a device that was only ever asked about a
- *   subset, when another member may well hold what it wants. Stay silent and let it retry.
+ * `emptyMeans` decides what an empty selection says; see {@link EmptyBundleMeaning}.
  */
 export async function sendHistoryBundleForIds(
   groupId: string,
   ids: readonly string[],
   deps: HistoryStoreDeps,
-  opts: { announceComplete: boolean; chunkSize?: number }
+  opts: { emptyMeans: EmptyBundleMeaning; chunkSize?: number }
 ): Promise<void> {
   const { storage, deviceKeyB64, mlsService, log } = deps;
-  const { announceComplete, chunkSize = 200 } = opts;
+  const { emptyMeans, chunkSize = 200 } = opts;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
@@ -711,16 +723,27 @@ export async function sendHistoryBundleForIds(
   }
 
   if (selected.length === 0) {
-    if (!announceComplete) {
+    if (emptyMeans === 'silence') {
       log(
         `[HISTORY_BUNDLE] Hold none of the ${wanted.size} message(s) asked for in ${groupId.slice(0, 8)}… - staying silent so another member can answer`
       );
       return;
     }
-    const bytes = encodeAppMessage(mkSystem('history_bundle', JSON.stringify({ messages: [] })));
+    // `vouched` is the whole difference between the two answers, so it goes on the wire. Its
+    // ABSENCE means vouched, which is what every client shipped before this field assumes when it
+    // reads an empty bundle - so an old responder stays correctly interpreted by a new requester.
+    const vouched = emptyMeans === 'complete';
+    const bytes = encodeAppMessage(
+      mkSystem(
+        'history_bundle',
+        JSON.stringify(vouched ? { messages: [] } : { messages: [], vouched: false })
+      )
+    );
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, true);
-      log(`[HISTORY_BUNDLE] Nothing to add for ${groupId.slice(0, 8)}… - empty bundle sent`);
+      log(
+        `[HISTORY_BUNDLE] Nothing to add for ${groupId.slice(0, 8)}… - empty bundle sent (${vouched ? 'vouching for completeness' : 'stores identical, not vouching'})`
+      );
     } catch (e) {
       log(`[HISTORY_BUNDLE] Empty bundle send error: ${String(e).slice(0, 120)}`);
     }

@@ -1043,20 +1043,15 @@ export async function handleHistoryRequest(params: {
       ? diff.missingOnPeer
       : selectEntryIdsForPrefixes(entries, diff.pushPrefixes, digest.depth);
 
-  if (idsToSend.length === 0 && isAwaitingHistory(selfUserId, groupId)) {
-    // We hold nothing the requester lacks, but we are ourselves waiting on this group - so "you are
-    // complete" is a claim we are not entitled to make. Answering it would clear the requester's
-    // marker for good on the word of a device that is itself short.
-    log(
-      `[HISTORY_REQ] ${short}... nothing to add and we are awaiting history too - staying silent`
-    );
-  } else {
-    // `announceComplete`: we compared our WHOLE store against the digest, so an empty result really
-    // does mean the requester is missing nothing - the one place entitled to say so.
-    await sendHistoryBundleForIds(groupId, idsToSend, deps, { announceComplete: true }).catch((e) =>
-      log(`[HISTORY_BUNDLE] Diff send error to ${requesterUserId}: ${String(e)}`)
-    );
-  }
+  // We compared our WHOLE store against the digest either way, so the answer is never silence. What
+  // differs is whether we may VOUCH: a device that is itself awaiting cannot say "you are complete",
+  // but it can say "our stores are identical", which is the fact it actually measured. Saying
+  // nothing at all was the deadlock: two peers both awaiting, both holding nothing the other lacked,
+  // each waiting for an answer only the other was entitled to give (WP-HISTBANNER-1).
+  const emptyMeans = isAwaitingHistory(selfUserId, groupId) ? 'identical' : 'complete';
+  await sendHistoryBundleForIds(groupId, idsToSend, deps, { emptyMeans }).catch((e) =>
+    log(`[HISTORY_BUNDLE] Diff send error to ${requesterUserId}: ${String(e)}`)
+  );
 
   const idsToPull = digest.mode === 'ids' ? diff.missingLocally : [];
   if (idsToPull.length > 0 || diff.pullPrefixes.length > 0) {
