@@ -2,13 +2,8 @@
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_wasmmlsclient_free: (a: number, b: number) => void;
-export const decrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-export const decrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const decrypt_mls_state_blob_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-export const encrypt_mls_state_blob: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const encrypt_mls_state_blob_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-export const encrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-export const encrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const init_logger: () => void;
 export const wasmmlsclient_add_member: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
 export const wasmmlsclient_add_members_bulk: (a: number, b: number, c: number, d: any) => [number, number, number];
@@ -37,6 +32,10 @@ export const wasmmlsclient_remove_members_by_device: (a: number, b: number, c: n
 export const wasmmlsclient_save_state: (a: number, b: number, c: number) => [number, number, number, number];
 export const wasmmlsclient_send_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const wasmmlsclient_send_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const decrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const decrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const encrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const encrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const __wbindgen_malloc: (a: number, b: number) => number;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_exn_store: (a: number) => void;

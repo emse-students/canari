@@ -495,6 +495,82 @@ it now. See `inboundFrameLedger.ts`.
 actually FIX, never by what each costs. Cheap-first is only sound when the cheap rung has a real
 chance, and here its single trigger guaranteed it did not.
 
+#### Re-run, 2026-08-10: the fix works and the conversation still lost 6 - because the PHONE answered
+
+The shallow break was re-run against the deployed fix as its own negative control - `PARTIAL - 9/14`
+before, so anything but `HEALED - 14/14` after means the reasoning was wrong. It came back
+**`PARTIAL - 8/14`**, and the escalation was not what failed:
+
+```
+12:02:49.053  [MLS] LOST frame for 642f389a… - the sender's ratchet rewound
+12:02:49.069  [MLS] Asked 642f389a… to retransmit the last 120s
+12:02:51.567  [HISTORY_REQ] started pending timer for 642f389a...
+12:02:51.662  [HISTORY_DIGEST] Sent for 642f389a… - ids mode, 410 id(s)
+12:02:55.639  [HISTORY_REQ] bundle received for 642f389a..., cleared pending state
+```
+
+The diff was solicited **2.5 s after the first lost frame** instead of never, and a bundle came back
+in four seconds. The fix does exactly what it claims. The bundle was simply empty, and W1 - which
+was holding all six messages, having sent them - never ran the responder at all: its console shows
+the digest arriving and no `[HISTORY_REQ] … diff with …` line.
+
+**The responder was the PHONE**, and its own logcat says what it did:
+
+```
+14:02:52.857  [WS RCV] history_request from b78568a3…:web-…-vegy for group 642f389a…
+14:02:54.888  [HISTORY_DIGEST] From b78568a3… for 642f389a… - ids, 410 id(s)
+14:02:56.420  [HISTORY_BUNDLE] Nothing to add for 642f389a… - empty bundle sent
+14:02:56.421  [HISTORY_REQ] … 0 to send, 0 to pull (identical stores)
+```
+
+Election is a random shuffle over every online device except the requester's own
+(`messaging.service.ts:1372-1382`), so a peer's phone answers as readily as a peer's browser - by
+design, and correct: `actions.ts:1044` already refuses to certify completeness from a device that is
+itself awaiting history. The phone was not awaiting anything, and the reason is one line deeper:
+
+```
+D/mls_core::messaging: Benign same-epoch ratchet frame dropped:
+group=642f389a… epoch=3 (ValidationError(UnableToDecrypt(SecretTreeError(SecretReuseError))))
+```
+
+**Zero `LOST frame` lines on the phone against thirteen on the browser, for the same frames.**
+`mls-core` classified every rewound frame as a benign duplicate and returned `Ok(None)`, so the
+phone's TS saw a bare `null` - indistinguishable from a structural commit - and never reached the
+fingerprint ledger. It lost the six messages in silence, recorded no gap, and was therefore
+*entitled* to announce `announceComplete`, which is the one claim that clears a requester's marker.
+Being unaware of its own gap is what made it authoritative.
+
+The most instructive part: `recevoir_message_bytes` (`commands/mls.rs:741-750`) and
+`map_decrypt_outcome` (`state.rs:60`) **both already classify `DecryptErrorKind::SecretReuse`**,
+with comments citing WP-LOSS-1 and handing the decision to the shared frontend classifier. Both were
+unreachable, because `mls-core` swallowed the error two layers below them. The web escaped only
+through a log-sniffing shim (`wasmLogShim.ts:17`) that has no counterpart on native. Careful native
+handling written for exactly this case had been dead for as long as it had existed, and no test
+noticed, because the test asserted the swallow (`same_epoch_ratchet.rs`, "a same-epoch duplicate is
+a benign drop (`Ok(None)`), never an error").
+
+Fixed in `mls-core/src/messaging.rs`: `SecretReuseError` leaves the benign set and reaches the
+caller. `TooDistantInThePast`/`NoPastEpochData` stay benign - those keys are genuinely gone and no
+peer can re-send readably. Both batch paths (`mls-wasm`, `state.rs`) keep mapping it to "nothing to
+show", because during a history REPLAY a consumed generation really is the expected case; that the
+batch therefore still cannot report a real loss is WP-PENDING-2's remaining item, now narrowed to
+one sentence: it needs a per-item verdict rather than a null.
+
+**Three rules, and the third is the expensive one:**
+
+- **A layer that cannot make a distinction must not make it.** "This generation is consumed" is not
+  "I already have this message" - only the frame's bytes separate them, and those live one layer up.
+- **A device that has not noticed its own gap will vouch for its store.** Any "I am complete" claim
+  must rest on evidence the claimant could actually have collected; silence is not evidence.
+- **Parity between platforms is not parity of the code they share.** Both platforms run the same
+  ledger, the same classifier and the same responder - and one of them could not reach any of it,
+  because a shared Rust crate answered the question before either could ask. Whenever a check runs
+  on one surface, ask what OTHER surface is a participant in the same exchange: this run's verdict
+  was decided by a device that was not under test.
+
+This also settles an item that was open as "unverified": **WP-LOSS-1's Android receiver half did not
+work.** It was never a matter of the phone not having been exercised - the code could not run there.
+
 ---
 
 ## 8. Multi-device (W1 + A1, same user)

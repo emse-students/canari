@@ -56,7 +56,12 @@ pub(crate) fn map_decrypt_outcome(
             error: None,
         },
         Err(e) => {
-            // SecretReuse = benign duplicate (key already consumed): ACK + drop, realtime parity. [[S5]]
+            // A consumed generation during a history REPLAY is expected - a bundle legitimately
+            // re-sends messages this device already read - so it is ACKed and dropped. This is
+            // NO LONGER realtime parity: since 2026-08-10 the realtime path surfaces the error so
+            // the shared ledger can tell a duplicate from a message lost to a rewound sender. The
+            // batch cannot make that distinction while its only vocabulary is `data: None`, which
+            // is precisely the gap WP-PENDING-2 stays open for. Mirrored in `mls-wasm`'s batch. [[S5]]
             if e.decrypt_kind() == mls_core::DecryptErrorKind::SecretReuse {
                 return BatchDecryptItem {
                     ok: true,

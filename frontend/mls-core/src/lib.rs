@@ -51,7 +51,10 @@ pub enum MlsError {
 /// `recevoir_message_bytes` and `map_decrypt_outcome` in `src-tauri` cannot diverge. [[S5]]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecryptErrorKind {
-    /// Ratchet key already consumed (benign duplicate): ACK + drop, it will never decrypt.
+    /// Ratchet key already consumed. It will never decrypt, so it is always ACKed and never
+    /// requeued - but it is NOT necessarily a duplicate: a sender whose ratchet rewound encrypts a
+    /// NEW message at a consumed generation. Only the frame's bytes tell the two apart, which is
+    /// why this reaches the frontend as an error rather than as "nothing to show".
     SecretReuse,
     /// OpenMLS error on the same epoch: Sender Ratchet gap (future generation) -> queue/retry.
     SenderRatchetGap,

@@ -479,6 +479,17 @@ impl WasmMlsClient {
                     let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::TRUE);
                     let _ = js_sys::Reflect::set(&obj, &data_key, &JsValue::NULL);
                 }
+                // A consumed generation during a history REPLAY is the expected case, not a
+                // defect: a bundle legitimately re-sends messages this device already read. So the
+                // batch keeps answering "nothing to show", exactly as `map_decrypt_outcome` does
+                // on native - the two paths must not diverge on the same frame. The realtime path
+                // is where the distinction is worth making, because there the frame is new.
+                // That the batch therefore still cannot report a genuine loss is a known gap, not
+                // an oversight: it needs a per-item verdict rather than a null (WP-PENDING-2).
+                Err(e) if e.decrypt_kind() == mls_core::DecryptErrorKind::SecretReuse => {
+                    let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::TRUE);
+                    let _ = js_sys::Reflect::set(&obj, &data_key, &JsValue::NULL);
+                }
                 Err(e) => {
                     let _ = js_sys::Reflect::set(&obj, &ok_key, &JsValue::FALSE);
                     let _ =

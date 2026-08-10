@@ -54,8 +54,8 @@ export class WasmMlsClient {
         return takeFromExternrefTable0(ret[0]);
     }
     /**
-     * Annule le commit *stage* (ADD ou REMOVE) quand le serveur le REJETTE. L'epoch local reste
-     * inchange (aucun fork) et un nouveau commit peut etre genere. [[C7]] Option A.
+     * Clears the *staged* commit (ADD or REMOVE) when the server REJECTS it. The local epoch stays
+     * unchanged (no fork) and a new commit can be generated. [[C7]] Option A.
      * @param {string} group_id
      */
     clear_pending_commit(group_id) {
@@ -244,8 +244,9 @@ export class WasmMlsClient {
         return ret[0] !== 0;
     }
     /**
-     * Merge le commit *stage* (ADD ou REMOVE) APRES acceptation serveur (`validateCommit`). Avance
-     * l'epoch local. Pendant de `clear_pending_commit`. [[C7]] Option A : valider-puis-merger.
+     * Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).
+     * Advances the local epoch. Counterpart of `clear_pending_commit`. [[C7]] Option A:
+     * validate-then-merge.
      * @param {string} group_id
      */
     merge_pending_commit(group_id) {
@@ -257,25 +258,30 @@ export class WasmMlsClient {
         }
     }
     /**
+     * Constructor called from JavaScript (e.g. new WasmMlsClient(...))
+     *
+     * When `device_key_b64` is provided with an encrypted state blob, the state is
+     * decrypted with the given key (ChaCha20-Poly1305 direct, no Argon2id). Otherwise,
+     * the state is loaded/created as plain CBOR.
      * @param {string} user_id
      * @param {string} device_id
      * @param {Uint8Array | null} [state_bytes]
-     * @param {string | null} [pin]
+     * @param {string | null} [device_key_b64]
      */
-    constructor(user_id, device_id, state_bytes, pin) {
+    constructor(user_id, device_id, state_bytes, device_key_b64) {
         const ptr0 = passStringToWasm0(user_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(device_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
         var ptr2 = isLikeNone(state_bytes) ? 0 : passArray8ToWasm0(state_bytes, wasm.__wbindgen_malloc);
         var len2 = WASM_VECTOR_LEN;
-        var ptr3 = isLikeNone(pin) ? 0 : passStringToWasm0(pin, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var ptr3 = isLikeNone(device_key_b64) ? 0 : passStringToWasm0(device_key_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len3 = WASM_VECTOR_LEN;
         const ret = wasm.wasmmlsclient_new(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
-        this.__wbg_ptr = ret[0] >>> 0;
+        this.__wbg_ptr = ret[0];
         WasmMlsClientFinalization.register(this, this.__wbg_ptr, this);
         return this;
     }
@@ -407,11 +413,16 @@ export class WasmMlsClient {
         return v2;
     }
     /**
-     * @param {string | null} [pin]
+     * Save state (returns a Uint8Array in JS).
+     *
+     * When `device_key_b64` is provided, the state is encrypted with ChaCha20-Poly1305
+     * using the given key (no Argon2id). Otherwise, the state is saved as plain CBOR
+     * (legacy/dev fallback).
+     * @param {string | null} [device_key_b64]
      * @returns {Uint8Array}
      */
-    save_state(pin) {
-        var ptr0 = isLikeNone(pin) ? 0 : passStringToWasm0(pin, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    save_state(device_key_b64) {
+        var ptr0 = isLikeNone(device_key_b64) ? 0 : passStringToWasm0(device_key_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         var len0 = WASM_VECTOR_LEN;
         const ret = wasm.wasmmlsclient_save_state(this.__wbg_ptr, ptr0, len0);
         if (ret[3]) {
@@ -462,6 +473,49 @@ export class WasmMlsClient {
 if (Symbol.dispose) WasmMlsClient.prototype[Symbol.dispose] = WasmMlsClient.prototype.free;
 
 /**
+ * ChaCha20 decrypt of an MLS CBOR snapshot (produced by `encrypt_mls_state_blob_with_key`).
+ * Wire format: `[nonce (12) || ciphertext]` — no salt prefix.
+ * @param {Uint8Array} encrypted
+ * @param {string} key_b64
+ * @returns {Uint8Array}
+ */
+export function decrypt_mls_state_blob_with_key(encrypted, key_b64) {
+    const ptr0 = passArray8ToWasm0(encrypted, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(key_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decrypt_mls_state_blob_with_key(ptr0, len0, ptr1, len1);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
+ * Decrypts `encrypted_data` (produced by `encrypt_with_key`) with a base64-encoded
+ * 32-byte key. Wire format: `[nonce (12) || ciphertext]` — no salt prefix.
+ * @param {string} key_b64
+ * @param {Uint8Array} encrypted_data
+ * @returns {Uint8Array}
+ */
+export function decrypt_with_key(key_b64, encrypted_data) {
+    const ptr0 = passStringToWasm0(key_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(encrypted_data, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decrypt_with_key(ptr0, len0, ptr1, len1);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
+ * @deprecated Use `decrypt_with_key` instead.
  * @param {string} pin
  * @param {Uint8Array} encrypted_data
  * @returns {Uint8Array}
@@ -481,17 +535,18 @@ export function decrypt_with_pin(pin, encrypted_data) {
 }
 
 /**
- * Argon2 + ChaCha20 encrypt of a plain MLS CBOR snapshot. Safe to call from a Web Worker.
+ * ChaCha20 encrypt of a plain MLS CBOR snapshot with a base64-encoded 32-byte key.
+ * Wire format: `[nonce (12) || ciphertext]` — no salt prefix. Safe to call from a Web Worker.
  * @param {Uint8Array} plain_state
- * @param {string} pin
+ * @param {string} key_b64
  * @returns {Uint8Array}
  */
-export function encrypt_mls_state_blob(plain_state, pin) {
+export function encrypt_mls_state_blob_with_key(plain_state, key_b64) {
     const ptr0 = passArray8ToWasm0(plain_state, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(pin, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr1 = passStringToWasm0(key_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.encrypt_mls_state_blob(ptr0, len0, ptr1, len1);
+    const ret = wasm.encrypt_mls_state_blob_with_key(ptr0, len0, ptr1, len1);
     if (ret[3]) {
         throw takeFromExternrefTable0(ret[2]);
     }
@@ -501,6 +556,28 @@ export function encrypt_mls_state_blob(plain_state, pin) {
 }
 
 /**
+ * Encrypts `data` with a base64-encoded 32-byte key (ChaCha20-Poly1305 direct, no Argon2id).
+ * Wire format: `[nonce (12) || ciphertext]` — no salt prefix.
+ * @param {string} key_b64
+ * @param {Uint8Array} data
+ * @returns {Uint8Array}
+ */
+export function encrypt_with_key(key_b64, data) {
+    const ptr0 = passStringToWasm0(key_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.encrypt_with_key(ptr0, len0, ptr1, len1);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
+ * @deprecated Use `encrypt_with_key` instead.
  * @param {string} pin
  * @param {Uint8Array} data
  * @returns {Uint8Array}
@@ -522,28 +599,27 @@ export function encrypt_with_pin(pin, data) {
 export function init_logger() {
     wasm.init_logger();
 }
-
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg___wbindgen_is_function_3c846841762788c1: function(arg0) {
+        __wbg___wbindgen_is_function_147961669f068cd4: function(arg0) {
             const ret = typeof(arg0) === 'function';
             return ret;
         },
-        __wbg___wbindgen_is_object_781bc9f159099513: function(arg0) {
+        __wbg___wbindgen_is_object_3a2c414391dbf751: function(arg0) {
             const val = arg0;
             const ret = typeof(val) === 'object' && val !== null;
             return ret;
         },
-        __wbg___wbindgen_is_string_7ef6b97b02428fae: function(arg0) {
+        __wbg___wbindgen_is_string_6541b0f6ecd4e8e5: function(arg0) {
             const ret = typeof(arg0) === 'string';
             return ret;
         },
-        __wbg___wbindgen_is_undefined_52709e72fb9f179c: function(arg0) {
+        __wbg___wbindgen_is_undefined_4410e3c20a99fa97: function(arg0) {
             const ret = arg0 === undefined;
             return ret;
         },
-        __wbg___wbindgen_string_get_395e606bd0ee4427: function(arg0, arg1) {
+        __wbg___wbindgen_string_get_fa2687d531ed17a5: function(arg0, arg1) {
             const obj = arg1;
             const ret = typeof(obj) === 'string' ? obj : undefined;
             var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -551,10 +627,10 @@ function __wbg_get_imports() {
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
-        __wbg___wbindgen_throw_6ddd609b62940d55: function(arg0, arg1) {
+        __wbg___wbindgen_throw_bbadd78c1bac3a77: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
-        __wbg_call_2d781c1f4d5c0ef8: function() { return handleError(function (arg0, arg1, arg2) {
+        __wbg_call_ec09a4cf93377d3a: function() { return handleError(function (arg0, arg1, arg2) {
             const ret = arg0.call(arg1, arg2);
             return ret;
         }, arguments); },
@@ -576,15 +652,15 @@ function __wbg_get_imports() {
         __wbg_getRandomValues_c44a50d8cfdaebeb: function() { return handleError(function (arg0, arg1) {
             arg0.getRandomValues(arg1);
         }, arguments); },
-        __wbg_get_unchecked_329cfe50afab7352: function(arg0, arg1) {
+        __wbg_get_unchecked_46e778e3cec74b5e: function(arg0, arg1) {
             const ret = arg0[arg1 >>> 0];
             return ret;
         },
-        __wbg_length_b3416cf66a5452c8: function(arg0) {
+        __wbg_length_68a9d5278d084f4f: function(arg0) {
             const ret = arg0.length;
             return ret;
         },
-        __wbg_length_ea16607d7b61445b: function(arg0) {
+        __wbg_length_fb04d16d7bdf6d4c: function(arg0) {
             const ret = arg0.length;
             return ret;
         },
@@ -592,27 +668,27 @@ function __wbg_get_imports() {
             const ret = arg0.msCrypto;
             return ret;
         },
+        __wbg_new_0b303268aa395a38: function() {
+            const ret = new Array();
+            return ret;
+        },
+        __wbg_new_20b778a4c5c691c3: function() {
+            const ret = new Object();
+            return ret;
+        },
         __wbg_new_227d7c05414eb861: function() {
             const ret = new Error();
             return ret;
         },
-        __wbg_new_5f486cdf45a04d78: function(arg0) {
+        __wbg_new_b06772b280cc6e52: function(arg0) {
             const ret = new Uint8Array(arg0);
             return ret;
         },
-        __wbg_new_a70fbab9066b301f: function() {
-            const ret = new Array();
-            return ret;
-        },
-        __wbg_new_ab79df5bd7c26067: function() {
-            const ret = new Object();
-            return ret;
-        },
-        __wbg_new_from_slice_22da9388ac046e50: function(arg0, arg1) {
+        __wbg_new_from_slice_bb2d1778c0b87eb1: function(arg0, arg1) {
             const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
             return ret;
         },
-        __wbg_new_with_length_825018a1616e9e55: function(arg0) {
+        __wbg_new_with_length_4b57a7a5dc67221c: function(arg0) {
             const ret = new Uint8Array(arg0 >>> 0);
             return ret;
         },
@@ -620,7 +696,7 @@ function __wbg_get_imports() {
             const ret = arg0.node;
             return ret;
         },
-        __wbg_now_16f0c993d5dd6c27: function() {
+        __wbg_now_bce4dc999095ea77: function() {
             const ret = Date.now();
             return ret;
         },
@@ -628,10 +704,10 @@ function __wbg_get_imports() {
             const ret = arg0.process;
             return ret;
         },
-        __wbg_prototypesetcall_d62e5099504357e6: function(arg0, arg1, arg2) {
+        __wbg_prototypesetcall_956c7493c68e29b4: function(arg0, arg1, arg2) {
             Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
         },
-        __wbg_push_e87b0e732085a946: function(arg0, arg1) {
+        __wbg_push_ceb8ef046afb2041: function(arg0, arg1) {
             const ret = arg0.push(arg1);
             return ret;
         },
@@ -642,7 +718,7 @@ function __wbg_get_imports() {
             const ret = module.require;
             return ret;
         }, arguments); },
-        __wbg_set_7eaa4f96924fd6b3: function() { return handleError(function (arg0, arg1, arg2) {
+        __wbg_set_a6ba3ac0e634b822: function() { return handleError(function (arg0, arg1, arg2) {
             const ret = Reflect.set(arg0, arg1, arg2);
             return ret;
         }, arguments); },
@@ -653,23 +729,23 @@ function __wbg_get_imports() {
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
-        __wbg_static_accessor_GLOBAL_8adb955bd33fac2f: function() {
+        __wbg_static_accessor_GLOBAL_60a4124bab7dcc9a: function() {
             const ret = typeof global === 'undefined' ? null : global;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
-        __wbg_static_accessor_GLOBAL_THIS_ad356e0db91c7913: function() {
+        __wbg_static_accessor_GLOBAL_THIS_95ca6460658b5d13: function() {
             const ret = typeof globalThis === 'undefined' ? null : globalThis;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
-        __wbg_static_accessor_SELF_f207c857566db248: function() {
+        __wbg_static_accessor_SELF_4c95f759a91e9aae: function() {
             const ret = typeof self === 'undefined' ? null : self;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
-        __wbg_static_accessor_WINDOW_bb9f1ba69d61b386: function() {
+        __wbg_static_accessor_WINDOW_44b435597f9e9ee7: function() {
             const ret = typeof window === 'undefined' ? null : window;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
-        __wbg_subarray_a068d24e39478a8a: function(arg0, arg1, arg2) {
+        __wbg_subarray_42216645a367cd7a: function(arg0, arg1, arg2) {
             const ret = arg0.subarray(arg1 >>> 0, arg2 >>> 0);
             return ret;
         },
@@ -677,7 +753,7 @@ function __wbg_get_imports() {
             const ret = arg0.versions;
             return ret;
         },
-        __wbg_wasm_bindings_log_2e953cfa40679744: function(arg0, arg1, arg2, arg3) {
+        __wbg_wasm_bindings_log_3c9c9ed361e88935: function(arg0, arg1, arg2, arg3) {
             window.wasm_bindings_log(getStringFromWasm0(arg0, arg1), getStringFromWasm0(arg2, arg3));
         },
         __wbindgen_cast_0000000000000001: function(arg0) {
@@ -713,7 +789,7 @@ function __wbg_get_imports() {
 
 const WasmMlsClientFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
-    : new FinalizationRegistry(ptr => wasm.__wbg_wasmmlsclient_free(ptr >>> 0, 1));
+    : new FinalizationRegistry(ptr => wasm.__wbg_wasmmlsclient_free(ptr, 1));
 
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();
@@ -735,8 +811,7 @@ function getDataViewMemory0() {
 }
 
 function getStringFromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return decodeText(ptr, len);
+    return decodeText(ptr >>> 0, len);
 }
 
 let cachedUint8ArrayMemory0 = null;
@@ -839,8 +914,9 @@ if (!('encodeInto' in cachedTextEncoder)) {
 
 let WASM_VECTOR_LEN = 0;
 
-let wasmModule, wasm;
+let wasmModule, wasmInstance, wasm;
 function __wbg_finalize_init(instance, module) {
+    wasmInstance = instance;
     wasm = instance.exports;
     wasmModule = module;
     cachedDataViewMemory0 = null;

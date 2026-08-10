@@ -8,9 +8,14 @@
 /// decrypt/persist on mobile).
 ///
 /// Two guarantees verified here:
-///  1. A same-epoch duplicate is a benign drop (`Ok(None)`), never an error.
+///  1. A consumed generation is REPORTED (`SecretReuse`), because this layer cannot tell a
+///     duplicate from a message lost to a rewound sender and must not decide for the caller.
 ///  2. An out-of-order burst still decrypts thanks to the widened window.
-use mls_core::MlsManager;
+///
+/// The third rule of this file - a frame older than the retained window (`TooDistantInThePast`)
+/// stays a silent `Ok(None)` - is deliberately NOT tested: `out_of_order_tolerance` is 2000, so
+/// producing one costs 2000 sends, and a test that cannot reach its own path is worse than none.
+use mls_core::{DecryptErrorKind, MlsManager};
 
 fn make_device(user_id: &str, device_id: &str) -> MlsManager {
     MlsManager::load_or_create(user_id, device_id, None)
@@ -35,7 +40,7 @@ fn pair_in_group(gid: &str) -> (MlsManager, MlsManager, String) {
 }
 
 #[test]
-fn duplicate_same_epoch_frame_is_a_benign_drop_not_an_error() {
+fn consumed_generation_is_reported_as_secret_reuse_not_swallowed() {
     let (mut alice, mut bob, gid) = pair_in_group("g-same-epoch-dup");
 
     let ciphertext = alice.send_message(&gid, b"hello").expect("encrypt");
@@ -45,14 +50,23 @@ fn duplicate_same_epoch_frame_is_a_benign_drop_not_an_error() {
         .expect("first decrypt must succeed");
     assert_eq!(first.as_deref(), Some(b"hello".as_ref()));
 
-    // Re-delivering the exact same ciphertext (realtime + queue duplicate) used to raise
-    // SecretReuseError and get queued for an endless retry. It must now be a benign drop.
-    let second = bob
+    // Re-delivering the same ciphertext is indistinguishable, HERE, from a rewound sender
+    // encrypting a brand-new message at this consumed generation - the two differ only in the
+    // frame's bytes, which the caller holds and this layer does not. So the outcome must carry the
+    // diagnosis rather than an `Ok(None)` that reads as "nothing to show": answering the benign
+    // case for both is what let a device drop real messages in silence, and then certify a peer's
+    // conversation complete because it had recorded no gap of its own (measured 2026-08-10).
+    //
+    // Requeueing is still forbidden - the frame can never decrypt - but that is the CALLER's
+    // decision, and both native callers already classify `SecretReuse` and ACK without queueing
+    // (`recevoir_message_bytes`, `map_decrypt_outcome`); each was unreachable until this changed.
+    let err = bob
         .process_incoming_message(&gid, &ciphertext)
-        .expect("duplicate frame must NOT error");
+        .expect_err("a consumed generation must reach the caller, not be swallowed as Ok(None)");
     assert_eq!(
-        second, None,
-        "duplicate same-epoch frame should be Ok(None)"
+        err.decrypt_kind(),
+        DecryptErrorKind::SecretReuse,
+        "the caller classifies on this kind: {err}"
     );
 }
 

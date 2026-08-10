@@ -82,12 +82,40 @@ fired with 1, 5, 15 then 25 payloads and delivered NONE, in either run. A 12-gen
 **16/16** via a bounded `ids`-mode diff (`32 to send, 1 to pull`). Fixed by soliciting the diff on the
 FIRST detection alongside the narrow signal (`inboundFrameLedger.ts`, 14 tests).
 
-**OWED, and it is the first thing to do: re-run the SHALLOW break against the deployed fix.** The
-negative control already exists and is the whole point - `REWIND_SENDS=12 node heal-web.mjs` returned
-`PARTIAL - 9/14` before the fix, so it must return `HEALED - 14/14` after, and any other number means
-the fix does not do what the reasoning says. **It cannot be checked until the CD has deployed**, since
-both browsers run against production. `heal-web.mjs` and `mlsdb.mjs` (in-page IndexedDB snapshot and
-restore, bytes never leave the browser) are in the scratchpad - reuse them, do not rebuild them.
+**The re-run was DONE and it returned `PARTIAL - 8/14`, which is how the NEXT P1 was found.** The
+escalation fix works exactly as claimed - the diff was solicited 2.5 s after the first lost frame and
+a bundle came back in 4 s - and the bundle was EMPTY, because the server elected the PHONE to answer
+and the phone had silently lost the same six messages. Full write-up, both consoles, in
+[cross-client-testing > 7.1 re-run](docs/wiki/cross-client-testing.md). `heal-web.mjs` and `mlsdb.mjs`
+(in-page IndexedDB snapshot and restore, bytes never leave the browser) are in the scratchpad - reuse
+them, do not rebuild them.
+
+#### 2026-08-10: A PHONE DROPS REWOUND FRAMES IN SILENCE, THEN CERTIFIES YOUR CONVERSATION COMPLETE (P1, FIXED - verification owed)
+
+`mls-core/src/messaging.rs` classified `SecretReuseError` as a benign duplicate and returned
+`Ok(None)`, so no caller could ever see it. **`recevoir_message_bytes` (`commands/mls.rs:741`) and
+`map_decrypt_outcome` (`state.rs:60`) both already classified `DecryptErrorKind::SecretReuse`, with
+comments citing WP-LOSS-1 - and both were unreachable.** The web escaped only through
+`wasmLogShim.ts:17`, which sniffs the log STRING; native has no such shim, so the phone reached
+neither the ledger nor the classifier: **zero `LOST frame` lines on A1 against thirteen on W2, for
+the same frames.** Having recorded no gap, it was not disqualified by `actions.ts:1044` and answered a
+peer's `history_request` with `0 to send, 0 to pull (identical stores)` + `announceComplete`, which is
+the one claim that clears a proven marker. Fixed by dropping `SecretReuseError` from the benign set
+(`TooDistantInThePast`/`NoPastEpochData` stay - those keys are genuinely gone). Both BATCH paths keep
+mapping it to "nothing to show" on purpose (a replay re-sends what you already read); that they still
+cannot report a real loss is all that is left of WP-PENDING-2.
+
+**This also answers WP-LOSS-1's Android half: it did not work, and never had.** Not "unverified" -
+the receiver-side detection could not run there at all.
+
+**OWED, and it is the first thing to do:** rebuild + install the APK (the one built at 14:2x predates
+this fix), then re-run `REWIND_SENDS=12 node heal-web.mjs`. Two assertions now, not one: `HEALED
+- 14/14`, AND `LOST frame` lines appearing in the PHONE's logcat where there were none. The election
+is a random shuffle (`messaging.service.ts:1372-1382`), so a run where W1 happens to be elected proves
+nothing about the phone - check WHICH device answered before believing any verdict. Second thing:
+`wasmLogShim`'s null+flag route should now be DEAD (the web reaches `handleConsumedGeneration` through
+the thrown error instead). Read W2's console for `(SecretReuseError)` rather than `(null payload, WASM
+duplicate flag)`; if the shim never fires, delete it - with that measurement as the evidence.
 
 Also this session: Leon's WP-SAFELINK-1 verified end to end - server on prod with a positive AND a
 negative control (Google's test malware URL `{"unsafe":true}`, `google.com` `{"unsafe":false}`), the
@@ -381,6 +409,11 @@ lose:
 - **A1 is signed in and PIN-unlocked.** Its device id is `tauri-d82cd226...-msgnk8nf-gyb2`; the DM
   under test is `642f389a-2800-412d-ab7c-cc521587f97f`. Check the APK's mtime before trusting a run,
   since the version name no longer moves.
+- **EVERY test message goes in the two-test-account DM, and NOWHERE else** (user, 2026-08-10). A
+  one-off probe run in a colleague's conversation because it was convenient fired a "dangerous link"
+  warning into a real person's thread. `openConversation(w1, 'Claire')` / `(w2, 'Jolan')` is what
+  every campaign script already does - keep new probes on it, and use the `Campagne de test`
+  community for anything that needs a channel.
 - **Reading the phone, and flashing it.** **The version name is still 0.13.0, so it no longer
   distinguishes builds** - the discriminators are `lastUpdateTime` and, in the artefacts, Rust
   strings inside `libmines_app_lib.so`. Rebuild with `bun tauri android build --target aarch64
@@ -671,7 +704,19 @@ three that must be seen without opening one:
   invitation path checks the key package, the fan-out does not - and the gap is where the ghosts live.
 - An error says what it says: "this generation is consumed" is NOT "I already have this message".
   Keep the evidence that distinguishes them (the frame's own bytes) - and never let a native layer
-  answer `Ok(None)` where the shared classifier could have decided.
+  answer `Ok(None)` where the shared classifier could have decided. **This rule was written here and
+  then broken for months by `mls-core` itself** (2026-08-10): a layer that cannot make a distinction
+  must not make it, and the guard is `same_epoch_ratchet.rs`, not a comment. A test that asserts the
+  swallow will happily protect the bug - this one did.
+- **A device that has not noticed its own gap will vouch for its store.** `announceComplete` is the
+  only claim that clears a proven marker, and the guard against making it wrongly (`actions.ts:1044`,
+  "am I awaiting history myself?") is only as good as the claimant's own detection. A silent failure
+  upstream does not merely lose data on that device - it promotes it to a trusted witness for
+  everyone else's repair.
+- **A responder is elected at RANDOM among all online devices except the requester's own**
+  (`messaging.service.ts:1372-1382`), so any check on a repair must record WHICH device answered.
+  Two runs of one check can exercise two different code paths on two different machines, and the
+  greener verdict is the one that says less.
 - EPOCH and GENERATION are different axes, and so are their repairs: a commit replay heals an epoch
   gap and can do nothing for a ratchet one (`TooDistantInTheFuture`), which only a new epoch clears.
   A verdict computed over one axis must never answer a question asked about the other - `epoch >=

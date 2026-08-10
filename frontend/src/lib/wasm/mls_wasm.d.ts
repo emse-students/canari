@@ -21,8 +21,8 @@ export class WasmMlsClient {
      */
     add_members_bulk(group_id: string, key_packages: Array<any>): Array<any>;
     /**
-     * Annule le commit *stage* (ADD ou REMOVE) quand le serveur le REJETTE. L'epoch local reste
-     * inchange (aucun fork) et un nouveau commit peut etre genere. [[C7]] Option A.
+     * Clears the *staged* commit (ADD or REMOVE) when the server REJECTS it. The local epoch stays
+     * unchanged (no fork) and a new commit can be generated. [[C7]] Option A.
      */
     clear_pending_commit(group_id: string): void;
     create_group(group_id: string): void;
@@ -68,10 +68,18 @@ export class WasmMlsClient {
     join_by_external_commit(group_info_bytes: Uint8Array): Array<any>;
     key_package_has_private(key_package_bytes: Uint8Array): boolean;
     /**
-     * Merge le commit *stage* (ADD ou REMOVE) APRES acceptation serveur (`validateCommit`). Avance
-     * l'epoch local. Pendant de `clear_pending_commit`. [[C7]] Option A : valider-puis-merger.
+     * Merges the *staged* commit (ADD or REMOVE) AFTER the server accepts it (`validateCommit`).
+     * Advances the local epoch. Counterpart of `clear_pending_commit`. [[C7]] Option A:
+     * validate-then-merge.
      */
     merge_pending_commit(group_id: string): void;
+    /**
+     * Constructor called from JavaScript (e.g. new WasmMlsClient(...))
+     *
+     * When `device_key_b64` is provided with an encrypted state blob, the state is
+     * decrypted with the given key (ChaCha20-Poly1305 direct, no Argon2id). Otherwise,
+     * the state is loaded/created as plain CBOR.
+     */
     constructor(user_id: string, device_id: string, state_bytes?: Uint8Array | null, device_key_b64?: string | null);
     process_incoming_message(group_id: string, message_bytes: Uint8Array): string | undefined;
     /**
@@ -102,6 +110,13 @@ export class WasmMlsClient {
      * Only removes the targeted leaves, leaving other devices of the same user intact.
      */
     remove_members_by_device(group_id: string, device_identities: Array<any>): Uint8Array;
+    /**
+     * Save state (returns a Uint8Array in JS).
+     *
+     * When `device_key_b64` is provided, the state is encrypted with ChaCha20-Poly1305
+     * using the given key (no Argon2id). Otherwise, the state is saved as plain CBOR
+     * (legacy/dev fallback).
+     */
     save_state(device_key_b64?: string | null): Uint8Array;
     send_message(group_id: string, message: string): Uint8Array;
     /**
@@ -110,6 +125,16 @@ export class WasmMlsClient {
     send_message_bytes(group_id: string, message_bytes: Uint8Array): Uint8Array;
 }
 
+/**
+ * ChaCha20 decrypt of an MLS CBOR snapshot (produced by `encrypt_mls_state_blob_with_key`).
+ * Wire format: `[nonce (12) || ciphertext]` — no salt prefix.
+ */
+export function decrypt_mls_state_blob_with_key(encrypted: Uint8Array, key_b64: string): Uint8Array;
+
+/**
+ * Decrypts `encrypted_data` (produced by `encrypt_with_key`) with a base64-encoded
+ * 32-byte key. Wire format: `[nonce (12) || ciphertext]` — no salt prefix.
+ */
 export function decrypt_with_key(key_b64: string, encrypted_data: Uint8Array): Uint8Array;
 
 /**
@@ -118,21 +143,15 @@ export function decrypt_with_key(key_b64: string, encrypted_data: Uint8Array): U
 export function decrypt_with_pin(pin: string, encrypted_data: Uint8Array): Uint8Array;
 
 /**
- * ChaCha20 decrypt of an MLS CBOR snapshot (produced by `encrypt_mls_state_blob_with_key`).
- */
-export function decrypt_mls_state_blob_with_key(encrypted: Uint8Array, key_b64: string): Uint8Array;
-
-/**
- * @deprecated Use `encrypt_mls_state_blob_with_key` instead.
- * Argon2 + ChaCha20 encrypt of a plain MLS CBOR snapshot.
- */
-export function encrypt_mls_state_blob(plain_state: Uint8Array, pin: string): Uint8Array;
-
-/**
  * ChaCha20 encrypt of a plain MLS CBOR snapshot with a base64-encoded 32-byte key.
+ * Wire format: `[nonce (12) || ciphertext]` — no salt prefix. Safe to call from a Web Worker.
  */
 export function encrypt_mls_state_blob_with_key(plain_state: Uint8Array, key_b64: string): Uint8Array;
 
+/**
+ * Encrypts `data` with a base64-encoded 32-byte key (ChaCha20-Poly1305 direct, no Argon2id).
+ * Wire format: `[nonce (12) || ciphertext]` — no salt prefix.
+ */
 export function encrypt_with_key(key_b64: string, data: Uint8Array): Uint8Array;
 
 /**
@@ -147,13 +166,8 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmmlsclient_free: (a: number, b: number) => void;
-    readonly decrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly decrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly decrypt_mls_state_blob_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly encrypt_mls_state_blob: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly encrypt_mls_state_blob_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly encrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly encrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly init_logger: () => void;
     readonly wasmmlsclient_add_member: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
     readonly wasmmlsclient_add_members_bulk: (a: number, b: number, c: number, d: any) => [number, number, number];
@@ -182,6 +196,10 @@ export interface InitOutput {
     readonly wasmmlsclient_save_state: (a: number, b: number, c: number) => [number, number, number, number];
     readonly wasmmlsclient_send_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_send_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly decrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly decrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly encrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly encrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

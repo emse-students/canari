@@ -128,23 +128,29 @@ impl MlsManager {
                     return Ok(None);
                 }
 
-                // Same-epoch sender-ratchet failures are PERMANENT - retrying never helps:
-                //  - SecretReuseError    : this generation's key was already consumed
-                //                          (duplicate delivery: realtime + queue + FCM).
-                //  - TooDistantInThePast : the generation is older than the kept ratchet
-                //                          window (out-of-order beyond tolerance). The key
-                //                          is gone for good.
-                // OpenMLS may surface the latter either raw or wrapped as NoPastEpochData;
-                // both Debug strings carry the variant name, so a substring match is robust.
-                // Treat them as a benign duplicate/late frame: ACK + drop (Ok(None)). This is
-                // the single source of truth so every caller (native, WASM, background worker)
-                // stops looping the message through its retry queue. Genuine epoch gaps are
-                // handled by the `msg_epoch > group_epoch` fast-fail above, never here.
+                // `TooDistantInThePast` (raw, or wrapped as NoPastEpochData): the generation is
+                // older than the kept ratchet window, so the key is gone for good. Retrying never
+                // helps, and no peer can re-send at a generation we can still read - so it is
+                // dropped with an ACK, and this is the single source of truth that stops every
+                // caller (native, WASM, background worker) looping it through a retry queue.
+                // Genuine epoch gaps are handled by the `msg_epoch > group_epoch` fast-fail above.
+                //
+                // `SecretReuseError` is DELIBERATELY NOT in this set, though it is equally
+                // permanent. "This generation is consumed" is not "I already have this message":
+                // a sender whose ratchet rewound (WP-LOSS-1) encrypts a NEW message at a
+                // generation we consumed for a different one, and only the frame's own bytes tell
+                // the two apart - which this layer cannot see, but the shared frontend ledger can.
+                // Answering Ok(None) here threw that diagnosis away before any caller could make
+                // it: `recevoir_message_bytes` and `map_decrypt_outcome` both classify
+                // `DecryptErrorKind::SecretReuse` and were unreachable, and the web only ever
+                // reached its classifier through a log-sniffing shim. Measured on production
+                // 2026-08-10: a phone dropped six rewound frames without one line of diagnosis,
+                // held no marker as a result, and was then elected to answer a peer's history
+                // request - where being unaware of its own gap is exactly what entitled it to
+                // certify the conversation complete, ending the repair (see cross-client-testing
+                // 7.1). The error is surfaced; callers still ACK, only the diagnosis changes.
                 let err_dbg = format!("{:?}", e);
-                if err_dbg.contains("SecretReuseError")
-                    || err_dbg.contains("TooDistantInThePast")
-                    || err_dbg.contains("NoPastEpochData")
-                {
+                if err_dbg.contains("TooDistantInThePast") || err_dbg.contains("NoPastEpochData") {
                     log::debug!(
                         "Benign same-epoch ratchet frame dropped: group={} epoch={} ({})",
                         group_id,
