@@ -141,6 +141,19 @@ wrong, and each one has already shipped a bug.
   `console.warn` inside a WebView, so a permanent degradation looks like a healthy start. Confirm
   the backend with `[DB] Using SQLite storage (Tauri)`. `canari_<userId>.db` is frontend-only; the
   native side owns `mls_pending.db`.
+- **Two `vite build` runs writing `build/` at once produce a bundle that cannot boot, and every
+  gate passes.** SvelteKit stamps each build with a per-build id and uses it as a global's name:
+  `build/index.html` writes `__sveltekit_<id> = {...}` and the runtime chunk reads
+  `globalThis.__sveltekit_<id>.data`. They match only because they came from the same build —
+  nothing checks it. Mixed, the app dies during `kit.start()` with
+  `TypeError: Cannot read properties of undefined (reading 'data')`, which names neither the cause
+  nor the file, and on mobile the only symptom is the splash screen never going away. Measured
+  2026-08-10: an Android debug APK shipped `__sveltekit_5wp7yq` in the HTML against
+  `__sveltekit_10pyqm3` in all four chunks, and was installed before anyone noticed.
+  `bun run build` now ends with `scripts/check-bundle-consistency.mjs`, which fails the build
+  instead (validated as a negative control against a hand-patched id). Corollary: **never run an
+  Android/iOS build concurrently with anything else that builds the frontend** — `beforeBuildCommand`
+  is `bun run build`, writing the very directory a parallel build is writing.
 - **A vendored plugin still ships the sample it was forked from.** `tauri-plugin-keystore` carried
   the UniMe `store`/`retrieve`/`remove` API with zero callers, yet it was registered in
   `generate_handler!`, in the `build.rs` ACL and in `permissions/default.toml` — reachable over IPC

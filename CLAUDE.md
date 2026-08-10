@@ -108,14 +108,28 @@ cannot report a real loss is all that is left of WP-PENDING-2.
 **This also answers WP-LOSS-1's Android half: it did not work, and never had.** Not "unverified" -
 the receiver-side detection could not run there at all.
 
-**OWED, and it is the first thing to do:** rebuild + install the APK (the one built at 14:2x predates
-this fix), then re-run `REWIND_SENDS=12 node heal-web.mjs`. Two assertions now, not one: `HEALED
-- 14/14`, AND `LOST frame` lines appearing in the PHONE's logcat where there were none. The election
-is a random shuffle (`messaging.service.ts:1372-1382`), so a run where W1 happens to be elected proves
-nothing about the phone - check WHICH device answered before believing any verdict. Second thing:
-`wasmLogShim`'s null+flag route should now be DEAD (the web reaches `handleConsumedGeneration` through
-the thrown error instead). Read W2's console for `(SecretReuseError)` rather than `(null payload, WASM
-duplicate flag)`; if the shim never fires, delete it - with that measurement as the evidence.
+**THE PHONE HALF IS VERIFIED (2026-08-10, deployed + clean APK at 15:21):** 13 `LOST frame …
+(SecretReuseError)` lines in logcat where the previous run had ZERO, `soliciting a history diff`,
+and bounded answers - `3 to send, 0 to pull`, then `9 to send, 0 to pull` - where it used to answer
+`0 to send, 0 to pull (identical stores)` and certify the conversation complete. Exactly one
+`Benign same-epoch ratchet frame dropped` remains, which is the `TooDistantInThePast` branch that
+stays benign on purpose. Do not re-run this half; the write-up is
+[cross-client-testing > verified on the phone](docs/wiki/cross-client-testing.md).
+
+**STILL OWED: the BROWSER half of the same re-run** (`HEALED - 14/14`, against `PARTIAL - 9/14`
+before). Four attempts failed at the setup gate today, all harness (faults #28/#29, both fixed in
+the scratchpad `heal-web.mjs`: a virtualised count needs a FRESH MOUNT plus the max over repeated
+polls, and the baseline needs a polled budget rather than a fixed wait). **Do not start the next
+attempt without reading the storm note**: the DM ended the session in a sustained retransmission
+loop (~450 frames/min on W1, ~300-450 control messages per 30 s on W2, 324 `LOST frame` on the
+phone, nothing being repaired), and **every run leaves W1 permanently rewound because the harness
+restores an old snapshot and never restores the current one** - each run compounds the last. Let it
+quiesce, or give W1 a clean state, before believing any measurement. The election is a random
+shuffle (`messaging.service.ts:1372-1382`), so always check WHICH device answered. Also owed:
+`wasmLogShim`'s null+flag route should now be DEAD (the web reaches `handleConsumedGeneration`
+through the thrown error instead) - read W2's console for `(SecretReuseError)` rather than `(null
+payload, WASM duplicate flag)`; if the shim never fires, delete it, with that measurement as the
+evidence.
 
 Also this session: Leon's WP-SAFELINK-1 verified end to end - server on prod with a positive AND a
 negative control (Google's test malware URL `{"unsafe":true}`, `google.com` `{"unsafe":false}`), the
@@ -853,6 +867,12 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
   Postgres sees it - and TypeORM does NOT preserve the order selects were declared in, so `DISTINCT`
   written into a `.select()` string lands mid-list once an `.addSelect()` follows (`.distinct(true)`
   is the only safe spelling). Where a test cannot reach, the DEPLOY LOG is the test.
+- **Two frontend builds writing `build/` at once ship an app that cannot boot, and every gate is
+  green.** SvelteKit's per-build `__sveltekit_<id>` names a global the HTML writes and the chunks
+  read; mixed, `kit.start()` throws `Cannot read properties of undefined (reading 'data')` and a
+  phone sits on the splash forever. `bun run build` now ends with
+  `scripts/check-bundle-consistency.mjs`. Never run an Android/iOS build next to anything else that
+  builds the frontend - `beforeBuildCommand` IS `bun run build`.
 - A batch of maintenance jobs must catch and log PER JOB. Sharing one try/catch means the first
   failure hides every job after it, and a GC that silently does nothing is indistinguishable from a
   GC with nothing to do. **The same holds for any observer list, and a COMMENT claiming the
