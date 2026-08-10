@@ -37,7 +37,7 @@ evidence for a shipped fix._
 | **MSG** - messages | **COMPLETE** | - |
 | **FWD** - forwarding | **COMPLETE** | - |
 | **TAB** - tabs and windows | **COMPLETE** | - |
-| **LIFE** - Android lifecycle | **all but one** | **LIFE-5 (reboot)** - blocked, needs the user: the device asks for its unlock pattern and `wm dismiss-keyguard` cannot answer it. Pause and ask; do not work around it. |
+| **LIFE** - Android lifecycle | **complete** | **LIFE-5 ran 2026-08-11** (the user unlocked; `wm dismiss-keyguard` still cannot). Assertion PASS - the notification carried `android.title=Claire VAN RUYMBEKE` and `android.text=<marker>`, i.e. the PLAINTEXT, decrypted natively with no WebView after a reboot with the app never opened, both quick actions wired. **Its OBSERVATION half found a P1** (WP-DIRECTBOOT-1) - see below. |
 | **NOTIF** - notifications | **partly** | NOTIF-2/3 (silent commit -> epoch gap), NOTIF-5 (mute), NOTIF-6 (quick reply from the shade, = check K). NOTIF-1 and NOTIF-8 are already answered by LIFE-8 and LIFE-4. |
 | **HEAL** - does a broken group repair itself on the BROWSER? | **not started** | HEAL-W1..W4, section 7.1. Break = restore an older snapshot of `CanariDBMls_<dev>`; take the snapshot first. |
 | **PIN** | **not started** | PIN-1..10 |

@@ -437,6 +437,34 @@ raising it first locks everyone out.
   only the seconds are unproven. Second, smaller half: `drainPendingOutbox` does work proportional to
   a backlog inside a 60 s `goAsync()` deadline, which is a hard OS limit - it needs a bound.
 
+- \[ \] **WP-DIRECTBOOT-1 (P1) - AFTER EVERY REBOOT THE APP PROCESS IS CREATED BEFORE THE FIRST
+  UNLOCK, AND IT SERVES PUSH DEGRADED FOR THE REST OF ITS LIFE.** Found by the OBSERVATION half of
+  LIFE-5 on 2026-08-11 (the check's own assertion PASSED); the user saw the visible tip - "il n'y a
+  pas l'air d'avoir la photo de profil dans la notification". Evidence in the scratchpad
+  `life5-canari.log`, and the negative control is decisive - same device, same account, 4 min apart:
+  | process | started | avatar fetch | result |
+  | pid 3765 | PRE-unlock | `fetchAvatar: HTTP 403` x2 | `hasAvatar=false` |
+  | pid 19352 | POST-unlock (`am kill` then a send) | `avatar cached` | `hasAvatar=true` |
+  The process is started by a broadcast (`LocalNotificationRestoreReceiver`) at boot, so
+  `CanariApplication.onCreate` runs against LOCKED credential-encrypted storage: it logged
+  `recordInstallerPackage: ... errno 126 (Required key not available)` - i.e. the install-source
+  fact, which the DURABLE RULE says is a RUNTIME fact deciding the update destination, is not
+  recorded. **What is PROVEN:** a pre-unlock process 403s on every PushSecret-authenticated fetch
+  and stays that way after the user unlocks. **What is NOT yet proven and must not be guessed:**
+  WHICH read inside that process yields the wrong secret. `retrievePushSecret` is NOT cached (fresh
+  each call) and `fetchAvatar` did not log "pushSecret absent", so it obtained a secret that prod
+  REJECTED - the mechanism is still open. Prod is not at fault: `push_token` holds a 64-char hashed
+  secret for that device and the guard answers correctly to a credential-free probe
+  (`PushSecret header required` / `Invalid push secret`).
+  **Why this is P1 and not cosmetic:** the same `verifyPushSecretAuth` guards the encrypted-media
+  proxy AND `fetchProtoFromBackend`, the fallback that pulls a message's ciphertext when it is not
+  in the FCM payload. A silent 403 there costs a MESSAGE, not a picture.
+  **Adjacent bug of the same shape, seen while reading:** `checkKeystoreHealth` early-returns on
+  `!contextFile.exists()` as "not authenticated yet", but pre-unlock that file merely LOOKS absent -
+  two causes under one predicate. It is harmless only by luck (the early return is what stops it
+  DELETING `keystore_ok.flag` and falsely reporting a lost keystore).
+  **Verification needs the USER** - a reboot plus the unlock pattern. Have the fix ready first.
+
 - \[ \] **WP-HISTBANNER-1 (P2) - the "historique en attente" banner is PERMANENTLY WRONG on a
   perfectly healed conversation, three defects stacked, all introduced 2026-08-10.** Seen by the
   user on BOTH browsers; the live state is captured by the scratchpad `hist-phase.mjs`. The
