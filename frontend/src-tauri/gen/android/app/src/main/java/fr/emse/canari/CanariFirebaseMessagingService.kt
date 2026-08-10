@@ -130,6 +130,34 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /** List of messageIds delivered in the background (read then cleared by the TS at login). */
         private const val OUTBOX_SENT_FILE = "outbox_sent.ndjson"
 
+        /**
+         * How many queued messages one drain takes on. The cap is on the ENCRYPT, deliberately:
+         * encrypting consumes a ratchet generation whether or not the frame is ever POSTed, so
+         * encrypting a backlog the drain has no time to deliver would run this sender's generation
+         * far ahead of what the peer receives - eventually past OpenMLS's maximum forward distance,
+         * which no retry can repair. Whatever is left over is not touched at all and is drained
+         * next time (FCM, boot, or OutboxRetryWorker), so a backlog of any size converges across
+         * successive drains. iOS twin: kCanariDrainMaxBatch.
+         */
+        private const val DRAIN_MAX_BATCH = 100
+
+        /**
+         * Wall-clock budget for the POST half of an outbox drain. A BroadcastReceiver holding
+         * goAsync() is killed by the OS at 60 s whatever it is doing, and the drain also has to pay
+         * for the token re-registration and the batch encrypt before it gets here. Exceeding it is
+         * not an error - the remainder stays queued - but unlike the batch cap it does leave already
+         * encrypted frames unsent, so it is the safety net for a slow network rather than the
+         * normal exit. iOS twin: kCanariDrainPostBudgetMs.
+         */
+        private const val DRAIN_POST_BUDGET_MS = 35_000L
+
+        /**
+         * How many deliveries may accumulate before the mirror is rewritten. The mirror is the only
+         * record of what is still owed, so between two rewrites a hard kill re-sends everything
+         * already delivered - this bounds that window instead of letting it be the whole backlog.
+         */
+        private const val DRAIN_CHECKPOINT_EVERY = 25
+
         /** Maximum number of messages stacked in a per-conversation MessagingStyle notification. */
         private const val MAX_NOTIF_MESSAGES = 6
 
@@ -177,7 +205,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // These take an explicit `context`/`service` instead of an implicit Service-as-Context
         // receiver so the notification-action BroadcastReceiver can reuse the exact same
         // outbox-drain and notification-cancel logic as the FCM service, with zero duplication.
-        // `service` only backs the JNI-bound `nativeSendMessageBackground` call (native code
+        // `service` only backs the JNI-bound `nativeSendMessagesBackground` call (native code
         // never touches Context/Service framework state), so a bare `CanariFirebaseMessagingService()`
         // instance - never `attachBaseContext`-ed - is safe to pass there, but NOT as `context`.
 
@@ -479,10 +507,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * Drains the outbox mirror: for each pending message, encrypts the proto against the live
-         * epoch (JNI under MlsStateLock), POSTs the ciphertext, and marks the send. Rewrites the
-         * mirror with the remaining entries and logs the delivered ids for TS reconciliation at
-         * login. Returns the number of NOT-sent entries (group not joined yet, network, etc.).
+         * Drains the outbox mirror: encrypts the WHOLE batch against one load of mls.bin (JNI under
+         * MlsStateLock), then POSTs each ciphertext and marks the send. Rewrites the mirror with the
+         * remaining entries and logs the delivered ids for TS reconciliation at login. Returns the
+         * number of NOT-sent entries (group not joined yet, network, etc.).
+         *
+         * The encrypt half is one JNI call for the whole batch on purpose: per-message it was one
+         * full CBOR decode and one full re-serialise of the entire MLS keystore EACH, i.e.
+         * O(N x |mls.bin|) inside the 60 s goAsync() deadline, which is what ANRed the app after a
+         * store update (WP-ANR-1). iOS twin: CanariDrainOutboxBackground in canari_push.mm.
          */
         internal fun drainOutboxBackground(
             context: Context,
@@ -496,11 +529,30 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "drainOutboxBackground: pushSecret absent -> ${entries.size} message(s) remain queued")
                 return entries.size
             }
-            Log.d(TAG, "drainOutboxBackground: ${entries.size} message(s) to send")
+            // Only this slice is encrypted, and only it can burn a generation. `deferred` is never
+            // touched by this drain.
+            val batch = entries.take(DRAIN_MAX_BATCH)
+            val deferred = entries.drop(DRAIN_MAX_BATCH)
+            Log.d(TAG, "drainOutboxBackground: ${entries.size} message(s) queued, taking ${batch.size}")
+            val ciphertexts = encryptQueuedMessages(context, service, ctx, batch)
+            if (ciphertexts == null) {
+                Log.w(TAG, "drainOutboxBackground: batch encrypt failed -> ${entries.size} message(s) stay queued")
+                return entries.size
+            }
+            val deadline = System.currentTimeMillis() + DRAIN_POST_BUDGET_MS
             val sentIds = mutableListOf<String>()
             val remaining = mutableListOf<OutboxMirrorEntry>()
-            for (entry in entries) {
-                val ciphertext = encryptQueuedMessage(context, service, ctx, entry)
+            var checkpointed = 0
+            var index = 0
+            for (entry in batch) {
+                index++
+                if (System.currentTimeMillis() >= deadline) {
+                    // Out of budget: everything not yet attempted goes back. The next drain
+                    // continues from here - partial progress is kept, never discarded.
+                    remaining.add(entry)
+                    continue
+                }
+                val ciphertext = ciphertexts[entry.id]
                 if (ciphertext == null) {
                     remaining.add(entry)
                     continue
@@ -512,54 +564,88 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     remaining.add(entry)
                     Log.w(TAG, "drainOutboxBackground: POST failed id=${entry.id.take(8)} -> stays queued")
                 }
+                // Checkpoint: a hard kill (the OS enforcing the goAsync deadline) would otherwise
+                // leave every delivered message still in the mirror, and the next drain would send
+                // them all again. This bounds that duplicate window to DRAIN_CHECKPOINT_EVERY.
+                if (sentIds.size - checkpointed >= DRAIN_CHECKPOINT_EVERY) {
+                    appendOutboxSent(context, sentIds.subList(checkpointed, sentIds.size))
+                    checkpointed = sentIds.size
+                    rewriteOutboxMirror(context, remaining + batch.drop(index) + deferred)
+                }
             }
-            if (sentIds.isNotEmpty()) appendOutboxSent(context, sentIds)
-            rewriteOutboxMirror(context, remaining)
-            Log.d(TAG, "drainOutboxBackground: ${sentIds.size} sent, ${remaining.size} remaining")
-            return remaining.size
+            if (sentIds.size > checkpointed) appendOutboxSent(context, sentIds.subList(checkpointed, sentIds.size))
+            val stillQueued = remaining + deferred
+            rewriteOutboxMirror(context, stillQueued)
+            Log.d(TAG, "drainOutboxBackground: ${sentIds.size} sent, ${stillQueued.size} remaining")
+            return stillQueued.size
         }
 
         /**
-         * Encrypts a pending message via JNI under MlsStateLock (the JNI rewrites mls.bin after
-         * advancing the ratchet). Returns the MLS ciphertext (base64) or null if the state is
-         * absent, the lock is unavailable, or the group is not joined yet (send_message ->
-         * GroupNotFound).
+         * Encrypts every pending message in ONE JNI call under MlsStateLock (the JNI loads mls.bin
+         * once, advances the ratchet per entry, and rewrites mls.bin once - before returning any
+         * ciphertext, so a frame is never handed out while its ratchet advance is not durable).
+         *
+         * Returns entry id -> ciphertext (base64) for the entries that encrypted; an entry missing
+         * from the map failed on its own (typically the group is not joined on this device yet) and
+         * stays queued. Returns null if the whole batch failed: state absent, lock unavailable, or
+         * the save failed - in which case NOTHING may be posted.
          */
-        private fun encryptQueuedMessage(
+        private fun encryptQueuedMessages(
             context: Context,
             service: CanariFirebaseMessagingService,
             ctx: PushContext,
-            entry: OutboxMirrorEntry,
-        ): String? {
+            entries: List<OutboxMirrorEntry>,
+        ): Map<String, String>? {
             val lockAcquired = try {
                 MlsStateLock.LOCK.tryLock(10, java.util.concurrent.TimeUnit.SECONDS)
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
-                Log.e(TAG, "encryptQueuedMessage: interrupted during tryLock: ${e.message}")
+                Log.e(TAG, "encryptQueuedMessages: interrupted during tryLock: ${e.message}")
                 return null
             }
             if (!lockAcquired) {
-                Log.w(TAG, "encryptQueuedMessage: MlsStateLock not acquired -> abort")
+                Log.w(TAG, "encryptQueuedMessages: MlsStateLock not acquired -> abort")
                 return null
             }
             try {
                 val stateBytes = MlsContextLoader.loadMlsState(context)
                 if (stateBytes == null) {
-                    Log.e(TAG, "encryptQueuedMessage: mls.bin absent -> abort")
+                    Log.e(TAG, "encryptQueuedMessages: mls.bin absent -> abort")
                     return null
                 }
                 val filesDir = MlsContextLoader.tauriDataDir(context).also { it.mkdirs() }.absolutePath
-                val jsonStr = service.nativeSendMessageBackground(
-                    filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, entry.groupId, entry.proto,
+                val payload = JSONArray()
+                for (entry in entries) {
+                    payload.put(
+                        JSONObject()
+                            .put("id", entry.id)
+                            .put("groupId", entry.groupId)
+                            .put("proto", entry.proto),
+                    )
+                }
+                val jsonStr = service.nativeSendMessagesBackground(
+                    filesDir, stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, payload.toString(),
                 )
                 val json = JSONObject(jsonStr)
                 if (!json.optBoolean("ok", false)) {
-                    Log.d(TAG, "encryptQueuedMessage: ok=false (${json.optString("error").take(60)}) group=${entry.groupId.take(8)} - group not joined yet?")
+                    Log.e(TAG, "encryptQueuedMessages: ok=false (${json.optString("error").take(120)})")
                     return null
                 }
-                return json.optString("ciphertext").takeIf { it.isNotEmpty() }
+                val results = json.optJSONArray("results") ?: JSONArray()
+                val out = mutableMapOf<String, String>()
+                for (i in 0 until results.length()) {
+                    val r = results.optJSONObject(i) ?: continue
+                    val id = r.optString("id")
+                    if (id.isEmpty()) continue
+                    if (!r.optBoolean("ok", false)) {
+                        Log.d(TAG, "encryptQueuedMessages: skipped id=${id.take(8)} (${r.optString("error").take(60)}) - group not joined yet?")
+                        continue
+                    }
+                    r.optString("ciphertext").takeIf { it.isNotEmpty() }?.let { out[id] = it }
+                }
+                return out
             } catch (e: Exception) {
-                Log.e(TAG, "encryptQueuedMessage: exception: ${e.message}")
+                Log.e(TAG, "encryptQueuedMessages: exception: ${e.message}")
                 return null
             } finally {
                 MlsStateLock.LOCK.unlock()
@@ -816,18 +902,22 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     ): Boolean
 
     /**
-     * Encrypts a pending outgoing message (text/reply) against the live epoch and persists
-     * {filesDir}/mls.bin. Returns JSON: {"ok":true,"ciphertext":"<b64>"} or {"ok":false,...}.
-     * `protoB64` is the cleartext AppMessage proto (base64), built on the TS side at compose time.
+     * Encrypts a BATCH of pending outgoing messages (text/reply) against the live epoch, loading
+     * {filesDir}/mls.bin once and persisting it once - see encryptQueuedMessages for why the drain
+     * is a batch (WP-ANR-1).
+     *
+     * `entriesJson` is `[{"id":"..","groupId":"..","proto":"<b64>"}, ..]`, each `proto` being the
+     * cleartext AppMessage proto built on the TS side at compose time. Returns JSON:
+     * {"ok":true,"results":[{"id":..,"ok":true,"ciphertext":"<b64>"}|{"id":..,"ok":false,"error":..}]}
+     * or {"ok":false,...} when the whole batch failed (state absent, save failed).
      */
-    external fun nativeSendMessageBackground(
+    external fun nativeSendMessagesBackground(
         filesDir: String,
         stateBytes: ByteArray,
         keyB64: String,
         userId: String,
         deviceId: String,
-        groupId: String,
-        protoB64: String,
+        entriesJson: String,
     ): String
 
     /**

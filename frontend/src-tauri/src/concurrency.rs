@@ -51,7 +51,7 @@ pub(crate) fn mark_foreground_inactive() {
 
 /// True while the foreground guard has not expired (the background must then refrain from writing).
 /// Mobile only: that is where the background writers (`background_write_mls_bin`) live.
-#[cfg(any(target_os = "android", target_os = "ios"))]
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn foreground_is_active() -> bool {
     now_ms() < foreground_active_until().load(Ordering::SeqCst)
 }
@@ -60,7 +60,7 @@ pub(crate) fn foreground_is_active() -> bool {
 /// which case it gives up: the foreground holds the up-to-date state in memory and would overwrite
 /// it - C1/FCM3). The "foreground active" error leaves the work pending, picked up on the next
 /// foreground pass.
-#[cfg(any(target_os = "android", target_os = "ios"))]
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn background_write_mls_bin(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
     let _guard = mls_bin_write_lock()
         .lock()

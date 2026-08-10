@@ -236,42 +236,112 @@ pub fn process_welcome_background_with_key(
     Ok(())
 }
 
-/// Encrypts a queued outbound message and persists `mls.bin`.
-/// Key-based variant: uses the pre-derived device key (base64) instead of the PIN.
-pub fn send_message_background_with_key(
+/// One entry of an outbox drain batch, as the platform mirrors store it. `id` is echoed back
+/// untouched so a caller can never mis-zip its own list against the results.
+#[derive(serde::Deserialize)]
+pub struct OutboxEntry {
+    #[serde(default)]
+    pub id: String,
+    #[serde(rename = "groupId")]
+    pub group_id: String,
+    /// Base64 plaintext `AppMessage` proto.
+    pub proto: String,
+}
+
+/// Encrypts a WHOLE batch of queued outbound messages against ONE load of `mls.bin`, then persists
+/// it ONCE.
+///
+/// # Why this is a batch and not a loop over the single-message call
+///
+/// Both platform drains used to call the single-message entry point per queued message, so `N`
+/// messages meant `N` full CBOR decodes of the entire MLS keystore plus `N` re-serialise-and-write
+/// cycles - `O(N x |mls.bin|)` work inside a `goAsync()` / background-task deadline the OS enforces
+/// at 60 s. That is what ANRed the app from `CanariBootReceiver` after a store update, with the
+/// per-byte decode of WP-ANR-1 multiplying it. Loading once makes the drain `O(|mls.bin| + N)`, so
+/// it holds for a backlog of any size rather than for backlogs under a cap.
+///
+/// # Ordering, which is load-bearing
+///
+/// The state is saved BEFORE any ciphertext is returned, and a save failure discards the entire
+/// batch. A frame handed to the caller is a frame the caller will POST, so a ciphertext escaping
+/// while the ratchet advance that produced it is not durable is exactly WP-LOSS-1 - the sender
+/// rewinds and the peer can never decrypt what follows. Undelivered entries simply stay in the
+/// mirror and are re-encrypted at a fresh generation on the next drain, which is harmless.
+///
+/// A per-entry failure (typically `GroupNotFound`: the group is not joined on this device yet) is
+/// isolated and reported in its own result, never allowed to abort the rest of the batch.
+pub fn send_messages_background_with_key(
     files_dir: &Path,
     state_bytes: &[u8],
     key_b64: &str,
     user_id: &str,
     device_id: &str,
-    group_id: &str,
-    proto_b64: &str,
+    entries: &[OutboxEntry],
 ) -> Result<serde_json::Value, String> {
-    let proto_bytes = STANDARD
-        .decode(proto_b64.trim())
-        .map_err(|e| format!("base64 decode proto: {e}"))?;
+    if entries.is_empty() {
+        return Ok(serde_json::json!({ "ok": true, "results": [] }));
+    }
 
+    // The one load for the whole batch.
     let (mut manager, key) = load_manager_with_key_b64(state_bytes, key_b64, user_id, device_id)?;
 
-    let ciphertext = manager
-        .send_message(group_id, &proto_bytes)
-        .map_err(|e| format!("send_message: {e:?}"))?;
+    let mut results = Vec::with_capacity(entries.len());
+    let mut encrypted = 0usize;
+    for entry in entries {
+        match encrypt_one(&mut manager, entry) {
+            Ok(ciphertext) => {
+                encrypted += 1;
+                results.push(serde_json::json!({
+                    "id": entry.id,
+                    "ok": true,
+                    "ciphertext": STANDARD.encode(&ciphertext),
+                }));
+            }
+            Err(e) => {
+                // Isolated on purpose: one unjoined group must not strand the rest of the backlog.
+                log::warn!(
+                    "[BG_SEND] entry skipped group={} : {e}",
+                    entry.group_id.chars().take(8).collect::<String>()
+                );
+                results.push(serde_json::json!({
+                    "id": entry.id,
+                    "ok": false,
+                    "error": e,
+                }));
+            }
+        }
+    }
 
+    // The one save for the whole batch - and it happens before any ciphertext leaves this function.
     let enc = manager
         .save_encrypted_with_key(&key)
         .map_err(|e| e.to_string())?;
     let mls_path = files_dir.join("mls.bin");
     background_write_mls_bin(&mls_path, &enc).map_err(|e| format!("write mls.bin: {e}"))?;
     log::info!(
-        "[BG_SEND] message encrypted group={group_id} (ciphertext {} bytes, mls.bin {} bytes)",
-        ciphertext.len(),
+        "[BG_SEND] batch encrypted {encrypted}/{} (mls.bin {} bytes, 1 load, 1 save)",
+        entries.len(),
         enc.len()
     );
 
-    Ok(serde_json::json!({
-        "ok": true,
-        "ciphertext": STANDARD.encode(&ciphertext),
-    }))
+    Ok(serde_json::json!({ "ok": true, "results": results }))
+}
+
+/// Encrypts a single entry against an already-loaded manager. Split out so the batch loop has one
+/// obvious failure boundary per entry.
+fn encrypt_one(manager: &mut MlsManager, entry: &OutboxEntry) -> Result<Vec<u8>, String> {
+    let proto_bytes = STANDARD
+        .decode(entry.proto.trim())
+        .map_err(|e| format!("base64 decode proto: {e}"))?;
+    manager
+        .send_message(&entry.group_id, &proto_bytes)
+        .map_err(|e| format!("send_message: {e:?}"))
+}
+
+/// Parses the batch JSON the platform drains pass across the FFI boundary:
+/// `[{"id":"...","groupId":"...","proto":"<b64>"}, ...]`.
+pub fn parse_outbox_entries_json(json: &str) -> Result<Vec<OutboxEntry>, String> {
+    serde_json::from_str(json).map_err(|e| format!("parse outbox entries: {e}"))
 }
 
 /// Prunes `mls_pending.db` (exhausted / expired messages). Mirrors `MlsBackgroundWorker`.
@@ -415,5 +485,221 @@ pub fn decrypt_push_message_with_commits_with_key(
         Some(info)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A distinct device key per test so no two tests can read the same `mls.bin`.
+    fn key_b64(seed: u8) -> String {
+        STANDARD.encode([seed; 32])
+    }
+
+    /// A temp directory of its own, so the `mls.bin` each test writes is its own.
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("canari-bg-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    /// Two real MLS clients in one group: `alice` is the sender under test, `bob` the peer whose
+    /// successful decrypt is the only honest proof that the ratchet was used correctly.
+    fn joined_pair(tag: &str) -> (MlsManager, MlsManager, String) {
+        let group_id = format!("{tag}-group");
+        let mut alice = MlsManager::load_or_create(&format!("{tag}-alice"), "dev-a", None)
+            .expect("alice load_or_create");
+        let mut bob = MlsManager::load_or_create(&format!("{tag}-bob"), "dev-b", None)
+            .expect("bob load_or_create");
+
+        alice.create_group(group_id.clone()).expect("create_group");
+        let kp = bob.generate_key_package().expect("bob key package");
+        let (_commit, welcome, _added, _skipped) = alice
+            .add_members_bulk(&group_id, &[&kp])
+            .expect("add_members_bulk");
+        alice
+            .merge_pending_commit_for(&group_id)
+            .expect("merge add commit");
+        let tree = alice
+            .export_ratchet_tree_for(&group_id)
+            .expect("export ratchet tree");
+        bob.process_welcome(welcome.as_deref().expect("welcome"), Some(&tree))
+            .expect("bob process_welcome");
+
+        (alice, bob, group_id)
+    }
+
+    fn entry(id: &str, group_id: &str, plaintext: &[u8]) -> OutboxEntry {
+        OutboxEntry {
+            id: id.to_string(),
+            group_id: group_id.to_string(),
+            proto: STANDARD.encode(plaintext),
+        }
+    }
+
+    fn ciphertexts_of(value: &serde_json::Value) -> Vec<Vec<u8>> {
+        value["results"]
+            .as_array()
+            .expect("results array")
+            .iter()
+            .filter(|r| r["ok"].as_bool() == Some(true))
+            .map(|r| {
+                STANDARD
+                    .decode(r["ciphertext"].as_str().expect("ciphertext"))
+                    .expect("base64 ciphertext")
+            })
+            .collect()
+    }
+
+    /// The whole contract of the batch drain, and in particular the WP-LOSS-1 half: the single save
+    /// must cover EVERY ratchet advance the batch made. The proof is the 6th message - it is
+    /// encrypted by a manager reloaded from the `mls.bin` the batch wrote, so if that file were
+    /// behind by even one generation, bob would reject it as a consumed secret rather than decrypt
+    /// it. A test that only checked the five would pass with a save that persisted just the first.
+    #[test]
+    fn one_load_and_one_save_cover_every_advance_in_the_batch() {
+        let (alice, mut bob, group_id) = joined_pair("batch");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(7)).expect("key");
+        let state_bytes = alice.save_encrypted_with_key(&key).expect("encrypt state");
+        let dir = temp_dir("batch");
+
+        let plaintexts: Vec<Vec<u8>> = (0..5).map(|i| format!("msg-{i}").into_bytes()).collect();
+        let entries: Vec<OutboxEntry> = plaintexts
+            .iter()
+            .enumerate()
+            .map(|(i, p)| entry(&format!("id-{i}"), &group_id, p))
+            .collect();
+
+        let out = send_messages_background_with_key(
+            &dir,
+            &state_bytes,
+            &key_b64(7),
+            "batch-alice",
+            "dev-a",
+            &entries,
+        )
+        .expect("batch send");
+
+        let results = out["results"].as_array().expect("results");
+        assert_eq!(results.len(), 5, "one result per entry, in order");
+        for (i, r) in results.iter().enumerate() {
+            assert_eq!(r["ok"].as_bool(), Some(true), "entry {i} must encrypt");
+            assert_eq!(
+                r["id"].as_str(),
+                Some(format!("id-{i}").as_str()),
+                "id echo"
+            );
+        }
+
+        let frames = ciphertexts_of(&out);
+        for (i, frame) in frames.iter().enumerate() {
+            let plain = bob
+                .process_incoming_message(&group_id, frame)
+                .unwrap_or_else(|e| panic!("bob decrypt {i}: {e:?}"))
+                .expect("application message");
+            assert_eq!(plain, plaintexts[i]);
+        }
+
+        // The saved state must be ahead of all five, not of the first.
+        let saved = std::fs::read(dir.join("mls.bin")).expect("mls.bin written");
+        let sixth = send_messages_background_with_key(
+            &dir,
+            &saved,
+            &key_b64(7),
+            "batch-alice",
+            "dev-a",
+            &[entry("id-5", &group_id, b"msg-5")],
+        )
+        .expect("send from the reloaded state");
+        let plain = bob
+            .process_incoming_message(&group_id, &ciphertexts_of(&sixth)[0])
+            .expect("bob decrypt 6th - a rewound save would fail here")
+            .expect("application message");
+        assert_eq!(plain, b"msg-5");
+    }
+
+    /// One unjoined group must not strand the rest of the backlog: the failure is reported in its
+    /// own result and the entries around it still encrypt and still decrypt in order.
+    #[test]
+    fn a_failing_entry_is_isolated_and_the_batch_continues() {
+        let (alice, mut bob, group_id) = joined_pair("isolate");
+        let key = mls_core::crypto::decode_base64_to_32_bytes(&key_b64(9)).expect("key");
+        let state_bytes = alice.save_encrypted_with_key(&key).expect("encrypt state");
+        let dir = temp_dir("isolate");
+
+        let entries = vec![
+            entry("ok-1", &group_id, b"first"),
+            entry("bad", "a-group-this-device-never-joined", b"doomed"),
+            entry("ok-2", &group_id, b"second"),
+        ];
+
+        let out = send_messages_background_with_key(
+            &dir,
+            &state_bytes,
+            &key_b64(9),
+            "isolate-alice",
+            "dev-a",
+            &entries,
+        )
+        .expect("batch send");
+
+        let results = out["results"].as_array().expect("results");
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0]["ok"].as_bool(), Some(true));
+        assert_eq!(results[1]["ok"].as_bool(), Some(false), "unjoined group");
+        assert_eq!(results[2]["ok"].as_bool(), Some(true), "not aborted by it");
+        assert!(results[1]["error"]
+            .as_str()
+            .expect("error string")
+            .contains("GroupNotFound"));
+
+        let frames = ciphertexts_of(&out);
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            bob.process_incoming_message(&group_id, &frames[0])
+                .expect("decrypt first")
+                .expect("application message"),
+            b"first"
+        );
+        assert_eq!(
+            bob.process_incoming_message(&group_id, &frames[1])
+                .expect("decrypt second")
+                .expect("application message"),
+            b"second"
+        );
+    }
+
+    #[test]
+    fn an_empty_batch_writes_nothing_and_returns_no_results() {
+        let dir = temp_dir("empty");
+        let _ = std::fs::remove_file(dir.join("mls.bin"));
+        let out = send_messages_background_with_key(&dir, &[], &key_b64(3), "u", "d", &[])
+            .expect("empty batch");
+        assert_eq!(out["results"].as_array().expect("results").len(), 0);
+        assert!(
+            !dir.join("mls.bin").exists(),
+            "an empty drain must not touch mls.bin"
+        );
+    }
+
+    /// The FFI contract is a string on both platforms and nothing type-checks it, so pin the shape
+    /// the Kotlin and ObjC drains actually build.
+    #[test]
+    fn the_platform_entry_shape_parses() {
+        let entries = parse_outbox_entries_json(
+            r#"[{"id":"a","groupId":"g1","proto":"AAEC"},{"id":"b","groupId":"g2","proto":""}]"#,
+        )
+        .expect("parse");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, "a");
+        assert_eq!(entries[0].group_id, "g1");
+        assert_eq!(entries[1].group_id, "g2");
+
+        assert!(parse_outbox_entries_json("not json").is_err());
+        assert!(
+            parse_outbox_entries_json(r#"[{"groupId":"g"}]"#).is_err(),
+            "a missing proto is a malformed entry, not an empty one"
+        );
     }
 }

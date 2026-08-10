@@ -91,7 +91,13 @@ fn each_mutation_invalidates_the_snapshot() {
 }
 
 #[test]
-fn loaded_state_seeds_cache_without_reserialize() {
+fn a_reloaded_state_re_encodes_and_preserves_its_content() {
+    // This used to assert BYTE equality, on the strength of the loaded snapshot being handed
+    // straight back by the cache. That seeding is gone: it would have pinned a legacy-encoded
+    // `mls.bin` in place for ever, since the first save would re-persist the very bytes that were
+    // just read (WP-ANR-1). A reload now always re-encodes, so what must hold is that the CONTENT
+    // survives - and byte equality could not be asserted anyway, because `storage_values` is an
+    // unordered HashMap and the CBOR is not deterministic.
     let mut manager = make_manager("seed-user", "seed-device");
     manager
         .create_group("seed-group".to_string())
@@ -102,8 +108,63 @@ fn loaded_state_seeds_cache_without_reserialize() {
     let restored = MlsManager::load_or_create("seed-user", "seed-device", Some(snapshot.clone()))
         .expect("restore");
 
-    let from_cache = restored.save_state().expect("restored save_state");
-    assert_eq!(snapshot, from_cache);
+    let resaved = restored.save_state().expect("restored save_state");
+    assert_eq!(
+        normalized(decode_persisted(&snapshot)),
+        normalized(decode_persisted(&resaved))
+    );
+}
+
+/// The legacy on-disk shape: every byte buffer on serde's generic `Vec<u8>` path, which encodes as
+/// a CBOR array of integers. This is what every `mls.bin` in the field was written with.
+#[derive(serde::Serialize)]
+struct LegacyPersistedState {
+    identity_bundle: Vec<u8>,
+    storage_values: std::collections::HashMap<Vec<u8>, Vec<u8>>,
+    group_ids: Vec<Vec<u8>>,
+    forgotten_group_min_epochs: std::collections::HashMap<String, u64>,
+}
+
+#[test]
+fn a_legacy_encoded_state_still_loads_and_is_migrated_on_save() {
+    // The whole compatibility contract, end to end at the manager level: if this fails, shipping
+    // the encoding change destroys the identity and every group of every existing install. The
+    // unit tests in `byte_compat` cover the framing; this covers a REAL snapshot - keypair,
+    // credential, OpenMLS keystore and group ids - going out in the old encoding and coming back
+    // through `load_or_create`.
+    let mut manager = make_manager("legacy-user", "legacy-device");
+    manager
+        .create_group("legacy-group".to_string())
+        .expect("create");
+    manager.generate_key_packages(3).expect("generate kps");
+    let modern = decode_persisted(&manager.save_state().expect("snapshot"));
+
+    // Re-encode the very same content the way every shipped version wrote it.
+    let legacy = LegacyPersistedState {
+        identity_bundle: modern.identity_bundle.clone(),
+        storage_values: modern.storage_values.clone(),
+        group_ids: modern.group_ids.clone(),
+        forgotten_group_min_epochs: modern.forgotten_group_min_epochs.clone(),
+    };
+    let mut legacy_bytes = Vec::new();
+    ciborium::ser::into_writer(&legacy, &mut legacy_bytes).expect("legacy encode");
+    assert!(
+        legacy_bytes.len() > manager.save_state().expect("snapshot").len(),
+        "the legacy encoding must be the larger one, or this fixture is not legacy"
+    );
+
+    // It loads - the identity check inside `load_or_create` also proves the keypair and credential
+    // survived, since a mangled bundle cannot produce a matching identity string.
+    let restored = MlsManager::load_or_create("legacy-user", "legacy-device", Some(legacy_bytes))
+        .expect("a legacy snapshot must still load");
+    assert_eq!(
+        restored.get_known_groups(),
+        vec!["legacy-group".to_string()]
+    );
+
+    // ...and the next save has migrated it, without losing anything.
+    let migrated = restored.save_state().expect("save after legacy load");
+    assert_eq!(normalized(decode_persisted(&migrated)), normalized(modern));
 }
 
 #[test]
@@ -138,6 +199,53 @@ fn cold_serialize_round_trips_through_load_or_create() {
             &restored.save_state().expect("restored snapshot")
         )),
         "rebuilt persisted state must be equivalent after round-trip"
+    );
+}
+
+/// Measures the cost this change exists to remove, on a realistically sized state, so the WP-ANR-1
+/// claim rests on a number rather than on a stack trace. Ignored because it is a MEASUREMENT, not
+/// an assertion - it takes tens of seconds and its result is a ratio, not a pass/fail.
+///
+/// `cargo test --release --test state_cache -- --ignored --nocapture legacy_decode`
+#[test]
+#[ignore = "measurement, not an assertion: run explicitly with --release --nocapture"]
+fn legacy_decode_cost_against_the_new_one() {
+    use std::time::Instant;
+
+    let mut manager = make_manager("bench-user", "bench-device");
+    manager
+        .create_group("bench-group".to_string())
+        .expect("create");
+    // The field prod file is ~2.67 MB in the legacy encoding; key package bundles are the bulk of
+    // a real keystore, so this is the closest honest stand-in.
+    manager.generate_key_packages(400).expect("generate kps");
+
+    let modern_bytes = manager.save_state().expect("snapshot");
+    let modern = decode_persisted(&modern_bytes);
+    let legacy = LegacyPersistedState {
+        identity_bundle: modern.identity_bundle.clone(),
+        storage_values: modern.storage_values.clone(),
+        group_ids: modern.group_ids.clone(),
+        forgotten_group_min_epochs: modern.forgotten_group_min_epochs.clone(),
+    };
+    let mut legacy_bytes = Vec::new();
+    ciborium::ser::into_writer(&legacy, &mut legacy_bytes).expect("legacy encode");
+
+    let t0 = Instant::now();
+    let _ = decode_persisted(&legacy_bytes);
+    let legacy_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    let t1 = Instant::now();
+    let _ = decode_persisted(&modern_bytes);
+    let modern_ms = t1.elapsed().as_secs_f64() * 1000.0;
+
+    println!(
+        "legacy: {} bytes, {legacy_ms:.1} ms | new: {} bytes, {modern_ms:.1} ms | \
+         size x{:.2}, time x{:.1}",
+        legacy_bytes.len(),
+        modern_bytes.len(),
+        legacy_bytes.len() as f64 / modern_bytes.len() as f64,
+        legacy_ms / modern_ms.max(f64::EPSILON),
     );
 }
 

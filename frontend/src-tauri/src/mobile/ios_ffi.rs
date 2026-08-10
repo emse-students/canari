@@ -15,8 +15,8 @@ use crate::concurrency::mark_foreground_active;
 use super::background::{
     background_group_epoch_with_key, cleanup_pending_db, create_welcome_background_with_key,
     decode_commits_b64_json, decrypt_channel_message, decrypt_push_message_with_commits_with_key,
-    decrypt_push_message_with_key, process_welcome_background_with_key,
-    send_message_background_with_key,
+    decrypt_push_message_with_key, parse_outbox_entries_json, process_welcome_background_with_key,
+    send_messages_background_with_key,
 };
 use super::proto_fields::{build_read_receipt_app_message, build_text_app_message};
 
@@ -354,39 +354,45 @@ pub unsafe extern "C" fn canari_native_process_welcome_background(
     }
 }
 
-/// Encrypts a plaintext AppMessage proto (base64) and returns `{"ok":true,"ciphertext":"..."}`.
+/// Encrypts a WHOLE outbox batch against one load of `mls.bin` and returns
+/// `{"ok":true,"results":[{"id":..,"ok":..,"ciphertext"|"error":..}, ...]}`.
+///
+/// `entries_json` is `[{"id":"...","groupId":"...","proto":"<b64>"}, ...]`. Android twin:
+/// `nativeSendMessagesBackground`. See `send_messages_background_with_key` for why the drain is a
+/// batch and why the save must precede the return.
 #[no_mangle]
-pub unsafe extern "C" fn canari_native_send_message_background(
+pub unsafe extern "C" fn canari_native_send_messages_background(
     files_dir: *const c_char,
     state_ptr: *const u8,
     state_len: usize,
     device_key_b64: *const c_char,
     user_id: *const c_char,
     device_id: *const c_char,
-    group_id: *const c_char,
-    proto_b64: *const c_char,
+    entries_json: *const c_char,
 ) -> *mut c_char {
     if files_dir.is_null()
         || state_ptr.is_null()
         || device_key_b64.is_null()
         || user_id.is_null()
         || device_id.is_null()
-        || group_id.is_null()
-        || proto_b64.is_null()
+        || entries_json.is_null()
     {
         return json_to_c_string(serde_json::json!({ "ok": false }));
     }
 
     let files_dir = path_from_c_str(files_dir);
     let state_bytes = slice::from_raw_parts(state_ptr, state_len);
-    match send_message_background_with_key(
+    let entries = match parse_outbox_entries_json(&str_from_c_str(entries_json)) {
+        Ok(entries) => entries,
+        Err(e) => return err_json_to_c_string(e),
+    };
+    match send_messages_background_with_key(
         &files_dir,
         state_bytes,
         &str_from_c_str(device_key_b64),
         &str_from_c_str(user_id),
         &str_from_c_str(device_id),
-        &str_from_c_str(group_id),
-        &str_from_c_str(proto_b64),
+        &entries,
     ) {
         Ok(v) => json_to_c_string(v),
         Err(e) => err_json_to_c_string(e),

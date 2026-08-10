@@ -5,7 +5,10 @@ mod concurrency;
 mod keystore_bridge;
 mod state;
 
-#[cfg(any(target_os = "android", target_os = "ios"))]
+// `test` is in the gate so the shared background logic - the outbox batch drain in particular -
+// is exercised by a host `cargo test` rather than only by a device build. Nothing in it is
+// platform-specific; the gate exists to keep it out of the desktop binary.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 mod mobile;
 
 use std::sync::{Arc, Mutex};
@@ -508,7 +511,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
 
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendMessageBackground<
+pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendMessagesBackground<
     'a,
 >(
     mut env: jni::JNIEnv<'a>,
@@ -518,8 +521,7 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
     key_b64: jni::objects::JString<'a>,
     user_id: jni::objects::JString<'a>,
     device_id: jni::objects::JString<'a>,
-    group_id: jni::objects::JString<'a>,
-    proto_b64: jni::objects::JString<'a>,
+    entries_json: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> Result<serde_json::Value, String> {
         let files_dir_str: String = env
@@ -535,27 +537,26 @@ pub extern "C" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeSendM
             .get_string(&device_id)
             .map_err(|e| e.to_string())?
             .into();
-        let group_id_str: String = env.get_string(&group_id).map_err(|e| e.to_string())?.into();
-        let proto_b64_str: String = env
-            .get_string(&proto_b64)
+        let entries_str: String = env
+            .get_string(&entries_json)
             .map_err(|e| e.to_string())?
             .into();
+        let entries = mobile::background::parse_outbox_entries_json(&entries_str)?;
 
-        mobile::background::send_message_background_with_key(
+        mobile::background::send_messages_background_with_key(
             std::path::Path::new(&files_dir_str),
             &state_vec,
             &key_b64_str,
             &user_id_str,
             &device_id_str,
-            &group_id_str,
-            &proto_b64_str,
+            &entries,
         )
     })();
 
     let json_str = match result {
         Ok(v) => v.to_string(),
         Err(e) => {
-            log::error!("[BG_SEND] nativeSendMessageBackground failed: {e}");
+            log::error!("[BG_SEND] nativeSendMessagesBackground failed: {e}");
             format!("{{\"ok\":false,\"error\":{:?}}}", e)
         }
     };

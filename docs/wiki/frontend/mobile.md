@@ -406,6 +406,38 @@ Notes on the adoption pass:
 - The proto is decoded, not replayed opaquely, so an adopted entry becomes a first-class `text`/`reply` that the flusher re-encodes identically (same `messageId`, same `sentAt`). A `silent` entry stays `control` — sent verbatim and without a push, which is what silent means. Anything else logs and is left alone.
 - A delivered send is removed from the mirror by the native drain, so an entry still present was not delivered. Should one race through, `reconcileOutboxSent` deletes it moments later; adoption is idempotent on the stable `messageId` either way.
 
+#### The drain is a BATCH, and every part of its shape is load-bearing (WP-ANR-1, 2026-08-11)
+
+The drain used to call the single-message native entry point once per queued message. Each call
+re-read `mls.bin`, CBOR-decoded the entire OpenMLS keystore, encrypted one message, re-serialised
+the whole keystore and wrote it back — `O(N x |mls.bin|)` on a 2.7 MB file, inside the **60 s the OS
+allows a `goAsync()` BroadcastReceiver**. With the per-byte decode below multiplying it, that is
+what ANRed the app from `CanariBootReceiver`, which fires after every Play Store update.
+
+`send_messages_background_with_key` (`src-tauri/src/mobile/background.rs`) is now the one entry
+point on both platforms — `nativeSendMessagesBackground` on Android,
+`canari_native_send_messages_background` on iOS — and the platform loops only POST. Four properties,
+each of which a plausible-looking implementation gets wrong:
+
+| Property | Why it is not optional |
+|---|---|
+| **One load, one save** | The whole point: `O(\|mls.bin\| + N)` instead of `O(N x \|mls.bin\|)`. |
+| **The save precedes any returned ciphertext** | A frame handed to the caller **is** a frame the caller POSTs. Returning one whose ratchet advance is not yet durable is exactly WP-LOSS-1: the sender rewinds and the peer can never decrypt what follows. A save failure therefore discards the entire batch. `one_load_and_one_save_cover_every_advance_in_the_batch` proves it by sending a further message from the *reloaded* file and having the peer decrypt it — a save that persisted only the first advance fails there and nowhere else. |
+| **The batch is capped (`DRAIN_MAX_BATCH` / `kCanariDrainMaxBatch`, 100)** | The cap is on the ENCRYPT, not on the POST. Encrypting consumes a generation whether or not the frame is ever sent, so encrypting a backlog the drain has no time to deliver runs this sender ahead of the peer — eventually past OpenMLS's maximum forward distance, which is `GenerationTooFarAhead` and **no retry repairs it**. The surplus is not touched at all. |
+| **Per-entry failures are isolated** | One group not yet joined on this device (`GroupNotFound`) must not strand the rest of the backlog. Each entry gets its own result; the id is echoed so a caller cannot mis-zip its own list. |
+
+Two bounds sit on top of the POST loop, and they are different in kind. `DRAIN_POST_BUDGET_MS`
+(35 s) is the safety net for a slow network: it leaves already-encrypted frames unsent, so it is the
+abnormal exit, not the normal one — the cap above is what makes the normal case fit. And the mirror
+is rewritten every `DRAIN_CHECKPOINT_EVERY` (25) deliveries rather than only at the end, because the
+mirror is the *only* record of what is still owed: between two rewrites, a hard kill re-sends
+everything already delivered. That bounds the duplicate window instead of letting it be the whole
+backlog.
+
+The shared logic is host-testable: `mod mobile` is gated on `any(android, ios, test)`, so
+`cargo test` in `src-tauri` runs the batch tests (and the `proto_fields` tests, which were
+device-only before) without a device build.
+
 ### Keyboard media (Android)
 
 `KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events picked up by `MainChatPage` → routed through the normal media pipeline.

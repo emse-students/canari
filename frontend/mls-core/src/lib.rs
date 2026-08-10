@@ -1,5 +1,6 @@
 pub mod security;
 
+pub(crate) mod byte_compat;
 pub mod crypto;
 pub mod group;
 pub mod keystore;

@@ -13,10 +13,21 @@ use crate::MlsError;
 
 // --- 1. Persistence model (on disk) ---
 
+/// The on-disk snapshot.
+///
+/// Every byte-buffer field goes through [`crate::byte_compat`], which writes a CBOR byte string
+/// and reads EITHER a byte string or the legacy array of integers. Without that, serde's generic
+/// `Vec<u8>` path parses one CBOR header per byte - 58.6 s of CPU on a 2.67 MB file, enough to ANR
+/// the app from the boot receiver (WP-ANR-1). The read side of the pair is what lets an existing
+/// install survive the change and MUST NOT be removed; see the module docs for the rollback
+/// consequence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PersistedState {
+    #[serde(with = "crate::byte_compat::bytes")]
     pub identity_bundle: Vec<u8>,
+    #[serde(with = "crate::byte_compat::bytes_map")]
     pub storage_values: HashMap<Vec<u8>, Vec<u8>>,
+    #[serde(with = "crate::byte_compat::bytes_vec")]
     pub group_ids: Vec<Vec<u8>>,
     /// Minimum epoch to accept per group after a forget_group() call.
     /// #[serde(default)] ensures compatibility with states saved before this field was added.
@@ -25,10 +36,16 @@ pub struct PersistedState {
 }
 
 /// Borrowed view of [`PersistedState`] for CBOR encoding without cloning OpenMLS storage.
+///
+/// The field encodings must match [`PersistedState`] exactly - this is the WRITER of the same
+/// bytes that struct reads, and nothing in the type system ties the two together.
 #[derive(Serialize)]
 pub(crate) struct PersistedStateSer<'a> {
+    #[serde(with = "crate::byte_compat::bytes")]
     pub(crate) identity_bundle: &'a [u8],
+    #[serde(with = "crate::byte_compat::bytes_map")]
     pub(crate) storage_values: &'a HashMap<Vec<u8>, Vec<u8>>,
+    #[serde(with = "crate::byte_compat::bytes_vec")]
     pub(crate) group_ids: &'a [Vec<u8>],
     pub(crate) forgotten_group_min_epochs: &'a HashMap<String, u64>,
 }
@@ -36,13 +53,17 @@ pub(crate) struct PersistedStateSer<'a> {
 // Struct request wrapper for serialization
 #[derive(Serialize)]
 pub(crate) struct IdentityBundleRef<'a> {
-    pub(crate) keypair: &'a [u8],    // Serialized bytes
+    #[serde(with = "crate::byte_compat::bytes")]
+    pub(crate) keypair: &'a [u8], // Serialized bytes
+    #[serde(with = "crate::byte_compat::bytes")]
     pub(crate) credential: &'a [u8], // Serialized bytes
 }
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct IdentityBundle {
+    #[serde(with = "crate::byte_compat::bytes")]
     pub(crate) keypair: Vec<u8>,
+    #[serde(with = "crate::byte_compat::bytes")]
     pub(crate) credential: Vec<u8>,
 }
 
@@ -60,14 +81,6 @@ impl StateSnapshotCache {
         Self {
             dirty: true,
             cached_cbor: None,
-        }
-    }
-
-    /// Seeds the cache from a freshly loaded plaintext snapshot (no re-serialize on first save).
-    pub(crate) fn from_loaded(bytes: Vec<u8>) -> Self {
-        Self {
-            dirty: false,
-            cached_cbor: Some(bytes),
         }
     }
 
@@ -201,7 +214,15 @@ impl MlsManager {
                 credential,
                 groups,
                 forgotten_group_min_epochs: state.forgotten_group_min_epochs,
-                state_snapshot: RefCell::new(StateSnapshotCache::from_loaded(state_bytes)),
+                // Deliberately NOT `from_loaded(state_bytes)`, which would hand the bytes we just
+                // read straight back to the first `save_state`. That is a sound optimisation while
+                // the encoding is fixed, and exactly wrong across a format change: a device
+                // carrying a legacy `mls.bin` would re-persist it verbatim and keep paying the
+                // per-byte decode for ever, migrating only if some mutation happened to dirty the
+                // cache first. Rebuilding once per session makes the migration deterministic
+                // instead of dependent on what the user does next, and the cost is one
+                // serialization - never the decode this change exists to remove.
+                state_snapshot: RefCell::new(StateSnapshotCache::new_dirty()),
             })
         } else {
             // Case 2: First creation

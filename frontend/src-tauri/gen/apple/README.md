@@ -71,5 +71,5 @@ FFI exposes :
 - `canari_native_decrypt_channel_message` (AES-256-GCM channel/communaute, hors MLS)
 - `canari_native_create_welcome_background`
 - `canari_native_process_welcome_background`
-- `canari_native_send_message_background`
+- `canari_native_send_messages_background` (batch : un seul chargement de `mls.bin` par vidage)
 - `canari_native_cleanup_pending_db`

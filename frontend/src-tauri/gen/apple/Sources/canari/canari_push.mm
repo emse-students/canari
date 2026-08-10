@@ -30,6 +30,23 @@ static const int kWelcomeRaceRetries = 3;
 static const useconds_t kWelcomeRaceRetryDelayUs = 1800000;
 static NSString *const kOutboxPendingFileName = @"outbox_pending.ndjson";
 static NSString *const kOutboxSentFileName = @"outbox_sent.ndjson";
+// How many queued messages one drain takes on. The cap is on the ENCRYPT, deliberately: encrypting
+// consumes a ratchet generation whether or not the frame is ever POSTed, so encrypting a backlog
+// the drain has no time to deliver would run this sender's generation far ahead of what the peer
+// receives - eventually past OpenMLS's maximum forward distance, which no retry can repair.
+// Whatever is left over is not touched at all and is drained next time, so a backlog of any size
+// converges across successive drains. Android twin: DRAIN_MAX_BATCH.
+static const NSUInteger kCanariDrainMaxBatch = 100;
+// Wall-clock budget for the POST half of an outbox drain. The OS reclaims a background task
+// whatever it is doing, and the drain also pays for the batch encrypt before it gets here.
+// Exceeding it is not an error - the remainder stays queued - but unlike the batch cap it does
+// leave already encrypted frames unsent, so it is the safety net for a slow network rather than the
+// normal exit. Android twin: DRAIN_POST_BUDGET_MS.
+static const NSTimeInterval kCanariDrainPostBudgetMs = 35000.0;
+// How many deliveries may accumulate before the mirror is rewritten. The mirror is the only record
+// of what is still owed, so between two rewrites a hard kill re-sends everything already delivered
+// - this bounds that window instead of letting it be the whole backlog.
+static const NSUInteger kCanariDrainCheckpointEvery = 25;
 // BGProcessingTask identifier; MUST match BGTaskSchedulerPermittedIdentifiers in Info.plist.
 // iOS analogue of Android's expedited MlsBackgroundWorker (WorkManager): given a background
 // window by the OS, it drains mls_pending.db via canari_native_cleanup_pending_db.
@@ -1380,26 +1397,51 @@ static void CanariAppendOutboxSent(NSArray<NSString *> *ids) {
   [combined writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
-static NSString *_Nullable CanariEncryptQueuedMessage(CanariPushContext *ctx, CanariOutboxEntry *entry) {
-  if (ctx.deviceKeyB64.length == 0) {
+/**
+ * Encrypts every pending message in ONE FFI call under g_mlsStateLock (the Rust side loads mls.bin
+ * once, advances the ratchet per entry, and rewrites mls.bin once - before returning any ciphertext,
+ * so a frame is never handed out while its ratchet advance is not durable).
+ *
+ * Returns entry id -> ciphertext (base64) for the entries that encrypted; an entry missing from the
+ * dictionary failed on its own (typically the group is not joined on this device yet) and stays
+ * queued. Returns nil if the whole batch failed: state absent, lock unavailable, or the save failed
+ * - in which case NOTHING may be posted.
+ *
+ * Per-message it was one full CBOR decode and one full re-serialise of the entire MLS keystore
+ * EACH, i.e. O(N x |mls.bin|) inside the OS background deadline (WP-ANR-1). Android twin:
+ * encryptQueuedMessages in CanariFirebaseMessagingService.kt.
+ */
+static NSDictionary<NSString *, NSString *> *_Nullable CanariEncryptQueuedMessages(
+    CanariPushContext *ctx, NSArray<CanariOutboxEntry *> *entries) {
+  if (ctx.deviceKeyB64.length == 0 || entries.count == 0) {
     return nil;
   }
   if (![g_mlsStateLock tryLock]) {
-    NSLog(@"[CanariPush] encryptQueuedMessage: MlsStateLock occupe");
+    NSLog(@"[CanariPush] encryptQueuedMessages: MlsStateLock occupe");
     return nil;
   }
-  NSString *ciphertext = nil;
+  NSMutableDictionary<NSString *, NSString *> *out = nil;
   @try {
     NSString *dir = CanariTauriDataDir();
     NSData *stateBytes = CanariLoadMlsState();
     if (dir == nil || stateBytes == nil) {
-      NSLog(@"[CanariPush] encryptQueuedMessage: MLS state absent");
+      NSLog(@"[CanariPush] encryptQueuedMessages: MLS state absent");
       return nil;
     }
-    char *jsonPtr = canari_native_send_message_background(
+    NSMutableArray *payload = [NSMutableArray arrayWithCapacity:entries.count];
+    for (CanariOutboxEntry *entry in entries) {
+      [payload addObject:@{
+        @"id" : entry.entryId ?: @"",
+        @"groupId" : entry.groupId ?: @"",
+        @"proto" : entry.proto ?: @"",
+      }];
+    }
+    NSData *payloadData = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+    NSString *payloadStr = [[NSString alloc] initWithData:payloadData encoding:NSUTF8StringEncoding];
+    char *jsonPtr = canari_native_send_messages_background(
         dir.UTF8String, (const unsigned char *)stateBytes.bytes, stateBytes.length,
-        ctx.deviceKeyB64.UTF8String, ctx.userId.UTF8String, ctx.deviceId.UTF8String, entry.groupId.UTF8String,
-        entry.proto.UTF8String);
+        ctx.deviceKeyB64.UTF8String, ctx.userId.UTF8String, ctx.deviceId.UTF8String,
+        payloadStr.UTF8String);
     if (jsonPtr == nil) {
       return nil;
     }
@@ -1408,15 +1450,36 @@ static NSString *_Nullable CanariEncryptQueuedMessage(CanariPushContext *ctx, Ca
     NSData *jsonData = [jsonStr dataUsingEncoding:NSUTF8StringEncoding];
     id json = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:nil];
     if (![json isKindOfClass:[NSDictionary class]] || ![json[@"ok"] boolValue]) {
-      NSLog(@"[CanariPush] encryptQueuedMessage: ok=false group=%@", entry.groupId);
+      NSLog(@"[CanariPush] encryptQueuedMessages: ok=false");
       return nil;
     }
-    NSString *ct = [json[@"ciphertext"] isKindOfClass:[NSString class]] ? json[@"ciphertext"] : @"";
-    ciphertext = ct.length > 0 ? ct : nil;
+    id results = json[@"results"];
+    if (![results isKindOfClass:[NSArray class]]) {
+      return nil;
+    }
+    out = [NSMutableDictionary dictionaryWithCapacity:((NSArray *)results).count];
+    for (id item in (NSArray *)results) {
+      if (![item isKindOfClass:[NSDictionary class]]) {
+        continue;
+      }
+      NSDictionary *r = item;
+      NSString *entryId = [r[@"id"] isKindOfClass:[NSString class]] ? r[@"id"] : @"";
+      if (entryId.length == 0) {
+        continue;
+      }
+      if (![r[@"ok"] boolValue]) {
+        NSLog(@"[CanariPush] encryptQueuedMessages: skipped id=%@ - group not joined yet?", entryId);
+        continue;
+      }
+      NSString *ct = [r[@"ciphertext"] isKindOfClass:[NSString class]] ? r[@"ciphertext"] : @"";
+      if (ct.length > 0) {
+        out[entryId] = ct;
+      }
+    }
   } @finally {
     [g_mlsStateLock unlock];
   }
-  return ciphertext;
+  return out;
 }
 
 static BOOL CanariSendQueuedMessagePush(CanariPushContext *ctx, NSString *secret, NSString *groupId,
@@ -1448,11 +1511,35 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
           (unsigned long)entries.count);
     return (int)entries.count;
   }
-  NSLog(@"[CanariPush] drainOutboxBackground: %lu message(s)", (unsigned long)entries.count);
+  // Only this slice is encrypted, and only it can burn a generation. `deferred` is never touched
+  // by this drain.
+  NSUInteger take = MIN(entries.count, kCanariDrainMaxBatch);
+  NSArray<CanariOutboxEntry *> *batch = [entries subarrayWithRange:NSMakeRange(0, take)];
+  NSArray<CanariOutboxEntry *> *deferred =
+      [entries subarrayWithRange:NSMakeRange(take, entries.count - take)];
+  NSLog(@"[CanariPush] drainOutboxBackground: %lu message(s) queued, taking %lu",
+        (unsigned long)entries.count, (unsigned long)batch.count);
+  NSDictionary<NSString *, NSString *> *ciphertexts = CanariEncryptQueuedMessages(ctx, batch);
+  if (ciphertexts == nil) {
+    NSLog(@"[CanariPush] drainOutboxBackground: batch encrypt failed (%lu remaining)",
+          (unsigned long)entries.count);
+    return (int)entries.count;
+  }
+  NSTimeInterval deadline =
+      [NSDate timeIntervalSinceReferenceDate] + (kCanariDrainPostBudgetMs / 1000.0);
   NSMutableArray<NSString *> *sentIds = [NSMutableArray array];
   NSMutableArray<CanariOutboxEntry *> *remaining = [NSMutableArray array];
-  for (CanariOutboxEntry *entry in entries) {
-    NSString *ciphertext = CanariEncryptQueuedMessage(ctx, entry);
+  NSUInteger checkpointed = 0;
+  NSUInteger index = 0;
+  for (CanariOutboxEntry *entry in batch) {
+    index++;
+    if ([NSDate timeIntervalSinceReferenceDate] >= deadline) {
+      // Out of budget: everything not yet attempted goes back untouched. The next drain continues
+      // from here - partial progress is kept, never discarded.
+      [remaining addObject:entry];
+      continue;
+    }
+    NSString *ciphertext = ciphertexts[entry.entryId];
     if (ciphertext == nil) {
       [remaining addObject:entry];
       continue;
@@ -1463,14 +1550,30 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
     } else {
       [remaining addObject:entry];
     }
+    // Checkpoint: a hard kill (the OS reclaiming the background task) would otherwise leave every
+    // delivered message still in the mirror, and the next drain would send them all again. This
+    // bounds that duplicate window to kCanariDrainCheckpointEvery.
+    if (sentIds.count - checkpointed >= kCanariDrainCheckpointEvery) {
+      CanariAppendOutboxSent(
+          [sentIds subarrayWithRange:NSMakeRange(checkpointed, sentIds.count - checkpointed)]);
+      checkpointed = sentIds.count;
+      NSMutableArray<CanariOutboxEntry *> *notYetAttempted = [remaining mutableCopy];
+      [notYetAttempted
+          addObjectsFromArray:[batch subarrayWithRange:NSMakeRange(index, batch.count - index)]];
+      [notYetAttempted addObjectsFromArray:deferred];
+      CanariRewriteOutboxMirror(notYetAttempted);
+    }
   }
-  if (sentIds.count > 0) {
-    CanariAppendOutboxSent(sentIds);
+  if (sentIds.count > checkpointed) {
+    CanariAppendOutboxSent(
+        [sentIds subarrayWithRange:NSMakeRange(checkpointed, sentIds.count - checkpointed)]);
   }
-  CanariRewriteOutboxMirror(remaining);
+  NSMutableArray<CanariOutboxEntry *> *stillQueued = [remaining mutableCopy];
+  [stillQueued addObjectsFromArray:deferred];
+  CanariRewriteOutboxMirror(stillQueued);
   NSLog(@"[CanariPush] drainOutboxBackground: %lu sent, %lu remaining",
-        (unsigned long)sentIds.count, (unsigned long)remaining.count);
-  return (int)remaining.count;
+        (unsigned long)sentIds.count, (unsigned long)stillQueued.count);
+  return (int)stillQueued.count;
 }
 
 /**

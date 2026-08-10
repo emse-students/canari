@@ -72,15 +72,14 @@ int canari_native_process_welcome_background(
     const char *welcome_b64,
     const char *ratchet_tree_b64);
 
-char *canari_native_send_message_background(
+char *canari_native_send_messages_background(
     const char *files_dir,
     const unsigned char *state_ptr,
     size_t state_len,
     const char *device_key_b64,
     const char *user_id,
     const char *device_id,
-    const char *group_id,
-    const char *proto_b64);
+    const char *entries_json);
 
 char *canari_native_build_text_message_proto(
     const char *message_id,

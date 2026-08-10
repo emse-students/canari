@@ -402,6 +402,55 @@ enqueueMessage()      enqueueMessage()
 - Atomically consumed by inviting devices.
 - On fresh start: old OTKPs have no matching private keys -> purged via `DELETE /api/mls/devices/:userId/:deviceId/prekeys` **before** generating new ones.
 
+## How the state is encoded inside the envelope (WP-ANR-1, 2026-08-11)
+
+The envelope above is the SEAL. Inside it, `PersistedState` is CBOR, and how its byte buffers are
+framed is a second at-rest format with its own compatibility rule.
+
+**serde has no dedicated `Vec<u8>`.** A derived `Deserialize` routes it through the generic sequence
+path, so ciborium wrote every buffer as a **CBOR array of integers** and read it back with one CBOR
+header parse *per byte*: `Vec<u8>::deserialize` -> `deserialize_seq` -> `VecVisitor<u8>::visit_seq`
+-> `SeqAccess::next_element::<u8>` -> `Decoder::pull` -> `Header::try_from`. Every buffer in the file
+was on that path - `identity_bundle`, the whole OpenMLS keystore (`storage_values`), `group_ids`,
+and the identity `keypair`/`credential` - and `serde_bytes` appeared nowhere in the repo.
+
+`mls-core/src/byte_compat.rs` fixes it with `serialize_bytes` plus a visitor that accepts a byte
+string **or** the legacy sequence. Measured on a 1.59 MB fixture, release build:
+
+| | legacy | byte string |
+|---|---|---|
+| size | 1 586 917 B | 794 938 B (**x2.00** smaller) |
+| decode | 21.6 ms | 0.5 ms (**x45** faster) |
+
+Re-run it with
+`cargo test --release --test state_cache -- --ignored --nocapture legacy_decode`. Two honest caveats
+on the field figure that motivated this: the 58.6 s of CPU captured in the ANR was a **debug** APK
+(debug is ~10x release on the same fixture), and the multiplier that turned a slow read into a
+freeze was the per-message reload in the outbox drain, fixed separately - see
+[mobile > the drain is a BATCH](../frontend/mobile.md#the-drain-is-a-batch-and-every-part-of-its-shape-is-load-bearing-wp-anr-1-2026-08-11).
+
+**The compatibility contract, and the one-way step.** The reader for the legacy encoding ships in the
+same commit, so any existing `mls.bin` or IndexedDB blob loads unchanged and is rewritten in the new
+encoding at its next save. The reverse does not hold: **a device that has already migrated cannot be
+read by a build older than that commit.** The frontend must not be rolled back past it, or every
+migrated user loses their identity and every group. Decision taken deliberately 2026-08-11
+(one-step: read both, write new now).
+
+The tests that hold this up, and what each would catch:
+
+- `byte_compat::reads_a_legacy_array_of_integers_file` - the framing.
+- `state_cache::a_legacy_encoded_state_still_loads_and_is_migrated_on_save` - a **real** snapshot
+  (keypair, credential, keystore, group ids) re-encoded the legacy way, through `load_or_create`.
+- Negative control run 2026-08-11: deleting the `visit_seq` arm fails exactly those two plus
+  `an_empty_buffer_survives_both_encodings`, and nothing else.
+
+`StateSnapshotCache::from_loaded` was **deleted** as part of this. Seeding the cache with the bytes
+just read handed them straight back to the first `save_state`, which would have pinned a
+legacy-encoded file in place for ever. A reload now always re-encodes, so the migration happens once
+per session rather than depending on what the user does next - which is also why
+`a_reloaded_state_re_encodes_and_preserves_its_content` asserts CONTENT equality and not byte
+equality (`storage_values` is an unordered `HashMap`; the CBOR is not deterministic).
+
 ## Failing to load a saved state
 
 `loadStateWithKey` can reject three ways. Two are told apart by

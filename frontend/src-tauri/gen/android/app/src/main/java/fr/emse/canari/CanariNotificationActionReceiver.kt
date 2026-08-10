@@ -16,7 +16,7 @@ import org.json.JSONObject
  * "Marquer comme lu", fired from the shade while the app may be fully killed.
  *
  * Both actions reuse [CanariFirebaseMessagingService]'s outbox-drain machinery unchanged (same
- * `outbox_pending.ndjson` mirror, same `drainOutboxBackground`/`nativeSendMessageBackground` path
+ * `outbox_pending.ndjson` mirror, same `drainOutboxBackground`/`nativeSendMessagesBackground` path
  * the background welcome-join/decrypt flows already use) - only the plaintext `AppMessage` proto
  * is built differently, via [CanariFirebaseMessagingService.nativeBuildTextMessageProto] /
  * [CanariFirebaseMessagingService.nativeBuildReadReceiptProto] (no TS runtime involved). Never
