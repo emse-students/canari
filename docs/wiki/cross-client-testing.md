@@ -598,6 +598,9 @@ Raw rows are appended to `scratchpad/results.ndjson` as each runner finishes; ca
 
 | Id | Build | Verdict | Evidence |
 | --- | --- | --- | --- |
+| SAFELINK (server) | prod 2026-08-10 | **PASS** | Positive AND negative control: Google's test malware URL answers `{"unsafe":true}`, `google.com` answers `{"unsafe":false}`. |
+| SAFELINK (web) | web, prod 2026-08-10 | **PASS** | Five assertions: warns, blocks, opens on confirm, silent on a clean link, no lookup twice for the same URL. |
+| SAFELINK (mobile) | A1 0.13.0, prod 2026-08-10 | **PASS (inline), card not exercised** | `AppLink` on hardware: lookup went to the correct ABSOLUTE `https://canari-emse.fr/api/mls/link-safety?url=…`, the warning rendered, and no navigation occurred. `LinkPreviewCard` could not be exercised - the preview pipeline renders no card for the flagged test URL, so only one anchor exists - but it calls the SAME `confirmUnsafeLinkIfNeeded` seam, which this row proves works in the WebView; what stays unverified on mobile is only the card's own click wiring, which the web row covers. |
 | MSG-1 | web, prod 2026-08-06 | **PASS** | DM W1 -> W2, delivered in 1225 ms, one copy each side, author `Jolan BOUDIN`. Re-proved by 38 consecutive sends below. |
 | MSG-1 (volume) | web, prod 2026-08-06 | **PASS** | 20 sends at 1.2 s spacing: 20/20, latency 177-830 ms. 8 sends each preceded by a receiver reload: 8/8, 493-1191 ms. 10 sends into the receiver's post-reload bootstrap window: 10/10, 505-1170 ms. |
 | MSG-2 | A1 0.12.0, prod 2026-08-06 | **PASS** | W2 -> A1 with the app foreground: 2665 ms, one copy, no push duplicate. |
@@ -2283,6 +2286,39 @@ holding **507** (the nine ghosts held 10 810 *each*), and `auth_db` steady at 29
 nothing left to collect, and zero `REFUSED` / `SKIPPED_NO_KEY_PACKAGE` lines, meaning nothing has
 tried to resurrect a dead device since. A one-shot purge would have shown the same table at
 midnight; only the second measurement distinguishes a fix from a cleanup.
+
+##### The 26th to 28th harness faults, all three from the WP-SAFELINK-1 mobile pass
+
+All three produced a verdict about the APP that was really a fact about the HARNESS, and two of them
+produced a **FAIL**, which is the direction this page keeps warning about.
+
+- **#26. `window.open(url, '_blank', 'noopener')` returns `null` BY SPECIFICATION**, so its return
+  value says nothing about whether the popup was blocked. The check read that `null` as "blocked"
+  and failed a working gate. The observable is a new page target in `/json/list`.
+- **#27, the expensive one: a click that opens an EXTERNAL APP backgrounds the WebView, and a
+  backgrounded page is throttled.** Three probes reported "no lookup was made, no warning appeared"
+  - all three were reading a FROZEN document, because the first click had handed the foreground to
+  Chrome. Nothing in the readings said so. The user mentioning "j'ai l'ecran site dangereux de
+  Chrome" is what exposed it. Every check whose action can leave the app now asserts the foreground
+  before AND after (`dumpsys window | mCurrentFocus`). A capture-phase `preventDefault()` does NOT
+  hold it - Tauri opens a `target="_blank"` link at the NATIVE layer, below anything the document
+  can cancel - so the anchors are defanged in the DOM instead, which leaves Svelte's delegated
+  `onclick` intact.
+- **#28, twice in a row, and it is a lesson about the fix rather than the bug.** Defanging by
+  re-querying `a[target="_blank"]` per case found nothing the second time, the first case having
+  stripped that very attribute; so the second case reported `clicked=absent`, which reads as a
+  finding about the app. Guarding with `if (!window.__defanged)` then made it worse: an earlier run
+  had exited at a validity gate BEFORE its cleanup, leaving a stale EMPTY array in the page - and an
+  empty array is truthy, so the guard refused to re-arm and BOTH cases reported `absent`. Arming is
+  now a step of its own, per run, that trusts no leftover page state. **A harness that mutates the
+  page owns the restoration on every exit path, including the early ones.**
+
+Two non-fault traps from the same hour, both about reading a measurement rather than taking one:
+a WebSocket close code of **1006 does not distinguish** an unreachable host from a rejected
+handshake (a non-101 upgrade response yields 1006 in every browser), so an unauthenticated `wss://`
+probe is not a reachability test; and `dumpsys connectivity`'s first `CONNECTED` line is not the
+default route - match the id from `Active default network: <id>`, or a phone on wifi reads as a
+phone on LTE.
 
 ##### The 16th and 17th harness faults, both from this hour
 
