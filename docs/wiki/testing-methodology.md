@@ -16,7 +16,7 @@ over a filtered copy of its own evidence.
 
 ---
 
-## The nine rules
+## The ten rules
 
 Ordered by how expensive it is to break them.
 
@@ -131,6 +131,27 @@ Two consequences, and the second is the expensive one:
   for a step that could never run.
 
 Same family as rule 1: `versionName` is a projection, the running code is the evidence.
+
+### 10. THE ABSENCE OF A FAILURE IS NOT EVIDENCE OF SUCCESS - prove the path was EXERCISED
+
+A check for "the push-authenticated fetch no longer 403s" counted zero rejections and wanted to call
+it PASS. But the process had cached both avatars hours earlier, so it never made a request: the
+verdict was measuring a path that did not run (WP-DIRECTBOOT-1). Every check whose assertion is the
+absence of something needs a second, POSITIVE assertion that the mechanism fired at all - and it must
+be reported next to the verdict, so a VOID run cannot be mistaken for a green one.
+
+The trap that hides it here is **two success logs one word apart**:
+
+| line | what it means |
+| --- | --- |
+| `fetchAvatar: from cache for X` | cache hit - **no network, no Keystore, nothing under test ran** |
+| `fetchAvatar: avatar cached for X` | an HTTP fetch succeeded and was written - the authenticated path DID run |
+
+A matcher written as `/(avatar cached\|from cache)/` therefore reports success for the one outcome
+that proves nothing. Read the source at the log site before trusting a string that merely sounds
+right; and to force the path, remove what makes it skippable - here
+`adb shell run-as fr.emse.canari rm files/avatar_*.jpg`, which works because the build is
+DEBUGGABLE, one of the few things a debug build is BETTER for (rule 9).
 
 ---
 

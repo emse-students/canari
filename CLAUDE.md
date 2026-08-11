@@ -151,7 +151,7 @@ and the vocabulary (`pending` / `passed` / `failed` / `to-revalidate` / `deferre
   one-shot `probe-*` scripts are in the scratchpad; `heal-web.mjs`, `mlsdb.mjs`, `recon.mjs`,
   `storm.mjs`, `pin.mjs`, `watch.mjs` all exist - reuse them, do not rebuild them.
 - The epistemics: [testing-methodology](docs/wiki/testing-methodology.md) - the 31 harness faults
-  distilled into eight rules, plus the environment traps that read as application bugs. **Read it
+  distilled into ten rules, plus the environment traps that read as application bugs. **Read it
   before writing a check or believing one.**
 
 Only what neither page can say, because it is about THIS machine and THIS session:
@@ -256,7 +256,7 @@ The campaign's state - every check, its category and its state - is the dashboar
 state here, and do not maintain a second copy.** The rig is
 [`tools/cross-client-harness/README.md`](tools/cross-client-harness/README.md); how a result earns
 belief is [testing-methodology](docs/wiki/testing-methodology.md), which carries the thirty-one
-harness faults distilled into eight rules plus the environment traps that read as application bugs.
+harness faults distilled into ten rules plus the environment traps that read as application bugs.
 The user has asked for the whole campaign to be RE-RUN from the start once the roadmap is clear.
 
 What a compaction must not lose, because it is a standing constraint rather than a finding:
@@ -386,47 +386,6 @@ raising it first locks everyone out.
   debug APK and debug measured ~10x release on the same fixture. Also owed: **the iOS
   `workflow_dispatch` compile check** - the `.mm` was edited symmetrically and nothing local
   compiles ObjC.
-
-- \[ \] **WP-DIRECTBOOT-1 (P1) - AFTER EVERY REBOOT THE APP PROCESS IS CREATED BEFORE THE FIRST
-  UNLOCK, AND IT SERVES PUSH DEGRADED FOR THE REST OF ITS LIFE.** Found by the OBSERVATION half of
-  LIFE-5 on 2026-08-11 (the check's own assertion PASSED); the user saw the visible tip - "il n'y a
-  pas l'air d'avoir la photo de profil dans la notification". Evidence in the scratchpad
-  `life5-canari.log`, and the negative control is decisive - same device, same account, 4 min apart:
-  | process | started | avatar fetch | result |
-  | pid 3765 | PRE-unlock | `fetchAvatar: HTTP 403` x2 | `hasAvatar=false` |
-  | pid 19352 | POST-unlock (`am kill` then a send) | `avatar cached` | `hasAvatar=true` |
-  The process is started by a broadcast (`LocalNotificationRestoreReceiver`) at boot, so
-  `CanariApplication.onCreate` runs against LOCKED credential-encrypted storage: it logged
-  `recordInstallerPackage: ... errno 126 (Required key not available)` - i.e. the install-source
-  fact, which the DURABLE RULE says is a RUNTIME fact deciding the update destination, is not
-  recorded. **What is PROVEN:** a pre-unlock process 403s on every PushSecret-authenticated fetch
-  and stays that way after the user unlocks. **What is NOT yet proven and must not be guessed:**
-  WHICH read inside that process yields the wrong secret. `retrievePushSecret` is NOT cached (fresh
-  each call) and `fetchAvatar` did not log "pushSecret absent", so it obtained a secret that prod
-  REJECTED - the mechanism is still open. Prod is not at fault: `push_token` holds a 64-char hashed
-  secret for that device and the guard answers correctly to a credential-free probe
-  (`PushSecret header required` / `Invalid push secret`).
-  **Why this is P1 and not cosmetic:** the same `verifyPushSecretAuth` guards the encrypted-media
-  proxy AND `fetchProtoFromBackend`, the fallback that pulls a message's ciphertext when it is not
-  in the FCM payload. A silent 403 there costs a MESSAGE, not a picture.
-  **FIX WRITTEN AND COMPILING 2026-08-11; the whole write-up is now
-  [mobile > the process exists before the first unlock](docs/wiki/frontend/mobile.md#the-process-exists-before-the-first-unlock-and-nothing-in-it-may-assume-otherwise-wp-directboot-1).**
-  Two things were PROVEN in the process, neither of them a guess:
-  1. **The entry point**, which the WP had asserted: `app.tauri.notification.LocalNotificationRestoreReceiver`
-     is `directBootAware="true"` on `LOCKED_BOOT_COMPLETED` **in the MERGED manifest** - it comes
-     from `tauri-plugin-notification`, we never declared it, and it is invisible in our source
-     manifest. One such component starts the whole process.
-  2. **A destructive branch that turns the temporary condition into a permanent loss**:
-     `PushSecretKeystore.getOrCreateKey` deleted the alias and generated a new one whenever
-     `getKey` threw - and pre-unlock it throws for a key that is intact. That orphans the stored
-     ciphertext for good. Now gated on `DirectBoot.storageReadable()` + `containsAlias`.
-  **What is STILL not proven, and must not be written down as if it were:** which read yields the
-  secret prod rejects. `retrievePushSecret`'s two branches are both plausible and neither is
-  established; `loadPushContext` was checked and does NOT cache, so a stale identity is ruled out.
-  The instrumentation to settle it now exists (a distinct log line per branch, and a 401/403 logged
-  as an auth failure instead of a debug-level avatar miss), so **the user's single reboot both
-  verifies the fix and answers this**.
-  **Verification needs the USER** - a reboot plus the unlock pattern, on a build carrying this.
 
 - \[ \] **WP-VIEWER-1 (P2) - UNIFY THE IMAGE LIGHTBOX AND THE PDF READER.** Asked by the user
   2026-08-07: "c'est presque la meme interface, ca meriterait d'etre joli, pratique et homogene".
@@ -844,7 +803,9 @@ page. The five to carry, plus one status line:
   ways for "cannot read" to be mistaken for "not there". **A destructive repair must therefore be
   gated on knowing the state is really broken**, or a temporary condition becomes a permanent loss:
   `getOrCreateKey` deleted an intact key and regenerated it, orphaning the push secret for good
-  (WP-DIRECTBOOT-1). Only the notification CHANNELS can be created pre-unlock - they live in the
+  (WP-DIRECTBOOT-1, fixed and VERIFIED on hardware 2026-08-11: same pid across the unlock, zero
+  rejected secrets, and a real authenticated fetch forced by emptying the avatar cache).
+  Only the notification CHANNELS can be created pre-unlock - they live in the
   system, not in our storage.
 - A plain system-browser launch (`openUrl`) is an ORPHANED activity on Android: it opens in a
   separate task the calling app has no relationship to, so nothing on either side can dismiss it

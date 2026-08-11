@@ -380,6 +380,35 @@ The rules that follow, and they apply to anything added to this startup path:
 - **A 401/403 on a push-authenticated fetch is an auth failure and must be logged as one.** It sat
   at debug level among the ordinary avatar misses, which is exactly why it went unseen.
 
+#### Verified on hardware, 2026-08-11 - and the open question was DISSOLVED, not answered
+
+A real reboot on A1, with the pid carried across both halves because a clean run on a process that
+was never born locked measures nothing:
+
+| What the WP claimed | What the fixed build did |
+| --- | --- |
+| the process is created pre-unlock | still true, and expected: `FirebaseApp: Device in Direct Boot Mode: postponing initialization`, pid 3562 |
+| `onCreate` runs blind against locked storage | it now **detects** it: `CanariApp: onCreate: storage locked (pre-unlock process) - deferring init to ACTION_USER_UNLOCKED` |
+| `recordInstallerPackage` fails with `errno 126` | 0 occurrences - the initialiser is deferred, so it never touches CE storage while locked |
+| `getOrCreateKey` deletes an intact alias | 0 occurrences of the destructive branch; the Keystore is not read at all in that window |
+| the process serves push degraded for its whole life | **same pid 3562** after `USER_UNLOCKED`: `MlsDeviceKeyStore: retrieve: success`, then a PushSecret-authenticated HTTP fetch that SUCCEEDS |
+| some read yields a secret production rejects | 0 `push secret REJECTED` over the whole session |
+
+The last row is the point, and it is worth stating precisely: the WP left open *which* read produced
+the rejected secret, and shipped a distinct log line per branch to settle it. **No branch ever
+produced one.** The question is dissolved rather than answered - the temporary-condition-as-permanent-loss
+was the whole mechanism, and once the destructive recreate cannot run there is no orphaned ciphertext
+to present.
+
+**The positive proof needed a trick, because absence of a rejection is not evidence of success.** The
+process had cached both avatars long before, so nothing PushSecret-authenticated was being exercised
+and the run was correctly VOID. The build is DEBUGGABLE, so `adb shell run-as fr.emse.canari rm
+files/avatar_*.jpg` emptied the cache under the born-locked process, and the next push produced
+`fetchAvatar: avatar cached for ...` twice from pid 3562 - which is the log emitted **after** an HTTP
+fetch succeeds and is written, distinct from `fetchAvatar: from cache for ...`. Two success logs one
+word apart is a trap worth knowing before reading any of this: only one of them proves the network
+path ran.
+
 ### Push notification handling
 
 `CanariFirebaseMessagingService.kt` — the single FCM handler:
