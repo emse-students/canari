@@ -100,7 +100,13 @@ run.
 - **adb over TCP is what makes a session stable**: `adb tcpip 5555` then `adb connect <ip>:5555`.
   Both transports attached means **every `adb` call needs `-s`**.
 - The WebView pid changes on every cold start, so re-read `/proc/net/unix | grep webview_devtools`
-  and redo the `adb forward` after one.
+  and redo the `adb forward` after one. **The socket exists only once the WebView does**: a process
+  started by a broadcast has neither a window nor a devtools socket (see WP-DIRECTBOOT-1), so poll
+  for the socket rather than concluding the app is not running - and a stale forward does not error,
+  it connects to nothing.
+- **`run-as <pkg>` reaches the app's private files** on a debug build, which is how a cache is
+  emptied to force a code path that would otherwise be skipped (`files/avatar_*.jpg`). One of the
+  few things a debug build is better for.
 - USB stays the fastest path for `install -r`, and this device's USB link drops on its own.
 - **Use PowerShell for any `adb shell` command carrying an absolute device path** - Git Bash
   rewrites `/sdcard/x` into a Windows-ish path and the command silently targets nothing.

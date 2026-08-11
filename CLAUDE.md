@@ -332,11 +332,6 @@ raising it first locks everyone out.
   **Owed: re-run `recon.mjs` over a batch of sends made DURING a drain** - and the phone, which
   shares the composable. Distinct from WP-LOSS-1 (which loses it at the receiver); do not merge them.
 
-- \[ \] **WP-RELOAD-DL-1 (P3) - fixed 2026-08-07; the ON-DEVICE verification is owed** (see the APK
-  gate above). A WebView reload replayed a launch deep link fifteen minutes old, because the guard
-  against replaying it was a module variable, which a reload wipes. Fixed by
-  `$lib/mobile/deepLinkClaims.ts` (`sessionStorage`, whose lifetime is exactly the plugin's).
-
 - \[ \] **WP-STORAGE-1 (P2 today, P1 the moment usage grows) - THE BACKUP SCHEME FAILS BEFORE THE
   DATA DOES.** Answer to the user's question of 2026-08-06 ("can the server hold several hundred
   users"). The whole model, every measured unit cost and the three scenarios are in

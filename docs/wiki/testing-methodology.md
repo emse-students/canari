@@ -153,6 +153,12 @@ right; and to force the path, remove what makes it skippable - here
 `adb shell run-as fr.emse.canari rm files/avatar_*.jpg`, which works because the build is
 DEBUGGABLE, one of the few things a debug build is BETTER for (rule 9).
 
+**Where the defect can be re-created, the check should re-create it.** WP-RELOAD-DL-1 asserts that a
+reload does NOT navigate - and a build with deep links entirely broken passes that too. Deleting the
+one key the fix relies on (`sessionStorage['canari:deeplink:handled']`) and reloading again brought
+the replay straight back, which is what turns "nothing happened" into "the guard held". A PASS whose
+failure you cannot produce on demand is the weakest kind there is.
+
 ---
 
 ## Observation is part of the check, not a debugging step

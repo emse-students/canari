@@ -224,6 +224,30 @@ The diagnosis is cheap when a cold start misbehaves, because each hop logs separ
 `[hooks] Deep-link listener registered`, the handoff prints `[hooks] Processing URL`, and the product
 prints `[notifNav] deep link received`. The first absent line names the broken hop.
 
+#### A reload used to replay the launch link, and the guard's LIFETIME is the fix (WP-RELOAD-DL-1)
+
+`getCurrent()` answers "the last deep link this PROCESS was handed", not "the app was just started by
+one" - the Rust plugin holds it for the life of the process - so the four cold-start re-reads
+(immediately, then 250/750/2000 ms) must be deduplicated. The guard was a module variable, which a
+WebView reload wipes, so a reload replayed a launch url fifteen minutes old and yanked the user into
+whatever it pointed at. `$lib/mobile/deepLinkClaims.ts` moved it to `sessionStorage`, whose lifetime
+is exactly the WebView's: **"module variable" is a LIFETIME, not a detail, and it must be chosen
+against the event the state has to survive.**
+
+**Verified on hardware 2026-08-11**, with the reproduction kept because it is what makes the pass
+mean anything:
+
+| step | result |
+| --- | --- |
+| cold start through `fr.emse.canari://post/<id>` (positive control) | route `/posts/<id>`, claim set - the link WAS consumed |
+| park on `/posts`, full load, then `location.reload()` | still `/posts`, claim intact - **PASS** |
+| delete the claim key, reload again (negative control) | back on `/posts/<id>` - **the defect, on demand** |
+
+The negative control is the point: "the app stayed put" is also what a build with deep links entirely
+dead would produce, and the third row proves the claim is the thing holding the line. The target is
+an all-zero UUID matching no post - `/posts/<unknown>` stays on its route and renders "Publication
+introuvable", so the assertion is about ROUTING and touches nobody's data.
+
 ## Where an update comes from
 
 Canari ships from three places at once: Google Play (`fr.emse.canari`), the App Store
