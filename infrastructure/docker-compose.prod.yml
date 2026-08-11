@@ -35,6 +35,14 @@ services:
   redis:
     image: redis:alpine
     restart: always
+    # Bounded on purpose. Redis holds presence, rendezvous digests and history streams and was
+    # running with maxmemory 0 / noeviction, i.e. unbounded growth on a 16 GB host - the forecast
+    # puts the worst case at ~2.3 GB of `history:` streams alone. `volatile-lru` is strictly safer
+    # than `noeviction`, never worse: it only ever evicts keys that already carry a TTL, and once
+    # those are gone it degrades to exactly the previous behaviour (write errors) instead of
+    # taking the host down. Current usage is 2.29 MB, so this cap does not bind in normal
+    # operation - it is a ceiling, not a budget.
+    command: ["redis-server", "--maxmemory", "1gb", "--maxmemory-policy", "volatile-lru"]
     expose:
       - "6379"
     healthcheck:

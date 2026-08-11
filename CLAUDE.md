@@ -362,9 +362,15 @@ raising it first locks everyone out.
   content-linked deletion: **account deletion DONE 2026-08-11** (`ownerId` recorded at upload,
   `DELETE /api/media/internal/users/:userId`, called by `deleteUser`; no backfill possible for older
   blobs), **message deletion deliberately NOT built** - forwarding copies the `MediaRef` and the
-  server counts no references, so it would break other people's messages; the sweep takes it; (4) Redis `maxmemory` +
-  `volatile-lru` (it is `0`/`noeviction` today); (5) autovacuum on `queued_message`. `docker system
-  prune` frees 5.45 GB right now. **The 30-day GC is no longer SILENT** (2026-08-11): all four media
+  server counts no references, so it would break other people's messages; the sweep takes it;
+  (4) **DONE** - Redis runs `--maxmemory 1gb --maxmemory-policy volatile-lru` in both compose files
+  (was `0`/`noeviction`; measured 2.29 MB, so a ceiling, not a budget, and `volatile-lru` is
+  strictly safer than `noeviction`); (5) **DONE** - `013_queued_message_autovacuum.sql`, but the
+  measurement says autovacuum was NEVER the cause (78 runs, 234 dead / 1173 live, 7.8 MB): the
+  70 MB was one abandoned device, and the settings are insurance for the churn profile only;
+  (6) `docker system prune` is NOT urgent (30 G of 125 G used) and NOT free - the CD deploys
+  `:latest`, so it deletes the untagged previous images, i.e. the fast rollback path.
+  **The 30-day GC is no longer SILENT** (2026-08-11): all four media
   surfaces now render an explicit expired state, see decision 3 at the top. What still needs the
   USER is the POLICY, not the rendering - a new device or a reinstall still sees no image older
   than 30 days, which is what makes the forecast survivable and may not be intended (section 6).

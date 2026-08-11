@@ -354,29 +354,38 @@ clients that cannot see each other.
 mechanisms, including this one, since `removeAllOwnedBy` also iterates the index. Reaping those
 needs a pass driven by the bucket.
 
-### 5.4 Bound Redis
+### 5.4 Bound Redis - **DONE 2026-08-11**
 
-`maxmemory` is `0` with `noeviction`. Worst case above is ~2.3 GB of `history:` streams against
-13 Gi available, so there is no emergency - but `noeviction` means that if it is ever reached Redis
-starts **refusing writes** rather than shedding load, and every one of these keys already carries a
-90-day TTL. Set an explicit `maxmemory` (e.g. 3 GB) with **`volatile-lru`**, which can only ever
-evict keys that were already expiring.
+`maxmemory` was `0` with `noeviction`: unbounded growth, and if the worst case above (~2.3 GB of
+`history:` streams) were ever reached Redis would start **refusing writes** rather than shedding
+load. The compose files now start it with `--maxmemory 1gb --maxmemory-policy volatile-lru`, in dev
+as well as prod so an eviction can never be an environment difference.
 
-### 5.5 Tune autovacuum on `queued_message`
+`volatile-lru` is **strictly safer than `noeviction`, never worse**: it evicts only keys that already
+carry a TTL, and once those are exhausted it degrades to exactly the old behaviour. Measured usage at
+the time of the change was **2.29 MB**, so the cap is a ceiling, not a budget.
 
-At 400 users this table takes **~132 000 inserts and deletes per day**. A single mass delete already
-left 76 MB of bloat behind 1 950 live rows. Give it its own settings rather than the cluster default:
+### 5.5 Tune autovacuum on `queued_message` - **DONE 2026-08-11, and it was never the cause**
 
-```sql
-ALTER TABLE queued_message SET (autovacuum_vacuum_scale_factor = 0.01,
-                                autovacuum_vacuum_cost_limit = 2000);
-```
+Worth stating plainly, because the earlier text implied otherwise: **autovacuum was not failing.**
+Measured on production after the queue cleanup - 1 173 live rows, 234 dead, `autovacuum_count` 78,
+the last run that morning, table 7.8 MB. The 70 MB was one abandoned device accumulating 28 124
+undelivered rows in five hours, which is a delivery problem answered by the hourly queue-depth
+report, not by vacuum.
 
-### 5.6 Free 5.45 GB now, and plan the disk
+The per-table settings are applied anyway (`013_queued_message_autovacuum.sql`) because the CHURN
+PROFILE justifies them: every row is inserted, delivered and deleted, and the default scale factor of
+0.2 raises the threshold with the table, so it waits longest exactly when the table is largest. A
+fixed 0.05 with a 200-row floor keeps the ceiling proportional to a healthy size.
 
-`docker system prune` reclaims 5.45 GB of images immediately. Beyond that, 125 GB is small for this
-workload: with 5.1 and 5.2 applied, a **500 GB** volume covers the high scenario for years, and
-`mitv` already has 376 GB free for the offsite copy.
+### 5.6 Plan the disk
+
+Measured 2026-08-11: **30 G used of 125 G (25 %)**, with 6.0 GB reclaimable from Docker images.
+A `docker system prune` is therefore **not urgent, and it is not free**: the CD deploys `:latest`, so
+the previous images are untagged and a prune deletes the fastest rollback path (GHCR still has them,
+at the cost of a pull). Beyond that, 125 GB is small for this workload: with 5.1 and 5.2 applied, a
+**500 GB** volume covers the high scenario for years, and `mitv` already has 376 GB free for the
+offsite copy.
 
 ### 5.7 Alert on the WP-GHOST-1 shape
 
