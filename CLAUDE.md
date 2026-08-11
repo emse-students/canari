@@ -295,10 +295,17 @@ raising it first locks everyone out.
   [mls-protocol > why a sender's ratchet goes backwards](docs/wiki/protocols/mls-protocol.md#why-a-senders-ratchet-goes-backwards-at-all-wp-loss-1-2026-08-06).
   Do not re-derive it, and do not re-open the load hypothesis or "forwarding is special": both are
   dead. The sender half is VERIFIED on prod (3/3 delivered where it lost 2/2) - do not re-verify it.
+  **The ANDROID half is now VERIFIED end to end too** (2026-08-11, `heal-a1.mjs`, log in the
+  scratchpad `heal-a1.log`): W1 parked so the rewound W2 was the only possible responder, 14 sends
+  from the rewound state, `HEALED - 14/14` on the phone. What the trace shows, and what a re-run must
+  expect: the phone detects (`LOST frame … SecretReuseError`), the first solicitations are correctly
+  SUPPRESSED because an attempt is already outstanding, and the repair that actually lands is the
+  **cross-session re-solicit** (`re-soliciting bundle … (awaiting across sessions)`) about 3 min
+  later, answered by a digest of 589 ids and a bundle of 8 - the diff, working, at the interval it is
+  designed to work at. **A HEAL check on the phone must budget minutes, not seconds**; a 60 s budget
+  would have called this FAILED.
   **Owed:** a LOSS-branch verification (no reproduction has produced one since the sender fixes
-  landed, which is itself the point); the **ANDROID** half - the phone's detection is VERIFIED
-  (2026-08-10, 13 `LOST frame … (SecretReuseError)` lines where there were zero) but no phone run has
-  exercised the repair end to end since. **One deliberate gap, not a defect:** nothing tells the
+  landed, which is itself the point). **One deliberate gap, not a defect:** nothing tells the
   receiver's USER that a message was lost.
 
 - \[ \] **WP-PENDING-1 (P1) - fixed and deployed; the ONE verification owed is against a REAL
@@ -396,14 +403,6 @@ raising it first locks everyone out.
   as an auth failure instead of a debug-level avatar miss), so **the user's single reboot both
   verifies the fix and answers this**.
   **Verification needs the USER** - a reboot plus the unlock pattern, on a build carrying this.
-
-- \[ \] **WP-DRAIN-2 (P2) - the inbound drain still has no watchdog, so ANY hung await inside it
-  stops every inbound message with no diagnostic.** `isDraining` is lowered only when the message
-  callback RETURNS, and two different awaits inside it have already frozen all inbound traffic - a
-  `requestAnimationFrame` yield in a hidden document, and a recovery re-acquiring the MLS mutex the
-  drain holds. Each was fixed in place; the SHAPE was not. The flush belongs behind
-  `isDraining = false`, or the queue needs a watchdog that reports a drain that never completed.
-  Nothing type-checks that the next await added there is safe.
 
 - \[ \] **WP-VIEWER-1 (P2) - UNIFY THE IMAGE LIGHTBOX AND THE PDF READER.** Asked by the user
   2026-08-07: "c'est presque la meme interface, ca meriterait d'etre joli, pratique et homogene".
@@ -562,6 +561,16 @@ carry in the head:
   the drain already holds, so awaiting one there is a DEADLOCK, not a slow path. A repair whose
   result nobody reads (a re-add, a Welcome, an external join) must be STARTED, never awaited - and it
   must log how it settles. `DeferredRecovery` on the Welcome path is the same lesson, learnt earlier.
+- **A MUTUAL-EXCLUSION WINDOW NEEDS ONE ENTRY POINT FOR AWAITING, OR ITS FREEZES ARE INVISIBLE
+  ONE AT A TIME.** Two awaits inside the drain had already frozen all inbound traffic and each was
+  fixed where it stood, so the third was free to do it again - nothing typed "this await is inside
+  the exclusion". `drain()` now has exactly one way to await (`guarded`), which names the phase, the
+  group and the message, and keeps reporting because the ELAPSED time is the diagnosis. It
+  deliberately does NOT cancel: the freeze loses nothing durable, whereas the alternative the WP
+  proposed - moving the flush behind `isDraining = false` - lets a second drain call
+  `beginBulkIngest` across a live `endBulkIngest`, and `bulkIngestPhases` being a STACK that would
+  clear the UI buffer without flushing, i.e. WP-ECHO-1 by construction. Report the freeze, do not
+  trade it for a loss.
 - `requestAnimationFrame` NEVER fires in a hidden document, so it can never be the only resolver of
   anything a background path awaits - and a "yield" that can hang is a deadlock, not a delay. Race it
   with a `MessageChannel` message; a timer fallback is clamped to ~1 Hz in the background.

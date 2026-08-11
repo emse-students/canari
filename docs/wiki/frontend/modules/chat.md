@@ -92,9 +92,34 @@ the two shapes to expect:
    must be STARTED, never awaited, and must log how it settles (`startRecovery`; `DeferredRecovery`
    on the Welcome path is the same lesson learnt earlier).
 
-**Each was fixed in place; the SHAPE was not** - nothing type-checks that the next await added there
-is safe. The flush belongs behind `isDraining = false`, or the queue needs a watchdog that reports a
-drain that never completed. That is the open WP-DRAIN-2.
+**Each was fixed in place; the SHAPE was not** - nothing type-checked that the next await added
+there was safe. That was WP-DRAIN-2, closed 2026-08-11.
+
+#### What closed it, and what it deliberately does NOT do
+
+There is now exactly ONE way to await inside `drain()`: `MlsPerGroupScheduler.guarded(label, work)`,
+which arms a repeating 60 s report and clears it in a `finally`. Four awaits go through it - the
+lock acquisition, `processMessage`, `yieldToMainThread` and `onDrainEnd` - and each carries its own
+label plus the group and queued-message id, so the log names WHICH phase is stuck rather than that
+something is. The report repeats every minute with the elapsed seconds, because the elapsed time is
+the diagnosis: one line says a phase was slow, twenty say it will never return.
+
+The lock acquisition is guarded SEPARATELY from the work it protects, and they must not nest -
+wrapping `runUnderMlsLock` whole made a hung handler report both labels, which is the exact
+ambiguity the split exists to remove. Hence `acquireMlsLock` is called directly in the drain loop.
+
+**It reports; it does not cancel, and the flush stays inside the window.** Moving `onDrainEnd`
+behind `isDraining = false` was the other option this page used to offer, and it is wrong:
+`bulkIngestPhases` is a stack, so a second drain starting during a live `endBulkIngest` would call
+`beginBulkIngest` across it - a UI buffer cleared without being flushed, which is WP-ECHO-1's exact
+failure and a strictly worse one. **A freeze loses nothing durable; a lost buffer does.** So the
+deadline buys the only thing it safely can, which is evidence.
+
+The per-message watchdog that used to sit in `BaseMlsService.processQueue` is deleted with this:
+it covered one of the four awaits, and two watchdogs for one await would have reported the same
+freeze twice while still saying nothing about the other three.
+`mlsPerGroupScheduler.test.ts > a frozen drain reports itself` pins all four labels plus the
+negative control - a healthy drain says nothing.
 
 One methodological consequence, because it retired a PASS: a check that asserts **after** restoring
 the tab is asserting after the very act that releases the drain. A single message can never expose

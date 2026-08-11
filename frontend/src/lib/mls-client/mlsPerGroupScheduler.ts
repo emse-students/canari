@@ -47,7 +47,53 @@ export class MlsPerGroupScheduler {
   private readonly queueIdleWaiters: Array<() => void> = [];
   private mlsLock: Promise<void> = Promise.resolve();
 
+  /**
+   * How long any ONE await inside {@link drain} may take before it is reported as stuck, and how
+   * often the report then repeats.
+   *
+   * It is a REPORTING deadline, not a cancellation: nothing is abandoned when it fires. A hung
+   * phase keeps the drain's mutual exclusion, which is what it is for - see {@link guarded}.
+   */
+  private static readonly PHASE_STUCK_MS = 60_000;
+
   constructor(private readonly mode: MlsPerGroupQueueMode) {}
+
+  /**
+   * The ONE way to await inside {@link drain}, and the reason it exists is that there is no other
+   * way to make this safe by construction.
+   *
+   * `isDraining` is lowered only when the whole drain - loop AND flush - has returned, so every
+   * await between those two points is a potential freeze of ALL inbound traffic, in silence:
+   * `enqueue` sees `draining === true`, declines to start a second drain, and the messages sit
+   * there forever with nothing in the log distinguishing "still working" from "stuck". Two
+   * different awaits have already done exactly that on production - a `requestAnimationFrame`
+   * yield in a hidden document (WP-HIDDEN-1) and a recovery re-acquiring the MLS mutex the drain
+   * already holds (WP-DRAIN-1) - and each was fixed in place while the SHAPE was left open.
+   *
+   * WHY IT REPORTS RATHER THAN CANCELS. Abandoning a phase on deadline would release the exclusion
+   * while the flush is still running, and a second drain would then call `beginBulkIngest` across
+   * a live `endBulkIngest`: a UI buffer cleared without being flushed, which is WP-ECHO-1's exact
+   * failure and a strictly worse one - a freeze loses nothing durable, a lost buffer does. So the
+   * flush stays inside the window and the deadline buys the only thing it safely can: evidence.
+   *
+   * It repeats rather than firing once because the elapsed time IS the diagnosis. A single line
+   * says a phase was slow; a line every minute for twenty minutes says it will never return.
+   */
+  private async guarded<T>(label: string, work: () => Promise<T>): Promise<T> {
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      console.error(
+        `[QUEUE] STUCK in ${label} for ${Math.round((Date.now() - startedAt) / 1000)}s - ` +
+          `the inbound queue is frozen: every message arriving now is enqueued and will not be ` +
+          `processed until this returns. pending=${this.getPendingCount()}`
+      );
+    }, MlsPerGroupScheduler.PHASE_STUCK_MS);
+    try {
+      return await work();
+    } finally {
+      clearInterval(timer);
+    }
+  }
 
   /** Whether the drain loop is currently running. */
   get draining(): boolean {
@@ -217,23 +263,43 @@ export class MlsPerGroupScheduler {
         if (!picked) break;
 
         const { msg } = picked;
+        const where = `group=${msg.groupId ?? 'unknown'}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`;
         // Welcome messages self-manage the MLS lock: their handler runs the network
         // preamble (terminal-group resolution, recovery checks) unlocked and only holds the
         // lock around the contiguous WASM critical section. Auto-locking them here would
         // keep the mutex held across those round-trips and starve catch-up / key-package work.
+        //
+        // Both branches go through `guarded`, and so does everything else awaited in this method:
+        // an unguarded await here is the freeze this class has already shipped twice.
         if (msg.isWelcome) {
-          await processMessage(msg);
+          await this.guarded(`processMessage (Welcome, ${where})`, () => processMessage(msg));
         } else {
-          await this.runUnderMlsLock(() => processMessage(msg));
+          // The ACQUISITION is guarded separately from the work, and the two must not nest:
+          // wrapping `runUnderMlsLock` whole made a hung handler report BOTH labels, which is
+          // exactly the ambiguity the split exists to remove. They fail differently and point at
+          // different code - waiting on the mutex means something outside this loop is holding it
+          // (WP-DRAIN-1's recovery re-entering it), a slow `processMessage` means the handler
+          // itself is hung - so `acquireMlsLock` is called directly rather than through the
+          // wrapper, and each guard covers exactly its own await.
+          const release = await this.guarded(`mlsLock (${where})`, () => this.acquireMlsLock());
+          try {
+            await this.guarded(`processMessage (${where})`, () => processMessage(msg));
+          } finally {
+            release();
+          }
         }
 
         if (this.getPendingCount() > 0) {
-          await yieldToMainThread();
+          await this.guarded('yieldToMainThread', () => yieldToMainThread());
         }
       }
     } finally {
       try {
-        await hooks?.onDrainEnd?.(pendingAtStart > 0);
+        // The flush sits in front of `isDraining = false` and cannot be moved behind it (see
+        // `guarded`), so it is the single most dangerous await in the class.
+        await this.guarded('onDrainEnd', async () => {
+          await hooks?.onDrainEnd?.(pendingAtStart > 0);
+        });
       } catch (e) {
         console.error('[QUEUE] onDrainEnd failed:', e);
       }

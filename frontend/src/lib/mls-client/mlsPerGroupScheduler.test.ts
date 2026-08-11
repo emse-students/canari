@@ -170,4 +170,103 @@ describe('MlsPerGroupScheduler', () => {
     const next = await scheduler.acquireMlsLock();
     next();
   });
+
+  /**
+   * WP-DRAIN-2. `isDraining` is lowered only when the whole drain has returned, so any await
+   * inside it can freeze every inbound message with nothing in the log. Two different awaits have
+   * already done that on production; what is pinned here is that a third one cannot do it in
+   * silence, whichever phase it is in.
+   *
+   * The freeze itself is NOT fixed - deliberately, see `guarded` - so these tests assert the
+   * REPORT, and the negative control (a healthy drain saying nothing) is what makes the report
+   * mean anything.
+   */
+  describe('a frozen drain reports itself', () => {
+    const STUCK_MS = 60_000;
+    let errors: string[];
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      errors = [];
+      vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        errors.push(args.map(String).join(' '));
+      });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    const stuck = () => errors.filter((e) => e.includes('[QUEUE] STUCK'));
+
+    it('names the message and the group when the handler never settles', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', 'x', { queuedMessageId: 'q-42' }));
+
+      // Never awaited: the whole point is that it never resolves.
+      void scheduler.drain(() => new Promise<void>(() => {}));
+      await vi.advanceTimersByTimeAsync(STUCK_MS + 1);
+
+      expect(stuck()).toHaveLength(1);
+      expect(stuck()[0]).toContain('processMessage');
+      expect(stuck()[0]).toContain('group=group-a');
+      expect(stuck()[0]).toContain('qId=q-42');
+    });
+
+    it('keeps reporting, because the elapsed time is the diagnosis', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', 'x'));
+
+      void scheduler.drain(() => new Promise<void>(() => {}));
+      await vi.advanceTimersByTimeAsync(STUCK_MS * 3 + 1);
+
+      expect(stuck()).toHaveLength(3);
+      expect(stuck()[2]).toContain('180s');
+    });
+
+    it('distinguishes waiting for the MLS lock from a hung handler', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      // Somebody outside the drain holds the mutex and never gives it back - WP-DRAIN-1's shape,
+      // where a recovery awaited inside the callback re-entered the lock the drain already held.
+      await scheduler.acquireMlsLock();
+      scheduler.enqueue(msg('group-a', 'x'));
+
+      let handlerRan = false;
+      void scheduler.drain(async () => {
+        handlerRan = true;
+      });
+      await vi.advanceTimersByTimeAsync(STUCK_MS + 1);
+
+      expect(handlerRan).toBe(false);
+      expect(stuck()).toHaveLength(1);
+      expect(stuck()[0]).toContain('mlsLock');
+      expect(stuck()[0]).not.toContain('processMessage');
+    });
+
+    it('reports the FLUSH, which is the one await that cannot be moved out of the window', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', 'x'));
+
+      void scheduler.drain(async () => {}, { onDrainEnd: () => new Promise<void>(() => {}) });
+      await vi.advanceTimersByTimeAsync(STUCK_MS + 1);
+
+      expect(stuck()).toHaveLength(1);
+      expect(stuck()[0]).toContain('onDrainEnd');
+      // The exclusion is still held - that is the freeze this line is reporting, not a bug in it.
+      expect(scheduler.draining).toBe(true);
+    });
+
+    it('says nothing about a drain that completes', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', 'x'));
+      scheduler.enqueue(msg('group-b', 'y'));
+
+      await scheduler.drain(async () => {}, { onDrainEnd: async () => {} });
+      await vi.advanceTimersByTimeAsync(STUCK_MS * 2);
+
+      expect(stuck()).toEqual([]);
+      expect(scheduler.draining).toBe(false);
+    });
+  });
 });

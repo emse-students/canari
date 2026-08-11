@@ -420,17 +420,11 @@ export abstract class BaseMlsService implements IMlsService {
                 }
               : undefined;
 
-          // A callback that never settles freezes `isDraining`, and every later inbound message is
-          // then enqueued and never processed - in silence (WP-HIDDEN-1, and again on the device
-          // 2026-08-06 through a recovery awaited inside the callback). The watchdog cannot fix
-          // that from here, but it can stop the failure being invisible: nothing else in the log
-          // distinguishes "still working" from "stuck forever".
-          const stuckWatch = setTimeout(() => {
-            console.error(
-              `[QUEUE] STUCK: messageCallback has not settled after 60s - group=${groupId ?? 'unknown'}${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}. The inbound queue is frozen.`
-            );
-          }, 60_000);
-
+          // The stuck-callback watchdog that used to sit here is gone, and it is not lost: it
+          // covered ONE of the four awaits that can freeze the drain, and `MlsPerGroupScheduler`
+          // now guards every one of them - including this callback, which it invokes as
+          // `processMessage`. Two watchdogs for one await would have reported the same freeze
+          // twice and still said nothing about the other three.
           const cbResult = await this.messageCallback!(
             msg.senderId,
             msg.ciphertext,
@@ -439,7 +433,7 @@ export abstract class BaseMlsService implements IMlsService {
             msg.ratchetTreeBytes,
             msg.isCommit,
             deliveryMeta
-          ).finally(() => clearTimeout(stuckWatch));
+          );
 
           console.log(
             `[QUEUE] messageCallback → ${cbResult} (group=${groupId ?? 'unknown'})${msg.queuedMessageId ? ` qId=${msg.queuedMessageId}` : ''}`
