@@ -4,7 +4,8 @@ import { getToken } from '$lib/stores/auth';
 import { BlobUrlPool } from './blobUrlPool';
 import { MediaPurgedError } from './mediaErrors';
 
-const CIPHER_CACHE_NAME = 'canari-media-ciphertext-v1';
+/** Exported so `deviceStorage.ts` can measure/clear it without duplicating the literal. */
+export const CIPHER_CACHE_NAME = 'canari-media-ciphertext-v1';
 
 const decryptedPool = new BlobUrlPool();
 const rawPool = new BlobUrlPool();

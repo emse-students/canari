@@ -81,6 +81,31 @@ IndexedDB. Two rules follow, both enforced in `db/sqliteMigrations.ts` and its t
 - A migration that inspects columns must build its statement from
   `PRAGMA table_info(...)`, so dropping a column can never break the migration that mentions it.
 
+### Local storage usage (WP-DEVICESTORAGE-1)
+
+Settings shows a breakdown of what Canari is using on the device, distinct from
+[storage-forecast](../infrastructure/storage-forecast.md), which is the SERVER's disk. Two
+measurement paths, because there is no single API that answers this on every platform:
+
+- The media/avatar/association-logo Cache Storage buckets (`mediaBlobCache.ts`,
+  `userAvatarCache.ts`, `associationLogoCache.ts` - each now exports its cache name for this
+  reason) are measured and cleared identically everywhere: Cache Storage works inside the Tauri
+  WebView too, and everything in them is re-fetchable, so this is the only thing "clear cache"
+  ever touches.
+- The local database above and `mls.bin` have no cross-platform size API. Native reads real file
+  sizes via `get_local_storage_usage` (`src-tauri/src/commands/storage.rs`), bucketing
+  `{app_data_dir}` by filename; on the web build there is no such command, so `deviceStorage.ts`
+  falls back to `navigator.storage.estimate()`'s origin-wide total minus the (precisely measured)
+  cache size, which folds the MLS IndexedDB store into "messages" there instead of reporting it
+  separately.
+
+`mls.bin` is reported for DISPLAY only and is never reachable from the clear action -
+`get_local_storage_usage` is read-only and `clearMediaCache()` only ever calls `caches.delete()`
+on the three named buckets by name, never lists the app data directory. Same shape of risk as
+[WP-DIRECTBOOT-1's `getOrCreateKey`](#the-process-exists-before-the-first-unlock-and-nothing-in-it-may-assume-otherwise-wp-directboot-1)
+below: a destructive control reachable from a Settings page needs an allowlist of what it may
+touch, not a denylist of what to avoid.
+
 ### Opening the app with no network
 
 A cold start with biometrics enrolled, or a device-key vault from "stay signed in", unlocks with no

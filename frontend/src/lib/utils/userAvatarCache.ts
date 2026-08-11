@@ -1,4 +1,5 @@
-const CACHE_NAME = 'canari-user-avatars-v1';
+/** Exported so `deviceStorage.ts` can measure/clear it without duplicating the literal. */
+export const CACHE_NAME = 'canari-user-avatars-v1';
 
 /** In-memory blob URLs for the current session (revoked when last consumer releases). */
 const sessionBlobByUrl = new Map<string, string>();

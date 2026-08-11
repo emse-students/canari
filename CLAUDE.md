@@ -825,6 +825,14 @@ page. The five to carry, plus one status line:
   IT**: the guard was a module variable, which a WebView reload wipes, so the reload replayed a
   15-minute-old launch URL (WP-RELOAD-DL-1). "Module variable" is a LIFETIME, not a detail - pick it
   against the event, here `sessionStorage`, which matches the plugin's own boundary.
+- **A DESTRUCTIVE CONTROL EXPOSED TO THE USER NEEDS AN ALLOWLIST OF WHAT IT MAY TOUCH, NOT A
+  DENYLIST OF WHAT IT MUST AVOID.** WP-DEVICESTORAGE-1's "clear cache" in Settings (`deviceStorage.ts`)
+  only ever calls `caches.delete()` on the three named Cache Storage buckets (media ciphertext,
+  avatars, association logos) - it has no path to `mls.bin`, the message database, or the outbox
+  mirror, because it never lists the app data directory at all. The measurement side is read-only
+  and separate: `get_local_storage_usage` (Rust) buckets `{app_data_dir}` file sizes for DISPLAY
+  only. A Settings-page button is easier for a user to hit by accident than a native OS "clear app
+  data" dialog already is - same shape of risk as WP-DIRECTBOOT-1's `getOrCreateKey`.
 
 **Android/iOS parity: CODE audited 2026-08-03 (v0.12.0, file by file), CONFIGURATION audited
 2026-08-07.** Do not re-audit either - the table of every surface, what each is guarded by, and the

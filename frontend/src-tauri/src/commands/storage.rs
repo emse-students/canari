@@ -203,6 +203,57 @@ pub(crate) fn get_installer_package(app: tauri::AppHandle) -> Option<String> {
     Some(installer.to_string())
 }
 
+/// Bucketed disk usage of `{app_data_dir}`, for the Settings storage panel (WP-DEVICESTORAGE-1).
+#[derive(serde::Serialize)]
+pub(crate) struct LocalStorageUsage {
+    /// The local message database: `canari_<userId>.db` plus its WAL/SHM side files.
+    /// `clear_app_data`'s `Path::extension()` filter only ever matches the base `.db` file, never
+    /// `db-wal`/`db-shm` - a gap worth knowing about but not fixing here. A size REPORT must not
+    /// repeat it: those side files can hold a meaningful fraction of what SQLite has on disk
+    /// while a write-ahead log is active, so this counts them by substring instead.
+    messages_bytes: u64,
+    /// `mls.bin` - the MLS encryption state. Reported separately and must NEVER be offered as
+    /// part of a "clear cache" action: it is identity and key material, not a cache.
+    encryption_state_bytes: u64,
+    /// Everything else in the app data directory (outbox mirror, FCM cache, push context, native
+    /// flags, the installer-package marker) - individually tiny, lumped together on purpose
+    /// rather than growing this struct one field per file.
+    other_bytes: u64,
+}
+
+/// Walks `{app_data_dir}` once and buckets every file's size. Read-only - pairs with the
+/// JS-side Cache Storage measurement (media/avatar/logo caches), which this command knows
+/// nothing about since those live inside the WebView, not the native app data directory.
+#[tauri::command]
+pub(crate) fn get_local_storage_usage(app: tauri::AppHandle) -> Result<LocalStorageUsage, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let mut usage = LocalStorageUsage {
+        messages_bytes: 0,
+        encryption_state_bytes: 0,
+        other_bytes: 0,
+    };
+    if !data_dir.exists() {
+        return Ok(usage);
+    }
+    for entry in std::fs::read_dir(&data_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name == "mls.bin" {
+            usage.encryption_state_bytes += size;
+        } else if name.starts_with("canari_") && name.contains(".db") {
+            usage.messages_bytes += size;
+        } else {
+            usage.other_bytes += size;
+        }
+    }
+    Ok(usage)
+}
+
 /// Reads all boolean flags from {app_data_dir}/native_flags.json.
 /// Returns an empty object if the file does not exist yet.
 #[tauri::command]
