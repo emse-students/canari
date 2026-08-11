@@ -99,24 +99,42 @@
         </span>
       {/if}
     {:else if showSent}
-      <!-- Single check icon only - no text -->
-      <span class="inline-flex items-center opacity-50">
+      <!--
+        Single check icon only - no visible text, so the state is carried entirely by an SVG. The
+        label is what makes "sent" distinguishable from "read" without sight: the two differ by one
+        tick and a colour otherwise.
+      -->
+      <span class="msg-status msg-status-sent inline-flex items-center opacity-50" role="status">
         <Check size={12} strokeWidth={2.5} />
+        <span class="sr-only">{m.msg_statut_envoye()}</span>
       </span>
     {:else if showRead}
       <!-- Reader avatars + double-check (tap bubble for names/time detail) -->
-      <span class="inline-flex items-center gap-0.5">
-        {#each readBy.slice(0, 3) as userId (userId)}
-          <Avatar {userId} size="xs" shape="circle" />
-        {/each}
-        {#if readBy.length > 3}
-          <span class="text-[0.6rem] font-bold opacity-70">+{readBy.length - 3}</span>
-        {/if}
-        <CheckCheck
-          size={12}
-          strokeWidth={2.5}
-          class="ml-0.5 text-emerald-500 dark:text-emerald-400"
-        />
+      <span class="msg-status msg-status-read inline-flex items-center gap-0.5" role="status">
+        <span class="inline-flex items-center gap-0.5" aria-hidden="true">
+          {#each readBy.slice(0, 3) as userId (userId)}
+            <Avatar {userId} size="xs" shape="circle" />
+          {/each}
+          {#if readBy.length > 3}
+            <span class="text-[0.6rem] font-bold opacity-70">+{readBy.length - 3}</span>
+          {/if}
+          <CheckCheck
+            size={12}
+            strokeWidth={2.5}
+            class="ml-0.5 text-emerald-500 dark:text-emerald-400"
+          />
+        </span>
+        <!--
+          One key per arity, which is this codebase's convention for counted strings (see
+          `chat_typing_one_person` / `_two_people` / `_multiple_people`). The inlang project has no
+          ICU plural support, and a single `{count, plural, ...}` message compiles to an input the
+          generated type does not carry.
+        -->
+        <span class="sr-only">
+          {readBy.length === 1
+            ? m.msg_statut_lu_une_personne()
+            : m.msg_statut_lu_plusieurs({ count: readBy.length })}
+        </span>
       </span>
     {/if}
   </div>
