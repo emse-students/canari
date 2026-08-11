@@ -423,6 +423,50 @@ The at-rest projection of a message is shared by both storage backends
 survive a reload, whichever backend is in use. `editedAt` was missing from both for exactly as long
 as it existed on the in-memory type.
 
+##### Verified on hardware, 2026-08-11 - and the check had to be rebuilt twice to be worth anything
+
+The unit half (`useMessaging.bulkIngest.svelte.test.ts`, 4 tests, 3 of which fail when the fix's
+condition is reverted) pins the rule. The device half asks the different question of whether the
+whole chain - composer, MLS, outbox, SQLite - keeps the message on real hardware, and answering it
+cost three harness rewrites, each of which is a general lesson:
+
+1. the first run counted 25 s after a reload while drains were still arriving, so "missing" could
+   not be told from "not re-rendered yet" - it reported FAIL and was **VOID**;
+2. the second read logcat after the fact, by which time the ring buffer had overrun and the
+   deciding lines were gone;
+3. the third printed **PASS and proved nothing**: its seven sends were at 13:20:23-13:20:39 and the
+   run's first drain opened at 13:20:42, so not one of them was inside the window under test.
+
+**The window cannot be aimed at with a delay.** It opens on `[QUEUE] Drain start`
+(`onBulkIngestStart` -> `beginBulkMessageIngest`) and closes on `[MLS] Bulk ingest done`, and on A1
+that measured 15 ms to 1.4 s depending on the decrypt. The check therefore ARMS the composer, waits
+for the app's own log to show a new window opening, and fires into it - and then proves after the
+fact which sends were inside one.
+
+**The discriminator is exact, not statistical.** `[ADD_MSG] ✓ Message added` is logged by
+`addMessageToChat` alone; inside a window an inbound message returns early into the buffer without
+logging it, and the flush that later renders it goes through `batchAddMessages`, which never logs
+that line at all. So an `[ADD_MSG] ✓ Message added` inside a window is necessarily a message that
+took the live path while `bulkIngestActive` was true - i.e. an own message through the branch this
+fix added.
+
+| own message | added at | window | verdict |
+| --- | --- | --- | --- |
+| `80e9927e` | 11:28:39.582 | opened 39.193, closed 39.601 (408 ms) | inside |
+| `050725aa` | 11:28:43.654 | opened 43.397, closed 44.790 (1393 ms) | inside |
+| `1537acbd` | 11:28:53.383 | opened 53.283, closed 53.612 (329 ms) | inside |
+| `bcba272f` | 11:28:59.295 | opened 58.874, closed 59.323 (449 ms) | inside |
+| `dde24b01` | 11:29:21.429 | opened 20.999, closed 21.464 (465 ms) | inside |
+| 6 others | - | between windows | outside |
+
+11 sent, 25 windows opened over the run, **5 inside**, and after the reload and a quiescence gate
+(no `Drain start` for 20 s) **11 of 11 still present**. PASS.
+
+The run also surfaced a harness artifact worth keeping in mind for any marker count: one attempt
+failed to submit and left its text in the box, the next `Input.insertText` appended to it, and the
+app faithfully delivered ONE message carrying TWO markers - twelve markers on screen for eleven
+sends. The app was right and the count was wrong; the harness now clears the composer before arming.
+
 ### Forwarding
 
 `forwardMessage` crosses freely between the two worlds: a channel message can be forwarded into a

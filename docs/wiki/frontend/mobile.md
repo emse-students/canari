@@ -149,6 +149,14 @@ Serialising in JavaScript does not help and was the original mistake: `runExclus
 transactional sections but could not bind them to a connection, and any concurrent `select` could
 still be handed the one holding the open transaction.
 
+**Verified on hardware, 2026-08-11.** A build carrying `db/sqliteBatch.ts` on A1, then a run driving
+25 inbound bulk-ingest drains against the test DM with 11 sends interleaved into them: **zero**
+occurrences of any of the three strings above in a continuous logcat capture of the whole run, and
+every send still present after a reload. Before the fix the same shape of load produced them within
+minutes. The assertion is now part of every phone check rather than a one-off - `sqlTransactionErrors`
+in the harness reads the capture any check already keeps, so a write failing under load cannot pass
+unnoticed again.
+
 ### Opening the app with no network
 
 A cold start with biometrics enrolled, or a device-key vault from "stay signed in", unlocks with no

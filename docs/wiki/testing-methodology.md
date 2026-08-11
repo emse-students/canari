@@ -159,6 +159,34 @@ one key the fix relies on (`sessionStorage['canari:deeplink:handled']`) and relo
 the replay straight back, which is what turns "nothing happened" into "the guard held". A PASS whose
 failure you cannot produce on demand is the weakest kind there is.
 
+#### The sharpest instance: a run that printed PASS while the branch never ran
+
+WP-ECHO-1's device check sends its own message "during a drain" and asserts it survives a reload.
+Version 2 printed `PASS - every message sent during a drain survived the reload`, on seven real sends
+and a real reload. The capture said otherwise: the seven sends were at 13:20:23-13:20:39 and the
+run's **first drain opened at 13:20:42**. Nothing had been sent during a drain at all, so the fix
+under test was never reached and the correct verdict was VOID.
+
+The cause was structural, not carelessness: the check spaced its sends with `sleep`, and the window
+it needed to hit is the app's own bulk-ingest phase, which measured **15 ms to 1.4 s** depending on
+the decrypt. A delay cannot aim at a duration the app chooses. Two changes fixed it, and both
+generalise:
+
+- **Trigger on the SYSTEM's own signal, not on a delay.** The check now arms the composer, waits for
+  the phone's log to show a new window opening, and fires into it - so the only work between the
+  event and the action is one CDP round trip. (`armComposer`/`fireComposer` exist purely to make
+  that gap small; the ordinary `send` is now their composition, so nothing else changed.)
+- **Report the exercise count NEXT TO the verdict, from an exact discriminator.**
+  `[ADD_MSG] ✓ Message added` is logged by `addMessageToChat` alone, and inside a window an inbound
+  message returns early into the buffer without logging it while the later flush goes through
+  `batchAddMessages`, which never logs it. So that line inside a window can only be an own message on
+  the live path. The run reports `inside a window: N`, and **N = 0 is a VOID**, whatever the reload
+  then shows. The passing run reported 5.
+
+The general form: when a check must act inside a window it does not control, find the log line that
+opens the window, and find a line that can only be emitted by the branch under test. Without the
+first the check cannot aim; without the second it cannot tell you it hit.
+
 ---
 
 ## Observation is part of the check, not a debugging step

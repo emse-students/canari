@@ -314,21 +314,22 @@ Fourteen defects, every one found by a check or by the log of a check. The narra
 | **WP-LOSS-1** - a reload rewinds the sender's ratchet, and the receiver silently drops the next message | FWD-3 / FWD-5, then reconciliation | shipped; sender half verified on prod; **Android half not yet exercised** |
 | **WP-HIDDEN-1** - a backgrounded tab stops receiving, silently | TAB-4 | shipped, verified |
 | **WP-MULTITAB-1** - two tabs of one account diverge their ratchet | TAB-4 | shipped, verified (9/9 where it lost 4 of 9) |
-| **WP-ECHO-1** - the sender loses its OWN message across a reload | reconciliation | shipped; verified on the web |
+| **WP-ECHO-1** - the sender loses its OWN message across a reload | reconciliation | shipped; verified on the web, on the phone 2026-08-11 (5 sends INSIDE a bulk window, 11/11 after a reload) |
+| **WP-SQLTXN-1** - a pooled connection made `BEGIN` and `COMMIT` two conversations, so writes failed for good | the noise of a VOID run | shipped; verified on the phone 2026-08-11 (25 drains, zero of the three error strings) |
 | **WP-PENDING-1** - a catch-up pull that can never make partial progress | LIFE-6 | shipped; **verification against a real backlog still owed** |
 | **WP-PENDING-2** - a frame too far ahead was ACKed off the server as delivered | LIFE-6 | shipped, seen firing end to end |
 | **WP-DRAIN-1** - a recovery awaited inside the drain, deadlocking it | verifying WP-HIDDEN-1 | shipped |
 | **WP-GHOST-1** - a revoked device wrote its own routing membership back | the queue's size | shipped + verified on prod (98 210 rows -> 0) |
 | **WP-NOTIF-1** - an Android notification not dismissed when read elsewhere | NOTIF-4 | shipped, verified on the device |
 | **WP-DEEPLINK-1** - the deep-link plugin was never granted its permission | NOTIF-7b | shipped, verified on the device |
-| **WP-RELOAD-DL-1** - a WebView reload replays the launch deep link | the log of a **passing** re-run | shipped; on-device verification owed |
+| **WP-RELOAD-DL-1** - a WebView reload replays the launch deep link | the log of a **passing** re-run | shipped, verified on the device 2026-08-11 with a negative control that re-creates it on demand |
 | **WP-RETRANSMIT-1** - a decrypt-failure repair that fed itself | a user noticing a sync banner | shipped, then the whole mechanism deleted |
 | **WP-HISTBANNER-1** - two peers both awaiting history waited on each other for ever | the user seeing the banner on a healed conversation | shipped, verified live on prod 2026-08-11 |
 | **WP-ANR-1** - the MLS state decoded one byte at a time, freezing the app after every store update | the user seeing "Canari ne repond pas" | shipped; **on-device verification owed** against a release build |
 
 Still open and needing a decision rather than a patch: **WP-KBD-1** (the composer behind the soft
-keyboard), **WP-DRAIN-2** (the inbound drain has no watchdog), **WP-DIRECTBOOT-1** (found by LIFE-5's
-observation half).
+keyboard) and **WP-DRAIN-2** (the inbound drain has no watchdog). **WP-DIRECTBOOT-1**, found by
+LIFE-5's observation half, was verified on hardware 2026-08-11 and is closed.
 
 ### The mechanism every later phase measures was replaced
 
