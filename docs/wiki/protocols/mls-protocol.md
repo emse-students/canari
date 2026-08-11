@@ -251,6 +251,49 @@ Triggered when `processIncomingMessage` fails with epoch-related errors:
 | `SenderDataDecryption` | Sender secrets diverged | `forgetGroup()` + `requestReAdd()` |
 | `WrongEpoch` | No epoch numbers | ACK silently |
 
+#### Why a sender's ratchet goes backwards at all (WP-LOSS-1, 2026-08-06)
+
+The recovery table above is the receiver's side of a defect whose cause is on the SENDER, and the
+two were originally reported as separate bugs (WP-FWD-1, "forwarding loses messages"). They are one
+defect, and it is deterministic.
+
+The fingerprint is a sender that keeps re-offering the SAME generation:
+
+```
+sender    POST /api/mls/send -> 201
+receiver  [RUST::DEBUG] Ciphertext generation out of bounds 110  SecretReuseError
+receiver  [MLS] Duplicate for <group> - silent ACK
+```
+
+Forwarding was never the variable. Two experiments isolate it, neither of which forwards anything:
+
+| Experiment | Result |
+| --- | --- |
+| Reload, then send three messages | only the FIRST is lost (`out of bounds 110`); a second round immediately after loses nothing |
+| Prime the ratchet with a send, wait, reload, send | 300 ms wait: **lost** (generations 118, then 120). 20 s wait: delivered in 694 ms |
+
+**MLS disk writes were deferred, so a reload that beat the checkpoint restored a state behind the
+ratchet the sender had already used.** The next message is then encrypted at a generation the
+receiver already consumed, and the receiver drops it as a duplicate.
+
+`scheduleOutboundMlsPersist` therefore calls `persistNow()` rather than `scheduleDeferred()`:
+encrypting a message checkpoints the ratchet at the point it moved. **An unload hook cannot
+substitute** - `pagehide` / `visibilitychange` can only *start* an async save (a worker round trip,
+then IndexedDB) and the document is torn down long before it lands, so it is a best-effort extra and
+never the guarantee. `persistNow` still merges same-tick calls and stays deferred during a bulk
+ingest, so a burst of sends costs one checkpoint.
+
+The invariant this establishes, and it is the general form: **never hand out a ciphertext whose
+ratchet advance is not yet durable.** A ratchet that can go backwards is a correctness bug in its
+own right - it is also how two live tabs of one device diverge (see [multi-tab
+leadership](#multi-tab-leadership)).
+
+Two things this retires permanently, so that neither is re-opened: the load hypothesis (a burst
+alone never provokes it - 30 rapid sends are clean), and "forwarding is special".
+
+One trap worth naming: `[MLS] Disk writes deferred` sat on the harness's benign-log list for weeks.
+It was the loudest line in the log.
+
 **A consumed generation is not evidence of a duplicate.** `SecretReuseError` /
 `CiphertextGenerationOutOfBounds` says only that the generation is spent, and that happens both when
 the same frame arrives twice (real-time publish racing the queue or FCM) and when a sender whose
@@ -273,8 +316,8 @@ whatever we do locally, and a re-add would destroy a valid membership for nothin
 
 Both platforms run this classifier - the Tauri command surfaces the
 error rather than answering `Ok(None)`, which used to discard the diagnosis before TypeScript saw
-it. Full write-up in
-[cross-client-testing](../cross-client-testing.md#the-receiver-half-2026-08-06-a-consumed-generation-is-not-evidence-of-a-duplicate).
+it. A layer that cannot make a distinction must not make it, and the guard is
+`same_epoch_ratchet.rs` rather than a comment.
 
 **And a generation too far AHEAD is the mirror case, with the opposite remedy.**
 `SecretTreeError(TooDistantInTheFuture)` means the frame's generation is beyond what OpenMLS will

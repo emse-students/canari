@@ -116,14 +116,14 @@ describe('resolveDisplayNames', () => {
     const mod = await import('./displayName');
     vi.mocked(userStore.fetchUserProfile).mockResolvedValueOnce({
       id: 'user-9',
-      firstName: 'Claire',
-      lastName: 'Van Ruymbeke',
+      firstName: 'Camille',
+      lastName: 'Van Dupont',
     } as never);
 
     const getName = await mod.resolveDisplayNames(['user-9']);
 
     expect(userStore.fetchUserProfile).toHaveBeenCalledWith('user-9');
-    expect(getName('user-9')).toBe('Claire Van Ruymbeke');
+    expect(getName('user-9')).toBe('Camille Van Dupont');
   });
 
   it('serves a cached name without hitting the network', async () => {

@@ -310,5 +310,5 @@ media" state in the UI so the deletion is visible rather than silent.
 - [chat-delivery](../services/chat-delivery.md) - the per-device fan-out and `queued_message`
 - [social-service](../services/social-service.md) - channel storage and the symmetric channel key
 - [media-service](../services/media-service.md) - upload, encryption and the retention sweep
-- [cross-client-testing](../cross-client-testing.md#how-big-the-queue-gets---and-it-was-not-by-design-wp-ghost-1) -
-  WP-GHOST-1, the defect that made this question worth asking
+- [cross-client-testing](../cross-client-testing.md) - the campaign that found WP-GHOST-1, the
+  defect that made this question worth asking; its narrative is in `CHANGELOG.md`

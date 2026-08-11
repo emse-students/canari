@@ -80,21 +80,62 @@ drives the real device panel (not the database); `storm.mjs` `syncbanner.mjs` `o
 were written to diagnose the 2026-08-07 retransmission storm and generalise to any "who is
 generating this traffic" question.
 
+## Operating it
+
+Facts about the instrument that are not guessable from the code, each of which has cost at least one
+run.
+
+**The browsers**
+
+- **Reload W1 and W2 onto the CURRENT bundle before any repair check.** A client left open across a
+  deploy is running yesterday's code, and every line it logs will be read as though it were not.
+  `bundle-id.mjs` reports what each one is actually on; it refuses to measure twice on purpose.
+- **`connect()` in `cdp.mjs` is not ready-aware.** Use `client(port)` from `chat.mjs`, which waits
+  for the page. (Cost two runs.)
+- A relaunch keeps the login but **re-locks the PIN**, and so do a kill, a reboot, a radio cycle and
+  an `install -r`.
+
+**The phone**
+
+- **adb over TCP is what makes a session stable**: `adb tcpip 5555` then `adb connect <ip>:5555`.
+  Both transports attached means **every `adb` call needs `-s`**.
+- The WebView pid changes on every cold start, so re-read `/proc/net/unix | grep webview_devtools`
+  and redo the `adb forward` after one.
+- USB stays the fastest path for `install -r`, and this device's USB link drops on its own.
+- **Use PowerShell for any `adb shell` command carrying an absolute device path** - Git Bash
+  rewrites `/sdcard/x` into a Windows-ish path and the command silently targets nothing.
+- The phone's entire web console is in logcat under `Tauri/Console`. Capture continuously to a file:
+  a busy device overruns the ring buffer in minutes.
+- Re-logging the phone in **is** automatable: the Android login opens the SYSTEM browser, so forward
+  CDP to `localabstract:chrome_devtools_remote` and run `login.mjs --match cas.emse.fr`. Never
+  `realClick` the CAS fields - focus by element and assert `activeElement`.
+
+**Building for it**
+
+- `bun tauri android build --target aarch64 --debug`, then install
+  `.../apk/universal/debug/app-universal-debug.apk` - **not** `arm64/`, which is stale.
+- **Never run an Android or iOS build next to anything else that builds the frontend.**
+  `beforeBuildCommand` is `bun run build`, and two builds writing `build/` ship an app that cannot
+  boot. `scripts/check-bundle-consistency.mjs` now fails the build rather than letting it through.
+- The version name no longer moves between builds - the discriminator is `lastUpdateTime`.
+- `bun run test` fails with locale mismatches after an Android build; re-run
+  `bun run paraglide:compile` first.
+
 ## Rules that make a result trustworthy
 
-Twenty-two harness faults produced a false verdict before these were learnt. Each is written up in
-the wiki; collectively they say four things, and ignoring any of them costs a re-run at best and a
-wrong bug report at worst.
+**Thirty-one** harness faults produced a false verdict before these were learnt. They are distilled,
+with their examples, in [testing-methodology](../../docs/wiki/testing-methodology.md) - read that
+page before writing a check or believing one. The five that decide whether a run is worth reading at
+all:
 
 - **Observation is part of every check, not a debugging step.** A verdict is `PASS` only if the
   assertions hold *and* the run is clean. A line that turns out to be routine is added to the benign
   list - never ignored in place. Two shipped bugs came out of the logs of *passing* checks.
+- **A verdict must never be computed over a projection of its own evidence.** A capture filter is
+  presentation; the verdict reads everything.
 - **Every action asserts its own post-condition.** An action that cannot prove it took effect still
   yields a verdict, and that verdict is fiction: a kill that killed nothing, a "relaunch" that was a
   new tab, a `pidof` that exits 1 exactly when the thing it measures happens.
-- **A check that puts the app through a transition must restore every precondition that transition
-  destroys** - and a precondition found by one check belongs to every check sharing the transition.
-  A kill, a reboot, a radio cycle and an `install -r` all re-lock the PIN.
 - **A locator is a guess unless it is disambiguated, and a DEVICE is a locator.** `/json/list` is not
   creation order; a document-wide text match hits the first hidden row; an `aria-label` must never
   outrank visible text; `.chat-composer-editor` exists on the social feed too, so every use is scoped
@@ -104,7 +145,7 @@ wrong bug report at worst.
   fixture with invalid PNG CRCs; another failed looking for a `<canvas>` where the app draws an
   `<img>`.
 
-Two environment traps worth stating outright, because they read as application bugs:
+Two environment traps worth repeating here, because they read as application bugs:
 
 - **Chrome discards every input event on a page it considers hidden**, and native occlusion detection
   marks a fully covered window hidden while `windowState` still says `normal`. Hence the
@@ -115,3 +156,9 @@ Two environment traps worth stating outright, because they read as application b
   broadcast until a manual launch, so any push-dependent check must use a swipe from recents or
   `am kill` - and `am kill` will not reclaim a foreground process, so go HOME first and assert the
   death.
+
+## When the campaign ends
+
+Restore Firefox as the device's default browser -
+`cmd role add-role-holder android.app.role.BROWSER org.mozilla.firefox`. It was switched to Chrome
+only because Firefox exposes no CDP.

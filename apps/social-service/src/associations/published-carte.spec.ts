@@ -51,7 +51,7 @@ function unit(overrides: Record<string, unknown> = {}) {
     cards: [
       {
         userId: 'u1',
-        name: 'Claire Vanruymbeke',
+        name: 'Camille Vandupont',
         role: 'Presidente',
         initials: 'CV',
         x: 163,

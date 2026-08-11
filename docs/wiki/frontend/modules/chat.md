@@ -57,6 +57,49 @@ connection.ts handler:
 
 See [`protocols/mls-protocol.md`](../protocols/mls-protocol.md) for full flow details.
 
+### The drain is a single point of failure for ALL inbound traffic (WP-HIDDEN-1, WP-DRAIN-1)
+
+The queue is serialised, and `isDraining` is lowered only when the message callback RETURNS - in a
+`finally`, but **behind** `await hooks.onDrainEnd()`. `enqueueMessage` starts a drain only
+`if (!draining)`, **and logs nothing when it does not**. So one stuck await inside the checkpoint
+stops every inbound message for the life of the tab, with not one line of output. The restart guard
+at the end of `processQueue` cannot help: it runs after `drain()` returns, and `onDrainEnd` is what
+hangs.
+
+Two different awaits have already frozen all inbound traffic this way, and they are worth keeping as
+the two shapes to expect:
+
+1. **A yield that never resolves.** `runSaveEncrypted` opened with `await yieldToMainThread()`, whose
+   helper resolved from `requestAnimationFrame` - **which a browser never fires for a hidden
+   document**. A backgrounded tab therefore received nothing at all, silently, until refocused. The
+   fingerprint is precise and reproducible with ONE tab: message #1 decrypts, logs
+   `Bulk ingest done - flushing…` and never renders (the UI flush is buffered by
+   `beginBulkIngest({ bufferUi: true })` and released by the `endBulkIngest` that is stuck); message
+   #2 is enqueued with no drain and no log; both appear at the exact millisecond of the refocus. Two
+   candidates were eliminated by MEASUREMENT rather than by reading - IndexedDB answered an open plus
+   read in 1 ms from inside the stuck tab, and the encrypt worker's 60 s timeout would have failed
+   loudly and released the drain.
+
+   The fix **races** the frame against a `MessageChannel` round trip rather than choosing between
+   them: branching on `document.visibilityState` would still hang whenever a tab is hidden *after*
+   the callback is queued, which is exactly what a user does. The fallback is a port message and not
+   `setTimeout`, because background tabs clamp timers to about 1 Hz - which would turn a
+   hundred-message catch-up into minutes of stalling. `yieldToMainThread` is awaited on six paths,
+   including history replay and the PIN-change batches.
+
+2. **A recovery re-acquiring the MLS mutex the drain already holds** - a deadlock, not a slow path.
+   Hence the rule that a repair whose result nobody reads (a re-add, a Welcome, an external join)
+   must be STARTED, never awaited, and must log how it settles (`startRecovery`; `DeferredRecovery`
+   on the Welcome path is the same lesson learnt earlier).
+
+**Each was fixed in place; the SHAPE was not** - nothing type-checks that the next await added there
+is safe. The flush belongs behind `isDraining = false`, or the queue needs a watchdog that reports a
+drain that never completed. That is the open WP-DRAIN-2.
+
+One methodological consequence, because it retired a PASS: a check that asserts **after** restoring
+the tab is asserting after the very act that releases the drain. A single message can never expose
+this; the second one is the whole test.
+
 ## Outbox (outbound delivery)
 
 `utils/chat/outbox.ts` owns every outbound message. A send is persisted first and transmitted
@@ -82,8 +125,11 @@ instruction crosses the channel, never the message, so a lost nudge costs a retr
 
 This is not tidiness. Two tabs hold two MLS clients loaded from one snapshot, so a send from the tab
 whose ratchet is behind is encrypted at a generation the peer has consumed and is dropped on arrival
-as a duplicate - 4 losses in 9 sends when measured (WP-MULTITAB-1, in
-[cross-client-testing](../../cross-client-testing.md#two-tabs-of-one-account-diverge-their-ratchet-and-the-losers-message-is-dropped-wp-multitab-1)).
+as a duplicate - 4 losses in 9 sends when measured, 9/9 after the fix (WP-MULTITAB-1). The guards are
+`outbox.test.ts` and `tabLeadership.test.ts`; nine green sends do not prove a follower stopped
+encrypting, so the mechanism is asserted from BOTH tabs' logs - the follower's
+`Flush skipped - follower tab` and the leader's `Flush requested by a follower tab` carrying the
+**same entry id**, which is also what proves the shared IndexedDB queue is the transfer.
 The same reasoning is why a follower promoted to leader **reloads** rather than picking up where it
 left off: the gate froze its in-memory state at load time while the leader kept advancing the one on
 disk.

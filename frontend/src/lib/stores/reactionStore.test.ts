@@ -19,8 +19,8 @@ describe('channel reaction store', () => {
   });
 
   it('lowercases user ids so ownership matches the normalised current user', () => {
-    expect(flattenReactionTally({ '👍': ['Jolan.Boudin'] })).toEqual([
-      { emoji: '👍', userId: 'jolan.boudin' },
+    expect(flattenReactionTally({ '👍': ['Camille.Dupont'] })).toEqual([
+      { emoji: '👍', userId: 'camille.dupont' },
     ]);
   });
 

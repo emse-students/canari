@@ -106,8 +106,8 @@ sending into a conversation that is OPEN while a drain is running, not by openin
 A rewound sender lost frames and the repair for it became a storm on prod: ~450 frames/min on W1,
 ~300-450 control messages per 30 s on W2, 324 `LOST frame` on the phone, nothing being repaired. Two
 causes, both now deleted rather than tuned, both written up in
-[chat > there is ONE repair](docs/wiki/frontend/modules/chat.md) and
-[cross-client-testing > DONE 2026-08-10](docs/wiki/cross-client-testing.md):
+[chat > there is ONE repair](docs/wiki/frontend/modules/chat.md), with the consequence for the
+campaign on [the dashboard](docs/wiki/cross-client-testing.md):
 
 1. **One question answered by nine clocks**, two of them retry ladders driving the same request, so
    traffic was their product - and the cheap rung (`decrypt_failed`) could repair nothing by
@@ -119,62 +119,39 @@ causes, both now deleted rather than tuned, both written up in
 
 Both rules are in DURABLE RULES. **Everything below is a MEASUREMENT that is owed, not a fix.**
 
-#### OWED, in order
+#### OWED - the list lives on the dashboard, not here
 
 **DONE 2026-08-10, do not re-run:** HEAL on the browser is `HEALED - 14/14` with `history diff
 ran=true`, `narrow retransmission=false` and `ids mode, 554 id(s)`; the frame-rate half is green too
 (14 console lines / 60 s per browser against ~450 frames/min). `wasmLogShim` is DELETED - eleven
 arrivals through the thrown error, zero through the flag, and the route is unreachable by
-construction after `same_epoch_ratchet.rs`. The full trace is in
-[cross-client-testing > HEAL, settled](docs/wiki/cross-client-testing.md). What every future run of
-this check still needs: `bundle-id.mjs` FIRST (it refused to measure twice, correctly); the responder
-is elected by a random shuffle (`messaging.service.ts:1372-1382`), so record WHICH device answered;
-the BREAK is a restored older snapshot of `CanariDBMls_<dev>` (`mlsdb.mjs`) and the teardown restores
-the INVARIANT, never a snapshot (`ensureDeliverable`); the test DM may be deleted and recreated.
+construction after `same_epoch_ratchet.rs`.
 
-1. **Four HEAL checks are still owed**, section 7.1: epoch gap, unknown group, generation gap, and
-   the pair nothing has ever exercised together (a recovery while a SECOND tab holds the leader role).
-2. **The phone: one background/foreground cycle** (WP-RECONNECT, shipped) - watch it re-arm.
-3. **The remaining P1s** in OPEN WORK PACKAGES below.
-4. **Convergence measurements the user asked for explicitly** (2026-08-07): `recon.mjs` for the
-   per-thread marker diff W1 vs W2; `SELECT recipientId, deviceId, count(*) FROM queued_message GROUP
-   BY 1,2` on prod against what each client shows; `DeviceGroupMembership` against live key packages
-   (the WP-GHOST-1 predicate - the platform should still hold ZERO memberships without one, VERIFIED
-   2026-08-10).
-5. **Then the campaign re-run.** The phase dashboard at the top of
-   [cross-client-testing](docs/wiki/cross-client-testing.md) is the source of truth, not this file.
-   **LIFE-5 needs the USER** (the unlock pattern after a reboot) - pause and ask, never work around it.
+**What is still owed, in order, is section "What is owed" of
+[cross-client-testing](docs/wiki/cross-client-testing.md)** - that page is the source of truth for
+campaign state and this file must not carry a second copy. It also carries the per-check state table
+and the vocabulary (`pending` / `passed` / `failed` / `to-revalidate` / `deferred`).
 
-Small items still owed, each one check: the **backup export's Tauri branch** (WP-DL-1's last case -
-it used to ask for a DIRECTORY, which SAF does not offer); Leon's **WP-SAFELINK-1 `LinkPreviewCard`
-case** and his **WP-OIDC-TAB-1 mobile pass**.
+#### The rig, and how a result earns belief
 
-#### The rig - RE-VERIFY each line, do not rebuild it
+- The instrument: [`tools/cross-client-harness/README.md`](tools/cross-client-harness/README.md) -
+  ports, launch flags, adb, the build traps, the file inventory. The working copy plus the ~60
+  one-shot `probe-*` scripts are in the scratchpad; `heal-web.mjs`, `mlsdb.mjs`, `recon.mjs`,
+  `storm.mjs`, `pin.mjs`, `watch.mjs` all exist - reuse them, do not rebuild them.
+- The epistemics: [testing-methodology](docs/wiki/testing-methodology.md) - the 31 harness faults
+  distilled into eight rules, plus the environment traps that read as application bugs. **Read it
+  before writing a check or believing one.**
 
-The harness is archived at `tools/cross-client-harness/` (its README covers the rig) and the working
-copy plus the ~60 one-shot `probe-*` scripts are in the scratchpad. `heal-web.mjs`, `mlsdb.mjs`
-(in-page IndexedDB snapshot/restore, bytes never leave the browser), `recon.mjs`, `storm.mjs`,
-`pin.mjs`, `watch.mjs` all exist - reuse them.
+Only what neither page can say, because it is about THIS machine and THIS session:
 
-- **W1 (9224) / W2 (9223) must be RELOADED onto the current bundle** before any repair check, and
-  relaunched with occlusion detection off if restarted (flags in the campaign page). A relaunch keeps
-  the login but re-locks the PIN - `pin.mjs`, and `--account jolan` for A1, not the default `claire`.
-- **`connect()` in `cdp.mjs` is NOT ready-aware** - use `client(port)` from `chat.mjs`. (Cost two runs.)
-- **A1 over adb TCP is what makes a session stable**: `adb tcpip 5555` + `adb connect <ip>:5555`;
-  wifi IS available at this location. Both transports attached means **every `adb` call needs `-s`**.
-  The WebView pid changes on every cold start - re-read `/proc/net/unix | grep webview_devtools` and
-  re-do `adb -s <tcp> forward tcp:9222 localabstract:…`. USB serial `2A251JEGR05373` (Pixel 6a) is
-  still the fastest for `install -r`, and this device's USB link drops on its own.
-- **Use PowerShell for adb shell commands carrying an absolute device path** - Git Bash rewrites
-  `/sdcard/x` to `/Files/Git/sdcard/x`. Same class as the prod-SSH rule.
-- Rebuild: `bun tauri android build --target aarch64 --debug` in `frontend/`, install
-  `.../apk/universal/debug/app-universal-debug.apk` (NOT `arm64/`, stale). Package `fr.emse.canari`.
-  **The version name no longer moves** - the discriminator is `lastUpdateTime`. Every build leaves a
-  Gradle daemon (idle timeout now 10 min). `bun run test` fails with locale mismatches after an
-  Android build - `bun run paraglide:compile`, re-run.
+- **Credentials are in the scratchpad `test-accounts.json` and never in the repo, which is PUBLIC.**
+  No PIN, login, display name, device id, group id or device serial goes in a committed file - the
+  harness copy is anonymised to `owner` / `peer` and the docs must stay that way.
+- `pin.mjs` needs `--account owner` for A1; the default is the peer.
 - **Never run an Android/iOS build next to anything else that builds the frontend** -
   `beforeBuildCommand` IS `bun run build`, and two builds writing `build/` ship an app that cannot
   boot. `scripts/check-bundle-consistency.mjs` now fails the build instead.
+- Every Android build leaves a Gradle daemon (idle timeout 10 min).
 
 ---
 
@@ -262,83 +239,30 @@ lacks `EVENT` on the `mysql` DB, so `--events` must be dropped).
 
 ### CANARI - THE TEST CAMPAIGN
 
-The plan, the harness, every check and every defect it produced are in
-**[cross-client-testing](docs/wiki/cross-client-testing.md)**, which OPENS with a "Where this campaign
-stands" dashboard. **Read that dashboard rather than re-deriving the state here** - do not maintain a
-second copy. State: Phase 0/MSG/FWD/TAB complete, LIFE done except LIFE-5 (needs the user), NOTIF
-partly (2/3, 5, 6 left, plus the NOTIF-10 re-run), then HEAL/PIN/MULTI/CORRUPT - though the user has
-asked for the whole thing to be RE-RUN from the start once the roadmap is clear.
+The campaign's state - every check, its category and its state - is the dashboard at
+**[cross-client-testing](docs/wiki/cross-client-testing.md)**. **Read it rather than re-deriving the
+state here, and do not maintain a second copy.** The rig is
+[`tools/cross-client-harness/README.md`](tools/cross-client-harness/README.md); how a result earns
+belief is [testing-methodology](docs/wiki/testing-methodology.md), which carries the thirty-one
+harness faults distilled into eight rules plus the environment traps that read as application bugs.
+The user has asked for the whole campaign to be RE-RUN from the start once the roadmap is clear.
 
-What a compaction must not lose:
+What a compaction must not lose, because it is a standing constraint rather than a finding:
 
 - Runs against **PRODUCTION**, two real accounts, credentials in the scratchpad
-  `test-accounts.json`, **never in the repo** (gitignored in both copies; no password is ever a
-  tool-call argument, which is why W1 moved off the chrome-devtools MCP).
+  `test-accounts.json`, **never in the repo** - which is PUBLIC. No password is ever a tool-call
+  argument, which is why W1 moved off the chrome-devtools MCP.
 - **EVERY test message goes in the two-test-account DM, and NOWHERE else** (user, 2026-08-10). A
   one-off probe run in a colleague's conversation because it was convenient fired a "dangerous link"
-  warning into a real person's thread. `openConversation(w1, 'Claire')` / `(w2, 'Jolan')` is what
-  every campaign script already does. For anything needing a CHANNEL, the venue is the
+  warning into a real person's thread. For anything needing a CHANNEL, the venue is the
   `Campagne de test` community, never MiTV - a private channel is readable by every association
-  admin (section 11 of the wiki page).
-- **OBSERVATION IS PART OF EVERY CHECK, not a debugging step** (`watch.mjs`, wiki section 9). A
-  verdict is `PASS` only if the assertions hold AND the run is clean; a line that turns out to be
-  routine is ADDED to the benign list, never ignored in place. Two shipped bugs came out of a green
-  check's noise.
-- **RECONCILIATION is the only way this campaign's loss class can be SEEN** (`recon.mjs`): markers on
-  W1 diffed against markers on W2 for one thread, re-run after any batch of sends. It found WP-LOSS-1
-  and WP-ECHO-1, and no per-check verdict substitutes for it. Two corrections it needed and must keep:
-  the list is VIRTUALISED (accumulate at every scroll position, one read returns a screenful), and
-  the diff must be BOUNDED to the window both sides cover. **A diff between unequal windows looks
-  authoritative and is noise.**
-- **An offline RECEIVER cannot be faked in the browser** - `emulateNetworkConditions` fails new
-  requests in 10 ms and W2 still rendered the message twice. MSG-9 belongs on the phone
-  (`svc wifi disable` + `svc data disable`), which needs adb on **USB**.
-- **`am force-stop` is NOT "the user killed the app"**: Android's STOPPED state cancels every FCM
-  broadcast until a manual launch. Use a SWIPE from recents or `am kill` - and `am kill` does not
-  reclaim a FOREGROUND process, so go HOME first and assert the death. The phone's whole web console
-  is in logcat under `Tauri/Console`; capture continuously to a file, a busy device overruns the ring
-  in minutes.
-- **Re-logging the phone in IS automatable**: the Android login opens the SYSTEM browser, so forward
-  CDP to `localabstract:chrome_devtools_remote` and run `login.mjs --match cas.emse.fr`. Never
-  `realClick` the CAS fields - focus by element and assert `activeElement`.
-- **THIRTY-ONE harness faults have produced a false result, all fixed and all written up in the wiki
-  page** (search "harness fault"). Do not re-derive them; these are the rules they add up to:
-  - **A VERDICT MUST NEVER BE COMPUTED OVER A PROJECTION OF ITS OWN EVIDENCE** (#31). `heal-web.mjs`
-    filtered the console through a display regex and then ran its matchers over the FILTERED text, so
-    a line the matcher accepts but the filter drops was invisible - `escalated=false` on a run whose
-    diff demonstrably ran. A capture filter is presentation; the verdict reads everything.
-  - **When a check's BREAK is not invertible, the teardown restores a PROPERTY, never a snapshot**
-    (#30). Rewinding a sender cannot be undone by restoring any state - the peer consumed generations
-    off the fork while it was live, so no snapshot is both legitimate and ahead of it. Ask what the
-    next run actually needs ("can W1 deliver?") and assert that, on every exit path.
-  - **A matcher tests one SPELLING; the absence of an entire VOCABULARY is evidence about the app.**
-    A stale matcher is the right first suspicion (#29's third bullet) and it is cheap to rule out -
-    grep the log for every word the mechanism could have used, not for the one string the check does.
-  - **A check that puts the app through a transition must restore every precondition that transition
-    destroys** - a kill, a reboot, a radio cycle and an `install -r` all re-lock the PIN. A
-    precondition found by one check belongs to every check sharing the transition.
-  - **An action that cannot prove it took effect still yields a verdict, and that verdict is
-    fiction.** Every action asserts its own post-condition.
-  - **"Did the state change" is almost never the assertion; "did it change into the RIGHT state" is.**
-    Validate a check as a NEGATIVE CONTROL against the unfixed build before its green means anything,
-    and set its tolerance from those two measurements rather than from taste.
-  - **Assume a green check is wrong until its evidence says otherwise - and a FAIL too.** Check the
-    fixture and the selector before blaming the app.
-  - **A locator is a guess unless it is disambiguated - and a DEVICE is a locator.** Name an element
-    from the component SOURCE, never from what the markup ought to be, and scope a selector shared by
-    two surfaces (`.chat-composer-footer .chat-composer-editor`, not the bare editor, which is also
-    on `/posts`). A locator failure does not bias the verdict in a predictable direction.
-  - **CDP's Network domain is BLIND to the app's own requests on mobile** - `hooks.client.ts` swaps
-    `window.fetch` for the Tauri plugin's RUST client. Record from INSIDE the page, inject failures
-    there too, and keep such navigation CLIENT-SIDE or the reload takes the patch with it.
-  - **A virtualised count needs a FRESH MOUNT and the max over repeated polls**, and a baseline needs
-    a polled budget rather than a fixed wait (#28/#29).
-- **Restore Firefox as the device's default browser when the campaign ends**
-  (`cmd role add-role-holder android.app.role.BROWSER org.mozilla.firefox`); it was switched to
-  Chrome because Firefox exposes no CDP.
-
-A check that FAILS earns a WP with its captured log; a check that passes earns a row in section 10
-and nothing else.
+  admin.
+- **OBSERVATION IS PART OF EVERY CHECK, not a debugging step.** A verdict is `PASS` only if the
+  assertions hold AND the run is clean. Two shipped bugs came out of a green check's noise.
+- **RECONCILIATION is the only way this campaign's loss class can be SEEN** (`recon.mjs`). It found
+  WP-LOSS-1 and WP-ECHO-1, and no per-check verdict substitutes for it.
+- A check that FAILS earns a WP with its captured log; a check that passes earns a row on the
+  dashboard and nothing else.
 
 **[device] The verification pass is NOT a Work Package.** Everything native is verified by COMPILING,
 which proves nothing about running; the owed list is
@@ -359,9 +283,9 @@ raising it first locks everyone out.
 ### CANARI - OPEN WORK PACKAGES
 
 - \[ \] **WP-LOSS-1 (P1) - both halves SHIPPED; what is left is verification.** A reload rewound the
-  sender's ratchet and the receiver silently dropped the next message. Root cause, the tables, the
-  retired hypotheses and both halves of the fix are in
-  [cross-client-testing > root cause](docs/wiki/cross-client-testing.md#root-cause-found-2026-08-06-a-reload-rewinds-the-senders-ratchet).
+  sender's ratchet and the receiver silently dropped the next message. Root cause, the isolating
+  experiments, the retired hypotheses and both halves of the fix are in
+  [mls-protocol > why a sender's ratchet goes backwards](docs/wiki/protocols/mls-protocol.md#why-a-senders-ratchet-goes-backwards-at-all-wp-loss-1-2026-08-06).
   Do not re-derive it, and do not re-open the load hypothesis or "forwarding is special": both are
   dead. The sender half is VERIFIED on prod (3/3 delivered where it lost 2/2) - do not re-verify it.
   **Owed:** a LOSS-branch verification (no reproduction has produced one since the sender fixes
@@ -452,38 +376,6 @@ raising it first locks everyone out.
   two causes under one predicate. It is harmless only by luck (the early return is what stops it
   DELETING `keystore_ok.flag` and falsely reporting a lost keystore).
   **Verification needs the USER** - a reboot plus the unlock pattern. Have the fix ready first.
-
-- \[ \] **WP-HISTBANNER-1 (P2) - the "historique en attente" banner is PERMANENTLY WRONG on a
-  perfectly healed conversation, three defects stacked, all introduced 2026-08-10.** Seen by the
-  user on BOTH browsers; the live state is captured by the scratchpad `hist-phase.mjs`. The
-  conversation is fine - the HEAL run the same evening ended `HEALED 14/14` - so this is bookkeeping
-  outliving the condition it described, which is the worst kind of banner: it trains the user to
-  ignore it.
-  1. **THE MARKERS DEADLOCK EACH OTHER.** Both W1 and W2 hold `mls_awaiting_history_since` for the
-     SAME group, and a marker is cleared ONLY by a peer announcing completeness. `actions.ts:1045`
-     deliberately stays silent when `idsToSend.length === 0 && isAwaitingHistory(self)` - correct in
-     isolation, and the rule it enforces is right. But once BOTH peers carry a marker and their
-     stores are equal, `idsToSend` is 0 on both sides, both stay silent, and **neither marker can
-     ever clear**. The convergence argument ("each exchange strictly reduces the symmetric
-     difference, so the empty diff is reached by construction") holds for the DATA and silently
-     assumes some peer is entitled to vouch; two waiting peers are a fixed point it does not cover.
-     The principled discharge is that an empty SYMMETRIC difference falsifies the very evidence
-     `peer-holds-more` was written on - the peer demonstrably no longer holds more - so that marker
-     is discharged by the measurement itself, whatever the peer's own state. `unreadable-frames` is
-     NOT the same case and must not be swept up with it: a frame both devices lack is still lost,
-     and only a third device can answer. Design the two separately; do not unify them by reflex.
-  2. ~~THE BANNER LATCHES~~ **- OVERSTATED, corrected 2026-08-11.** `pending-unanswered` is indeed
-     terminal, and `onResume()` indeed never fires on the tab being looked at - but the 15-minute
-     `AWAITING_SWEEP_INTERVAL_MS` sweep re-solicits on a visible tab, which calls `start()` and
-     refreshes the phase. So the stale window is <= 15 min, not "the life of the tab". Not worth a
-     fix on its own once (1) is fixed, because an answer now always arrives.
-  3. ~~THE STRING IS A LIE~~ **- WRONG, retracted 2026-08-11.** "Nouvelle tentative automatique" was
-     accurate: the sweep above IS an automatic retry. Deleting the RETRY LADDER did not delete the
-     sweep, and I read the one as the other. The string was reworded only for clarity of CAUSE
-     ("aucun appareil n'a repondu" rather than "la demande n'a pas encore recu de reponse"); the
-     retry promise is restored verbatim. **The rule this earns:** a claim that a string is stale
-     must name the mechanism that would honour it and show that mechanism gone - here the grep for
-     `AWAITING_SWEEP_INTERVAL_MS` would have taken one minute and refuted it before it was written.
 
 - \[ \] **WP-DRAIN-2 (P2) - the inbound drain still has no watchdog, so ANY hung await inside it
   stops every inbound message with no diagnostic.** `isDraining` is lowered only when the message
@@ -580,6 +472,22 @@ three that must be seen without opening one:
   a rotated identity rejoins every group while the browser still holds every message.
 - A durable marker must carry the EVIDENCE that justified it, or nothing can ever revisit the
   diagnosis; one written without evidence is legacy - drop it, do not replay it.
+- **A MARKER IS DISCHARGED BY ANYTHING THAT FALSIFIES ITS OWN EVIDENCE, NOT ONLY BY THE ANSWER IT
+  WAS WAITING FOR** - and because the evidence differs per reason, the discharges do too. Two peers
+  both awaiting history were each other's only possible responder, and the guard that (rightly)
+  forbids a waiting device from vouching for completeness was implemented as SILENCE, so neither
+  could ever clear: a fixed point the convergence argument never covered, because it reasons about
+  the DATA and assumes someone is entitled to vouch. An empty symmetric difference falsifies
+  `peer-holds-more` outright - the peer demonstrably no longer holds more - so that marker is
+  retired by the measurement itself whatever the responder's own state, while `unreadable-frames`
+  survives it, a frame neither device holds being still lost and answerable only by a third.
+  Verified live on prod 2026-08-11 (WP-HISTBANNER-1). Residual and DELIBERATE: an
+  `unreadable-frames` marker never self-clears, so every state edge re-solicits for the life of the
+  conversation - bounded, zero-message, and the only alternative is a false completeness claim.
+- **A CLAIM THAT A STRING IS STALE MUST NAME THE MECHANISM THAT WOULD HONOUR IT AND SHOW THAT
+  MECHANISM GONE.** "Nouvelle tentative automatique" was written off as a lie left by the deleted
+  retry ladder; the 15-minute `AWAITING_SWEEP_INTERVAL_MS` sweep is a different mechanism and still
+  honours it exactly. One grep would have refuted the claim before it was written.
 - A LIVENESS clock must be written by the thing whose liveness it measures. `updatedAt` answers "when
   was this row last written" and was asked "when was this device last seen" - so a peer's sync kept
   nine dead devices alive forever (WP-GHOST-1). Same shape as an epoch verdict answering a generation

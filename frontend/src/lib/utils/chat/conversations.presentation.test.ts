@@ -67,12 +67,12 @@ describe('resolveConversationListPresentation', () => {
         contactName: PEER,
         conversationType: 'direct',
         directPeerId: PEER,
-        fallbackDisplayName: 'Claire VAN RUYMBEKE',
+        fallbackDisplayName: 'Camille VAN DUPONT',
       },
       ME
     );
     expect(pres.displayNameResolved).toBe(true);
-    expect(pres.displayName).toBe('Claire VAN RUYMBEKE');
+    expect(pres.displayName).toBe('Camille VAN DUPONT');
   });
 
   it('treats a group name as resolved', () => {
