@@ -108,6 +108,36 @@ Two things follow, and both are the point of building the report rather than a c
   open half, and it is the one a future GC has to answer — with a predicate re-measured on the
   population it will actually run against, not the one that named the last incident.
 
+#### The answer was a REVOCATION, not a sweep (2026-08-11)
+
+The debris was closed the same day, and by the mechanism the product already has rather than by the
+new predicate the report seemed to be asking for. `web-d82cd226…-msi13yl3-ytaa` was revoked from
+Settings > Appareils connectés; measured immediately after, on prod:
+
+| | before | after |
+| --- | --- | --- |
+| `queued_message` for that device | 2 073 | **0** |
+| `dm_device_group_memberships` for it | 6 | **0** |
+| `revoked_device` rows for it | 0 | **1** |
+| platform-wide `queued_message` | 2 916 | **847** |
+
+**A DELETE WOULD HAVE BEEN THE WRONG SHAPE, AND IT WOULD HAVE LOOKED RIGHT FOR A DAY.** The rows were
+the symptom; the cause is that the device is still a valid fan-out target. Emptying the table leaves
+the six routing memberships in place, so the next message re-queues to it and the count starts over —
+which is precisely what the report had already caught happening once, the queue reconstituting itself
+from zero at ~2.4 frames a minute after the overnight purge. The revoke removes the membership, the
+key packages and the queue together, and records the fact in `revoked_device` so nothing re-adds it.
+
+The generalisation, and the reason this is filed as a rule rather than an incident: **when a resource
+keeps refilling, the disposal is not the fix — find the mechanism that keeps naming it as a
+destination, and use the product's own control over that mechanism.** A GC predicate written for this
+would have had to distinguish "a generation the user replaced" from "a device that is merely offline",
+which is a judgement the server cannot make and the user already made by replacing it.
+
+What the remaining 847 rows say is that there was nothing else of this shape: the deepest per-device
+queue is **84**, on a real user's phone whose key package predates it — the ordinary profile the
+threshold was set against, not a second runaway.
+
 #### WP-PENDING-1 verified on hardware, and what the run could not establish
 
 The defect: a single `AbortController(10_000)` wrapped the **whole** paginated pull, and nothing was

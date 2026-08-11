@@ -554,6 +554,23 @@ An undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_o
 - **BootReceiver** (`CanariBootReceiver`): re-registers FCM token + drains outbox on boot
 - **Foreground guard**: retry is deferred when the TS outbox flusher is active
 
+**A RESIDUE AFTER A DRAIN WAITS FOR THE NEXT TRIGGER, AND MAY WAIT A LONG TIME.** Observed on A1,
+2026-08-11: a 110-message backlog drained to **3** and then stopped, with the app foregrounded,
+unlocked, connected and polling `/api/presence` successfully throughout - and **zero log lines**
+about those three for roughly ten minutes. One ordinary send into the same conversation cleared them
+within 45 s (mirror 3 → 4 → 0), so the three were never stuck: the drain had simply run out of
+triggers. Two consequences for anyone reading a residual count:
+
+- **A non-zero mirror with no log is "nothing has happened since", not "delivery failed."** It is the
+  same trap as reading the mirror at all while the FOREGROUND path is the one draining - the mirror
+  is rewritten wholesale by the TS queue, so it lags. The server-side `queued_message` count for the
+  group is the instrument that answers "did it leave"; during that run it climbed 55 → 162 while the
+  mirror still read 110.
+- The exponential backoff above did not visibly fire inside that window. Deliberately not opened as a
+  Work Package: nothing was lost, and the trigger set (a send, a reconnect, a foreground, a boot) is
+  what a real user generates constantly. Worth re-measuring only if a residue is ever seen to survive
+  one of those events.
+
 ### Outbox mirror
 
 Both platforms maintain an `outbox_pending.ndjson` mirror for background sends:

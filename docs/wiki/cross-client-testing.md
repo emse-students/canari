@@ -381,6 +381,37 @@ Three things that pass taught, and they generalise to every future one:
   `performance.getEntriesByType('resource')`, not `script[src]`: SvelteKit boots from an inline
   module, so a selector-based version of this assertion finds nothing and silently asserts nothing.
 
+## The campaign owns its own debris, and clearing it is a check in itself
+
+Asked by the user on 2026-08-11. A campaign that creates groups, devices and backlogs on the
+PRODUCTION database leaves state behind that later runs then measure — and cannot tell from real
+traffic. Two classes were cleared that day, and each taught something the runs themselves had not.
+
+**Ten test groups, deleted through the UI and not by SQL.** `DELETE /api/mls/groups/:groupId` emits
+nothing to clients: the notice is an E2EE MLS `groupDeleted` system message the CLIENT sends
+*before* calling the server, precisely because the server call hard-deletes `dm_group_members` and
+strips the routing a later message would need (`groupActions.ts:98`). An `UPDATE` straight into
+Postgres would have left the peer holding a live MLS group for a conversation that no longer exists
+— manufacturing the exact orphan state this campaign hunts. Going through the UI also exercises
+`deleteGroupAndBroadcast`, which no check covers. Verified server-side: all ten tombstoned, zero
+members, zero queued. `scratchpad/cleanup-test-groups.mjs` only ever matches the harness's own name
+prefixes; a real user's group sat in the same sidebar and was skipped by name.
+
+**One dead browser generation, revoked.** It held 2 073 of the platform's 2 916 queued rows. See
+[chat-delivery > the answer was a REVOCATION](services/chat-delivery.md) for why deleting the rows
+would have been the wrong shape.
+
+Two rules for any destructive cleanup script, both learnt by nearly getting them wrong here:
+
+- **Name the target, never infer it.** The device dialog labels its rows "Appareil 1/2/3" and shows
+  no id, so pressing on an ordinal would have been a guess between this browser, the phone and the
+  debris — and a wrong guess destroys a live device's access. The id is in a `title` attribute; the
+  script matches on it and **fails** if it does not find exactly one match, rather than falling back
+  to a position.
+- **Assert the post-condition, not the click.** The delete is asynchronous (MLS broadcast, then the
+  server call), so a loop counting clicks reports success for a no-op. Poll until the entry actually
+  leaves the sidebar.
+
 ## What is owed, in order
 
 1. **Four HEAL checks** - HEAL-W1 through W4, section above. W4 has never been exercised anywhere.

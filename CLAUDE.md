@@ -86,6 +86,9 @@ up: **prod IS the test server** until a `dev.canari-emse.fr` exists.
    keyed correctly on `KeyPackage.createdAt`). What was actually missing was that nobody was looking,
    so the durable half shipped is an hourly `reportQueueDepth` that names the deepest queues and
    WARNs past a threshold - observation, never a cap, because capping trades disk for silent loss.
+   **CLOSED the same day by REVOKING the debris generation** (2 073 -> 0 rows, 6 -> 0 routing
+   memberships, platform 2 916 -> 847, deepest remaining queue 84 on a real user's phone): the rows
+   were the symptom and the routing was the cause, so no new GC predicate was written.
    Reasoning and the numbers: [chat-delivery > the queue is bounded on ONE
    axis](docs/wiki/services/chat-delivery.md).
 2. **WP-STORAGE-1's backup rewrite: BUILD IT AND PROVE A RESTORE, then show the user before any
@@ -445,6 +448,13 @@ three that must be seen without opening one:
   falling behind is a client bug, a stale one is debris), or it sends the reader to the wrong fix.
 - A device good enough to be MESSAGED must be at least as valid as one good enough to be INVITED. The
   invitation path checks the key package, the fan-out does not - and the gap is where the ghosts live.
+- **WHEN A RESOURCE KEEPS REFILLING, DELETING IT IS NOT THE FIX - REVOKE WHATEVER KEEPS NAMING IT AS
+  A DESTINATION.** The 2 073-row debris queue was emptied by REVOKING the dead browser generation, not
+  by a sweep: a DELETE leaves the six routing memberships standing, so the next message re-queues and
+  the count starts over - which the hourly report had already caught happening once. The revoke drops
+  the memberships, the key packages and the queue together and records the fact in `revoked_device`.
+  The GC predicate this seemed to want would have had to tell "a generation the user replaced" from
+  "a device that is merely offline", a judgement the server cannot make and the user already made.
 - An error says what it says: "this generation is consumed" is NOT "I already have this message".
   Keep the evidence that distinguishes them (the frame's own bytes) - and never let a native layer
   answer `Ok(None)` where the shared classifier could have decided. **This rule was written here and
