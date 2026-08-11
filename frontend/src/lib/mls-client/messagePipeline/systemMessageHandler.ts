@@ -38,6 +38,38 @@ export interface SystemEventContext extends MessageHandlerDeps {
 }
 
 /**
+ * May `senderNorm` rewrite or remove `target`? Only its own author may.
+ *
+ * WHY THIS IS ENFORCED ON RECEIPT, not only where the action is offered. `isOwnMessage` gates the
+ * edit and delete controls, but it runs on the device that SENDS the event - it decides what to put
+ * on the wire, and a check that lives on the attacker's side of the wire is not a check. Every other
+ * member then applied `delete_message` / `edit_message` by message id alone, so a member of a group
+ * could silently remove or rewrite ANY other member's message on EVERY device in it. Nothing else
+ * would have caught it: DMs and groups carry no server authority over their content the way channels
+ * do, precisely because the server cannot read them.
+ *
+ * The identity is the one MLS itself authenticated for the frame, which is what makes this
+ * sufficient rather than advisory: a member can lie about the message id, never about who they are.
+ *
+ * Refusing is silent to the user by design - the honest reading is that a peer sent something it had
+ * no right to send, which is not the local user's problem to act on - but it is never silent in the
+ * log, because a swallowed branch in a best-effort path leaves nothing else behind.
+ */
+function mutationIsAuthorised(
+  target: { senderId?: string },
+  senderNorm: string,
+  kind: 'edit' | 'delete',
+  log: (msg: string) => void
+): boolean {
+  const owner = (target.senderId ?? '').toLowerCase();
+  if (owner && owner === senderNorm.toLowerCase()) return true;
+  log(
+    `[MLS] Refused ${kind === 'edit' ? 'an edit' : 'a delete'} of a message owned by ${owner.slice(0, 8) || 'unknown'} from ${senderNorm.slice(0, 8)} - only the author may mutate it`
+  );
+  return false;
+}
+
+/**
  * Dispatches a decoded MLS system event to the appropriate handler.
  *
  * Called from setupMessageHandler after JSON-parsing `msg.system.data`.
@@ -487,6 +519,8 @@ export async function handleSystemEvent(
     const c = conversations.get(convoKey);
     if (c && data.messageId) {
       const idx = c.messages.findIndex((m) => m.id === data.messageId);
+      if (idx !== -1 && !mutationIsAuthorised(c.messages[idx], senderNorm, 'delete', log))
+        return true;
       if (idx !== -1) {
         const orig = c.messages[idx];
         const deletedMsg = {
@@ -526,6 +560,8 @@ export async function handleSystemEvent(
     const c = conversations.get(convoKey);
     if (c) {
       const idx = c.messages.findIndex((m) => m.id === data.messageId);
+      if (idx !== -1 && !mutationIsAuthorised(c.messages[idx], senderNorm, 'edit', log))
+        return true;
       if (idx !== -1) {
         const orig = c.messages[idx];
         const editedAt = typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();

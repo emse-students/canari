@@ -229,6 +229,26 @@ explicitly through **`appMsgToChannelSystemEnvelope`** and attribute it to `'sys
 `isSystem: true`, so it renders centred and neutral rather than as a message from whoever triggered
 it. `ChatMessageGroups` centres on the ROW flag; the `system` envelope kind only gives the pill.
 
+### A mutation event is authorised on RECEIPT, by the MLS sender
+
+`delete_message` and `edit_message` name a target by `messageId`. `handleSystemEvent` resolves it and
+then calls **`mutationIsAuthorised(target, senderNorm, kind, log)`** (`systemMessageHandler.ts`),
+which applies the mutation only when `target.senderId === senderNorm` (case-insensitive; an empty
+`senderId` never matches). A refusal returns `true` - the event is consumed, not re-queued - and logs
+`[MLS] Refused an edit|a delete of a message owned by … - only the author may mutate it`.
+
+**Why the receiving side.** `isOwnMessage` gates the edit/delete controls, but it runs on the device
+that SENDS the event: it decides what an honest client puts on the wire and nothing about what a
+modified one can. Until 2026-08-12 the handlers applied the mutation by id alone, so any member of a
+DM or group could delete or rewrite any other member's message on every device in it. A channel is
+different - the server owns channel content and checks ownership itself - and that asymmetry is the
+trap: DMs and groups are exactly the places where the server *cannot* check, being unable to read
+them.
+
+`senderNorm` is the identity **MLS authenticated for the frame**, which is what makes the check
+sufficient rather than advisory: a member can lie about the message id, never about who it is.
+Covered by `systemMessageHandler.mutationOwnership.test.ts`.
+
 ### Channel invitation card
 
 Inviting someone to a community sends a `channel_invitation` system event into the 1:1 MLS DM, and

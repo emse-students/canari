@@ -54,6 +54,12 @@ three that must be seen without opening one:
 
 ## MLS membership and routing -> [mls-protocol](protocols/mls-protocol.md), [chat-delivery](services/chat-delivery.md)
 
+- **A permission check that runs where the action is OFFERED is not a check.** `isOwnMessage` hid the
+  edit/delete buttons, and both handlers then applied `delete_message` / `edit_message` by message id
+  alone - so any member could rewrite any other member's message on every device in the group. Where
+  the server cannot read the content it cannot police it either, so the RECEIVER enforces it, against
+  the identity MLS authenticated for the frame: a member can lie about the id, never about who it is.
+  Consume the event and log the refusal; do not re-queue it.
 - MLS membership says who can decrypt; `DeviceGroupMembership` says who is actually sent to.
 - A join is NOT evidence of a gap: the message store and the seen-frame ledger are keyed by USER, so
   a rotated identity rejoins every group while the browser still holds every message.
