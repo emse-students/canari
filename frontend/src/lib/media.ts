@@ -123,6 +123,41 @@ export async function readImageDimensions(file: File): Promise<ImageDimensions |
   });
 }
 
+/**
+ * Reasons `compressImage` can hand back the ORIGINAL file. Several of them ship megabytes.
+ *
+ * Measured 2026-08-11 (WP-STORAGE-1): a 3840x2400 photograph through this compressor costs
+ * **245 KB** on average, while the five largest objects on production are 4.15 to 7.86 MB - 16 to
+ * 32 times that. So a large object is never a compressed image; it came through one of these
+ * branches, or it is a video, which is not compressed at all. Until now they all returned
+ * silently, which is why the question "what IS that 7.86 MB blob" had no answer anywhere.
+ */
+type PassthroughReason =
+  | 'not-an-image'
+  | 'animated-or-vector' // GIF/SVG: re-encoding drops the animation
+  | 'no-canvas-context'
+  | 'already-small' // under the skip threshold and no resize needed - the expected cheap path
+  | 'encode-produced-nothing'
+  | 'webp-not-smaller' // an already-optimised JPEG can beat WebP
+  | 'decode-failed' // HEIC and anything else this engine cannot decode
+  | 'threw';
+
+/** Logs every non-trivial passthrough with its cost, so a large upload is attributable later. */
+function keepOriginal(
+  reason: PassthroughReason,
+  file: File,
+  dims: ImageDimensions
+): CompressedImage {
+  // The two expected paths are not worth a line each; the rest are how big objects get in.
+  if (reason !== 'already-small' && reason !== 'not-an-image') {
+    console.warn(
+      `[media] uploading the original (${reason}): ${file.type || 'unknown'}, ` +
+        `${(file.size / 1024 / 1024).toFixed(2)} MB`
+    );
+  }
+  return { file, width: dims.width, height: dims.height };
+}
+
 export async function compressImage(
   file: File,
   maxWidth: number = IMAGE_COMPRESS_PRESETS.chat.maxWidth,
@@ -130,12 +165,15 @@ export async function compressImage(
   quality: number = IMAGE_COMPRESS_PRESETS.chat.quality
 ): Promise<CompressedImage> {
   if (!file.type.startsWith('image/')) {
-    return { file, width: 0, height: 0 };
+    return keepOriginal('not-an-image', file, { width: 0, height: 0 });
   }
 
   if (file.type === 'image/gif' || file.type === 'image/svg+xml') {
     const dims = await readImageDimensions(file);
-    return { file, width: dims?.width ?? 0, height: dims?.height ?? 0 };
+    return keepOriginal('animated-or-vector', file, {
+      width: dims?.width ?? 0,
+      height: dims?.height ?? 0,
+    });
   }
 
   try {
@@ -148,7 +186,12 @@ export async function compressImage(
       if (!ctx) {
         URL.revokeObjectURL(objectUrl);
         void readImageDimensions(file).then((dims) =>
-          resolve({ file, width: dims?.width ?? 0, height: dims?.height ?? 0 })
+          resolve(
+            keepOriginal('no-canvas-context', file, {
+              width: dims?.width ?? 0,
+              height: dims?.height ?? 0,
+            })
+          )
         );
         return;
       }
@@ -168,7 +211,7 @@ export async function compressImage(
         const needsResize = width !== img.naturalWidth || height !== img.naturalHeight;
 
         if (!needsResize && file.size < SKIP_REENCODE_UNDER_BYTES) {
-          resolve({ file, width: outWidth, height: outHeight });
+          resolve(keepOriginal('already-small', file, { width: outWidth, height: outHeight }));
           return;
         }
 
@@ -180,7 +223,12 @@ export async function compressImage(
         canvas.toBlob(
           (blob) => {
             if (!blob) {
-              resolve({ file, width: outWidth, height: outHeight });
+              resolve(
+                keepOriginal('encode-produced-nothing', file, {
+                  width: outWidth,
+                  height: outHeight,
+                })
+              );
               return;
             }
 
@@ -195,7 +243,9 @@ export async function compressImage(
                 height: outHeight,
               });
             } else {
-              resolve({ file, width: outWidth, height: outHeight });
+              resolve(
+                keepOriginal('webp-not-smaller', file, { width: outWidth, height: outHeight })
+              );
             }
           },
           outputType,
@@ -203,10 +253,17 @@ export async function compressImage(
         );
       };
 
+      // HEIC lands here on any engine that cannot decode it - i.e. a full-size phone photo
+      // uploaded untouched. The dimensions probe uses the same decoder and will fail too.
       img.onerror = () => {
         URL.revokeObjectURL(objectUrl);
         void readImageDimensions(file).then((dims) =>
-          resolve({ file, width: dims?.width ?? 0, height: dims?.height ?? 0 })
+          resolve(
+            keepOriginal('decode-failed', file, {
+              width: dims?.width ?? 0,
+              height: dims?.height ?? 0,
+            })
+          )
         );
       };
       img.src = objectUrl;
@@ -214,7 +271,7 @@ export async function compressImage(
   } catch (error) {
     console.warn('Image compression failed:', error);
     const dims = await readImageDimensions(file);
-    return { file, width: dims?.width ?? 0, height: dims?.height ?? 0 };
+    return keepOriginal('threw', file, { width: dims?.width ?? 0, height: dims?.height ?? 0 });
   }
 }
 

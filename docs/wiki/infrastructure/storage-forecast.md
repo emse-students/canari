@@ -263,17 +263,70 @@ that file from the GitHub secrets on every deploy and a repository whose passwor
 unreadable forever. It has to be copied off the machine - the offsite mirror is a copy of an
 encrypted repository, not a second chance. See [MIGRATION.md](../../../infrastructure/MIGRATION.md).
 
-### 5.2 Cap and re-encode media at upload time (x5-10 on the dominant term)
+### 5.2 Cap and re-encode media at upload time - **MEASURED AND REFUTED 2026-08-11**
 
-The server cannot transcode - it only ever sees ciphertext - so this has to happen **client-side,
-before encryption**, in `frontend/src/lib/media.ts`:
+> This section used to read "x5-10 on the dominant term ... measured p90 4.25 MB and max 8.06 MB,
+> i.e. unmodified phone photos ... the **only** lever that reduces the live figure". Every clause of
+> that is wrong, and it is kept here because the way it was wrong is the reusable part: **a
+> distribution was attributed to a cause without checking whether the mechanism that would have
+> prevented it was already running.** It was.
 
-- a hard cap per attachment (e.g. 25 MB), refused with a clear message rather than silently;
-- re-encode images to a maximum dimension (~2 048 px) at WebP/AVIF quality ~80 before encrypting.
+The server cannot transcode - it only ever sees ciphertext - so any re-encoding must happen
+client-side, before encryption, in `frontend/src/lib/media.ts`. **It already does, on every upload
+path**: `compressImage` (WebP, `IMAGE_COMPRESS_PRESETS`) is called by `useMessaging`
+(`handleFilesSelected`, chat), `CreatePostForm`, `EditPostForm` and `PostComments`, and the outbox
+flush re-uses the bytes it produced. There is no bypass.
 
-Measured p90 is 4.25 MB and max 8.06 MB, i.e. unmodified phone photos. Re-encoded they land around
-200-400 KB. This is the **only** lever that reduces the live figure rather than the copies of it, and
-it also cuts every user's mobile data bill.
+**What one photo actually costs.** Twelve photographic 3840x2400 sources (~9 MP, comparable to a
+phone photo) through Chrome's own canvas/WebP encoder - the same encoder the app uses - scored
+against the original downscaled to the same output size:
+
+| preset | output | mean size | vs today | PSNR |
+| --- | --- | --- | --- | --- |
+| **2560 / 0.92 (ships today)** | 2560x1600 | **245 KB** | x1.00 | 43.29 dB |
+| 2048 / 0.92 | 2048x1280 | 175 KB | x0.71 | 42.39 dB |
+| 2048 / 0.85 | 2048x1280 | 107 KB | x0.44 | 41.18 dB |
+| 2048 / 0.80 | 2048x1280 | 86 KB | x0.35 | 40.52 dB |
+| 1600 / 0.80 | 1600x1000 | 61 KB | x0.25 | 39.78 dB |
+
+**245 KB, not 4.25 MB.** So the multi-megabyte objects are not images that escaped the compressor;
+no setting of this preset produces them. Production on 2026-08-11, 26 live objects totalling
+41.6 MB: the ten objects above 1 MB hold **35.3 MB, i.e. 85 % of the bytes**, and the five largest
+are 4.15 to 7.86 MB - **16 to 32 times** what a full-resolution photograph costs here.
+
+**So lowering the preset would halve the class that is not the problem.** It is not taken: the whole
+image class is the small end of the distribution, and 43.29 -> 41.18 dB is a real quality loss paid
+for bytes that do not exist. Should this ever be revisited, 2048/0.85 is the point to take - the
+table is the argument, not taste.
+
+**Where those bytes actually come from**, in order:
+
+1. **Video, which is not compressed at all.** `handleFilesSelected` re-encodes images only; a clip
+   goes up exactly as the camera wrote it. Nothing else in the app can produce a 7.86 MB object as
+   routinely.
+2. **The passthrough branches of `compressImage`**, which returned the original *silently* until
+   2026-08-11. `decode-failed` is the expensive one: **HEIC** cannot be decoded by an engine without
+   a HEIC codec, `img.onerror` fires, and a full-size iPhone photo is uploaded untouched. GIF and SVG
+   are deliberate (re-encoding a GIF drops the animation). Each branch now logs its reason and the
+   size, so the next large object is attributable from the client log instead of being a mystery on
+   disk - see `PassthroughReason`.
+3. The per-attachment cap, which already exists and is admin-configurable (`mediaMaxSizeBytes`).
+
+**The honest conclusion for the forecast**: the 87 % media share is real, but it is a VIDEO
+forecast, not a photo one, and the lever that would move it is client-side transcoding - expensive,
+platform-specific, and not obviously worth it at this scale. The cheap win claimed by the old text
+does not exist.
+
+**One incidental finding, and its mechanism is in the code**: 7 of the 26 objects on disk have no
+entry in `media_metadata.json` (~11 MB, including the two largest). `purgeExpiredMedia` iterates
+`this.meta.items`, so an object with no entry is invisible to it **for ever** - it is not "not yet
+due", it is unreachable. One way in is visible three lines apart in the same function: the
+`storage.delete` failure was swallowed, the entry was still marked purged, and the tombstone trim
+(`META_TOMBSTONE_MAX_AGE_MS`) later deleted the entry - after which nothing on the server knows the
+object exists. That branch now logs (2026-08-11); an upload that wrote the object and died before
+persisting the metadata is a second way in. **Reaping them needs a pass driven by the BUCKET rather
+than the index**, which does not exist today - the same shape as 5.3, and the same GDPR point: an
+object nothing can enumerate is an object no deletion request can reach.
 
 ### 5.3 Give media a content-linked deletion path
 

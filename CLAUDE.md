@@ -352,9 +352,13 @@ raising it first locks everyone out.
   deleting step 3 of `backup.sh`, and the user asked to see the proof first. The password is at
   `/home/canari/.config/canari/restic-password` and is deliberately NOT a GitHub secret (the CD
   rewrites `.env` every deploy; a changed password makes the repo unreadable forever) - **it must be
-  copied off the box, the offsite mirror is an encrypted copy, not a second chance**; (2) cap +
-  re-encode images CLIENT-SIDE before encryption in `frontend/src/lib/media.ts` (measured p90
-  4.25 MB, max 8.06 MB - raw phone photos), the only lever that touches the live figure; (3)
+  copied off the box, the offsite mirror is an encrypted copy, not a second chance**; (2) **MEASURED
+  AND REFUTED 2026-08-11 - do not re-plan it.** `compressImage` ALREADY runs on every upload path,
+  and a 9 MP photograph through it costs **245 KB** (12 sources, Chrome's own encoder), while prod's
+  five largest objects are 4.15-7.86 MB. So the megabytes are VIDEO (never compressed) or a
+  passthrough branch (**HEIC hits `img.onerror` and ships full size**) - lowering the preset would
+  halve the class that is not the problem, at a real quality cost. Not taken; every passthrough now
+  logs its reason. Table and reasoning in section 5.2 of the page; (3)
   content-linked media deletion, which does not exist at all today - message delete and account
   delete leave the blobs, a GDPR point as much as a storage one; (4) Redis `maxmemory` +
   `volatile-lru` (it is `0`/`noeviction` today); (5) autovacuum on `queued_message`. `docker system
@@ -739,6 +743,12 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
 - A cross-process contract is only as good as its test: pin the PATHS as well as the field names,
   or a writer on one OS fills a directory nothing ever reads.
 - Never let a capability probe swallow its own failure, and never branch on an error MESSAGE.
+- **A DISTRIBUTION IS NOT A DIAGNOSIS: BEFORE BLAMING A CAUSE, CHECK WHETHER THE MECHANISM THAT
+  WOULD HAVE PREVENTED IT IS ALREADY RUNNING.** "p90 4.25 MB, i.e. unmodified phone photos" named a
+  cause from a shape and planned an x5-10 lever on it; `compressImage` was already on every upload
+  path and a 9 MP photo costs 245 KB through it, so the lever was worth nothing and the real bytes
+  (video, and HEIC through `img.onerror`) were never looked for. The measurement that settles it is
+  cheap - run the app's OWN transform over a representative input and compare to what is on disk.
 - **A DISTINCTION CARRIED IN PROSE IS A DISTINCTION EXACTLY ONE CALL SITE WILL MAKE.** `410 Gone`
   became `new Error('MEDIA_PURGED_BY_RETENTION')`, so telling "expired for ever" from "the download
   failed" meant `String.includes` at each consumer - and of four media surfaces exactly one did it:

@@ -366,8 +366,17 @@ export class MediaService {
 
       try {
         await this.storage.delete(mediaId);
-      } catch {
-        // Object may already be absent; still mark as purged in index.
+      } catch (err) {
+        // Still marked purged below - the object may simply be absent already. But this branch is
+        // how a blob is STRANDED: the entry becomes a tombstone, the tombstone is trimmed after
+        // META_TOMBSTONE_MAX_AGE_MS, and the sweep only ever iterates the metadata - so an object
+        // whose delete failed here can never be seen again. Measured 2026-08-11: 7 of the 26 live
+        // objects on production have no metadata entry at all. Never swallow it silently.
+        this.logger.warn(
+          `Retention delete failed for ${mediaId} (object may be stranded): ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
       }
 
       this.meta.items[mediaId] = {
