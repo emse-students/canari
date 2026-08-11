@@ -64,6 +64,12 @@ pub enum DecryptErrorKind {
     /// Like `SecretReuse` it will NEVER decrypt - queueing it for retry only accumulates dead rows -
     /// but the cause is the opposite end of the ratchet, and only a new epoch clears it.
     GenerationTooFarAhead,
+    /// An APPLICATION frame from an epoch older than ours, whose epoch secrets we no longer hold
+    /// (`max_past_epochs` is 2, so this is not simply a frame overtaken by a commit - it is a
+    /// re-joined group, which starts with no past epochs). Like `SecretReuse` the plaintext is gone
+    /// for good and retrying is dead weight, and like it the frame is a REAL MESSAGE rather than
+    /// nothing to show - only a member re-sending it at the current epoch recovers it.
+    PastEpochApplication,
     /// Unrecoverable MLS state (corruption/inconsistency): the frontend must re-bootstrap.
     Unrecoverable,
     /// Unclassified.
@@ -82,6 +88,13 @@ impl MlsError {
             // never decrypt (WP-PENDING-2).
             MlsError::OpenMls(s) if s.contains("TooDistantInTheFuture") => {
                 DecryptErrorKind::GenerationTooFarAhead
+            }
+            // Also before the generic `Process error:` arm, and for the same reason: a past-epoch
+            // application frame IS a process error, and reading it as a retryable ratchet gap
+            // queues a frame whose epoch secrets are gone - it can never decrypt, however often
+            // it is retried.
+            MlsError::OpenMls(s) if s.contains("past epoch application frame") => {
+                DecryptErrorKind::PastEpochApplication
             }
             MlsError::OpenMls(s) if s.contains("Process error:") => {
                 DecryptErrorKind::SenderRatchetGap

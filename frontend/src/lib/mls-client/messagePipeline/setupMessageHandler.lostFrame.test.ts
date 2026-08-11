@@ -53,6 +53,7 @@ vi.mock('$lib/utils/chat/awaitingHistoryRegistry', () => ({
 import { setupMessageHandler } from './setupMessageHandler';
 import { solicitHistory } from '$lib/utils/chat/historySolicit';
 import { markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
+import { requestReAdd } from '$lib/utils/chat/recovery';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
 import {
   createTestConversations,
@@ -131,5 +132,53 @@ describe('a frame lost to a rewound sender', () => {
 
   it('still ACKs the frame - it can never decrypt, so retrying it forever is dead weight', async () => {
     expect(await deliver(baseDeps(), [7, 7])).toBe(true);
+  });
+});
+
+/**
+ * The same policy, reached from the OTHER end of the ratchet.
+ *
+ * `mls-core` answered `Ok(None)` for an application frame from an epoch already past, which reads
+ * as "no application payload" - indistinguishable from a commit echo - so none of the above ran
+ * and the loss left no trace at all. Measured on prod 2026-08-11 (HEAL-W2): the message was ACKed
+ * off the server, and the only line it produced was one a routine handshake also produces.
+ */
+describe('a frame from an epoch whose secrets are gone', () => {
+  /** The marker `mls-core` emits, and the only thing the TS side ever sees of that decision. */
+  const PAST_EPOCH = 'Process error: past epoch application frame [msg_epoch=1, group_epoch=4]';
+
+  const pastEpochDeps = () =>
+    baseDeps({
+      mlsService: createMlsServiceStub({
+        getUserGroups: vi.fn().mockResolvedValue([{ groupId, name: 'Test', isGroup: true }]),
+        getLocalGroups: vi.fn().mockReturnValue([groupId]),
+        processIncomingMessage: vi.fn().mockRejectedValue(new Error(PAST_EPOCH)),
+      }),
+    });
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('solicits a history diff and ACKs, exactly like a consumed generation', async () => {
+    const deps = pastEpochDeps();
+
+    expect(await deliver(deps, [4, 4, 4])).toBe(true);
+
+    expect(vi.mocked(solicitHistory)).toHaveBeenCalledWith(
+      deps.mlsService,
+      groupId,
+      expect.any(Function)
+    );
+    expect(vi.mocked(markAwaitingHistory)).toHaveBeenCalledWith(
+      'user-a',
+      groupId,
+      'unreadable-frames'
+    );
+  });
+
+  it('never re-adds: the group is healthy, only this one frame is unreadable', async () => {
+    // A re-add destroys a valid membership, and it would recover nothing - the plaintext is gone
+    // locally whatever we do. Only a member still holding the message can produce it again.
+    await deliver(pastEpochDeps(), [4, 4, 4]);
+    expect(vi.mocked(requestReAdd)).not.toHaveBeenCalled();
   });
 });

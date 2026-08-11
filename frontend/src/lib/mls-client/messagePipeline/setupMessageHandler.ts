@@ -567,12 +567,17 @@ async function handleKnownGroup({
   const fingerprint = frameFingerprint(content);
 
   /**
-   * MLS says this generation is already consumed. That is all it says - and the two situations it
-   * covers are opposites: the same frame delivered twice (benign, drop it), or a NEW frame the
-   * sender encrypted at a generation it had already used because its ratchet went backwards
-   * (WP-LOSS-1, WP-MULTITAB-1 - a real message, lost). The frame's own bytes tell them apart.
+   * A frame MLS will never decrypt here, whatever we do locally - and the two situations that
+   * produce one are opposites: the same frame delivered twice (benign, drop it), or a frame this
+   * device has never read (a real message, lost). The frame's own bytes tell them apart, and
+   * nothing else can: neither cause is visible in the error.
+   *
+   * Two errors arrive here and they are unreadable at opposite ends. `SecretReuseError` is a
+   * generation already spent, so the sender's ratchet went backwards (WP-LOSS-1, WP-MULTITAB-1).
+   * A past-epoch application frame is an epoch whose secrets are gone, which is what a re-joined
+   * group has for everything sent before the join. The DIAGNOSIS differs, the policy does not.
    */
-  const handleConsumedGeneration = (reason: string): void => {
+  const handleUnreadableFrame = (reason: string, diagnosis: string): void => {
     if (hasFrameBeenProcessed(groupId, fingerprint)) {
       log(`[MLS] Duplicate delivery for ${convoKey.slice(0, 8)}… - silent ACK (${reason})`);
       return;
@@ -580,9 +585,7 @@ async function handleKnownGroup({
     // Deliberately NOT onOutOfSync: the plaintext is unrecoverable here whatever we do locally, and
     // a re-add would destroy a valid membership to fix nothing. The sender is the only party that
     // can still produce this message at a generation we have not consumed.
-    log(
-      `[MLS] LOST frame for ${convoKey.slice(0, 8)}… from ${sender}: generation consumed but this frame was never processed - the sender's ratchet rewound (${reason})`
-    );
+    log(`[MLS] LOST frame for ${convoKey.slice(0, 8)}… from ${sender}: ${diagnosis} (${reason})`);
     // ONE repair, and it is the id-addressed one. There used to be a narrow rung first - ask the
     // sender to re-send the last two minutes - and it was deleted rather than tuned: it could not
     // name what it wanted (the frame never decrypted, so its id was never seen), so it asked for a
@@ -785,7 +788,28 @@ async function handleKnownGroup({
     // Never onOutOfSync either way: the group is healthy and a re-add would destroy a valid
     // membership for a message no local recovery can bring back.
     if (kind === 'secret-reuse') {
-      handleConsumedGeneration('SecretReuseError');
+      handleUnreadableFrame(
+        'SecretReuseError',
+        "generation consumed but this frame was never processed - the sender's ratchet rewound"
+      );
+      return true;
+    }
+
+    // An application frame from an epoch we are already PAST, whose secrets we no longer hold -
+    // which is what a group re-joined since carries for everything sent before the join. Same
+    // policy as a consumed generation and for the same reason: no local recovery brings the
+    // plaintext back, the group itself is healthy so a re-add would destroy a valid membership for
+    // nothing, and the peer's durable store is the only place the message still exists.
+    //
+    // This used to be invisible. `mls-core` answered `Ok(None)` for it, i.e. "no application
+    // payload", which is also what a commit echo answers - so a lost message and a routine
+    // handshake printed the same line and this whole ladder was unreachable from a value saying
+    // nothing had failed (measured on prod 2026-08-11, HEAL-W2).
+    if (kind === 'past-epoch-application') {
+      handleUnreadableFrame(
+        'past epoch application frame',
+        'sent in an epoch whose secrets this device no longer holds - most likely before it re-joined'
+      );
       return true;
     }
 

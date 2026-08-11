@@ -88,9 +88,12 @@ impl MlsManager {
             _ => return Err(MlsError::InvalidData),
         };
 
-        // Both fields are always cleartext in the MLS frame header - safe to read
-        // before decryption and invaluable for diagnosing epoch-mismatch errors.
+        // All three are always cleartext in the MLS frame header - safe to read before decryption
+        // and invaluable for diagnosing epoch-mismatch errors. The content type is read HERE rather
+        // than where it is used because `process_message` consumes the frame, and a diagnosis that
+        // needs it is only ever made after that call has failed.
         let msg_epoch = protocol_message.epoch();
+        let msg_content_type = protocol_message.content_type();
         let group_epoch = group.epoch();
 
         // Epoch-gap fast-fail: a future epoch means we missed at least one commit.
@@ -113,19 +116,50 @@ impl MlsManager {
         let processed_message = match group.process_message(provider, protocol_message) {
             Ok(pm) => pm,
             Err(e) => {
-                // If the message is from a past epoch, it's almost certainly our own
-                // echoed commit (already merged via merge_pending_commit) or a stale
-                // commit that another device already applied. The decryption keys for
-                // commits are consumed during merge, so re-processing always fails with
-                // AeadError. Silently succeed so the caller ACKs it on the gateway.
+                // A frame from a PAST epoch is two different events, and `content_type` - which is
+                // cleartext in the frame header, exactly like `epoch` - is what tells them apart.
+                //
+                // A HANDSHAKE frame is our own echoed commit (already merged via
+                // merge_pending_commit) or a stale commit another device applied. The decryption
+                // keys for commits are consumed during the merge, so re-processing always fails
+                // with AeadError. Nothing is lost: succeed silently so the caller ACKs it.
+                //
+                // An APPLICATION frame is a MESSAGE SOMEBODY SENT, and it is gone. `max_past_epochs`
+                // is 2, so a frame merely overtaken by a commit still decrypts; reaching here means
+                // the secrets for its epoch are absent - typically after a re-join, whose group
+                // state starts with no past epochs at all. This branch answered `Ok(None)` for it
+                // too, i.e. "no application payload", and the whole recovery ladder above it is
+                // unreachable from a value that says nothing failed: measured on prod 2026-08-11
+                // (HEAL-W2, group HGRPjws28), a message was ACKed off the server and dropped with
+                // no `LOST frame`, no marker and no history solicitation - the loss left one
+                // `[MLS] No application payload` line, which is what a commit echo also prints.
+                // Same shape as `SecretReuseError` below: the layer that CAN make a distinction
+                // must make it, and the caller decides the policy.
                 if msg_epoch.as_u64() < group_epoch.as_u64() {
-                    log::debug!(
-                        "Stale message ignored: msg_epoch={} < group_epoch={} ({})",
+                    if msg_content_type != ContentType::Application {
+                        log::debug!(
+                            "Stale handshake ignored: msg_epoch={} < group_epoch={} ({})",
+                            msg_epoch,
+                            group_epoch,
+                            group_id
+                        );
+                        return Ok(None);
+                    }
+                    log::warn!(
+                        "Past-epoch application frame, unreadable for good: msg_epoch={} \
+                         group_epoch={} group={} err={:?}",
                         msg_epoch,
                         group_epoch,
-                        group_id
+                        group_id,
+                        e
                     );
-                    return Ok(None);
+                    // The underlying OpenMLS error is deliberately NOT embedded: it carries markers
+                    // (`WrongEpoch`, an Aead failure) that the shared classifiers test for, and a
+                    // wrapper holding two markers makes their ORDER a decision rather than a fact.
+                    return Err(MlsError::OpenMls(format!(
+                        "Process error: past epoch application frame [msg_epoch={}, group_epoch={}]",
+                        msg_epoch, group_epoch
+                    )));
                 }
 
                 // `TooDistantInThePast` (raw, or wrapped as NoPastEpochData): the generation is

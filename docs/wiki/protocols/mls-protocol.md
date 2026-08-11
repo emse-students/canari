@@ -333,6 +333,46 @@ identically. Read as an epoch gap it produced the worst possible outcome: a repl
 commits, reported `healed=true` because `epoch >= activeEpoch` was trivially satisfied, and ACKed the
 message off the server (WP-PENDING-2).
 
+### A frame from a PAST epoch is two events, and only `content_type` separates them (2026-08-11)
+
+`process_incoming_on_group` compares the frame's epoch to the group's before deciding anything, and
+for a frame that is BEHIND it answered `Ok(None)` - "no application payload" - on the reasoning that
+such a frame is "almost certainly our own echoed commit". For a **handshake** that is exactly right:
+a commit re-delivered after the merge has had its keys consumed by that merge, nothing is lost, and
+the caller must ACK it without a word.
+
+For an **application** frame it is a message somebody sent, and it is gone. `Ok(None)` is the same
+value a commit echo returns, so both printed the same `[MLS] No application payload … - commit or
+dropped frame` line and the entire ladder above was unreachable: no `LOST frame`, no
+`unreadable-frames` marker, no history solicitation, and the frame ACKed off the server. Measured on
+production 2026-08-11 during a HEAL-W2 run: a restored (rewound) device re-joined the group from a
+still-available Welcome, then received a message sent one epoch earlier and dropped it in complete
+silence.
+
+The distinction needs no decryption, because **`content_type` is cleartext in the MLS frame header**,
+exactly like `epoch` - it is read next to it, before `process_message` consumes the frame. A
+handshake keeps its silent `Ok(None)`; an application frame becomes
+`Process error: past epoch application frame [msg_epoch=…, group_epoch=…]`, classified as
+`DecryptErrorKind::PastEpochApplication` / `'past-epoch-application'` **before** the generic
+`Process error:` and `GAP_QUEUED` arms, for the same reason as `TooDistantInTheFuture`: a commit
+replay repairs an epoch we are BEHIND and can do nothing for one we are already past.
+
+The policy is `secret-reuse`'s, because the situation is the same one from the other end of the
+ratchet - unreadable for good, the group itself healthy: check the frame against
+`inboundFrameLedger`, log `LOST frame` when it is genuinely new, mark `unreadable-frames`, solicit
+the history diff, ACK. Never a re-add (it would destroy a valid membership to recover nothing), and
+never queued for retry on native (no retry can decrypt it).
+
+**Why this is not simply "past epoch = loss".** `max_past_epochs` is 2 on all three group-config
+paths, so a message merely overtaken by a commit - ordinary traffic whenever someone is invited
+while a message is in flight - still decrypts, and reporting a loss there would manufacture a
+phantom gap on every invitation. Reaching this branch means the epoch's secrets are genuinely
+absent, which is what a **re-joined** group has for everything sent before its join: a fresh join
+starts with no past epochs at all. `tests/past_epoch_frame.rs` pins all three facts - the loss is
+reported, the overtaken frame still decrypts, the stale handshake stays silent - and asserts that
+the wrapper carries its own marker and no other, since a string holding two markers makes the
+classifier's ORDER a decision rather than a fact.
+
 `requestReAdd(groupId)`: tries `externalJoin(groupId)` first (fetch the stored GroupInfo -> build a native external commit -> submit under the epoch gate -> merge, or discard + retry on an epoch race); falls back to a single `welcome_request` when no GroupInfo is available. Self-throttled to one attempt per `RECOVERY_TIMEOUT_MS`; the SYNC_WATCHDOG drives the cadence. No reboot/CAS/successor.
 
 **Server-side membership on an external join.** `validateCommit` promotes the committing device's `DeviceGroupMembership` to `active` (and adds it to the `group:members:<groupId>` Redis set) when it has no active row yet. An external commit is the ONE join path with no Welcome, so nothing else creates that row - and recipient resolution filters on `status='active'`. Without the promotion the rejoined device is invisible to routing while believing it is a member: its own sends work, but it receives neither the history bundle it solicits nor any later live message. Idempotent, and skipped for ordinary commits from existing members.

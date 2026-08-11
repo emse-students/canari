@@ -795,6 +795,20 @@ pub(crate) async fn recevoir_message_bytes(
                     Err(format!("GAP_QUEUED:{}:{}", group_id, err_str))
                 }
 
+                // An application frame from an epoch whose secrets we no longer hold. Not queued in
+                // SQLite, for the same reason as the two arms above: no retry can decrypt it, so a
+                // row here is dead weight forever. Surfaced verbatim so the shared frontend
+                // classifier reaches the same policy it applies to a consumed generation - a LOST
+                // frame, and an id-addressed history diff, which is the only thing that recovers a
+                // message a member still holds in its durable store.
+                DecryptErrorKind::PastEpochApplication => {
+                    log::warn!(
+                        "[GAP] Past-epoch application frame for group={} - unreadable locally, escalating to the frontend",
+                        group_id
+                    );
+                    Err(err_str)
+                }
+
                 DecryptErrorKind::Other => Err(err_str),
             }
         }
