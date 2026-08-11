@@ -401,6 +401,30 @@ would have filled the disk. The fix is in (`5335a71f`), but the cheap monitor is
 any device holding memberships with **no** `key_package` row, and any device holding more than a few
 hundred `queued_message` rows.
 
+### 5.8 Two MLS tables are never purged for a deleted group - measured 2026-08-11, NOT worth acting on yet
+
+`DELETE /api/mls/groups/:groupId` (`groups.controller.ts:131-143`) soft-deletes the `dm_groups` row
+and hard-deletes `dm_group_members`, `dm_device_group_memberships`, `queued_message` and the two
+Redis keys. It does **not** touch `mls_group_info` or `mls_commit_log`, and neither does the 90-day
+tombstone purge (`app.controller.ts:550-568`) - neither migration declares an FK to `dm_groups`, so
+nothing cascades. `mls_commit_log` shrinks only by age/size pruning; `mls_group_info` rows are
+deleted nowhere in the codebase at all.
+
+Measured on production:
+
+| Table | Rows | Orphaned (no live group) | Total size |
+|---|---|---|---|
+| `mls_group_info` | 52 | **24 (46 %)** | 536 kB |
+| `mls_commit_log` | 390 | **313 (80 %)** | 952 kB |
+
+**The proportion is alarming and the volume is not**, and the honest reading is the second one: 1.5 MB
+against a 125 GB disk, and the ratio is inflated by this campaign - ten test groups were created and
+destroyed in a single day, which is not a rate any real deployment reaches. What makes it worth
+writing down is that the leak is unbounded *in principle*: it grows with group churn and nothing ever
+reclaims it, so the ratio is the quantity to re-measure rather than the byte count. Add the purge to
+the tombstone cron when either table becomes visible in section 1's measurements - it is two `DELETE`
+statements in a place that already enumerates the ids.
+
 ---
 
 ## 6. What needs a human decision

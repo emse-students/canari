@@ -187,6 +187,21 @@ The general form: when a check must act inside a window it does not control, fin
 opens the window, and find a line that can only be emitted by the branch under test. Without the
 first the check cannot aim; without the second it cannot tell you it hit.
 
+#### The corollary for a PERFORMANCE verdict: fast and skipped look identical on a clock
+
+WP-ANR-1's check measures a duration - `onReceive` to `drainPendingOutbox: done` - against the 60 s
+the OS gives a `goAsync()` receiver. It came back at **2 331 ms** where the defect measured 58.6 s,
+and that number on its own is worth nothing: a drain that saw the radios were off and gave up before
+encrypting anything would also finish in two seconds, and it is a perfectly plausible implementation.
+A duration is a *lower* bound on work done, never a statement that the work happened.
+
+So the exercise assertion for a performance check is a COUNT of the expensive operation, taken from
+a line only that operation can emit. Here: 100 `PrivateMessage::try_from_authenticated_content` and
+100 **distinct** ratchet generations in the OpenMLS trace, against **one** `MlsDeviceKeyStore.retrieve`
+for the whole process. That triple is the `O(|mls.bin| + N)` shape observed rather than assumed -
+and the keystore-load count is the one that would have caught a regression back to the per-message
+entry point, because that regression is fast per call and only the *number* of loads betrays it.
+
 ---
 
 ## Observation is part of the check, not a debugging step
@@ -322,6 +337,20 @@ by anyone who has not met them.
 - **Clicking through to an external app backgrounds the WebView**, which throttles it, so every read
   taken after that point is against a frozen page.
 - **`tail`-piped output buffers until EOF**, so a progressing job looks hung.
+- **`logcat -b all` is the whole PHONE, not the app.** Any filter over it must be scoped to the app's
+  pid (`adb shell pidof fr.emse.canari`) before it is scoped to a word. An unscoped search for
+  `forbidden` - looking for a Tauri capability rejection - counted **26** of them, every one the modem
+  printing `Received Forbidden PLMNs`, and would have reported a colleague's storage panel as broken
+  because of the SIM card.
+- **An install can succeed over a WebView that then serves a cached page**, so a run can measure the
+  previous bundle while every gate is green. Compare the loaded `_app/immutable/entry/*.js` names
+  against the local build output - and read them from `performance.getEntriesByType('resource')`, not
+  from `script[src]`: SvelteKit boots from an inline module, so a selector-based version of that
+  assertion finds nothing and silently asserts nothing.
+- **A conversation looked up by NAME is ambiguous once the campaign has created test groups**, since
+  a group containing the peer matches the peer's own name. Harmless for a check that only needs
+  *some* group, wrong for anything asserting about the DM - resolve the id, and report which
+  conversation the run actually used.
 - **Postgres stores UTC while the prod host is `Europe/Paris`**, so a DB timestamp is two hours
   behind the wall clock a test just wrote down. Both are correct; convert, and never "fix" the
   server clock.

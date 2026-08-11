@@ -341,18 +341,6 @@ raising it first locks everyone out.
   USER is the POLICY, not the rendering - a new device or a reinstall still sees no image older
   than 30 days, which is what makes the forecast survivable and may not be intended (section 6).
 
-- \[ \] **WP-ANR-1 (P1) - FIXED AND PUSHED (`01bc0a13`); what is left is ONE on-device
-  verification.** Both multiplicative causes are gone (the per-byte CBOR decode, and the drain
-  reloading `mls.bin` once per queued message), with the measurements, the one-way rollback
-  constraint and every test in
-  [mls-protocol > how the state is encoded](docs/wiki/protocols/mls-protocol.md) and
-  [mobile > the drain is a BATCH](docs/wiki/frontend/mobile.md). **Do not re-derive any of it.**
-  **Owed:** install a build on A1 and confirm no ANR through `MY_PACKAGE_REPLACED` with a non-empty
-  outbox - which needs a RELEASE build to be worth anything, since the 58.6 s figure came from a
-  debug APK and debug measured ~10x release on the same fixture. Also owed: **the iOS
-  `workflow_dispatch` compile check** - the `.mm` was edited symmetrically and nothing local
-  compiles ObjC.
-
 **Known and deliberately NOT a WP yet** (do not "fix" these by reflex):
 
 - **Nothing tells the RECEIVER's user that a message was lost** (the residue of WP-LOSS-1, which is
@@ -764,6 +752,16 @@ page. The five to carry, plus one status line:
   while the ACL, the save dialog and `fs.writeFile` were all correct. `utils/fetchRouting.ts`, pure
   and tested. `XMLHttpRequest` is not patched - a passing XHR beside a failing `fetch` is the
   fingerprint.
+- **A RELATIVE `/api/` PATH IS DEAD ON MOBILE, AND IT FAILS AS A SUCCESS.** The WebView's origin is
+  `tauri.localhost`, so Tauri resolves the path as an ASSET, misses, and falls back to `index.html`
+  - **200 with an HTML body**, so `res.ok` is `true` and only `res.json()` throws, inside whatever
+  `catch` happens to be there. Seen on A1 2026-08-11 in the app's own log (`[tauri::manager] Asset
+  api/mls/security/pin-status/... not found; fallback to index.html`). Three call sites had it and
+  the third was destructive: `handlePinReset` read that `res.ok` as "the server cleared the
+  verifier" and went on to wipe the device's MLS state, losing the history while the verifier stayed
+  registered - the WP-DIRECTBOOT-1 shape again, a "cannot read" taken for a "not there" with a
+  destructive branch behind it. Always a base from `utils/apiUrl.ts` (`coreUrl`/`socialUrl`/
+  `gatewayUrl`/`deliveryUrl`) or `historyBaseUrl`; `apiUrl.absolute.test.ts` is the guard.
 - A WEBVIEW HAS NO DOWNLOAD MANAGER: `<a download>` is a silent no-op on Android and iOS alike
   (Tauri installs neither a `DownloadListener` nor a `WKDownloadDelegate`), and the click still
   "succeeds", so there is no exception and no log - eleven buttons shipped dead. Everything saving a

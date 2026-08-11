@@ -54,6 +54,7 @@
   import { fly } from 'svelte/transition';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { IStorage, StoredMessage } from '$lib/db';
+  import { deliveryUrl } from '$lib/utils/apiUrl';
   import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
   import { reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
   import {
@@ -418,9 +419,10 @@
   async function detectFirstPinSetup(uid: string): Promise<boolean> {
     try {
       const token = await getToken();
-      const res = await fetch(`/api/mls/security/pin-status/${encodeURIComponent(uid)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(
+        `${deliveryUrl()}/api/mls/security/pin-status/${encodeURIComponent(uid)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       if (!res.ok) return false;
       const { registered } = (await res.json()) as { registered: boolean };
       return !registered;
@@ -1260,7 +1262,7 @@
     appendLog(`[PIN_RESET] Starting for userId=${uid.slice(0, 8)}…`);
     try {
       const token = await getToken();
-      const res = await fetch('/api/mls/security/pin-reset', {
+      const res = await fetch(`${deliveryUrl()}/api/mls/security/pin-reset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ userId: uid }),

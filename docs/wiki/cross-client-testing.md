@@ -325,7 +325,7 @@ Fourteen defects, every one found by a check or by the log of a check. The narra
 | **WP-RELOAD-DL-1** - a WebView reload replays the launch deep link | the log of a **passing** re-run | shipped, verified on the device 2026-08-11 with a negative control that re-creates it on demand |
 | **WP-RETRANSMIT-1** - a decrypt-failure repair that fed itself | a user noticing a sync banner | shipped, then the whole mechanism deleted |
 | **WP-HISTBANNER-1** - two peers both awaiting history waited on each other for ever | the user seeing the banner on a healed conversation | shipped, verified live on prod 2026-08-11 |
-| **WP-ANR-1** - the MLS state decoded one byte at a time, freezing the app after every store update | the user seeing "Canari ne repond pas" | shipped; **on-device verification owed** against a release build |
+| **WP-ANR-1** - the MLS state decoded one byte at a time, freezing the app after every store update | the user seeing "Canari ne repond pas" | shipped; verified on the phone 2026-08-11 (110 queued, `MY_PACKAGE_REPLACED` drained in **2 331 ms** of a 60 000 ms deadline where it took 58 600, with 100 encrypts on **one** keystore load and zero ANR - on a DEBUG build, so release clears it a fortiori) |
 
 Still open and needing a decision rather than a patch: **WP-KBD-1** (the composer behind the soft
 keyboard) and **WP-DRAIN-2** (the inbound drain has no watchdog). **WP-DIRECTBOOT-1**, found by
@@ -349,6 +349,37 @@ Two consequences for this campaign, and they are why the re-run is not a formali
 - **Every HEAL observation before 2026-08-10 was made against a code path that no longer exists.**
 
 ---
+
+## A commit from another contributor owes a WEB pass and a MOBILE pass
+
+His tests establish that his code compiles and that his units behave. They cannot establish that it
+RUNS against this deployment, which is the only thing this campaign is for. So each of his commits
+that lands in a measured surface gets two observations, and they are not the same observation twice:
+a panel can render perfectly in a browser and be empty on a phone, because the two halves are fed by
+different code.
+
+The device-storage panels (2026-08-11) are the worked example.
+
+| Pass | What only that pass can see | Verdict |
+| --- | --- | --- |
+| WEB | The admin panel reads four independent backend measurements, one of them across a service boundary - the exact shape that fails only on a deployment, silently, when a variable is missing from a compose `environment:` block | **PASS** - 4/4 rendered a figure (`Disque`, `Base de donnees`, `MinIO`, `Redis`) |
+| MOBILE | The client breakdown comes from a NEW Rust command (`get_local_storage_usage`); the web build never calls it, it falls back to `navigator.storage.estimate()`. A Tauri v2 command not granted in `capabilities/` builds, ships, installs and then rejects on a real device (WP-DEEPLINK-1) | **PASS** - four native categories with figures, zero command rejection in the app's own log |
+
+Three things that pass taught, and they generalise to every future one:
+
+- **Assert on what the PAGE rendered, not on a probe of your own.** The first web attempt called the
+  admin endpoint with a bare `fetch` and got `403 Operation restricted to global admins` while the
+  page beside it showed all four figures - because the access token lives in MEMORY, never in a
+  cookie. The 403 was the right answer to the wrong question, and reporting it would have accused
+  the app of the harness's mistake.
+- **Scope a log filter to the app's own pid.** `logcat -b all` carries the whole platform: an
+  unscoped search for `forbidden` counted 26 "command rejections" that were the modem printing
+  `Received Forbidden PLMNs`. That verdict would have blamed a colleague's panel for the phone's SIM.
+- **Prove WHICH bundle is running, or the run measures the previous one.** An install can succeed
+  over a WebView that then serves a cached page. The check compares the loaded
+  `_app/immutable/entry/*.js` names against the local build output - and it must read
+  `performance.getEntriesByType('resource')`, not `script[src]`: SvelteKit boots from an inline
+  module, so a selector-based version of this assertion finds nothing and silently asserts nothing.
 
 ## What is owed, in order
 

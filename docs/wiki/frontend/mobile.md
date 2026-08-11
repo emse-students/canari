@@ -609,6 +609,34 @@ The shared logic is host-testable: `mod mobile` is gated on `any(android, ios, t
 `cargo test` in `src-tauri` runs the batch tests (and the `proto_fields` tests, which were
 device-only before) without a device build.
 
+##### Measured on hardware, 2026-08-11
+
+`adb install -r` over a device with a 110-line outbox mirror **is** the reproduction — nothing else
+triggers `MY_PACKAGE_REPLACED`, and there is no gesture for it. The run went offline first (radios
+disabled with `svc wifi/data disable`), which costs nothing: `drainOutboxBackground` calls
+`encryptQueuedMessages` for the whole batch *before* the first POST and without consulting
+connectivity, so the expensive half runs identically and only the POSTs then fail — the messages
+stay queued, which is the outbox behaving as designed.
+
+| Measurement | Before | This run |
+|---|---|---|
+| Receiver window, `onReceive` → `drainPendingOutbox: done` | **58.6 s** against a 60 s deadline | **2 331 ms** |
+| The encrypt phase alone, 100 messages | — | **216 ms** (15:35:42.278 → .494) |
+| MLS keystore loads for 100 encrypts | 100 | **1** (2 `MlsDeviceKeyStore.retrieve` for the whole process) |
+| ANR lines | the user seeing "Canari ne repond pas" | **0** |
+
+**The wall clock alone would not have earned the verdict.** A drain that gave up before encrypting —
+offline, that is a plausible implementation — would also finish in 2 s, and the check as first
+written could not tell the two apart. What settles it is the mechanism in the log: 100
+`PrivateMessage::try_from_authenticated_content` and 100 *distinct* ratchet generations, against a
+single keystore load. That is the `O(|mls.bin| + N)` shape, observed rather than assumed.
+
+**The verdict is asymmetric, and saying so is the point.** This installed a DEBUG build over a debug
+build, and debug measured ~10x release on the same fixture. A PASS here is therefore *stronger* than
+a release pass — if the slow build clears the deadline, the fast one does a fortiori. A FAIL would
+have been INCONCLUSIVE, and interpreting it would have needed a release build, which costs an
+uninstall and therefore that phone's identity and history.
+
 ### Keyboard media (Android)
 
 `KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events picked up by `MainChatPage` → routed through the normal media pipeline.

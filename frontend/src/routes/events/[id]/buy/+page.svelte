@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getToken } from '$lib/stores/auth';
   import { m } from '$lib/paraglide/messages';
+  import { coreUrl } from '$lib/utils/apiUrl';
 
   let { data }: { data: any } = $props();
   let eventId = $derived(data?.eventId || 'unknown-event');
@@ -25,7 +26,7 @@
         /* empty */
       }
 
-      const response = await fetch('/api/payments/create-checkout-session', {
+      const response = await fetch(`${coreUrl()}/api/payments/create-checkout-session`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
