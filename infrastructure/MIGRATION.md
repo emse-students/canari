@@ -145,9 +145,28 @@ sudo -u canari crontab -e
 # Add:
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 30 3 * * * cd /home/canari/canari && ./infrastructure/backup/backup.sh >> /home/canari/backups/backup.log 2>&1
+0 4 * * * cd /home/canari/canari && ./infrastructure/backup/backup-objects.sh >> /home/canari/backups/backup-objects.log 2>&1
 ```
 
 (Alternative via root: systemd timer, see [backup/README.md](backup/README.md).)
+
+### The restic repository password is a bootstrap step, and it is NOT a GitHub secret
+
+`backup-objects.sh` keeps the media volumes in a deduplicated restic repository. Its
+password must exist before the first run, and it deliberately lives OUTSIDE the deployment
+cycle - the CD regenerates `infrastructure/.env` from the repo secrets on every deploy, and
+a restic repository whose password changes is unreadable forever:
+
+```bash
+sudo -u canari mkdir -p /home/canari/.config/canari
+sudo -u canari sh -c 'umask 077; openssl rand -base64 48 > /home/canari/.config/canari/restic-password'
+```
+
+**Copy that file off the machine and keep it with the disaster-recovery material.** Without
+it, both the local repository and its offsite mirror are unreadable - the mirror is a copy
+of an encrypted repository, not a second chance. The script aborts when the file is missing
+rather than generating one, because generating one would silently start a SECOND repository
+while every run kept reporting success.
 
 ## 8. Network / reverse proxy
 

@@ -232,6 +232,37 @@ scheme for the `pg_dump` - which is 29 MB and where point-in-time copies are act
 This is the whole difference between the two tables above, it touches no product code, and it should
 be done before any growth in usage rather than after.
 
+#### BUILT AND MEASURED 2026-08-11 - running alongside the tar, cutover NOT taken
+
+`infrastructure/backup/backup-objects.sh` keeps `infrastructure_minio_data` and
+`infrastructure_media_meta` in a restic repository (throwaway image, no host dependency), 14d/8w/6m
+retention, `restic check` after every run, then an rsync mirror of the repository to `mitv`. It is in
+the `canari` crontab at 04:00, after the tar, and was verified under cron's own environment
+(`env -i` + cron `PATH`), not just from an interactive shell.
+
+What it measured on production, which is the argument for the cutover:
+
+| Measurement | Value |
+| --- | --- |
+| First snapshot | 44.26 MiB, repository 46 MB |
+| Second run, nothing changed | **24 KB** added |
+| Control restore vs. the live volume | 172 media objects + metadata, **sha256 identical byte for byte** |
+
+The only files that differed on restore were under `.minio.sys/` - the bloom cycle, the usage caches
+and the trash, which MinIO rewrites continuously. That is not data, and it is worth knowing before
+someone reads a diff and concludes the backup is wrong: the restored `.usage.json` hash was found in
+the LIVE tree under `tmp/.trash/`, i.e. MinIO had rotated it in the four minutes between the two.
+
+**The tar is still the backup of record.** The cutover is one edit - deleting step 3 of `backup.sh` -
+and it is deliberately not taken here: the decision was to prove a restore first and show it before
+any change to how production is backed up.
+
+One consequence that must not be lost: the repository password lives at
+`/home/canari/.config/canari/restic-password`, NOT in `infrastructure/.env`, because the CD rewrites
+that file from the GitHub secrets on every deploy and a repository whose password changes is
+unreadable forever. It has to be copied off the machine - the offsite mirror is a copy of an
+encrypted repository, not a second chance. See [MIGRATION.md](../../../infrastructure/MIGRATION.md).
+
 ### 5.2 Cap and re-encode media at upload time (x5-10 on the dominant term)
 
 The server cannot transcode - it only ever sees ciphertext - so this has to happen **client-side,

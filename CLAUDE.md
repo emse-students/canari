@@ -341,8 +341,14 @@ raising it first locks everyone out.
   copies, so every live byte costs **16 bytes** on a 125 GB disk, and at 400 daily users the disk
   fills in **9 to 34 days** in EVERY scenario. Media are 87 % of the total; encrypted blobs are
   incompressible, so gzip buys nothing and dedup buys everything. **Ordered actions, highest leverage
-  first:** (1) stop re-archiving MinIO nightly - use `restic`/`borg`/`rclone sync`, keep the 14-day
-  full scheme for the 29 MB `pg_dump`; config only, and it divides the requirement by ~16; (2) cap +
+  first:** (1) **DONE 2026-08-11, cutover NOT taken** - `backup-objects.sh` (restic, 14d/8w/6m,
+  `restic check`, rsync mirror to mitv) is in the crontab at 04:00 next to the tar and verified under
+  cron's own env; second run added **24 KB**, and a control restore matched the live volume
+  **sha256-identical over 172 media objects**. What is OWED is only the decision: the cutover is
+  deleting step 3 of `backup.sh`, and the user asked to see the proof first. The password is at
+  `/home/canari/.config/canari/restic-password` and is deliberately NOT a GitHub secret (the CD
+  rewrites `.env` every deploy; a changed password makes the repo unreadable forever) - **it must be
+  copied off the box, the offsite mirror is an encrypted copy, not a second chance**; (2) cap +
   re-encode images CLIENT-SIDE before encryption in `frontend/src/lib/media.ts` (measured p90
   4.25 MB, max 8.06 MB - raw phone photos), the only lever that touches the live figure; (3)
   content-linked media deletion, which does not exist at all today - message delete and account
