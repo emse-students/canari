@@ -32,6 +32,7 @@ The chat-delivery-service is the MLS API layer. It:
 | 1h | Detect stale devices -> reset to pending |
 | 1h | Clean expired queued messages |
 | 1h | Full GC of stale device entries |
+| 1h | Report queue depth (observation only, deletes nothing) |
 | 6h | Clean orphaned Redis `group:members:*` keys |
 | 24h | Purge soft-deleted groups (> 90 days old) |
 | 24h | Purge stale push tokens (> 90 days) |
@@ -48,6 +49,42 @@ Until that window elapses, a churned device id keeps receiving fan-out. That is 
 offline window - a device that is merely off for a fortnight must still get its messages - not a
 leak. Anything that needs a device to stop receiving *immediately* (a revocation) must act on the
 Redis set directly rather than wait for the reaper.
+
+### The queue is bounded on ONE axis, and observed on the other
+
+`cleanupExpiredQueuedMessages` bounds the queue by AGE, and that is the only axis on which
+dropping a frame is defensible: past the retention window the recipient could not have used it.
+There is deliberately **no size cap**. Capping a device's queue would convert a disk problem into
+silent message loss, which is the failure class the whole delivery path exists to prevent.
+
+So the answer to "one device is running away" is to NAME it. `reportQueueDepth` (hourly, added
+2026-08-11) logs the total depth plus the five deepest per-device queues, and WARNs above
+`QUEUE_DEPTH_WARN_PER_DEVICE`. It deletes nothing.
+
+It exists because of a measurement, not a theory. The retransmission storm of 2026-08-10
+(WP-RETRANSMIT-1) put **28 124 frames on a single web device in five hours** - 39 MB of ciphertext,
+thirty times the rest of the platform combined, addressed to a browser generation that had already
+been replaced and would therefore never drain it. The table reached 70 MB. Every mechanism behaved
+as designed: the frames were inside the 90-day window, and the device held a valid `KeyPackage`, so
+**no ghost predicate applied to it** - which is the correction to make if you are reading an older
+note: "reap frames addressed to devices with no key package" would have matched ZERO of these rows,
+and on the day it was checked every one of the 52 devices with a queue had a key package. Nothing
+logged, nothing warned; it was found by a manual `GROUP BY "deviceId"` a day later.
+
+The threshold is set from those two measurements rather than from taste: healthy per-device
+backlogs were <= 84 frames, one storm hour was 21 597. 2000 is ~24x the former and ~1/10 of the
+latter, so ordinary traffic and a genuinely offline weekend never trip it while a runaway sender is
+named within minutes.
+
+The WARN carries the device's **last `KeyPackage` upload** because that is the evidence separating
+the two causes, which call for opposite responses: a recent upload means a live device that cannot
+keep up ([WP-PENDING-1](../../../CLAUDE.md), a client bug to chase), a stale one means debris
+awaiting the GC. A line reporting only the depth cannot tell them apart and sends the reader to the
+wrong fix.
+
+`app.controller.queue-depth.spec.ts` pins the decision - the threshold boundary and the evidence in
+the line. It cannot pin the SQL: a mocked repository never parses a query, so the builder's output
+is verified only by the prod deploy log.
 
 ### A revoked device id never comes back
 

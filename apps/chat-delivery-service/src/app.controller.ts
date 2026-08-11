@@ -10,7 +10,12 @@ import { RevokedDevice } from './entities/revoked-device.entity';
 import { PushToken } from './entities/push-token.entity';
 import Redis from 'ioredis';
 import { initializeApp, getApps, cert, type ServiceAccount } from 'firebase-admin/app';
-import { RETENTION_WINDOW_MS, STALE_PENDING_INVITATION_MS } from './retention.constants';
+import {
+  RETENTION_WINDOW_MS,
+  STALE_PENDING_INVITATION_MS,
+  QUEUE_DEPTH_WARN_PER_DEVICE,
+  QUEUE_DEPTH_REPORT_TOP_N,
+} from './retention.constants';
 import { MessagingService } from './services/messaging.service';
 
 /**
@@ -29,6 +34,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
   private cleanupOrphanedMemberRowsInterval: ReturnType<typeof setInterval>;
   private cleanupStalePendingInvitationsInterval: ReturnType<typeof setInterval>;
+  private reportQueueDepthInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
   /**
@@ -157,9 +163,18 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
+    // Observe the undelivered queue. Purely a report: it deletes nothing, and it exists because
+    // a single device silently accumulated 29 499 frames (39 MB) in five hours on production and
+    // nothing said so - the shape was only found by hand, a day later.
+    this.reportQueueDepthInterval = setInterval(() => {
+      void this.reportQueueDepth().catch((e) =>
+        this.logger.error('[CRON] reportQueueDepth failed', e)
+      );
+    }, ONE_HOUR);
+
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
-        'stale device GC (1h), orphaned Redis groups cleanup (6h), ' +
+        'stale device GC (1h), queue depth report (1h), orphaned Redis groups cleanup (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'orphaned member rows purge (24h), stale pending invitations purge (24h) scheduled'
     );
@@ -189,6 +204,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['cleanupOrphanedMemberRows', () => this.cleanupOrphanedMemberRows()],
       ['cleanupStalePendingInvitations', () => this.cleanupStalePendingInvitations()],
       ['pruneExpiredCommitLog', () => this.messagingService.pruneExpiredCommitLog()],
+      // Last on purpose: it reports the queue as the GC leaves it, not as it found it.
+      ['reportQueueDepth', () => this.reportQueueDepth()],
     ];
     for (const [name, run] of jobs) {
       // One failing job must never cost the others their only run of the deployment.
@@ -236,6 +253,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupStalePushTokensInterval);
     clearInterval(this.cleanupOrphanedMemberRowsInterval);
     clearInterval(this.cleanupStalePendingInvitationsInterval);
+    clearInterval(this.reportQueueDepthInterval);
     clearTimeout(this.initialSweepTimeout);
   }
 
@@ -322,6 +340,74 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     });
     if (result.affected && result.affected > 0) {
       this.logger.log(`[CRON] cleanupExpiredQueuedMessages: deleted ${result.affected} message(s)`);
+    }
+  }
+
+  /**
+   * Report the shape of the undelivered queue, hourly. Deletes nothing.
+   *
+   * WHY A REPORT AND NOT A CAP. The queue is bounded on exactly one axis, age
+   * ({@link cleanupExpiredQueuedMessages}), because that is the only axis on which dropping a
+   * frame is defensible: past the retention window the recipient could not have used it anyway.
+   * A size cap would trade a disk problem for silent message loss, which is the failure class
+   * this whole service exists to prevent. So the answer to "one device is running away" is to
+   * NAME it, not to start discarding its mail.
+   *
+   * WHY IT EXISTS AT ALL. On 2026-08-10 the retransmission storm (WP-RETRANSMIT-1) put 28 124
+   * frames on a single web device inside five hours - 39 MB of ciphertext, thirty times the rest
+   * of the platform put together - addressed to a browser generation that had already been
+   * replaced and would therefore never drain it. Nothing logged, nothing warned; it was found by
+   * a manual `GROUP BY deviceId` a day later. Every mechanism involved behaved as designed: the
+   * 90-day retention would have collected it in November, and the device held a valid KeyPackage
+   * so no ghost predicate applied to it. What was missing was somebody looking.
+   *
+   * The WARN carries the device's last KeyPackage upload because that is the EVIDENCE that
+   * distinguishes the two causes a deep queue can have, and they call for opposite responses:
+   * a recent upload means a live device that cannot keep up (WP-PENDING-1, a client bug), while
+   * a stale one means a device that will never come back (debris, awaiting the GC). A line
+   * reporting only the depth cannot tell them apart and would send the reader to the wrong fix.
+   */
+  private async reportQueueDepth() {
+    const total = await this.queuedMessageRepo.count();
+    if (total === 0) {
+      this.logger.log('[CRON] reportQueueDepth: queue empty');
+      return;
+    }
+
+    const deepest = await this.queuedMessageRepo
+      .createQueryBuilder('q')
+      .select('q.deviceId', 'deviceId')
+      .addSelect('COUNT(*)', 'depth')
+      .addSelect('MIN(q.createdAt)', 'oldest')
+      .groupBy('q.deviceId')
+      .orderBy('COUNT(*)', 'DESC')
+      .limit(QUEUE_DEPTH_REPORT_TOP_N)
+      .getRawMany<{ deviceId: string; depth: string; oldest: Date }>();
+
+    const summary = deepest.map((r) => `${r.deviceId}=${r.depth}`).join(' ');
+    this.logger.log(
+      `[CRON] reportQueueDepth: ${total} frame(s) queued, deepest ${QUEUE_DEPTH_REPORT_TOP_N}: ${summary}`
+    );
+
+    const runaway = deepest.filter((r) => Number(r.depth) >= QUEUE_DEPTH_WARN_PER_DEVICE);
+    if (runaway.length === 0) return;
+
+    // One extra query rather than one per offender: the WARN list is capped at TOP_N, so this is
+    // a single `IN` over at most a handful of ids.
+    const liveness = await this.keyPackageRepo.find({
+      where: { deviceId: In(runaway.map((r) => r.deviceId)) },
+      select: { deviceId: true, createdAt: true },
+    });
+    const lastSeen = new Map(liveness.map((kp) => [kp.deviceId, kp.createdAt]));
+
+    for (const r of runaway) {
+      const seen = lastSeen.get(r.deviceId);
+      this.logger.warn(
+        `[CRON] reportQueueDepth: device=${r.deviceId} depth=${r.depth} ` +
+          `oldest=${new Date(r.oldest).toISOString()} ` +
+          `lastKeyPackage=${seen ? seen.toISOString() : 'none'} ` +
+          `(>= ${QUEUE_DEPTH_WARN_PER_DEVICE}: a live device is falling behind, a stale one is debris)`
+      );
     }
   }
 

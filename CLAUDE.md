@@ -19,7 +19,6 @@
   Bash strips the backslashes out of the cloudflared ProxyCommand path and the exec fails. Quote SQL
   with a SINGLE-quoted outer string and doubled literals: `ssh canari 'docker exec … psql -U canari
   -d auth_db -x -c "SELECT … WHERE id = ''uuid''"'`.
-- CLASSIFIER DOWN: End of session signal. Stop ASAP, prepare compaction + easy resume for next session.
 
 ## **ARCHITECTURE & CONSTRAINTS**
 
@@ -77,10 +76,18 @@ up: **prod IS the test server** until a `dev.canari-emse.fr` exists.
 
 **FOUR DECISIONS THE USER TOOK 2026-08-10 - do not re-ask, do not re-litigate:**
 
-1. **The orphaned queue: DELETE the rows AND add a TTL.** A targeted `DELETE` scoped to the abandoned
-   profile's `deviceId` (28 136 rows, 96 % of the whole prod queue, last active 2026-08-08), after a
-   row count and a `pg_dump` check - then a maintenance job reaping frames addressed to devices with
-   no key package. The WP-GHOST-1 predicate already proves that set is well-defined.
+1. ~~The orphaned queue~~ **DONE 2026-08-11, and the recorded predicate was WRONG.** 29 501 rows
+   deleted after the `pg_dump` check (the 2026-08-11 03:30 archive post-dates the storm and carries
+   them); 30 496 -> 995 rows, 70 MB -> 4.3 MB after `VACUUM FULL`. But the planned reaper -
+   "devices with no key package" - would have matched **zero** of them: all 52 devices with a queue
+   held a valid key package, the abandoned one included. It was not an abandoned profile either;
+   28 124 of the rows are debris from the retransmission storm of 2026-08-10, addressed to a browser
+   generation replaced at 01:00 on 08-11. And a TTL already existed (`RETENTION_WINDOW_MS`, 90 days,
+   keyed correctly on `KeyPackage.createdAt`). What was actually missing was that nobody was looking,
+   so the durable half shipped is an hourly `reportQueueDepth` that names the deepest queues and
+   WARNs past a threshold - observation, never a cap, because capping trades disk for silent loss.
+   Reasoning and the numbers: [chat-delivery > the queue is bounded on ONE
+   axis](docs/wiki/services/chat-delivery.md).
 2. **WP-STORAGE-1's backup rewrite: BUILD IT AND PROVE A RESTORE, then show the user before any
    cutover.** The new scheme runs ALONGSIDE the tar; the tar is retired only after a restore has been
    demonstrated from the new repo. Not a free hand on prod backups.
@@ -505,6 +512,18 @@ three that must be seen without opening one:
   was this row last written" and was asked "when was this device last seen" - so a peer's sync kept
   nine dead devices alive forever (WP-GHOST-1). Same shape as an epoch verdict answering a generation
   question: a column is only evidence for the question it was written to answer.
+- **A PREDICATE THAT NAMED THE LAST INCIDENT IS NOT THE PREDICATE THAT NAMES THE NEXT ONE - RE-MEASURE
+  BEFORE REUSING IT.** WP-GHOST-1's "a device with no key package" was carried forward, in this file,
+  as the plan for a 29 499-row prod queue; it matches ZERO of those rows, because all 52 devices with
+  a queue hold a valid key package. The two incidents share a symptom (frames going to a device that
+  will never read them) and nothing else. A predicate is evidence about the population it was
+  measured on; one `GROUP BY` with the predicate as a column refutes or confirms it in seconds.
+- **A CORRECT GC WITH NO REPORT IS FOUND BY HAND, A DAY LATE.** Everything about the storm queue was
+  working as designed - inside the retention window, valid key package, autovacuum running - so
+  nothing complained while one device took 39 MB and thirty times the platform's whole traffic. The
+  missing piece was never a rule, it was a LOOK. And the report must carry the evidence that
+  separates the causes it cannot itself distinguish (here `KeyPackage.createdAt`: a live device
+  falling behind is a client bug, a stale one is debris), or it sends the reader to the wrong fix.
 - A device good enough to be MESSAGED must be at least as valid as one good enough to be INVITED. The
   invitation path checks the key package, the fan-out does not - and the gap is where the ghosts live.
 - An error says what it says: "this generation is consumed" is NOT "I already have this message".

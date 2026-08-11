@@ -30,3 +30,24 @@ export const MAX_DEVICES_PER_USER = 15;
  * offline for a few days (weekend), then we purge.
  */
 export const STALE_PENDING_INVITATION_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * Per-device undelivered-queue depth above which the hourly queue report escalates from a
+ * log line to a WARN.
+ *
+ * This is an OBSERVATION threshold, deliberately not a cap: nothing here drops a frame.
+ * Dropping is what {@link RETENTION_WINDOW_MS} already does, on the only axis that is safe
+ * (age), and a size cap would turn a resource problem into silent message loss - the exact
+ * failure class the delivery path exists to prevent.
+ *
+ * The number comes from two measurements on production rather than from taste. Healthy
+ * per-device backlogs sat at 84 frames or less across 52 devices; the retransmission storm
+ * of 2026-08-10 put 21 597 frames on ONE device in a single hour. 2000 is therefore ~24x
+ * the largest normal backlog (so ordinary traffic, an offline weekend or a slow catch-up
+ * never trips it) and ~1/10 of one storm hour (so a runaway sender is named within minutes
+ * instead of being found by hand a day later).
+ */
+export const QUEUE_DEPTH_WARN_PER_DEVICE = 2000;
+
+/** How many of the deepest per-device queues the hourly report names. */
+export const QUEUE_DEPTH_REPORT_TOP_N = 5;
