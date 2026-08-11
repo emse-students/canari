@@ -23,9 +23,17 @@ object PushSecretKeystore {
      * Encrypts [secret] with AES-256-GCM using an Android Keystore key,
      * then stores the ciphertext and IV in the app's SharedPreferences.
      * Must be called exactly once from [CanariApplication] at startup.
+     *
+     * Refuses while credential-encrypted storage is locked: the SharedPreferences write would
+     * target a store this process cannot read back, and opening it here caches an EMPTY instance
+     * for the life of the process (see [DirectBoot]).
      */
     fun store(context: Context, secret: String) {
-        val key = getOrCreateKey()
+        if (!DirectBoot.storageReadable(context)) {
+            Log.w(TAG, "store: refused - storage still locked (pre-unlock process)")
+            return
+        }
+        val key = getOrCreateKey(context)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key)
         val iv = cipher.iv
@@ -42,11 +50,17 @@ object PushSecretKeystore {
      * (TEE failure, device reset) - the error is logged to logcat.
      */
     fun retrieve(context: Context): String? {
+        if (!DirectBoot.storageReadable(context)) {
+            // Not "no secret": we cannot look. Reading here would also cache an empty
+            // SharedPreferences for the life of the process, which no later unlock repairs.
+            Log.w(TAG, "retrieve: storage still locked (pre-unlock process) - not a missing secret")
+            return null
+        }
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val encB64 = prefs.getString(PREFS_KEY_ENC, null) ?: return null
         val ivB64  = prefs.getString(PREFS_KEY_IV,  null) ?: return null
         return try {
-            val key = getOrCreateKey()
+            val key = getOrCreateKey(context)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             val iv = Base64.decode(ivB64, Base64.NO_WRAP)
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_LENGTH, iv))
@@ -57,13 +71,33 @@ object PushSecretKeystore {
         }
     }
 
-    private fun getOrCreateKey(): SecretKey {
+    /**
+     * Returns the Keystore key, creating it only when it is genuinely ABSENT.
+     *
+     * The destructive branch below recovers a key that survived as an unusable entry - TEE
+     * corruption after a partial wipe - and it must never fire for a key that is merely not
+     * readable YET. Those two look identical from `getKey`: it throws, or answers null, for both.
+     * The discriminator is not the exception, it is whether credential-encrypted storage is open,
+     * so the caller checks that first and this stays the last line of defence. Deleting the alias
+     * in a pre-unlock process would orphan the ciphertext in SharedPreferences for good, and the
+     * user would find background push dead with `keystore_ok.flag` gone - a permanent loss caused
+     * by a temporary condition (WP-DIRECTBOOT-1).
+     *
+     * `containsAlias` distinguishes the two cases the caller cannot: absent is a fresh install,
+     * present-but-unreadable is a diagnosis this function is not entitled to make on its own.
+     */
+    private fun getOrCreateKey(context: Context): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").also { it.load(null) }
-        // Try to use existing key. If it's present but unusable (e.g. TEE corruption after
-        // a factory-reset partial wipe), delete it so we can create a fresh one below.
         try {
             ks.getKey(KEY_ALIAS, null)?.let { return it as SecretKey }
         } catch (e: Exception) {
+            val readable = DirectBoot.storageReadable(context)
+            val present = try { ks.containsAlias(KEY_ALIAS) } catch (_: Exception) { false }
+            if (present && !readable) {
+                // The one case that must NOT be repaired by deletion.
+                Log.e(TAG, "getOrCreateKey: key present but unreadable while locked - refusing to recreate")
+                throw IllegalStateException("push secret key not available before first unlock", e)
+            }
             Log.w(TAG, "getOrCreateKey: existing key unusable, recreating: ${e.message}")
             try { ks.deleteEntry(KEY_ALIAS) } catch (_: Exception) {}
         }

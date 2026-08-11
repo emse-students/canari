@@ -3,6 +3,10 @@ package fr.emse.canari
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
@@ -30,11 +34,57 @@ class CanariApplication : Application() {
             // The lib is not available on this architecture - native calls
             // will fail gracefully (a generic notification is shown).
         }
+        // Channels live in the system, not in our storage, so they are the one thing that can
+        // always be done here.
         createNotificationChannels()
+
+        if (DirectBoot.storageReadable(this)) {
+            initStorageBackedState()
+        } else {
+            // Every initialiser below reads credential-encrypted storage, and while it is locked
+            // each one of them would misread "cannot open" as "nothing there" - the files report
+            // exists() == false and the prefs load empty and stay empty for the life of the
+            // process. Running them now cannot help and can only teach this process something
+            // false, so they are deferred to the unlock (WP-DIRECTBOOT-1).
+            Log.w(TAG, "onCreate: storage locked (pre-unlock process) - deferring init to ACTION_USER_UNLOCKED")
+            registerUnlockReceiver()
+        }
+    }
+
+    /**
+     * The startup work that needs credential-encrypted storage, in its original order.
+     * Idempotent: each step either no-ops or converges, so running it again after an unlock is
+     * safe - which is what [registerUnlockReceiver] does.
+     */
+    private fun initStorageBackedState() {
         processPendingPushSecret()
         migrateDeviceKeyFromJson()
         checkKeystoreHealth()
         recordInstallerPackage()
+    }
+
+    /**
+     * Runs the deferred init the moment the user unlocks, for a process that was started before
+     * they did. `ACTION_USER_UNLOCKED` is delivered to a runtime receiver only - it cannot be
+     * declared in the manifest - and it is unregistered immediately so a re-lock/unlock cycle
+     * later in the same boot does not run this again.
+     */
+    private fun registerUnlockReceiver() {
+        try {
+            registerReceiver(
+                object : BroadcastReceiver() {
+                    override fun onReceive(context: Context, intent: Intent) {
+                        Log.i(TAG, "onUserUnlocked: storage available - running deferred init")
+                        try { context.applicationContext.unregisterReceiver(this) } catch (_: Exception) {}
+                        initStorageBackedState()
+                    }
+                },
+                IntentFilter(Intent.ACTION_USER_UNLOCKED),
+            )
+        } catch (e: Exception) {
+            // Never fatal: the next process start does the work anyway.
+            Log.e(TAG, "registerUnlockReceiver: ${e.message}", e)
+        }
     }
 
     /**
@@ -80,6 +130,14 @@ class CanariApplication : Application() {
      */
     internal fun checkKeystoreHealth() {
         try {
+            if (!DirectBoot.storageReadable(this)) {
+                // `push_context.json` merely LOOKS absent while locked, and the early return below
+                // would read that as "not authenticated yet". It happens to be harmless - the
+                // return is also what stops the flag being DELETED and background push falsely
+                // reported dead - but two causes under one predicate is not a safety property.
+                Log.w(TAG, "checkKeystoreHealth: storage locked - cannot tell, deferring")
+                return
+            }
             val dataDir = MlsContextLoader.tauriDataDir(this)
             val contextFile = File(dataDir, "push_context.json")
             if (!contextFile.exists()) return // not authenticated yet, no secret expected

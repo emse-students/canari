@@ -338,6 +338,48 @@ Android has no equivalent restriction.
 
 ## Android specifics
 
+### The process exists before the first unlock, and nothing in it may assume otherwise (WP-DIRECTBOOT-1)
+
+**Our process is created before the user's first unlock after a reboot, and we never asked for
+that.** `tauri-plugin-notification` merges
+`app.tauri.notification.LocalNotificationRestoreReceiver` into the manifest with
+`android:directBootAware="true"` and an intent filter on `LOCKED_BOOT_COMPLETED`. One
+direct-boot-aware component is enough to start the process, so `CanariApplication.onCreate` runs
+whether or not anything of ours is direct-boot aware - and nothing of ours is. Check the **merged**
+manifest, never the source one: this declaration is invisible in
+`app/src/main/AndroidManifest.xml`.
+
+In that window, credential-encrypted storage is not open, and **the failure mode is silence, not an
+error**:
+
+| Storage | What it does while locked | Why that is dangerous |
+| --- | --- | --- |
+| a file under `context.dataDir` | `exists()` answers **false**; a read fails with `errno 126 (Required key not available)` | every `if (!file.exists()) return` reads as "nothing to do" when it means "cannot tell" |
+| `SharedPreferences` | loads **empty**, and the instance is cached for the life of the process | a later unlock repairs nothing - the fix is to never open it, not to re-read it |
+| an AndroidKeyStore alias | may be **present and unreadable** | indistinguishable from missing, from `getKey` alone |
+
+The defect this produced is the third row taken for the second. `PushSecretKeystore.getOrCreateKey`
+treated an unreadable key as a corrupt one - the recovery it was written for is a TEE wipe - and so
+it **deleted the alias and generated a new one**. That is a permanent loss caused by a temporary
+condition: the ciphertext in `canari_push_prefs` was encrypted under the old key and is orphaned for
+good, and the process then serves push with a credential the server rejects. The user-visible tip
+was a missing avatar in a notification after a reboot; the same `verifyPushSecretAuth` guards the
+encrypted-media proxy and `fetchProtoFromBackend`, the fallback that pulls a message's ciphertext
+when the FCM payload does not carry it - so the same 403 costs a MESSAGE, not a picture.
+
+The rules that follow, and they apply to anything added to this startup path:
+
+- **Ask `DirectBoot.storageReadable()` before touching CE storage**, and treat `false` as "come back
+  later", never as "the data is gone". `CanariApplication.onCreate` now defers every
+  storage-backed initialiser and re-runs them on `ACTION_USER_UNLOCKED` (a runtime receiver - that
+  action cannot be declared in a manifest).
+- **A destructive repair must be gated on knowing the state is really broken.** `containsAlias`
+  separates "absent" (a fresh install, generate) from "present but unreadable" (refuse, and say so).
+- **Only notification CHANNELS can be created pre-unlock**, because they live in the system rather
+  than in our storage.
+- **A 401/403 on a push-authenticated fetch is an auth failure and must be logged as one.** It sat
+  at debug level among the ordinary avatar misses, which is exactly why it went unseen.
+
 ### Push notification handling
 
 `CanariFirebaseMessagingService.kt` — the single FCM handler:

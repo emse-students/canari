@@ -2222,7 +2222,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     }
                     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { circleCrop(it) }
                 } else {
-                    Log.d(TAG, "fetchAvatar: HTTP $code for $userId -> initials fallback")
+                    // 401/403 is NOT "this user has no avatar": it is our push secret being
+                    // rejected, and the same credential guards the media proxy and the
+                    // ciphertext fetch that a message falls back to - so a silent 403 here is
+                    // the visible tip of something that costs a MESSAGE elsewhere. It used to be
+                    // logged at debug level alongside the ordinary misses, which is how it went
+                    // unnoticed until a user remarked the picture was missing (WP-DIRECTBOOT-1).
+                    if (code == 401 || code == 403) {
+                        Log.e(TAG, "fetchAvatar: HTTP $code - push secret REJECTED, background auth is broken in this process")
+                    } else {
+                        Log.d(TAG, "fetchAvatar: HTTP $code for $userId -> initials fallback")
+                    }
                     null
                 }
             } finally {

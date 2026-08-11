@@ -371,11 +371,24 @@ raising it first locks everyone out.
   **Why this is P1 and not cosmetic:** the same `verifyPushSecretAuth` guards the encrypted-media
   proxy AND `fetchProtoFromBackend`, the fallback that pulls a message's ciphertext when it is not
   in the FCM payload. A silent 403 there costs a MESSAGE, not a picture.
-  **Adjacent bug of the same shape, seen while reading:** `checkKeystoreHealth` early-returns on
-  `!contextFile.exists()` as "not authenticated yet", but pre-unlock that file merely LOOKS absent -
-  two causes under one predicate. It is harmless only by luck (the early return is what stops it
-  DELETING `keystore_ok.flag` and falsely reporting a lost keystore).
-  **Verification needs the USER** - a reboot plus the unlock pattern. Have the fix ready first.
+  **FIX WRITTEN AND COMPILING 2026-08-11; the whole write-up is now
+  [mobile > the process exists before the first unlock](docs/wiki/frontend/mobile.md#the-process-exists-before-the-first-unlock-and-nothing-in-it-may-assume-otherwise-wp-directboot-1).**
+  Two things were PROVEN in the process, neither of them a guess:
+  1. **The entry point**, which the WP had asserted: `app.tauri.notification.LocalNotificationRestoreReceiver`
+     is `directBootAware="true"` on `LOCKED_BOOT_COMPLETED` **in the MERGED manifest** - it comes
+     from `tauri-plugin-notification`, we never declared it, and it is invisible in our source
+     manifest. One such component starts the whole process.
+  2. **A destructive branch that turns the temporary condition into a permanent loss**:
+     `PushSecretKeystore.getOrCreateKey` deleted the alias and generated a new one whenever
+     `getKey` threw - and pre-unlock it throws for a key that is intact. That orphans the stored
+     ciphertext for good. Now gated on `DirectBoot.storageReadable()` + `containsAlias`.
+  **What is STILL not proven, and must not be written down as if it were:** which read yields the
+  secret prod rejects. `retrievePushSecret`'s two branches are both plausible and neither is
+  established; `loadPushContext` was checked and does NOT cache, so a stale identity is ruled out.
+  The instrumentation to settle it now exists (a distinct log line per branch, and a 401/403 logged
+  as an auth failure instead of a debug-level avatar miss), so **the user's single reboot both
+  verifies the fix and answers this**.
+  **Verification needs the USER** - a reboot plus the unlock pattern, on a build carrying this.
 
 - \[ \] **WP-DRAIN-2 (P2) - the inbound drain still has no watchdog, so ANY hung await inside it
   stops every inbound message with no diagnostic.** `isDraining` is lowered only when the message
@@ -746,6 +759,16 @@ page. The five to carry, plus one status line:
   `CustomTabsIntent`. Calling one of those reliably needs Tauri's own plugin-invocation path
   (`@TauriPlugin`/`Plugin(activity)`), which already runs with the right classloader context - not
   a raw `JNI_OnLoad`-cached `JavaVM` and a hand-rolled `attach_current_thread` (WP-OIDC-TAB-1).
+- **A DEPENDENCY CAN MAKE YOUR PROCESS START IN A STATE YOU NEVER DESIGNED FOR, and the source
+  manifest will not show it.** `tauri-plugin-notification` merges a `directBootAware` receiver on
+  `LOCKED_BOOT_COMPLETED`, so Canari runs before the first unlock after every reboot; read the
+  MERGED manifest. In that window a file `exists()` false, `SharedPreferences` loads empty AND
+  CACHES that for the life of the process, and a Keystore alias is present but unreadable - three
+  ways for "cannot read" to be mistaken for "not there". **A destructive repair must therefore be
+  gated on knowing the state is really broken**, or a temporary condition becomes a permanent loss:
+  `getOrCreateKey` deleted an intact key and regenerated it, orphaning the push secret for good
+  (WP-DIRECTBOOT-1). Only the notification CHANNELS can be created pre-unlock - they live in the
+  system, not in our storage.
 - A plain system-browser launch (`openUrl`) is an ORPHANED activity on Android: it opens in a
   separate task the calling app has no relationship to, so nothing on either side can dismiss it
   once the flow that needed it is done. A Chrome Custom Tab launched via `CustomTabsIntent`
