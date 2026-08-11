@@ -57,6 +57,7 @@ describe('purgeLocalConversationRecord', () => {
       conversations,
       contactKey: 'g1',
       groupId: 'g1',
+      userId: 'user-a',
       deleteConversation,
     });
 

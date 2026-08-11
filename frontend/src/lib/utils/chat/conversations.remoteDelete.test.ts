@@ -2,6 +2,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import { findConversationKeyByGroupId, markConversationDeletedRemotely } from './conversations';
 
+const USER = 'user-a';
 const GROUP = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
 
 function makeConvo(overrides: Partial<Conversation> = {}): Conversation {
@@ -39,7 +40,7 @@ describe('markConversationDeletedRemotely', () => {
     ]);
     const save = vi.fn().mockResolvedValue(undefined);
 
-    const changed = markConversationDeletedRemotely(conversations, GROUP, save);
+    const changed = markConversationDeletedRemotely(conversations, GROUP, USER, save);
 
     expect(changed).toBe(true);
     expect(conversations.get(legacyKey)?.lifecycle).toBe('removed');

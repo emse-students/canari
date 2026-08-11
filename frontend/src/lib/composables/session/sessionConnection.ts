@@ -111,7 +111,12 @@ export async function attemptReconnectImpl(
       onGroupMissing: (groupId: string) =>
         requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
       onGroupDeletedRemotely: (groupId: string) =>
-        markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
+        markConversationDeletedRemotely(
+          cb.conversations,
+          groupId,
+          ctx.getUserId(),
+          cb.saveConversation
+        ),
     };
     const connected = await openGatewayConnection(connectionDeps);
     if (!connected) {

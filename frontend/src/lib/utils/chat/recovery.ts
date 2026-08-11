@@ -67,6 +67,7 @@ async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Pr
       conversations: deps.conversations,
       contactKey: entry[0],
       groupId,
+      userId: deps.userId,
       deleteConversation: deps.deleteConversation,
       log: deps.log,
     });

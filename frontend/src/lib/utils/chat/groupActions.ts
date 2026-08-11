@@ -5,6 +5,7 @@ import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 import { isAwaitingHistory } from './awaitingHistoryRegistry';
+import { forgetAwaitingHistory } from './historySolicit';
 import {
   buildHistoryDigest,
   chunkIds,
@@ -141,7 +142,12 @@ export async function deleteGroupAndBroadcast(params: {
     /* non-blocking */
   }
 
-  // 4. Persist MLS state (forgetGroup modified the WASM tree)
+  // 4. Forget any outstanding "this conversation is missing history" state. Nothing else will:
+  // every clear path waits for a bundle to arrive, and the group we have just deleted from the
+  // server cannot produce one.
+  forgetAwaitingHistory(userId, groupId);
+
+  // 5. Persist MLS state (forgetGroup modified the WASM tree)
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 }
 
@@ -333,11 +339,15 @@ export async function purgeLocalConversationRecord(params: {
   conversations: Map<string, Conversation>;
   contactKey: string;
   groupId: string;
+  userId: string;
   deleteConversation?: (key: string) => Promise<void>;
   log?: (msg: string) => void;
 }): Promise<void> {
-  const { conversations, contactKey, groupId, deleteConversation, log } = params;
+  const { conversations, contactKey, groupId, userId, deleteConversation, log } = params;
   localStorage.removeItem(`discovery_pending:${groupId}`);
+  // Same reason as the `discovery_pending` key above, and the same lifetime: per-conversation local
+  // state may not outlive the conversation. This one was user-visible when it did.
+  forgetAwaitingHistory(userId, groupId);
   if (deleteConversation) {
     await deleteConversation(contactKey).catch(() => {});
   }
@@ -363,7 +373,7 @@ export async function purgeOrphanGroup(params: {
   if (mlsChanged) {
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
   }
-  await purgeLocalConversationRecord({ ...uiParams, groupId, log });
+  await purgeLocalConversationRecord({ ...uiParams, groupId, userId, log });
 }
 
 /** Returns whether the group is still active for this user on the server (null = unknown). */

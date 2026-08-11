@@ -442,6 +442,25 @@ up.** No Work Package is open on any repository, so nothing competes with it. Th
 a preference - each step is entered only once the one before it has proved something the next one
 assumes.
 
+**Decisions taken 2026-08-11 before the run, not to be re-litigated:**
+
+- **A defect is fixed and pushed the moment it is found.** Prod is the test server, so the fix is
+  verified RUNNING - which is the only thing this campaign is for. Consequence accepted: every deploy
+  invalidates the loaded bundle, so `bundle-id.mjs` runs again after each one.
+- **Then EVERY check the fix could touch, however remotely, is re-run - err wide.** The user's
+  instruction, verbatim: *"quand tu fixes quelque chose, il faut refaire tous les tests qui peuvent
+  etre touches de pres ou de loin par ce que tu as fait, vois large"*. The scripts exist, so a wide
+  re-run is cheap and a narrow one is a guess about a blast radius nobody has measured. Judging a
+  check unaffected is a claim, and this campaign has been wrong about exactly that before: a fix to
+  the drain explained a tab defect, and a fix to the ratchet explained an echo defect.
+- **The destructive phases proceed unattended**, PIN and CORRUPT included - PIN-2's repeated
+  rejection, PIN-4/5's change, PIN-6's removal, and all ten corruptions. The floor under it is
+  SETUP-8's archive plus the fact that a full re-enrolment is always possible; it costs the 2FA.
+- **The two steps no tool can perform are BATCHED to the end**, not asked for as they arise: the
+  owner account's 2FA (any re-login) and the unlock pattern after LIFE-5's reboot. So LIFE-5 and
+  every re-login check leave the ordered plan below and run last, together, once the user is warned.
+- **The phone is free**: reboots, radio cycles, forced Doze and `install -r` need no warning.
+
 **Pre-flight, and none of it is a check.** A run that skips this measures the previous build.
 
 | Gate | Why it is a gate | Measured 2026-08-11 |

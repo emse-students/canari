@@ -339,6 +339,40 @@ export function noteHistoryBundleReceived(
   clearAwaitingHistory(userId, groupId);
 }
 
+/**
+ * Forgets everything this module is holding about a conversation's missing history, because the
+ * CONVERSATION is gone - deleted here, deleted by a peer, or purged as an orphan.
+ *
+ * WHY THIS EXISTS AS A SEAM RATHER THAN A LINE IN EACH DELETION PATH. Three separate pieces of
+ * state answer "is this conversation still awaiting history", they have three different lifetimes,
+ * and not one of them was bounded by the lifetime of the conversation itself:
+ *
+ *   - the scheduled burst (`scheduled`) - in-memory, cancelled when it fires;
+ *   - the reactive phase (`historyRequestPendingStore`) - in-memory, cleared when a bundle ARRIVES;
+ *   - the durable marker (`mls_awaiting_history_since:*`) - localStorage, cleared when a bundle
+ *     arrives, and otherwise only by the 30-day give-up horizon.
+ *
+ * Every one of those clear paths waits for an answer, and for a deleted conversation no answer is
+ * ever coming. So all three outlived their subject, and the reactive one is user-visible: a
+ * conversation deleted by the peer keeps its row (`lifecycle: 'removed'`, so the UI can say so) and
+ * kept rendering "L'historique est en attente : aucun appareil n'a répondu" over it, for a
+ * conversation that no longer exists anywhere. Reported from production 2026-08-11.
+ *
+ * A per-path fix would have been three lines in three files that must never drift apart, on state
+ * this module owns and nobody else should reach into. One function, called at each deletion seam,
+ * is the version that cannot drift - and it makes the rule legible: a marker describes a
+ * conversation, so it may not outlive one.
+ *
+ * It is deliberately NOT `noteHistoryBundleReceived`: that one reasons about what a bundle proves,
+ * and none of that reasoning applies here. Nothing was proven, nothing converged; the question was
+ * withdrawn.
+ */
+export function forgetAwaitingHistory(userId: string, groupId: string): void {
+  cancelHistorySolicit(groupId);
+  historyRequestPendingStore.noteReceived(groupId);
+  clearAwaitingHistory(userId, groupId);
+}
+
 /** Cancels every solicitation not yet sent (session teardown / test cleanup). */
 export function cancelAllHistorySolicit(): void {
   // Deleting the current key mid-iteration is well defined for a Map, so no copy is needed.

@@ -146,7 +146,12 @@ export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks
     onGroupMissing: (groupId: string) =>
       requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
     onGroupDeletedRemotely: (groupId: string) =>
-      markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
+      markConversationDeletedRemotely(
+        cb.conversations,
+        groupId,
+        ctx.getUserId(),
+        cb.saveConversation
+      ),
   };
 }
 
@@ -175,7 +180,12 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     // one and has reopened the socket, then it flushes explicitly.
     canFlush: () => !ctx.isOfflineSession(),
     markDeletedRemotely: (groupId: string) =>
-      markConversationDeletedRemotely(cb.conversations, groupId, cb.saveConversation),
+      markConversationDeletedRemotely(
+        cb.conversations,
+        groupId,
+        ctx.getUserId(),
+        cb.saveConversation
+      ),
     uploadMedia: async (media: NonNullable<import('$lib/db').OutboxEntry['media']>) => {
       const { MediaService } = await import('$lib/media');
       const token = await getToken();

@@ -18,6 +18,7 @@ import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
+import { forgetAwaitingHistory } from './historySolicit';
 import { compareMessageOrder } from './messageOrder';
 import { isUnreadForUser } from './unread';
 import { isChannelConversationId } from './channelCrypto';
@@ -128,10 +129,17 @@ export function findConversationKeyByGroupId(
 /**
  * Marks a conversation as remotely deleted (`deletedRemotely=true`) so the UI shows
  * the local-delete banner instead of silently keeping a live conversation shell.
+ *
+ * `userId` is what lets the awaiting-history state be forgotten with it. This row deliberately
+ * SURVIVES the deletion - that is the whole point of `lifecycle: 'removed'` - so anything keyed by
+ * the group and left behind stays reachable by the UI. The pending-history banner was exactly that:
+ * it kept claiming an attempt was outstanding over a conversation that no longer exists anywhere,
+ * because every path that clears it waits for an answer nobody will ever send.
  */
 export function markConversationDeletedRemotely(
   conversations: Map<string, Conversation>,
   groupId: string,
+  userId: string,
   saveConversation?: (key: string) => Promise<void>
 ): boolean {
   const key = findConversationKeyByGroupId(conversations, groupId);
@@ -140,6 +148,7 @@ export function markConversationDeletedRemotely(
   if (!convo || convo.lifecycle === 'removed') return false;
   conversations.set(key, { ...convo, lifecycle: 'removed' });
   saveConversation?.(key).catch(() => {});
+  forgetAwaitingHistory(userId, groupId);
   return true;
 }
 
