@@ -120,17 +120,45 @@ grows monotonically, forever - at ~960 B/row.
 ### 2.4 Media have a 30-day IDLE retention
 
 `MediaService.purgeExpiredMedia` sweeps hourly and deletes any object whose `lastAccessAt` is older
-than **30 days**, leaving a tombstone (trimmed at 90 days). `lastAccessAt` is refreshed on **every
-download**, so anything still being viewed survives indefinitely; public assets (association logos,
-event images, form banners) are exempt and are permanent.
+than **30 days**, leaving a tombstone (trimmed at 90 days); public assets (association logos, event
+images, form banners) are exempt and are permanent.
 
 This bounds media storage to roughly a rolling window rather than letting it grow forever - which is
 what makes the numbers below survivable at all. **It also has a product consequence that is a human
 decision, not a technical one: see §6.**
 
-There is **no content-linked deletion**. Deleting a message does not delete its blob; deleting an
-account does not either (`users.service.ts` calls chat-delivery and social-service, never
-media-service). The 30-day sweep is the only path.
+#### The clock was measuring something it could not see (fixed 2026-08-11)
+
+An earlier version of this page said `lastAccessAt` is refreshed on every download, "so anything
+still being viewed survives indefinitely". The first half was true and the conclusion did not
+follow. The client caches the **ciphertext** locally and indefinitely
+(`canari-media-ciphertext-v1`), so once a device holds an object it never asks the server for it
+again. A photograph opened daily by everyone in a conversation therefore left exactly the same
+server-side trace as one nobody ever opened twice - the initial download - and both were deleted on
+the same day. What the predicate actually measured was *"30 days since the last device that did not
+already have it fetched it"*.
+
+**The generalisation is the reusable part: a server-side clock can only measure the requests that
+reach the server, so any cache in front of it silently changes what the clock means.** The name
+`lastAccessAt` made that invisible - it described the intent, not the observation - and no test can
+catch this, because the server behaves exactly as written.
+
+`POST /api/media/touch` closes the gap: the client reports a cache hit and the object is treated as
+used. Two rules keep it cheap, and both are about information rather than pacing - a report is
+worthless twice on the same day when the clock has 30-day granularity, so it is **one report per
+object per calendar day**, remembered durably so a reload does not re-report, and reports are
+**merged into one request**. The day marker is written only after the server acknowledges: marking
+on enqueue would cost the object a day of clock for one dropped request, and the failure mode of
+this feature must always be "expires as it would have before", never "expires sooner".
+`utils/mediaTouch.ts` (8 tests, two of which fail if the marker moves before the request) and
+`media.service.touch.spec.ts` (6 tests, the important ones being the refusals: a tombstone is never
+revived and an unknown id never creates an entry).
+
+There is **no message-linked deletion**, deliberately: forwarding copies the `MediaRef` and the
+server counts no references, so deleting a message's blob would break other people's messages. The
+sweep takes it. **Account deletion IS wired** since 2026-08-11 (`ownerId` recorded at upload,
+`DELETE /api/media/internal/users/:userId` called by `deleteUser`); objects stored before that date
+carry no `ownerId` and remain reachable only by the sweep. See §5.3.
 
 ---
 
@@ -260,9 +288,46 @@ and the trash, which MinIO rewrites continuously. That is not data, and it is wo
 someone reads a diff and concludes the backup is wrong: the restored `.usage.json` hash was found in
 the LIVE tree under `tmp/.trash/`, i.e. MinIO had rotated it in the four minutes between the two.
 
-**The tar is still the backup of record.** The cutover is one edit - deleting step 3 of `backup.sh` -
-and it is deliberately not taken here: the decision was to prove a restore first and show it before
-any change to how production is backed up.
+#### CUTOVER TAKEN 2026-08-11
+
+Step 3 of `backup.sh` is deleted: restic is now the only backup of the media blobs. What was done
+on production alongside it, and why each half is the way it is:
+
+| | before | after |
+| --- | --- | --- |
+| `/home/canari/backups` | 1019 MB | **133 MB** (of which 46 MB restic) |
+| offsite mirror on `mitv` | 1019 MB | **133 MB** |
+| one nightly archive | 70-76 MB | 3-4 MB |
+
+**The 15 existing archives were NOT deleted, and that correction matters more than the numbers.**
+"Purge the old tars" is the obvious reading of the cutover and it would have destroyed the only
+backup of the databases: each archive holds `postgres_auth_db.sql.gz` as well as the media. Only the
+`minio_data.tar.gz` member was removed from each, in place, with the original mtime restored so the
+retention `find -mtime` still ages them correctly, and with the presence of the Postgres dump
+asserted before every rewrite. Generalisable: **before deleting a container to reclaim what one of
+its members costs, enumerate the other members.**
+
+The immediate disk saving is modest - 87 GB were free. What the cutover changes is the **slope**: a
+night now costs what changed rather than the whole volume, which is the entire content of §4.
+
+Two consequences of no longer having a second copy, both now enforced in code rather than remembered:
+
+- `restore.sh` restores the objects from restic automatically, and **stops** if it can find them in
+  neither place. The previous `if [ -f minio_data.tar.gz ]` would have skipped them without a word
+  and finished announcing a complete restore that was missing 87 % of the data. An absent branch
+  that is silent is worse than one that fails.
+- The manifest inside each archive says, in the archive itself, that the media are elsewhere and
+  which script restores them. A restore happens on the worst day of the year; the instructions have
+  to travel with the artefact, not live only in a wiki.
+
+While rewriting the manifest, one of its claims turned out to be false: it described
+`mongo_chat_db.archive.gz` as "blobs MLS chiffres / historique". That dump is **116 bytes** because
+production's MongoDB holds no application database at all (`admin`, `config`, `local` only) and
+nothing connects to it - there is no MongoDB connection string anywhere in the code. The MLS history
+is in PostgreSQL and was always backed up correctly. **Only the documentation was wrong, which
+during an incident is worse than the documentation being absent**: it names a recovery source that
+does not exist. The `mongo` service in `docker-compose.prod.yml` is a residue and is a candidate for
+removal.
 
 One consequence that must not be lost: the repository password lives at
 `/home/canari/.config/canari/restic-password`, NOT in `infrastructure/.env`, because the CD rewrites
@@ -427,18 +492,23 @@ statements in a place that already enumerates the ids.
 
 ---
 
-## 6. What needs a human decision
+## 6. The retention policy - DECIDED 2026-08-11
 
 **The 30-day idle media retention is what makes the forecast survivable, and it is also a product
-behaviour that may not be intended.** A photo nobody re-opens for 30 days is deleted from the server.
-Clients that already downloaded it may still hold a local copy, but:
+behaviour, so it was put to the user rather than left as a side effect.** A photo nobody re-opens for
+30 days is deleted from the server. Clients that already downloaded it may still hold a local copy,
+but a **new device**, a **reinstall**, or anything that clears the local cache sees nothing older
+than 30 days. The alternative was a longer window, which scales the media line above proportionally:
+90 days roughly triples it.
 
-- a **new device** sees nothing older than 30 days;
-- so does a **reinstall**, or anything that clears the local cache.
+**The decision: keep 30 days, and make the clock honest instead of moving it.** The question that
+settled it was not "how long" but "since when" - the answer turned out to be *"since the last device
+that did not already have it fetched it"*, not *"since anyone last looked"*, because of the client's
+own ciphertext cache. Lengthening a window that measures the wrong thing buys the wrong thing more
+slowly. The mechanism, its two bounding rules and the tests are in §2.4.
 
-That is a legitimate design for a student social app, and it is the reason media do not grow without
-bound - but it should be a decision, not a side effect. The alternative is a longer window, which
-scales the media line above proportionally: 90 days roughly triples it.
+So the policy now says what it does: **30 days after the last time anyone actually opened it**, on
+any device, cached or not.
 
 ### The deletion is no longer silent (2026-08-11)
 

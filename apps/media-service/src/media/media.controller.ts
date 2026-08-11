@@ -4,6 +4,7 @@
  * Endpoints:
  *   POST /media/upload  - Receive an encrypted blob, store it, return { mediaId }
  *   GET  /media/:id     - Return the encrypted blob (client decrypts it)
+ *   POST /media/touch   - Refresh the retention clock for media the client had cached locally
  *   DELETE /media/:id   - Remove a blob (server-to-server only: valid JWT + X-Internal-Secret)
  *
  * Authentication: Bearer JWT validated via the shared JWT_SECRET env var.
@@ -20,6 +21,7 @@ import {
   Get,
   Delete,
   Param,
+  Body,
   Res,
   Req,
   Headers,
@@ -58,6 +60,9 @@ const PUBLIC_LOGO_MAX_BYTES = 2 * 1024 * 1024;
 /** Browser cache for versioned logo URLs (`?v=` busts on re-upload); server retention is indefinite. */
 const PUBLIC_ASSET_CACHE_MAX_AGE_SEC = 365 * 24 * 60 * 60;
 const ALLOWED_PUBLIC_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+/** Upper bound on a single POST /media/touch batch; the client batches well below this. */
+const TOUCH_MAX_IDS = 500;
 
 @Controller('media')
 export class MediaController {
@@ -280,6 +285,45 @@ export class MediaController {
     res.setHeader('Content-Length', result.data.length);
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.send(result.data);
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/touch - refresh the retention clock for locally-cached media
+  // ---------------------------------------------------------------------------
+  /**
+   * Marks media as used when the client served them from its own ciphertext cache.
+   *
+   * Without this the 30-day retention clock only ever advanced when a device that did NOT already
+   * hold an object downloaded it, so an image everyone looks at daily expired on the same schedule
+   * as one nobody ever opened again. See {@link MediaService.touch}.
+   *
+   * A JWT is required and no more: the body carries only opaque ids, the service holds only
+   * ciphertext, and the sole effect is to POSTPONE a deletion. The worst a caller can do with
+   * somebody else's id is keep an object alive slightly longer, which is why this does not need -
+   * and deliberately does not have - the internal-secret gate that DELETE carries.
+   */
+  @Post('touch')
+  async touch(
+    @Body() body: { mediaIds?: unknown },
+    @Req() req: Request
+  ): Promise<{ refreshed: number }> {
+    this.verifyToken(req);
+
+    const ids = body?.mediaIds;
+    if (!Array.isArray(ids)) {
+      throw new BadRequestException('mediaIds must be an array');
+    }
+    // The batch is bounded here rather than trusted from the client: the client's own batching
+    // caps it far lower, but a body is attacker-controlled and an unbounded loop over it is a
+    // free way to hold the metadata lock.
+    if (ids.length > TOUCH_MAX_IDS) {
+      throw new BadRequestException(`mediaIds must hold at most ${TOUCH_MAX_IDS} entries`);
+    }
+
+    const refreshed = await this.mediaService.touch(
+      ids.filter((id): id is string => typeof id === 'string')
+    );
+    return { refreshed };
   }
 
   // ---------------------------------------------------------------------------  // GET /media/:id

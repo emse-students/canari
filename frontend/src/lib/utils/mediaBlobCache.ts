@@ -3,6 +3,7 @@ import { decryptMediaBuffer } from '$lib/mediaCrypto';
 import { getToken } from '$lib/stores/auth';
 import { BlobUrlPool } from './blobUrlPool';
 import { MediaPurgedError } from './mediaErrors';
+import { noteMediaCacheHit } from './mediaTouch';
 
 /** Exported so `deviceStorage.ts` can measure/clear it without duplicating the literal. */
 export const CIPHER_CACHE_NAME = 'canari-media-ciphertext-v1';
@@ -39,7 +40,13 @@ async function fetchCiphertext(mediaId: string, baseUrl: string): Promise<ArrayB
       const hit = await cache.match(cacheKey);
       if (hit) {
         const buf = await hit.arrayBuffer();
-        if (buf.byteLength > 0) return buf;
+        if (buf.byteLength > 0) {
+          // The server's 30-day retention clock only ever saw DOWNLOADS, and this branch is
+          // precisely the case where there is none - so without this report an object everyone
+          // looks at daily expires on the same schedule as one nobody opens twice.
+          noteMediaCacheHit(mediaId, baseUrl);
+          return buf;
+        }
       }
     } catch {
       // Cache API unavailable or read failed - fall through to network.

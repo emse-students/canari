@@ -7,6 +7,9 @@
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "target": "ES2021",
+    // Declared explicitly so `*.spec.ts` compiles: this service had no test of its own until
+    // 2026-08-11, so nothing had ever needed the jest globals here.
+    "types": ["jest", "node"],
     "sourceMap": true,
     "rootDir": "./src",
     "outDir": "./dist",

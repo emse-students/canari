@@ -170,6 +170,46 @@ export class MediaService {
     return { status: 'not_found' };
   }
 
+  /**
+   * Refreshes the retention clock for media the client served from its OWN cache.
+   *
+   * THE CLOCK WAS MEASURING SOMETHING IT COULD NOT SEE. `lastAccessAt` is refreshed by
+   * {@link download}, so the sweep's predicate reads as "30 days since anyone last looked at
+   * this". It is not: the client caches the ciphertext locally and forever
+   * (`canari-media-ciphertext-v1`), so once a device has an object it never asks for it again.
+   * A photograph opened every day by everyone in a conversation therefore produced exactly the
+   * same server-side trace as one nobody ever opened again - the first download - and both were
+   * deleted on the same day. The clock was, in practice, "30 days since the last device that did
+   * not already have it fetched it", while claiming to be about use.
+   *
+   * This endpoint closes that gap: the client reports a cache hit, and the object is treated as
+   * used. The two rules that keep it cheap live on the CLIENT (`utils/mediaTouch.ts`): at most one
+   * report per object per calendar day, and reports batched into one request. The server does not
+   * need to enforce them - the write is idempotent within a day at this granularity - but it does
+   * bound the batch, because a body is attacker-controlled.
+   *
+   * Unknown and already-purged ids are skipped rather than rejected: a client legitimately holds
+   * cached ciphertext for an object the sweep has since deleted, and reviving a tombstone here
+   * would resurrect an entry the retention decision already closed.
+   *
+   * @returns how many entries were actually refreshed, so the caller can log a no-op distinctly.
+   */
+  async touch(mediaIds: string[]): Promise<number> {
+    let refreshed = 0;
+    const now = Date.now();
+
+    for (const mediaId of mediaIds) {
+      if (!UUID_REGEX.test(mediaId)) continue;
+      const entry = this.meta.items[mediaId];
+      if (!entry || entry.purgedAt) continue;
+      this.setAccess(mediaId, now);
+      refreshed += 1;
+    }
+
+    if (refreshed > 0) await this.persistMetadata();
+    return refreshed;
+  }
+
   async remove(mediaId: string): Promise<void> {
     // Validate mediaId is a UUID to prevent prototype pollution via property key injection.
     if (!UUID_REGEX.test(mediaId)) {
