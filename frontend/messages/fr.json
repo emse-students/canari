@@ -2278,5 +2278,7 @@
   "link_preview_join_conversation": "Rejoindre la discussion",
   "link_preview_invite_invalid": "Invitation invalide ou expirée",
   "link_safety_warning_message": "Ce lien a été signalé comme potentiellement dangereux par Google Safe Browsing. Voulez-vous vraiment continuer ?",
-  "link_safety_continue_button": "Continuer quand même"
+  "link_safety_continue_button": "Continuer quand même",
+  "media_lightbox_next_aria": "Suivant",
+  "media_lightbox_dot_aria": "Image {index}"
 }

@@ -1,10 +1,12 @@
 import {
   anchorFraction,
   anchorScroll,
+  clampTranslation,
   nearestBoxIndex,
   nearestStepIndex,
   touchDistance,
   touchMidpoint,
+  zoomAboutPivot,
 } from './pinchZoom';
 
 /** Where a content point ends up on screen once `next` has been applied. */
@@ -203,5 +205,111 @@ describe('touch geometry', () => {
     const b = { clientX: 30, clientY: 40 };
     expect(touchMidpoint(a, b)).toEqual({ x: 15, y: 20 });
     expect(touchDistance(a, b)).toBe(50);
+  });
+});
+
+describe('clampTranslation', () => {
+  /** A 1000x800 content inside a 400x300 box. */
+  const bounds = {
+    contentWidth: 1000,
+    contentHeight: 800,
+    viewportWidth: 400,
+    viewportHeight: 300,
+  };
+
+  it('centres the content whenever it is not zoomed in', () => {
+    // At scale 1 the transform is the identity, so a leftover translation from a previous
+    // gesture must not survive - "unzoom puts it back" is the property being pinned.
+    expect(clampTranslation(120, -80, { ...bounds, scale: 1 })).toEqual([0, 0]);
+    expect(clampTranslation(120, -80, { ...bounds, scale: 0.5 })).toEqual([0, 0]);
+  });
+
+  it('allows exactly half the overflow on each axis', () => {
+    // At x1 the content already overflows (1000 > 400), but the clamp only applies above scale 1;
+    // at x2 the overflow is 2000 - 400 = 1600, so the travel is 800 either way.
+    expect(clampTranslation(5000, 5000, { ...bounds, scale: 2 })).toEqual([800, 650]);
+    expect(clampTranslation(-5000, -5000, { ...bounds, scale: 2 })).toEqual([-800, -650]);
+  });
+
+  it('leaves a translation inside the bounds untouched', () => {
+    expect(clampTranslation(100, -50, { ...bounds, scale: 2 })).toEqual([100, -50]);
+  });
+
+  it('pins an axis with no overflow to the centre while the other still pans', () => {
+    const narrow = {
+      contentWidth: 100,
+      contentHeight: 800,
+      viewportWidth: 400,
+      viewportHeight: 300,
+    };
+    // 100 x 2 = 200 < 400, so there is nothing to pan horizontally.
+    expect(clampTranslation(90, 90, { ...narrow, scale: 2 })).toEqual([0, 90]);
+  });
+
+  it('refuses a non-finite input rather than emitting a NaN transform', () => {
+    // CSS drops a NaN transform silently, which freezes the view with no error anywhere.
+    expect(clampTranslation(Number.NaN, 10, { ...bounds, scale: 2 })).toEqual([0, 0]);
+  });
+});
+
+describe('zoomAboutPivot', () => {
+  const at = (scale: number, tx = 0, ty = 0) => ({ scale, tx, ty });
+
+  it('keeps the pivot point still', () => {
+    // The content point under the pivot sits at (pivot - t) / scale in content coordinates; after
+    // the zoom it must land back on the same pivot.
+    const before = at(1, 0, 0);
+    const next = zoomAboutPivot({ ...before, nextScale: 2, pivotX: 60, pivotY: -40 });
+    const contentPoint = {
+      x: (60 - before.tx) / before.scale,
+      y: (-40 - before.ty) / before.scale,
+    };
+    expect(contentPoint.x * next.scale + next.tx).toBeCloseTo(60, 6);
+    expect(contentPoint.y * next.scale + next.ty).toBeCloseTo(-40, 6);
+  });
+
+  it('holds the pivot still from an already panned and zoomed state too', () => {
+    const before = at(2.5, 40, -30);
+    const next = zoomAboutPivot({ ...before, nextScale: 4, pivotX: -15, pivotY: 22 });
+    const contentPoint = {
+      x: (-15 - before.tx) / before.scale,
+      y: (22 - before.ty) / before.scale,
+    };
+    expect(contentPoint.x * next.scale + next.tx).toBeCloseTo(-15, 6);
+    expect(contentPoint.y * next.scale + next.ty).toBeCloseTo(22, 6);
+  });
+
+  it('clamps the scale to the ladder', () => {
+    expect(
+      zoomAboutPivot({ ...at(4), nextScale: 99, pivotX: 0, pivotY: 0, maxScale: 8 }).scale
+    ).toBe(8);
+    expect(zoomAboutPivot({ ...at(4), nextScale: 0.1, pivotX: 0, pivotY: 0 }).scale).toBe(1);
+  });
+
+  it('RESETS rather than clamps the translation at the minimum scale', () => {
+    // A clamp would leave a photo wherever the gesture ended if the arithmetic happened to land
+    // inside the bounds, so pinching out and back would not return it to where it started.
+    const next = zoomAboutPivot({ ...at(2, 300, 200), nextScale: 1, pivotX: 90, pivotY: 90 });
+    expect(next).toEqual({ scale: 1, tx: 0, ty: 0 });
+  });
+
+  it('applies the bounds when they are given, and not when they are not', () => {
+    const input = { ...at(1), nextScale: 2, pivotX: 400, pivotY: 0 } as const;
+    const unbounded = zoomAboutPivot({ ...input });
+    const bounded = zoomAboutPivot({
+      ...input,
+      bounds: { contentWidth: 300, contentHeight: 300, viewportWidth: 400, viewportHeight: 400 },
+    });
+    expect(unbounded.tx).toBe(-400);
+    // 300 x 2 = 600 against a 400 box leaves 100 of travel each way.
+    expect(bounded.tx).toBe(-100);
+  });
+
+  it('refuses to divide by a zero current scale', () => {
+    expect(zoomAboutPivot({ ...at(0), nextScale: 2, pivotX: 10, pivotY: 10 })).toEqual({
+      scale: 2,
+      tx: 0,
+      ty: 0,
+    });
   });
 });

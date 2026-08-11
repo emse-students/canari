@@ -316,7 +316,7 @@ Fourteen defects, every one found by a check or by the log of a check. The narra
 | **WP-MULTITAB-1** - two tabs of one account diverge their ratchet | TAB-4 | shipped, verified (9/9 where it lost 4 of 9) |
 | **WP-ECHO-1** - the sender loses its OWN message across a reload | reconciliation | shipped; verified on the web, on the phone 2026-08-11 (5 sends INSIDE a bulk window, 11/11 after a reload) |
 | **WP-SQLTXN-1** - a pooled connection made `BEGIN` and `COMMIT` two conversations, so writes failed for good | the noise of a VOID run | shipped; verified on the phone 2026-08-11 (25 drains, zero of the three error strings) |
-| **WP-PENDING-1** - a catch-up pull that can never make partial progress | LIFE-6 | shipped; **verification against a real backlog still owed** |
+| **WP-PENDING-1** - a catch-up pull that can never make partial progress | LIFE-6 | shipped; verified on the phone 2026-08-11 against a built backlog (1 100 sends into a parked A1: 2 pages, a `Drain start` between them, two ACK steps server-side, depth to 0). The ORIGINAL 10 s timeout is **not** reproduced by that run and is not claimed - see [chat-delivery](services/chat-delivery.md) |
 | **WP-PENDING-2** - a frame too far ahead was ACKed off the server as delivered | LIFE-6 | shipped, seen firing end to end |
 | **WP-DRAIN-1** - a recovery awaited inside the drain, deadlocking it | verifying WP-HIDDEN-1 | shipped |
 | **WP-GHOST-1** - a revoked device wrote its own routing membership back | the queue's size | shipped + verified on prod (98 210 rows -> 0) |

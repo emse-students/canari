@@ -20,11 +20,8 @@
     touchDistance,
     touchMidpoint,
   } from '$lib/utils/pinchZoom';
-  import { X, ZoomIn, ZoomOut, Download, FileText } from '@lucide/svelte';
-  import { portal } from '$lib/actions/portal';
-  import { focusTrap } from '$lib/actions/focusTrap.svelte';
-  import { fly } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import { ZoomIn, ZoomOut, Download, FileText } from '@lucide/svelte';
+  import FullScreenViewer from './FullScreenViewer.svelte';
   import {
     openPdfDocument,
     releasePdfObjectUrl,
@@ -451,165 +448,170 @@
     pinchOrigin = null;
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-    }
+  /**
+   * Drag-to-pan for a MOUSE, at any zoom that overflows the viewport.
+   *
+   * A finger already pans: the pages live in a real scroll container and `touch-pan-x touch-pan-y`
+   * leaves one-finger scrolling to the browser. A mouse had nothing - the scrollbars and the wheel
+   * were the only way to move, and at x3 a page is wider than the window, so reading a line meant
+   * hunting for the horizontal scrollbar. This moves the container's own scroll rather than any
+   * transform, so it composes with the zoom instead of competing with it.
+   *
+   * IT MUST NOT STEAL A TEXT SELECTION. `PdfTextLayer` is `pointer-events: none` with `auto` on the
+   * spans exactly so the gaps stay available to handlers here, which makes the target the honest
+   * test: down on a span is a selection, down anywhere else is a pan.
+   */
+  let isPanning = $state(false);
+  let panStartX = 0;
+  let panStartY = 0;
+  let panStartScrollLeft = 0;
+  let panStartScrollTop = 0;
+
+  const canPan = $derived(zoom > ZOOM_STEPS[0]);
+
+  function handlePointerDown(e: PointerEvent) {
+    if (e.pointerType === 'touch' || e.button !== 0 || !scrollEl || !canPan) return;
+    if ((e.target as HTMLElement).closest('.pdf-text-layer, button, a')) return;
+    isPanning = true;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    panStartScrollLeft = scrollEl.scrollLeft;
+    panStartScrollTop = scrollEl.scrollTop;
+    scrollEl.setPointerCapture(e.pointerId);
+  }
+
+  function handlePointerMove(e: PointerEvent) {
+    if (!isPanning || !scrollEl) return;
+    // Dragging right must bring content from the left, so the scroll moves AGAINST the pointer.
+    scrollEl.scrollLeft = panStartScrollLeft - (e.clientX - panStartX);
+    scrollEl.scrollTop = panStartScrollTop - (e.clientY - panStartY);
+  }
+
+  function handlePointerUp(e: PointerEvent) {
+    if (!isPanning) return;
+    isPanning = false;
+    scrollEl?.releasePointerCapture(e.pointerId);
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<FullScreenViewer ariaLabel={fileName} {onClose} maxWidthClass="sm:max-w-275">
+  {#snippet headerLead()}
+    <FileText size={16} strokeWidth={2.5} class="shrink-0 opacity-70" />
+    <p class="min-w-0 flex-1 truncate text-xs sm:text-sm opacity-80">{fileName}</p>
+    {#if pageCount > 0}
+      <span class="shrink-0 text-[0.7rem] tabular-nums opacity-50">
+        {m.pdf_viewer_page_count({ count: pageCount })}
+      </span>
+    {/if}
+  {/snippet}
 
-<div use:portal>
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- Backdrop: click outside the card to close. Escape is handled above. -->
-  <div
-    role="presentation"
-    class="fixed inset-0 z-300 flex items-center justify-center bg-black/70 backdrop-blur-lg sm:p-4"
-    onclick={onClose}
-  >
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={fileName}
-      tabindex="-1"
-      use:focusTrap
-      class="relative flex flex-col w-full text-white overflow-hidden
-             h-dvh sm:h-[90dvh] sm:max-w-275
-             sm:rounded-xl sm:border sm:border-white/8
-             bg-black/20 sm:bg-white/4 sm:backdrop-blur-2xl
-             sm:shadow-[0_20px_60px_rgba(0,0,0,0.7)]"
-      onclick={(e) => e.stopPropagation()}
-      transition:fly={{ y: 18, duration: 240, easing: cubicOut }}
+  {#snippet headerActions()}
+    <button
+      type="button"
+      class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors disabled:opacity-30"
+      disabled={zoomIndex === 0}
+      onclick={() => (zoomIndex = Math.max(0, zoomIndex - 1))}
+      aria-label={m.pdf_viewer_zoom_out()}
     >
-      <!-- Header -->
-      <div
-        class="flex shrink-0 items-center justify-between gap-3 px-3 sm:px-4 pb-2 sm:pb-3 border-b border-white/8 bg-linear-to-b from-black/30 to-transparent"
-        style="padding-top: max(0.75rem, env(safe-area-inset-top, 0.75rem));"
+      <ZoomOut size={18} strokeWidth={2.5} />
+    </button>
+    <button
+      type="button"
+      class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors disabled:opacity-30"
+      disabled={zoomIndex === ZOOM_STEPS.length - 1}
+      onclick={() => (zoomIndex = Math.min(ZOOM_STEPS.length - 1, zoomIndex + 1))}
+      aria-label={m.pdf_viewer_zoom_in()}
+    >
+      <ZoomIn size={18} strokeWidth={2.5} />
+    </button>
+    {#if onDownload}
+      <button
+        type="button"
+        class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
+        onclick={onDownload}
+        aria-label={m.common_download_label()}
+        title={m.common_download_label()}
       >
-        <div class="flex min-w-0 flex-1 items-center gap-2">
-          <FileText size={16} strokeWidth={2.5} class="shrink-0 opacity-70" />
-          <p class="min-w-0 flex-1 truncate text-xs sm:text-sm opacity-80">{fileName}</p>
-          {#if pageCount > 0}
-            <span class="shrink-0 text-[0.7rem] tabular-nums opacity-50">
-              {m.pdf_viewer_page_count({ count: pageCount })}
-            </span>
-          {/if}
-        </div>
-        <div class="flex items-center gap-1.5 shrink-0">
-          <button
-            type="button"
-            class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors disabled:opacity-30"
-            disabled={zoomIndex === 0}
-            onclick={() => (zoomIndex = Math.max(0, zoomIndex - 1))}
-            aria-label={m.pdf_viewer_zoom_out()}
-          >
-            <ZoomOut size={18} strokeWidth={2.5} />
-          </button>
-          <button
-            type="button"
-            class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors disabled:opacity-30"
-            disabled={zoomIndex === ZOOM_STEPS.length - 1}
-            onclick={() => (zoomIndex = Math.min(ZOOM_STEPS.length - 1, zoomIndex + 1))}
-            aria-label={m.pdf_viewer_zoom_in()}
-          >
-            <ZoomIn size={18} strokeWidth={2.5} />
-          </button>
-          {#if onDownload}
-            <button
-              type="button"
-              class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
-              onclick={onDownload}
-              aria-label={m.common_download_label()}
-              title={m.common_download_label()}
-            >
-              <Download size={18} strokeWidth={2.5} />
-            </button>
-          {/if}
-          <button
-            type="button"
-            class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
-            onclick={onClose}
-            aria-label={m.common_close_label()}
-          >
-            <X size={22} strokeWidth={2.5} />
-          </button>
-        </div>
-      </div>
+        <Download size={18} strokeWidth={2.5} />
+      </button>
+    {/if}
+  {/snippet}
 
-      <!-- Pages -->
-      <!-- `document` rather than a bare div: the pages ARE the document being read, and the pinch
-           handlers below need the element to carry a role. -->
-      <div
-        role="document"
-        class="flex-1 min-h-0 overflow-auto overscroll-contain px-2 sm:px-4 py-3 touch-pan-x touch-pan-y"
-        bind:this={scrollEl}
-        bind:clientWidth={viewportWidth}
-        ontouchstart={handleTouchStart}
-        ontouchmove={handleTouchMove}
-        ontouchend={handleTouchEnd}
-        ontouchcancel={handleTouchEnd}
-      >
-        {#if loadError}
-          <div class="flex h-full flex-col items-center justify-center gap-3 text-white/70">
-            <FileText size={40} strokeWidth={1.5} />
-            <p class="text-sm">{m.pdf_viewer_error()}</p>
-          </div>
-        {:else if pageCount === 0}
-          <div class="flex h-full items-center justify-center">
-            <div
-              class="h-8 w-8 animate-spin rounded-full border-4 border-white/20 border-t-white/70"
-            ></div>
-          </div>
-        {:else}
-          <!-- Zooming widens the column past the viewport; the scroll container above owns
-               the resulting horizontal scroll, so pages never scroll independently. -->
-          <!-- `pinchScale` previews the gesture without rasterising; it is 1 at rest, so the
-               transform is inert outside a pinch and the settled zoom does the real work. -->
-          <div
-            bind:this={columnEl}
-            bind:clientWidth={columnInnerWidth}
-            class="mx-auto flex flex-col items-center gap-3"
-            style="width: {zoom * 100}%; max-width: {COLUMN_MAX_WIDTH * zoom}px;
-                   transform: scale({pinchScale});
-                   transform-origin: {pinchOriginCss};
-                   transition: {pinchScale === 1 && !settling
-              ? 'transform 120ms ease-out'
-              : 'none'};"
-          >
-            {#each pages as page, index (index)}
-              <!-- `relative` so the text layer can be absolutely placed over the bitmap. -->
-              <div
-                use:visible={index}
-                class="relative w-full overflow-hidden rounded-lg bg-white shadow-lg"
-                style={page ? '' : `aspect-ratio: 1 / ${placeholderRatio(index)};`}
-              >
-                {#if page}
-                  <img
-                    src={page.url}
-                    alt={m.pdf_viewer_page_alt({ page: index + 1, total: pageCount })}
-                    class="block h-auto w-full"
-                  />
-                  <!--
-                    The page's own displayed height, derived rather than measured: every page is
-                    the column's inner width wide, and the bitmap's aspect ratio gives the rest.
-                    Measuring instead would mean one ResizeObserver per page - two hundred of them
-                    on a long document - to learn something the numbers already say exactly.
-                  -->
-                  {#if pageTexts[index] && columnInnerWidth > 0}
-                    <PdfTextLayer
-                      runs={pageTexts[index]!}
-                      pageWidth={columnInnerWidth}
-                      pageHeight={(columnInnerWidth * page.height) / page.width}
-                    />
-                  {/if}
-                {/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
+  <!-- Pages -->
+  <!-- `document` rather than a bare div: the pages ARE the document being read, and the pinch
+       handlers below need the element to carry a role. -->
+  <div
+    role="document"
+    class="flex-1 min-h-0 overflow-auto overscroll-contain px-2 sm:px-4 py-3 touch-pan-x touch-pan-y"
+    class:cursor-grab={canPan && !isPanning}
+    class:cursor-grabbing={isPanning}
+    bind:this={scrollEl}
+    bind:clientWidth={viewportWidth}
+    ontouchstart={handleTouchStart}
+    ontouchmove={handleTouchMove}
+    ontouchend={handleTouchEnd}
+    ontouchcancel={handleTouchEnd}
+    onpointerdown={handlePointerDown}
+    onpointermove={handlePointerMove}
+    onpointerup={handlePointerUp}
+    onpointercancel={handlePointerUp}
+  >
+    {#if loadError}
+      <div class="flex h-full flex-col items-center justify-center gap-3 text-white/70">
+        <FileText size={40} strokeWidth={1.5} />
+        <p class="text-sm">{m.pdf_viewer_error()}</p>
       </div>
-    </div>
+    {:else if pageCount === 0}
+      <div class="flex h-full items-center justify-center">
+        <div
+          class="h-8 w-8 animate-spin rounded-full border-4 border-white/20 border-t-white/70"
+        ></div>
+      </div>
+    {:else}
+      <!-- Zooming widens the column past the viewport; the scroll container above owns
+           the resulting horizontal scroll, so pages never scroll independently. -->
+      <!-- `pinchScale` previews the gesture without rasterising; it is 1 at rest, so the
+           transform is inert outside a pinch and the settled zoom does the real work. -->
+      <div
+        bind:this={columnEl}
+        bind:clientWidth={columnInnerWidth}
+        class="mx-auto flex flex-col items-center gap-3"
+        style="width: {zoom * 100}%; max-width: {COLUMN_MAX_WIDTH * zoom}px;
+               transform: scale({pinchScale});
+               transform-origin: {pinchOriginCss};
+               transition: {pinchScale === 1 && !settling ? 'transform 120ms ease-out' : 'none'};"
+      >
+        {#each pages as page, index (index)}
+          <!-- `relative` so the text layer can be absolutely placed over the bitmap. -->
+          <div
+            use:visible={index}
+            class="relative w-full overflow-hidden rounded-lg bg-white shadow-lg"
+            style={page ? '' : `aspect-ratio: 1 / ${placeholderRatio(index)};`}
+          >
+            {#if page}
+              <img
+                src={page.url}
+                alt={m.pdf_viewer_page_alt({ page: index + 1, total: pageCount })}
+                class="block h-auto w-full"
+                draggable="false"
+              />
+              <!--
+                The page's own displayed height, derived rather than measured: every page is
+                the column's inner width wide, and the bitmap's aspect ratio gives the rest.
+                Measuring instead would mean one ResizeObserver per page - two hundred of them
+                on a long document - to learn something the numbers already say exactly.
+              -->
+              {#if pageTexts[index] && columnInnerWidth > 0}
+                <PdfTextLayer
+                  runs={pageTexts[index]!}
+                  pageWidth={columnInnerWidth}
+                  pageHeight={(columnInnerWidth * page.height) / page.width}
+                />
+              {/if}
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
-</div>
+</FullScreenViewer>

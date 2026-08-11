@@ -202,6 +202,52 @@ their input unchanged (respectively `null`) on an area-less or non-finite box ra
 `NaN` assigned to `scrollLeft` is swallowed by the DOM, which would make the whole correction fail
 invisibly.
 
+### The two viewers share one shell, and two zoom models (WP-VIEWER-1, 2026-08-11)
+
+Asked for on 2026-08-07: *"c'est presque la meme interface, ca meriterait d'etre joli, pratique et
+homogene"*. The image lightbox and the PDF reader did the same job — take over the screen, name what
+is shown, offer download and close — with two independent implementations of every part of it.
+
+[`FullScreenViewer.svelte`](../../../../frontend/src/lib/components/shared/FullScreenViewer.svelte)
+now owns the portal, the backdrop, the card, the header (`headerLead` / `headerActions` snippets plus
+a close button it draws itself), the safe-area padding top and bottom, the focus trap and Escape.
+[`MediaLightbox`](../../../../frontend/src/lib/components/shared/MediaLightbox.svelte) and
+[`PdfViewerModal`](../../../../frontend/src/lib/components/shared/PdfViewerModal.svelte) bring only
+what is theirs.
+
+**The drift the merge exposed is the argument for having done it.** Neither copy looked wrong on its
+own, and side by side they disagreed about things a reviewer cannot see from one file: one close
+button carried a raw `aria-label="Fermer"` next to `m.common_close_label()` on the other (plus a
+literal `"Suivant"` and `"Image {n}"` — three untranslated strings, now
+`media_lightbox_next_aria` / `media_lightbox_dot_aria`), and one card said `z-[300]` where the other
+said `z-300`. Two copies of a dialog do not stay identical; they stay *plausible*.
+
+**What the shell deliberately does NOT own is the content area**, and the reason is the same
+difference the pinch section above is about. A photo is one bitmap centred in a box that must never
+scroll — so `MediaLightbox` passes `lockTouch`, which puts `touch-action: none` over the whole card.
+A PDF is a scrolling column of re-rasterised pages, and that same `touch-action: none` would kill the
+one-finger scroll that is *how a document is read*. Giving the shell a prop to decide which layout to
+be would only move the knowledge of both viewers into the one component that was supposed to know
+about neither, so `children` is rendered as the card's flex child and each viewer supplies its own.
+
+The gesture is shared as arithmetic rather than as a component, for the same reason:
+`clampTranslation` and `zoomAboutPivot` join `anchorScroll` and friends in
+[`utils/pinchZoom.ts`](../../../../frontend/src/lib/utils/pinchZoom.ts), so the module now carries
+**both** models — the global translate for a single bitmap, the anchor for a paged column — with the
+warning that they are not interchangeable. The lightbox's DOM reads shrank to one `panBounds()`
+helper; everything else is pure and tested (36 tests, 20 of them new). `zoomAboutPivot` *resets*
+rather than clamps the translation at the minimum scale, which is not a detail: a clamp would leave
+a photo wherever a gesture ended whenever the arithmetic happened to land inside the bounds, and
+"unzoom puts it back" is the one thing a user is entitled to assume.
+
+**Drag-to-pan now exists on the PDF, for a mouse only.** A finger already panned — the pages live in
+a real scroll container with `touch-pan-x touch-pan-y` — but a mouse had nothing, and at x3 a page is
+wider than the window, so following a line meant hunting for the horizontal scrollbar. It moves the
+container's own `scrollLeft`/`scrollTop` rather than a transform, so it composes with the zoom
+instead of competing with it. **It must not steal a text selection**, and `PdfTextLayer` makes that
+test honest rather than heuristic: the layer is `pointer-events: none` with `auto` on the spans, so
+a pointer-down whose target is a span is a selection and one anywhere else is a pan.
+
 ### Rasterising is right; losing the TEXT was not (2026-08-11)
 
 Reported from the app: "avec la visionneuse pdf on ne peut pas selectionner le texte, ni rechercher,

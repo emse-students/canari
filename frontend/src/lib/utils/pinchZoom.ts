@@ -132,6 +132,97 @@ export function nearestStepIndex(value: number, steps: readonly number[]): numbe
   return best;
 }
 
+/**
+ * The other representation of "keep the focal point still": a single element that carries the whole
+ * zoom as a CSS `translate(...) scale(...)`.
+ *
+ * A photo is ONE bitmap with nothing around it that fails to scale, so the anchor machinery above is
+ * unnecessary there - the transform itself is exact, and the arithmetic reduces to the two functions
+ * below. The two models are kept in one module because they answer the same question and a viewer
+ * may need either, but they are NOT interchangeable: applying this one to a paged column is exactly
+ * the ratio-based correction the anchor model exists to replace.
+ */
+
+/** The geometry a translation must stay inside, all in CSS pixels at scale 1 except `scale`. */
+export interface TranslationBounds {
+  /** Size of the transformed content before scaling. */
+  contentWidth: number;
+  contentHeight: number;
+  /** Size of the box it is transformed inside. */
+  viewportWidth: number;
+  viewportHeight: number;
+  scale: number;
+}
+
+/** A translate + scale transform, in the units a CSS `transform` consumes. */
+export interface ZoomTransform {
+  scale: number;
+  tx: number;
+  ty: number;
+}
+
+/**
+ * Translation clamped so the content never scrolls past its own edges.
+ *
+ * The transform is applied about the CENTRE, so the travel available on each axis is half the
+ * overflow. An axis with no overflow yields 0 rather than a negative bound, which is what snaps a
+ * content smaller than its box back to the middle instead of letting it drift into a corner.
+ */
+export function clampTranslation(
+  tx: number,
+  ty: number,
+  bounds: TranslationBounds
+): [number, number] {
+  const { contentWidth, contentHeight, viewportWidth, viewportHeight, scale } = bounds;
+  if (!(scale > 1)) return [0, 0];
+  if (
+    ![contentWidth, contentHeight, viewportWidth, viewportHeight, tx, ty].every(Number.isFinite)
+  ) {
+    return [0, 0];
+  }
+  const maxTx = Math.max(0, (contentWidth * scale - viewportWidth) / 2);
+  const maxTy = Math.max(0, (contentHeight * scale - viewportHeight) / 2);
+  return [Math.max(-maxTx, Math.min(maxTx, tx)), Math.max(-maxTy, Math.min(maxTy, ty))];
+}
+
+export interface ZoomAboutPivotInput extends ZoomTransform {
+  /** The scale being asked for, before clamping to `[minScale, maxScale]`. */
+  nextScale: number;
+  /** Pivot in CENTRE-relative coordinates of the transformed box - the point to hold still. */
+  pivotX: number;
+  pivotY: number;
+  minScale?: number;
+  maxScale?: number;
+  /** When given, the result is clamped to it; otherwise the raw translation is returned. */
+  bounds?: Omit<TranslationBounds, 'scale'>;
+}
+
+/**
+ * The transform that scales to `nextScale` while keeping the content point under `pivot` under it.
+ *
+ * At the minimum scale the translation is reset rather than clamped. That is not the same thing: a
+ * clamp would leave the content wherever the gesture ended if the arithmetic happened to land inside
+ * the bounds, so pinching out and back would not return a photo to where it started - and "unzoom
+ * puts it back" is the one thing a user is entitled to assume.
+ */
+export function zoomAboutPivot(input: ZoomAboutPivotInput): ZoomTransform {
+  const { scale, tx, ty, pivotX, pivotY, minScale = 1, maxScale = 8, bounds } = input;
+  const next = Math.max(minScale, Math.min(maxScale, input.nextScale));
+  // A zero or non-finite current scale makes the ratio meaningless; refusing to compute is better
+  // than emitting a NaN transform, which CSS drops silently and leaves the view frozen.
+  if (!Number.isFinite(next) || !(scale > 0))
+    return { scale: Math.max(minScale, next || minScale), tx: 0, ty: 0 };
+  if (next <= minScale) return { scale: next, tx: 0, ty: 0 };
+
+  const ratio = next / scale;
+  const rawTx = tx * ratio + pivotX * (1 - ratio);
+  const rawTy = ty * ratio + pivotY * (1 - ratio);
+  if (!bounds) return { scale: next, tx: rawTx, ty: rawTy };
+
+  const [clampedX, clampedY] = clampTranslation(rawTx, rawTy, { ...bounds, scale: next });
+  return { scale: next, tx: clampedX, ty: clampedY };
+}
+
 /** Midpoint of two touch points, in viewport coordinates. */
 export function touchMidpoint(
   a: { clientX: number; clientY: number },

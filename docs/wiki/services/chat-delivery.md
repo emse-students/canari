@@ -86,6 +86,58 @@ wrong fix.
 the line. It cannot pin the SQL: a mocked repository never parses a query, so the builder's output
 is verified only by the prod deploy log.
 
+#### The report worked, and its discriminator earned its keep (2026-08-11)
+
+First real use, hours after it shipped. The hourly line named
+`web-d82cd226…-msi13yl3-ytaa=1419`, and a follow-up `GROUP BY` showed it climbing to 1 513 with its
+oldest row timestamped **02:00:46 that same morning** — i.e. the queue had reconstituted itself from
+zero since the storm rows were purged overnight, at roughly 2.4 frames a minute of ordinary traffic.
+
+It reads exactly like WP-PENDING-1's symptom: a device receiving and never draining. It is not, and
+the thing that settled it in one query was the evidence the WARN carries — a **last `KeyPackage` of
+2026-08-10 19:47**, against a live browser on that same account whose device id is
+`…msgm5z5j-136y`. Different generation, so nobody will ever drain it: debris, not a client bug.
+
+Two things follow, and both are the point of building the report rather than a cap:
+
+- **The device id is the identity, and it must be read from the client under test, never recalled.**
+  The whole distinction between "a bug to chase" and "rows to sweep" rested on comparing two strings
+  that differ in eight characters.
+- **The reaper still cannot touch it.** A valid key package is what disqualifies it from every ghost
+  predicate, so the frames accumulate until the 90-day `RETENTION_WINDOW_MS` takes them. That is the
+  open half, and it is the one a future GC has to answer — with a predicate re-measured on the
+  population it will actually run against, not the one that named the last incident.
+
+#### WP-PENDING-1 verified on hardware, and what the run could not establish
+
+The defect: a single `AbortController(10_000)` wrapped the **whole** paginated pull, and nothing was
+ingested or ACKed until the pull returned, so a backlog bigger than 10 s of transfer aborted on every
+reconnect, ACKed nothing, and only grew (measured at 5 526 rows = 12 pages). The fix moves the
+deadline onto one PAGE and hands each page to `onPage` as it lands
+(`mlsDeliveryApi.pullPendingMessagesJson`, `BaseMlsService.fetchPendingMessages`).
+
+Verified on A1 by parking the phone (`am force-stop`), sending 1 100 messages from the peer browser
+into the two-test-account DM, and unparking it under continuous logcat with the server-side queue
+polled every 4 s. Both halves agree:
+
+| Evidence | Reading |
+| --- | --- |
+| `[PENDING] Fetched 500 … (500 so far)` then `Fetched 287 … (787 so far)` | the pull really paginates |
+| a `[QUEUE] Drain start` **between** those two lines | page 1 was ingested before page 2 was fetched |
+| depth series `795 → 305` at 54 s, then `417 → 6` at 100 s | two distinct ACK steps, ~490 then ~411 |
+| final depth `0`; 0 ACK failures, 0 transport failures, 0 SQLite errors | the backlog is discharged |
+
+The depth *rises* through the first 48 s (`693 → 795`) because the fan-out lags the last send by
+minutes at this volume — which is also why the harness now polls until the depth stops growing
+instead of reading it once after a fixed pause. A single read 8 s after the last send reported 615
+of the ~1 100 on their way; it cost nothing here, but it is the number a verdict quotes.
+
+**What this run does NOT establish, stated because the tempting claim is the wrong one:** 1 100 rows
+is two pages and a few seconds of transfer, so the *old* code would very likely have finished inside
+its 10 s budget too. The original timeout is not reproduced. What is established is the structural
+property the fix is made of, which is independent of link speed — partial progress, page by page —
+and reproducing the timeout would need a backlog no composer can build in under an hour.
+
 ### A revoked device id never comes back
 
 `DELETE /mls/devices/:userId/:deviceId` purges the device footprint **and** writes a permanent

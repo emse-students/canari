@@ -303,16 +303,6 @@ raising it first locks everyone out.
 
 ### CANARI - OPEN WORK PACKAGES
 
-- \[ \] **WP-PENDING-1 (P1) - fixed and deployed; the ONE verification owed is against a REAL
-  backlog.** A single `AbortController(10_000)` wrapped a whole paginated pull, so a backlog bigger
-  than 10 s of transfer aborted forever, ACKed nothing, and only grew. Now a deadline per PAGE, each
-  page ingested and ACKed as it lands. **The server hypothesis is dead** - 8.909 ms on the composite
-  `(recipientId, deviceId)` index. **The verification cannot be re-run on A1** (that phone's backlog
-  was deleted to prove the cause), so it needs a device that falls behind again. The trap that cost
-  three runs: the abort surfaces on Android as `TypeError: Failed to fetch` plus orphaned
-  `Uncaught (in promise) The resource id NNNN is invalid` - indistinguishable from a network failure
-  by text alone.
-
 - \[ \] **WP-STORAGE-1 (P2 today, P1 the moment usage grows) - THE BACKUP SCHEME FAILS BEFORE THE
   DATA DOES.** Answer to the user's question of 2026-08-06 ("can the server hold several hundred
   users"). The whole model, every measured unit cost and the three scenarios are in
@@ -362,29 +352,6 @@ raising it first locks everyone out.
   debug APK and debug measured ~10x release on the same fixture. Also owed: **the iOS
   `workflow_dispatch` compile check** - the `.mm` was edited symmetrically and nothing local
   compiles ObjC.
-
-- \[ \] **WP-VIEWER-1 (P2) - UNIFY THE IMAGE LIGHTBOX AND THE PDF READER.** Asked by the user
-  2026-08-07: "c'est presque la meme interface, ca meriterait d'etre joli, pratique et homogene".
-  Two full-screen modals with the same job and two different implementations of every part of it:
-  `shared/MediaLightbox.svelte` (417 lines) and `shared/PdfViewerModal.svelte` (~380). **The
-  gestures are the concrete debt**: the lightbox has a MATURE pinch/pan - `zoomAt` with a focal
-  point, clamped translation, drag panning, wheel zoom, a percentage readout - while the PDF reader
-  had none at all until 2026-08-07. **The START of the shared gesture now EXISTS and is the thing to
-  build on, not to redo**: `utils/pinchZoom.ts` (pure, 16 tests) carries `focalScroll`,
-  `nearestStepIndex` and the touch geometry, and the PDF reader consumes it - the user reported the
-  same day that pinching zoomed "pas a l'endroit qu'on veut", which was the missing focal point, and
-  it is fixed on both halves of the gesture (live `transform-origin`, then a scroll correction after
-  `tick()`). Reasoning and the MiGallery equivalence are in
-  [posts > the pinch](docs/wiki/frontend/modules/posts.md#the-pinch-and-why-it-needs-a-focal-point).
-  **What is still owed is the UNIFICATION**, and the real difference to respect while doing it: a
-  photo is one bitmap that may be scaled continuously about its centre, a PDF page is RE-RASTERISED
-  per zoom level (sharp text is the whole reason pages are not upscaled) and lives in a SCROLLING
-  column, so the shared gesture must expose a continuous live scale AND a settle callback the PDF
-  binds to its step list - a single translate model cannot serve both. Chrome to share besides: the
-  header (title, page/percentage readout, zoom pair, download, close), the safe-area padding, the
-  backdrop + focus trap + Escape, and the download button routing through `utils/fileDownload.ts`.
-  **Drag panning is still missing on the PDF at zoom > 1** (the scroll container is the only way to
-  move), which the shared gesture should bring.
 
 **Known and deliberately NOT a WP yet** (do not "fix" these by reflex):
 
@@ -541,7 +508,12 @@ carry in the head:
   with a `MessageChannel` message; a timer fallback is clamped to ~1 Hz in the background.
 - A deadline's SCOPE is part of its meaning: one budget over a paginated catch-up is a budget the
   devices that most need it can never meet, and an all-or-nothing pull makes each failure bigger than
-  the last. Per page, ingested and ACKed as it lands - partial progress must be kept.
+  the last. Per page, ingested and ACKed as it lands - partial progress must be kept. Verified on
+  hardware 2026-08-11 (WP-PENDING-1): 1 100 sends into a parked phone, two pages, a `Drain start`
+  between them and two ACK steps server-side. **A verification of a STRUCTURAL fix must not claim
+  the ORIGINAL failure**: the run's backlog was well inside the old 10 s budget, so it establishes
+  partial progress and nothing about the timeout - say which, or the next reader believes more than
+  was measured. [chat-delivery](docs/wiki/services/chat-delivery.md).
 - MLS gives no echo of your OWN message, so the sender's optimistic update is the only writer it
   gets: apply it in memory AND persist it (`persistLocalMutation`), or it dies at the next load.
 - A UI buffer placed IN FRONT of a persistence call is a persistence bug, not a rendering choice:
@@ -644,6 +616,20 @@ prompt fields are all on those pages. What must not be forgotten between them:
   anything that later resolves the real value loses to it - and a module-level cache re-renders
   nothing when it warms, so whether a user ever sees the truth depends on cache timing. Return the
   absence (`peekUserDisplayName` -> `null`, or an explicit `*Resolved` flag), never the label.
+- **TWO COPIES OF A DIALOG DO NOT STAY IDENTICAL, THEY STAY PLAUSIBLE.** The lightbox and the PDF
+  reader each looked right alone and disagreed on what no single-file review can see: a raw
+  `aria-label="Fermer"` beside `m.common_close_label()`, plus `"Suivant"` and `"Image {n}"`, and a
+  `z-[300]` beside a `z-300`. `shared/FullScreenViewer.svelte` now owns the portal, backdrop, card,
+  header, close, safe areas, focus trap and Escape (WP-VIEWER-1). It deliberately does NOT own the
+  content area: `lockTouch` (`touch-action: none`) is right for one bitmap and would kill the
+  one-finger scroll a PDF is READ with, and a prop choosing between the two layouts would put the
+  knowledge of both viewers into the component meant to know neither.
+  [posts](docs/wiki/frontend/modules/posts.md).
+- A shared GESTURE is shared as arithmetic, not as a component: `pinchZoom.ts` carries both models -
+  the global translate for one bitmap, the anchor for a paged column - and they are NOT
+  interchangeable. `zoomAboutPivot` RESETS rather than clamps at the minimum scale, because a clamp
+  leaves a photo wherever the gesture ended whenever the maths lands inside the bounds, and "unzoom
+  puts it back" is the one thing a user may assume.
 - French inclusive writing and elided forms defeat a TLD-shape heuristic for "this looks like a
   domain" (`.es`/`.it`/`.re`/`.ne` collide with "auteur.rice"/"cher.e.s"-style endings) - an exact
   WHITELIST of real hosts sidesteps the ambiguity entirely instead of trying to out-narrow it

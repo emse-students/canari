@@ -1,11 +1,19 @@
 <script lang="ts">
+  /**
+   * Full-screen viewer for one image or video, with pinch/wheel zoom and drag panning.
+   *
+   * The content is a single bitmap, so the whole zoom is one CSS transform on one wrapper and the
+   * arithmetic that keeps the pinched point still lives in `utils/pinchZoom.ts` beside the PDF
+   * reader's - see there for why the two viewers need two different models and share one module.
+   * Everything that is not the gesture (portal, backdrop, card, header, close) is
+   * {@link FullScreenViewer}.
+   */
   import type { Snippet } from 'svelte';
-  import { ChevronLeft, ChevronRight, X } from '@lucide/svelte';
-  import { portal } from '$lib/actions/portal';
-  import { focusTrap } from '$lib/actions/focusTrap.svelte';
-  import { fade, fly } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import { ChevronLeft, ChevronRight } from '@lucide/svelte';
+  import { fade } from 'svelte/transition';
+  import { clampTranslation, zoomAboutPivot } from '$lib/utils/pinchZoom';
   import { m } from '$lib/paraglide/messages';
+  import FullScreenViewer from './FullScreenViewer.svelte';
 
   interface Props {
     open?: boolean;
@@ -82,46 +90,67 @@
   }
 
   /**
-   * Clamp (tx, ty) so the image never scrolls past its own edges.
-   * When the image is smaller than the viewport it snaps to center.
+   * The live geometry the translation must stay inside, or `undefined` while nothing is laid out.
+   *
+   * Measured here and passed to the pure clamp rather than measured inside it: the DOM read is the
+   * one part that cannot be tested without a browser, so it is kept as small as possible.
    */
-  function constrain(newTx: number, newTy: number): [number, number] {
-    if (!transformEl || scale <= 1) return [0, 0];
-    const parent = transformEl.parentElement;
-    if (!parent) return [newTx, newTy];
-    const elW = transformEl.offsetWidth;
-    const elH = transformEl.offsetHeight;
-    const pW = parent.clientWidth;
-    const pH = parent.clientHeight;
-    const maxTx = Math.max(0, (elW * scale - pW) / 2);
-    const maxTy = Math.max(0, (elH * scale - pH) / 2);
-    return [Math.max(-maxTx, Math.min(maxTx, newTx)), Math.max(-maxTy, Math.min(maxTy, newTy))];
+  function panBounds() {
+    const parent = transformEl?.parentElement;
+    if (!transformEl || !parent) return undefined;
+    return {
+      contentWidth: transformEl.offsetWidth,
+      contentHeight: transformEl.offsetHeight,
+      viewportWidth: parent.clientWidth,
+      viewportHeight: parent.clientHeight,
+    };
+  }
+
+  /** Applies a drag delta, clamped to the content's own edges. */
+  function panTo(nextTx: number, nextTy: number) {
+    const bounds = panBounds();
+    if (!bounds) {
+      tx = nextTx;
+      ty = nextTy;
+      return;
+    }
+    [tx, ty] = clampTranslation(nextTx, nextTy, { ...bounds, scale });
   }
 
   /** Zoom around a pivot point expressed in element-center coordinates. */
   function zoomAt(newScale: number, pivotX: number, pivotY: number) {
-    newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
-    const ratio = newScale / scale;
-    const rawTx = tx * ratio + pivotX * (1 - ratio);
-    const rawTy = ty * ratio + pivotY * (1 - ratio);
-    scale = newScale;
-    if (scale <= MIN_SCALE) {
-      tx = 0;
-      ty = 0;
-    } else {
-      [tx, ty] = constrain(rawTx, rawTy);
-    }
+    const next = zoomAboutPivot({
+      scale,
+      tx,
+      ty,
+      nextScale: newScale,
+      pivotX,
+      pivotY,
+      minScale: MIN_SCALE,
+      maxScale: MAX_SCALE,
+      bounds: panBounds(),
+    });
+    scale = next.scale;
+    tx = next.tx;
+    ty = next.ty;
     showIndicator();
+  }
+
+  /** Pivot for a pointer event, in the transform wrapper's centre-relative coordinates. */
+  function pivotOf(e: { clientX: number; clientY: number }, el: HTMLElement) {
+    const rect = el.getBoundingClientRect();
+    return {
+      x: e.clientX - rect.left - rect.width / 2,
+      y: e.clientY - rect.top - rect.height / 2,
+    };
   }
 
   // Wheel zoom handler (registered non-passively via $effect)
   function handleWheel(e: WheelEvent) {
     e.preventDefault();
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const px = e.clientX - rect.left - rect.width / 2;
-    const py = e.clientY - rect.top - rect.height / 2;
+    const pivot = pivotOf(e, e.currentTarget as HTMLElement);
     const delta = e.deltaY * (e.deltaMode === 1 ? 20 : 1);
-    zoomAt(scale * Math.pow(0.999, delta), px, py);
+    zoomAt(scale * Math.pow(0.999, delta), pivot.x, pivot.y);
   }
 
   // Attach non-passive wheel + touch listeners
@@ -158,18 +187,18 @@
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
         );
-        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        const rect = el!.getBoundingClientRect();
-        zoomAt(
-          scale * (dist / lastPinchDist),
-          midX - rect.left - rect.width / 2,
-          midY - rect.top - rect.height / 2
+        const pivot = pivotOf(
+          {
+            clientX: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+            clientY: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+          },
+          el!
         );
+        zoomAt(scale * (dist / lastPinchDist), pivot.x, pivot.y);
         lastPinchDist = dist;
       } else if (isDragging && e.touches.length === 1) {
         e.preventDefault();
-        [tx, ty] = constrain(
+        panTo(
           dragStartTx + e.touches[0].clientX - dragStartX,
           dragStartTy + e.touches[0].clientY - dragStartY
         );
@@ -208,10 +237,7 @@
 
   function handlePointerMove(e: PointerEvent) {
     if (!isDragging || e.pointerType === 'touch') return;
-    [tx, ty] = constrain(
-      dragStartTx + e.clientX - dragStartX,
-      dragStartTy + e.clientY - dragStartY
-    );
+    panTo(dragStartTx + e.clientX - dragStartX, dragStartTy + e.clientY - dragStartY);
   }
 
   function handlePointerUp(e: PointerEvent) {
@@ -219,7 +245,7 @@
     isDragging = false;
   }
 
-  // Double-click: toggle between 1× and 2.5×
+  // Double-click: toggle between 1x and 2.5x
   function handleDoubleClick(e: MouseEvent) {
     e.stopPropagation();
     const target = e.target as HTMLElement;
@@ -227,27 +253,20 @@
     if (isZoomed) {
       resetZoom();
     } else {
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      zoomAt(2.5, e.clientX - rect.left - rect.width / 2, e.clientY - rect.top - rect.height / 2);
+      const pivot = pivotOf(e, e.currentTarget as HTMLElement);
+      zoomAt(2.5, pivot.x, pivot.y);
     }
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
+  function handleArrowKeys(e: KeyboardEvent) {
+    if (isZoomed) return;
+    if (e.key === 'ArrowLeft' && showPrev && onPrev) {
       e.preventDefault();
-      if (isZoomed) resetZoom();
-      else onClose();
-      return;
+      handlePrev();
     }
-    if (!isZoomed) {
-      if (e.key === 'ArrowLeft' && showPrev && onPrev) {
-        e.preventDefault();
-        handlePrev();
-      }
-      if (e.key === 'ArrowRight' && showNext && onNext) {
-        e.preventDefault();
-        handleNext();
-      }
+    if (e.key === 'ArrowRight' && showNext && onNext) {
+      e.preventDefault();
+      handleNext();
     }
   }
 
@@ -265,153 +284,115 @@
   });
 </script>
 
-<svelte:window onkeydown={open ? handleKeydown : undefined} />
+<svelte:window onkeydown={open ? handleArrowKeys : undefined} />
 
 {#if open}
-  <div use:portal>
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- Backdrop: click outside the card to close. Escape key is handled by the inner dialog. -->
+  <FullScreenViewer
+    {ariaLabel}
+    {onClose}
+    onEscape={() => (isZoomed ? resetZoom() : onClose())}
+    lockTouch
+  >
+    {#snippet headerLead()}
+      <p class="min-w-0 flex-1 truncate text-xs sm:text-sm opacity-80">{title}</p>
+    {/snippet}
+
+    {#snippet headerActions()}
+      {#if onDownload}
+        <button
+          type="button"
+          class="px-3 h-9 rounded-lg bg-white/15 hover:bg-white/25 transition-colors text-sm font-semibold"
+          onclick={(e) => {
+            e.stopPropagation();
+            onDownload!();
+          }}
+        >
+          {m.common_download_label()}
+        </button>
+      {/if}
+    {/snippet}
+
     <div
-      role="presentation"
-      class="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-lg sm:p-4"
-      style="touch-action: none;"
-      onclick={onClose}
+      class="relative flex flex-1 min-h-0 w-full items-center justify-center pointer-events-none overflow-hidden"
     >
-      <!-- Floating card: full-screen on mobile, bounded on desktop -->
+      {#if showPrev && onPrev}
+        <button
+          type="button"
+          class="absolute left-2 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-colors pointer-events-auto"
+          onclick={(e) => {
+            e.stopPropagation();
+            handlePrev();
+          }}
+          aria-label={m.media_lightbox_prev_aria()}
+        >
+          <ChevronLeft size={26} strokeWidth={2.5} />
+        </button>
+      {/if}
+
+      <!-- Transform wrapper: zoom + pan target -->
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={ariaLabel}
-        tabindex="-1"
-        use:focusTrap
-        class="relative flex flex-col w-full text-white overflow-hidden
-               h-dvh sm:h-[90dvh] sm:max-w-[1400px]
-               sm:rounded-xl sm:border sm:border-white/8
-               bg-black/20 sm:bg-white/[0.04] sm:backdrop-blur-2xl
-               sm:shadow-[0_20px_60px_rgba(0,0,0,0.7)]"
-        style="touch-action: none;"
+        bind:this={transformEl}
+        role="presentation"
+        class="relative z-10 flex h-full w-full items-center justify-center pointer-events-auto select-none"
+        style="transform: translate({tx}px, {ty}px) scale({scale}); transform-origin: center; will-change: transform; touch-action: none; cursor: {isDragging
+          ? 'grabbing'
+          : isZoomed
+            ? 'grab'
+            : 'zoom-in'};"
         onclick={(e) => e.stopPropagation()}
-        transition:fly={{ y: 18, duration: 240, easing: cubicOut }}
+        ondblclick={handleDoubleClick}
+        onpointerdown={handlePointerDown}
+        onpointermove={handlePointerMove}
+        onpointerup={handlePointerUp}
+        onpointercancel={handlePointerUp}
       >
-        <!-- Header -->
-        <div
-          class="flex shrink-0 items-center justify-between gap-3 px-3 sm:px-4 pb-2 sm:pb-3 border-b border-white/8 bg-gradient-to-b from-black/30 to-transparent"
-          style="padding-top: max(0.75rem, env(safe-area-inset-top, 0.75rem));"
-        >
-          <p class="min-w-0 flex-1 truncate text-xs sm:text-sm opacity-80">{title}</p>
-          <div class="flex items-center gap-2 shrink-0">
-            {#if onDownload}
-              <button
-                type="button"
-                class="px-3 h-9 rounded-lg bg-white/15 hover:bg-white/25 transition-colors text-sm font-semibold"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onDownload!();
-                }}
-              >
-                {m.common_download_label()}
-              </button>
-            {/if}
-            <button
-              type="button"
-              class="p-2 rounded-lg bg-white/15 hover:bg-white/25 transition-colors"
-              onclick={(e) => {
-                e.stopPropagation();
-                onClose();
-              }}
-              aria-label="Fermer"
-            >
-              <X size={22} strokeWidth={2.5} />
-            </button>
-          </div>
-        </div>
-
-        <!-- Content area -->
-        <div
-          class="relative flex flex-1 min-h-0 w-full items-center justify-center pointer-events-none overflow-hidden"
-        >
-          {#if showPrev && onPrev}
-            <button
-              type="button"
-              class="absolute left-2 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-colors pointer-events-auto"
-              onclick={(e) => {
-                e.stopPropagation();
-                handlePrev();
-              }}
-              aria-label={m.media_lightbox_prev_aria()}
-            >
-              <ChevronLeft size={26} strokeWidth={2.5} />
-            </button>
-          {/if}
-
-          <!-- Transform wrapper: zoom + pan target -->
-          <div
-            bind:this={transformEl}
-            role="presentation"
-            class="relative z-10 flex h-full w-full items-center justify-center pointer-events-auto select-none"
-            style="transform: translate({tx}px, {ty}px) scale({scale}); transform-origin: center; will-change: transform; touch-action: none; cursor: {isDragging
-              ? 'grabbing'
-              : isZoomed
-                ? 'grab'
-                : 'zoom-in'};"
-            onclick={(e) => e.stopPropagation()}
-            ondblclick={handleDoubleClick}
-            onpointerdown={handlePointerDown}
-            onpointermove={handlePointerMove}
-            onpointerup={handlePointerUp}
-            onpointercancel={handlePointerUp}
-          >
-            {@render children?.()}
-          </div>
-
-          {#if showNext && onNext}
-            <button
-              type="button"
-              class="absolute right-2 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-colors pointer-events-auto"
-              onclick={(e) => {
-                e.stopPropagation();
-                handleNext();
-              }}
-              aria-label="Suivant"
-            >
-              <ChevronRight size={26} strokeWidth={2.5} />
-            </button>
-          {/if}
-
-          <!-- Zoom level indicator -->
-          {#if showZoomIndicator}
-            <div
-              transition:fade={{ duration: 200 }}
-              class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 px-3 py-1 rounded-full bg-black/60 backdrop-blur-sm text-white/90 text-xs font-semibold pointer-events-none tabular-nums"
-            >
-              {scaleLabel}
-            </div>
-          {/if}
-        </div>
-
-        <!-- Dots navigation -->
-        {#if dotCount > 1 && onDotSelect}
-          <div
-            class="flex shrink-0 justify-center gap-1.5 pt-2 pointer-events-auto"
-            style="padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0.5rem));"
-          >
-            {#each { length: dotCount } as _, i (i)}
-              <button
-                type="button"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  resetZoom();
-                  onDotSelect!(i);
-                }}
-                class="w-2 h-2 rounded-full transition-all {i === dotIndex
-                  ? 'bg-white'
-                  : 'bg-white/40'}"
-                aria-label="Image {i + 1}"
-              ></button>
-            {/each}
-          </div>
-        {/if}
+        {@render children?.()}
       </div>
+
+      {#if showNext && onNext}
+        <button
+          type="button"
+          class="absolute right-2 z-20 p-2.5 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-colors pointer-events-auto"
+          onclick={(e) => {
+            e.stopPropagation();
+            handleNext();
+          }}
+          aria-label={m.media_lightbox_next_aria()}
+        >
+          <ChevronRight size={26} strokeWidth={2.5} />
+        </button>
+      {/if}
+
+      <!-- Zoom level indicator -->
+      {#if showZoomIndicator}
+        <div
+          transition:fade={{ duration: 200 }}
+          class="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 px-3 py-1 rounded-full bg-black/60 backdrop-blur-sm text-white/90 text-xs font-semibold pointer-events-none tabular-nums"
+        >
+          {scaleLabel}
+        </div>
+      {/if}
     </div>
-  </div>
+
+    {#snippet footer()}
+      {#if dotCount > 1 && onDotSelect}
+        <div class="flex justify-center gap-1.5 pt-2 pointer-events-auto">
+          {#each { length: dotCount } as _, i (i)}
+            <button
+              type="button"
+              onclick={(e) => {
+                e.stopPropagation();
+                resetZoom();
+                onDotSelect!(i);
+              }}
+              class="w-2 h-2 rounded-full transition-all {i === dotIndex
+                ? 'bg-white'
+                : 'bg-white/40'}"
+              aria-label={m.media_lightbox_dot_aria({ index: i + 1 })}
+            ></button>
+          {/each}
+        </div>
+      {/if}
+    {/snippet}
+  </FullScreenViewer>
 {/if}
