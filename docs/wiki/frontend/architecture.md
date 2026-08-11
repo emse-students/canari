@@ -139,6 +139,21 @@ The fix is to take it out of the ancestor: render the panel at the document leve
 clamps it to the viewport, and re-runs on scroll and resize. `matchAnchorWidth` exists because
 `w-full` no longer resolves once the panel is portalled out of its container.
 
+**Portalling breaks the accessible relationship too, and nothing warns.** Once the panel is no longer
+a descendant of its trigger, `aria-expanded` on that trigger announces "expanded" without naming what
+expanded, and there is no DOM structure left for a screen reader to infer it from — so the panel
+needs an `id` and the button an `aria-controls` pointing at it. Found on `AdminNavGroup` while a
+harness check went looking for exactly that back-reference, failed to find it, and reported a working
+dropdown as clipped: the selector was wrong *and* the thing it looked for should have existed.
+
+**It is a DISCLOSURE, not `role="menu"`.** The distinction is a contract, not a label: the menu role
+promises arrow-key roving focus, Home/End and typeahead, and claiming it while offering none of them
+describes an interaction model the component does not honour — worse for a screen-reader user than
+the plain, accurate one. These are navigation links; `aria-expanded` + `aria-controls` says exactly
+what is true. What a disclosure *does* owe is **Escape**, closing and returning focus to the trigger:
+the outside-click backdrop only serves a pointer, and a keyboard user who opened a portalled panel
+has nothing near their focus to get back to.
+
 ### An API helper that ends in `res.json()` throws on a void response
 
 A `DELETE` or a void `POST` answers `204`, or `200` with an empty body - and `res.json()` on an

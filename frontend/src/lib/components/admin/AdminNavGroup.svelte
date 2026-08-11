@@ -27,6 +27,18 @@
   let buttonEl = $state<HTMLElement | null>(null);
   let panelEl = $state<HTMLElement | null>(null);
 
+  /**
+   * Ties the button to the panel it reveals, which is the only thing that makes `aria-expanded`
+   * mean anything: on its own it announces "expanded" without naming what expanded, and once the
+   * panel is PORTALLED there is no DOM relationship left for a reader to infer one from either.
+   *
+   * A DISCLOSURE, deliberately not `role="menu"`. These are navigation links, not commands, and the
+   * menu role is a contract - it promises arrow-key roving focus, Home/End, and typeahead, none of
+   * which exist here. Claiming it would announce an interaction model the component does not honour,
+   * which is worse for a screen-reader user than the plain, accurate one.
+   */
+  const panelId = $props.id();
+
   // The nav bar scrolls horizontally (`overflow-x-auto`), which forces the browser to clip the
   // vertical axis too - an `absolute` panel anchored inside it never becomes visible, and every
   // page is itself wrapped in `.page-scroll-wrap` (`will-change: transform`), which makes IT the
@@ -38,7 +50,23 @@
     const unbind = bindFixedPopover(panelEl, { anchor: () => buttonEl, estimatedHeight: 220 });
     return unbind;
   });
+
+  /**
+   * Escape closes, and focus goes back to the button that opened it.
+   *
+   * The backdrop already covers a mouse, but a keyboard user who opened this has no pointer to click
+   * "outside" with - and once portalled, the panel is not a DOM descendant of the button either, so
+   * tabbing out of it does not return anywhere near where they started.
+   */
+  function handleKeydown(e: KeyboardEvent) {
+    if (!open || e.key !== 'Escape') return;
+    e.preventDefault();
+    open = false;
+    buttonEl?.focus();
+  }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="shrink-0">
   <button
@@ -46,6 +74,7 @@
     type="button"
     onclick={() => (open = !open)}
     aria-expanded={open}
+    aria-controls={panelId}
     class="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors
     {active
       ? 'bg-cn-yellow text-cn-ink shadow-sm'
@@ -63,13 +92,14 @@
     <div
       use:portal
       role="presentation"
-      class="fixed inset-0 z-[190]"
+      class="fixed inset-0 z-190"
       onclick={() => (open = false)}
     ></div>
     <div
       bind:this={panelEl}
+      id={panelId}
       use:portal
-      class="fixed z-[200] min-w-52 rounded-2xl border border-black/8 dark:border-white/10 bg-cn-surface/95 backdrop-blur-xl shadow-lg p-1.5 space-y-0.5"
+      class="fixed z-200 min-w-52 rounded-2xl border border-black/8 dark:border-white/10 bg-cn-surface/95 backdrop-blur-xl shadow-lg p-1.5 space-y-0.5"
     >
       {#each items as item (item.href)}
         <a

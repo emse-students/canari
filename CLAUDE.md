@@ -616,6 +616,13 @@ prompt fields are all on those pages. What must not be forgotten between them:
   anything that later resolves the real value loses to it - and a module-level cache re-renders
   nothing when it warms, so whether a user ever sees the truth depends on cache timing. Return the
   absence (`peekUserDisplayName` -> `null`, or an explicit `*Resolved` flag), never the label.
+- **PORTALLING A DROPDOWN BREAKS ITS ACCESSIBLE RELATIONSHIP AS WELL AS ITS POSITIONING, AND
+  NOTHING WARNS.** `aria-expanded` on a trigger whose panel is no longer its descendant announces
+  "expanded" and names nothing - it needs an `id` + `aria-controls`. And the right role is a
+  DISCLOSURE, never `role="menu"`: the menu role promises arrow keys, Home/End and typeahead, so
+  claiming it for a set of navigation links describes an interaction the component does not honour.
+  What a disclosure does owe is Escape, closing AND returning focus to the trigger - the outside
+  click backdrop only serves a pointer. [architecture](docs/wiki/frontend/architecture.md).
 - **TWO COPIES OF A DIALOG DO NOT STAY IDENTICAL, THEY STAY PLAUSIBLE.** The lightbox and the PDF
   reader each looked right alone and disagreed on what no single-file review can see: a raw
   `aria-label="Fermer"` beside `m.common_close_label()`, plus `"Suivant"` and `"Image {n}"`, and a
