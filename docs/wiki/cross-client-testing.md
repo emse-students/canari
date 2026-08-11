@@ -53,8 +53,13 @@ meet.
 A `passed` check drops to `to-revalidate` when a commit touches its area or on a release. **The
 whole campaign is `to-revalidate` as of 2026-08-10**: the repair mechanism every phase after MSG
 observes was deleted and rebuilt, so every earlier HEAL observation was made against a code path
-that no longer exists. The user's decision is to **re-run from the start (post-setup)** once the
-roadmap is clear.
+that no longer exists.
+
+**Every state below is therefore a HISTORY, not a plan.** The roadmap is clear and no Work Package
+is open, so the decision taken on 2026-08-11 is to re-run the campaign in full, to the end, fixing
+what comes up as it comes up - see [the run plan](#the-run-plan-for-the-full-re-run). What each row
+still says is what that check has cost and taught, which is why it is worth reading before running
+it again; it is not a claim that the check need not run.
 
 ---
 
@@ -430,18 +435,68 @@ Two rules for any destructive cleanup script, both learnt by nearly getting them
   server call), so a loop counting clicks reports success for a no-op. Poll until the entry actually
   leaves the sidebar.
 
-## What is owed, in order
+## The run plan for the full re-run
 
-1. **Four HEAL checks** - HEAL-W1 through W4, section above. W4 has never been exercised anywhere.
-2. **The phone**: one background/foreground cycle, watching the reconnect watchdogs re-arm.
-3. **The remaining Work Packages** in `CLAUDE.md`, P1s first.
-4. **Convergence measurements**: the per-thread marker diff between W1 and W2; the queued-message
-   counts on prod against what each client shows; `DeviceGroupMembership` against live key packages
-   (the WP-GHOST-1 predicate - the platform held zero violations when last checked, 2026-08-10).
-5. **Then the re-run from the start**, post-setup.
+Decided by the user 2026-08-11: **re-run everything, to the end, fixing what comes up as it comes
+up.** No Work Package is open on any repository, so nothing competes with it. The order below is not
+a preference - each step is entered only once the one before it has proved something the next one
+assumes.
+
+**Pre-flight, and none of it is a check.** A run that skips this measures the previous build.
+
+| Gate | Why it is a gate | Measured 2026-08-11 |
+| --- | --- | --- |
+| Prod version + `minClientVersion` | A client below the floor is bounced, and the run would be measuring the bounce | `0.13.1` / `0.13.0`, maintenance off |
+| `git fetch` | Another contributor pushes to `main`; the local tree is not the deployed truth | in sync at `aefdb81a` |
+| `bundle-id.mjs` on W1 and W2 | A browser left open across a deploy runs yesterday's code and logs are read as if it did not | owed at the start of the run |
+| `pin.mjs --port 9224 --account owner` | A launch, kill, reboot, radio cycle or `install -r` re-locks the PIN | owed - both browsers were relaunched on 2026-08-11 |
+| A1 present and DEBUGGABLE | `run-as` is how every at-rest assertion reads the phone; a release build refuses | `fr.emse.canari` 0.13.1, DEBUGGABLE, `mls.bin` 1 618 509 B, logged in as **owner** |
+| The two profiles hold their identity | `chrome-w1` / `chrome-w2` ARE the devices | fingerprinted, unchanged across the move |
+
+**Then, in this order.**
+
+1. **MSG**, all eleven. The baseline exists so that every later failure can be told from a rig that
+   was already broken - and it must be re-proved in the SAME session, not cited from a previous one.
+2. **FWD**, all five. It is where the campaign's central defect lives, and it needs nothing but MSG.
+3. **TAB**, all seven - including TAB-1 and TAB-7, which have never run.
+4. **LIFE** then **NOTIF**. Both need A1 and a logcat capture running; NOTIF-2/3/5/6 have never run.
+   LIFE-5 needs the user once, for the unlock pattern after the reboot.
+5. **HEAL**, W1 through W4, and only here: it rewinds W1's ratchet in EVERY group, so it must not
+   precede a check that would then blame the app for a lossy link. Take the `mlsdb.mjs` snapshot
+   first, `bundle-id.mjs` first, record which device answered, and let the teardown restore the
+   invariant rather than a snapshot. W4 has no prior art on either client.
+6. **MULTI**, six checks, none of which has ever run.
+7. **PIN**, ten checks, none of which has ever run. After HEAL because PIN-3 probes the lockout rule
+   and a lockout blocks everything downstream.
+8. **CORRUPT**, last, because it destroys state and SETUP-8's archive is the only way back that does
+   not cost a re-enrolment.
+
+**Reconciliation runs after every phase, not once at the end.** `recon.mjs` is the only thing that
+can SEE this codebase's loss class, and a diff taken only at the end cannot say which phase opened
+it.
+
+**Convergence measurements**, once the phases are through: the per-thread marker diff between W1 and
+W2; the queued-message counts on prod against what each client shows; `DeviceGroupMembership`
+against live key packages (the WP-GHOST-1 predicate - zero violations when last checked 2026-08-10).
 
 Small items owed, one check each: the backup export's Tauri branch; the `LinkPreviewCard` case of
 the link-safety check; the mobile pass of the OIDC custom-tab change.
 
 **Anything needing a logout and re-login is last**, and needs the user: the owner account's 2FA
 cannot be answered by the harness.
+
+**Then clean up.** The campaign creates groups, devices and backlogs on the production database that
+the NEXT run then measures and cannot tell from real traffic. The two rules a destructive cleanup
+script must follow are in the debris section above.
+
+### State to carry into the run, measured 2026-08-11
+
+- **Seven awaiting-history markers are already set** - three on W1, four on W2. Each one re-solicits
+  history on the first reconnect, so they will fire during the very first check of the run and must
+  not be read as that check's doing. Whether they are legitimate pending state or residue of
+  WP-HISTBANNER-1 is itself worth settling before MSG-1.
+- W1 holds 6 conversations / 1 880 messages, W2 holds 1 / 1 804. A HEAL check that rewinds W1
+  rewinds all six.
+- `heal-w2.mjs`'s verdict was rewritten on 2026-08-11 and its old form **could not pass**: it
+  required a branch four runs proved unreachable. It now gates on the break having taken, and asks
+  the question the `1e8208d6` fix created - see the HEAL-W2 section above.
