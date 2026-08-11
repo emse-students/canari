@@ -184,8 +184,16 @@ export function pauseConnectionImpl(ctx: SessionContext): void {
  * closed it: a successful connect resets the attempt COUNT but not the circuit, and the watchdog
  * reaches for `scheduleReconnectImpl`, which returns early while it is open - so the one component
  * whose job is to notice a dead socket was disarmed by the same flag that made noticing matter.
- * Returning to the foreground is precisely the evidence that conditions may have changed, which is
- * what makes it the right seam to clear it from.
+ *
+ * THIS IS THE ONLY SEAM THAT CLOSES THE CIRCUIT, AND IT HAS TWO TRIGGERS, because the circuit's own
+ * message promises two: retries pause "until the app returns to the foreground or the network
+ * changes". The foreground half was built first; the network half was a promise nothing kept - an
+ * `online` event reached `scheduleReconnectImpl`, which returns early precisely while the circuit is
+ * open, so the flag cut the wire to its own reset a second time, on the one event most likely to
+ * mean the outage is over. Both triggers now call THIS function
+ * (`ChatBackgroundService.handleOnlineResume`), rather than each deciding for itself what to reset:
+ * a device whose wifi returns while the user is still looking at the app recovers without being
+ * backgrounded first.
  */
 export async function resumeConnectionImpl(
   ctx: SessionContext,

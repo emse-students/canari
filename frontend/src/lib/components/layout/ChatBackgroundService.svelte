@@ -1104,7 +1104,29 @@
       }
     };
 
+    /**
+     * The network coming back is evidence conditions changed, exactly like a foreground
+     * transition - and it must reach the same seam.
+     *
+     * The reconnect circuit opens after MAX_RECONNECT_ATTEMPTS and its own message says retries
+     * are paused "until the app returns to the foreground OR THE NETWORK CHANGES". The first half
+     * is `handleVisibilityChange` above. The second half did not exist: `online` reached
+     * `scheduleReconnect` (through the MLS service's own listener), which returns early precisely
+     * while the circuit is open - so the flag cut the wire to its own reset, again, on the one
+     * event most likely to mean the outage is over. A phone whose wifi returned while the user was
+     * still looking at the app stayed disconnected until they left it and came back.
+     *
+     * `resumeConnection` is idempotent here: it clears the circuit, re-arms the watchdogs, and
+     * returns immediately if the socket is already up.
+     */
+    const handleOnlineResume = () => {
+      if (!globalSession.isLoggedIn) return;
+      appendLog('[LIFECYCLE] Network back online - re-arming watchdogs and reconnecting...');
+      void globalSession.resumeConnection(sessionCb());
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnlineResume);
 
     const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
 
@@ -1142,6 +1164,7 @@
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnlineResume);
       unsubscribeTabMessages();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);
