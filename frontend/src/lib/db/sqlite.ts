@@ -16,6 +16,7 @@ import {
 } from './outboxCodec';
 import { SCHEMA_VERSION, isFreshDatabase, legacyBlobPurgeStatement } from './sqliteMigrations';
 import { fromMessagePayload, toMessagePayload } from './messagePayload';
+import { MESSAGE_ROWS_PER_STATEMENT, chunk, messageInsertSql } from './sqliteBatch';
 
 function rowTimestampMs(raw: unknown): number {
   return readStoredTimestampMs(raw) ?? 0;
@@ -66,23 +67,6 @@ function base64ToUint8(val: unknown): Uint8Array {
 export class SqliteStorage implements IStorage {
   private db: any = null;
   private readonly dbPath: string;
-  /** Serialisation chain for transactional sections (see runExclusive). */
-  private txnChain: Promise<unknown> = Promise.resolve();
-
-  /**
-   * Serialises `BEGIN…COMMIT` sections. The SQL plugin has a single connection and SQLite
-   * does not nest transactions: two concurrent transactions short-circuit each other
-   * ("cannot commit - no transaction is active" when one COMMITs while the other is active).
-   * Every transactional section must go through here to execute one at a time.
-   */
-  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.txnChain.then(fn, fn);
-    this.txnChain = run.then(
-      () => undefined,
-      () => undefined
-    );
-    return run;
-  }
 
   /** Create a storage instance for the given user. Call init() before using. */
   constructor(userId: string) {
@@ -276,30 +260,27 @@ export class SqliteStorage implements IStorage {
       })
     );
 
-    // Wrap all inserts in a transaction for atomicity and performance.
+    // ONE STATEMENT PER BATCH, and it is not an optimisation - see `sqliteBatch.ts`. The plugin
+    // pools connections, so a `BEGIN`/`COMMIT` pair issued as separate `execute` calls is not
+    // guaranteed to reach the same connection: measured on device, two concurrent `BEGIN`s both
+    // succeeded and a following `ROLLBACK` reported "no transaction is active". Under load that
+    // failed real writes ("database is locked", "cannot start a transaction within a transaction"),
+    // and a failed write here is a message the sender does not keep.
+    //
     // Binary data stored as base64 TEXT: passing number[] would cause the plugin to
     // serialise as JSON "[1,2,3]" (not a BLOB), which is unreadable after restart.
-    await this.runExclusive(async () => {
-      await this.db.execute('BEGIN');
-      try {
-        for (const item of encryptedMessages) {
-          await this.db.execute(
-            'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text) VALUES ($1, $2, $3, $4, $5)',
-            [
-              item.msg.id,
-              item.msg.conversationId,
-              item.msg.timestamp,
-              uint8ToBase64(item.encrypted.iv),
-              uint8ToBase64(item.encrypted.cipherText),
-            ]
-          );
-        }
-        await this.db.execute('COMMIT');
-      } catch (e) {
-        await this.db.execute('ROLLBACK');
-        throw e;
-      }
-    });
+    for (const batch of chunk(encryptedMessages, MESSAGE_ROWS_PER_STATEMENT)) {
+      await this.db.execute(
+        messageInsertSql(batch.length),
+        batch.flatMap((item) => [
+          item.msg.id,
+          item.msg.conversationId,
+          item.msg.timestamp,
+          uint8ToBase64(item.encrypted.iv),
+          uint8ToBase64(item.encrypted.cipherText),
+        ])
+      );
+    }
   }
 
   /** Decrypt and return all messages for `conversationId` sorted oldest-first; silently skips rows that fail decryption. */

@@ -106,6 +106,49 @@ on the three named buckets by name, never lists the app data directory. Same sha
 below: a destructive control reachable from a Settings page needs an allowlist of what it may
 touch, not a denylist of what to avoid.
 
+#### There is NO multi-statement transaction here, because the connection is not yours (WP-SQLTXN-1)
+
+`tauri-plugin-sql` opens the database with sqlx's `Pool::connect`, i.e. `PoolOptions::default()` and
+`max_connections = 10`. Each `db.execute(...)` is therefore its own **acquisition**: it takes a
+connection from the pool, runs one statement and gives it back. So
+
+```
+execute('BEGIN');  execute('INSERT …');  execute('COMMIT');
+```
+
+is three acquisitions that may land on three different connections. The transaction stays open on
+whichever connection began it - released back into the pool, still in a transaction - while the
+COMMIT reaches a connection that never began one.
+
+**Measured on device, 2026-08-11:** two `BEGIN`s issued concurrently on the same handle BOTH
+succeeded, and one of the two following `ROLLBACK`s answered `cannot rollback - no transaction is
+active`. That is the discriminator - on a single connection the second `BEGIN` would have failed
+with `cannot start a transaction within a transaction`.
+
+The damage is not theoretical. Under a multi-group MLS drain the app logged all three of
+
+| line | what it means |
+| --- | --- |
+| `cannot start a transaction within a transaction` | the acquired connection already carried a leaked transaction |
+| `cannot rollback - no transaction is active` | the recovery path landed somewhere clean |
+| `database is locked` | a leaked transaction held the write lock; **the next writer simply fails** |
+
+and the writers that failed were `[OUTBOX] Persist sent … failed` and `[OUTBOX] Enqueue failed` -
+i.e. a message the sender does not keep and an outbox entry that was never queued. A leaked
+transaction is also permanent: nothing closes it, so every later writer that draws that connection
+fails until the process restarts.
+
+**The rule: a statement is the largest unit of atomicity available.** One `execute` is one
+acquisition, and SQLite wraps a lone statement in its own implicit transaction, so a batch insert is
+built as a single multi-row `INSERT` (`db/sqliteBatch.ts`) rather than a loop inside `BEGIN`. A batch
+past the bound-parameter ceiling becomes several statements and is no longer atomic as a whole -
+acceptable **only** because every row is `INSERT OR REPLACE` under a key the caller already holds, so
+re-running converges. A torn `BEGIN`/`COMMIT` across two connections has no such property.
+
+Serialising in JavaScript does not help and was the original mistake: `runExclusive` ordered our own
+transactional sections but could not bind them to a connection, and any concurrent `select` could
+still be handed the one holding the open transaction.
+
 ### Opening the app with no network
 
 A cold start with biometrics enrolled, or a device-key vault from "stay signed in", unlocks with no

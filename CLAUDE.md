@@ -323,8 +323,26 @@ raising it first locks everyone out.
   `Uncaught (in promise) The resource id NNNN is invalid` - indistinguishable from a network failure
   by text alone.
 
+- \[ \] **WP-SQLTXN-1 (P1) - FIXED, the on-device verification is owed.** Found 2026-08-11 while
+  trying to verify WP-ECHO-1, in the noise of a run whose own verdict was VOID - the OBSERVATION
+  half again. `tauri-plugin-sql` pools connections, so `BEGIN`/INSERT/`COMMIT` issued as three
+  `execute` calls is three acquisitions on up to three connections; the leaked transaction then
+  fails every later writer with `database is locked`, permanently. Live consequences in the log:
+  `[OUTBOX] Persist sent … failed`, `[OUTBOX] Enqueue failed`. Proven, not inferred: two concurrent
+  `BEGIN`s both succeeded on the device (`probe-sql-pool.mjs`). Reasoning and the rule are in
+  [mobile > there is NO multi-statement transaction here](docs/wiki/frontend/mobile.md);
+  `db/sqliteBatch.ts` + 7 tests. **Owed:** a build carrying it on A1, then a heavy multi-group drain
+  with ZERO of the three SQLite error strings in the console. Do NOT re-derive the cause.
+
 - \[ \] **WP-ECHO-1 (P2) - the SENDER loses its own message across a reload. FIXED (`214592e5`);
-  the VERIFICATION is owed.** The loss is inside `addMessageToChat`: the `bulkIngestActive` early
+  the VERIFICATION is owed.** **Unit half DONE 2026-08-11**: `useMessaging.bulkIngest.svelte.test.ts`
+  pins the rule (own message rendered AND persisted inside a bulk window, and surviving both
+  unflushed discards), and 3 of its 4 tests fail when the fix's condition is reverted. **The device
+  half is VOID, not failed** - the first attempt counted 4 of 9 markers after a reload while a
+  multi-group catch-up was still draining, so "missing" could not be told from "not re-rendered
+  yet"; the user spotted it from the sync banner. A re-run needs continuous logcat capture (the ring
+  buffer overran within the run) and a QUIESCENCE GATE - no `Drain start` for N seconds - before
+  counting anything. The loss is inside `addMessageToChat`: the `bulkIngestActive` early
   return buffers and returns BEFORE `saveMessage`, the flag is raised on EVERY inbound drain, and the
   buffer is cleared without flushing by a second drain and by `resetMessageCatchupState`. The outbox
   cannot repair it - `persistSent` -> `findMessage` only scans `conversations`, which a buffered
@@ -718,6 +736,16 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
   The classification belongs at the THROW, as a type (`MediaPurgedError` + one `isMediaPurgedError`).
   Corollary for any audit: **one surface handling a case is not "the case is handled"** - enumerate
   the consumers of the seam, never just the ones that mention it.
+- **A CONNECTION POOL MAKES `BEGIN` AND `COMMIT` TWO DIFFERENT CONVERSATIONS.** `tauri-plugin-sql`
+  opens SQLite through sqlx's `Pool::connect` (default `max_connections = 10`), so each `execute` is
+  its own acquisition and a three-call `BEGIN`/INSERT/`COMMIT` can touch three connections - leaving
+  a transaction open on one of them for good, which then fails every later writer with `database is
+  locked`. Proven on device by issuing two concurrent `BEGIN`s and having both succeed. Serialising
+  in JS orders the sections but cannot bind them to a connection, which is why `runExclusive` looked
+  right and was not. **A statement is the largest unit of atomicity available**: one multi-row
+  `INSERT` (`db/sqliteBatch.ts`), never a loop inside a transaction - and a chunked batch is only
+  safe because the rows are `INSERT OR REPLACE` under a caller-held key, so a re-run converges.
+  [mobile > there is NO multi-statement transaction here](docs/wiki/frontend/mobile.md).
 - A plugin in `Cargo.toml` is not a plugin the app may CALL: Tauri v2 gates every plugin COMMAND
   behind `capabilities/`, and an ungranted one builds, ships and installs, then rejects on a real
   device. EVENTS are not gated - which is how `deep-link` worked warm and was dead cold for as long
