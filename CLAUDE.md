@@ -125,16 +125,22 @@ The campaign's state - every check, its category and its state - is the dashboar
 **[cross-client-testing](docs/wiki/cross-client-testing.md)**. **Read it rather than re-deriving the
 state here, and do not maintain a second copy.** The rig is
 [`tools/cross-client-harness/README.md`](tools/cross-client-harness/README.md) (ports, launch flags,
-adb, the build traps, the file inventory); the working copy plus `heal-web.mjs`, `mlsdb.mjs`,
-`recon.mjs`, `storm.mjs`, `pin.mjs`, `watch.mjs` and ~60 one-shot `probe-*` scripts are in the
-scratchpad - reuse them, do not rebuild them. How a result earns belief is
+adb, the build traps, the file inventory).
+
+**THE WORKING RIG LIVES AT `../canari-harness` (`C:\Users\jolan\Documents\Programmation\canari-harness`)**,
+moved there 2026-08-11 and NOT in a scratchpad: a scratchpad is scoped to one session, so the next
+session gets an empty one and the instrument would be unreachable. It holds 251 `.mjs` (the library,
+the checks, ~150 one-shot probes), `test-accounts.json`, the debug APK, A1's baseline, and
+**`chrome-w1` / `chrome-w2` - the two logged-in Chrome profiles, which ARE the W1 and W2 devices**:
+losing them costs a re-enrolment and SETUP-4's 2FA, the one step no tool here can answer. Reuse it,
+do not rebuild it. How a result earns belief is
 [testing-methodology](docs/wiki/testing-methodology.md), which carries thirty-one harness faults
 distilled into ten rules plus the environment traps that read as application bugs. **Read it before
 writing a check or believing one.**
 
 Standing constraints, which are not findings and must survive any compaction:
 
-- Runs against **PRODUCTION**, two real accounts, credentials in the scratchpad `test-accounts.json`, **never in the repo - which is PUBLIC**. No PIN, login, display name, device id, group id or device serial goes in a committed file; the harness copy is anonymised to `owner` / `peer` and the docs must stay that way. **No password is ever a tool-call argument.**
+- Runs against **PRODUCTION**, two real accounts, credentials in `../canari-harness/test-accounts.json`, **never in the repo - which is PUBLIC**. No PIN, login, display name, device id, group id or device serial goes in a committed file; the harness copy is anonymised to `owner` / `peer` and the docs must stay that way. **No password is ever a tool-call argument.**
 - **EVERY test message goes in the two-test-account DM, and NOWHERE else.** For anything needing a CHANNEL, the venue is the `Campagne de test` community, never MiTV - a private channel is readable by every association admin.
 - **OBSERVATION IS PART OF EVERY CHECK, not a debugging step.** A verdict is `PASS` only if the assertions hold AND the run is clean. Several shipped bugs came out of a green check's noise.
 - **RECONCILIATION is the only way this campaign's loss class can be SEEN** (`recon.mjs`). No per-check verdict substitutes for it.

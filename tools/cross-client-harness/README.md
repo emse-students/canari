@@ -22,6 +22,12 @@ when you need to know what actually happens across clients, not on every commit.
 One driver (`cdp.mjs`) speaks to all three - the WebView is a Chrome target like any other. `a1.py`
 is only for surfaces the WebView cannot reach (the notification shade, the system PIN, the launcher).
 
+> **The working copy is `../canari-harness`, a sibling of this repository** - not a scratchpad, which
+> is scoped to a single session and would strand the instrument. `chrome-w1` and `chrome-w2` in it
+> ARE the two test devices: their profile directory holds the MLS identity, the history and the
+> login, so deleting one costs a re-enrolment and the 2FA that only a human can answer. What is in
+> THIS directory is the archived, anonymised copy.
+
 ## Getting started
 
 1. **Node 24+** (a global `WebSocket` is assumed - there is no Playwright or Puppeteer here),

@@ -23,8 +23,14 @@ meet.
 > **Target is PRODUCTION** (`https://canari-emse.fr`). Real accounts, real messages, real FCM. There
 > is no staging that carries push.
 >
-> **Credentials live in the scratchpad `test-accounts.json` and never in this repository**, which is
-> public. The two accounts appear here only as **owner** (W1, A1) and **peer** (W2). No PIN, login,
+> **The working rig is `../canari-harness`**, a sibling of this repository and deliberately not a
+> scratchpad (which is scoped to one session). `chrome-w1` and `chrome-w2` inside it ARE the W1 and
+> W2 devices - their MLS identity, their history, their login. Verified across the move of
+> 2026-08-11 by fingerprinting both profiles before and after: same device id, same MLS blob size to
+> the byte, same conversation and message counts.
+>
+> **Credentials live in `../canari-harness/test-accounts.json` and never in this repository**, which
+> is public. The two accounts appear here only as **owner** (W1, A1) and **peer** (W2). No PIN, login,
 > display name, device id or group id belongs on this page.
 >
 > **Every test message goes in the owner-peer DM, and nowhere else.** A one-off probe once fired a
@@ -280,13 +286,25 @@ full re-enrolment.
 ### The at-rest artefacts these target
 
 Enumerated for real at SETUP-7, not guessed - a corruption test written against a guessed key name
-tests nothing and passes silently. Every web artefact except three is keyed by the **device id**, so
-a test hardcoding one client's key silently no-ops on the other.
+tests nothing and passes silently. **The web artefacts are keyed by the USER id**
+(`CanariDB_<userId>`, `mls_device_id_<userId>`, `canari_last_active:<userId>`,
+`history_*:<userId>:<conversationId>`), so a test hardcoding one client's key silently no-ops on the
+other. The device id is what the SERVER knows the client by; it names no local artefact.
+
+**This table said `<dev>` until 2026-08-11, and the correction was itself paid for.** A probe built
+the names from the documented pattern, reported "DB ABSENT" for both databases, and was believed for
+a moment before the source settled it ([indexeddb.ts:33](../../frontend/src/lib/db/indexeddb.ts),
+[hex.ts:46](../../frontend/src/lib/utils/hex.ts)). Worse than the wrong answer is what producing it
+cost: **`indexedDB.open(name)` CREATES when the name is absent**, so the guess did not fail - it
+manufactured two empty databases inside each profile under test and then declared the real ones
+missing. They were deleted the same minute, asserting zero object stores before removing anything
+and re-enumerating after. Any check that reaches for a web artefact must enumerate
+`indexedDB.databases()` and match, never construct a name.
 
 | Client | Artefact | Path / key |
 | --- | --- | --- |
-| Web | MLS state | IndexedDB `CanariDBMls_<dev>` v1, store `state` |
-| Web | message store | IndexedDB `CanariDB_<dev>` v6: `conversations`, `messages`, `outbox` |
+| Web | MLS state | IndexedDB `CanariDBMls_<userId>` v1, store `state` |
+| Web | message store | IndexedDB `CanariDB_<userId>` v6: `conversations`, `messages`, `outbox` |
 | Web | device key vault | `sessionStorage.canari_device_key_vault` + `…_vault_key` |
 | Web | vault persistence flag | `localStorage.canari_device_key_persist` |
 | Web | device id, last active, saved user | `localStorage.mls_device_id_<dev>`, `canari_last_active:<dev>`, `canari_saved_user` |
