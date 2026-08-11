@@ -88,7 +88,16 @@ the narrative to the wiki page the entry points at. **Do not reconstruct shipped
 
 ### CANARI - what is open
 
-**NO WORK PACKAGE IS OPEN.** WP-STORAGE-1 closed 2026-08-11, the last of them.
+**NO WORK PACKAGE IS OPEN.** WP-PUSHHERD-1 closed 2026-08-11, the last of them - fixed AND verified
+running on the device (0 lock timeouts, 1 MLS thread, 0 kills, against 97/20+/1 before). **The iOS
+half of it is compile-verified only** and joins the owed device list below.
+
+**A1 IS UNREACHABLE: the phone dropped off USB mid-session** (`adb devices` empty, survives
+`kill-server`). It needs a replug and the USB-debugging prompt accepted. Two things are owed the
+moment it is back: the **PIN unlock** (a reinstall restarts the process and "Rester connecte" was
+off, so the app sits on the PIN screen with an EMPTY local store - which reads as a stuck sync and
+is not one), and the **A1-vs-W1 reconciliation**, the one MULTI measurement the browsers cannot
+make.
 
 **The order the user set governs what comes next:** the roadmap is clear, so the remaining task is to
 **re-run the cross-client campaign from the START (post-setup)**. The scripts exist, so it should be
@@ -146,7 +155,9 @@ Standing constraints, which are not findings and must survive any compaction:
 - **RECONCILIATION is the only way this campaign's loss class can be SEEN** (`recon.mjs`). No per-check verdict substitutes for it.
 - A check that FAILS earns a WP with its captured log; a check that passes earns a row on the dashboard and nothing else.
 - **Clean up after the campaign.** It creates groups, devices and backlogs on the production database that later runs then measure and cannot tell from real traffic - see the cleanup section of the dashboard.
-- On THIS machine: `pin.mjs` needs `--account owner` for A1. **Never run an Android/iOS build next to anything else that builds the frontend** - `beforeBuildCommand` IS `bun run build`, and two builds writing `build/` ship an app that cannot boot (`scripts/check-bundle-consistency.mjs` now fails the build instead). Every Android build leaves a Gradle daemon (idle timeout 10 min).
+- On THIS machine: `pin.mjs --account` takes the KEY AS SPELT IN `test-accounts.json`, which is a first name, not the `owner`/`peer` alias the docs use - so the alias cannot be written here and the key cannot either. Read the keys with `node -e` over the file; never pass a PIN or password as an argument. **Never run an Android/iOS build next to anything else that builds the frontend** - `beforeBuildCommand` IS `bun run build`, and two builds writing `build/` ship an app that cannot boot (`scripts/check-bundle-consistency.mjs` now fails the build instead). Every Android build leaves a Gradle daemon (idle timeout 10 min).
+- **A Kotlin-only change does NOT need the Tauri build**: `gradlew :app:assembleUniversalDebug` in `gen/android` packages the assets already on disk, which skips `bun run build` and the trap above entirely. `:app:testDebugUnitTest` is ambiguous - the variants are `testUniversalDebugUnitTest` / `testArmDebugUnitTest`, and stale reports from the OTHER variant will happily answer a question about this one.
+- **A1's devtools socket is `webview_devtools_remote_<pid>`, so it CHANGES on every restart.** A forward left over from an earlier session stays listed and points at nothing, or at another app's `chrome_devtools_remote` - the phone then reads as "not debuggable" while it is in the foreground. `a1forward.mjs` derives it from the running pid and fails loudly when the target list is empty.
 
 **[device] The verification pass is NOT a Work Package.** Everything native is verified by COMPILING,
 which proves nothing about running; the owed list is

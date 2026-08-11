@@ -172,8 +172,9 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// Runs the decrypt ladder matching Android (WP-PUSH-2):
   /// 1. direct decrypt;
-  /// 2. if the group is already local, in-memory commit catch-up;
-  /// 3. if the group is not local, retry the Welcome race up to 3 times, then a final
+  /// 2. if the locality could not be established, stop - see `GroupLocality.unknown`;
+  /// 3. if the group is already local, in-memory commit catch-up;
+  /// 4. if the group is genuinely absent, retry the Welcome race up to 3 times, then a final
   ///    catch-up if the group appeared in the meantime.
   private func runDecryptLadder(ctx: PushContext, groupId: String, protoB64: String) -> DecryptResult? {
     guard let state = loadMlsState() else {
@@ -184,10 +185,17 @@ class NotificationService: UNNotificationServiceExtension {
     var decrypted = decryptProto(ctx: ctx, groupId: groupId, protoB64: protoB64, state: state)
     guard decrypted == nil, !groupId.isEmpty else { return decrypted }
 
-    let local = isGroupLocal(groupId: groupId, ctx: ctx)
-    NSLog("[CanariNSE] direct decrypt failed group=\(groupId.prefix(8)) local=\(local)")
+    let locality = groupLocality(groupId: groupId, ctx: ctx)
+    NSLog("[CanariNSE] direct decrypt failed group=\(groupId.prefix(8)) locality=\(locality)")
 
-    if local {
+    if locality == .unknown {
+      // Nothing was established, so nothing is retried: the catch-up answers an epoch gap and the
+      // race answers a pending join, and neither has been diagnosed here.
+      NSLog("[CanariNSE] locality unknown group=\(groupId.prefix(8)) -> generic fallback")
+      return nil
+    }
+
+    if locality == .local {
       decrypted = decryptWithCommitCatchup(ctx: ctx, groupId: groupId, protoB64: protoB64)
       return decrypted
     }
@@ -209,7 +217,7 @@ class NotificationService: UNNotificationServiceExtension {
 
     // The group may have appeared during the race (Welcome processed by the app or
     // another extension invocation). Last-resort catch-up before falling back.
-    if decrypted == nil && isGroupLocal(groupId: groupId, ctx: ctx) {
+    if decrypted == nil && groupLocality(groupId: groupId, ctx: ctx) == .local {
       NSLog("[CanariNSE] group appeared during welcome-race, attempting catch-up group=\(groupId.prefix(8))")
       decrypted = decryptWithCommitCatchup(ctx: ctx, groupId: groupId, protoB64: protoB64)
     }
@@ -365,18 +373,33 @@ class NotificationService: UNNotificationServiceExtension {
     return Self.parseDecrypted(json)
   }
 
-  /// Returns true if the group already exists in the persisted MLS state (epoch >= 0).
-  /// Loads `mls.bin` read-only and never persists state.
-  private func isGroupLocal(groupId: String, ctx: PushContext) -> Bool {
-    guard !groupId.isEmpty, !ctx.deviceKeyB64.isEmpty else { return false }
-    guard let state = loadMlsState() else { return false }
+  /// Whether the group exists in the persisted MLS state - or whether that could not be
+  /// established. `unknown` is not `absent`: this returned a plain `Bool`, so an unreadable
+  /// `mls.bin` or a missing device key both said "the group is not joined here", which sends a
+  /// conversation the device has been in for months down the Welcome-race branch. Android twin:
+  /// `CanariFirebaseMessagingService.GroupLocality`, where the same conflation was measured
+  /// turning a push backlog into a process the OS killed for CPU.
+  private enum GroupLocality { case local, absent, unknown }
+
+  /// Loads `mls.bin` read-only, never persists state, and asks for the group's epoch;
+  /// epoch >= 0 means joined. Anything that stops short of an epoch answers `.unknown`.
+  private func groupLocality(groupId: String, ctx: PushContext) -> GroupLocality {
+    guard !groupId.isEmpty else { return .absent }
+    guard !ctx.deviceKeyB64.isEmpty else {
+      NSLog("[CanariNSE] groupLocality: device key absent group=\(groupId.prefix(8)) -> unknown")
+      return .unknown
+    }
+    guard let state = loadMlsState() else {
+      NSLog("[CanariNSE] groupLocality: mls.bin unreadable group=\(groupId.prefix(8)) -> unknown")
+      return .unknown
+    }
     let epoch: Int64 = state.withUnsafeBytes { statePtr in
       canari_native_group_epoch(
         statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
         ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId)
     }
-    NSLog("[CanariNSE] isGroupLocal: epoch=\(epoch) group=\(groupId.prefix(8))")
-    return epoch >= 0
+    NSLog("[CanariNSE] groupLocality: epoch=\(epoch) group=\(groupId.prefix(8))")
+    return epoch >= 0 ? .local : .absent
   }
 
   /// Writes a decrypted message entry to `fcm_message_cache.ndjson` in the host app's

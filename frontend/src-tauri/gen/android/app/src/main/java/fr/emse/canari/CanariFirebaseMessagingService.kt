@@ -24,6 +24,8 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkRequest
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -55,6 +57,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     companion object {
         const val TAG = "CanariFCM"
+
+        /**
+         * The one thread on which every push that touches `mls.bin` runs. See
+         * [runSerializedWithWakeLock] for what it replaced and why.
+         *
+         * It lives in the companion object because the FCM service object is recreated per
+         * delivery: a lane held as an instance field would be a new lane per push, which is the
+         * unbounded thread-per-push it exists to prevent, wearing a queue as a disguise.
+         */
+        private val MLS_PUSH_LANE: ExecutorService =
+            Executors.newSingleThreadExecutor { r -> Thread(r, "canari-fcm-mls") }
 
         /** High-priority channel: DMs and group messages (sound + vibration). */
         const val CHANNEL_MESSAGES = "canari_messages"
@@ -1036,7 +1049,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.e(TAG, "welcome_request_pending: missing fields -> abort")
                 return
             }
-            runWithWakeLock("welcome_bg", 90_000L) {
+            runSerializedWithWakeLock("welcome_bg", 90_000L) {
                 processWelcomeRequestBackground(groupId, requesterUser, requesterDev)
             }
             return
@@ -1055,7 +1068,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.e(TAG, "isWelcome: missing groupId -> abort")
                 return
             }
-            runWithWakeLock("welcome_join", 90_000L) {
+            runSerializedWithWakeLock("welcome_join", 90_000L) {
                 processReceivedWelcomeBackground(groupId, queuedMessageId, inlineProto)
             }
             return
@@ -1121,11 +1134,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
-        // Encrypted MLS message: decryption in a dedicated thread (max 60s).
+        // Encrypted MLS message: decrypted on the serialized MLS lane (max 60s per push).
         // Non-blocking for FCM: onMessageReceived returns immediately.
-        // MLS_LOCK in tryDecrypt guarantees a single thread writes mls.bin at a time.
         val silent = data["silent"] == "true"
-        runWithWakeLock("fcm_decrypt") {
+        runSerializedWithWakeLock("fcm_decrypt") {
             val groupId         = data["groupId"] ?: ""
             val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: ""
             val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: ""
@@ -1160,18 +1172,26 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
             var decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
             if (decrypted == null && !queuedMessageId.isNullOrEmpty()) {
-                val groupLocal = isGroupLocal(groupId)
-                Log.d(TAG, "tryDecrypt failed group=${groupId.take(8)} local=$groupLocal")
-                if (groupLocal) {
+                val locality = groupLocality(groupId)
+                Log.d(TAG, "tryDecrypt failed group=${groupId.take(8)} locality=$locality")
+                if (locality == GroupLocality.UNKNOWN) {
+                    // NOTHING WAS ESTABLISHED, SO NOTHING IS RETRIED HERE. Both recoveries below
+                    // are answers to a diagnosis, and there is none: the commit catch-up costs a
+                    // fetch and a state load to close an epoch gap nobody saw, and the Welcome race
+                    // waits on a join that is probably not happening. The push falls through to the
+                    // WorkManager fallback, which is where work with no deadline belongs.
+                    Log.d(TAG, "locality unknown group=${groupId.take(8)} -> leaving it to the worker")
+                } else if (locality == GroupLocality.LOCAL) {
                     // The group exists locally: the only plausible reason for a direct failure is an
                     // epoch gap (a commit arrived while the app was closed). Catch-up FIRST, before
                     // any expensive Welcome-race loop that cannot help a group that is already joined.
                     decrypted = tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
                 } else {
-                    // Welcome/message race: the concurrent Welcome push may be joining the group (or
-                    // holding MlsStateLock) when this message arrives. We retry briefly so the 1st
-                    // message of a new conversation produces a real notification instead of a generic
-                    // fallback, rather than showing then correcting the notification.
+                    // GroupLocality.ABSENT - the epoch query ran and the group is genuinely not
+                    // joined here. Welcome/message race: the concurrent Welcome push may be joining
+                    // the group when this message arrives. We retry briefly so the 1st message of a
+                    // new conversation produces a real notification instead of a generic fallback,
+                    // rather than showing then correcting the notification.
                     var raceAttempt = 0
                     while (decrypted == null && raceAttempt < WELCOME_RACE_RETRIES) {
                         raceAttempt++
@@ -1184,9 +1204,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         Log.d(TAG, "tryDecrypt retry $raceAttempt/$WELCOME_RACE_RETRIES (group-join race) group=${groupId.take(8)}")
                         decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
                     }
-                    // The group may have appeared during the race (Welcome processed on another thread).
-                    // Last-resort catch-up before falling back to the worker.
-                    if (decrypted == null && isGroupLocal(groupId)) {
+                    // The group may have appeared during the race (a Welcome queued ahead of this
+                    // one on the MLS lane). Last-resort catch-up before falling back to the worker.
+                    if (decrypted == null && groupLocality(groupId) == GroupLocality.LOCAL) {
                         Log.d(TAG, "group appeared during welcome-race, attempting catch-up group=${groupId.take(8)}")
                         decrypted = tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
                     }
@@ -1202,19 +1222,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     this, groupId, decrypted.callId ?: "mls-$groupId",
                     senderName, groupName, decrypted.hasVideo,
                 )
-                return@runWithWakeLock
+                return@runSerializedWithWakeLock
             }
             if (decrypted?.type == "call_control") {
                 if (decrypted.callEnded) cancelIncomingCallNotification(this, decrypted.callId ?: "")
                 Log.d(TAG, "call_control: suppressed (ended=${decrypted.callEnded})")
-                return@runWithWakeLock
+                return@runSerializedWithWakeLock
             }
 
             if (decrypted == null && silent) {
                 // Silent push: no notification must be shown. Do not log the misleading worker/fallback
                 // messages that are only meaningful for visible pushes.
                 Log.d(TAG, "Silent push decryption failed group=${groupId.take(8)} -> returning silently")
-                return@runWithWakeLock
+                return@runSerializedWithWakeLock
             }
 
             val body: String = decrypted?.text
@@ -1237,7 +1257,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // or not this frame decrypted. All that is left here is to state that a silent push
                 // shows nothing.
                 Log.d(TAG, "FCM silent -> MLS state updated, no notification shown")
-                return@runWithWakeLock
+                return@runSerializedWithWakeLock
             }
 
             if (decrypted != null) {
@@ -1290,6 +1310,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /**
      * Starts a new named thread holding a partial WakeLock for at most [timeoutMs] ms.
      * WakeLock tag: `"canari:<name>"`. Thread name: `"canari-<name>"` (visible in crash logs).
+     *
+     * ONLY FOR WORK THAT DOES NOT TOUCH mls.bin. Anything that does must go through
+     * [runSerializedWithWakeLock] - see the herd it caused.
      */
     private fun runWithWakeLock(name: String, timeoutMs: Long = 60_000L, block: () -> Unit) {
         Thread(null, {
@@ -1302,6 +1325,45 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (wl.isHeld) wl.release()
             }
         }, "canari-$name").start()
+    }
+
+    /**
+     * The same, but QUEUED behind every other push that touches the MLS state.
+     *
+     * A push used to get a thread of its own, which is fine for one push and pathological for a
+     * backlog: they all reach for the single [MlsStateLock], each waits its 5 s, each that wins
+     * reads the whole 1.6 MB `mls.bin`, and each that loses retries. Measured on device with a
+     * backlog behind it (2026-08-11): 97 lock timeouts, 60 retries and 11 full state loads from a
+     * handful of messages - roughly 485 thread-seconds spent WAITING - after which Android ended
+     * the argument itself:
+     *
+     *     ActivityManager: Killing 22636:fr.emse.canari (adj 905):
+     *       excessive cpu 10090 during 300076 dur=1263194 limit=2
+     *
+     * A killed process delivers no notifications and drains no outbox, so the cost of the herd is
+     * not the CPU, it is the app going silent.
+     *
+     * Serialising is not a throttle and there is no delay in it: the work was already serial,
+     * because the lock made it serial. All this removes is the contention around it - one thread
+     * does the same work in the same order, and `onMessageReceived` still returns immediately.
+     * The WakeLock is taken when the task STARTS rather than when it is queued, so a task waiting
+     * its turn does not hold the CPU awake for the ones ahead of it.
+     */
+    private fun runSerializedWithWakeLock(name: String, timeoutMs: Long = 60_000L, block: () -> Unit) {
+        MLS_PUSH_LANE.execute {
+            val wl = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "canari:$name")
+            wl.acquire(timeoutMs)
+            try {
+                block()
+            } catch (e: Throwable) {
+                // A task that dies must not take the lane with it: the executor would keep running,
+                // but this is the only place the failure is visible at all.
+                Log.e(TAG, "$name: uncaught in the MLS push lane: ${e.message}", e)
+            } finally {
+                if (wl.isHeld) wl.release()
+            }
+        }
     }
 
     /**
@@ -2020,31 +2082,61 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     /**
-     * Returns true if [groupId] already exists in the local MLS state. Loads push_context + mls.bin,
-     * acquires MlsStateLock for up to 5 s, and asks nativeGroupEpochWithKey; an epoch >= 0 means the
-     * group is joined locally. A join race can only happen when this returns false.
+     * Whether [groupId] is joined in the local MLS state - or whether that could not be established.
+     *
+     * [UNKNOWN] IS NOT [ABSENT], AND COLLAPSING THEM SENT EVERY RECOVERY DOWN THE WRONG BRANCH.
+     * This returned a plain Boolean, and every way of failing to reach the state - lock not
+     * acquired, `mls.bin` unreadable, device key missing, JNI not loaded - came back as `false`,
+     * which the caller reads as "the group is not joined here". So a device that had been in a
+     * conversation for months answered "not mine" whenever another thread happened to hold the
+     * lock, and the message was handed to the Welcome-race retry loop: three more attempts, each
+     * re-entering the same contended lock, for a group that was never racing a Welcome at all.
+     * Measured on device 2026-08-11: twenty `local=false` verdicts from ten epoch queries - half
+     * the answers were given by a timeout, about the main DM.
      */
-    private fun isGroupLocal(groupId: String): Boolean {
-        if (groupId.isEmpty()) return false
-        val ctx = MlsContextLoader.loadPushContext(this) ?: return false
-        return withMlsStateLock(5) {
-            val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock false
+    private enum class GroupLocality { LOCAL, ABSENT, UNKNOWN }
+
+    /**
+     * Loads push_context + mls.bin, acquires MlsStateLock for up to 5 s and asks
+     * nativeGroupEpochWithKey; an epoch >= 0 means the group is joined locally. Every path that did
+     * not get as far as an epoch answers [GroupLocality.UNKNOWN].
+     */
+    private fun groupLocality(groupId: String): GroupLocality {
+        if (groupId.isEmpty()) return GroupLocality.ABSENT
+        val ctx = MlsContextLoader.loadPushContext(this)
+        if (ctx == null) {
+            Log.w(TAG, "groupLocality: push context absent group=${groupId.take(8)} -> UNKNOWN")
+            return GroupLocality.UNKNOWN
+        }
+        val locality = withMlsStateLock(5) {
+            val stateBytes = MlsContextLoader.loadMlsState(this)
+            if (stateBytes == null) {
+                Log.w(TAG, "groupLocality: mls.bin unreadable group=${groupId.take(8)} -> UNKNOWN")
+                return@withMlsStateLock GroupLocality.UNKNOWN
+            }
             if (ctx.deviceKeyB64.isEmpty()) {
-                Log.w(TAG, "isGroupLocal: device key absent group=${groupId.take(8)}")
-                return@withMlsStateLock false
+                Log.w(TAG, "groupLocality: device key absent group=${groupId.take(8)} -> UNKNOWN")
+                return@withMlsStateLock GroupLocality.UNKNOWN
             }
             try {
                 val epoch = nativeGroupEpochWithKey(stateBytes, ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId)
-                Log.d(TAG, "isGroupLocal: epoch=$epoch group=${groupId.take(8)}")
-                epoch >= 0
+                Log.d(TAG, "groupLocality: epoch=$epoch group=${groupId.take(8)}")
+                if (epoch >= 0) GroupLocality.LOCAL else GroupLocality.ABSENT
             } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "isGroupLocal: native library not loaded: ${e.message}")
-                false
+                Log.e(TAG, "groupLocality: native library not loaded: ${e.message}")
+                GroupLocality.UNKNOWN
             } catch (e: Exception) {
-                Log.e(TAG, "isGroupLocal: exception: ${e.message}")
-                false
+                Log.e(TAG, "groupLocality: exception: ${e.message}")
+                GroupLocality.UNKNOWN
             }
-        } ?: false
+        }
+        // `withMlsStateLock` returns null on a timeout, and that is the case this whole enum exists
+        // for: it says nothing about the group, only about the lock.
+        if (locality == null) {
+            Log.w(TAG, "groupLocality: MlsStateLock not acquired group=${groupId.take(8)} -> UNKNOWN")
+            return GroupLocality.UNKNOWN
+        }
+        return locality
     }
 
     /** Parses the JSON from nativeDecryptMessageWithCommitsWithKey into a DecryptedMessage (mirror of decryptProto). */

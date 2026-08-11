@@ -91,8 +91,13 @@ sitting in production.
 | **MENTION** - @ and what it triggers | `pending` | MENTION-1..6 |
 | **CALL** - audio and video | `pending` | CALL-1..20. **The largest hole**: no harness script exists, and CALL-13 (iOS CallKit) has never run on hardware |
 | **COMM** - communities, channels, roles | `pending` | COMM-1..22 |
-| **GRP** - group membership and invitations | `pending` (1/9 run) | GRP-2 `failed` on the first look and is fixed; GRP-1 exercised by the DEL-1 rig; GRP-3..9 owed |
-| **DEL** - deleting a conversation, crossed | `pending` (1/10 run) | DEL-1 `failed`, fixed, awaiting its prod re-run; DEL-2..10 owed |
+| **GRP** - group membership and invitations | `pending` (3/9 run) | GRP-2 `failed` and is fixed and re-verified; GRP-1 passed; GRP-3 (traffic reconciles both ways) passed; GRP-4..9 owed |
+| **DEL** - deleting a conversation, crossed | `pending` (1/10 run) | DEL-1 `passed` armed, after four vacuous runs; DEL-2..10 owed |
+
+The reconciliation that backs every phase above was **rebuilt on 2026-08-11** and no longer reads
+the screen - see [what recon.mjs measures](#recon-measures-the-store-not-the-screen). The rebuild
+paid for itself within the hour: the first clean run's *logcat* held
+[WP-PUSHHERD-1](#wp-pushherd-1-the-push-decrypt-herd-that-got-the-app-killed).
 
 ---
 
@@ -365,6 +370,118 @@ reads `aria-expanded` and counts `[role=option]`, which are contracts rather tha
 
 This is the general form of the user's standing instruction: the attribute a screen reader needs is
 the attribute a harness can trust, and neither of them breaks when someone changes a class.
+
+## recon.mjs measures the store, not the screen
+
+Rewritten 2026-08-11. The reconciliation is the campaign's only instrument for the silent-loss
+class, and until this it read campaign markers out of the rendered message pane. Every problem that
+design had came from one fact: **the pane is a window onto the history, not the history.**
+
+It had to scroll to see anything; scrolling pages 50 rows at a time; so it needed a time window to
+stay honest, a coverage proof that the window had been reached, and about a minute per side. Run
+against the test DM - 1804 messages - it read **60 of them** and printed `reconciled: true`. Three
+separate faults were stacked in that one line:
+
+1. Its marker pattern was a private copy of the one in `results.mjs` and had drifted, requiring
+   eight base36 characters where the sequenced markers filling the DM have seven. It matched
+   **nothing**, on either side.
+2. It called an empty difference over an empty set a reconciliation. `trustworthy: false` was
+   printed directly beside `reconciled: true`, and the eye reads the first field.
+3. Its scroll loop assigned `scrollTop` without dispatching an event, so at the top it assigned 0
+   to 0, fired nothing, and concluded it had reached the beginning of history after four steps.
+
+The rewrite reads both clients' IndexedDB instead. Rows are ciphertext at rest (`iv` +
+`cipherText`) but `id` and `conversationId` are plaintext, so the two stores can be compared
+exactly without decrypting anything. **1804 = 1804, shared 1804, zero either side, in 0.58 s** -
+against roughly two minutes for a bounded, windowed answer that covered 3% of the conversation.
+
+What that costs: the id sets cannot say a message *decrypted*, only that both clients hold it.
+That claim is exactly what the loss class is about; rendering and decryption are asserted per
+check, by the marker each one sends. What it buys, beyond the speed, is the property the user asked
+for in general terms - it works on a conversation of any size, because it never looks at a window.
+
+Three consequences worth keeping:
+
+- **Membership comes from the `conversations` store, not from the message rows.** Keyed off
+  messages alone, a conversation a client is in but has received *nothing* for has no rows, so it
+  looks like a conversation the client is not in - and a total loss, the worst case, would be the
+  one case that reconciled silently.
+- **A conversation `removed` on either side is expected to diverge**, and is reported apart rather
+  than as a difference. That is what deleting it means.
+- **`VACUOUS` is a third verdict, not a flag on a boolean**, and it exits non-zero.
+
+### GRP-3, and an asymmetry that was not a loss
+
+The first store-based run flagged a shared group holding 0 rows on the inviter and 1 on the
+invitee. That is indistinguishable, from the outside, from the group's first message being lost -
+so `grp-traffic.mjs` was written to settle it: send both ways, then compare. Both markers rendered
+on both clients, and the inviter picked up the missing row when it first opened the group. A
+membership event the receiver records at once and the sender acquires later is convergence at
+different moments, not a loss.
+
+The check's first version asserted on what each side *gained* and failed on that difference of one.
+The assertion belongs on where the two sides **end**, which is what the loss class is about.
+
+## WP-PUSHHERD-1: the push-decrypt herd that got the app killed
+
+**P1, found 2026-08-11 in the logcat of a green check** - `grp-traffic.mjs` passed and `recon.mjs`
+reconciled, and the run was still not clean. Which is the whole reason observation is part of a
+verdict here rather than a debugging step.
+
+Android gave every push its own thread (`runWithWakeLock` per `onMessageReceived`). That is fine
+for one push and pathological for a backlog: each thread reaches for the single `MlsStateLock`,
+waits its 5 s, and each that wins reads the whole 1.6 MB `mls.bin`. Counted over one storm behind
+a backlog:
+
+| | |
+| --- | --- |
+| lock timeouts | **97** (~485 thread-seconds spent purely waiting) |
+| full 1.6 MB MLS state loads | 11 |
+| "group-join race" retries | 60 |
+| `local=false` verdicts | 20 |
+| epoch queries that actually ran | **10** |
+
+Two defects, and the second is why the first compounded.
+
+**The herd.** Twenty-plus concurrent handlers, from a handful of messages. Android ended the
+argument itself:
+
+```
+ActivityManager: Killing 22636:fr.emse.canari/u0a469 (adj 905):
+  excessive cpu 10090 during 300076 dur=1263194 limit=2
+```
+
+A killed process delivers no notifications and drains no outbox. The cost of the herd is not the
+CPU, it is the app going silent.
+
+**A lock timeout answering a question about group membership.** `isGroupLocal` returned a plain
+`Boolean`, and *every* way of failing to reach the state - lock not acquired, `mls.bin` unreadable,
+device key missing, JNI absent - came back `false`, which its one caller reads as "the group is not
+joined on this device". Hence twenty verdicts from ten answers: half were given by a timeout, about
+the **main DM**, a conversation the device had been in for months. Each of those false verdicts
+routed the message into the Welcome-race retry loop - three more attempts, each re-entering the
+same contended lock, for a group that was never racing a Welcome. Contention produced retries,
+which produced contention.
+
+The docblock even asserted *"A join race can only happen when this returns false"*, which is
+exactly backwards under load: it returns false precisely when it could not tell.
+
+**The fix is one lane and one more enum value.** Everything that touches `mls.bin` now runs on a
+single process-wide executor, so the work is done in the same order by one thread instead of being
+fought over by twenty - serialising adds no delay, because the lock had already made the work
+serial; it only removes the contention around it. And `GroupLocality` has three values, so
+`UNKNOWN` reaches neither recovery: the catch-up answers an epoch gap and the race answers a
+pending join, and nothing has diagnosed either. The push falls through to the WorkManager fallback,
+where work with no deadline belongs.
+
+The serialisation *dissolves* the second defect rather than patching it - with one lane, the FCM
+side no longer contends with itself at all. The tri-state stays because `MlsBackgroundWorker` is
+still a second contender, and because the conflation was wrong independently of the herd.
+
+iOS carried the same conflation in `NotificationService.swift` (an unreadable `mls.bin` or an empty
+device key both said "not local") and got the same tri-state. **It has never run a check on
+hardware**, so that half is compile-verified only - which proves nothing about running, and is
+recorded here as owed rather than done.
 
 ## The matrix, and why the phases above were not one
 

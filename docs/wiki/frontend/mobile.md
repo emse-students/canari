@@ -391,7 +391,7 @@ comes with raising the minimum.
 - Decrypts media thumbnails via Rust FFI (`canari_native_decrypt_media`)
 - Builds visible notification content (title, body, attachment, category, badge)
 - Writes decrypted messages to `fcm_message_cache.ndjson` in the App Group container, which the app drains into its own `app_data_dir` and pre-injects at boot (see "FCM message cache")
-- Runs the same background MLS decrypt ladder as Android (direct decrypt → catch-up-first for local groups → Welcome-race retry for non-local groups)
+- Runs the same background MLS decrypt ladder as Android (direct decrypt → catch-up-first for local groups → Welcome-race retry for genuinely absent ones → nothing at all when the locality is `UNKNOWN`)
 - Budget: ~30 seconds; 2 MB media cap
 
 The NSE shares data with the main app via App Group `group.fr.emse.canari`:
@@ -526,12 +526,31 @@ MessagingStyle takes two `Person`s and **both** need an icon. The sender's comes
 Both Android and the iOS NSE run the same ladder when an encrypted MLS message push arrives:
 
 1. Try a direct decrypt (`tryDecrypt` / `decryptProto`).
-2. If that fails and the group is already local (`isGroupLocal` → epoch ≥ 0), run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately.
-3. If the group is **not** local, retry a few times to give a concurrent Welcome push time to join the group (`WELCOME_RACE_RETRIES × WELCOME_RACE_RETRY_DELAY_MS` = 3 × 1.8 s on Android, mirrored by `welcomeRaceRetries × welcomeRaceRetryDelayMs` in the NSE).
-4. If the group becomes local during that race, try commit catch-up as a last resort before falling back.
-5. If everything fails, Android enqueues `MlsBackgroundWorker` and shows the generic fallback notification (unless the push is silent, in which case it returns quietly). The iOS NSE cannot enqueue work from the extension, so it shows the fallback directly.
+2. If that fails, ask where the group stands: `groupLocality` / `GroupLocality` returns `LOCAL`, `ABSENT` or `UNKNOWN`.
+3. `UNKNOWN` — the state could not be reached at all (lock not acquired, `mls.bin` unreadable, device key missing, JNI absent). **Neither recovery runs**, because neither is an answer to it. The push falls through to the fallback below.
+4. `LOCAL` (epoch ≥ 0) — run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately.
+5. `ABSENT` — retry a few times to give a concurrent Welcome push time to join the group (`WELCOME_RACE_RETRIES × WELCOME_RACE_RETRY_DELAY_MS` = 3 × 1.8 s on Android, mirrored by `welcomeRaceRetries × welcomeRaceRetryDelayMs` in the NSE). If the group becomes `LOCAL` during that race, try commit catch-up as a last resort before falling back.
+6. If everything fails, Android enqueues `MlsBackgroundWorker` and shows the generic fallback notification (unless the push is silent, in which case it returns quietly). The iOS NSE cannot enqueue work from the extension, so it shows the fallback directly.
 
 This order matters because a silent commit push advances the epoch but cannot persist state while the app is closed; the next message push therefore looks like an epoch gap on a group that is already joined. Running catch-up first for local groups avoids the old ~9.6 s retry loop.
+
+**`UNKNOWN` is step 3 and not a value of "is it local" because the two were the same value until WP-PUSHHERD-1.** Every failure to reach the state answered "not local", so a message in a months-old DM went down the Welcome-race branch, whose retries re-entered the very lock that had just timed out. Twenty such verdicts came from ten epoch queries in one measured run. See [cross-client-testing](../cross-client-testing.md#wp-pushherd-1-the-push-decrypt-herd-that-got-the-app-killed).
+
+#### One lane for everything that touches `mls.bin`
+
+Android runs the ladder — and the two Welcome paths — on a **single process-wide executor**
+(`MLS_PUSH_LANE`, entered via `runSerializedWithWakeLock`). Work that does not touch the MLS state
+(token refresh, channel notifications) keeps a thread of its own via `runWithWakeLock`.
+
+This is not a throttle and costs no latency: `MlsStateLock` had already made the work serial. A
+thread per push only added the contention around it — 5 s per timeout, a full 1.6 MB state read per
+winner, and a retry per loser — which behind a backlog reached 97 timeouts and 20+ threads and
+ended with `ActivityManager` killing the process for `excessive cpu`. The lane must live in the
+companion object: the FCM service object is recreated per delivery, so an instance field would be a
+new lane per push wearing a queue as a disguise.
+
+The iOS NSE needs no equivalent — the extension is invoked serially by the system — but it carried
+the same `UNKNOWN`/`ABSENT` conflation and got the same tri-state.
 
 ### FCM message cache
 

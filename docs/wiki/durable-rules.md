@@ -396,6 +396,20 @@ page. The five to carry, plus one status line:
   wrong in the NSE, and the App Group is the only shared storage.
 - Background decrypt applies no commit, so a silent commit push leaves the next message unreadable -
   that is the epoch gap, not a bug to retry through.
+- **WORK GUARDED BY ONE LOCK IS ALREADY SERIAL - GIVING IT A THREAD EACH ONLY ADDS THE FIGHT.** A
+  thread per push looks concurrent and is not: they all queue on the same `MlsStateLock`, at
+  5 s per timeout, each winner re-reading the whole 1.6 MB `mls.bin`. Behind a backlog that reached
+  97 timeouts, 60 retries and 20+ threads, until `ActivityManager` killed the process for
+  `excessive cpu` - and a killed app delivers no notification and drains no outbox, which is the
+  real cost. **Serialising such work adds no latency**, because the lock had already imposed the
+  order; it removes only the contention (WP-PUSHHERD-1).
+- **A LOCK TIMEOUT IS NOT A DOMAIN ANSWER.** `isGroupLocal` returned a plain `Boolean`, so lock
+  unavailable, `mls.bin` unreadable, device key missing and JNI absent all became "the group is not
+  joined on this device" - twenty verdicts from ten epoch queries, about a DM the device had been
+  in for months, each one routed into the Welcome-race retry loop that then re-entered the same
+  contended lock. Any predicate that can FAIL TO LOOK needs a third value, and `UNKNOWN` must reach
+  no recovery at all: a catch-up answers an epoch gap and a race answers a pending join, and
+  nothing has diagnosed either.
 - A Play-signed install and the GitHub-signed APK cannot update each other, and switching sides
   needs an uninstall that wipes `mls.bin` - so the update target is a RUNTIME fact, never a constant.
 - `minClientVersion` is the ONLY thing that interrupts a user now; raising it before the store
