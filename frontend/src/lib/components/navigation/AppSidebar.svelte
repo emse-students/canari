@@ -79,10 +79,17 @@
   ></div>
 {/if}
 
+<!--
+  NAMED LANDMARK. Two `<aside>` elements are on screen at once - this rail and the conversation
+  list - and an unnamed complementary landmark is announced as just "complementary", so assistive
+  technology offered the user two identical, indistinguishable regions. The name is also what lets a
+  harness address one of them without resorting to pixel widths.
+-->
 <aside
+  aria-label={m.nav_main_landmark()}
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
-  class="fixed hidden md:flex flex-col left-0 top-[env(safe-area-inset-top)] h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] border-r border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/80 backdrop-blur-2xl overflow-hidden transition-all duration-300 ease-out shadow-[4px_0_24px_rgba(0,0,0,0.02)] dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)]
+  class="app-nav-rail fixed hidden md:flex flex-col left-0 top-[env(safe-area-inset-top)] h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] border-r border-black/5 dark:border-white/10 bg-white/70 dark:bg-black/80 backdrop-blur-2xl overflow-hidden transition-all duration-300 ease-out shadow-[4px_0_24px_rgba(0,0,0,0.02)] dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)]
     {isExpanded ? 'w-64 z-30' : 'w-[4.5rem] z-20'}"
 >
   <nav class="flex flex-col p-3 flex-1 gap-1.5 pt-[4.5rem]">

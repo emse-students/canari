@@ -327,8 +327,16 @@
   ></button>
 {/if}
 
+<!--
+  NAMED LANDMARK, and the name follows what the panel is actually listing - it is the same region
+  showing two different things. See the note on the nav rail in `AppSidebar.svelte`: with both
+  asides unnamed, assistive technology announced two indistinguishable "complementary" regions.
+-->
 <aside
-  class="h-full backdrop-blur-md bg-white/40 dark:bg-gray-900/50 border-r border-white/50 dark:border-white/10 flex {viewMode ===
+  aria-label={viewMode === 'communities'
+    ? m.nav_communities_landmark()
+    : m.nav_conversations_landmark()}
+  class="sidebar-panel h-full backdrop-blur-md bg-white/40 dark:bg-gray-900/50 border-r border-white/50 dark:border-white/10 flex {viewMode ===
   'communities'
     ? 'flex-row'
     : 'flex-col'} {drawerMode
