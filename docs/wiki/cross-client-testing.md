@@ -270,6 +270,311 @@ Read [auth](frontend/modules/auth.md) before running any of these - the PIN, the
 | MULTI-5 | W1 + A1 + a second W1 tab on one channel | `pending` - no epoch conflict, no `SecretReuse` |
 | MULTI-6 | A1 offline a long while, 20 messages, then returns | `pending` |
 
+## DEL - deleting a conversation, crossed with everything else
+
+Added 2026-08-11, on the user's instruction: *"j'ai dit que je voulais tous les tests possibles,
+qu'ils soient plus ou moins absurdes, plus ou moins courant. Un test absurde qui provoque une
+incoherence peut servir dans d'autres contextes que celui de ce test absurde"*.
+
+The phase exists because deletion had never been a subject, only a step - every phase deletes groups
+as setup or teardown, and nothing ever asked what deletion CROSSES. The first question anyone asked
+of it found WP-HISTGHOST-1 sitting in production, so the absurd-crossing argument is not a
+hypothesis here, it is a measurement.
+
+What makes a crossing worth a row: deletion is one of the few operations that removes state while
+OTHER state keeps pointing at it. So each row pairs it with something mid-flight.
+
+| Id | The crossing | What must hold |
+| --- | --- | --- |
+| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `failed` then fixed - see below. No banner survives on the removed row, no marker survives, and no solicitation is retried for it |
+| DEL-2 | Peer deletes while a message from us is in the outbox | The outbox entry resolves or fails LOUDLY - never a silent, permanent pending |
+| DEL-3 | Both peers delete the same conversation within a second of each other | No error surfaces on either side; neither resurrects it |
+| DEL-4 | Delete a conversation while its media is still uploading | The upload stops or completes harmlessly; no orphan blob is left addressable |
+| DEL-5 | Delete, then the peer sends into it anyway | The frame is dropped without a decrypt-failure marker - a deleted group must not look like a loss |
+| DEL-6 | Delete while a drain is in flight for that group | `Drain start` still gets its `Drain complete`; the deletion may not deadlock the drain (WP-DRAIN-1's shape) |
+| DEL-7 | Delete on W1 while A1 is killed, then wake A1 | A1 converges to deleted; it must not re-create the row from a queued frame |
+| DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | The absurd one. The group returns to WASM while the server has none: it must be purged as an orphan, not left soliciting for ever |
+| DEL-9 | Delete the conversation currently OPEN on screen | The view leaves cleanly; the composer cannot send into a removed row |
+| DEL-10 | Delete while offline, then reconnect | The deletion reaches the server once, and does not re-broadcast on every later reconnect |
+
+Every row is also a place to re-read the three states WP-HISTGHOST-1 was about - the durable marker,
+the reactive phase, the scheduled burst - because they are exactly the kind of thing that is cleared
+on one path and forgotten on the other nine.
+
+### DEL-1, and what it cost to make it mean something (2026-08-11)
+
+The rig is `del1.mjs`. It took four runs to produce one honest verdict, and each failure is a
+methodology lesson rather than a product one.
+
+1. **It invited itself.** The script took the first option in the member picker without checking it
+   matched the query; the picker offers users who are ALREADY members, so it invited the account it
+   was running as, the roster stayed at one, and it then waited a minute for a peer that had never
+   been invited. On a rig whose directory holds real colleagues, the same blindness could have added
+   one of them to a test group. Two name-parsing heuristics were tried to tell self from peer and
+   both read the wrong substring off `innerText`; the fix was to stop parsing and believe only the
+   roster going from one member to two. **That defect is now GRP-2, and it is fixed in the product.**
+2. **It scoped a lookup by an id it never had.** The group id was read with a UUID matcher over
+   `location.pathname`, copied from `heal-w2.mjs`. This app routes every conversation to a bare
+   `/chat` and keeps the selection in a store, so that matcher returns null for every conversation,
+   always. The id comes from the `conversations` store in IndexedDB now.
+3. **It passed while measuring nothing.** The three messages were sent AFTER the invite, so the peer
+   received them live, lacked nothing, and recorded no marker - there was nothing for the deletion to
+   clear and the assertions would have held on a build with the fix reverted. The history now
+   predates the join, and a run that finds no marker reports `VACUOUS`, never `PASS`.
+4. **Armed, it FAILED - and the fix was one fifth of a fix.** `lifecycle: 'removed'` with the marker
+   surviving at its ORIGINAL `since`: the delete had reached the peer and the marker had never been
+   removed, rather than having been re-created. The path that ran was the `groupDeleted` system
+   message, one of five places writing that state inline. Collapsed into `retireConversation`, now
+   the single writer, guarded by a source grep in `conversations.retire.test.ts`.
+
+The lifecycle field is what separated cause 4 from "the delete never arrived", which is a different
+and much larger defect. **A check on a state that several paths can write must report which path
+wrote it**, or its failure sends the reader to the wrong fix.
+
+## The matrix, and why the phases above were not one
+
+Added 2026-08-11 on the user's instruction: *"Vraiment je veux que cross-client-testing soit une
+matrice parfaite de tout ce qui est possible de faire avec les messageries/communautes"*, and
+*"Tester les appels audios et video aussi"*.
+
+Everything above this line grew out of INCIDENTS - a forward that lost a message, a tab that
+duplicated one, a group that would not heal. That is why the campaign had eleven checks on sending a
+message and none at all on editing one: nobody had reported an edit. A matrix is the opposite
+construction. It starts from the feature surface, so a hole is visible as an empty cell rather than
+as the absence of a memory.
+
+The surface was inventoried from the code, not recalled, on 2026-08-11. Two things came out of that
+inventory before a single check ran, and both are recorded below rather than in a phase: the
+**negative rows** (things that do not exist, so nothing may test them and nobody may "fix" them by
+reflex) and the **doc rot** it exposed.
+
+**Read the transport column.** This app has three completely different delivery mechanisms, and a
+check that does not know which one it is exercising will draw the wrong conclusion from its result:
+
+| World | What travels | Who can read it |
+| --- | --- | --- |
+| DM and group | MLS `AppMessage` protobuf, `POST /api/mls/send`. Every MUTATION too - edit, delete, read receipt, pin, reaction removal - as a `SystemMsg{event, data}` sent `silent=true` | members only; the server stores ciphertext |
+| Community channel | REST on social-service + a Redis broadcast relayed by the gateway. Server-held `masterSecret` per epoch, NOT MLS | the server, in cleartext, for everything except message bodies |
+| Ephemeral | WebSocket JSON: `ping`, `disconnect`, `welcome_request`, `typing`. Nothing else | online peers, now, or never |
+
+The consequence that catches people: **a mutation sent `silent=true` is excluded from the Redis
+history stream and delivered only per-device from the queue.** So "did the edit arrive" and "did the
+message arrive" are not the same question and do not share a failure mode.
+
+## MUT - editing, deleting, reacting, pinning
+
+The four things a user does to a message that already exists. All four are MLS system events in a
+DM or a group, and all four are REST calls in a channel - so **every row runs twice**, once in the
+two-account DM and once in `Campagne de test`, and the two results are recorded separately.
+
+| Id | What it asks | Venue | State |
+| --- | --- | --- | --- |
+| MUT-1 | Edit a text message: both sides show the new text and an edited marker | DM | `pending` |
+| MUT-2 | Edit clears `readBy` - the receipt restarts, and the sender's "read" indicator goes back | DM | `pending` |
+| MUT-3 | Edit is refused on a message with media, and on someone else's message | DM | `pending` |
+| MUT-4 | Edit a message the peer has NOT yet received: peer must end up with the edited text, once | DM | `pending` |
+| MUT-5 | Edit is absent in channels by design - assert the control is not offered | Channel | `pending` |
+| MUT-6 | Delete a message: both sides show the tombstone, not a gap | DM | `pending` |
+| MUT-7 | The tombstone WINS over a body on merge - a device holding the original must not resurrect it | DM | `pending` |
+| MUT-8 | Delete in a channel is a HARD row delete, no tombstone: assert the difference is real | Channel | `pending` |
+| MUT-9 | A moderator deletes another user's channel message | Channel | `pending` |
+| MUT-10 | The toolbar offers Delete to a moderator in a DM, where the handler refuses it | DM | `pending` - **a suspected defect, see the negatives** |
+| MUT-11 | React, un-react, re-react; two users on the same message; the same user with several emoji | both | `pending` |
+| MUT-12 | The 15-distinct-emoji cap, on both transports | both | `pending` |
+| MUT-13 | A reaction pushes a notification to the message author only, never to the reactor | DM | `pending` |
+| MUT-14 | Pin and unpin, seen on the OTHER device | both | `pending` |
+| MUT-15 | A DM pin does not survive on a fresh device - localStorage-only, no history replay | DM | `pending` - expected to fail; it is a real hole |
+| MUT-16 | A channel pin DOES survive, because it is re-hydrated from the server | Channel | `pending` |
+| MUT-17 | Edit, then delete, then react to the deleted message | DM | `pending` - the absurd crossing |
+| MUT-18 | Two devices of the SAME user edit the same message at once | DM | `pending` |
+| MUT-19 | Delete a message that is still in the outbox, unsent | DM | `pending` |
+| MUT-20 | Mutate a message older than the 90-day server retention window | DM | `pending` |
+
+## READ - receipts, unread counts, and what syncs
+
+Read state is per-USER, never per-device, and the unread count is **never persisted** - it is
+recomputed from `readBy` on every batch. That is what makes this phase worth running: a recomputed
+number is a number that can be recomputed differently.
+
+| Id | What it asks | State |
+| --- | --- | --- |
+| READ-1 | Reading on W1 clears the unread badge on W1 and marks it read for the sender | `pending` |
+| READ-2 | The SAME user's other device also clears - a receipt from yourself resets your own count | `pending` |
+| READ-3 | The receipt only fires with the window FOCUSED and the tab visible: a background tab must not mark read | `pending` |
+| READ-4 | The 2 s debounce batches: reading twenty messages sends one receipt with twenty ids | `pending` |
+| READ-5 | "Seen by" resolves to display names, and to `+N` past three | `pending` |
+| READ-6 | Channels send no receipts at all, by design - and their read state comes from the server tally | `pending` |
+| READ-7 | Unread count after a reload, with the receipt still in flight | `pending` |
+| READ-8 | Unread count on a conversation whose messages arrived while logged out | `pending` |
+| READ-9 | Read on A1 while W1 is open: the count on W1 goes without a reload | `pending` |
+| READ-10 | Reading a conversation whose peer has deleted it | `pending` - crosses DEL |
+
+## TYPE - typing indicators
+
+Ephemeral, online-peers-only, never queued: the phase is short because there is almost nothing to
+persist, and that is itself the thing to assert.
+
+| Id | What it asks | State |
+| --- | --- | --- |
+| TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `pending` |
+| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `pending` |
+| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `pending` |
+| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `pending` |
+| TYPE-5 | Channel typing, which is a different transport entirely (REST, not WS) | `pending` |
+
+## SEARCH - finding a message
+
+Search is client-side, in-conversation, substring-only. There is no server index and no global
+search, so the phase measures what the local store actually holds - which makes it a second,
+independent probe of the same loss class `recon.mjs` measures.
+
+| Id | What it asks | State |
+| --- | --- | --- |
+| SEARCH-1 | A term in a recent message is found and highlighted, prev/next walk the hits | `pending` |
+| SEARCH-2 | A term only in OLD history: does the `searchLimitedToLoaded` flag tell the truth? | `pending` |
+| SEARCH-3 | Deleted messages are excluded; edited messages match their NEW text, not the old | `pending` |
+| SEARCH-4 | Channel search pulls up to 2000 rows and decrypts them - time it, and watch for a stall | `pending` |
+| SEARCH-5 | Accents and case: a French corpus is the real corpus here | `pending` |
+| SEARCH-6 | The sidebar filter is a DIFFERENT search (name + last message) - assert it does not claim more | `pending` |
+
+## MENTION - @ and what it triggers
+
+| Id | What it asks | State |
+| --- | --- | --- |
+| MENTION-1 | The autocomplete inserts the `@[uuid]` token, and it renders as a chip linking to the profile | `pending` |
+| MENTION-2 | In a CHANNEL, the mentioned user gets a push even at level `mentions` | `pending` |
+| MENTION-3 | At level `none`, the mention gets nothing | `pending` |
+| MENTION-4 | In a DM or group a mention triggers NOTHING extra - assert it, do not assume it | `pending` |
+| MENTION-5 | Mention a user who is not a member of the channel | `pending` |
+| MENTION-6 | The channel path sends `mentionedUserIds` in CLEARTEXT - confirm the leak is the documented one and nothing more | `pending` |
+
+## CALL - audio and video
+
+**The largest hole the inventory found.** Calls have four unit-test files, zero harness scripts,
+zero `test_adb.py` coverage and no phase at all - and they are the feature with the most moving
+parts: an SFU, a TURN provider, a 5-minute room token, MLS-exported media keys, insertable streams,
+CallKit on one platform and a full-screen intent on the other.
+
+Media is encrypted with a key exported from MLS (`exportSecret(groupId, 'mls-webrtc-media',
+callId, 32)`) and applied per encoded frame. **If the browser does not support the transform, the
+call silently degrades to SFU-visible DTLS-SRTP** and a store flips to false. Asserting that store
+is therefore part of every call check, not a separate one.
+
+| Id | What it asks | State |
+| --- | --- | --- |
+| CALL-1 | 1:1 audio W1 -> W2: ring, accept, two-way audio, hangup on either side | `pending` |
+| CALL-2 | 1:1 video: both streams render, and the E2E transform is ACTIVE - not the degraded path | `pending` |
+| CALL-3 | Group call in a 3-member group, one leg on A1 | `pending` |
+| CALL-4 | Decline: the callee stops ringing - and the caller learns nothing, which is the current design | `pending` |
+| CALL-5 | Cancel before answer: `ring-end` reaches every device including the caller's siblings | `pending` |
+| CALL-6 | Answer on A1 while W1 is also logged in: W1 stops ringing (sibling suppression) | `pending` |
+| CALL-7 | Unanswered: 60 s native timeout fires on the phone; the WEB side has no timeout at all | `pending` |
+| CALL-8 | Toggle mute, toggle camera mid-call, and camera-on from an audio-only start (renegotiation) | `pending` |
+| CALL-9 | Speaker/earpiece routing on A1 | `pending` |
+| CALL-10 | Incoming call with the app KILLED: FCM high-priority wakes it, full-screen intent, deep link answers into the right conversation | `pending` |
+| CALL-11 | The same in forced Doze | `pending` |
+| CALL-12 | Incoming call on the LOCK SCREEN, answered without unlocking - then what the PIN gate does | `pending` |
+| CALL-13 | iOS CallKit end to end: VoIP push, native UI, answer, `pending_call_accept.json`, auto-accept | `pending` - **never run on hardware** |
+| CALL-14 | A call is refused in a community channel, by design | `pending` |
+| CALL-15 | The room token expires (5 min): start a call, hold the invite, accept late | `pending` |
+| CALL-16 | Network drop mid-call - **expected to end the call**, there is no ICE restart. Confirm the UI says so | `pending` |
+| CALL-17 | A second incoming call while already in one - **expected to vanish silently**. Confirm, then decide | `pending` |
+| CALL-18 | The missed-call system message: who it names and on whose device | `pending` - **a suspected defect, see the negatives** |
+| CALL-19 | Call system messages survive a reload and appear on a second device | `pending` |
+| CALL-20 | Start a call, then the peer deletes the conversation | `pending` - crosses DEL |
+
+## COMM - communities, channels, roles
+
+A community is a `Workspace`, and **its membership is not MLS membership**. A kick rotates a
+server-held epoch key; it commits nothing. Every row here must therefore be read against `MSG-5`'s
+standing assertion: **no `masterSecret` in any payload, ever**.
+
+| Id | What it asks | State |
+| --- | --- | --- |
+| COMM-1 | Create a community, create a channel, post, both peers converge | `pending` |
+| COMM-2 | Invite link: create, preview, accept from the other account | `pending` |
+| COMM-3 | An expired link, a `maxUses`-exhausted link, and a link to a deleted community | `pending` |
+| COMM-4 | Direct invite: the `channel_invitation` card appears in the 1:1 DM on both sides, deduped | `pending` |
+| COMM-5 | Roles: promote to moderator, then admin; the permission grid takes effect immediately | `pending` |
+| COMM-6 | A custom role with a hand-picked permission set | `pending` |
+| COMM-7 | `writePolicy` = admins only: the composer is refused for a member, server-side as well as in the UI | `pending` |
+| COMM-8 | Private channel: a non-allowed member cannot see it - **and cannot fetch it by id either** | `pending` |
+| COMM-9 | Kick from a channel: the key rotates, and the kicked device can no longer decrypt NEW messages | `pending` |
+| COMM-10 | Kick from a channel: the kicked device can still decrypt the OLD ones it already holds | `pending` |
+| COMM-11 | Kick from the COMMUNITY, which carries no channel id: the client purges the whole workspace | `pending` |
+| COMM-12 | Re-invite a kicked user: they get the new epoch and not the old one | `pending` |
+| COMM-13 | Manual key rotation with both sides online, and with one side offline | `pending` |
+| COMM-14 | Channel notification levels `all` / `mentions` / `none`, enforced server-side | `pending` |
+| COMM-15 | Polls: create, vote, close; auto-pinned | `pending` |
+| COMM-16 | Delete a channel, then a community; the client drops them and the slug stays reserved | `pending` |
+| COMM-17 | Reorder communities by drag and drop; the order survives a reload and reaches the other device | `pending` |
+| COMM-18 | Deep link into a channel from a cold start | `pending` |
+| COMM-19 | The last admin leaves a community | `pending` - the absurd one, and nothing in the inventory says what happens |
+| COMM-20 | Two admins change the same role at the same moment | `pending` |
+| COMM-21 | A member is kicked while composing a message in that channel | `pending` |
+| COMM-22 | `hydrateChannelHistoryKeys` on a channel with many epochs - time it | `pending` |
+
+## GRP - group membership, invitations, and the member picker
+
+Split out of DEL once the DEL-1 rig found a defect in a control nobody had ever asserted on.
+
+| Id | What it asks | State |
+| --- | --- | --- |
+| GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `to-revalidate` - exercised by the DEL-1 rig |
+| GRP-2 | **The member picker offers users who are ALREADY members, yourself included, and inviting one changes nothing without saying so** | `failed` - found 2026-08-11, see below |
+| GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `pending` |
+| GRP-4 | The group invitation LINK: generate, open it on the other account | `pending` |
+| GRP-5 | Rename a group, seen on the other side | `pending` |
+| GRP-6 | Leave a group - which deliberately commits nothing | `pending` |
+| GRP-7 | Add a member who is offline; they join on their next connection | `pending` |
+| GRP-8 | Add and remove the same member twice in a row, fast | `pending` |
+| GRP-9 | A member row rendering a raw user id instead of a display name | `pending` - **observed on 2026-08-11**, same class as the `Utilisateur inconnu` fixes |
+
+**GRP-2, as observed.** On a group whose only member is the creator, typing one's own username in
+the picker returns one's own account as a selectable option; picking it enables *Envoyer
+l'invitation*; submitting closes the picker with no error and the roster stays at one. Two things
+are wrong and they are worth separating: the picker should not offer an existing member, and a
+submission that cannot do anything should not report success by closing. It was found because a
+harness script took the first option in the list, invited the account it was already running as,
+and then waited sixty seconds for a peer that had never been invited - see
+[testing-methodology](testing-methodology.md).
+
+## The negative rows - what does NOT exist
+
+Written down so that no check is invented for them, and so that nobody "fixes" one by reflex during
+a run. Each was confirmed absent in the code on 2026-08-11, not merely unremembered.
+
+**Messages.** Delete-for-me-only. Editing a channel message. A tombstone for a channel deletion (it
+is a hard row delete). Disappearing, expiring or view-once messages of any kind. Chat drafts - the
+composer is plain component state, so switching conversation loses it. Global or cross-conversation
+search, any server-side index, and any search filter. A mention notification in a DM or group. A
+read-receipt privacy toggle. An edit time window or edit history. A per-recipient *delivered* ACK -
+`sent` means the server accepted the POST and nothing more. Any "forwarded from" attribution.
+
+**Calls.** Screen share. Camera flip. A busy signal. Any signal back to the caller when the callee
+declines. ICE restart or any mid-call reconnection. Android `ConnectionService`/Telecom. Any
+participant cap. A call-history screen - the history is the system bubbles in the thread.
+
+**Communities.** Join requests or approval. Bans. Renaming a community. A community description. A
+channel description or topic. Channel reordering (only communities reorder). A community-level mute.
+An endpoint to revoke an invite link, though the `revoked` column exists. Any MLS involvement in
+community membership.
+
+**Three of these are gaps rather than decisions**, and they get a check that is expected to fail
+rather than a shrug: a DM pin never reaches a fresh device (MUT-15); a reply quote keeps showing the
+snapshotted preview of a parent that has since been deleted, and jumping to it lands on the
+tombstone; and `recordCallMissed` is invoked with the LOCAL user's id on the caller's own device, so
+the caller sees "appel manque de <themselves>" while the callee who never answered gets no missed
+record at all (CALL-18). None is a Work Package until a check captures it.
+
+**And the docs are wrong in four places** the inventory tripped over, all cheap to fix and none of
+them a defect in the product: `docs/wiki/protocols/websocket-protocol.md` documents a `WsEnvelope` /
+`ReadAck` protobuf path that no Rust code references; `docs/wiki/frontend/modules/calls.md` names
+call states `outgoing`/`active` where the code says `calling`/`incall`, and lists four call
+components where there is one; `docs/wiki/services/chat-delivery.md` still carries `LIVEKIT_*`
+environment variables and calls the room token a "LiveKit room token" when the SFU is the in-repo
+Rust `call-service`; and the TURN TTL is documented at 3600 s and coded at 7200.
+
 ## CORRUPT - deliberate store damage
 
 **Runs last.** It destroys state, and SETUP-8's archive is the only way back that does not cost a
@@ -460,6 +765,13 @@ assumes.
   owner account's 2FA (any re-login) and the unlock pattern after LIFE-5's reboot. So LIFE-5 and
   every re-login check leave the ordered plan below and run last, together, once the user is warned.
 - **The phone is free**: reboots, radio cycles, forced Doze and `install -r` need no warning.
+- **Every fix also pays down the cost of the NEXT check.** The user's standing instruction, given
+  2026-08-11: *"si tu dois faire un fix, profite pour rendre les tests suivants plus rapides et plus
+  faciles"*, and, on accessibility, *"ca aide aussi pour les tests automatisees, donc c'est avec
+  grand plaisir"*. The two are the same instruction: an `aria-label`, a `role="option"`, a stable
+  `id` is simultaneously the thing a screen reader announces and the thing a harness can select on,
+  and both are more durable than a Tailwind class or a portal's screen position. This applies to the
+  whole roadmap, not to one phase.
 
 **Pre-flight, and none of it is a check.** A run that skips this measures the previous build.
 
@@ -510,10 +822,40 @@ script must follow are in the debris section above.
 
 ### State to carry into the run, measured 2026-08-11
 
-- **Seven awaiting-history markers are already set** - three on W1, four on W2. Each one re-solicits
-  history on the first reconnect, so they will fire during the very first check of the run and must
-  not be read as that check's doing. Whether they are legitimate pending state or residue of
-  WP-HISTBANNER-1 is itself worth settling before MSG-1.
+**Seven awaiting-history markers were already set** - three on W1, four on W2, every one of them
+carrying the PROVEN reason `unreadable-frames`. They were audited before MSG-1 rather than left to
+fire inside it, and the audit settled two different questions and found one defect.
+
+| Marker | Conversation row | What a reconnect does with it |
+| --- | --- | --- |
+| 1 of 3 on W1 (= 1 of 4 on W2) | present on both | solicited - it is the DM under test |
+| the other 5 | none | nothing: `reSolicitAwaitingHistory` skips any group not held locally |
+
+**The live one is CORRECT and must not be "fixed".** A reconnect produced the full round trip:
+`[HISTORY_REQ] re-soliciting bundle ... (awaiting across sessions)` -> a range-mode digest, 256
+slices at depth 2 -> the peer answering `0 to send, 0 to pull (identical stores)` with an empty,
+explicitly **not vouching** bundle -> `attempt ... settled`. The marker deliberately survives that:
+an empty unvouched bundle cannot discharge `unreadable-frames`, because a frame BOTH devices lack is
+still lost and only a third device can produce it. The banner does NOT show, because the pending
+phase cleared - which is WP-HISTBANNER-1's fix working, the responder ANSWERING rather than staying
+silent. The third device that could actually discharge it is A1, which holds the same account as W1.
+
+**Exactly one of the three W1 markers was solicited**, which is the skip working, measured rather
+than argued.
+
+**The five orphans exposed WP-HISTGHOST-1**, fixed the same day: an awaiting-history marker, its
+reactive phase and its scheduled burst all outlived the conversation they described, and the
+reactive one is user-visible - a conversation deleted by the peer keeps its row on purpose
+(`lifecycle: 'removed'`) and kept rendering "L'historique est en attente" over it, permanently,
+since every clear path waits for an answer that a deleted group cannot send. See `CHANGELOG.md`.
+
+The first analysis of those orphans was WRONG and the way it was wrong is the lesson: they were
+declared inert after enumerating ONE consumer of the marker (the solicitation, which does skip
+them). The banner is another consumer, and it does not skip. One surface handling a case is not the
+case being handled - the user had seen the banner in production and said so.
+
+- W1 holds 6 conversations / 1 880 messages, W2 holds 1 / 1 804. A HEAL check that rewinds W1
+  rewinds all six.
 - W1 holds 6 conversations / 1 880 messages, W2 holds 1 / 1 804. A HEAL check that rewinds W1
   rewinds all six.
 - `heal-w2.mjs`'s verdict was rewritten on 2026-08-11 and its old form **could not pass**: it

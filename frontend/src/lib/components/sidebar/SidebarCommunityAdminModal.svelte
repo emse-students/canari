@@ -645,11 +645,13 @@
             {#if canManage}
               <div class="px-4 py-3 border-b border-cn-border bg-cn-bg/60 space-y-2.5">
                 <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2.5">
+                  <!-- Members of this community are already here; inviting them again is not an action. -->
                   <UserAutocomplete
                     value={inviteUserId}
                     onValueChange={(v) => (inviteUserId = v)}
                     placeholder={m.chat_community_search_user_placeholder()}
                     inputId="community-invite-autocomplete"
+                    excludeIds={communityMembers.map((member) => member.userId)}
                   />
                   <select
                     bind:value={inviteRole}

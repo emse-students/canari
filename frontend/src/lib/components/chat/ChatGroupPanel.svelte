@@ -585,8 +585,17 @@
       {m.chat_group_invite_description_suffix()}
     </p>
 
+    <!--
+      YOU CANNOT INVITE SOMEONE WHO IS ALREADY HERE, AND THAT INCLUDES YOURSELF.
+      All three lists were already in this component's props and simply were not wired, so the
+      picker offered existing members and the current user. Picking one enabled the submit button,
+      submitting closed the modal exactly like a real invitation, and the roster did not move - a
+      success that did nothing. Excluding them at the source is the fix; refusing them afterwards
+      would only move the silence one step later.
+    -->
     <MultiUserSelector
       users={newMembers}
+      excludeIds={[...groupMembers, ...pendingInvites, currentUserId]}
       onUsersChange={(users) => {
         newMembers = users;
       }}

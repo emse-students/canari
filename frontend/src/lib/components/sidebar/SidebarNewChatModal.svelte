@@ -102,11 +102,19 @@
           <label for="new-contact-id" class="block text-sm font-medium text-text-main mb-1">
             {m.chat_modal_contact_label()}
           </label>
+          <!--
+            Your own account is not a conversation you can start, so it is not offered. The
+            `isSelf` guard below stays: this excludes self from THIS surface's suggestions, it does
+            not make the id unreachable, and the guard is what covers a `contactId` arriving from
+            anywhere else. Note the exclusion is scoped here rather than built into the picker -
+            elsewhere in the app, finding yourself is exactly what the search is for.
+          -->
           <UserAutocomplete
             value={contactId}
             onValueChange={onContactIdChange}
             placeholder={m.chat_modal_search_user_placeholder()}
             inputId="new-contact-id"
+            excludeIds={currentUserId ? [currentUserId] : []}
             onSubmit={onSubmitContact}
           />
         </div>

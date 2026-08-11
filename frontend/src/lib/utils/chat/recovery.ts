@@ -6,6 +6,7 @@ import { persistMlsStateAfterMutation, purgeLocalConversationRecord } from './gr
 import { classifyServerStatus } from './groupLifecycle';
 import { markGroupNotReady, clearGroupNotReady } from './notReadyRegistry';
 import { solicitHistoryIfMissing } from './historySolicit';
+import { retireConversation } from './conversations';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).
@@ -158,8 +159,14 @@ export async function requestReAdd(
     const convo = deps.conversations.get(groupId);
     if (!convo || convo.lifecycle === 'removed') return;
     deps.log(`[READD] ${groupId.slice(0, 8)}... deleted server-side - marking removed`);
-    deps.conversations.set(groupId, { ...convo, id: groupId, lifecycle: 'removed' });
-    await deps.saveConversation(groupId).catch(() => {});
+    await retireConversation({
+      conversations: deps.conversations,
+      key: groupId,
+      groupId,
+      userId: deps.userId,
+      saveConversation: deps.saveConversation,
+      patch: { id: groupId },
+    });
     return;
   }
 

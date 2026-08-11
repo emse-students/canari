@@ -341,6 +341,21 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
   The classification belongs at the THROW, as a type (`MediaPurgedError` + one `isMediaPurgedError`).
   Corollary for any audit: **one surface handling a case is not "the case is handled"** - enumerate
   the consumers of the seam, never just the ones that mention it.
+- **ENUMERATE THE WRITERS OF THE STATE, NOT THE CALLERS OF THE HELPER - AND THEN MAKE THE HELPER THE
+  ONLY WRITER.** WP-HISTGHOST-1 was fixed by wiring the awaiting-history cleanup into
+  `markConversationDeletedRemotely`, whose five call sites were all checked. It shipped and FAILED
+  in production, because `lifecycle: 'removed'` was written INLINE in five OTHER places - a
+  `groupDeleted` system message, being excluded from the group, discovery, a re-add finding the
+  group tombstoned - and a sixth path purged the row outright, orphaning the marker with no row
+  left to reach it. `grep` for the STATE, not for the function; then collapse every writer into one
+  (`retireConversation`) and lock it with a test that greps the source, because no unit test can
+  observe a seventh path that does not exist yet. [chat](frontend/modules/chat.md).
+- **A PASSING CHECK THAT NEVER ARMED ITS PRECONDITION IS A CHECK THAT MEASURES NOTHING.** The first
+  end-to-end run of DEL-1 was green: it created a group, invited the peer, sent messages, deleted
+  it, and found no marker and no banner. There had never been a marker - the messages were sent
+  AFTER the join, so the peer was missing nothing. The assertions would have held with the fix
+  reverted. Every check that clears a state must first PROVE the state was set, and report
+  `VACUOUS` rather than `PASS` when it was not.
 - **A CONNECTION POOL MAKES `BEGIN` AND `COMMIT` TWO DIFFERENT CONVERSATIONS.** `tauri-plugin-sql`
   opens SQLite through sqlx's `Pool::connect` (default `max_connections = 10`), so each `execute` is
   its own acquisition and a three-call `BEGIN`/INSERT/`COMMIT` can touch three connections - leaving

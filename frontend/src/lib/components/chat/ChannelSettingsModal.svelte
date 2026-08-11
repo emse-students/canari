@@ -611,11 +611,16 @@
                     </p>
                     <div class="flex gap-2 items-start">
                       <div class="flex-1">
+                        <!--
+                          Already-granted users are not offered again. `addAllowedUser` deduped
+                          them silently, so picking one looked like it worked and changed nothing.
+                        -->
                         <UserAutocomplete
                           value={addingUserId}
                           onValueChange={(v) => (addingUserId = v)}
                           placeholder={m.chat_search_user_placeholder()}
                           filterUserIds={workspaceMemberIds}
+                          excludeIds={accessAllowedUserIds}
                         />
                       </div>
                       <button

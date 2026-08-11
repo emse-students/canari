@@ -10,7 +10,8 @@ import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { messageTime } from '$lib/utils/chat/messageOrder';
-import { noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
+import { forgetAwaitingHistory, noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
+import { retireConversation } from '$lib/utils/chat/conversations';
 import { digestIdentity, noteDigestReceived } from '$lib/utils/chat/historyDigestRendezvous';
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { readHistoryEntries, sendHistoryBundleForIds } from '$lib/utils/chat/groupActions';
@@ -327,9 +328,13 @@ export async function handleSystemEvent(
       await addMessageToChat('system', m.chat_system_removed_from_group(), convoKey, {
         isSystem: true,
       });
-      const updated = conversations.get(convoKey);
-      if (updated) conversations.set(convoKey, { ...updated, lifecycle: 'removed' });
-      await saveConversation(convoKey).catch(() => {});
+      await retireConversation({
+        conversations,
+        key: convoKey,
+        groupId: convo.id,
+        userId,
+        saveConversation,
+      });
       log(`[INFO] Excluded from group "${convoKey}" by ${getName(senderNorm)} - marked removed`);
     } else {
       await addMessageToChat(
@@ -380,6 +385,11 @@ export async function handleSystemEvent(
       // without user interaction (syncing our own action).
       if (getSelectedContact() === convoKey) setSelectedContact(null);
       conversations.delete(convoKey);
+      // A purge removes the row, so nothing keyed by the group is reachable through the UI any
+      // more - but the awaiting-history marker is keyed by the GROUP, not by the row, and outlives
+      // it. That is where this rig's five orphan markers came from: conversations deleted on
+      // another device, whose markers then sat in localStorage until the 30-day horizon.
+      forgetAwaitingHistory(userId, convo.id);
       await deleteConversation?.(convoKey).catch(() => {});
       log(`[INFO] Group deleted on another device - conversation removed immediately`);
     } else {
@@ -391,9 +401,13 @@ export async function handleSystemEvent(
         convoKey,
         { isSystem: true }
       );
-      const updated = conversations.get(convoKey);
-      if (updated) conversations.set(convoKey, { ...updated, lifecycle: 'removed' });
-      await saveConversation(convoKey).catch(() => {});
+      await retireConversation({
+        conversations,
+        key: convoKey,
+        groupId: convo.id,
+        userId,
+        saveConversation,
+      });
       log(`[INFO] Group deleted by ${senderName} - conversation marked removed`);
     }
     return true;

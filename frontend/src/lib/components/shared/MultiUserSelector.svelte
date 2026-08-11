@@ -12,9 +12,22 @@
     onUsersChange: (users: string[]) => void;
     /** Placeholder text shown in the search input. */
     placeholder?: string;
+    /**
+     * User IDs the surrounding surface already holds, and which must therefore not be offered -
+     * an existing group member, a pending invitee, the current user.
+     *
+     * Separate from `users` on purpose: `users` is what this widget has collected and can be
+     * removed by its chips, while these cannot be removed here and are simply not on the menu.
+     */
+    excludeIds?: string[];
   }
 
-  let { users, onUsersChange, placeholder = m.user_search_placeholder() }: Props = $props();
+  let {
+    users,
+    onUsersChange,
+    placeholder = m.user_search_placeholder(),
+    excludeIds = [],
+  }: Props = $props();
 
   /**
    * Adds a picked user to the selection. Seeds the display-name cache with the
@@ -38,7 +51,7 @@
     onValueChange={() => {}}
     onSelect={handleSelect}
     clearOnSelect
-    excludeIds={users}
+    excludeIds={[...users, ...excludeIds]}
     {placeholder}
   />
 

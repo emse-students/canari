@@ -127,14 +127,49 @@ export function findConversationKeyByGroupId(
 }
 
 /**
- * Marks a conversation as remotely deleted (`deletedRemotely=true`) so the UI shows
- * the local-delete banner instead of silently keeping a live conversation shell.
+ * Retires a conversation: marks the row `removed` and forgets everything else keyed by its group.
  *
- * `userId` is what lets the awaiting-history state be forgotten with it. This row deliberately
- * SURVIVES the deletion - that is the whole point of `lifecycle: 'removed'` - so anything keyed by
- * the group and left behind stays reachable by the UI. The pending-history banner was exactly that:
- * it kept claiming an attempt was outstanding over a conversation that no longer exists anywhere,
- * because every path that clears it waits for an answer nobody will ever send.
+ * THIS IS THE ONLY PLACE `lifecycle: 'removed'` MAY BE WRITTEN, and that is the substance of it.
+ * Five separate paths used to write it inline - a peer deleting the group, a `groupDeleted` system
+ * message, being excluded from the group, discovery finding the group gone server-side, and a
+ * re-add attempt discovering the same - so wiring the awaiting-history cleanup into ONE of them
+ * fixed one fifth of the defect and shipped looking complete. Enumerating the callers of a helper
+ * is not enumerating the writers of a state.
+ *
+ * The row deliberately SURVIVES this - that is the whole point of `removed`, so the UI can explain
+ * the absence rather than silently dropping a conversation - which is exactly what keeps anything
+ * else keyed by the group reachable. The pending-history banner was that: it kept claiming, over a
+ * conversation that no longer exists anywhere, that a history bundle was on its way, because every
+ * path that clears the claim waits for an answer nobody will ever send.
+ *
+ * The forget happens BEFORE the persist is awaited: a save that is slow or rejected must not be
+ * able to leave the marker behind.
+ *
+ * @returns whether anything changed - false when the row is absent or already retired
+ */
+export async function retireConversation(params: {
+  conversations: Map<string, Conversation>;
+  /** The conversations-map key. Use {@link markConversationDeletedRemotely} when you only have the group id. */
+  key: string;
+  /** The MLS group id, which is what the group-keyed leftovers are keyed by. */
+  groupId: string;
+  userId: string;
+  saveConversation?: (key: string) => Promise<void>;
+  /** Extra fields to merge into the row, for callers that repair it in the same write. */
+  patch?: Partial<Conversation>;
+}): Promise<boolean> {
+  const { conversations, key, groupId, userId, saveConversation, patch } = params;
+  const convo = conversations.get(key);
+  if (!convo || convo.lifecycle === 'removed') return false;
+  conversations.set(key, { ...convo, ...patch, lifecycle: 'removed' });
+  forgetAwaitingHistory(userId, groupId);
+  await saveConversation?.(key).catch(() => {});
+  return true;
+}
+
+/**
+ * Retires the conversation carrying `groupId`, for callers that hold the group id rather than the
+ * map key. Synchronous by design: its callers are event handlers whose return value is a boolean.
  */
 export function markConversationDeletedRemotely(
   conversations: Map<string, Conversation>,
@@ -146,9 +181,7 @@ export function markConversationDeletedRemotely(
   if (!key) return false;
   const convo = conversations.get(key);
   if (!convo || convo.lifecycle === 'removed') return false;
-  conversations.set(key, { ...convo, lifecycle: 'removed' });
-  saveConversation?.(key).catch(() => {});
-  forgetAwaitingHistory(userId, groupId);
+  void retireConversation({ conversations, key, groupId, userId, saveConversation });
   return true;
 }
 

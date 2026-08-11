@@ -6,6 +6,7 @@
   import { m } from '$lib/paraglide/messages';
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
+  import { filterUserSuggestions } from '$lib/utils/users/suggestionFilter';
 
   interface User {
     id: string;
@@ -27,7 +28,14 @@
     onSubmit?: () => void;
     /** When true, the input resets after each selection (multi-add usage, e.g. MultiUserSelector). */
     clearOnSelect?: boolean;
-    /** User IDs to hide from the suggestion list (e.g. already-selected users). */
+    /**
+     * User IDs to hide from the suggestion list.
+     *
+     * This is how an invitation surface says "these people are already here". It is deliberately
+     * NOT a property of the picker itself: the same component is used to FIND a user - including
+     * yourself - in contexts where excluding anyone would be wrong, so who may not be offered is
+     * the caller's question, and only the caller can answer it.
+     */
     excludeIds?: string[];
     /** When set, only users whose IDs are in this list appear in suggestions. */
     filterUserIds?: string[];
@@ -45,7 +53,7 @@
     filterUserIds,
   }: Props = $props();
 
-  let suggestions = $state<User[]>([]);
+  let results = $state<User[]>([]);
   let isLoading = $state(false);
   let showDropdown = $state(false);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -54,6 +62,18 @@
   let selectedUser = $state<User | null>(null);
   let anchorEl = $state<HTMLElement | null>(null);
   let dropdownEl = $state<HTMLElement | null>(null);
+
+  /**
+   * What the user may actually pick: the server's answer, minus who this surface excludes.
+   *
+   * A PROJECTION, not a step inside `searchUsers`, so that a roster changing while the dropdown is
+   * open takes effect immediately rather than on the next keystroke. The rule itself lives in
+   * `filterUserSuggestions` because it is worth a test of its own.
+   */
+  const suggestions = $derived(filterUserSuggestions(results, { excludeIds, filterUserIds }));
+
+  const listboxId = $derived(`${inputId}-listbox`);
+  const optionId = (index: number) => `${inputId}-option-${index}`;
 
   /**
    * Position the portalled dropdown against the input.
@@ -80,7 +100,7 @@
 
   async function searchUsers(query: string) {
     if (!query || query.length < 2) {
-      suggestions = [];
+      results = [];
       showDropdown = false;
       return;
     }
@@ -89,19 +109,13 @@
     try {
       const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(query)}`);
       if (res.ok) {
-        let all: User[] = await res.json();
-        all = all.filter((u) => !excludeIds.includes(u.id));
-        if (filterUserIds) {
-          const allowed = new Set(filterUserIds.map((id) => id.toLowerCase()));
-          all = all.filter((u) => allowed.has(u.id.toLowerCase()));
-        }
-        suggestions = all;
+        results = await res.json();
         showDropdown = suggestions.length > 0;
         selectedIndex = -1;
       }
     } catch (e) {
       console.error('Failed to search users:', e);
-      suggestions = [];
+      results = [];
     } finally {
       isLoading = false;
     }
@@ -127,7 +141,7 @@
     inputText = user.displayName || user.id;
     onValueChange(user.id);
     showDropdown = false;
-    suggestions = [];
+    results = [];
     selectedIndex = -1;
     onSelect?.(user);
     if (clearOnSelect) {
@@ -196,9 +210,21 @@
   <span class="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted">
     <Search size={15} />
   </span>
+  <!--
+    The ARIA 1.2 combobox pattern, and it is not decoration: without `aria-expanded` a screen
+    reader never announces that suggestions appeared, and without `aria-activedescendant` the
+    arrow keys move a highlight nobody is told about. It also gives automated checks a stable
+    handle - `role="option"` - instead of matching on a Tailwind class or a portal's position.
+  -->
   <input
     id={inputId}
     type="text"
+    role="combobox"
+    aria-expanded={showDropdown && suggestions.length > 0}
+    aria-controls={listboxId}
+    aria-autocomplete="list"
+    aria-busy={isLoading}
+    aria-activedescendant={selectedIndex >= 0 ? optionId(selectedIndex) : undefined}
     value={inputText}
     oninput={handleInput}
     onkeydown={handleKeydown}
@@ -206,7 +232,7 @@
     onfocus={handleFocus}
     {placeholder}
     autocomplete="off"
-    class="w-full pl-9 pr-4 py-2.5 bg-[var(--cn-surface)] border border-cn-border rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45 focus:border-amber-400/60"
+    class="w-full pl-9 pr-4 py-2.5 bg-(--cn-surface) border border-cn-border rounded-xl text-sm outline-none focus:ring-2 focus:ring-amber-400/45 focus:border-amber-400/60"
   />
 
   {#if isLoading}
@@ -216,6 +242,7 @@
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
+        aria-hidden="true"
       >
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"
         ></circle>
@@ -233,20 +260,30 @@
     <ul
       bind:this={dropdownEl}
       use:portal
-      class="fixed z-[290] bg-white/95 dark:bg-gray-900/95 border border-white/60 dark:border-white/10 rounded-xl shadow-lg overflow-auto backdrop-blur-sm"
+      id={listboxId}
+      role="listbox"
+      aria-label={placeholder}
+      class="fixed z-290 bg-white/95 dark:bg-gray-900/95 border border-white/60 dark:border-white/10 rounded-xl shadow-lg overflow-auto backdrop-blur-sm"
     >
       {#each suggestions as user, index (user.id)}
-        <li>
-          <button
-            type="button"
-            class="w-full px-4 py-2 text-left text-sm hover:bg-amber-100/50 dark:hover:bg-amber-900/30 transition-colors first:rounded-t-xl last:rounded-b-xl {index ===
-            selectedIndex
-              ? 'bg-amber-100/50 dark:bg-amber-900/30'
-              : ''}"
-            onmousedown={() => selectUser(user)}
-          >
-            <span class="font-medium text-text-main">{user.displayName || user.id}</span>
-          </button>
+        <!--
+          The option IS the `li`. Wrapping a `button` in it would put a generic element between the
+          listbox and its options and break the relation the pattern depends on; the options are
+          never focused anyway - the input keeps focus and points at one via `aria-activedescendant`.
+          `onmousedown` rather than `onclick` because `handleBlur` fires first on a click.
+        -->
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <li
+          id={optionId(index)}
+          role="option"
+          aria-selected={index === selectedIndex}
+          class="px-4 py-2 text-left text-sm cursor-pointer hover:bg-amber-100/50 dark:hover:bg-amber-900/30 transition-colors first:rounded-t-xl last:rounded-b-xl {index ===
+          selectedIndex
+            ? 'bg-amber-100/50 dark:bg-amber-900/30'
+            : ''}"
+          onmousedown={() => selectUser(user)}
+        >
+          <span class="font-medium text-text-main">{user.displayName || user.id}</span>
         </li>
       {/each}
     </ul>

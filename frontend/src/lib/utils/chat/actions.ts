@@ -23,7 +23,7 @@ import {
   selectEntryIdsForPrefixes,
 } from '$lib/utils/chat/historyManifest';
 import { isAwaitingHistory, markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
-import { resolveDirectPeerId } from '$lib/utils/chat/conversations';
+import { resolveDirectPeerId, retireConversation } from '$lib/utils/chat/conversations';
 import {
   classifyServerStatus,
   decideAbsentGroupFate,
@@ -431,8 +431,13 @@ export async function discoverMissingGroups(params: {
           continue;
         }
         if (fate.action === 'markRemoved') {
-          conversations.set(key, { ...convo, lifecycle: 'removed' });
-          await saveConversation?.(key).catch(() => {});
+          await retireConversation({
+            conversations,
+            key,
+            groupId: convo.id,
+            userId,
+            saveConversation,
+          });
           log(`[DISCOVERY] UI group "${label}" ${fate.reason} - marked removed`);
           continue;
         }
