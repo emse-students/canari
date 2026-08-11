@@ -2,6 +2,7 @@
   import type { Component } from 'svelte';
   import { ChevronDown } from '@lucide/svelte';
   import { clickOutside } from '$lib/actions/clickOutside';
+  import { bindFixedPopover } from '$lib/actions/fixedPopover';
 
   interface NavGroupItem {
     href: string;
@@ -23,10 +24,23 @@
   let { label, icon: Icon, items, active }: Props = $props();
 
   let open = $state(false);
+  let buttonEl = $state<HTMLElement | null>(null);
+  let panelEl = $state<HTMLElement | null>(null);
+
+  // The nav bar scrolls horizontally (`overflow-x-auto`), which forces the browser to clip the
+  // vertical axis too - an `absolute` panel anchored inside it never becomes visible. `fixed`,
+  // positioned against the button's own viewport rect, escapes that clip (see
+  // docs/wiki/frontend/architecture.md "An anchored dropdown must be portalled").
+  $effect(() => {
+    if (!open || !panelEl || !buttonEl) return;
+    const unbind = bindFixedPopover(panelEl, { anchor: () => buttonEl, estimatedHeight: 220 });
+    return unbind;
+  });
 </script>
 
-<div class="relative shrink-0" use:clickOutside={() => (open = false)}>
+<div class="shrink-0" use:clickOutside={() => (open = false)}>
   <button
+    bind:this={buttonEl}
     type="button"
     onclick={() => (open = !open)}
     aria-expanded={open}
@@ -41,7 +55,8 @@
   </button>
   {#if open}
     <div
-      class="absolute left-0 top-full z-30 mt-1.5 min-w-52 rounded-2xl border border-black/8 dark:border-white/10 bg-cn-surface/95 backdrop-blur-xl shadow-lg p-1.5 space-y-0.5"
+      bind:this={panelEl}
+      class="fixed z-[200] min-w-52 rounded-2xl border border-black/8 dark:border-white/10 bg-cn-surface/95 backdrop-blur-xl shadow-lg p-1.5 space-y-0.5"
     >
       {#each items as item (item.href)}
         <a
