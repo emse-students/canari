@@ -38,7 +38,11 @@ import {
   startNewConversation as startConversation,
 } from '$lib/utils/chat/groupCreation';
 import { requestReAdd } from '$lib/utils/chat/recovery';
-import { loadExistingConversations, INITIAL_MESSAGES_PAGE } from '$lib/utils/chat/conversations';
+import {
+  loadExistingConversations,
+  purgeConversation,
+  INITIAL_MESSAGES_PAGE,
+} from '$lib/utils/chat/conversations';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import {
   mapStoredMessagesToChatMessages,
@@ -971,8 +975,15 @@ export function useConversations() {
   async function handleDeleteGroupLocally(ctx: ConversationContext) {
     if (!selectedContact) return;
     const contactKey = selectedContact;
-    if (ctx.storage) await ctx.storage.deleteConversation(contactKey).catch(() => {});
-    conversations.delete(contactKey);
+    // Through `purgeConversation` rather than a bare `conversations.delete`, so this exit forgets
+    // the group-keyed leftovers exactly like retiring does - it did not, and left orphaned
+    // awaiting-history markers behind for every conversation cleared this way.
+    await purgeConversation({
+      conversations,
+      key: contactKey,
+      userId: ctx.userId,
+      deleteStored: ctx.storage ? (key) => ctx.storage!.deleteConversation(key) : undefined,
+    });
     selectedContact = null;
     ctx.log(`[DELETE_LOCAL] Local conversation deleted: ${contactKey.slice(0, 8)}…`);
   }

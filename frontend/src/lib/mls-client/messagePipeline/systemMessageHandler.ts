@@ -10,8 +10,8 @@ import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { messageTime } from '$lib/utils/chat/messageOrder';
-import { forgetAwaitingHistory, noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
-import { retireConversation } from '$lib/utils/chat/conversations';
+import { noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
+import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
 import { digestIdentity, noteDigestReceived } from '$lib/utils/chat/historyDigestRendezvous';
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { readHistoryEntries, sendHistoryBundleForIds } from '$lib/utils/chat/groupActions';
@@ -384,13 +384,17 @@ export async function handleSystemEvent(
       // Deletion performed by us on another device: remove immediately
       // without user interaction (syncing our own action).
       if (getSelectedContact() === convoKey) setSelectedContact(null);
-      conversations.delete(convoKey);
       // A purge removes the row, so nothing keyed by the group is reachable through the UI any
       // more - but the awaiting-history marker is keyed by the GROUP, not by the row, and outlives
-      // it. That is where this rig's five orphan markers came from: conversations deleted on
-      // another device, whose markers then sat in localStorage until the 30-day horizon.
-      forgetAwaitingHistory(userId, convo.id);
-      await deleteConversation?.(convoKey).catch(() => {});
+      // it. That is where this rig's orphan markers came from: conversations deleted on another
+      // device, whose markers then sat in localStorage until the 30-day horizon.
+      await purgeConversation({
+        conversations,
+        key: convoKey,
+        groupId: convo.id,
+        userId,
+        deleteStored: deleteConversation,
+      });
       log(`[INFO] Group deleted on another device - conversation removed immediately`);
     } else {
       // Deleted by another participant: add a visible message and set the

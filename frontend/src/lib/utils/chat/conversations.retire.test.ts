@@ -15,7 +15,11 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
-import { retireConversation, markConversationDeletedRemotely } from './conversations';
+import {
+  retireConversation,
+  purgeConversation,
+  markConversationDeletedRemotely,
+} from './conversations';
 import { markAwaitingHistory, isAwaitingHistory } from './awaitingHistoryRegistry';
 
 const USER = 'user-a';
@@ -100,6 +104,56 @@ describe('retireConversation', () => {
     expect(markConversationDeletedRemotely(conversations, GROUP, USER)).toBe(true);
     expect(conversations.get('k')?.lifecycle).toBe('removed');
     expect(isAwaitingHistory(USER, GROUP)).toBe(false);
+  });
+});
+
+describe('purgeConversation', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('removes the row and forgets the awaiting-history marker', async () => {
+    const conversations = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
+    markAwaitingHistory(USER, GROUP, 'unreadable-frames');
+
+    expect(await purgeConversation({ conversations, key: 'k', groupId: GROUP, userId: USER })).toBe(
+      true
+    );
+    expect(conversations.has('k')).toBe(false);
+    expect(isAwaitingHistory(USER, GROUP)).toBe(false);
+  });
+
+  it("falls back to the row's own group id when the caller does not pass one", async () => {
+    // The two exits reach this with different information: the system-message handler holds the
+    // group id, the UI handler holds only the map key.
+    const conversations = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
+    markAwaitingHistory(USER, GROUP, 'unreadable-frames');
+
+    await purgeConversation({ conversations, key: 'k', userId: USER });
+
+    expect(isAwaitingHistory(USER, GROUP)).toBe(false);
+  });
+
+  it('forgets the marker even when deleting the stored row rejects', async () => {
+    // Same ordering rule as retiring: a failed write must not be able to strand the marker.
+    const conversations = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
+    markAwaitingHistory(USER, GROUP, 'unreadable-frames');
+
+    await purgeConversation({
+      conversations,
+      key: 'k',
+      groupId: GROUP,
+      userId: USER,
+      deleteStored: () => Promise.reject(new Error('quota')),
+    });
+
+    expect(conversations.has('k')).toBe(false);
+    expect(isAwaitingHistory(USER, GROUP)).toBe(false);
+  });
+
+  it('reports false when there was no row to remove', async () => {
+    const conversations = new SvelteMap<string, Conversation>();
+    expect(await purgeConversation({ conversations, key: 'k', groupId: GROUP, userId: USER })).toBe(
+      false
+    );
   });
 });
 

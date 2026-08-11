@@ -168,6 +168,42 @@ export async function retireConversation(params: {
 }
 
 /**
+ * Removes a conversation OUTRIGHT - the row and everything keyed by its group.
+ *
+ * The other way a conversation can end, and the reason this exists beside {@link retireConversation}
+ * rather than inside it: retiring KEEPS the row so the UI can explain the absence, purging does
+ * not. Both must forget the group-keyed leftovers, and only one of them used to.
+ *
+ * Found by measuring rather than by reading: after clearing five peer-deleted conversations through
+ * "Supprimer localement", the awaiting-history markers for two of them were still in
+ * `localStorage`, now pointing at conversations that no longer existed. The single-writer test
+ * guarding `retireConversation` could not have caught it - this path never writes
+ * `lifecycle: 'removed'`, it deletes the row instead, so it was never a writer of the state that
+ * test watches. Two exits, two seams, one cleanup.
+ *
+ * Harmless today, because `reSolicitAwaitingHistory` filters on `mls.getLocalGroups()` and a group
+ * that is gone can never re-arm the banner - an orphan marker just sits there until its 30-day
+ * horizon. That is a reason it was not visible, not a reason to leave it.
+ *
+ * @returns whether a row was actually removed
+ */
+export async function purgeConversation(params: {
+  conversations: Map<string, Conversation>;
+  key: string;
+  /** The MLS group id. Falls back to the row's own id when the caller only holds the key. */
+  groupId?: string;
+  userId: string;
+  deleteStored?: (key: string) => Promise<void>;
+}): Promise<boolean> {
+  const { conversations, key, userId, deleteStored } = params;
+  const convo = conversations.get(key);
+  const groupId = params.groupId ?? convo?.id;
+  if (groupId) forgetAwaitingHistory(userId, groupId);
+  await deleteStored?.(key).catch(() => {});
+  return conversations.delete(key);
+}
+
+/**
  * Retires the conversation carrying `groupId`, for callers that hold the group id rather than the
  * map key. Synchronous by design: its callers are event handlers whose return value is a boolean.
  */
