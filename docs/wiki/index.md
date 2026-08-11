@@ -3,6 +3,10 @@
 > Language: English (all technical documentation).
 > Audience: developers, LLMs, contributors.
 
+> **Start here: [Durable rules](durable-rules.md)** — every constraint this codebase has paid for,
+> indexed by area. `CLAUDE.md` keeps only the rules that apply to every task and points here for the
+> rest. Read the section matching what you are about to touch, before you write anything.
+
 ## Table of contents
 
 ### Architecture
@@ -61,10 +65,13 @@
 
 ### Development & operations
 
+- [Durable rules](durable-rules.md) — the constraints, grouped by area, each linked to the page carrying its reasoning
 - [Development workflow](development.md) — Local setup, Makefile, Docker Compose, pre-commit hooks
 - [CI/CD pipeline](cicd.md) — GitHub Actions, mobile builds, releases, self-hosted runner
 - [Device verification runbook](device-verification.md) — The ordered Android + iOS pass: what compiling never proves, and the log line that is the verdict for each check
-- [Server migration & bootstrap](../infrastructure/MIGRATION.md) — Bare-metal setup, secrets, data restore, SSH backup
+- [Testing methodology](testing-methodology.md) — How a result earns belief: the harness faults distilled into rules, plus the environment traps that read as application bugs
+- [Cross-client testing](cross-client-testing.md) — The campaign dashboard: every check, its category and its state
+- [Server migration & bootstrap](../../infrastructure/MIGRATION.md) — Bare-metal setup, secrets, data restore, SSH backup
 
 ---
 
@@ -72,12 +79,12 @@
 
 | Concern | Where to look |
 |---|---|
-| Nginx routing (source of truth) | [`infrastructure/local/Dockerfile.frontend`](../infrastructure/local/Dockerfile.frontend) |
-| Gateway routes | [`apps/chat-gateway/src/main.rs`](../apps/chat-gateway/src/main.rs) |
-| Full MLS API | [`apps/chat-delivery-service/src/app.controller.ts`](../apps/chat-delivery-service/src/app.controller.ts) |
-| i18n messages | [`frontend/messages/fr.json`](../frontend/messages/fr.json) (source), `en.json` |
+| Nginx routing (source of truth) | [`infrastructure/local/Dockerfile.frontend`](../../infrastructure/local/Dockerfile.frontend) |
+| Gateway routes | [`apps/chat-gateway/src/main.rs`](../../apps/chat-gateway/src/main.rs) |
+| Full MLS API | [`apps/chat-delivery-service/src/app.controller.ts`](../../apps/chat-delivery-service/src/app.controller.ts) |
+| i18n messages | [`frontend/messages/fr.json`](../../frontend/messages/fr.json) (source), `en.json` |
 | Environment setup | `scripts/setup-env.sh` |
 | Available commands | `Makefile` |
-| Server bootstrap | [`infrastructure/MIGRATION.md`](../infrastructure/MIGRATION.md) |
-| Protobuf schema | [`libs/proto/canari.proto`](../libs/proto/canari.proto) |
-| Shared event types | [`libs/shared-rust/src/lib.rs`](../libs/shared-rust/src/lib.rs) |
+| Server bootstrap | [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) |
+| Protobuf schema | [`libs/proto/canari.proto`](../../libs/proto/canari.proto) |
+| Shared event types | [`libs/shared-rust/src/lib.rs`](../../libs/shared-rust/src/lib.rs) |
