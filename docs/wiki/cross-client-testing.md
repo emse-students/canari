@@ -189,7 +189,7 @@ exactly the rewind this campaign chased, done deliberately. Take the snapshot fi
 | Id | How the group is broken | State |
 | --- | --- | --- |
 | HEAL-W1 | Restore a snapshot from BEFORE a membership commit, then have the peer send | `pending` - epoch gap. A `healed` verdict after applying ZERO commits is the WP-PENDING-2 fault reappearing |
-| HEAL-W2 | Restore from BEFORE the group was joined at all | `pending` - unknown-group path. `Drain start` must be followed by `Drain complete`; the drain must never be held by the recovery |
+| HEAL-W2 | Restore from BEFORE the group was joined at all | `to-revalidate` 2026-08-11 - it has never reached the branch it names, and it found a different defect instead. See below |
 | HEAL-W3 | Freeze one client while the peer advances its ratchet past 2 000 frames in one epoch | `pending` - generation gap. `TooDistantInTheFuture` must beat `GAP_QUEUED`, as it does on Android. The expensive one: a scripted volume run |
 | HEAL-W4 | HEAL-W2 with a SECOND tab holding the leader role | `pending` - **no prior art on either client**. The WP-MULTITAB-1 seam meeting the recovery seam |
 | HEAL-repair | Does the history diff repair a rewound sender end to end? | `passed` 2026-08-10: `HEALED 14/14`, `ids mode, 554 id(s)`, `narrow retransmission=false`, and the frame rate back to ~14 console lines per 60 s against the ~450 frames/min of the deleted mechanism |
@@ -197,6 +197,38 @@ exactly the rewind this campaign chased, done deliberately. Take the snapshot fi
 Every run of a HEAL check needs, without exception: `bundle-id.mjs` **first** (both browsers reloaded
 onto the current bundle); a record of **which device answered**, since the responder is elected at
 random; and a teardown that restores the **invariant**, never a snapshot.
+
+### HEAL-W2: what four runs actually established (2026-08-11)
+
+The break has to be CONSTRUCTED, and that is the check's whole design: the web MLS state is one
+opaque blob (`mls_autosave`, ~1.9 MB) holding every group, so no edit makes a single group unknown -
+a restore rewinds everything or nothing. So the group is created AFTER the snapshot (`newgroup.mjs`
++ `invite.mjs`, the only cheap deterministic epoch generator), proved to deliver, and only then is
+the blob restored. `mlsdb.mjs` keeps the snapshot in its own IndexedDB database rather than a
+`window` property, which is what lets the device under test navigate and reload between the two -
+the earlier tab-lifetime version forced W1 to sit on a minutes-old page, where a sidebar row would
+not open however often it was clicked.
+
+**The branch it names was never reached, and the reason is the app being right.** Boot catch-up
+(`[CATCHUP] batch history: N group(s) in 1 request`) re-joins the group from a Welcome still
+available server-side before any frame can arrive, so by the time one does the group is known.
+`handleUnknownGroup` is reachable only when no Welcome is available, which this construction cannot
+arrange. Sending DURING the boot was tried and does not settle it either: it is a race, and a check
+whose verdict depends on winning one measures the race, not the branch.
+
+**What the fourth run found instead is a real defect, now fixed** (`1e8208d6`). Once catch-up had
+re-joined, the re-joined group held no past-epoch secrets, and the peer's message - encrypted one
+epoch earlier - hit the `msg_epoch < group_epoch` branch of `process_incoming_on_group`, which
+answered `Ok(None)`, i.e. "no application payload". That is what a commit echo also answers, so the
+message was ACKed off the server and dropped with no `LOST frame`, no marker and no solicitation.
+Reasoning and the fix are in
+[mls-protocol > a frame from a PAST epoch is two events](protocols/mls-protocol.md).
+
+**So the re-run has a new expected outcome**, and it is a better check than the original: after the
+deploy, the same construction must end with the message RECOVERED through `LOST frame` ->
+`unreadable-frames` -> the history diff, and `unknownGroupFired=0` is then a fact about catch-up
+rather than a failure. `heal-w2.mjs`'s verdict has to be rewritten around that before the re-run -
+it currently reads `unknown.length` as a PASS condition, which no run can satisfy.
 
 ## PIN
 
