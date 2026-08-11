@@ -91,9 +91,13 @@ up: **prod IS the test server** until a `dev.canari-emse.fr` exists.
 2. **WP-STORAGE-1's backup rewrite: BUILD IT AND PROVE A RESTORE, then show the user before any
    cutover.** The new scheme runs ALONGSIDE the tar; the tar is retired only after a restore has been
    demonstrated from the new repo. Not a free hand on prod backups.
-3. **The 30-day media GC STAYS, but it must stop being silent.** Render an explicit "this image is no
-   longer available" state instead of a gap. It is a lie today, not a limitation - section 6 of
-   [storage-forecast](docs/wiki/infrastructure/storage-forecast.md).
+3. **The 30-day media GC STAYS, and it no longer lies - DONE 2026-08-11.** "It is a lie today" was
+   itself half stale, and the correction is the point: the chat bubble has rendered an explicit
+   "Média expiré (rétention 30 jours)" since June (`d00935bd`), and 62 of the 189 prod media rows are
+   already `retention_expired`, so the mechanism was live. THREE OTHER surfaces were wrong, and the
+   worst was the raw token `MEDIA_PURGED_BY_RETENTION` rendered in red under a post. Fixed on all
+   four - table and reasoning in
+   [storage-forecast > the deletion is no longer silent](docs/wiki/infrastructure/storage-forecast.md).
 4. **The phone is available this session** - the user offered to plug it in, so the Android P1s and
    LIFE-5 come before the rest of the browser roadmap.
 
@@ -354,9 +358,10 @@ raising it first locks everyone out.
   content-linked media deletion, which does not exist at all today - message delete and account
   delete leave the blobs, a GDPR point as much as a storage one; (4) Redis `maxmemory` +
   `volatile-lru` (it is `0`/`noeviction` today); (5) autovacuum on `queued_message`. `docker system
-  prune` frees 5.45 GB right now. **One thing needs the USER, not a fix:** media are GC'd after 30
-  days of no access, so a new device or a reinstall sees no image older than 30 days, silently. That
-  is what makes the forecast survivable and it may not be intended - section 6 of the page.
+  prune` frees 5.45 GB right now. **The 30-day GC is no longer SILENT** (2026-08-11): all four media
+  surfaces now render an explicit expired state, see decision 3 at the top. What still needs the
+  USER is the POLICY, not the rendering - a new device or a reinstall still sees no image older
+  than 30 days, which is what makes the forecast survivable and may not be intended (section 6).
 
 - \[ \] **WP-ANR-1 (P1) - FIXED AND PUSHED (`01bc0a13`); what is left is ONE on-device
   verification.** Both multiplicative causes are gone (the per-byte CBOR decode, and the drain
@@ -734,6 +739,13 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
 - A cross-process contract is only as good as its test: pin the PATHS as well as the field names,
   or a writer on one OS fills a directory nothing ever reads.
 - Never let a capability probe swallow its own failure, and never branch on an error MESSAGE.
+- **A DISTINCTION CARRIED IN PROSE IS A DISTINCTION EXACTLY ONE CALL SITE WILL MAKE.** `410 Gone`
+  became `new Error('MEDIA_PURGED_BY_RETENTION')`, so telling "expired for ever" from "the download
+  failed" meant `String.includes` at each consumer - and of four media surfaces exactly one did it:
+  one rendered the raw token to the user in red, one drew a generic broken image, one spun for ever.
+  The classification belongs at the THROW, as a type (`MediaPurgedError` + one `isMediaPurgedError`).
+  Corollary for any audit: **one surface handling a case is not "the case is handled"** - enumerate
+  the consumers of the seam, never just the ones that mention it.
 - A plugin in `Cargo.toml` is not a plugin the app may CALL: Tauri v2 gates every plugin COMMAND
   behind `capabilities/`, and an ungranted one builds, ships and installs, then rejects on a real
   device. EVENTS are not gated - which is how `deep-link` worked warm and was dead cold for as long

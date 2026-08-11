@@ -324,13 +324,36 @@ behaviour that may not be intended.** A photo nobody re-opens for 30 days is del
 Clients that already downloaded it may still hold a local copy, but:
 
 - a **new device** sees nothing older than 30 days;
-- so does a **reinstall**, or anything that clears the local cache;
-- and the conversation itself gives no indication that the image is gone rather than failing to load.
+- so does a **reinstall**, or anything that clears the local cache.
 
 That is a legitimate design for a student social app, and it is the reason media do not grow without
-bound - but it should be a decision, not a side effect. The alternatives are a longer window (which
-scales the media line above proportionally: 90 days roughly triples it), or an explicit "expired
-media" state in the UI so the deletion is visible rather than silent.
+bound - but it should be a decision, not a side effect. The alternative is a longer window, which
+scales the media line above proportionally: 90 days roughly triples it.
+
+### The deletion is no longer silent (2026-08-11)
+
+The third bullet used to read "the conversation itself gives no indication that the image is gone
+rather than failing to load", and the user's decision was to make the state explicit. **Half of that
+was already shipped and the note was stale**: the server has answered `410 Gone` with
+`purgeReason = 'retention_expired'` and the chat bubble has rendered "Média expiré (rétention 30
+jours)." since June 2026 (`d00935bd`, `d2fb58cd`). Of the 189 media rows on production, **62 are
+already `retention_expired`** - so this path is live, not theoretical.
+
+What was NOT shipped is every OTHER surface, and the audit found three of the four consumers wrong:
+
+| Surface | Before | After |
+| --- | --- | --- |
+| Message bubble (`MessageMediaRenderer`) | explicit expired label | unchanged |
+| Post media (`PostMedia`) | rendered `err.message` - the **raw token `MEDIA_PURGED_BY_RETENTION`** shown to the user, in red, as an error | neutral box, `post_media_expired_label` |
+| Shared-media grid (`SharedMediaThumb`) | bare `ImageOff` icon, identical to a network failure | icon + "Expiré", full sentence on the tooltip and the `aria-label` |
+| Shared-media lightbox (`ConversationMediaPanel`) | `.catch(() => {})` - **spun forever** on a blob the server will never return | explicit expired/error state |
+| That panel's file download | `console.error` only, no user feedback | toast |
+
+**The generalisable defect was the classification, not the wording.** The transport threw
+`new Error('MEDIA_PURGED_BY_RETENTION')` and each call site was left to sniff the message with
+`String.includes` - so exactly one did, and it was the only surface that behaved. `utils/mediaErrors.ts`
+now exports a `MediaPurgedError` class and the single predicate `isMediaPurgedError`; nothing branches
+on the prose any more (`mediaErrors.test.ts` pins that a look-alike message is NOT accepted).
 
 ---
 

@@ -2,6 +2,7 @@ import type { MediaRef } from '$lib/media';
 import { decryptMediaBuffer } from '$lib/mediaCrypto';
 import { getToken } from '$lib/stores/auth';
 import { BlobUrlPool } from './blobUrlPool';
+import { MediaPurgedError } from './mediaErrors';
 
 const CIPHER_CACHE_NAME = 'canari-media-ciphertext-v1';
 
@@ -52,7 +53,7 @@ async function fetchCiphertext(mediaId: string, baseUrl: string): Promise<ArrayB
   );
 
   if (!res.ok) {
-    if (res.status === 410) throw new Error('MEDIA_PURGED_BY_RETENTION');
+    if (res.status === 410) throw new MediaPurgedError();
     throw new Error(`Media download failed: ${res.status} ${res.statusText}`);
   }
 
@@ -117,7 +118,7 @@ async function loadRawBlobUrl(mediaId: string, baseUrl: string): Promise<string>
       { headers: { Authorization: `Bearer ${await getToken()}` } }
     );
     if (!res.ok) {
-      if (res.status === 410) throw new Error('MEDIA_PURGED_BY_RETENTION');
+      if (res.status === 410) throw new MediaPurgedError();
       throw new Error(`Avatar download failed: ${res.status}`);
     }
     const blobUrl = URL.createObjectURL(await res.blob());

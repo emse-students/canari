@@ -4,12 +4,14 @@
     Download,
     CircleAlert,
     Image as ImageIcon,
+    ImageOff,
     Video as VideoIcon,
     Mic,
   } from '@lucide/svelte';
   import { MediaService } from '$lib/media';
   import type { MediaRef, MediaType } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
+  import { isMediaPurgedError } from '$lib/utils/mediaErrors';
   import { resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
   import { formatFileSize } from '$lib/utils/fileSize';
   import { isPdfAttachment } from '$lib/utils/pdfThumbnail';
@@ -46,6 +48,8 @@
   let blobUrl = $state<string | null>(null);
   let loading = $state(true);
   let loadError = $state('');
+  /** Purged by the 30-day retention: a permanent absence, not a failure to retry. */
+  let mediaExpired = $state(false);
 
   const mediaType = $derived<MediaType>(resolveMediaType(media));
 
@@ -67,6 +71,7 @@
     let acquired = false;
     loading = true;
     loadError = '';
+    mediaExpired = false;
 
     const mediaRef: MediaRef = {
       type: mediaType,
@@ -93,8 +98,15 @@
         }
       })
       .catch((err) => {
-        if (!destroyed) {
-          loadError = err instanceof Error ? err.message : m.post_image_load_error();
+        if (destroyed) return;
+        if (isMediaPurgedError(err)) {
+          // Retention GC, not a failure: say so, and never in red.
+          mediaExpired = true;
+          loadError = m.post_media_expired_label();
+        } else {
+          // The raw message used to be rendered as-is - a dev string shown to the user.
+          console.error('[PostMedia] media download failed', err);
+          loadError = m.post_image_load_error();
         }
       })
       .finally(() => {
@@ -149,7 +161,11 @@
     </div>
   {:else if loadError}
     <div class="flex flex-col items-center justify-center gap-2 p-4 text-center text-white/60">
-      <CircleAlert size={24} strokeWidth={2} />
+      {#if mediaExpired}
+        <ImageOff size={24} strokeWidth={2} />
+      {:else}
+        <CircleAlert size={24} strokeWidth={2} />
+      {/if}
       <span class="text-xs">{loadError}</span>
     </div>
   {:else if blobUrl}
@@ -211,12 +227,17 @@
     {/if}
   {:else if loadError}
     <div
-      class="{fillsReservedBox
-        ? 'absolute inset-0'
-        : 'w-full rounded-[1rem]'} flex flex-col items-center justify-center gap-2 p-4 text-center bg-red-500/5 dark:bg-red-500/10 border border-dashed border-red-500/20"
+      class="{fillsReservedBox ? 'absolute inset-0' : 'w-full rounded-2xl'} {mediaExpired
+        ? 'bg-black/5 dark:bg-white/5 border-black/10 dark:border-white/10'
+        : 'bg-red-500/5 dark:bg-red-500/10 border-red-500/20'} flex flex-col items-center justify-center gap-2 p-4 text-center border border-dashed"
     >
-      <CircleAlert size={24} class="text-red-500 opacity-70" strokeWidth={2} />
-      <span class="text-xs font-semibold text-red-600 dark:text-red-400">{loadError}</span>
+      {#if mediaExpired}
+        <ImageOff size={24} class="text-text-muted opacity-70" strokeWidth={2} />
+        <span class="text-xs font-medium text-text-muted">{loadError}</span>
+      {:else}
+        <CircleAlert size={24} class="text-red-500 opacity-70" strokeWidth={2} />
+        <span class="text-xs font-semibold text-red-600 dark:text-red-400">{loadError}</span>
+      {/if}
     </div>
   {:else if blobUrl}
     {#if mediaType === 'image'}

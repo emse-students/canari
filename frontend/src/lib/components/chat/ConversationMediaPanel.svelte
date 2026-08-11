@@ -3,6 +3,7 @@
     X,
     Search,
     Image as ImageIcon,
+    ImageOff,
     Link as LinkIcon,
     FileText,
     Download,
@@ -11,6 +12,8 @@
   import { portal } from '$lib/actions/portal';
   import { MediaService } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
+  import { isMediaPurgedError } from '$lib/utils/mediaErrors';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { openExternal } from '$lib/utils/openExternal';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import MediaLightbox from '../shared/MediaLightbox.svelte';
@@ -47,6 +50,11 @@
   /** Index into content.media of the open lightbox, or null when closed. */
   let lightboxIndex = $state<number | null>(null);
   let lightboxUrl = $state<string | null>(null);
+  /**
+   * Why the open item has no image. Without it the lightbox spins forever on a media the
+   * server will never return - a purged blob has no retry that can succeed.
+   */
+  let lightboxError = $state('');
 
   const dateFmt = $derived(
     new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
@@ -92,6 +100,7 @@
     const idx = lightboxIndex;
     if (idx === null) {
       lightboxUrl = null;
+      lightboxError = '';
       return;
     }
     const item = content.media[idx];
@@ -100,6 +109,7 @@
     let destroyed = false;
     let acquired = false;
     lightboxUrl = null;
+    lightboxError = '';
     new MediaService()
       .downloadAndDecrypt(ref)
       .then((url) => {
@@ -109,7 +119,15 @@
           acquired = true;
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        if (destroyed) return;
+        if (isMediaPurgedError(err)) {
+          lightboxError = m.msg_media_expired_label();
+        } else {
+          console.error('[ConversationMediaPanel] media decrypt failed', err);
+          lightboxError = m.msg_image_load_error();
+        }
+      });
     return () => {
       destroyed = true;
       if (acquired) releaseDecryptedMediaBlobUrl(ref);
@@ -121,8 +139,10 @@
       const url = await new MediaService().downloadAndDecrypt(ref);
       await downloadDecryptedFile(url, ref.fileName ?? 'fichier');
     } catch (err) {
-      // Best-effort, but never silent: this is the only trace a failed download leaves.
+      // A console line is a trace for us, not an answer for the user: pressing a download
+      // button and getting nothing at all is the same silent gap as a missing image.
       console.error('[ConversationMediaPanel] download failed', err);
+      showToast(isMediaPurgedError(err) ? m.msg_media_expired_label() : m.msg_image_load_error());
     }
   }
 
@@ -314,6 +334,11 @@
           class="max-h-full max-w-full object-contain select-none"
         />
       {/if}
+    {:else if lightboxError}
+      <div class="flex flex-col items-center gap-3 p-6 text-center text-white/70">
+        <ImageOff size={32} strokeWidth={1.5} />
+        <span class="text-sm">{lightboxError}</span>
+      </div>
     {:else}
       <div
         class="h-10 w-10 animate-spin rounded-full border-4 border-white/70 border-t-transparent"

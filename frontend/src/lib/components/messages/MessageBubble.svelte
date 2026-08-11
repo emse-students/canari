@@ -5,6 +5,7 @@
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
+  import { isMediaPurgedError } from '$lib/utils/mediaErrors';
   import { parseEnvelope } from '$lib/envelope';
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
@@ -494,12 +495,8 @@
       })
       .catch((error) => {
         if (!destroyed) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (message.includes('MEDIA_PURGED_BY_RETENTION')) {
-            mediaPurgedByRetention = true;
-          } else {
-            loadError = true;
-          }
+          if (isMediaPurgedError(error)) mediaPurgedByRetention = true;
+          else loadError = true;
         }
       });
 

@@ -480,6 +480,7 @@
   "post_send_comment_label": "Send comment",
   "post_missing_auth_token": "Missing authentication token",
   "post_image_load_error": "Could not load media",
+  "post_media_expired_label": "Media expired (30-day retention).",
   "post_image_alt": "Post image",
   "post_zoom_image_label": "Enlarge media",
   "post_image_enlarged_alt": "Enlarged media",

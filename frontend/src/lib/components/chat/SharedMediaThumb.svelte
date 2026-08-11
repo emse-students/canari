@@ -2,6 +2,7 @@
   import { MediaService } from '$lib/media';
   import type { MediaRef } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
+  import { isMediaPurgedError } from '$lib/utils/mediaErrors';
   import { Play, ImageOff } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -18,6 +19,8 @@
 
   let blobUrl = $state<string | null>(null);
   let failed = $state(false);
+  /** Purged by the 30-day retention: permanent, and worth saying so rather than showing a gap. */
+  let expired = $state(false);
 
   // Decrypt this single item; released on destroy. Rendering the grid in a bounded
   // window (see panel) keeps the number of concurrent decryptions reasonable.
@@ -28,6 +31,7 @@
     let destroyed = false;
     let acquired = false;
     failed = false;
+    expired = false;
     new MediaService()
       .downloadAndDecrypt(ref)
       .then((url) => {
@@ -37,8 +41,10 @@
           acquired = true;
         }
       })
-      .catch(() => {
-        if (!destroyed) failed = true;
+      .catch((err) => {
+        if (destroyed) return;
+        expired = isMediaPurgedError(err);
+        failed = true;
       });
     return () => {
       destroyed = true;
@@ -52,11 +58,18 @@
   type="button"
   onclick={onClick}
   class="relative aspect-square w-full overflow-hidden rounded-lg bg-black/5 dark:bg-white/10 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 hover:opacity-90 transition-opacity"
-  aria-label={m.chat_open_media_label()}
+  aria-label={expired ? m.msg_media_expired_label() : m.chat_open_media_label()}
+  title={expired ? m.msg_media_expired_label() : undefined}
 >
   {#if failed}
-    <div class="flex h-full w-full items-center justify-center text-text-muted">
+    <div
+      class="flex h-full w-full flex-col items-center justify-center gap-1 px-1 text-text-muted text-center"
+    >
       <ImageOff size={18} />
+      {#if expired}
+        <!-- The tile is ~5rem wide: the short label fits, the sentence is on the tooltip. -->
+        <span class="text-[0.625rem] leading-tight">{m.msg_expired_label()}</span>
+      {/if}
     </div>
   {:else if blobUrl}
     {#if media.type === 'video'}

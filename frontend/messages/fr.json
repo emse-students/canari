@@ -501,6 +501,7 @@
   "post_send_comment_label": "Envoyer le commentaire",
   "post_missing_auth_token": "Jeton d'authentification manquant",
   "post_image_load_error": "Impossible de charger le média",
+  "post_media_expired_label": "Média expiré (rétention 30 jours).",
   "post_image_alt": "Image de la publication",
   "post_zoom_image_label": "Agrandir le média",
   "post_image_enlarged_alt": "Média agrandi",
