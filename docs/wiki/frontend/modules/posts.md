@@ -202,6 +202,51 @@ their input unchanged (respectively `null`) on an area-less or non-finite box ra
 `NaN` assigned to `scrollLeft` is swallowed by the DOM, which would make the whole correction fail
 invisibly.
 
+### Rasterising is right; losing the TEXT was not (2026-08-11)
+
+Reported from the app: "avec la visionneuse pdf on ne peut pas selectionner le texte, ni rechercher,
+tout a ete transforme en image". Both halves of that are accurate, and the first clause is a correct
+description of a decision that has to stay — a bitmap is the only renderer Android's WebView has (see
+above). But **rasterising costs the text only if nothing puts it back**, and that is a gap rather
+than a price: pdf.js's own viewer draws the same bitmap and lays the real characters over it,
+transparent and positioned. That is what `PdfTextLayer.svelte` now does, fed by
+`PdfDocument.getPageText`.
+
+The layer has to survive the zoom, which re-rasterises the page underneath it, and that is what
+decides its units:
+
+- **Every box is a FRACTION of the page box, never a pixel** ([`utils/pdfTextGeometry.ts`](../../../../frontend/src/lib/utils/pdfTextGeometry.ts)).
+  One extraction then serves every zoom step, every column width and every device pixel ratio, and
+  nothing is recomputed when a page re-renders. A pixel layer would have been tied to one particular
+  rasterisation and silently misaligned at the next.
+- **Sizes are `em` against a `font-size` set to the page HEIGHT**, so the whole layer scales with the
+  page by CSS alone — no measurement, no `ResizeObserver`, nothing to go stale between a relayout and
+  the next frame.
+- **The glyph height is `hypot(t[2], t[3])`, not `t[3]`**, and the run's advance `hypot(t[0], t[1])`:
+  read off the matrix entries directly, a run rotated 90° collapses to zero height. Rotated text in a
+  PDF is not exotic — a page-margin watermark is usually exactly that.
+- **A run whose box cannot be computed is DROPPED, not placed at the origin.** A pile of spans in the
+  top-left corner is selectable text that belongs nowhere, which is worse than text that is absent.
+  Same reason `asMatrix` checks the length instead of casting: pdf.js types these transforms as plain
+  `number[]`, and a five-entry array cast to a tuple yields an `undefined` that arithmetic turns into
+  `NaN`, which CSS swallows.
+
+Two things about the DOM side. `horizontalScale` stretches each span onto the width the PDF says the
+run occupies, because the browser lays it out in a substituted font and the **selection highlight
+follows the span**, so without the correction the highlight drifts further from the glyphs with every
+word. And the layer is `pointer-events: none` with `auto` on the spans only: the gaps between runs
+have to stay transparent to the pinch and scroll handlers above, or a text-heavy page becomes
+impossible to drag.
+
+`getPageText` is separate from `renderPage` rather than returned with it because the two have
+different lifetimes — a page is re-rasterised on every zoom step and its text never changes — and
+because it is the cheap half, no canvas and no PNG encode, which is what makes it affordable for
+every page merely on screen.
+
+**In-document SEARCH is not this**, and is not built: it needs the text of pages that have never been
+on screen, a match model across runs (a word is routinely split over several), and scroll-to-match.
+The extraction this adds is its prerequisite, not its implementation.
+
 **What the device check must assert is the ANCHOR, never that the zoom changed.** The first run
 here passed on "width% 100 → 300" against a build the user immediately reported as zooming in the
 wrong place. `tools/cross-client-harness/check-pdf-anchor.mjs` identifies a content point (page

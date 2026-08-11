@@ -29,8 +29,10 @@
     openPdfDocument,
     releasePdfObjectUrl,
     type PdfDocument,
+    type PdfTextRun,
     type RenderedPdfPage,
   } from '$lib/utils/pdfDocument';
+  import PdfTextLayer from './PdfTextLayer.svelte';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -60,6 +62,13 @@
   /** Rasterised bitmap per page, 0-based; `null` until that page has been rendered. */
   let pages = $state<(RenderedPdfPage | null)[]>([]);
   /**
+   * Selectable text per page, 0-based; `null` until extracted.
+   *
+   * Kept apart from {@link pages} because the two have different lifetimes: the bitmap is replaced
+   * on every zoom step and the text never changes, so one extraction serves the whole session.
+   */
+  let pageTexts = $state<(PdfTextRun[] | null)[]>([]);
+  /**
    * Last known height/width per page, kept ACROSS a re-render so the placeholder that replaces
    * a page during a zoom keeps that page's real proportions instead of falling back to A4.
    */
@@ -74,6 +83,14 @@
   let renderedAt: Record<number, number> = {};
   /** Width of the scroll viewport, which is what "fit" means at zoom 1. */
   let viewportWidth = $state(0);
+  /**
+   * Rendered width of the page column, which every page is exactly as wide as.
+   *
+   * ONE binding for the whole document rather than one per page: it is the same number for all of
+   * them, and it is what turns a text run's page-fraction box into CSS pixels. It tracks the zoom
+   * on its own, since the zoom is what changes the column's width.
+   */
+  let columnInnerWidth = $state(0);
 
   const columnWidth = $derived(Math.min(COLUMN_MAX_WIDTH, Math.max(320, viewportWidth)));
 
@@ -108,6 +125,7 @@
     loadError = false;
     pageCount = 0;
     pages = [];
+    pageTexts = [];
     renderedAt = {};
 
     openPdfDocument(source)
@@ -120,6 +138,7 @@
         doc = handle;
         pageCount = handle.numPages;
         pages = Array.from({ length: handle.numPages }, () => null);
+        pageTexts = Array.from({ length: handle.numPages }, () => null);
         console.debug(`[pdfViewer] opened "${fileName}" (${handle.numPages} pages)`);
       })
       .catch((err) => {
@@ -209,6 +228,36 @@
     }
   }
 
+  /** 0-based page indices whose text is being extracted. Not reactive: nothing renders it. */
+  const extracting: Record<number, boolean> = {};
+
+  /**
+   * Extracts one page's selectable text, once for the life of the document.
+   *
+   * Unlike {@link renderPage} there is no width to guard on - the runs are in page fractions, so
+   * they are already correct at every zoom. The guard is therefore simply "do we have it".
+   */
+  async function loadPageText(index: number) {
+    const handle = doc;
+    if (!handle || extracting[index] || pageTexts[index]) return;
+    extracting[index] = true;
+    try {
+      const runs = await handle.getPageText(index + 1);
+      // The document may have been closed or swapped while this was in flight.
+      if (doc !== handle) return;
+      const next = [...pageTexts];
+      next[index] = runs;
+      pageTexts = next;
+    } catch (err) {
+      // A page whose text cannot be extracted still READS - it is the bitmap that matters, and the
+      // layer is an enhancement. Logged rather than surfaced, but never swallowed silently: a
+      // document where nothing is selectable is a fault worth being able to find afterwards.
+      console.warn(`[pdfViewer] page ${index + 1} text could not be extracted`, err);
+    } finally {
+      delete extracting[index];
+    }
+  }
+
   /**
    * Renders a page when it comes within a screen of the viewport. Attached per placeholder
    * so a page that scrolls away never costs anything it has not already cost.
@@ -218,7 +267,10 @@
       (entries) => {
         const isOnScreen = entries.some((entry) => entry.isIntersecting);
         onScreen[index] = isOnScreen;
-        if (isOnScreen) void renderPage(index);
+        if (isOnScreen) {
+          void renderPage(index);
+          void loadPageText(index);
+        }
       },
       { rootMargin: '100% 0px' }
     );
@@ -517,6 +569,7 @@
                transform is inert outside a pinch and the settled zoom does the real work. -->
           <div
             bind:this={columnEl}
+            bind:clientWidth={columnInnerWidth}
             class="mx-auto flex flex-col items-center gap-3"
             style="width: {zoom * 100}%; max-width: {COLUMN_MAX_WIDTH * zoom}px;
                    transform: scale({pinchScale});
@@ -526,9 +579,10 @@
               : 'none'};"
           >
             {#each pages as page, index (index)}
+              <!-- `relative` so the text layer can be absolutely placed over the bitmap. -->
               <div
                 use:visible={index}
-                class="w-full overflow-hidden rounded-lg bg-white shadow-lg"
+                class="relative w-full overflow-hidden rounded-lg bg-white shadow-lg"
                 style={page ? '' : `aspect-ratio: 1 / ${placeholderRatio(index)};`}
               >
                 {#if page}
@@ -537,6 +591,19 @@
                     alt={m.pdf_viewer_page_alt({ page: index + 1, total: pageCount })}
                     class="block h-auto w-full"
                   />
+                  <!--
+                    The page's own displayed height, derived rather than measured: every page is
+                    the column's inner width wide, and the bitmap's aspect ratio gives the rest.
+                    Measuring instead would mean one ResizeObserver per page - two hundred of them
+                    on a long document - to learn something the numbers already say exactly.
+                  -->
+                  {#if pageTexts[index] && columnInnerWidth > 0}
+                    <PdfTextLayer
+                      runs={pageTexts[index]!}
+                      pageWidth={columnInnerWidth}
+                      pageHeight={(columnInnerWidth * page.height) / page.width}
+                    />
+                  {/if}
                 {/if}
               </div>
             {/each}

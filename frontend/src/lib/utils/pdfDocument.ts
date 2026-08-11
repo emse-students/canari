@@ -12,6 +12,8 @@
  * nothing is fetched until a PDF is actually displayed.
  */
 
+import { asMatrix, textRunBox, type TextRunBox } from './pdfTextGeometry';
+
 /** Upper bound on the render scale, so a poster-sized page cannot blow up memory. */
 export const MAX_PDF_RENDER_SCALE = 4;
 
@@ -46,12 +48,28 @@ export interface RenderedPdfPage {
   height: number;
 }
 
+/** One run of text, placed in fractions of the page box so it survives every re-rasterisation. */
+export interface PdfTextRun extends TextRunBox {
+  /** The characters themselves. */
+  text: string;
+}
+
 /** An open PDF the caller MUST {@link PdfDocument.destroy} when it is done with it. */
 export interface PdfDocument {
   /** Total page count, 1-based page numbers. */
   readonly numPages: number;
   /** Rasterises one page to a PNG. */
   renderPage(pageNumber: number, maxWidth: number): Promise<RenderedPdfPage>;
+  /**
+   * Text runs of one page, for the selectable layer drawn over its bitmap.
+   *
+   * Separate from {@link renderPage} rather than returned with it, because the two have different
+   * lifetimes: a page is re-rasterised on every zoom step and its text never changes, so folding
+   * them together would re-extract the text three times for nothing. It is also the cheap half -
+   * no canvas, no PNG encode - which is what makes it affordable to have for a page that is merely
+   * on screen.
+   */
+  getPageText(pageNumber: number): Promise<PdfTextRun[]>;
   /** Tears the worker down. Safe to call twice. */
   destroy(): Promise<void>;
 }
@@ -97,6 +115,29 @@ export async function openPdfDocument(source: string): Promise<PdfDocument> {
 
       if (!blob) throw new Error(`Canvas produced no bitmap for page ${pageNumber}`);
       return { url: URL.createObjectURL(blob), width, height };
+    },
+
+    async getPageText(pageNumber: number): Promise<PdfTextRun[]> {
+      if (destroyed) throw new Error('PDF document already destroyed');
+      const page = await doc.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1 });
+      const content = await page.getTextContent();
+
+      const runs: PdfTextRun[] = [];
+      for (const item of content.items) {
+        // `getTextContent` yields marked-content markers alongside the text items; only the
+        // latter carry a transform, and `str` is what distinguishes them.
+        if (!('str' in item) || typeof item.str !== 'string' || item.str.length === 0) continue;
+        const pageMatrix = asMatrix(viewport.transform);
+        const runMatrix = asMatrix(item.transform);
+        if (!pageMatrix || !runMatrix) continue;
+        const box = textRunBox(pageMatrix, runMatrix, item.width, viewport.width, viewport.height);
+        // A run with no placeable box is DROPPED rather than placed at the origin: a pile of
+        // spans in the top-left corner would be selectable text that belongs nowhere, which is
+        // worse than text that is merely absent.
+        if (box) runs.push({ text: item.str, ...box });
+      }
+      return runs;
     },
 
     async destroy(): Promise<void> {
