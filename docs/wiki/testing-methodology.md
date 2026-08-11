@@ -16,7 +16,7 @@ over a filtered copy of its own evidence.
 
 ---
 
-## The eight rules
+## The nine rules
 
 Ordered by how expensive it is to break them.
 
@@ -108,6 +108,29 @@ one re-creates the very break.
 Ask what the next run actually needs - "can this device still deliver?" - and assert that invariant
 on every exit path (`ensureDeliverable`). A teardown that only runs on the happy path is not a
 teardown.
+
+### 9. DATE THE BUILD BEFORE BELIEVING ANYTHING IT SAYS - and the build's own log strings are the date
+
+A1 was measured for hours on 2026-08-11 against a **debug** APK several commits stale, and nothing in
+the check said so. The fingerprint was in the evidence the whole time: the phone printed
+`[QUEUE] STUCK: messageCallback has not settled after 60s`, a string `93244a7b` had **deleted** that
+same day when it replaced the single-step watchdog with `guarded`. One `git log -S` on a line the
+device logged dated the build in seconds - which is the general method, because a log string is
+version-stamped evidence a running process hands you for free, while `versionName` is a constant
+somebody edits at release time and had read `0.13.1` on both.
+
+Two consequences, and the second is the expensive one:
+
+- **A debug build is not the app.** WP-ANR-1's own note measures debug at ~10x release on the same
+  fixture, so a TIMING verdict from a debug APK is not a weak result, it is an answer to a different
+  question. Behavioural verdicts survive the distinction; performance verdicts do not.
+- **Check the SIGNATURE before planning an install, not after.** `dumpsys package | grep pkgFlags`
+  says `DEBUGGABLE` outright, and a debug-keystore install and a release-signed APK cannot replace
+  one another - `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, and the only way across is an uninstall that
+  wipes `mls.bin`. Discovering that at the install step means the whole preceding setup was arranged
+  for a step that could never run.
+
+Same family as rule 1: `versionName` is a projection, the running code is the evidence.
 
 ---
 

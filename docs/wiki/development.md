@@ -98,6 +98,15 @@ svelte-check  # Type check
 
 The hooks run across the **whole frontend** and re-stage modified files. Isolate unrelated dirty files before committing.
 
+**A generated file that is also committed must not be formatted, or the two fight for ever.** The
+Tauri plugin build script writes `src-tauri/plugins/*/permissions/` (the ACL reference and its JSON
+schema) and those files are committed, so every local Android build re-expanded the JSON and every
+commit hook re-collapsed it - two files dirty in every unrelated diff, and a `git status` that lies
+about what a session touched. They are in `oxfmt.json`'s `ignorePatterns` as of 2026-08-11: the
+generator's output is the committed truth. Ask the same of any new generated-and-committed path,
+and note that `oxfmt.json` is plain JSON with no comment syntax - the reason for an entry belongs
+here, not beside it.
+
 ## Contracts the compiler does not check
 
 Canari spans TypeScript, Rust, Kotlin, Swift and ObjC, and the boundaries between them are strings

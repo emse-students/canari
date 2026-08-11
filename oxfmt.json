@@ -30,6 +30,7 @@
     "**/project.inlang/**",
     "**/src-tauri/gen/**",
     "**/src-tauri/patches/**",
+    "**/src-tauri/plugins/*/permissions/**",
     "**/src-tauri/tauri.conf.json",
     "**/*.tsbuildinfo",
     "**/.env",

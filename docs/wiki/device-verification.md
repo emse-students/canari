@@ -63,6 +63,22 @@ K would be meaningless on it.
 
 ## Before you start
 
+- **KNOW WHAT THE DEVICE IS RUNNING, before anything else.** Not `versionName` - that is a constant
+  edited at release time and it read `0.13.1` for both a current build and a stale one on 2026-08-11.
+  Two readings that cannot be faked:
+
+  ```
+  adb shell dumpsys package fr.emse.canari | grep -E "pkgFlags|signatures|lastUpdateTime"
+  ```
+
+  `pkgFlags=[ DEBUGGABLE ]` means a debug APK, which is **~10x slower than release on the same
+  fixture** (WP-ANR-1's own measurement) - every behavioural check still holds, every timing verdict
+  is void. And a debug-keystore install cannot be replaced by a release-signed APK
+  (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`): crossing that line needs an **uninstall, which wipes
+  `mls.bin`** and re-enrols the device, so it is a decision to take before the setup, never at the
+  install step. Then date the CODE from a string the running app logs - `git log -S "<that line>"` -
+  because a log string is version-stamped evidence the process hands you for free. See rule 9 in
+  [testing-methodology](testing-methodology.md).
 - **A second account.** Every push check needs a peer to send from. A second phone, or the web app
   in another browser profile, both work.
 - **A log capture.** iOS: Console.app or the Xcode device console, filtered on the app and on
