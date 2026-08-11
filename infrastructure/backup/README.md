@@ -8,15 +8,30 @@ Sauvegarde complete de toutes les donnees persistantes, avec une copie locale
 
 | Source | Methode | Contenu |
 | --- | --- | --- |
-| PostgreSQL Canari (`auth_db`) | `pg_dump` (dump logique coherent) | users, channels, posts, forms, paiements |
-| MongoDB (`chat_db`) | `mongodump` | blobs MLS chiffres / historique |
-| MinIO (`infrastructure_minio_data`) | tar du volume + depot restic deduplique (voir plus bas) | medias chiffres |
+| PostgreSQL Canari (`auth_db`) | `pg_dump` (dump logique coherent) | users, channels, posts, forms, paiements, **et l historique MLS chiffre** (`queued_message`, `mls_*`) |
+| MinIO (`infrastructure_minio_data`) | **depot restic deduplique uniquement** (voir plus bas) | medias chiffres |
 | media-service (`infrastructure_media_meta`) | tar du volume + depot restic | metadonnees media |
 | PostgreSQL Authentik (`miconnect`) | `pg_dump` | identites, config OIDC |
+| MongoDB (`chat_db`) | `mongodump` | **rien** - voir ci-dessous |
 
 Non sauvegarde car transitoire : Kafka, Redis, Zookeeper.
 
 Chaque execution produit une archive unique `canari-backup-AAAAMMJJ-HHMMSS.tar.gz`.
+
+> **Le dump MongoDB pese 116 octets et c est normal.** L instance de production ne
+> contient aucune base applicative (verifie le 2026-08-11 : seules `admin`, `config` et
+> `local` existent) et aucun service ne s y connecte - il n existe aucune chaine de
+> connexion MongoDB dans le code. Ce tableau annoncait auparavant que Mongo portait les
+> "blobs MLS chiffres / historique", ce qui etait faux : cet historique est dans
+> PostgreSQL. Un dump vide n est pas une panne, mais il ne doit pas passer pour une
+> sauvegarde. Le service `mongo` de `docker-compose.prod.yml` est un residu.
+
+## Une restauration complete utilise DEUX sources
+
+Depuis la bascule du 2026-08-11, l archive ne contient plus les blobs medias. Il faut
+donc l archive (bases + metadonnees) **et** le depot restic (medias). `restore.sh` gere
+les deux automatiquement et **s arrete** si les medias sont introuvables, plutot que de
+terminer en annoncant une restauration complete qui aurait saute 87 % des donnees.
 
 ## Stockage et retention
 
@@ -70,8 +85,8 @@ journalctl -u canari-backup.service -f
 
 ## Sauvegarde dedupliquee des volumes objets (`backup-objects.sh`)
 
-`backup.sh` re-archive le volume MinIO **en entier chaque nuit** et en garde 14 : chaque
-octet vivant coute donc 15 octets de disque. Les blobs medias sont chiffres cote client,
+`backup.sh` re-archivait le volume MinIO **en entier chaque nuit** et en gardait 14 : chaque
+octet vivant coutait donc 15 octets de disque. Les blobs medias sont chiffres cote client,
 donc incompressibles et immuables - c est exactement le cas ou une sauvegarde dedupliquee
 change tout. Le modele chiffre est dans
 [storage-forecast](../../docs/wiki/infrastructure/storage-forecast.md).
@@ -92,9 +107,20 @@ Mesures du 2026-08-11 sur la production :
 > Les seules differences a la restauration sont dans `.minio.sys/` (bloom cycle, caches
 > d usage, corbeille), que MinIO reecrit en permanence. Ce ne sont pas des donnees.
 
-**Ce schema ne remplace pas encore le tar.** Les deux tournent cote a cote : le tar reste la
-sauvegarde de reference tant que la bascule n a pas ete decidee. La bascule consiste a
-supprimer l etape 3 de `backup.sh` (le tar de MinIO).
+**Bascule prise le 2026-08-11 : ce depot est desormais la SEULE sauvegarde des medias.**
+L etape 3 de `backup.sh` (le tar de MinIO) est supprimee, et le membre `minio_data.tar.gz`
+a ete retire des 15 archives deja sur disque - sans toucher aux dumps qu elles contiennent,
+ce qui est la raison pour laquelle ces archives n ont PAS ete supprimees : elles portent
+l unique historique de sauvegarde des bases.
+
+| Mesure | Avant | Apres |
+| --- | --- | --- |
+| `/home/canari/backups` | 1019 Mo | **133 Mo** (dont 46 Mo de depot restic) |
+| Miroir offsite `mitv` | 1019 Mo | **133 Mo** |
+| Archive nocturne type | 70-76 Mo | 3-4 Mo |
+
+Le gain immediat en disque est modeste (87 Go etaient libres). Ce que la bascule change est
+la **pente** : le cout d une nuit passe du volume entier a ce qui a reellement change.
 
 Le mot de passe du depot vit dans `/home/canari/.config/canari/restic-password` (0600) et
 **pas** dans `infrastructure/.env` : la CD regenere ce fichier a chaque deploiement, et un

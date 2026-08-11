@@ -9,11 +9,20 @@
 # OPERATION DESTRUCTIVE : ecrase les donnees actuelles (postgres, mongo, minio,
 # media, Authentik) par celles de l archive. Exige --yes pour s executer.
 #
+# DEPUIS LE 2026-08-11 UNE RESTAURATION COMPLETE UTILISE DEUX SOURCES : l archive
+# (bases + metadonnees) et le depot restic (blobs medias). Ce script gere les deux et
+# refuse de se terminer si les medias sont introuvables - voir la section MinIO.
+# Le fichier de mot de passe restic ne se trouve PAS dans le depot git ni dans les
+# secrets GitHub : sans lui le depot est illisible pour toujours. Il doit exister sur
+# la machine cible AVANT toute migration (voir infrastructure/MIGRATION.md).
+#
 # Pour une migration vers un nouveau serveur :
 #   1. Cloner le repo, creer infrastructure/.env (ou laisser la CD le generer).
-#   2. Demarrer la stack : docker compose -f infrastructure/docker-compose.prod.yml up -d
-#   3. Demarrer Authentik (stack miconnect) si incluse.
-#   4. Lancer ce script avec l archive recuperee depuis mitv.
+#   2. Copier le mot de passe restic vers /home/canari/.config/canari/restic-password
+#      et le depot (ou le miroir mitv) vers /home/canari/backups/restic-objects.
+#   3. Demarrer la stack : docker compose -f infrastructure/docker-compose.prod.yml up -d
+#   4. Demarrer Authentik (stack miconnect) si incluse.
+#   5. Lancer ce script avec l archive recuperee depuis mitv.
 #
 set -euo pipefail
 
@@ -25,6 +34,17 @@ ENV_FILE="$INFRA_DIR/.env"
 BACKUP_SSH_HOST="${BACKUP_SSH_HOST:-canaribackup@10.0.0.4}"
 BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
 MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER:-miconnect-postgresql-1}"
+
+# Depot restic des blobs medias. Doit rester aligne sur backup-objects.sh : un chemin
+# qui diverge ne casse pas la sauvegarde, il casse la restauration - c est-a-dire le
+# jour ou personne n a le temps de chercher pourquoi.
+BACKUP_DIR="${BACKUP_DIR:-/home/canari/backups}"
+RESTIC_REPO_DIR="${RESTIC_REPO_DIR:-${BACKUP_DIR}/restic-objects}"
+RESTIC_PASSWORD_FILE="${RESTIC_PASSWORD_FILE:-/home/canari/.config/canari/restic-password}"
+RESTIC_IMAGE="${RESTIC_IMAGE:-restic/restic:latest}"
+# Par defaut le dernier instantane. Surchargeable pour remonter avant une corruption :
+#   RESTIC_SNAPSHOT=<id> ./restore.sh <archive> --yes
+RESTIC_SNAPSHOT="${RESTIC_SNAPSHOT:-latest}"
 
 log() { printf '[restore] %s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 fail() { printf '[restore] ERROR %s\n' "$*" >&2; exit 1; }
@@ -89,8 +109,15 @@ if [ -f "$STAGE/mongo_chat_db.archive.gz" ]; then
 fi
 
 # ── MinIO (volume objet) ──────────────────────────────────────────────────────
+# DEUX SOURCES POSSIBLES, ET L ABSENCE N EST JAMAIS SILENCIEUSE.
+#
+# Les archives d avant le 2026-08-11 contiennent minio_data.tar.gz ; celles d apres
+# ne le contiennent plus (les blobs sont dans le depot restic). Un `if [ -f ]` seul
+# aurait saute les medias sans un mot sur une archive recente : l operateur aurait lu
+# "Restauration terminee" pour une restauration amputee de 87 % des donnees. Si aucune
+# des deux sources n est disponible, ce script S ARRETE.
 if [ -f "$STAGE/minio_data.tar.gz" ]; then
-  log "Restauration du volume MinIO (arret temporaire de minio)…"
+  log "Restauration du volume MinIO depuis l archive (format d avant le 2026-08-11)…"
   "${DC[@]}" stop minio media-service
   docker run --rm \
     -v infrastructure_minio_data:/data \
@@ -98,6 +125,27 @@ if [ -f "$STAGE/minio_data.tar.gz" ]; then
     alpine:latest \
     sh -c 'rm -rf /data/* /data/..?* /data/.[!.]* 2>/dev/null; tar xzf /in/minio_data.tar.gz -C /data'
   "${DC[@]}" start minio media-service
+elif [ -f "$RESTIC_PASSWORD_FILE" ] && [ -d "$RESTIC_REPO_DIR" ]; then
+  log "Restauration du volume MinIO depuis restic ($RESTIC_SNAPSHOT)…"
+  "${DC[@]}" stop minio media-service
+  # `restic restore --target /` ecrit /data/minio, qui est le chemin sous lequel
+  # backup-objects.sh a pris l instantane. Le volume est monte a cet endroit exact,
+  # donc les fichiers atterrissent directement dedans.
+  docker run --rm \
+    --user "$(id -u):$(id -g)" \
+    -v infrastructure_minio_data:/data/minio \
+    -v "$RESTIC_REPO_DIR":/repo:ro \
+    -v "$RESTIC_PASSWORD_FILE":/pw:ro \
+    -e RESTIC_PASSWORD_FILE=/pw \
+    -e RESTIC_REPOSITORY=/repo \
+    "${RESTIC_IMAGE:-restic/restic:latest}" \
+    restore "$RESTIC_SNAPSHOT" --target / --include /data/minio
+  "${DC[@]}" start minio media-service
+else
+  fail "aucune source pour les blobs medias : ni minio_data.tar.gz dans l archive,
+  ni depot restic lisible ($RESTIC_REPO_DIR avec $RESTIC_PASSWORD_FILE).
+  Les bases ont peut-etre deja ete restaurees - NE PAS considerer la restauration
+  comme terminee. Voir docs/wiki/infrastructure/storage-forecast.md."
 fi
 
 # ── Metadonnees media-service ─────────────────────────────────────────────────

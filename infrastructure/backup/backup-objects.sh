@@ -14,8 +14,15 @@
 # and a blob already stored is never written again. The same history then fits in the
 # space of a single copy plus what is new.
 #
-# THIS REPLACES NOTHING YET. It runs ALONGSIDE backup.sh until a restore has been
-# demonstrated from this repository. Until then the tar remains the backup of record.
+# THIS IS NOW THE ONLY BACKUP OF THE MEDIA BLOBS (cutover 2026-08-11). backup.sh no
+# longer archives the MinIO volume, so a restore of the objects can only come from here.
+# The cutover was taken after a control restore matched the live volume sha256-identically
+# over 172 media objects, and after a second nightly run cost 24 KB.
+#
+# Consequence to keep in mind before touching anything here: a failure of this script is no
+# longer softened by the tar. It is loud on purpose (`set -euo pipefail`, and a missing
+# password stops rather than initialising a second repository), and the password file must
+# be kept off this machine - the offsite mirror is an encrypted copy, not a second chance.
 #
 # No host dependency: restic runs in a throwaway image, like the tar and rclone already do.
 #
