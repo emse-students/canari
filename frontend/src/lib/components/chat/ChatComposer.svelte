@@ -379,22 +379,36 @@
 
 <!-- Footer Container -->
 <footer class="chat-composer-footer" bind:this={composerFooter}>
-  <!-- Typing indicator: sits just above the input field, never behind it. -->
-  {#if typingLabel}
-    <div transition:slide={{ duration: 150, axis: 'y' }} class="px-3 sm:px-4 md:px-6 pb-1">
-      <span class="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted">
-        <span class="flex items-end gap-0.5" aria-hidden="true">
-          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:0ms"
-          ></span>
-          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:150ms"
-          ></span>
-          <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:300ms"
-          ></span>
+  <!--
+    Typing indicator: sits just above the input field, never behind it.
+
+    The live region is rendered UNCONDITIONALLY and only its contents change. A `role="status"`
+    element created by an `{#if}` at the moment it gains text is announced unreliably - assistive
+    technology has to be observing the region BEFORE the mutation - so the wrapper is permanent and
+    the `{#if}` moved inside it. It is also the only stable hook the harness has on this indicator,
+    whose text is otherwise localized prose.
+  -->
+  <div class="chat-typing-indicator" role="status" aria-live="polite">
+    {#if typingLabel}
+      <div transition:slide={{ duration: 150, axis: 'y' }} class="px-3 sm:px-4 md:px-6 pb-1">
+        <span class="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted">
+          <span class="flex items-end gap-0.5" aria-hidden="true">
+            <span class="h-1 w-1 rounded-full bg-current animate-bounce" style="animation-delay:0ms"
+            ></span>
+            <span
+              class="h-1 w-1 rounded-full bg-current animate-bounce"
+              style="animation-delay:150ms"
+            ></span>
+            <span
+              class="h-1 w-1 rounded-full bg-current animate-bounce"
+              style="animation-delay:300ms"
+            ></span>
+          </span>
+          {typingLabel}
         </span>
-        {typingLabel}
-      </span>
-    </div>
-  {/if}
+      </div>
+    {/if}
+  </div>
   <!-- Reply preview strip. -->
   {#if replyingTo}
     <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">
