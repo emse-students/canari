@@ -16,6 +16,7 @@ import { ApnsVoipService } from './services/apns-voip.service';
 import { CallsController } from './controllers/calls.controller';
 import { PushController } from './controllers/push.controller';
 import { InternalController } from './controllers/internal.controller';
+import { AdminStorageController } from './controllers/admin-storage.controller';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
@@ -97,6 +98,7 @@ const RedisProvider: Provider = {
     MessagingController,
     PushController,
     InternalController,
+    AdminStorageController,
     CallsController,
   ],
   providers: [RedisProvider, MessagingService, CallsService, ApnsVoipService],

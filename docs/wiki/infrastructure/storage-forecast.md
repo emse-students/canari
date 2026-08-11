@@ -11,6 +11,13 @@ the requirement by ~16. It is *not optional at any scenario*, including the most
 
 Everything below is measured on production, not estimated, unless a line says otherwise.
 
+**A live admin panel now exists for four of these numbers** (`/admin/storage`, WP-DEVICESTORAGE-1's
+backend counterpart, added 2026-08-11): disk usage, the Postgres `auth_db` size, the MinIO bucket's
+total size and object count, and Redis memory - via `GET /api/mls/admin/storage` on
+chat-delivery-service (global-admin only). It replaces the manual `df`/`psql`/`redis-cli` steps
+below for a QUICK check; the detailed per-table breakdown, the backup-cost multiplier and the
+scenario math below still need this page, since the endpoint reports totals only.
+
 ---
 
 ## 1. What was measured (production, 2026-08-07)

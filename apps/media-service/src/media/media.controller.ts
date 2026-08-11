@@ -236,6 +236,22 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
+  // GET /media/internal/storage-stats - bucket size for the admin storage panel
+  // ---------------------------------------------------------------------------
+  /**
+   * Reports the MinIO bucket's total size and object count to an internal caller (the
+   * chat-delivery-service admin storage aggregator, WP-DEVICESTORAGE-1's backend counterpart).
+   * Declared before `internal/:id` so "storage-stats" is matched as a literal segment, not an id.
+   */
+  @Get('internal/storage-stats')
+  async internalStorageStats(
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ totalBytes: number; objectCount: number }> {
+    assertInternalSecret(internalSecret);
+    return this.mediaService.getStorageStats();
+  }
+
+  // ---------------------------------------------------------------------------
   // GET /media/internal/:id - server-to-server ciphertext fetch (X-Internal-Secret)
   // ---------------------------------------------------------------------------
   /**

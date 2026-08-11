@@ -2,8 +2,10 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import type { Component } from 'svelte';
   import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import { listMyAssociations, ensureAssociationSuperAdmin } from '$lib/associations/api';
+  import AdminNavGroup from '$lib/components/admin/AdminNavGroup.svelte';
   import {
     Shield,
     CalendarClock,
@@ -16,8 +18,21 @@
     Wallet,
     FileCheck2,
     Map,
+    HardDrive,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+
+  interface NavItem {
+    href: string;
+    label: string;
+    icon: Component;
+  }
+
+  interface NavGroup {
+    label: string;
+    icon: Component;
+    items: NavItem[];
+  }
 
   let { children } = $props();
 
@@ -50,43 +65,59 @@
     }
   });
 
-  const navItems = $derived.by(() => {
-    const items: {
-      href: string;
-      label: string;
-      icon:
-        | 'agenda'
-        | 'status'
-        | 'moderation'
-        | 'users'
-        | 'platform'
-        | 'associations'
-        | 'cercle'
-        | 'doc-reviewers'
-        | 'carte';
-    }[] = [{ href: '/admin/agenda', label: m.admin_pending_agenda_label(), icon: 'agenda' }];
+  // Grouped into dropdowns by theme rather than a flat row of up to 9 tabs. A group renders only
+  // if at least one of its items is visible to the current user, so a plain association admin
+  // (not global, not BDE super-admin) still sees just "Moderation" (containing only Agenda).
+  const navGroups = $derived.by((): NavGroup[] => {
+    const moderationItems: NavItem[] = [
+      { href: '/admin/agenda', label: m.admin_pending_agenda_label(), icon: CalendarClock },
+    ];
     if (isGlobalAdminUser) {
-      items.push(
-        { href: '/admin/moderation', label: m.admin_reported_posts_label(), icon: 'moderation' },
-        { href: '/admin/associations', label: m.admin_associations_label(), icon: 'associations' },
-        { href: '/admin/status', label: m.admin_presence_connections_label(), icon: 'status' },
-        { href: '/admin/platform', label: m.admin_platform_label(), icon: 'platform' },
-        { href: '/admin/cercle', label: m.admin_cercle_label(), icon: 'cercle' },
-        { href: '/admin/users', label: m.admin_admins_label(), icon: 'users' }
-      );
+      moderationItems.push({
+        href: '/admin/moderation',
+        label: m.admin_reported_posts_label(),
+        icon: ShieldAlert,
+      });
+    }
+
+    const communityItems: NavItem[] = [];
+    if (isGlobalAdminUser) {
+      communityItems.push({
+        href: '/admin/associations',
+        label: m.admin_associations_label(),
+        icon: Building2,
+      });
     }
     // Document-reviewer grants + Carte de la Vie Asso: global admins and BDE super-admins.
     if (isGlobalAdminUser || isSuperAdminUser) {
-      items.push(
-        {
-          href: '/admin/document-reviewers',
-          label: m.docreview_nav_label(),
-          icon: 'doc-reviewers',
-        },
-        { href: '/admin/carte', label: m.carte_card_label(), icon: 'carte' }
+      communityItems.push(
+        { href: '/admin/document-reviewers', label: m.docreview_nav_label(), icon: FileCheck2 },
+        { href: '/admin/carte', label: m.carte_card_label(), icon: Map }
       );
     }
-    return items;
+
+    const platformItems: NavItem[] = isGlobalAdminUser
+      ? [
+          { href: '/admin/platform', label: m.admin_platform_label(), icon: Wrench },
+          { href: '/admin/users', label: m.admin_admins_label(), icon: UserCog },
+          { href: '/admin/status', label: m.admin_presence_connections_label(), icon: Activity },
+        ]
+      : [];
+
+    return [
+      { label: m.admin_group_moderation_label(), icon: ShieldAlert, items: moderationItems },
+      { label: m.admin_group_community_label(), icon: Building2, items: communityItems },
+      { label: m.admin_group_platform_label(), icon: Wrench, items: platformItems },
+    ].filter((group) => group.items.length > 0);
+  });
+
+  // Single-page sections stay direct links rather than one-item dropdowns.
+  const directLinks = $derived.by((): NavItem[] => {
+    if (!isGlobalAdminUser) return [];
+    return [
+      { href: '/admin/cercle', label: m.admin_cercle_label(), icon: Wallet },
+      { href: '/admin/storage', label: m.admin_storage_label(), icon: HardDrive },
+    ];
   });
 </script>
 
@@ -134,7 +165,15 @@
       >
         {m.admin_home_label()}
       </a>
-      {#each navItems as item (item.href)}
+      {#each navGroups as group (group.label)}
+        <AdminNavGroup
+          label={group.label}
+          icon={group.icon}
+          items={group.items}
+          active={group.items.some((item) => path.startsWith(item.href))}
+        />
+      {/each}
+      {#each directLinks as item (item.href)}
         <a
           href={item.href}
           class="inline-flex items-center gap-1.5 shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors
@@ -142,25 +181,7 @@
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border border-cn-border text-text-muted hover:text-text-main'}"
         >
-          {#if item.icon === 'agenda'}
-            <CalendarClock size={15} />
-          {:else if item.icon === 'moderation'}
-            <ShieldAlert size={15} />
-          {:else if item.icon === 'users'}
-            <UserCog size={15} />
-          {:else if item.icon === 'associations'}
-            <Building2 size={15} />
-          {:else if item.icon === 'platform'}
-            <Wrench size={15} />
-          {:else if item.icon === 'cercle'}
-            <Wallet size={15} />
-          {:else if item.icon === 'doc-reviewers'}
-            <FileCheck2 size={15} />
-          {:else if item.icon === 'carte'}
-            <Map size={15} />
-          {:else}
-            <Activity size={15} />
-          {/if}
+          <item.icon size={15} />
           {item.label}
         </a>
       {/each}

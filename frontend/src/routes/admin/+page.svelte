@@ -18,6 +18,7 @@
     FileCheck2,
     BookUser,
     Map,
+    HardDrive,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
@@ -86,7 +87,8 @@
     | 'calendar'
     | 'directory'
     | 'doc-reviewers'
-    | 'carte';
+    | 'carte'
+    | 'storage';
 
   interface AdminCard {
     href?: string;
@@ -166,6 +168,13 @@
           label: m.admin_card_global_calendar_label(),
           description: m.admin_card_calendar_desc(),
           globalOnly: true,
+        },
+        {
+          href: '/admin/storage',
+          kind: 'storage',
+          label: m.admin_storage_label(),
+          description: m.admin_card_storage_desc(),
+          globalOnly: true,
         }
       );
     }
@@ -219,6 +228,8 @@
               <BookUser size={20} />
             {:else if card.kind === 'carte'}
               <Map size={20} />
+            {:else if card.kind === 'storage'}
+              <HardDrive size={20} />
             {:else}
               <CalendarDays size={20} />
             {/if}

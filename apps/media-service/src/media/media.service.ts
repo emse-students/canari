@@ -236,6 +236,11 @@ export class MediaService {
     return { deleted, failed };
   }
 
+  /** Bucket-wide size and object count, for the admin storage panel (WP-DEVICESTORAGE-1). */
+  async getStorageStats(): Promise<{ totalBytes: number; objectCount: number }> {
+    return this.storage.getBucketStats();
+  }
+
   // --- Chunked upload ---
 
   async initChunkedUpload(): Promise<string> {

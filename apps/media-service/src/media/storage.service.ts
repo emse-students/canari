@@ -89,4 +89,24 @@ export class StorageService implements OnModuleInit {
   async delete(objectId: string): Promise<void> {
     await this.client.removeObject(this.bucket, objectId);
   }
+
+  /**
+   * Sums the size and count of every object in the bucket, for the admin storage panel
+   * (WP-DEVICESTORAGE-1's backend counterpart). MinIO's JS client has no bucket-size API, so this
+   * streams the full object list - acceptable at this bucket's current scale (low hundreds of
+   * objects), but would need MinIO's server-side data-usage API if that ever changes.
+   */
+  async getBucketStats(): Promise<{ totalBytes: number; objectCount: number }> {
+    return new Promise((resolve, reject) => {
+      let totalBytes = 0;
+      let objectCount = 0;
+      const stream = this.client.listObjectsV2(this.bucket, '', true);
+      stream.on('data', (obj) => {
+        totalBytes += obj.size ?? 0;
+        objectCount += 1;
+      });
+      stream.on('end', () => resolve({ totalBytes, objectCount }));
+      stream.on('error', reject);
+    });
+  }
 }
