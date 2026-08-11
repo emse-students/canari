@@ -155,15 +155,20 @@ export function solicitHistory(
         log(`[HISTORY_REQ] solicited ${groupId.slice(0, 8)}...`);
       })
       .catch((e) => {
-        // Network-level failure (offline, fetch abort, etc.): the request never left the device.
-        if (typeof navigator !== 'undefined' && !navigator.onLine) {
-          log(`[HISTORY_REQ] offline while soliciting ${groupId.slice(0, 8)}...`);
-          historyRequestPendingStore.markUnsent(groupId);
-          return;
-        }
+        // A THROW MEANS IT NEVER LEFT THE DEVICE - offline, DNS, TLS, a 502 from the proxy, an
+        // abort. All of them are the same fact, and none of them is an answer, so the attempt ends
+        // here and says only what is true: the service could not be reached.
+        //
+        // This used to end the attempt ONLY when `navigator.onLine` was false, and otherwise fall
+        // through with nothing but a log line - leaving the response window open so the 30 s timer
+        // could later report `pending-unanswered`. A user watching a thirty-second deploy saw the
+        // result: "aucun appareil n'a repondu", about devices that had never been sent anything.
+        // `navigator.onLine` was the wrong discriminator twice over - it cannot see a server that
+        // is down, and a captive portal reports `true` - and it is gone rather than corrected.
         log(
-          `[HISTORY_REQ] solicit failed for ${groupId.slice(0, 8)}...: ${String(e).slice(0, 120)}`
+          `[HISTORY_REQ] could not reach the service for ${groupId.slice(0, 8)}...: ${String(e).slice(0, 120)}`
         );
+        historyRequestPendingStore.markUnreachable(groupId);
       });
   };
 

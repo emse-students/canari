@@ -191,6 +191,7 @@
   "chat_mls_sync_in_progress": "MLS sync in progress - sending temporarily unavailable",
   "chat_history_request_pending_unsent": "History pending: no other device is online to send it. It will be retried as soon as one comes back.",
   "chat_history_request_pending_unanswered": "History pending: no device has answered. It will be retried automatically.",
+  "chat_history_request_pending_unreachable": "History pending: the server is unreachable. It will be retried on reconnect.",
   "chat_conversation_deleted_message": "This conversation has been deleted.",
   "chat_delete_locally_button": "Delete locally",
   "chat_typing_one_person": "{names} is typing…",

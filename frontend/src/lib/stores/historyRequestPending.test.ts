@@ -49,6 +49,19 @@ describe('historyRequestPendingStore', () => {
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unsent');
   });
 
+  it('reports an unreachable service as over, and CLOSES the window so the timer cannot speak', () => {
+    // The whole point of the phase. Left open, the 30 s timer would overwrite this with
+    // `pending-unanswered` - a claim about other people's devices, made because the server was
+    // briefly absent. Nobody was asked, so nobody failed to answer.
+    historyRequestPendingStore.start('g1');
+    historyRequestPendingStore.markUnreachable('g1');
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unreachable');
+
+    vi.advanceTimersByTime(REQUEST_TIMEOUT_MS * 10);
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unreachable');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('NEVER schedules anything: a timed-out attempt stays over', () => {
     // The regression this exists for. Both ladders re-fired from inside a timer, so one detection
     // could still be generating traffic minutes later with no further evidence of a problem.

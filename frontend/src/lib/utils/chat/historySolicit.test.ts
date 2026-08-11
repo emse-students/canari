@@ -152,7 +152,7 @@ describe('solicitHistory', () => {
     expect(historyRequestPendingStore.getPhase('g1')).toBe('pending');
   });
 
-  it('moves straight to pending-unsent when the network is offline', async () => {
+  it('moves straight to pending-unreachable when the send throws while offline', async () => {
     const mls = makeMls();
     mls.sendHistoryRequest.mockRejectedValue(new Error('offline'));
     vi.stubGlobal('navigator', { onLine: false });
@@ -160,7 +160,28 @@ describe('solicitHistory', () => {
     solicitHistory(mls, 'g1', log);
     await vi.advanceTimersByTimeAsync(INITIAL);
 
-    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unsent');
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unreachable');
+    vi.unstubAllGlobals();
+  });
+
+  it('moves to pending-unreachable when the send throws and navigator says we are ONLINE', async () => {
+    // THE PRODUCTION CASE, seen by a user during a thirty-second deploy: the server answers 502, so
+    // the send throws, but `navigator.onLine` is perfectly true because the network is fine. The
+    // old code took that branch to mean "not a network failure", logged, and left the response
+    // window open - and thirty seconds later the timer reported `pending-unanswered`, telling the
+    // user no device had answered a request no device had ever been sent.
+    const mls = makeMls();
+    mls.sendHistoryRequest.mockRejectedValue(new Error('502 Bad Gateway'));
+    vi.stubGlobal('navigator', { onLine: true });
+
+    solicitHistory(mls, 'g1', log);
+    await vi.advanceTimersByTimeAsync(INITIAL);
+
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unreachable');
+
+    // And it must STAY that way: the window is closed, so the 30 s timer can no longer speak.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unreachable');
     vi.unstubAllGlobals();
   });
 });

@@ -10,24 +10,39 @@ import { SvelteMap } from 'svelte/reactivity';
  * request per edge and converges because each exchange is a diff - see `solicitHistory`.
  *
  * - `pending`: a request went out and the response window is still open.
- * - `pending-unsent`: the request never left the device, because the server elected no responder or
- *   this device is offline.
+ * - `pending-unsent`: the SERVER answered and said it elected no responder - nobody was online to
+ *   receive the request. A domain answer, from the one party that knows.
  * - `pending-unanswered`: the request DID go out and the window elapsed with no answer.
+ * - `pending-unreachable`: the request never left the device, because the service could not be
+ *   reached at all.
  *
- * The last two used to be one `pending-offline`, and the UI told the user the first one's story for
+ * The first two used to be one `pending-offline`, and the UI told the user the first one's story for
  * both - "no member online sent it" - on a conversation whose peer was demonstrably online and had
  * simply not answered. Two causes, one label, and the label asserted a fact the state did not carry:
  * the same shape as a liveness column answering a question it was never written for. Whether anyone
  * else is reachable is exactly the part a user can act on, so it is the part worth being right about.
  *
- * Both are terminal for the attempt: nothing is outstanding, and the next state edge - a reconnect, a
- * peer coming online, the awaiting sweep - is what asks again.
+ * `pending-unreachable` is the SAME mistake found one level up, in production, by a user watching a
+ * thirty-second deploy: a request that threw on the way out left the window open, the timer below
+ * then fired, and the banner told them "aucun appareil n'a repondu" - a statement about their peers'
+ * behaviour, caused entirely by the server being briefly absent. No device had been asked, because
+ * the ask never arrived anywhere. A transport failure is not an answer, and the only honest thing to
+ * say about the other devices in that moment is nothing.
+ *
+ * All three of the terminal phases end the attempt: nothing is outstanding, and the next state edge -
+ * a reconnect, a peer coming online, the awaiting sweep - is what asks again.
  */
-export type HistoryRequestPhase = 'pending' | 'pending-unsent' | 'pending-unanswered';
+export type HistoryRequestPhase =
+  | 'pending'
+  | 'pending-unsent'
+  | 'pending-unanswered'
+  | 'pending-unreachable';
 
 /** Whether the attempt is over, whatever ended it. */
 export function isAttemptOver(phase: HistoryRequestPhase | null): boolean {
-  return phase === 'pending-unsent' || phase === 'pending-unanswered';
+  return (
+    phase === 'pending-unsent' || phase === 'pending-unanswered' || phase === 'pending-unreachable'
+  );
 }
 
 type PendingEntry = {
@@ -67,7 +82,7 @@ class HistoryRequestPendingStore {
     console.log(`[HISTORY_REQ] response window open for ${groupId.slice(0, 8)}...`);
   }
 
-  /** The request never left the device (offline, or no member online). The attempt is over. */
+  /** The server elected no responder: nobody was online to be asked. The attempt is over. */
   markUnsent(groupId: string): void {
     const entry = entries.get(groupId);
     if (!entry || isAttemptOver(entry.phase)) return;
@@ -75,6 +90,24 @@ class HistoryRequestPendingStore {
     entry.phase = 'pending-unsent';
     this.phases.set(groupId, 'pending-unsent');
     console.log(`[HISTORY_REQ] ${groupId.slice(0, 8)}... could not be asked - attempt over`);
+  }
+
+  /**
+   * The request could not be sent at all - the service was unreachable. The attempt is over.
+   *
+   * This MUST end the window rather than leave it running. Left open, the timer below fires thirty
+   * seconds later and reports `pending-unanswered`, which tells the user no device answered a
+   * request that no device ever received.
+   */
+  markUnreachable(groupId: string): void {
+    const entry = entries.get(groupId);
+    if (!entry || isAttemptOver(entry.phase)) return;
+    clearTimeout(entry.timeoutId);
+    entry.phase = 'pending-unreachable';
+    this.phases.set(groupId, 'pending-unreachable');
+    console.log(
+      `[HISTORY_REQ] ${groupId.slice(0, 8)}... could not reach the service - attempt over`
+    );
   }
 
   /** The current phase for `groupId`, or null when no attempt is being tracked. */

@@ -439,6 +439,8 @@
     if (historyRequestPhase === 'pending-unsent') return m.chat_history_request_pending_unsent();
     if (historyRequestPhase === 'pending-unanswered')
       return m.chat_history_request_pending_unanswered();
+    if (historyRequestPhase === 'pending-unreachable')
+      return m.chat_history_request_pending_unreachable();
     return '';
   });
 
