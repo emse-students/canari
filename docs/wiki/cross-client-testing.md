@@ -65,6 +65,12 @@ it again; it is not a claim that the check need not run.
 
 ## Where the campaign stands
 
+**The phases below the rule were added 2026-08-11**, when the campaign stopped being a list of
+things that had once broken and became [a matrix of the feature
+surface](#the-matrix-and-why-the-phases-above-were-not-one). They are not a backlog of suspicions:
+they are the cells that were empty. The very first question asked of one of them found a defect
+sitting in production.
+
 | Phase | State | What is left |
 | --- | --- | --- |
 | **0** - setup | `passed` | SETUP-3 restarts each session |
@@ -77,6 +83,16 @@ it again; it is not a claim that the check need not run.
 | **PIN** | `pending` | PIN-1..10 |
 | **MULTI** - one user, two devices | `pending` | MULTI-1..6 |
 | **CORRUPT** - deliberate store damage | `deferred` | runs last: it destroys state |
+| --- | --- | --- |
+| **MUT** - edit, delete, react, pin | `pending` | MUT-1..20. Every row runs TWICE: MLS in a DM, REST in a channel |
+| **READ** - receipts and unread counts | `pending` | READ-1..10 |
+| **TYPE** - typing indicators | `pending` | TYPE-1..5 |
+| **SEARCH** - finding a message | `pending` | SEARCH-1..6 |
+| **MENTION** - @ and what it triggers | `pending` | MENTION-1..6 |
+| **CALL** - audio and video | `pending` | CALL-1..20. **The largest hole**: no harness script exists, and CALL-13 (iOS CallKit) has never run on hardware |
+| **COMM** - communities, channels, roles | `pending` | COMM-1..22 |
+| **GRP** - group membership and invitations | `pending` (1/9 run) | GRP-2 `failed` on the first look and is fixed; GRP-1 exercised by the DEL-1 rig; GRP-3..9 owed |
+| **DEL** - deleting a conversation, crossed | `pending` (1/10 run) | DEL-1 `failed`, fixed, awaiting its prod re-run; DEL-2..10 owed |
 
 ---
 
@@ -331,6 +347,25 @@ The lifecycle field is what separated cause 4 from "the delete never arrived", w
 and much larger defect. **A check on a state that several paths can write must report which path
 wrote it**, or its failure sends the reader to the wrong fix.
 
+**The fifth run, against the deployed fix, is the one that counts:** marker present and
+`lifecycle: active` before, marker gone / banner absent / `lifecycle: removed` after. `PASS`, armed.
+
+The fixture the run needs - create a group, invite the peer, prove the roster moved - is now
+`testgroup.mjs`, shared by `del1.mjs` and `grp2.mjs`. It keeps its own roster-based peer
+identification even though GRP-2 is fixed: **a fixture must not depend on the fix it is used to
+verify.**
+
+### What the accessibility work bought the harness
+
+`grp2.mjs` asserts that a list is EMPTY. Before the picker carried `role="listbox"` /
+`role="option"`, the only way to reach it was to look for a portalled `<ul>` whose class matched
+`fixed` - and "no element matched my class selector" is not the same statement as "the list offered
+nothing". One is a verdict, the other is a selector that may simply have gone stale. The check now
+reads `aria-expanded` and counts `[role=option]`, which are contracts rather than styling.
+
+This is the general form of the user's standing instruction: the attribute a screen reader needs is
+the attribute a harness can trust, and neither of them breaks when someone changes a class.
+
 ## The matrix, and why the phases above were not one
 
 Added 2026-08-11 on the user's instruction: *"Vraiment je veux que cross-client-testing soit une
@@ -520,8 +555,8 @@ Split out of DEL once the DEL-1 rig found a defect in a control nobody had ever 
 
 | Id | What it asks | State |
 | --- | --- | --- |
-| GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `to-revalidate` - exercised by the DEL-1 rig |
-| GRP-2 | **The member picker offers users who are ALREADY members, yourself included, and inviting one changes nothing without saying so** | `failed` - found 2026-08-11, see below |
+| GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `passed` 2026-08-11 - the `testgroup.mjs` fixture, exercised by every DEL and GRP run |
+| GRP-2 | **The member picker offers users who are ALREADY members, yourself included, and inviting one changes nothing without saying so** | `failed` 2026-08-11 -> fixed and re-verified on prod (`grp2.mjs`) |
 | GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `pending` |
 | GRP-4 | The group invitation LINK: generate, open it on the other account | `pending` |
 | GRP-5 | Rename a group, seen on the other side | `pending` |

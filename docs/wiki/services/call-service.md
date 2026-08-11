@@ -92,7 +92,7 @@ The SFU fetches short-lived TURN credentials from the Cloudflare Calls API on st
 
 - `CLOUDFLARE_CALLS_API_TOKEN` — API token for Cloudflare
 - `CLOUDFLARE_TURN_KEY_ID` — TURN key identifier
-- `CLOUDFLARE_TURN_TTL_SECONDS` — Credential TTL (default: 3600)
+- `CLOUDFLARE_TURN_TTL_SECONDS` — Credential TTL (default: 7200)
 
 If Cloudflare is not configured, it falls back to `TURN_URL` / `TURN_USERNAME` / `TURN_CREDENTIAL` env vars (dev only). Without any TURN configuration, falls back to Google STUN only.
 
@@ -129,7 +129,7 @@ Max 50 signal frames per second per peer. Exceeded peers are disconnected.
 | `PORT` | no | `3004` | Listen port |
 | `CLOUDFLARE_CALLS_API_TOKEN` | no | - | Cloudflare API token for TURN credentials |
 | `CLOUDFLARE_TURN_KEY_ID` | no | - | Cloudflare TURN key ID |
-| `CLOUDFLARE_TURN_TTL_SECONDS` | no | `3600` | TURN credential TTL |
+| `CLOUDFLARE_TURN_TTL_SECONDS` | no | `7200` | TURN credential TTL |
 | `TURN_URL` | no | - | Static TURN URL (dev fallback) |
 | `TURN_USERNAME` | no | `user` | Static TURN username |
 | `TURN_CREDENTIAL` | no | `password` | Static TURN credential |

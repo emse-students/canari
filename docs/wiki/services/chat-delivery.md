@@ -798,7 +798,7 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/calls/initiate` | Verify membership, return LiveKit room token + room ID |
+| POST | `/api/calls/initiate` | Verify membership, return a room token + room ID for the in-repo `call-service` SFU |
 | GET | `/api/calls/room-token` | Get room token for recipient |
 | GET | `/api/calls/ice-servers` | Get ICE server configuration |
 | POST | `/api/calls/presence` | Report device presence in call |
@@ -824,9 +824,7 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | no | Firebase Admin SDK credentials (push notifications) |
 | `PUSH_SECRET` | yes | Shared secret for background push service routes |
 | `INTERNAL_SECRET` | yes | Shared secret for internal service-to-service routes |
-| `LIVEKIT_API_KEY` | no | LiveKit API key (calls) |
-| `LIVEKIT_API_SECRET` | no | LiveKit API secret (calls) |
-| `LIVEKIT_URL` | no | LiveKit server URL (calls) |
+| `CALL_ROOM_SECRET` | yes, for calls | HS256 secret signing the 5-minute room token. Unset, `/api/calls/initiate` answers 503 |
 | `MEDIA_SERVICE_URL` | no | media-service base URL (rich media notification proxy) |
 | `APNS_VOIP_KEY_P8` | no | APNs auth key (.p8, raw PEM or base64) for direct VoIP pushes (CallKit) |
 | `APNS_VOIP_KEY_ID` | no | Key ID of the APNs auth key |

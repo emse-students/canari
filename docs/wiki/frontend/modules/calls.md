@@ -125,7 +125,7 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/calls/initiate` | Verify membership, return LiveKit/LiveKit room token + room ID |
+| POST | `/api/calls/initiate` | Verify membership, return a room token + room ID. **Not LiveKit** - the SFU is the in-repo Rust `call-service`; the token is an HS256 JWT signed with `CALL_ROOM_SECRET`, valid 5 minutes |
 | GET | `/api/calls/room-token` | Get room token for recipient |
 | GET | `/api/calls/ice-servers` | Get ICE server configuration (Cloudflare TURN) |
 | POST | `/api/calls/presence` | Report device presence in call |
