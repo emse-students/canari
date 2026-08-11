@@ -311,7 +311,7 @@ Fourteen defects, every one found by a check or by the log of a check. The narra
 
 | Defect | Found by | State |
 | --- | --- | --- |
-| **WP-LOSS-1** - a reload rewinds the sender's ratchet, and the receiver silently drops the next message | FWD-3 / FWD-5, then reconciliation | shipped; sender half verified on prod; **Android half not yet exercised** |
+| **WP-LOSS-1** - a reload rewinds the sender's ratchet, and the receiver silently drops the next message | FWD-3 / FWD-5, then reconciliation | shipped, both halves verified on Android 2026-08-11: the trigger delivers 6/6 with zero `LOST frame`, and the repair heals 14/14 on a forced rewind |
 | **WP-HIDDEN-1** - a backgrounded tab stops receiving, silently | TAB-4 | shipped, verified |
 | **WP-MULTITAB-1** - two tabs of one account diverge their ratchet | TAB-4 | shipped, verified (9/9 where it lost 4 of 9) |
 | **WP-ECHO-1** - the sender loses its OWN message across a reload | reconciliation | shipped; verified on the web, on the phone 2026-08-11 (5 sends INSIDE a bulk window, 11/11 after a reload) |

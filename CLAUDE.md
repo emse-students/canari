@@ -303,25 +303,6 @@ raising it first locks everyone out.
 
 ### CANARI - OPEN WORK PACKAGES
 
-- \[ \] **WP-LOSS-1 (P1) - both halves SHIPPED; what is left is verification.** A reload rewound the
-  sender's ratchet and the receiver silently dropped the next message. Root cause, the isolating
-  experiments, the retired hypotheses and both halves of the fix are in
-  [mls-protocol > why a sender's ratchet goes backwards](docs/wiki/protocols/mls-protocol.md#why-a-senders-ratchet-goes-backwards-at-all-wp-loss-1-2026-08-06).
-  Do not re-derive it, and do not re-open the load hypothesis or "forwarding is special": both are
-  dead. The sender half is VERIFIED on prod (3/3 delivered where it lost 2/2) - do not re-verify it.
-  **The ANDROID half is now VERIFIED end to end too** (2026-08-11, `heal-a1.mjs`, log in the
-  scratchpad `heal-a1.log`): W1 parked so the rewound W2 was the only possible responder, 14 sends
-  from the rewound state, `HEALED - 14/14` on the phone. What the trace shows, and what a re-run must
-  expect: the phone detects (`LOST frame … SecretReuseError`), the first solicitations are correctly
-  SUPPRESSED because an attempt is already outstanding, and the repair that actually lands is the
-  **cross-session re-solicit** (`re-soliciting bundle … (awaiting across sessions)`) about 3 min
-  later, answered by a digest of 589 ids and a bundle of 8 - the diff, working, at the interval it is
-  designed to work at. **A HEAL check on the phone must budget minutes, not seconds**; a 60 s budget
-  would have called this FAILED.
-  **Owed:** a LOSS-branch verification (no reproduction has produced one since the sender fixes
-  landed, which is itself the point). **One deliberate gap, not a defect:** nothing tells the
-  receiver's USER that a message was lost.
-
 - \[ \] **WP-PENDING-1 (P1) - fixed and deployed; the ONE verification owed is against a REAL
   backlog.** A single `AbortController(10_000)` wrapped a whole paginated pull, so a backlog bigger
   than 10 s of transfer aborted forever, ACKed nothing, and only grew. Now a deadline per PAGE, each
@@ -407,6 +388,12 @@ raising it first locks everyone out.
 
 **Known and deliberately NOT a WP yet** (do not "fix" these by reflex):
 
+- **Nothing tells the RECEIVER's user that a message was lost** (the residue of WP-LOSS-1, which is
+  otherwise closed - both halves verified on Android 2026-08-11, see
+  [mls-protocol > both halves verified on hardware](docs/wiki/protocols/mls-protocol.md)). The
+  device knows: it logs `LOST frame` and solicits the diff. The user is told nothing, because the
+  repair usually succeeds and a banner for every transient gap would be noise. Deliberate, and
+  revisit it only with evidence that a loss went unrepaired.
 - **A device only asks for history when something TELLS it to.** The four triggers are a decrypt
   failure, a fresh join with no local store, being elected as a responder and finding the peer holds
   more (`peer-holds-more`), and a reconnect re-soliciting an existing marker. So a device holding

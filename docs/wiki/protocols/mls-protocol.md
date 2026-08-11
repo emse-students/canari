@@ -319,6 +319,32 @@ error rather than answering `Ok(None)`, which used to discard the diagnosis befo
 it. A layer that cannot make a distinction must not make it, and the guard is
 `same_epoch_ratchet.rs` rather than a comment.
 
+##### Both halves verified on hardware, and they need two DIFFERENT runs
+
+The trigger and the repair cannot be exercised by one check, because the fix means the trigger no
+longer reaches the repair. Both were run on A1 against a browser peer:
+
+| run | what it exercises | result |
+| --- | --- | --- |
+| `check-loss-a1.mjs` (2026-08-11) | the ORIGINAL trigger: reload the sender, then send | 3/3 delivered before, **6/6 after**, **zero `LOST frame`** |
+| `heal-a1.mjs` (2026-08-11) | the REPAIR, on a deliberately rewound sender | 10 `LOST frame … SecretReuseError`, cross-session re-solicit, `HEALED 14/14` |
+
+Zero `LOST frame` in the first run is the point of it, not a gap in it: the sender half persists its
+ratchet across a reload, so nothing goes backwards and the receiver never has to detect anything.
+The detector and the diff are what the second run covers, and it has to force the rewind to get
+there. **A run reporting neither is VOID** - it has shown only that nobody sent anything.
+
+The check carries a positive control for the same reason: it delivers a baseline batch BEFORE the
+reload and refuses to report on the trigger unless all of it arrived. Otherwise a delivery that was
+already broken would be attributed to the reload.
+
+Worth keeping from building it, because it nearly produced a false FAIL: the first attempt reported
+`phone holds 2/3` before the trigger had even fired, and a direct comparison of the two stores
+showed all three markers present on both sides. The counter gave up after a fixed number of polls.
+**A harness that stops looking early manufactures exactly the silent loss this WP is about**, so the
+count is now bounded by a deadline and reports how long it waited - 1472 ms and 1240 ms in the
+passing run, i.e. nothing was ever slow; the earlier miss was the harness alone.
+
 **And a generation too far AHEAD is the mirror case, with the opposite remedy.**
 `SecretTreeError(TooDistantInTheFuture)` means the frame's generation is beyond what OpenMLS will
 derive forward (`maximum_forward_distance`), i.e. this device missed a long run of that sender's
