@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Component } from 'svelte';
   import { ChevronDown } from '@lucide/svelte';
-  import { clickOutside } from '$lib/actions/clickOutside';
+  import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
 
   interface NavGroupItem {
@@ -28,9 +28,11 @@
   let panelEl = $state<HTMLElement | null>(null);
 
   // The nav bar scrolls horizontally (`overflow-x-auto`), which forces the browser to clip the
-  // vertical axis too - an `absolute` panel anchored inside it never becomes visible. `fixed`,
-  // positioned against the button's own viewport rect, escapes that clip (see
-  // docs/wiki/frontend/architecture.md "An anchored dropdown must be portalled").
+  // vertical axis too - an `absolute` panel anchored inside it never becomes visible, and every
+  // page is itself wrapped in `.page-scroll-wrap` (`will-change: transform`), which makes IT the
+  // containing block for a merely `fixed` descendant instead of the viewport. `use:portal` moves
+  // the panel out of both ancestors; `bindFixedPopover` then positions it against the button's own
+  // viewport rect (see docs/wiki/frontend/architecture.md "An anchored dropdown must be portalled").
   $effect(() => {
     if (!open || !panelEl || !buttonEl) return;
     const unbind = bindFixedPopover(panelEl, { anchor: () => buttonEl, estimatedHeight: 220 });
@@ -38,7 +40,7 @@
   });
 </script>
 
-<div class="shrink-0" use:clickOutside={() => (open = false)}>
+<div class="shrink-0">
   <button
     bind:this={buttonEl}
     type="button"
@@ -54,8 +56,19 @@
     <ChevronDown size={14} class="transition-transform {open ? 'rotate-180' : ''}" />
   </button>
   {#if open}
+    <!-- Full-screen invisible backdrop, below the panel: closes on any outside click, matching
+         PostNotificationBell rather than clickOutside - the panel no longer being a DOM descendant
+         of this wrapper once portalled, composedPath() would treat every click inside it as
+         "outside" too. -->
+    <div
+      use:portal
+      role="presentation"
+      class="fixed inset-0 z-[190]"
+      onclick={() => (open = false)}
+    ></div>
     <div
       bind:this={panelEl}
+      use:portal
       class="fixed z-[200] min-w-52 rounded-2xl border border-black/8 dark:border-white/10 bg-cn-surface/95 backdrop-blur-xl shadow-lg p-1.5 space-y-0.5"
     >
       {#each items as item (item.href)}
