@@ -97,16 +97,17 @@ up: **prod IS the test server** until a `dev.canari-emse.fr` exists.
 4. **The phone is available this session** - the user offered to plug it in, so the Android P1s and
    LIFE-5 come before the rest of the browser roadmap.
 
-**One observation from the user, and it is almost certainly a REAL defect** (2026-08-10): a
-conversation showed its HEADER with no messages under it, and **"pour avoir les messages affiches,
-j'ai change de conv, puis je suis revenu dans la precedente et j'ai vu les messages"**. That second
-sentence is the whole diagnosis: **a REMOUNT fixed it, so the messages were already there and the
-open view simply never re-read them.** Exactly the shape of the feed-retry defect already in DURABLE
-RULES - "leaving the page and coming back worked, which reads as a data fault and is not one".
-Suspect the seam between a bulk ingest / history bundle landing and `activeConversation`: `MainChatPage`
-already carries an "explicit derived binding so ChatArea re-renders when the open conversation
-mutates" (line ~106), which says someone has fought this before and did not close it. Reproduce by
-sending into a conversation that is OPEN while a drain is running, not by opening one.
+**The user's empty-conversation observation is SOLVED and FIXED** (2026-08-11, WP-EMPTYVIEW-1). It
+was found by accident: the Android HEAL run ended `W2 holds 0/14` and the sender turned out to be
+rendering NOTHING at all, 598 messages in its store and 24 characters in the pane (screenshot
+`w2-empty.png` in the scratchpad). Cause, table and proof are in
+[chat > the render window](docs/wiki/frontend/modules/chat.md); the rule is in DURABLE RULES. In one
+line: `windowStart` was recomputed only on a conversation-key change while
+`loadHistoryForConversation` replaces the list with a 60-message page, so the window pointed past
+the end and `slice` answered `[]` in silence. **Do not re-derive it, and do not chase the
+`MainChatPage` derived binding - it was not at fault.** The reproduction that failed is worth
+keeping: opening a conversation during boot does NOT reproduce it, because the list GROWS there; the
+bug needs a LONG in-memory list at click time and a shrink after.
 
 #### What the escalation chantier settled (2026-08-10, shipped - do not re-derive)
 
@@ -655,6 +656,18 @@ prompt fields are all on those pages. What must not be forgotten between them:
   French literals (WP-SAFELINK-1), copying the shape of that store's own ~21 other call sites,
   none of which are Paraglide either; that existing pattern is not a precedent to extend.
 - Re-run `bun run paraglide:compile` before `bun run test` after any build.
+- **AN INDEX INTO AN ARRAY YOU DO NOT OWN IS STATE THAT GOES STALE, AND `slice` PAST THE END IS
+  SILENT.** `ChatArea` renders `messageGroups.slice(windowStart, …)` and recomputed `windowStart`
+  only when the conversation KEY changed - while `loadHistoryForConversation` REPLACES
+  `conversation.messages` with a 60-message page on every click and every reconnect. A long list
+  shrinking under a window computed against it left the start past the end, and `slice` answered
+  `[]`: header, avatar and composer with a void under them, no error, no skeleton, no empty state
+  (WP-EMPTYVIEW-1, seen on prod with 598 messages stored and zero rendered). Same family as the
+  feed-retry defect - a remount "fixed" it, so it read as data loss and was not. The fix is never to
+  make the stored index correct; it is for the READ side to clamp against the current length
+  (`utils/chat/renderWindow.ts`), so the invariant "a non-empty list yields a non-empty window"
+  holds by construction rather than by whoever remembers to recompute. Ask of any cached index what
+  invalidates it, and prefer a derived clamp over a recompute you have to remember.
 - **A promise that has REJECTED stays rejected, so an `{#await}` over one sits in `{:catch}` for the
   life of the component** - nothing re-enters `{:then}` but a new promise, i.e. a remount. State a
   RETRY writes must therefore be read from OUTSIDE the thing that failed: the feed read

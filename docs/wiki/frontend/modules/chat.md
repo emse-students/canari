@@ -764,6 +764,56 @@ carries the sorted ids below 1000 messages, and above that one line per slice of
 count AND a truncated SHA-256 of that slice's ids. The hash is exactly what catches "same count,
 different messages", and `historyManifest.test.ts` pins that case.
 
+## The render window is a pointer into an array the component does not own (WP-EMPTYVIEW-1)
+
+`ChatArea` never renders a whole conversation. It renders a WINDOW - `messageGroups.slice(start,
+end)` - because a thousand bubbles in one synchronous pass delays layout and the entry scroll then
+overshoots. `windowStart` is component STATE: it moves when the reader paginates upwards, and it is
+recomputed from the list length in exactly one place, the effect that fires when the conversation
+KEY changes (`ChatArea.svelte`, `hasConversationChanged`).
+
+The list it points into belongs to somebody else, and that somebody REPLACES it rather than
+appending to it. `loadHistoryForConversation` ends by setting `conversation.messages` to
+`getMessagesPage(id, key, INITIAL_MESSAGES_PAGE)` - 60 messages - on both its fast path (the
+`limit=1` cursor probe finding nothing new) and its full path. It runs on every conversation click
+and from `ChatBackgroundService` on reconnect and on history events.
+
+So the two combine into a conversation that renders NOTHING:
+
+| step | in-memory messages | groups | `windowStart` | rendered |
+| --- | --- | --- | --- | --- |
+| a bulk ingest / history bundle has grown the open list | 598 | ~300 | - | - |
+| the conversation is clicked: the key changes | 598 | ~300 | `300 - 60 = 240` | 60 groups |
+| `loadHistoryForConversation` replaces the list with one page | 60 | ~65 | still 240 | `slice(240, 65)` = **none** |
+
+`slice` with a start past its end returns `[]` without complaining. There is no error, no log, and no
+skeleton - `showSkeleton` requires `isLoadingHistory`, which is false by then - and no empty state,
+because `ChatMessageGroups` renders an empty list as nothing. The user sees the header, the avatar,
+the composer, and a void. Observed on production 2026-08-11 with 598 messages in the local store and
+zero on screen, surviving a full reload.
+
+Two facts make the diagnosis a proof rather than a story, and both are cheap to re-check:
+
+- the SIDEBAR renders `convo.messages[convo.messages.length - 1].content` as its preview, so a tile
+  showing a preview proves the map entry the pane reads is NOT empty;
+- `groupMessages` only ever pushes - a non-empty list cannot produce empty groups - and
+  `hideDuringEntry` is `opacity-0`, which `innerText` still reports. So a pane whose `innerText` is
+  the header and the composer alone had no message nodes in the DOM at all, which leaves the slice
+  as the only reduction that could have removed them.
+
+The fix does not make `windowStart` correct; it makes the READ side stop trusting it.
+`utils/chat/renderWindow.ts` clamps the stored index against the CURRENT group count on every
+render, and every consumer - the slice, the hidden-above count, `loadOlderGroups`,
+`fillViewportThenPin`, `navigateToMessage` - reads the clamped value while pagination keeps writing
+the raw state. The invariant it guarantees is the one worth remembering: **a non-empty list always
+yields a non-empty window.** `renderWindow.test.ts` pins it across every combination of stored index
+and list length, which is the assertion that fails against the old arithmetic.
+
+Still true and deliberately NOT changed here: that refresh DISCARDS older messages the reader had
+paginated in, because it replaces the list with one page instead of merging. That costs scroll
+position and a re-fetch, and it is now merely annoying rather than invisible - but it is the reason
+the window and the list can disagree at all.
+
 ## UI features
 
 - **Focus writing mode**: header hides when composer is focused on mobile.

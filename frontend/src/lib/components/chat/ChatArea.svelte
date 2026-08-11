@@ -22,6 +22,7 @@
   import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
+  import { resolveRenderWindow } from '$lib/utils/chat/renderWindow';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
@@ -284,9 +285,9 @@
    * network), then pin to the latest message.
    */
   async function fillViewportThenPin() {
-    for (let i = 0; i < 4 && chatContainer && windowStart > 0; i++) {
+    for (let i = 0; i < 4 && chatContainer && renderWindow.start > 0; i++) {
       if (chatContainer.scrollHeight > chatContainer.clientHeight + 40) break;
-      windowStart = Math.max(0, windowStart - RENDER_GROUPS_STEP);
+      windowStart = Math.max(0, renderWindow.start - RENDER_GROUPS_STEP);
       await tick();
     }
     scrollToBottomSettled(() => {
@@ -456,10 +457,25 @@
 
   // Group messages by date and time gaps
   let messageGroups = $derived(chatView ? groupMessages(chatView.conversation.messages) : []);
-  let windowEnd = $derived(Math.min(messageGroups.length, windowStart + MAX_RENDERED_GROUPS));
-  let visibleMessageGroups = $derived(messageGroups.slice(windowStart, windowEnd));
+  /**
+   * The stored `windowStart` is a pointer into a list this component does not own: every path that
+   * reloads a page from the local store REPLACES `conversation.messages`, and a replacement shorter
+   * than what was in memory leaves the pointer past the end - `slice` then returns nothing and the
+   * conversation renders no messages at all (WP-EMPTYVIEW-1). So the read side clamps against the
+   * current length; `windowStart` stays the state pagination writes.
+   */
+  let renderWindow = $derived(
+    resolveRenderWindow(
+      windowStart,
+      messageGroups.length,
+      INITIAL_RENDER_GROUPS,
+      MAX_RENDERED_GROUPS
+    )
+  );
+  let windowEnd = $derived(renderWindow.end);
+  let visibleMessageGroups = $derived(messageGroups.slice(renderWindow.start, renderWindow.end));
   /** Groups hidden above the render window (older messages). */
-  let _hiddenGroupCount = $derived(windowStart);
+  let _hiddenGroupCount = $derived(renderWindow.start);
   /** Groups hidden below the render window (newer messages, while scrolled far up). */
   let hiddenBelowCount = $derived(messageGroups.length - windowEnd);
   /**
@@ -472,8 +488,11 @@
   let hideDuringEntry = $derived(entering && !showSkeleton);
 
   async function loadOlderGroups() {
-    if (windowStart > 0) {
-      windowStart = Math.max(0, windowStart - RENDER_GROUPS_STEP);
+    // Paginate from where the window ACTUALLY is, never from the stored index: after the list has
+    // been replaced by a shorter page the two differ, and stepping back from the stale one would
+    // walk a window that is already past the end.
+    if (renderWindow.start > 0) {
+      windowStart = Math.max(0, renderWindow.start - RENDER_GROUPS_STEP);
     } else if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
       isLoadingOlder = true;
       try {
@@ -508,7 +527,7 @@
       return;
     }
 
-    if (targetIndex < windowStart || targetIndex >= windowEnd) {
+    if (targetIndex < renderWindow.start || targetIndex >= renderWindow.end) {
       windowStart = Math.max(0, targetIndex - Math.floor(MAX_RENDERED_GROUPS / 2));
       await tick();
     }
