@@ -117,7 +117,7 @@ export class MediaController {
     })
   )
   async upload(@UploadedFile() file: unknown, @Req() req: Request): Promise<{ mediaId: string }> {
-    this.verifyToken(req);
+    const ownerId = this.verifyToken(req);
 
     let upload: ReturnType<typeof requireUploadedFile>;
     try {
@@ -128,7 +128,7 @@ export class MediaController {
       );
     }
 
-    const mediaId = await this.mediaService.upload(upload.buffer);
+    const mediaId = await this.mediaService.upload(upload.buffer, ownerId);
     this.logger.log(`Stored encrypted blob: ${mediaId} (${upload.size} bytes)`);
     return { mediaId };
   }
@@ -214,8 +214,8 @@ export class MediaController {
     @Param('id') id: string,
     @Req() req: Request
   ): Promise<{ mediaId: string }> {
-    this.verifyToken(req);
-    const mediaId = await this.mediaService.completeChunkedUpload(id, MAX_BYTES);
+    const ownerId = this.verifyToken(req);
+    const mediaId = await this.mediaService.completeChunkedUpload(id, MAX_BYTES, ownerId);
     this.logger.log(`Completed chunked upload: ${id} -> ${mediaId}`);
     return { mediaId };
   }
@@ -292,6 +292,23 @@ export class MediaController {
     // Prevent any caching of sensitive encrypted content
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     res.send(data);
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETE /media/internal/users/:userId - account deletion fan-out (core-service)
+  //
+  // Declared BEFORE the catch-all `@Delete(':id')` for the same reason `internal/:id` precedes
+  // `@Get(':id')`. No JWT: the caller is a service, not a user - the account is already gone by
+  // the time the fan-out reaches here, so there is no token left to present.
+  // ---------------------------------------------------------------------------
+  @Delete('internal/users/:userId')
+  async removeAllOwnedBy(
+    @Param('userId') userId: string,
+    @Headers('x-internal-secret') internalSecret?: string
+  ): Promise<{ ok: boolean; deleted: number; failed: number }> {
+    assertInternalSecret(internalSecret);
+    const { deleted, failed } = await this.mediaService.removeAllOwnedBy(userId);
+    return { ok: true, deleted, failed };
   }
 
   // ---------------------------------------------------------------------------

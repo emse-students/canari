@@ -328,14 +328,31 @@ persisting the metadata is a second way in. **Reaping them needs a pass driven b
 than the index**, which does not exist today - the same shape as 5.3, and the same GDPR point: an
 object nothing can enumerate is an object no deletion request can reach.
 
-### 5.3 Give media a content-linked deletion path
+### 5.3 Content-linked deletion - **HALF DONE 2026-08-11, and the other half must NOT be built**
 
-Today the 30-day idle sweep is the only thing that ever deletes a blob. At minimum, deleting a
-message and deleting an account should delete their media - the internal endpoint already exists
-(`DELETE /api/media/:id`, `assertInternalSecret`) and is already used for association logos; it is
-simply never called from the chat or channel paths. This is also a **GDPR** point, not only a
-storage one: an account deletion that leaves the user's images on disk is a deletion that did not
-happen.
+The 30-day idle sweep used to be the only thing that ever deleted a blob, so an account deletion
+left the account's images on disk: a **GDPR** point as much as a storage one, since a deletion that
+leaves the data is a deletion that did not happen.
+
+**Account deletion now reaches them.** The blocker was not the delete, it was attribution: the
+service holds only ciphertext, and `upload` discarded the JWT's `sub` after using it to authenticate.
+It records it (`MediaMetaEntry.ownerId`, simple and chunked uploads alike), and `deleteUser` fans out
+to `DELETE /api/media/internal/users/:userId` alongside the existing chat-delivery and social calls -
+best-effort with its own catch, like its siblings, because the user row must go even if a service is
+down. `removeAllOwnedBy` skips public assets on purpose: an association logo outlives the member who
+uploaded it. **Objects stored before this change carry no owner** and remain reachable only by the
+retention sweep - there is no backfill, because nothing on the server knows who uploaded them.
+
+**Message deletion deliberately does NOT delete the blob.** Forwarding copies the `MediaRef`, so one
+object can be cited by messages in conversations the deleter cannot see, and the server - holding
+ciphertext - can count no references. Deleting on message-delete would break other people's messages
+with no way to detect it beforehand; the blob goes idle instead and the 30-day sweep takes it. This
+is the same reason a refcount cannot simply be added: the count would have to be maintained by
+clients that cannot see each other.
+
+**The residual gap is the orphans** (see 5.2): objects with no metadata entry are invisible to both
+mechanisms, including this one, since `removeAllOwnedBy` also iterates the index. Reaping those
+needs a pass driven by the bucket.
 
 ### 5.4 Bound Redis
 

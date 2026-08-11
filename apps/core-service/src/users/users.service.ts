@@ -28,6 +28,7 @@ export class UsersService implements OnModuleInit {
   private readonly chatDeliveryUrl =
     process.env.CHAT_DELIVERY_URL ?? 'http://chat-delivery-service:3010';
   private readonly socialUrl = process.env.SOCIAL_URL ?? 'http://social-service:3014';
+  private readonly mediaUrl = process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011';
   /**
    * Verification service account used by Google/Apple app reviewers. It is hidden from
    * non-admin users (search + directory) and can itself only discover global admins.
@@ -386,6 +387,20 @@ export class UsersService implements OnModuleInit {
       .delete(`${this.socialUrl}/internal/users/${encodeURIComponent(userId)}`, { headers })
       .catch((err) =>
         this.logger.warn(`[deleteUser] social failed userId=${userId}: ${String(err)}`)
+      );
+
+    // Best-effort: delete the media this user uploaded. The service holds only ciphertext, so the
+    // recorded uploader is the ONLY thing that can attribute a blob - anything stored before that
+    // was recorded stays reachable by the retention sweep alone.
+    await axios
+      .delete(`${this.mediaUrl}/api/media/internal/users/${encodeURIComponent(userId)}`, { headers })
+      .then((r) =>
+        this.logger.log(
+          `[deleteUser] media deleted userId=${userId} count=${r.data?.deleted ?? '?'}`
+        )
+      )
+      .catch((err) =>
+        this.logger.warn(`[deleteUser] media failed userId=${userId}: ${String(err)}`)
       );
 
     // Hard-delete the user row last so login becomes impossible immediately after

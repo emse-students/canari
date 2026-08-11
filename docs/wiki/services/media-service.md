@@ -54,11 +54,15 @@ a prop, but only as a signal that the session is authenticated.
 | POST | `/api/media/upload/chunk/:id/complete` | JWT | Complete chunked upload, return `mediaId` |
 | GET | `/api/media/public/:id` | none | Download public asset (cached 1 year, no auth) |
 | GET | `/api/media/:id` | JWT | Download encrypted blob (no-cache, owner or group member) |
+| DELETE | `/api/media/internal/users/:userId` | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion) |
 | DELETE | `/api/media/:id` | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`) |
 
-`DELETE` is not reachable by a client. Its only callers are
+Neither `DELETE` is reachable by a client. `:id` is called by
 `AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
-`FormsService`. **Nothing in the chat or channel paths ever calls it** - see retention below.
+`FormsService`; `internal/users/:userId` by `UsersService.deleteUser` in core-service. That route
+carries **no JWT on purpose** - the account is already being destroyed, so there is no token left to
+present - and it is declared BEFORE the catch-all `:id` for the same reason `internal/:id` precedes
+`GET :id`. **Nothing in the chat or channel paths deletes a blob** - see retention below.
 
 ## Retention: a 30-day IDLE sweep, and it is the only thing that deletes chat media
 
@@ -72,14 +76,19 @@ Four consequences, all of which matter and none of which are obvious:
 - **`lastAccessAt` is refreshed on every download**, so anything still being viewed never expires.
   The window measures *idleness*, not age.
 - **Public assets are exempt** (`isPublicAssetEntry`) and are therefore permanent.
-- **There is no content-linked deletion whatsoever.** Deleting a message does not delete its blob;
-  deleting a community only archives it; and account deletion calls chat-delivery and social-service
-  but **never** media-service, so a deleted user's images stay. That is a GDPR gap as much as a
-  storage one.
+- **Account deletion reaches a user's uploads since 2026-08-11, message deletion deliberately does
+  not.** `upload` records the JWT's `sub` as `ownerId` - the only attribution possible on a service
+  that sees ciphertext - and `removeAllOwnedBy` deletes those objects, skipping public assets (a logo
+  outlives the member who uploaded it). Blobs stored before that change have no owner and cannot be
+  backfilled. Message deletion is left to the sweep **by design**: forwarding copies the `MediaRef`,
+  so a blob can be cited from conversations the deleter cannot see and no reference count is
+  computable here. Deleting a community still only archives it.
 - **A user-visible effect:** a photo nobody re-opens for 30 days is gone from the server, so a new
-  device or a reinstall can never fetch it, and the conversation does not say so. This is what bounds
-  media storage - see [storage-forecast](../infrastructure/storage-forecast.md), where it is also
-  flagged as a product decision that was never explicitly taken.
+  device or a reinstall can never fetch it. The client says so explicitly since 2026-08-11 - the
+  service answers `410` with `purgeReason = retention_expired` and all four media surfaces render an
+  expired state (`isMediaPurgedError`). This is what bounds media storage - see
+  [storage-forecast](../infrastructure/storage-forecast.md), where the RETENTION WINDOW itself is
+  still flagged as a product decision that was never explicitly taken.
 
 The index is a **JSON file** (`media_meta/media_metadata.json`), not a database table. If it is lost,
 `download()`'s `setAccess` re-creates the entry with `createdAt = now`, silently restarting every

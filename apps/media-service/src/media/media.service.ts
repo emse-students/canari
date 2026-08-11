@@ -29,6 +29,15 @@ interface MediaMetaEntry {
   /** Plaintext object served at GET /api/media/public/:id without JWT; exempt from retention purge. */
   publicAsset?: boolean;
   contentType?: string;
+  /**
+   * User who uploaded the blob, from the JWT `sub` of the upload request.
+   *
+   * The service never sees the plaintext, so this is the ONLY thing that can attribute an object
+   * to a person - and without it an account deletion cannot reach the account's own uploads.
+   * Absent on everything stored before 2026-08-11: those objects stay unattributable and are
+   * reachable only by the retention sweep.
+   */
+  ownerId?: string;
 }
 
 interface MediaMetadataStore {
@@ -72,10 +81,10 @@ export class MediaService {
     timer.unref();
   }
 
-  async upload(encryptedBytes: Buffer): Promise<string> {
+  async upload(encryptedBytes: Buffer, ownerId?: string): Promise<string> {
     const mediaId = uuidv4();
     await this.storage.put(mediaId, encryptedBytes, encryptedBytes.length);
-    this.setAccess(mediaId, Date.now());
+    this.setAccess(mediaId, Date.now(), ownerId);
     await this.persistMetadata();
     return mediaId;
   }
@@ -178,6 +187,55 @@ export class MediaService {
     await this.persistMetadata();
   }
 
+  /**
+   * Deletes every blob uploaded by a user. Called when the account itself is deleted.
+   *
+   * Only the UPLOADER's own objects: a message the user merely received belongs to whoever sent
+   * it. Public assets are excluded - an association logo outlives the member who uploaded it, and
+   * removing it would break a page for everyone else.
+   *
+   * Deliberately NOT wired to message deletion: forwarding copies the reference, so one blob can
+   * be cited by messages in conversations the deleter cannot see, and the server - holding only
+   * ciphertext - can count no references. A deleted message's blob is left to the retention sweep.
+   *
+   * @param ownerId  User whose uploads are removed.
+   * @returns Counts for the caller's log: what was deleted, and what could not be.
+   */
+  async removeAllOwnedBy(ownerId: string): Promise<{ deleted: number; failed: number }> {
+    let deleted = 0;
+    let failed = 0;
+
+    for (const [mediaId, entry] of Object.entries(this.meta.items)) {
+      if (entry.ownerId !== ownerId) continue;
+      if (entry.purgedAt) continue;
+      if (this.isPublicAssetEntry(entry)) continue;
+
+      try {
+        await this.storage.delete(mediaId);
+        deleted += 1;
+      } catch (err) {
+        // Same stranding risk as the retention sweep: say so rather than losing the object.
+        failed += 1;
+        this.logger.warn(
+          `Account deletion could not remove ${mediaId} (object may be stranded): ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+
+      this.meta.items[mediaId] = {
+        createdAt: entry.createdAt,
+        lastAccessAt: entry.lastAccessAt,
+        purgedAt: Date.now(),
+        purgeReason: 'manual_delete',
+      };
+    }
+
+    if (deleted > 0 || failed > 0) await this.persistMetadata();
+    this.logger.log(`Account deletion for ${ownerId}: ${deleted} media deleted, ${failed} failed`);
+    return { deleted, failed };
+  }
+
   // --- Chunked upload ---
 
   async initChunkedUpload(): Promise<string> {
@@ -209,7 +267,11 @@ export class MediaService {
     });
   }
 
-  async completeChunkedUpload(uploadId: string, maxBytes: number): Promise<string> {
+  async completeChunkedUpload(
+    uploadId: string,
+    maxBytes: number,
+    ownerId?: string
+  ): Promise<string> {
     // Validate uploadId is a UUID to prevent path traversal.
     if (!UUID_REGEX.test(uploadId)) {
       throw new BadRequestException('Invalid uploadId');
@@ -231,7 +293,7 @@ export class MediaService {
 
       await fs.remove(tempFile);
 
-      this.setAccess(mediaId, Date.now());
+      this.setAccess(mediaId, Date.now(), ownerId);
       await this.persistMetadata();
 
       return mediaId;
@@ -345,12 +407,17 @@ export class MediaService {
     return ct.startsWith('image/');
   }
 
-  private setAccess(mediaId: string, now: number) {
+  /**
+   * Records an access, and the owner on the FIRST write only - `setAccess` also runs on every
+   * download, where no uploader is in scope, so an ownerless call must never erase one.
+   */
+  private setAccess(mediaId: string, now: number, ownerId?: string) {
     const current = this.meta.items[mediaId];
     this.meta.items[mediaId] = {
       ...current,
       createdAt: current?.createdAt ?? now,
       lastAccessAt: now,
+      ...(ownerId ? { ownerId } : {}),
     };
   }
 

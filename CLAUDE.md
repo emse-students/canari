@@ -359,8 +359,10 @@ raising it first locks everyone out.
   passthrough branch (**HEIC hits `img.onerror` and ships full size**) - lowering the preset would
   halve the class that is not the problem, at a real quality cost. Not taken; every passthrough now
   logs its reason. Table and reasoning in section 5.2 of the page; (3)
-  content-linked media deletion, which does not exist at all today - message delete and account
-  delete leave the blobs, a GDPR point as much as a storage one; (4) Redis `maxmemory` +
+  content-linked deletion: **account deletion DONE 2026-08-11** (`ownerId` recorded at upload,
+  `DELETE /api/media/internal/users/:userId`, called by `deleteUser`; no backfill possible for older
+  blobs), **message deletion deliberately NOT built** - forwarding copies the `MediaRef` and the
+  server counts no references, so it would break other people's messages; the sweep takes it; (4) Redis `maxmemory` +
   `volatile-lru` (it is `0`/`noeviction` today); (5) autovacuum on `queued_message`. `docker system
   prune` frees 5.45 GB right now. **The 30-day GC is no longer SILENT** (2026-08-11): all four media
   surfaces now render an explicit expired state, see decision 3 at the top. What still needs the
