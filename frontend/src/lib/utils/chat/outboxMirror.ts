@@ -33,7 +33,7 @@
  */
 
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
-import { buildOutboxProto } from '$lib/utils/chat/outbox';
+import { buildOutboxProto, deliveryForOutboxEntry } from '$lib/utils/chat/outbox';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -47,11 +47,18 @@ export interface OutboxMirrorEntry {
   sentAt: number;
   /**
    * Silent send (no recipient notification) - true for control events (reaction/edit/delete/read),
-   * mirroring the foreground flusher (`sendMessage(…, entry.kind === 'control')`). The server
-   * cannot infer this from the E2E ciphertext, so it must travel with the entry; without it a
-   * background-sent delete/reaction would trigger a spurious push on peers.
+   * mirroring the foreground flusher. The server cannot infer this from the E2E ciphertext, so it
+   * must travel with the entry; without it a background-sent delete/reaction would trigger a
+   * spurious push on peers.
    */
   silent: boolean;
+  /**
+   * Append to the group's shared log. Travels for the same reason as {@link silent} and is
+   * deliberately independent of it: a mutation sent from the background must be exactly as durable
+   * as one sent from the foreground, or which path delivered it would decide whether an absent
+   * device can ever learn about it.
+   */
+  durable: boolean;
 }
 
 /** Project a queued entry to its mirror form, or null if it cannot be mirrored (media, no proto). */
@@ -62,12 +69,14 @@ export function toMirrorEntry(entry: OutboxEntry): OutboxMirrorEntry | null {
   // already-sent body until the app reopens.
   const proto = buildOutboxProto(entry);
   if (!proto) return null;
+  const { silent, durable } = deliveryForOutboxEntry(entry);
   return {
     id: entry.id,
     groupId: entry.conversationId,
     proto: toBase64(proto),
     sentAt: entry.sentAt,
-    silent: entry.kind === 'control',
+    silent,
+    durable,
   };
 }
 

@@ -12,6 +12,7 @@ import {
   createSequentialDecryptSession,
 } from '$lib/mls-client/mlsDecryptSession';
 import { DeviceRevokedError, type MlsDeliveryFetch } from '$lib/mls-client/mlsDeliveryApi';
+import type { FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { HistoryRequestOutcome, IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
@@ -1349,7 +1350,7 @@ export abstract class BaseMlsService implements IMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     messageId?: string,
-    silent?: boolean
+    delivery?: FrameDelivery
   ): Promise<Uint8Array>;
   abstract processIncomingMessage(
     groupId: string,

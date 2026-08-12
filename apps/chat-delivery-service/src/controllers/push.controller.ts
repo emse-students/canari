@@ -631,6 +631,7 @@ export class PushController {
       proto: string;
       messageId?: string;
       silent?: boolean;
+      durable?: boolean;
     }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
@@ -644,17 +645,21 @@ export class PushController {
 
     const traceId = `bg-send-${crypto.randomUUID().slice(0, 8)}`;
     this.logger.log(
-      `[BG_SEND][${traceId}] START group=${groupId} sender=${userId}:${deviceId} msg=${body.messageId ?? 'none'} silent=${body.silent ?? false}`
+      `[BG_SEND][${traceId}] START group=${groupId} sender=${userId}:${deviceId} msg=${body.messageId ?? 'none'} silent=${body.silent ?? false} durable=${body.durable ?? !(body.silent ?? false)}`
     );
 
-    // silent flows through from the outbox mirror: control events (delete/reaction/read) must not
-    // trigger a recipient notification. The server cannot infer it from the E2E ciphertext.
+    // Both flags flow through from the outbox mirror, because the server sees only the E2E
+    // ciphertext and can infer neither: `silent` keeps a control event (delete/reaction/read) from
+    // notifying the recipient, `durable` decides whether it gets a copy in the shared log. A
+    // background-sent mutation must be as durable as a foreground one, or which path happened to
+    // deliver it would decide whether an absent device can ever learn about it.
     const result = await this.messagingService.sendMessage({
       proto: body.proto,
       groupId,
       senderId: userId,
       senderDeviceId: deviceId,
       silent: body.silent ?? false,
+      durable: body.durable,
     });
 
     this.logger.log(`[BG_SEND][${traceId}] DONE queued=${result.queued} sent=${result.sent}`);

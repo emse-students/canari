@@ -35,6 +35,7 @@ import {
   sanitizeStringIdList,
   assertCallerOwnsUserId,
 } from '../utils/sanitize';
+import { HISTORY_STREAM_MAXLEN, RETENTION_WINDOW_MS } from '../retention.constants';
 
 export interface SendMessageBody {
   proto?: string;
@@ -48,6 +49,19 @@ export interface SendMessageBody {
   excludeDeviceIds?: string[];
   /** When true, FCM is sent (for MLS state sync) but no notification is displayed (read receipts, own-device copies). */
   silent?: boolean;
+  /**
+   * When true, the frame is appended to the group's shared history stream so a device that was
+   * absent can still obtain it.
+   *
+   * Independent of {@link silent}. Until 2026-08-12 the two were the same boolean, and because
+   * every control frame is silent by construction, no reaction, edit, deletion or read receipt
+   * ever had a shared copy. See `docs/wiki/protocols/history-reconciliation.md`.
+   *
+   * The server holds ciphertext only, so it cannot classify a frame: the sender declares this.
+   * Absent means "fall back to the old meaning of `silent`" - the only thing a client predating
+   * the split can be interpreted as.
+   */
+  durable?: boolean;
   // legacy fields (frontend fallback / group fan-out)
   content?: string;
   type?: string;
@@ -659,40 +673,45 @@ export class MessagingService {
       this.logger.warn(`[SEND][${traceId}] No message queued after validation`);
     }
 
-    // 1b. Append to history stream so late-joining devices can replay.
-    // Only for regular, user-visible application messages (proto path).
-    // Excluded:
+    // 1b. Append to the group's shared history stream, so a device that was absent can obtain the
+    // frame without a peer being online.
+    //
+    // The sender declares durability (`body.durable`); the server sees ciphertext and can classify
+    // nothing. Two things are still excluded here rather than by the client:
     //  - Welcome / Commit: MLS epoch-transition frames that cannot be replayed out of order.
-    //  - silent messages: control / state-sync payloads (read receipts, edits, deletes,
-    //    reactions, and especially history_bundle replays). These are delivered reliably
-    //    per-device via the QueuedMessage queue; replaying them through the capped history
-    //    stream (MAXLEN ~1000) is redundant and, for history_bundle chunks of up to 200
-    //    messages, would evict genuine recent messages from the stream.
-    if (
-      body.proto &&
-      !body.isWelcome &&
-      !body.isCommit &&
-      !body.silent &&
-      body.groupId &&
-      body.senderId
-    ) {
+    //  - anything without a group or a sender: there is no stream to write to.
+    //
+    // This condition used to read `!body.silent`. Since every control frame is silent by
+    // construction, that excluded every reaction, edit, deletion and read receipt from the only
+    // shared copy that exists - the defect this rework removes
+    // (`docs/wiki/protocols/history-reconciliation.md`).
+    const durable = body.durable ?? !body.silent;
+    if (body.proto && !body.isWelcome && !body.isCommit && durable && body.groupId && body.senderId) {
       try {
         const historyKey = `history:${body.groupId}`;
         await this.redis.xadd(
           historyKey,
           'MAXLEN',
           '~',
-          '1000',
+          String(HISTORY_STREAM_MAXLEN),
           '*',
           'sender_id',
           body.senderId,
           'content',
           body.proto,
           'timestamp',
-          new Date().toISOString()
+          new Date().toISOString(),
+          // The stream used to hold visible messages only, so every consumer could assume a frame
+          // read from it was showable. It now also holds mutations, and the server cannot tell
+          // them apart afterwards - the payload is ciphertext. So visibility is recorded here, at
+          // the one point where it is known. See `redeliverMissedDuringActivationWindow`, which
+          // notifies from this stream and would otherwise ring for every reaction.
+          'silent',
+          body.silent ? '1' : '0'
         );
-        // Refresh TTL on every write so abandoned groups are evicted after 90 days of inactivity.
-        await this.redis.expire(historyKey, 90 * 24 * 60 * 60);
+        // Refresh TTL on every write so abandoned groups are evicted after the offline-recovery
+        // window of inactivity. Same window as every other staleness threshold, by construction.
+        await this.redis.expire(historyKey, Math.floor(RETENTION_WINDOW_MS / 1000));
         this.logger.log(`[HISTORY][${traceId}] XADD group=${body.groupId}`);
       } catch (e) {
         this.logger.warn(`[HISTORY][${traceId}] XADD failed group=${body.groupId}: ${String(e)}`);
@@ -1272,9 +1291,11 @@ export class MessagingService {
   /**
    * Re-delivers to a device that just became `active` the visible application messages sent
    * during its activation window (when it was `pending`, thus excluded from recipients and
-   * never notified). Source: the `history:{groupId}` stream, which ONLY contains visible
-   * application messages (Welcome/Commit/silent are excluded at write time) - so no control
-   * frame will ever be re-notified. Bounded by {@link ACTIVATION_REDELIVER_WINDOW_MS} and
+   * never notified). Source: the `history:{groupId}` stream, filtered on the `silent` field each
+   * entry now carries: since 2026-08-12 the stream also holds mutations (reactions, edits,
+   * deletions, read receipts), and re-notifying one would ring the user for a reaction. Welcome
+   * and Commit are still absent from the stream entirely. Bounded by
+   * {@link ACTIVATION_REDELIVER_WINDOW_MS} and
    * a message cap to never spam a device that stayed `pending` for a long time. The device's
    * own messages are skipped. Display idempotency: the client deduplicates by messageId
    * (a message already received via history catch-up is not re-displayed).
@@ -1308,12 +1329,15 @@ export class MessagingService {
 
     let redelivered = 0;
     for (const [, fields] of entries) {
-      // fields = ['sender_id', <id>, 'content', <protoB64>, 'timestamp', <iso>]
+      // fields = ['sender_id', <id>, 'content', <protoB64>, 'timestamp', <iso>, 'silent', '0'|'1']
       const map = new Map<string, string>();
       for (let i = 0; i + 1 < fields.length; i += 2) map.set(fields[i], fields[i + 1]);
       const senderId = map.get('sender_id') ?? '';
       const proto = map.get('content') ?? '';
       if (!proto || senderId === userId) continue; // no payload, or our own message
+      // Entries written before the field existed are visible messages by construction, since the
+      // stream held nothing else then - so an absent `silent` reads as '0'.
+      if ((map.get('silent') ?? '0') === '1') continue; // a mutation: it must never re-notify
 
       const queued = await this.queuedMessageRepo.save(
         this.queuedMessageRepo.create({

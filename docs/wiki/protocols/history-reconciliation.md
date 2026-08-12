@@ -76,9 +76,19 @@ for no reason, the durability switch: `outbox.ts:327` marks **every** control fr
 construction, and `messaging.service.ts:674` excludes silent frames from the shared log. That single
 overload is why no mutation has a shared copy.
 
-**They are split.** A frame declares *visibility* and *durability* independently. Every mutation is
-durable; only `history_bundle` stays out of the log, because it is a replay of the log and writing it
-back would be circular.
+**They are split.** A frame declares *visibility* and *durability* independently, in one place -
+`DELIVERY` in `mls-client/frameDelivery.ts`, three named cases: `visible`, `mutation`, `transport`.
+Every mutation is durable; reconciliation traffic is not, because it only restates state held
+elsewhere and writing it back would be circular - and the log is capped per group, so a 200-message
+bundle chunk would evict the very messages it exists to carry.
+
+Two consequences, both handled where the assumption lived:
+
+- the stream now carries silent frames, so each entry records its own visibility. Anything reading
+  the stream to *notify* must honour it - `redeliverMissedDuringActivationWindow` re-notifies a
+  reactivated device from this stream and would otherwise ring the user for a reaction;
+- the client's replay handlers for mutations, dead until now because no mutation reached the
+  stream, become the path every mutation takes on replay. See D7.
 
 ### Also measured that day
 
@@ -100,10 +110,17 @@ back would be circular.
 : **Hard constraint:** it may never sit below what some member can still supply, or the system
   promises a completeness nobody can honour.
 
-**The device window** - local, per platform.
-: *"What this device intends to retain."* **Web: 90 days. Mobile and desktop: everything.**
+**The device window** - local, **fixed per platform. Never a user-visible setting.**
+: *"What this device intends to retain."* **Web: 90 days. Mobile and desktop: 5 years.**
   Deliberately unequal. Ninety days covers most of a semester, so the browser reaches for
-  [scrollback](#scrollback-below-the-window) rarely rather than routinely.
+  [scrollback](#scrollback-below-the-window) rarely rather than routinely. Five years is longer than
+  the longest tenure anyone has here, so no user meets that bound while they are still a member: it
+  exists to keep "everything" finite, not to expire anything anybody will miss.
+: Bounded rather than literally infinite for two reasons, neither of them rendering cost - history
+  already loads in pages of 60 behind the `afterStreamId` cursor, so the window never reaches the
+  renderer. First, an unbounded window gives the floor nothing to move for, ever. Second, the
+  [state key](#completeness-is-asked-from-the-requesters-side) is computed over the window, and an
+  unbounded domain makes its worst case unbounded too.
 
 ### Completeness is asked from the requester's side
 
@@ -131,6 +148,10 @@ The state key covers **the id set and the mutation state** - not ids alone. Two 
 which messages exist can still disagree on which are deleted, and both would call themselves
 complete. Ids and mutation state only, never content: a deleted message keeps its id and changes its
 content, and the two devices must still recognise their agreement.
+
+It is **cached per conversation and invalidated on write**, never recomputed by walking the window.
+Connect cost must not grow with retention, or the 5-year window would be paid on every connect for
+a comparison that almost always matches.
 
 - **Keys match** → nothing is sent, nothing is displayed. The common case, and it must cost one small
   frame.
@@ -213,7 +234,7 @@ from the audit and carry its references.
 | D4 | `editedAt` is not serialised into the bundle although `isEdited` is, so a device restored by bundle shows "edited" with no timestamp, permanently | `groupActions.ts:450-465` | audit |
 | D5 | Bundle merge flags `isDeleted` without replacing `content`, and writes the original text back to disk | `systemMessageHandler.ts:724-727`, `:762` | yes |
 | D6 | `serverTimestamp` is dropped on the live bundle add path, giving unstable ordering for messages sharing a client timestamp. The replay path preserves it | `systemMessageHandler.ts:671-678` | audit |
-| D7 | The replay handlers for `reaction`, `read_receipt`, `delete_message`, `edit_message`, `remove_reaction` are unreachable for MLS groups, because those frames never enter the stream | `historySystemEvents.ts:173-238`, `history.ts:378-388` | audit |
+| D7 | The replay handlers for `reaction`, `read_receipt`, `delete_message`, `edit_message`, `remove_reaction` are unreachable for MLS groups, because those frames never enter the stream. **Inverted by the durability split**: they are now the path every mutation takes on replay, so the work is to verify them rather than delete them | `historySystemEvents.ts:173-238`, `history.ts:378-388` | audit |
 
 Three defects measured the same day are covered here rather than patched separately, by decision: the
 stuck `isMessageCatchupActive` overlay, the post-ingest render freeze, and the 15 s `scheduleRetry`
@@ -269,18 +290,21 @@ With the product owner, 2026-08-12. Each replaced an alternative rejected for th
 | The three measured defects | **Folded into this work** | Patching first fixes symptoms whose common cause this removes |
 | Transition | **Clean break, forced update** | Cohabitation: compatibility code to write, maintain and later remove |
 | Floor in v1 | **Yes, present from the start**, even while it is worth zero | Adding it later means converging one more field across a deployed fleet, and we keep no compatibility layer - so it would cost a second break |
-| Window sizes | **Web 90 days, mobile/desktop everything** | 30 days on the web: leans on scrollback for ordinary use. A count rather than a duration: a quiet conversation would keep years and a busy one a few days, which is not what a user expects of "recent" |
+| Window sizes | **Web 90 days, mobile/desktop 5 years** | 30 days on the web: leans on scrollback for ordinary use. A count rather than a duration: a quiet conversation would keep years and a busy one a few days, which is not what a user expects of "recent". Literally unbounded on mobile: leaves the floor immovable and the state key's domain unbounded |
+| Who chooses the window | **Fixed per platform** | A user-visible setting: it is a completeness contract between devices, not a preference, and a user lowering it silently reduces what their other devices can be told |
+| What may move the floor | **Nothing, for now** - it ships at zero and the merge rule (`max`) is all that is implemented | Moving it on any schedule: the floor may never sit below what a member can still supply, and with the most retentive platform at 5 years no member prunes for five years. There is nothing to move it *to* |
 | Redis durability | **Fixed immediately** - named volume + `appendonly yes` | Deferring it to the rework: the log would stay destructible until then, and the cap cannot be raised before it |
 
 ---
 
 ## Open questions
 
-- **What may move the floor.** It ships at zero, so nothing depends on this yet, but it must never be
-  moved below what a member can still supply.
-- **Whether the window is a user-visible setting**, or fixed per platform.
+Two were closed on 2026-08-12 and moved into [Decisions](#decisions-taken): what may move the floor
+(nothing, for now) and who chooses the window (the platform, not the user). What is left:
+
 - **The new cap.** Order is fixed and must be respected: Redis persisted (done) → raise `maxmemory`
   → raise `MAXLEN`. The number needs the mutation budget, which is only known once mutations are
   actually written to the log.
-- **State key cost at scale.** One small frame per conversation per connect; measure for a user in
-  many groups before shipping.
+- **State key cost at scale.** Caching it removes the *per-conversation* cost of a large window, but
+  not the *fan-out*: one small frame per conversation per connect, for a user in many groups.
+  Measure before shipping.

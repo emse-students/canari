@@ -183,7 +183,7 @@ describe('outbox native mirror', () => {
     expect(buildOutboxProto(e)).toBeNull();
   });
 
-  it('mirrors control entries as a silent send (delete/reaction/read background delivery)', () => {
+  it('mirrors control entries as silent but DURABLE (delete/reaction/read background delivery)', () => {
     const e: OutboxEntry = {
       id: 'c1',
       conversationId: 'g1',
@@ -197,15 +197,21 @@ describe('outbox native mirror', () => {
     const mirror = toMirrorEntry(e);
     expect(mirror).not.toBeNull();
     expect(mirror!.silent).toBe(true);
+    // The two are independent. They were one boolean until 2026-08-12, and because every control
+    // frame is silent by construction that overload kept every reaction, edit, deletion and read
+    // receipt out of the group's shared log - so a device that missed one could never recover it.
+    // A background-sent mutation must be exactly as durable as a foreground one.
+    expect(mirror!.durable).toBe(true);
     expect(mirror!.id).toBe('c1');
     expect(mirror!.groupId).toBe('g1');
     expect(Array.from(buildOutboxProto(e)!)).toEqual([1, 2, 3]);
   });
 
-  it('mirrors text entries as a non-silent send', () => {
+  it('mirrors text entries as a non-silent, durable send', () => {
     const mirror = toMirrorEntry(textEntry('m1', 'g1', 100));
     expect(mirror).not.toBeNull();
     expect(mirror!.silent).toBe(false);
+    expect(mirror!.durable).toBe(true);
   });
 });
 
@@ -302,8 +308,13 @@ describe('outbox flusher', () => {
 
     await outbox.flush();
 
-    // 4th arg = silent = true for control events; the verbatim proto is sent under the entry id.
-    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'c1', true);
+    // 4th arg = the delivery class. A control event is a mutation: silent, but DURABLE - it must
+    // reach the group's shared log, since its queue entry is deleted on ACK and a device that was
+    // offline has nothing else to learn it from.
+    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'c1', {
+      silent: true,
+      durable: true,
+    });
     expect(storage._map.has('c1')).toBe(false);
   });
 
@@ -427,7 +438,10 @@ describe('outbox flusher', () => {
     await outbox.flush();
 
     expect(uploadMedia).toHaveBeenCalledTimes(1);
-    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm', false);
+    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm', {
+      silent: false,
+      durable: true,
+    });
     expect(storage._map.has('mm')).toBe(false);
     // Placeholder content swapped for the real attachment envelope (now carries the mediaId).
     expect(conversations.get('g1')!.messages[0].content).toContain('mid-1');
@@ -462,7 +476,10 @@ describe('outbox flusher', () => {
     await outbox.flush();
 
     expect(uploadMedia).not.toHaveBeenCalled();
-    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm', false);
+    expect(mlsService.sendMessage).toHaveBeenCalledWith('g1', expect.anything(), 'mm', {
+      silent: false,
+      durable: true,
+    });
     expect(storage._map.has('mm')).toBe(false);
   });
 });

@@ -55,11 +55,16 @@ services:
     # migration: presence keys regenerate on reconnect, rendezvous digests have a 60 s TTL, and
     # `group:members:*` is repopulated from `device_group_membership` whenever the set is found
     # empty (see that entity's docblock, role 1).
+    #
+    # Raised to 2 GB on 2026-08-12, and it must be raised BEFORE `HISTORY_STREAM_MAXLEN` is: that
+    # cap decides how much a single group may hold, this one decides how much the whole store may.
+    # Raising the per-group cap first would let eviction start choosing which conversations keep a
+    # shared copy. The host has 13 GB free, so 2 GB is a ceiling with room, not an allocation.
     command:
       [
         "redis-server",
         "--maxmemory",
-        "1gb",
+        "2gb",
         "--maxmemory-policy",
         "volatile-lru",
         "--appendonly",

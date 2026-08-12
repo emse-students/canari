@@ -96,7 +96,21 @@ half of it is compile-verified only** and joins the owed device list below.
 **[history-reconciliation](docs/wiki/protocols/history-reconciliation.md)** - read that page, do not
 re-derive the design here and do NOT re-open a decision listed in its Decisions table. It carries the
 measured constraints, the seven defects to fix (D1-D7, with a column saying which were verified by
-hand), what disappears, and the four remaining open questions. Implementation has NOT started.
+hand), what disappears, and the open questions - **two of which the user closed on 2026-08-12** and
+which are now Decisions rows: the device window is **fixed per platform** (web 90 days, mobile and
+desktop 5 years - bounded, not infinite, so the floor has something to move for and the state key a
+bounded domain), and **nothing may move the floor for now**. The two still open are the new
+`MAXLEN` (answered below) and the state key's fan-out cost for a user in many groups.
+
+**IMPLEMENTATION HAS STARTED. Phase 1 is committed** - the `silent` split, mutations in the shared
+log, and the caps. What it changed, so nothing re-derives it: `DELIVERY` in
+`frontend/src/lib/mls-client/frameDelivery.ts` is the ONLY classification (`visible` / `mutation` /
+`transport`) and every send site names one; the server gate reads `body.durable`, not `!silent`. Two
+consequences were handled at the same time and must not be undone: the stream now carries silent
+frames so **each entry records its own `silent`**, and `redeliverMissedDuringActivationWindow`
+filters on it or it rings the user for every reaction; and **D7 inverted** - the mutation replay
+handlers were dead because no mutation reached the stream, they are now the path every mutation
+takes on replay, so they are to be VERIFIED, not deleted.
 
 The chain that produced it, kept only because it explains why the page looks like it does: MSG-1
 failed, was root-caused to a history load ASSIGNING a freshly read page over the rendered list
@@ -108,9 +122,13 @@ green result cannot be told from an unexercised one**. That check then exposed t
 durable `unreadable-frames` marker that no peer can ever discharge, because both devices of a DM
 carry it and neither may vouch for the other.
 
-**Order of work, decided:** Redis durability (DONE - volume + `appendonly`, in
-`docker-compose.prod.yml`) → raise `maxmemory` → raise `MAXLEN ~1000` → the rework itself → then the
-campaign from MSG-1 on the reworked build. **A clean break, no compatibility layer**, so the deploy
+**Order of work, decided:** Redis durability (DONE, and VERIFIED on prod - named volume
+`infrastructure_redis_data` mounted at `/data`, `appendonly yes`) → raise `maxmemory` (DONE, 1→2 GB)
+→ raise `MAXLEN` (DONE, 1000→8000, `HISTORY_STREAM_MAXLEN` in `retention.constants.ts`) → **the rest
+of the rework** → then the campaign from MSG-1 on the reworked build. That order is a constraint, not
+a preference: the per-group cap decides what one conversation may hold, `maxmemory` what the whole
+store may, so raising the per-group cap first lets eviction choose which conversations keep a shared
+copy at all. **A clean break, no compatibility layer**, so the deploy
 sequence is: publish to the stores, VERIFY the store serves the new build, only then deploy the
 server and raise `minClientVersion` - raising it first traps users on an update screen whose button
 leads to the old version.

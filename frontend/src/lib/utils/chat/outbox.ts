@@ -1,4 +1,5 @@
 import type { SvelteMap } from 'svelte/reactivity';
+import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
 import type { ChatMessage, Conversation } from '$lib/types';
@@ -27,6 +28,20 @@ const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 /** Returns the backoff delay for the given (post-increment) attempt count. */
 function backoffFor(attempts: number): number {
   return BACKOFF_MS[Math.min(Math.max(attempts - 1, 0), BACKOFF_MS.length - 1)];
+}
+
+/**
+ * Delivery class of a queued entry.
+ *
+ * Control events (reaction, edit, delete, pin, read receipt) are mutations of existing history:
+ * they must not notify, and they must be durable. Their per-device queue entry is deleted on ACK,
+ * so the group's shared log is the only thing left that can hand one to a device that was offline.
+ *
+ * Shared by the flusher and the native-background mirror, so which path happens to deliver a frame
+ * never changes how it is classified.
+ */
+export function deliveryForOutboxEntry(entry: OutboxEntry): FrameDelivery {
+  return entry.kind === 'control' ? DELIVERY.mutation : DELIVERY.visible;
 }
 
 /**
@@ -323,8 +338,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         proto = buildOutboxProto(entry) ?? new Uint8Array(0);
       }
 
-      // Control events are MLS state-sync only: send them silent (no push notification).
-      await mlsService.sendMessage(terminalId, proto, entry.id, entry.kind === 'control');
+      await mlsService.sendMessage(terminalId, proto, entry.id, deliveryForOutboxEntry(entry));
       scheduleOutboundMlsPersist();
       // Swap the placeholder for the uploaded media before persisting the sent copy.
       if (mediaContent) updateMessageContent(entry.id, mediaContent);

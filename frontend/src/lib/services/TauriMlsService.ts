@@ -9,6 +9,7 @@ import {
   type MlsInitOptions,
 } from '$lib/mls-client';
 import { mapNativeBatchDecryptResults } from '$lib/mls-client/mlsBatchDecrypt';
+import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
@@ -795,7 +796,7 @@ export class TauriMlsService extends BaseMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     _messageId?: string,
-    silent = false
+    frameDelivery: FrameDelivery = DELIVERY.visible
   ): Promise<Uint8Array> {
     const res = await invoke<number[]>('envoyer_message_bytes', {
       groupId,
@@ -803,7 +804,7 @@ export class TauriMlsService extends BaseMlsService {
     });
     const encryptedBytes = Uint8Array.from(res);
     const proto = toBase64(encryptedBytes);
-    await this.delivery.postApplicationMessage(groupId, proto, silent);
+    await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
     return encryptedBytes;
   }
 

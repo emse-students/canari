@@ -1,3 +1,4 @@
+import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -546,7 +547,7 @@ export async function sendFullHistoryBundle(
     }
     const bytes = bundleFrame([], to);
     try {
-      await mlsService.sendMessage(groupId, bytes, undefined, true);
+      await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
       log(`[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (group has no history)`);
     } catch (e) {
       log(`[HISTORY_BUNDLE] Empty bundle send error: ${String(e).slice(0, 120)}`);
@@ -584,7 +585,7 @@ async function sendBundleChunks(
     const payload = messages.slice(i, i + chunkSize).map(serializeForBundle);
     const bytes = bundleFrame(payload, to);
     try {
-      await mlsService.sendMessage(groupId, bytes, undefined, true);
+      await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
       log(
         `[HISTORY_BUNDLE] Chunk ${Math.floor(i / chunkSize) + 1}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…`
       );
@@ -652,7 +653,7 @@ export async function sendHistoryDigest(
       : `${digest.ranges.length} slice(s) at depth ${digest.depth}`;
   const bytes = encodeAppMessage(mkSystem('history_digest', JSON.stringify({ from, digest })));
   try {
-    await mlsService.sendMessage(groupId, bytes, undefined, true);
+    await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
     log(`[HISTORY_DIGEST] Sent for ${groupId.slice(0, 8)}… - ${digest.mode} mode, ${summary}`);
     return true;
   } catch (e) {
@@ -696,7 +697,7 @@ export async function sendHistoryPull(
   for (const payload of frames) {
     const bytes = encodeAppMessage(mkSystem('history_pull', JSON.stringify(payload)));
     try {
-      await mlsService.sendMessage(groupId, bytes, undefined, true);
+      await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
     } catch (e) {
       log(`[HISTORY_PULL] Send failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
       return;
@@ -773,7 +774,7 @@ export async function sendHistoryBundleForIds(
     const vouched = emptyMeans === 'complete';
     const bytes = bundleFrame([], to, vouched);
     try {
-      await mlsService.sendMessage(groupId, bytes, undefined, true);
+      await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
       log(
         `[HISTORY_BUNDLE] Nothing to add for ${groupId.slice(0, 8)}… - empty bundle sent (${vouched ? 'vouching for completeness' : 'stores identical, not vouching'})`
       );

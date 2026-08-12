@@ -50,6 +50,32 @@ offline window - a device that is merely off for a fortnight must still get its 
 leak. Anything that needs a device to stop receiving *immediately* (a revocation) must act on the
 Redis set directly rather than wait for the reaper.
 
+### The shared log keeps mutations, and records what may notify
+
+`history:{groupId}` is the only **shared** copy of a conversation: the per-device queue is deleted on
+ACK, and MLS forward secrecy means the server can never re-derive a frame it did not keep. What is
+not written here is recoverable only from a peer that still holds it, and only while that peer is
+online.
+
+Until 2026-08-12 the write was gated on `!body.silent`. `silent` is a UI property - do not notify -
+and **every** control frame is silent by construction, so that one condition excluded every reaction,
+edit, deletion and read receipt from the only shared copy that exists. The client now declares the
+two independently (`silent`, `durable`); the server classifies nothing, because it holds ciphertext.
+Reconciliation traffic stays out: it restates state held elsewhere, and a 200-message bundle chunk
+would evict the messages the log exists to carry.
+
+Because the stream now holds silent frames, each entry records its own `silent` field. Any consumer
+that reads the stream in order to **notify** must honour it -
+`redeliverMissedDuringActivationWindow` re-notifies a reactivated device from this stream, and
+without the filter it would ring the user for every reaction. An absent field reads as visible: it
+can only come from an entry written when the stream held nothing else.
+
+Sizing is `HISTORY_STREAM_MAXLEN` (`retention.constants.ts`), raised 1000 → 8000 the same day. The
+order matters and is not cosmetic: the store must be durable, then `maxmemory` must have headroom,
+then the per-group cap may rise. Raising the per-group cap first lets eviction choose which
+conversations keep a shared copy. Full reasoning in
+[history-reconciliation](../protocols/history-reconciliation.md).
+
 ### The queue is bounded on ONE axis, and observed on the other
 
 `cleanupExpiredQueuedMessages` bounds the queue by AGE, and that is the only axis on which

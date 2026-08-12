@@ -160,6 +160,12 @@ static CanariDecryptedMessage *_Nullable CanariParseDecryptedJson(NSString *json
 @property(nonatomic, copy) NSString *proto;
 @property(nonatomic, assign) long long sentAt;
 @property(nonatomic, assign) BOOL silent;
+/**
+ * Append to the group's shared log. Independent of `silent`, and true for every outbox entry: a
+ * mutation sent from the background must be as durable as one sent from the foreground, or which
+ * path delivered it would decide whether an absent device can ever learn about it.
+ */
+@property(nonatomic, assign) BOOL durable;
 @end
 
 @implementation CanariOutboxEntry
@@ -1346,6 +1352,9 @@ static NSArray<CanariOutboxEntry *> *CanariReadOutboxMirror(void) {
                        ? [o[@"sentAt"] longLongValue]
                        : 0;
     entry.silent = [o[@"silent"] boolValue];
+    // Defaults to YES: every entry the outbox mirrors carries conversation state, so a mirror file
+    // written before this field existed must not be read as frames nobody may ever recover.
+    entry.durable = o[@"durable"] == nil ? YES : [o[@"durable"] boolValue];
     [entries addObject:entry];
   }
   return entries;
@@ -1369,6 +1378,7 @@ static void CanariRewriteOutboxMirror(NSArray<CanariOutboxEntry *> *remaining) {
       @"proto" : e.proto,
       @"sentAt" : @(e.sentAt),
       @"silent" : @(e.silent),
+      @"durable" : @(e.durable),
     };
     NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
     if (data != nil) {
@@ -1483,7 +1493,8 @@ static NSDictionary<NSString *, NSString *> *_Nullable CanariEncryptQueuedMessag
 }
 
 static BOOL CanariSendQueuedMessagePush(CanariPushContext *ctx, NSString *secret, NSString *groupId,
-                                        NSString *ciphertextB64, NSString *messageId, BOOL silent) {
+                                        NSString *ciphertextB64, NSString *messageId, BOOL silent,
+                                        BOOL durable) {
   NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"%@/api/mls/push/send", ctx.baseUrl]];
   NSDictionary *payload = @{
     @"userId" : ctx.userId,
@@ -1492,6 +1503,7 @@ static BOOL CanariSendQueuedMessagePush(CanariPushContext *ctx, NSString *secret
     @"proto" : ciphertextB64,
     @"messageId" : messageId,
     @"silent" : @(silent),
+    @"durable" : @(durable),
   };
   NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
   int status = 0;
@@ -1545,7 +1557,7 @@ static int CanariDrainOutboxBackground(CanariPushContext *ctx) {
       continue;
     }
     if (CanariSendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.entryId,
-                                    entry.silent)) {
+                                    entry.silent, entry.durable)) {
       [sentIds addObject:entry.entryId];
     } else {
       [remaining addObject:entry];
@@ -1613,6 +1625,7 @@ static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text) {
   entry.proto = protoB64;
   entry.sentAt = sentAt;
   entry.silent = NO;
+  entry.durable = YES;
   NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
   [entries addObject:entry];
   CanariRewriteOutboxMirror(entries);
@@ -1681,7 +1694,10 @@ static void CanariHandleMarkReadAction(NSString *groupId) {
   entry.groupId = groupId;
   entry.proto = protoB64;
   entry.sentAt = (long long)([[NSDate date] timeIntervalSince1970] * 1000);
+  // Silent, but durable: a read receipt sent from the notification shade is the same mutation as
+  // one sent from the app, and must reach a device that was offline.
   entry.silent = YES;
+  entry.durable = YES;
   NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
   [entries addObject:entry];
   CanariRewriteOutboxMirror(entries);

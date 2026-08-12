@@ -1,5 +1,6 @@
 import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
 import { ackMessagesWithRetry } from './ackRetry';
+import { DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { GroupMeta, UserGroupRow } from './IMlsService';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 
@@ -570,11 +571,18 @@ export class MlsDeliveryApi {
     ).catch(() => {});
   }
 
-  /** POSTs an already-encrypted MLS ciphertext to `/api/mls/send` without epoch validation. Used by Tauri (native MLS handles epoch tracking internally). */
+  /**
+   * POSTs an already-encrypted MLS ciphertext to `/api/mls/send` without epoch validation. Used by
+   * Tauri (native MLS handles epoch tracking internally).
+   *
+   * Both halves of `delivery` travel on the wire because the server holds ciphertext only and can
+   * classify nothing itself: `silent` decides whether recipients are notified, `durable` whether
+   * the frame is appended to the group's shared log.
+   */
   async postApplicationMessage(
     groupId: string,
     protoBase64: string,
-    silent = false
+    delivery: FrameDelivery = DELIVERY.visible
   ): Promise<void> {
     const res = await this.f(`${this.historyUrl}/api/mls/send`, {
       method: 'POST',
@@ -584,7 +592,8 @@ export class MlsDeliveryApi {
         senderDeviceId: this.deviceId,
         groupId,
         proto: protoBase64,
-        silent,
+        silent: delivery.silent,
+        durable: delivery.durable,
       }),
     });
     if (!res.ok) {

@@ -1,5 +1,6 @@
 import { writable, get } from 'svelte/store';
 import type { IMlsService } from '$lib/mls-client';
+import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { canari } from '../proto/canari.js';
 import { encodeAppMessage, mkCallAnswered, mkCallHangup, mkCallInvite } from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
@@ -1193,7 +1194,9 @@ export class CallService {
     // WP-XP-5: ALL call signaling is sent silent - visible ringing on killed devices comes
     // exclusively from the explicit /api/calls/ring fan-out (CallStyle/CallKit), so these
     // protos must never surface as "new message" pushes (they used to, as generic fallbacks).
-    await this.mlsService.sendMessage(groupId, buffer, undefined, true);
+    // Ephemeral too: signalling is only meaningful while the call is live, so replaying it out of
+    // the shared log would ring a device about a call that ended.
+    await this.mlsService.sendMessage(groupId, buffer, undefined, DELIVERY.transport);
   }
 
   /** Toggles microphone mute on the local audio track. */

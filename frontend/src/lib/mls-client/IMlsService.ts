@@ -1,5 +1,8 @@
+import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
+
+export type { FrameDelivery };
 
 export type { IncomingDeliveryMeta };
 
@@ -196,12 +199,18 @@ export interface IMlsService {
   }>;
   /** Processes an incoming MLS Welcome message and returns the resulting group ID. */
   processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;
-  /** Encrypts an application message for the group and delivers it via the delivery service. */
+  /**
+   * Encrypts an application message for the group and delivers it via the delivery service.
+   *
+   * `delivery` declares both whether the frame notifies and whether it is appended to the group's
+   * shared log; the server sees only ciphertext and cannot work either out. Defaults to
+   * {@link DELIVERY.visible}.
+   */
   sendMessage(
     groupId: string,
     messageBytes: Uint8Array,
     messageId?: string,
-    silent?: boolean
+    delivery?: FrameDelivery
   ): Promise<Uint8Array>;
   /** Decrypts and processes an incoming MLS message for the group, returning the plaintext or null. */
   processIncomingMessage(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array | null>;

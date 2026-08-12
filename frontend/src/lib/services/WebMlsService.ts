@@ -2,6 +2,7 @@ import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSes
 import { encryptMlsStateOffThread } from '$lib/mls-client/mlsEncryptWorkerSession';
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
+import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
   loadAndInitWasm,
@@ -886,11 +887,11 @@ export class WebMlsService extends BaseMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     _messageId?: string,
-    silent = false
+    frameDelivery: FrameDelivery = DELIVERY.visible
   ): Promise<Uint8Array> {
     const encryptedBytes: Uint8Array = this.client.send_message_bytes(groupId, messageBytes);
     const proto = toBase64(encryptedBytes);
-    await this.delivery.postApplicationMessage(groupId, proto, silent);
+    await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
     return encryptedBytes;
   }
 

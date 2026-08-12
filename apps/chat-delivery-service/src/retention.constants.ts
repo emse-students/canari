@@ -51,3 +51,33 @@ export const QUEUE_DEPTH_WARN_PER_DEVICE = 2000;
 
 /** How many of the deepest per-device queues the hourly report names. */
 export const QUEUE_DEPTH_REPORT_TOP_N = 5;
+
+/**
+ * Entries kept per group in the shared history stream `history:{groupId}` (`XADD ... MAXLEN ~`).
+ *
+ * This is the only SHARED copy of a conversation: the per-device queue is deleted on ACK, and MLS
+ * forward secrecy means the server can never re-derive a frame it did not keep. What falls off the
+ * end here is recoverable only from a peer that still holds it.
+ *
+ * Raised from 1000 on 2026-08-12, together with the durability split that put mutations
+ * (reactions, edits, deletions, read receipts) into this stream for the first time. Two reasons,
+ * in this order:
+ *
+ *  1. **Mutations now consume the budget.** At the same cap the stream would cover strictly less
+ *     wall-clock history than before - the change would have shortened the window it exists to
+ *     provide.
+ *  2. **1000 was already short.** Measured on production the same day: an active DM spanned 22.6
+ *     hours at 1000 entries. A device offline for a weekend fell off the end, which is exactly the
+ *     case the shared copy is for.
+ *
+ * 8000 covers several days for that same DM even assuming mutations arrive as often as messages
+ * (they do not - read receipts are batched per read, not per message). Cost is bounded and small:
+ * ~431 bytes an entry, so ~3.4 MB for a group that actually saturates the cap, against the 2 GB
+ * `maxmemory` set in `infrastructure/docker-compose.prod.yml`. Most groups never approach it - the
+ * whole instance held 1.62 MB when this was measured.
+ *
+ * Raising this REQUIRES the store to be durable and `maxmemory` to have headroom; see the redis
+ * service definition in `docker-compose.prod.yml` and
+ * `docs/wiki/protocols/history-reconciliation.md`.
+ */
+export const HISTORY_STREAM_MAXLEN = 8000;

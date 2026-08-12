@@ -53,6 +53,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val sentAt: Long,
         /** Silent send (no recipient notification): true for control events. */
         val silent: Boolean,
+        /**
+         * Append to the group's shared log. Independent of [silent], and true for every outbox
+         * entry: a mutation sent from here must be as durable as one sent from the foreground, or
+         * which path delivered it would decide whether an absent device can ever learn about it.
+         */
+        val durable: Boolean,
     )
 
     companion object {
@@ -570,7 +576,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     remaining.add(entry)
                     continue
                 }
-                if (sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent)) {
+                if (sendQueuedMessagePush(ctx, secret, entry.groupId, ciphertext, entry.id, entry.silent, entry.durable)) {
                     sentIds.add(entry.id)
                     Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${entry.groupId.take(8)}")
                 } else {
@@ -673,6 +679,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             ciphertextB64: String,
             messageId: String,
             silent: Boolean,
+            durable: Boolean,
         ): Boolean {
             return try {
                 val url = URL("${ctx.baseUrl}/api/mls/push/send")
@@ -683,6 +690,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     put("proto", ciphertextB64)
                     put("messageId", messageId)
                     put("silent", silent)
+                    put("durable", durable)
                 }.toString()
                 val conn = (url.openConnection() as HttpURLConnection).apply {
                     connectTimeout = 10_000
@@ -718,7 +726,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         val groupId = o.optString("groupId")
                         val proto = o.optString("proto")
                         if (id.isEmpty() || groupId.isEmpty() || proto.isEmpty()) null
-                        else OutboxMirrorEntry(id, groupId, proto, o.optLong("sentAt", 0L), o.optBoolean("silent", false))
+                        // `durable` defaults to true: every entry the outbox mirrors carries
+                        // conversation state, so a mirror file written before the field existed
+                        // must not be read as a batch of frames nobody may ever recover.
+                        else OutboxMirrorEntry(
+                            id,
+                            groupId,
+                            proto,
+                            o.optLong("sentAt", 0L),
+                            o.optBoolean("silent", false),
+                            o.optBoolean("durable", true),
+                        )
                     } catch (e: Exception) {
                         null
                     }
@@ -744,6 +762,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         put("proto", e.proto)
                         put("sentAt", e.sentAt)
                         put("silent", e.silent)
+                        put("durable", e.durable)
                     }.toString()
                 }
                 file.writeText(body + "\n")
