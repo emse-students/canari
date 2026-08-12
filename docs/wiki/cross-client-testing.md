@@ -561,6 +561,33 @@ number is a number that can be recomputed differently.
 | READ-9 | Read on A1 while W1 is open: the count on W1 goes without a reload | `pending` |
 | READ-10 | Reading a conversation whose peer has deleted it | `pending` - crosses DEL |
 
+**Every READ check must FORCE THE FOCUS, or it measures the harness.** The receipt is deliberately
+gated on the window being focused and the tab visible - that gate is READ-3, the thing this phase is
+here to assert - and every launcher in the rig drives its client with `focus: false`. A check that
+does not lift that will watch messages arrive, render, and never be marked read, then report that the
+receipt is not firing. It takes BOTH `Page.bringToFront` and
+`Emulation.setFocusEmulationEnabled` - the first makes it so, the second makes the page believe it,
+and the app reads the second. `read-badge.mjs` is the worked example.
+
+**The badge cannot be audited from the store, and a probe that tries will answer plausibly and
+wrongly.** The count is never persisted - `ConversationMeta` carries none - so it is recomputed on
+every load by `countUnreadForUser`, and a badge that returns after a reload therefore never means the
+badge is broken; it means the receipt never landed on those rows. But the rows at rest are
+CIPHERTEXT: only `id` and `conversationId` are plaintext, while `senderId`, `readBy` and `timestamp`
+live inside the blob. So an IndexedDB audit reads an empty `readBy` on every row of every client and
+concludes the whole store is unread. `unread-audit.mjs` did exactly that - 1 987 rows, none authored
+by this account - and now carries a guard that refuses to report when an account appears to have
+authored nothing. **Ask the running app, in the sequence that separates the causes:** read the badge,
+focus and open, read again (if it does not clear here the receipt is not firing), reload, read a
+third time (cleared then returned = it fired but never persisted, a different defect).
+
+Measured 2026-08-12, on the user's report of a `99+` returning at every reload: W1 `99+`, W2 `1`, A1
+none; all three **cleared and stayed cleared** across the reload. The badge was arithmetically
+correct the whole time - those messages genuinely carried no receipt from this device, because the
+campaign had been driving W1 unfocused for days. A1 showed no badge already, which is CONSISTENT with
+the cross-device propagation of READ-2 but does not establish it, there being no reading of A1 from
+before W1 was read; that ordering is what READ-2 has to run deliberately.
+
 ## TYPE - typing indicators
 
 Ephemeral, online-peers-only, never queued: the phase is short because there is almost nothing to
@@ -1008,8 +1035,64 @@ case being handled - the user had seen the banner in production and said so.
 
 - W1 holds 6 conversations / 1 880 messages, W2 holds 1 / 1 804. A HEAL check that rewinds W1
   rewinds all six.
-- W1 holds 6 conversations / 1 880 messages, W2 holds 1 / 1 804. A HEAL check that rewinds W1
-  rewinds all six.
 - `heal-w2.mjs`'s verdict was rewritten on 2026-08-11 and its old form **could not pass**: it
   required a branch four runs proved unreachable. It now gates on the break having taken, and asks
   the question the `1e8208d6` fix created - see the HEAL-W2 section above.
+
+### The 2026-08-12 re-run starts against a deliberately MIXED fleet
+
+Four fixes were pushed at the head of this run (`42c0f1bd`): the addressed `history_bundle`, the
+`withDigest` election frame, the unacknowledged-row report, and the CD detector. **The first two
+change the history protocol on the wire, and only the two BROWSERS get them.** A1 runs the assets
+bundled into its APK - 0.13.1, installed 2026-08-11 22:01 - so until a new APK is built and
+installed it speaks the OLD protocol: bundles with no `to`, requests with no `withDigest`.
+
+**That is a test condition worth having, not an obstacle.** Both compatibility branches in
+[legacy-compatibility](legacy-compatibility.md) exist for exactly this fleet, and a real device
+running the real old code is the only thing that exercises them - a unit test asserts the branch is
+taken, never that the peer on the other side behaves as the branch assumes. So the run proceeds with
+A1 as the legacy peer, and the checks it participates in (MSG-2, MSG-9/9a1, MULTI, LIFE, NOTIF) are
+reading the shim path on purpose.
+
+**What this costs, stated so no verdict claims more than it measured:** no A1 check in this pass can
+establish that the FIXED code works on Android. Establishing that needs a rebuilt APK and a re-run
+of every A1 check, which is the follow-up this section exists to make impossible to forget - and it
+must not be run next to anything else that builds the frontend (`beforeBuildCommand` is
+`bun run build`).
+
+#### The pre-flight, measured 2026-08-12
+
+| Gate | Result |
+| --- | --- |
+| Prod version / `minClientVersion` | `0.13.1` / `0.13.0`, maintenance off |
+| `POST /api/media/touch` | **401**, i.e. the route exists - the WP that shipped with it stays fixed |
+| `git fetch` | in sync at `42c0f1bd`; CD green, nothing from another contributor to rebase onto |
+| `bundle-id.mjs` | both browsers **stale** after the deploy, reloaded, re-asserted on `__sveltekit_lproze` |
+| `unlock.mjs` | W1, W2, A1 all unlocked |
+| A1 present and DEBUGGABLE | yes; 0.13.1, and its own bundle id differs from the deployed one, which is the mixed fleet above |
+| `recon.mjs` W1 vs W2 | **RECONCILED** - the shared DM at 1 900 / 1 900, zero one-sided ids, before a single check ran |
+| `awaiting.mjs` | W1 4 markers, W2 6, A1 6 - **all `unreadable-frames`**, oldest 2 days |
+
+**Two new harness tools, and one repaired instrument.** `reload.mjs` is the other half of
+`bundle-id.mjs`: it detects staleness AND repairs it, then re-asserts the build id rather than
+assuming the reload took. `unlock.mjs` resolves which account owns which port from the `clients`
+field already in `test-accounts.json`, navigates to a route where the gate actually MOUNTS, and
+spawns `pin.mjs` - so the recurring "you forgot the PIN" costs one idempotent command, and no real
+first name has to be typed into a shell line to unlock a client.
+
+**`recon.mjs` now REFUSES to read a Tauri client instead of answering wrongly.** A1 carries a
+`CanariDB_*` IndexedDB database that is present, openable, correctly shaped and **permanently
+empty** - a vestige of the shared web code path - while its real store is SQLite behind Tauri. Read
+through it, a healthy phone displaying nine conversations reports zero of everything. It never
+fabricated a `LOSS` (nothing is shared, so the verdict was `VACUOUS`), but `VACUOUS` sends the reader
+to look for a missing conversation rather than at the wrong store, and the A1-vs-W1 reconciliation is
+precisely one of the measurements still owed. It now answers `WRONG STORE`, names the runtime, and
+reports how many conversations the client is showing. `awaiting.mjs` carries the same guard: its
+first run called all six of A1's markers orphans.
+
+**That marker probe was wrong twice over, and both faults have the same shape.** It looked for the
+evidence in a `_reason` companion key when `awaitingHistoryRegistry.ts` stores `{since, reason}` as
+the JSON *value*, so it reported every marker on every client as legacy - a unanimous answer
+contradicting a measurement taken the day before, which is what a vacuous probe always looks like.
+And it returned `[]` rather than `null` when it could not read a store, which is the "a failed read
+is not an empty store" rule broken inside the instrument that exists to enforce it.
