@@ -104,10 +104,30 @@ jobs:
               echo "Latest main commit is not a version bump (${LAST_MSG}); skipping rebuild."
             fi
           else
-            BEFORE_SHA="${{ github.event.before }}"
             HEAD_SHA="${{ github.sha }}"
 
-            if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            # WHAT THE BASELINE MUST BE, and why it is not the previous push. This asks "which
+            # services need rebuilding", and the only honest answer is measured against what is
+            # RUNNING - so the baseline is the last commit that actually reached production, marked
+            # by the `prod-deployed` tag the deploy job writes on success. Against the previous push
+            # instead, a service whose image never shipped is never revisited: the next push touches
+            # other paths, the detector answers "media-service unchanged", and a 404 stays live
+            # for as long as nobody edits that directory again. That is exactly what happened on
+            # 11 August. Anything the tag cannot answer falls back to the previous push, which is
+            # never worse than the behaviour it replaces.
+            BEFORE_SHA=""
+            git fetch --force --tags origin 'refs/tags/prod-deployed:refs/tags/prod-deployed' 2>/dev/null || true
+            if git rev-parse --verify -q prod-deployed^{commit} >/dev/null; then
+              BEFORE_SHA="$(git rev-parse prod-deployed^{commit})"
+              echo "Baseline: prod-deployed = $BEFORE_SHA"
+            fi
+
+            if [ -z "$BEFORE_SHA" ]; then
+              BEFORE_SHA="${{ github.event.before }}"
+              echo "No prod-deployed tag; falling back to the previous push."
+            fi
+
+            if [ -z "$BEFORE_SHA" ] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
               if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
                 BEFORE_SHA="$(git rev-parse HEAD~1)"
               else
@@ -349,6 +369,12 @@ jobs:
       contents: read
       packages: write
     strategy:
+      # One image's failure must NOT cancel its siblings. With the default fail-fast, a frontend
+      # build that failed on 11 August cancelled the media-service build sitting next to it - and
+      # because the detector below only looks at what the CURRENT push changed, no later run ever
+      # revisited it. `POST /api/media/touch` answered 404 in production for a day: the retention
+      # clock the endpoint exists to extend was silently dead, on a service whose own build was fine.
+      fail-fast: false
       matrix: ${{ fromJSON(needs.detect-changed-services.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
@@ -408,7 +434,8 @@ jobs:
       needs.detect-changed-services.result == 'success' &&
       (needs.build-docker-images.result == 'success' || needs.build-docker-images.result == 'skipped')
     permissions:
-      contents: read
+      # `write` only for the `prod-deployed` tag the last step moves - the deploy itself reads.
+      contents: write
       packages: read
     environment:
       name: production
@@ -1041,7 +1068,30 @@ jobs:
             "^[1-5][0-9][0-9]$" \
             "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${FRONTEND_HOST_PORT}/api/media"
 
+          # ROUTE EXISTENCE, not just reachability. The check above passes on ANY status, which is
+          # what let a media-service missing `POST /media/touch` deploy green while the endpoint
+          # answered 404 in production for a day. Unauthenticated, an existing route answers 401 and
+          # an absent one answers 404, so the two are distinguishable without a credential - and
+          # this asserts the image really carries the code, which "the container started" never did.
+          retry_http \
+            "media-service /touch route present" \
+            "^401$" \
+            "curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{\"mediaIds\":[]}' http://127.0.0.1:${FRONTEND_HOST_PORT}/api/media/touch"
+
           echo "✅ Health checks completed"
+
+      # The durable state the detector reads next time. Written ONLY once the deploy has really
+      # succeeded, so "what is running" is a fact recorded by the thing that made it true, not a
+      # guess derived from the commit graph. Best-effort by design: a tag that fails to move costs
+      # one over-broad rebuild on the next push, never a missed one.
+      - name: Record the deployed commit
+        run: |
+          set -euo pipefail
+          git -C "${{ env.DEPLOY_PATH }}" tag -f prod-deployed "${{ github.sha }}"
+          git -C "${{ env.DEPLOY_PATH }}" push -f \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+            refs/tags/prod-deployed
+          echo "📌 prod-deployed -> ${{ github.sha }}"
 
       - name: Notify deployment
         if: always()
