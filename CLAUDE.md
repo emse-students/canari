@@ -85,6 +85,7 @@ Work is tracked as Work Packages ordered by severity: **P1** (security, or a use
 broken), **P2** (correctness, nothing at risk), **P3** (hygiene). Delete a WP outright once it ships:
 the rule it taught goes to [durable-rules](docs/wiki/durable-rules.md), the story to `CHANGELOG.md`,
 the narrative to the wiki page the entry points at. **Do not reconstruct shipped work here.**
+Everything wanted but NOT scheduled is [backlog](docs/wiki/backlog.md) - file it there, never here.
 
 ### CANARI - what is open
 
@@ -97,16 +98,28 @@ half of it is compile-verified only** and joins the owed device list below.
 record: read it, do not re-derive the design here, do NOT re-open a decision in its Decisions table.
 Its Open questions section is empty.
 
-**NOTHING OF IT HAS RUN ON A DEVICE OR IN A BROWSER.** The gates are green (0 svelte-check errors,
-1351/1351 frontend tests) and that is ALL they prove. **The next task is the deploy, then the
-cross-client campaign from MSG-1 on the reworked build.**
+**IT IS DEPLOYED TO PROD AND HAS STILL NOT RUN ON A DEVICE OR IN A BROWSER.** The gates are green (0
+svelte-check errors, 1351/1351 frontend tests) and that is ALL they prove. **The next task is the
+cross-client campaign from MSG-1 on the reworked build.** Deploy verified 2026-08-12 22:23 and not
+merely green: CD success on `8b85ba91`, four images restarted, `prod-deployed` moved, `/api/version`
+→ 200, and the served chunks carry `HISTORY_RECONCILE` + the new scrollback string.
 
-Deploy order, a constraint and not a preference - **a clean break, no compatibility layer**: publish
-to the stores → VERIFY the store serves the new build → only then deploy the server and raise
-`minClientVersion`. Raising it first traps users on an update screen whose button leads to the old
-version. The Redis prerequisites are already done and verified on prod (named volume
-`infrastructure_redis_data` at `/data` + `appendonly yes`; `maxmemory` 1→2 GB; `HISTORY_STREAM_MAXLEN`
-1000→8000 in `retention.constants.ts`).
+**THE SERVER SHIPPED BEFORE THE STORES, against the stated order** - forced by Leon's `6f87a3e7`
+having prod down. **Checked rather than assumed, and harmless:** no endpoint, DTO, proto field or
+retention constant changed, so a 0.13.0 client still talks to this server; the one removed wire field
+(`withDigest`) only makes an old responder send its whole store instead of a diff. **The real
+mixed-fleet hazard is client↔client, which the deploy order never governed** - a 0.14 responder that
+gets no probe answers NOTHING and a 0.13.0 requester sends no probe, so old requesters get silence
+from updated peers. That is the clean break working as decided; both halves are written up in
+[legacy-compatibility](docs/wiki/legacy-compatibility.md). What survives of the order: publish to the
+stores → VERIFY the store serves it → only THEN raise `minClientVersion` past 0.14. Raising it first
+traps users on an update screen whose button leads to the old version.
+
+**Three P2s were measured in the shipped exchange and are live in prod** - cost and determinism, no
+data loss, none a reason to revert: the probe pushes to offline devices that can never answer,
+`reconcileAllGroups` reads the whole conversations table once per group, and a probe can be compared
+against a key up to 60 s stale from three online devices upward. Each with its evidence and the shape
+of its fix in [backlog](docs/wiki/backlog.md).
 
 Four things a future session must not undo, because the wiki explains them but the temptation is to
 "simplify" them back:
@@ -128,12 +141,6 @@ Four things a future session must not undo, because the wiki explains them but t
   `transport`) and every send site names one; the server gate reads `body.durable`, not `!silent`.
   Each stream entry records its own `silent`, and `redeliverMissedDuringActivationWindow` filters on
   it or it rings the user for every reaction.
-
-Two SHAPES from it, both written up in [durable-rules](docs/wiki/durable-rules.md): **making a dead
-code path reachable re-opens every check that path never had** (`f0dc3296`, the replay applying
-`delete_message` with no author check), and **carry the evidence that the window opened, or a green
-result cannot be told from an unexercised one** (`msg1b.mjs`, after MSG-1 passed vacuously).
-
 
 **A1 IS UNREACHABLE: the phone dropped off USB mid-session** (`adb devices` empty, survives
 `kill-server`). It needs a replug and the USB-debugging prompt accepted. Two things are owed the

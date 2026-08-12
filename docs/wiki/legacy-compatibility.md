@@ -19,29 +19,6 @@ it sits below that release, an old client is not just possible, it is *supported
 
 ## Open
 
-### `history_bundle` with no `to` - since v0.13.2
-
-**Site:** `systemMessageHandler.ts`, the `history_bundle` branch.
-**Shim:** a bundle carrying no `to` is accepted as an answer to OUR wait when
-`isSolicitInFlight(groupId)` is true.
-**Replacement:** every bundle is addressed at the requester's `digestIdentity` (`bundleFrame`).
-**On removal:** drop the `isSolicitInFlight` fallback; an unaddressed bundle is then ingested for its
-messages and discharges nothing, which is the correct reading of a frame that names nobody.
-**Cost of keeping it:** small and non-lossy - it can only leave a marker up one exchange too long.
-
-### `history_request` with no `withDigest` - since v0.13.2
-
-**Site:** `actions.ts`, `handleHistoryRequest` (`requesterHasDigest`); relayed by
-`messaging.service.ts`, `notifyHistoryRequest`.
-**Shim:** an election frame without `withDigest` is read as "this client sends no digest", and the
-responder answers immediately with its whole store.
-**Replacement:** the requester states on the election frame whether a digest is coming, so the
-responder waits for an EVENT instead of guessing at a duration.
-**On removal:** make `withDigest` required in `NotifyWelcomeRequestBody`, drop the `= false` default
-on `requesterHasDigest`, and delete the "client too old to send one" branch of the log line.
-**Cost of keeping it:** a full-store dump per solicitation from those clients - bandwidth, never
-correctness.
-
 ### `remove_reaction` as a system event - since v0.14
 
 **Site:** `systemMessageHandler.ts` (live) and `historySystemEvents.ts` (replay), the
@@ -97,5 +74,31 @@ ignore. Bandwidth, never correctness.
 
 ## Closed
 
-Nothing yet. Move an entry here with the date and the release that made it safe, rather than deleting
-the entry outright - the next reader wants to know the shim existed and why it could go.
+Move an entry here with the date and the release that made it safe, rather than deleting the entry
+outright - the next reader wants to know the shim existed and why it could go.
+
+### `history_bundle` with no `to` - retired 2026-08-12 by the history-reconciliation rework
+
+**Not retired by a rollout: the thing it protected was deleted.** The shim existed so that an
+unaddressed bundle could still DISCHARGE the receiver's durable awaiting-history marker. There is no
+marker. `systemMessageHandler.ts` now ingests every bundle it can decrypt and reads the addressee for
+one log line only - an answer meant for a peer is simply free messages, and what this device holds is
+compared again on its next connection. `isSolicitInFlight` no longer exists.
+
+### `history_request` with no `withDigest` - retired 2026-08-12 by the history-reconciliation rework
+
+**Deleted as a CLEAN BREAK, on the user's explicit decision** (*"finalement, pas besoin de conserver
+le legacy cette fois"*), not because the fleet had updated. `withDigest` is gone from the election
+frame (`messaging.service.ts`, where only a comment now names it) and `requesterHasDigest` is gone
+from `actions.ts`. A responder now waits for the MLS probe and answers what the probe asks for.
+
+**The consequence, which is live during the store rollout and must not be mistaken for a defect:**
+a 0.14 responder that receives no probe answers NOTHING (`actions.ts`, `handleHistoryRequest`:
+*"no probe ... - nothing to answer"*), and a 0.13.0 requester sends no probe. So an old requester gets
+silence from an updated peer where it used to get a whole-store dump. It degrades history repair for
+clients that have not updated; it cannot corrupt anything. **The remedy is to finish the rollout and
+raise `minClientVersion` past 0.14 - never to restore the branch.**
+
+Note the asymmetry that made the deploy order not matter here: this hazard is client↔client. The
+SERVER remained compatible with a 0.13.0 client throughout (no endpoint, DTO, proto field or
+retention constant changed), which is why shipping it before the stores was survivable.
