@@ -216,7 +216,12 @@ describe('MessagingService - visibility vs durability', () => {
 
   describe('who a transport frame is queued for', () => {
     /** Two peer devices, so one can be online and the other not. */
-    const twoPeers = { recipients: [{ userId: 'u2', deviceId: 'dA' }, { userId: 'u2', deviceId: 'dB' }] };
+    const twoPeers = {
+      recipients: [
+        { userId: 'u2', deviceId: 'dA' },
+        { userId: 'u2', deviceId: 'dB' },
+      ],
+    };
 
     /** `dA` online, `dB` offline. */
     const onlyAOnline = () =>
@@ -230,10 +235,7 @@ describe('MessagingService - visibility vs durability', () => {
         .spyOn(service as unknown as { scheduleDeferredPush: () => void }, 'scheduleDeferredPush')
         .mockImplementation(() => {}),
       immediate: jest
-        .spyOn(
-          service as unknown as { sendFcmForQueued: () => Promise<void> },
-          'sendFcmForQueued'
-        )
+        .spyOn(service as unknown as { sendFcmForQueued: () => Promise<void> }, 'sendFcmForQueued')
         .mockResolvedValue(undefined),
     });
 

@@ -45,46 +45,46 @@
     "typescript": "^6.0.3"
   },
   "overrides": {
-    "protobufjs": "^7.6.5",
+    "@babel/core": "^7.29.6",
     "@protobufjs/utf8": "^1.1.1",
-    "qs": "6.15.2",
     "@types/request": {
       "form-data": "^2.5.6"
     },
     "brace-expansion": "^5.0.7",
     "fast-xml-parser": "^5.10.1",
-    "js-yaml": "^4.2.0",
-    "@babel/core": "^7.29.6",
-    "multer": "^2.2.0",
     "gaxios": {
       "uuid": "^11.1.1"
     },
+    "glob": "^13.0.0",
+    "js-yaml": "^4.2.0",
+    "multer": "^2.2.0",
+    "protobufjs": "^7.6.5",
+    "qs": "6.15.2",
     "teeny-request": {
       "uuid": "^11.1.1"
-    },
-    "glob": "^13.0.0"
+    }
   },
   "jest": {
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
+    "coverageDirectory": "../coverage",
     "moduleFileExtensions": [
       "js",
       "json",
       "ts"
     ],
+    "moduleNameMapper": {
+      "@canari/shared-ts": "<rootDir>/../../../libs/shared-ts/src/index.ts"
+    },
     "rootDir": "src",
+    "testEnvironment": "node",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
-    "moduleNameMapper": {
-      "@canari/shared-ts": "<rootDir>/../../../libs/shared-ts/src/index.ts"
-    },
     "transformIgnorePatterns": [
       "node_modules/(?!(uuid)/)"
-    ],
-    "collectCoverageFrom": [
-      "**/*.(t|j)s"
-    ],
-    "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    ]
   }
 }
