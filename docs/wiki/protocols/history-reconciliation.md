@@ -8,10 +8,10 @@ in [`mls-recovery-ladder.md`](mls-recovery-ladder.md). That machinery was measur
 below was taken with the product owner on that date and is recorded, with what it displaced, in
 [Decisions](#decisions-taken) - do not re-litigate one without going back there.
 
-> **Status: PARTLY IMPLEMENTED.** D1-D7, the durability split, the read watermark, and the
-> conversation floor + device window are shipped - each is marked where it is described. What is
-> left, in order: clipping the exchange to the asker's `since`, the state key, the reconciliation
-> exchange on connect, the scrollback, and the deletions under [What disappears](#what-disappears).
+> **Status: PARTLY IMPLEMENTED.** D1-D7, the durability split, the read watermark, the conversation
+> floor + device window, and the `since` clipping of the exchange are shipped - each is marked where
+> it is described. What is left, in order: the state key, the reconciliation exchange on connect, the
+> scrollback, and the deletions under [What disappears](#what-disappears).
 
 ---
 
@@ -131,16 +131,31 @@ Two consequences, both handled where the assumption lived:
   renderer. First, an unbounded window gives the floor nothing to move for, ever. Second, the
   [state key](#completeness-is-asked-from-the-requesters-side) is computed over the window, and an
   unbounded domain makes its worst case unbounded too.
-: **SHIPPED as a value, not yet as a bound.** `$lib/utils/chat/historyWindow.ts` holds the two
-  constants, the platform split (`isTauriRuntime`, the only distinction that matters here - mobile
-  and desktop answer the same) and `historyRangeStart(floor, now)`, the later of the floor and the
-  window. What still has to use it is the ASK: `history_digest` and `history_pull` must state their
-  `since`, and an answering device must clip its bundle to the `since` it was given. Until they do,
-  a diff is computed over both stores whole.
+: **SHIPPED, and now a bound.** `$lib/utils/chat/historyWindow.ts` holds the two constants, the
+  platform split (`isTauriRuntime`, the only distinction that matters here - mobile and desktop
+  answer the same) and `historyRangeStart(floor, now)`, the later of the floor and the window.
+  `history_digest` and `history_pull` both state their `since`; the rendezvous carries the digest's
+  through to the responder as one `SolicitedDigest`, because a digest without its window can only be
+  answered in full - the behaviour the window exists to end.
 : **`since` is STATED, never recomputed by the answering side.** The window slides, so two devices
   computing `now - 90 days` a second apart get two different boundaries - and a boundary that
   disagrees by a second is a message neither side believes it owes. The asker states it; the
   answerer obeys it; one exchange uses one number.
+: **The digest says what a device HAS; `since` says what it WANTS**, and the two sets differ. The
+  digest is deliberately not clipped: a device holding messages below its own window can still serve
+  them to a peer whose window reaches further back, and it can only do so by describing them.
+: **The clip is applied to the ANSWER, never to the COMPARISON**, in `sendHistoryBundleForIds` - the
+  one place holding both the messages and their timestamps, since an id list carries no dates. This
+  is not an implementation convenience: a stored timestamp can differ by a hair between two devices
+  (the reason the manifest buckets the ID space and not time), so clipping the comparison would let
+  a message near the boundary read as missing on one side and present on the other, permanently.
+  Clipping the answer cannot - the worst it does is decline to send what was not asked for.
+: **Each leg states its OWN window.** `handleHistoryRequest` plays both roles in one exchange: it
+  answers within the requester's `since`, and the pull it sends back states its own. Reusing the
+  requester's there would cap every device in the conversation at the shortest window in it.
+: **An emptiness produced by the clip still VOUCHES.** Completeness was defined by the asker's own
+  line, so "everything you lack is below it" and "you lack nothing" are the same answer; withholding
+  the vouch would leave a device that is complete for its window re-soliciting for ever.
 : **A bundle nobody asked for is not clipped**, and that is deliberate: `sendFullHistoryBundle` is
   pushed to a device being INVITED, which has stated no window because it has not asked anything.
   Over-delivering there costs the receiver disk and nothing else - and under-delivering would lose
@@ -180,7 +195,9 @@ a comparison that almost always matches.
 - **Keys match** → nothing is sent, nothing is displayed. The common case, and it must cost one small
   frame.
 - **Keys differ** → then, and only then, exchange the hierarchical digest that already exists
-  (`groupActions.ts:636`), and each side sends what the other lacks **within that side's window**.
+  (`groupActions.ts`, `sendHistoryDigest`), and each side sends what the other lacks **within that
+  side's window**. That last clause is **SHIPPED**: every ask carries a `since` and every answer is
+  clipped to the one it was given - see [the device window](#two-boundaries-not-one).
 
 Election is unchanged: the server picks one online member, so the exchange stays two-party. A
 broadcast digest would cost every member a decryption for a repair concerning two devices.

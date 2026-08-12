@@ -14,7 +14,7 @@ import { isSolicitInFlight, noteHistoryBundleReceived } from '$lib/utils/chat/hi
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
 import { digestIdentity, noteDigestReceived } from '$lib/utils/chat/historyDigestRendezvous';
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
-import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
+import { mergeHistoryFloor, parseHistorySince } from '$lib/utils/chat/historyWindow';
 import { readHistoryEntries, sendHistoryBundleForIds } from '$lib/utils/chat/groupActions';
 import {
   countUnreadForUser,
@@ -143,13 +143,17 @@ export async function handleSystemEvent(
       log(`[HISTORY_DIGEST] Malformed digest from ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
-    noteDigestReceived(convoKey, from, digest);
+    // The window the asker drew, carried to whichever leg of the exchange ends up answering. A frame
+    // that states none parses as 0, which answers in full - the right reading of a client too old to
+    // have a window to state.
+    const since = parseHistorySince(data?.since);
+    noteDigestReceived(convoKey, from, digest, since);
     const size =
       digest.mode === 'ids'
         ? `${digest.ids.length} id(s)`
         : `${digest.ranges.length} slice(s) at depth ${digest.depth}`;
     log(
-      `[HISTORY_DIGEST] From ${senderNorm} for ${convoKey.slice(0, 8)}… - ${digest.mode}, ${size}`
+      `[HISTORY_DIGEST] From ${senderNorm} for ${convoKey.slice(0, 8)}… - ${digest.mode}, ${size}, asking from ${since > 0 ? new Date(since).toISOString() : 'the beginning'}`
     );
     return true;
   }
@@ -217,9 +221,13 @@ export async function handleSystemEvent(
     );
     // `silence`: we were asked about a SUBSET, so holding none of it says nothing about whether the
     // asker is complete - and an empty bundle would end its solicitation for good.
+    //
+    // The puller's own window, which is NOT the one we would have used: it may retain five years
+    // where we keep ninety days, or the reverse. Only the asker may set the bound on its answer.
     await sendHistoryBundleForIds(convoKey, wanted, deps, {
       emptyMeans: 'silence',
       to: puller,
+      since: parseHistorySince(data?.since),
     }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
     return true;
   }

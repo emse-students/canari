@@ -23,10 +23,19 @@ import type { HistoryDigest } from './historyManifest';
 /** How long a digest stays usable after arriving. Beyond this it describes a store that has moved. */
 export const DIGEST_TTL_MS = 60_000;
 
-type StoredDigest = { digest: HistoryDigest; at: number };
+/**
+ * A solicitation as the responder receives it: what the asker HOLDS, and where its window OPENS.
+ *
+ * The two travel together because they are one ask and are useless apart - a digest without its
+ * `since` can only be answered in full, which is the behaviour the window exists to end. `since` is
+ * 0 for a client too old to state one, and 0 means "answer in full", so that case needs no branch.
+ */
+export type SolicitedDigest = { digest: HistoryDigest; since: number };
+
+type StoredDigest = SolicitedDigest & { at: number };
 
 const digests = new Map<string, StoredDigest>();
-const waiters = new Map<string, Array<(digest: HistoryDigest) => void>>();
+const waiters = new Map<string, Array<(solicited: SolicitedDigest) => void>>();
 
 /**
  * Identifies the DEVICE, not the user: a user with three devices must be able to solicit from one
@@ -57,6 +66,7 @@ export function noteDigestReceived(
   groupId: string,
   fromIdentity: string,
   digest: HistoryDigest,
+  since: number = 0,
   now: number = Date.now()
 ): void {
   const k = key(groupId, fromIdentity);
@@ -65,10 +75,10 @@ export function noteDigestReceived(
   const pending = waiters.get(k);
   if (pending && pending.length > 0) {
     waiters.delete(k);
-    for (const resolve of pending) resolve(digest);
+    for (const resolve of pending) resolve({ digest, since });
     return;
   }
-  digests.set(k, { digest, at: now });
+  digests.set(k, { digest, since, at: now });
 }
 
 /**
@@ -83,23 +93,23 @@ export function awaitDigest(
   fromIdentity: string,
   timeoutMs: number,
   now: number = Date.now()
-): Promise<HistoryDigest | null> {
+): Promise<SolicitedDigest | null> {
   const k = key(groupId, fromIdentity);
   purgeExpired(now);
 
   const stored = digests.get(k);
   if (stored) {
     digests.delete(k);
-    return Promise.resolve(stored.digest);
+    return Promise.resolve({ digest: stored.digest, since: stored.since });
   }
 
-  return new Promise<HistoryDigest | null>((resolve) => {
+  return new Promise<SolicitedDigest | null>((resolve) => {
     let settled = false;
-    const finish = (digest: HistoryDigest | null): void => {
+    const finish = (solicited: SolicitedDigest | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(digest);
+      resolve(solicited);
     };
 
     const timer = setTimeout(() => {
@@ -113,7 +123,7 @@ export function awaitDigest(
       finish(null);
     }, timeoutMs);
 
-    const onDigest = (digest: HistoryDigest): void => finish(digest);
+    const onDigest = (solicited: SolicitedDigest): void => finish(solicited);
     waiters.set(k, [...(waiters.get(k) ?? []), onDigest]);
   });
 }

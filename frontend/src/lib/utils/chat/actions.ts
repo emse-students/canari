@@ -9,6 +9,7 @@ import {
   sendHistoryBundleForIds,
   sendHistoryPull,
   readHistoryEntries,
+  historyRangeStartFor,
   persistMlsStateAfterMutation,
   forgetMlsGroupIfPresent,
   purgeLocalConversationRecord,
@@ -1047,20 +1048,24 @@ export async function handleHistoryRequest(params: {
   const requesterIdentity = digestIdentity(requesterUserId, requesterDeviceId);
   // Nothing is waited for unless a digest was PROMISED. A peer too old to promise one is answered
   // at once - it was the grace period's only real cost, paid on every one of its solicitations.
-  const digest = requesterHasDigest
+  const solicited = requesterHasDigest
     ? await awaitDigest(groupId, requesterIdentity, digestWaitMs)
     : null;
 
-  if (!digest) {
+  if (!solicited) {
     log(
       `[HISTORY_REQ] no digest from ${requesterIdentity} for ${short}... (${requesterHasDigest ? 'promised but never arrived' : 'client too old to send one'}) - sending the whole store`
     );
+    // Unclipped on purpose: the window a bundle honours is the one the ASKER stated, and no digest
+    // means nothing was stated. A window invented on this side would silently withhold messages the
+    // requester never declined.
     await sendFullHistoryBundle(groupId, { ...deps, selfUserId, to: requesterIdentity }).catch(
       (e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
     );
     return;
   }
 
+  const { digest, since } = solicited;
   const entries = await readHistoryEntries(groupId, deps);
   if (entries === null) {
     // A read that FAILED proves nothing about the group. Staying silent lets the requester retry
@@ -1081,10 +1086,17 @@ export async function handleHistoryRequest(params: {
   // but it can say "our stores are identical", which is the fact it actually measured. Saying
   // nothing at all was the deadlock: two peers both awaiting, both holding nothing the other lacked,
   // each waiting for an answer only the other was entitled to give (WP-HISTBANNER-1).
+  //
+  // The diff is computed over our WHOLE store and clipped only on the way out, which is what keeps
+  // the two sides symmetric: a stored timestamp can differ by a hair between devices (see
+  // `historyManifest`), so clipping the COMPARISON would let a message near the boundary read as
+  // missing on one side and present on the other, for ever. Clipping the ANSWER cannot: the worst it
+  // does is decline to send something the asker did not ask for.
   const emptyMeans = isAwaitingHistory(selfUserId, groupId) ? 'identical' : 'complete';
   await sendHistoryBundleForIds(groupId, idsToSend, deps, {
     emptyMeans,
     to: requesterIdentity,
+    since,
   }).catch((e) => log(`[HISTORY_BUNDLE] Diff send error to ${requesterUserId}: ${String(e)}`));
 
   const idsToPull = digest.mode === 'ids' ? diff.missingLocally : [];
@@ -1102,6 +1114,10 @@ export async function handleHistoryRequest(params: {
         ids: idsToPull,
         prefixes: diff.pullPrefixes,
         depth: digest.mode === 'range' ? digest.depth : undefined,
+        // OUR window, not the requester's. On this leg we are the asker, and the `since` that
+        // arrived with its digest describes what IT wants - reusing it would cap this device at the
+        // shortest window in the conversation.
+        since: await historyRangeStartFor(groupId, storage),
       },
       deps
     ).catch((e) => log(`[HISTORY_PULL] Pull send error to ${requesterUserId}: ${String(e)}`));

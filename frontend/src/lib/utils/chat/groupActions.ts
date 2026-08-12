@@ -8,6 +8,7 @@ import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 import { isAwaitingHistory } from './awaitingHistoryRegistry';
 import { forgetAwaitingHistory } from './historySolicit';
+import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import {
   buildHistoryDigest,
   chunkIds,
@@ -534,6 +535,27 @@ async function storedConversationState(
 }
 
 /**
+ * The instant THIS device asks from for `groupId` - the later of the conversation's shared floor and
+ * its own retention window.
+ *
+ * Every frame this device sends as an ASKER states this value, and no answerer ever recomputes it:
+ * the window slides, so two devices deriving it a second apart disagree by whatever was sent in
+ * between. One exchange must use one number, and the asker is the only side entitled to say which.
+ *
+ * A store that cannot be read yields the bare window rather than throwing. That is the conservative
+ * answer in the only direction that matters here: an absent floor asks for MORE than a known one
+ * would, so the worst case is a few messages nobody needed - never a message nobody asked for.
+ */
+export async function historyRangeStartFor(
+  groupId: string,
+  storage: IStorage | null
+): Promise<number> {
+  if (!storage) return historyRangeStart(undefined);
+  const { historyFloor } = await storedConversationState(groupId, storage);
+  return historyRangeStart(historyFloor);
+}
+
+/**
  * Sends the full local history of `groupId` to active group members, encrypted under the
  * current MLS epoch, in chunks of `chunkSize` messages (default 200).
  *
@@ -676,13 +698,18 @@ export async function readHistoryEntries(
  *
  * It rides inside MLS, never over the WebSocket: the ids of the messages a device kept are metadata
  * the server does not hold today and must not learn.
+ *
+ * **The digest says what we HAVE; `since` says what we WANT, and they are not the same set.** The
+ * digest is deliberately NOT clipped: a device holding messages below its own window can still serve
+ * them to a peer whose window reaches further back, and describing them truthfully is what lets it.
+ * `since` bounds the ANSWER only.
  */
 export async function sendHistoryDigest(
   groupId: string,
   from: string,
   deps: HistoryStoreDeps
 ): Promise<boolean> {
-  const { mlsService, log } = deps;
+  const { mlsService, log, storage } = deps;
   const entries = await readHistoryEntries(groupId, deps);
   if (entries === null) {
     log(`[HISTORY_DIGEST] Cannot describe ${groupId.slice(0, 8)}… - no readable store`);
@@ -690,14 +717,19 @@ export async function sendHistoryDigest(
   }
 
   const digest = await buildHistoryDigest(entries);
+  const since = await historyRangeStartFor(groupId, storage);
   const summary =
     digest.mode === 'ids'
       ? `${digest.ids.length} id(s)`
       : `${digest.ranges.length} slice(s) at depth ${digest.depth}`;
-  const bytes = encodeAppMessage(mkSystem('history_digest', JSON.stringify({ from, digest })));
+  const bytes = encodeAppMessage(
+    mkSystem('history_digest', JSON.stringify({ from, digest, since }))
+  );
   try {
     await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
-    log(`[HISTORY_DIGEST] Sent for ${groupId.slice(0, 8)}… - ${digest.mode} mode, ${summary}`);
+    log(
+      `[HISTORY_DIGEST] Sent for ${groupId.slice(0, 8)}… - ${digest.mode} mode, ${summary}, asking from ${new Date(since).toISOString()}`
+    );
     return true;
   } catch (e) {
     log(`[HISTORY_DIGEST] Send failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
@@ -715,6 +747,11 @@ export async function sendHistoryDigest(
  *
  * Split across several frames because a diff is unbounded (a device back after a month away can be
  * short thousands of messages) while an MLS application message is not.
+ *
+ * A pull is an ASK, so it states `since` exactly as a digest does - and it must state its OWN, never
+ * the one that arrived on the digest it is answering. The two devices have different windows: a
+ * phone diffing against a browser's digest asks back for five years, and reusing the browser's
+ * ninety days would silently cap the phone at the shortest window in the conversation.
  */
 export async function sendHistoryPull(
   groupId: string,
@@ -724,15 +761,17 @@ export async function sendHistoryPull(
     ids?: readonly string[];
     prefixes?: readonly string[];
     depth?: number;
+    /** Where OUR window opens. Anything the answerer holds below it is not wanted. */
+    since: number;
   },
   { mlsService, log }: HistorySendDeps
 ): Promise<void> {
-  const { from, to, ids, prefixes, depth } = request;
+  const { from, to, ids, prefixes, depth, since } = request;
   const frames: Array<Record<string, unknown>> =
     ids && ids.length > 0
-      ? chunkIds(ids).map((batch) => ({ from, to, ids: batch }))
+      ? chunkIds(ids).map((batch) => ({ from, to, ids: batch, since }))
       : prefixes && prefixes.length > 0 && depth
-        ? [{ from, to, prefixes: [...prefixes], depth }]
+        ? [{ from, to, prefixes: [...prefixes], depth, since }]
         : [];
 
   if (frames.length === 0) return;
@@ -777,15 +816,24 @@ export type EmptyBundleMeaning = 'complete' | 'identical' | 'silence';
  *
  * `emptyMeans` decides what an empty selection says; see {@link EmptyBundleMeaning}. `to` addresses
  * the answer at the device that asked; see {@link bundleFrame}.
+ *
+ * **This is where the asker's window is honoured, and the only place it can be.** The clip is by
+ * timestamp, and an id list carries no timestamps - only the device HOLDING a message knows when it
+ * was sent. So an asker states `since` and the answerer drops what falls below it here, once, rather
+ * than every caller filtering an id list it cannot date.
+ *
+ * `since` defaults to 0, which answers in full. That is what a path with no window to state means:
+ * the bundle pushed to a member being invited was asked for by nobody, and a requester too old to
+ * state one is owed the whole store. Over-answering costs bandwidth; under-answering loses messages.
  */
 export async function sendHistoryBundleForIds(
   groupId: string,
   ids: readonly string[],
   deps: HistoryStoreDeps,
-  opts: { emptyMeans: EmptyBundleMeaning; to: string; chunkSize?: number }
+  opts: { emptyMeans: EmptyBundleMeaning; to: string; chunkSize?: number; since?: number }
 ): Promise<void> {
   const { storage, deviceKeyB64, mlsService, log } = deps;
-  const { emptyMeans, to, chunkSize = 200 } = opts;
+  const { emptyMeans, to, chunkSize = 200, since = 0 } = opts;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
@@ -794,15 +842,25 @@ export async function sendHistoryBundleForIds(
   const state = await storedConversationState(groupId, storage);
   const wanted = new Set(ids);
   let selected: StoredMessage[] = [];
+  let clipped = 0;
   if (wanted.size > 0) {
     try {
-      selected = (await storage.getMessages(groupId, deviceKeyB64)).filter((m) => wanted.has(m.id));
+      const held = (await storage.getMessages(groupId, deviceKeyB64)).filter((m) =>
+        wanted.has(m.id)
+      );
+      selected = held.filter((m) => isWithinHistoryRange(Number(m.timestamp), since));
+      clipped = held.length - selected.length;
     } catch (e) {
       // A read that FAILED proves nothing about the group: stay silent so the requester retries
       // against another member rather than concluding it is already complete.
       log(`[HISTORY_BUNDLE] Read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
       return;
     }
+  }
+  if (clipped > 0) {
+    log(
+      `[HISTORY_BUNDLE] Held ${clipped} message(s) below the asker's window for ${groupId.slice(0, 8)}… - not sent`
+    );
   }
 
   if (selected.length === 0) {
@@ -815,6 +873,11 @@ export async function sendHistoryBundleForIds(
     // `vouched` is the whole difference between the two answers, so it goes on the wire. Its
     // ABSENCE means vouched, which is what every client shipped before this field assumes when it
     // reads an empty bundle - so an old responder stays correctly interpreted by a new requester.
+    //
+    // An emptiness produced by the CLIP still vouches, and that is not a leniency: completeness was
+    // defined by the asker's own `since`, so "everything you lack is below the line you drew" is the
+    // same answer as "you lack nothing". Vouching on a narrower range than the asker named would be
+    // the bug; this is exactly the range it named.
     const vouched = emptyMeans === 'complete';
     const bytes = bundleFrame([], to, { vouched, state });
     try {

@@ -47,8 +47,14 @@ function activeConversations(groupId: string): Map<string, Conversation> {
   ]);
 }
 
-/** A store holding exactly `entries`, or one that throws when `entries` is the string 'broken'. */
-function storageWith(entries: HistoryEntry[] | 'broken'): IStorage {
+/**
+ * A store holding exactly `entries`, or one that throws when `entries` is the string 'broken'.
+ *
+ * `historyFloor` is what this device would ask FROM. Setting it above the device window is what
+ * makes the window assertions deterministic: the range start is `max(floor, windowStart)`, so a
+ * recent floor decides it outright and the test never has to name a wall clock.
+ */
+function storageWith(entries: HistoryEntry[] | 'broken', historyFloor?: number): IStorage {
   return {
     getMessages: vi.fn().mockImplementation(async () => {
       if (entries === 'broken') throw new Error('store unreadable');
@@ -63,6 +69,11 @@ function storageWith(entries: HistoryEntry[] | 'broken'): IStorage {
           }) as StoredMessage
       );
     }),
+    getConversations: vi
+      .fn()
+      .mockResolvedValue([
+        { id: GROUP, name: 'Test', lifecycle: 'active', updatedAt: 0, historyFloor },
+      ]),
   } as unknown as IStorage;
 }
 
@@ -178,7 +189,8 @@ describe('handleHistoryRequest - with a digest', () => {
       ['only-ours'],
       expect.anything(),
       // Our whole store was compared, so an empty result here really would mean "you are complete".
-      { emptyMeans: 'complete', to: REQUESTER }
+      // `since: 0` is the requester's own window, restated: this digest stated none.
+      { emptyMeans: 'complete', to: REQUESTER, since: 0 }
     );
   });
 
@@ -192,6 +204,7 @@ describe('handleHistoryRequest - with a digest', () => {
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, [], expect.anything(), {
       emptyMeans: 'complete',
       to: REQUESTER,
+      since: 0,
     });
     expect(sendHistoryPull).not.toHaveBeenCalled();
   });
@@ -240,6 +253,7 @@ describe('handleHistoryRequest - with a digest', () => {
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, [], expect.anything(), {
       emptyMeans: 'identical',
       to: REQUESTER,
+      since: 0,
     });
   });
 
@@ -253,6 +267,7 @@ describe('handleHistoryRequest - with a digest', () => {
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, ['ours'], expect.anything(), {
       emptyMeans: 'identical',
       to: REQUESTER,
+      since: 0,
     });
   });
 
@@ -290,7 +305,7 @@ describe('handleHistoryRequest - with a digest', () => {
       GROUP,
       ['ours-a', 'ours-b'],
       expect.anything(),
-      { emptyMeans: 'complete', to: REQUESTER }
+      { emptyMeans: 'complete', to: REQUESTER, since: 0 }
     );
     // Their slice is theirs alone, so it is pulled - and the DEPTH travels with the prefix, or it
     // names a slice the answering device cannot compute.
@@ -300,4 +315,69 @@ describe('handleHistoryRequest - with a digest', () => {
       expect.anything()
     );
   });
+});
+
+describe('handleHistoryRequest - whose window bounds what', () => {
+  // The rule this fixes in place: on the leg where we ANSWER we honour the requester's window, and
+  // on the leg where we ASK we state our own. One handler plays both roles in a single exchange,
+  // which is exactly why the two are easy to confuse.
+
+  /** A floor recent enough to sit above any device window, so it alone decides the range start. */
+  const OUR_FLOOR = Date.now() - 60_000;
+  const THEIR_SINCE = 1_700_000_000_000;
+
+  async function postDigestAsking(entries: HistoryEntry[], since: number): Promise<void> {
+    noteDigestReceived(GROUP, REQUESTER, await buildHistoryDigest(entries), since);
+  }
+
+  it('bounds the ANSWER by the window the requester stated, not by its own', async () => {
+    await postDigestAsking([], THEIR_SINCE);
+    await handleHistoryRequest(
+      baseParams({
+        storage: storageWith([{ id: 'ours', timestamp: at('2026-01-01T00:00:00Z') }], OUR_FLOOR),
+      })
+    );
+
+    expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, ['ours'], expect.anything(), {
+      emptyMeans: 'complete',
+      to: REQUESTER,
+      since: THEIR_SINCE,
+    });
+  });
+
+  it("bounds what it ASKS BACK for by its OWN window, never by the requester's", async () => {
+    // A phone diffing against a browser's digest asks back for five years. Reusing the browser's
+    // ninety days would cap every device in the conversation at the shortest window in it.
+    await postDigestAsking([{ id: 'theirs', timestamp: at('2026-01-01T00:00:00Z') }], THEIR_SINCE);
+    await handleHistoryRequest(baseParams({ storage: storageWith([], OUR_FLOOR) }));
+
+    expect(sendHistoryPull).toHaveBeenCalledWith(
+      GROUP,
+      expect.objectContaining({ ids: ['theirs'], since: OUR_FLOOR }),
+      expect.anything()
+    );
+  });
+
+  it('answers in full when the requester stated no window, rather than inventing one', async () => {
+    // A client too old to state a window has not declined anything. Clipping it to a bound we chose
+    // for it would withhold messages nobody refused - the failure mode the default guards against.
+    await postDigest([]);
+    await handleHistoryRequest(
+      baseParams({
+        storage: storageWith([{ id: 'ours', timestamp: at('2020-01-01T00:00:00Z') }], OUR_FLOOR),
+      })
+    );
+
+    expect(sendHistoryBundleForIds).toHaveBeenCalledWith(
+      GROUP,
+      ['ours'],
+      expect.anything(),
+      expect.objectContaining({ since: 0 })
+    );
+  });
+
+  /** Posts a digest that states no window, the way a client too old to have one does. */
+  async function postDigest(entries: HistoryEntry[]): Promise<void> {
+    noteDigestReceived(GROUP, REQUESTER, await buildHistoryDigest(entries));
+  }
 });

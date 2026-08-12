@@ -1,4 +1,4 @@
-import { sendFullHistoryBundle } from './groupActions';
+import { sendFullHistoryBundle, sendHistoryBundleForIds } from './groupActions';
 import { markAwaitingHistory } from './awaitingHistoryRegistry';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';
@@ -19,12 +19,12 @@ function storageWith(messages: StoredMessage[] | Error): IStorage {
   } as unknown as IStorage;
 }
 
-function storedMessage(id: string): StoredMessage {
+function storedMessage(id: string, timestamp = 1_700_000_000_000): StoredMessage {
   return {
     id,
     senderId: 'user-b',
     content: 'hello',
-    timestamp: 1_700_000_000_000,
+    timestamp,
   } as StoredMessage;
 }
 
@@ -149,4 +149,86 @@ describe('sendFullHistoryBundle', () => {
       ],
     });
   });
+});
+
+describe("sendHistoryBundleForIds - the asker's window", () => {
+  // The clip lives HERE and nowhere else, because this is the only place holding both the messages
+  // and their timestamps: an id list carries no dates, so no caller upstream could apply it.
+
+  const OLD = 1_600_000_000_000;
+  const RECENT = 1_700_000_000_000;
+  const SINCE = 1_650_000_000_000;
+
+  /** Every id in `msgs`, so a test asks for the whole selection and only the clip narrows it. */
+  const allIds = (msgs: StoredMessage[]) => msgs.map((m) => m.id);
+
+  function serve(msgs: StoredMessage[], since?: number) {
+    const mlsService = createMlsServiceStub();
+    return {
+      mlsService,
+      done: sendHistoryBundleForIds(
+        GROUP,
+        allIds(msgs),
+        { storage: storageWith(msgs), deviceKeyB64: 'k', mlsService, log: vi.fn() },
+        { emptyMeans: 'complete', to: REQUESTER, since }
+      ),
+    };
+  }
+
+  it('drops what falls below the stated window and sends the rest', async () => {
+    const { mlsService, done } = serve(
+      [storedMessage('old', OLD), storedMessage('new', RECENT)],
+      SINCE
+    );
+    await done;
+
+    const { data } = sentBundle(mlsService);
+    expect(data.messages).toHaveLength(1);
+    expect(data.messages[0]).toMatchObject({ id: 'new' });
+  });
+
+  it('includes the boundary itself - `since` is the first instant asked for, not the last refused', async () => {
+    const { mlsService, done } = serve([storedMessage('exactly-at', SINCE)], SINCE);
+    await done;
+
+    expect(data0(mlsService)).toMatchObject({ id: 'exactly-at' });
+  });
+
+  it('answers in full when no window is stated', async () => {
+    // The default that keeps every unasked path working: an invite push and a client too old to
+    // state a window both mean "send it all", and neither can be made to say so.
+    const { mlsService, done } = serve([storedMessage('old', OLD), storedMessage('new', RECENT)]);
+    await done;
+
+    expect(sentBundle(mlsService).data.messages).toHaveLength(2);
+  });
+
+  it('still VOUCHES when the clip is what emptied the answer', async () => {
+    // Completeness was defined by the asker's own line, so "everything you lack is below it" and
+    // "you lack nothing" are the same answer. Withholding the vouch here would leave a device that
+    // is complete for its window re-soliciting for ever.
+    const { mlsService, done } = serve([storedMessage('old', OLD)], SINCE);
+    await done;
+
+    const { data } = sentBundle(mlsService);
+    expect(data.messages).toEqual([]);
+    expect((data as { vouched?: boolean }).vouched).toBeUndefined();
+  });
+
+  it('keeps a message whose timestamp cannot be compared, rather than silently dropping it', async () => {
+    // An unusable date is not evidence that a message is old. The range exists to bound what is
+    // sent; a value nothing can be concluded from must not decide against the message.
+    const { mlsService, done } = serve(
+      [storedMessage('undated', undefined as unknown as number)],
+      SINCE
+    );
+    await done;
+
+    expect(data0(mlsService)).toMatchObject({ id: 'undated' });
+  });
+
+  /** First message of the single bundle the stub was asked to send. */
+  function data0(mlsService: ReturnType<typeof createMlsServiceStub>) {
+    return sentBundle(mlsService).data.messages[0];
+  }
 });
