@@ -1,5 +1,5 @@
 import type { StoredMessage } from './types';
-import { fromMessagePayload, toMessagePayload } from './messagePayload';
+import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
 
 const KEYS = { id: 'msg-1', conversationId: 'conv-1', timestamp: 1_700_000_000_000 };
 
@@ -88,5 +88,70 @@ describe('message payload round trip', () => {
     expect(hostile.editedAt).toBeUndefined();
     expect(hostile.readBy).toBeUndefined();
     expect(hostile.isEdited).toBeUndefined();
+  });
+});
+
+describe('merging a mutation onto a stored message', () => {
+  /**
+   * Every mutation handler used to rebuild the whole row from what it happened to know, and
+   * `saveMessage` is a full-row replace - so the row's contents depended on which mutation touched
+   * it last. The two cases below are the ones confirmed by hand (D1).
+   */
+  it('keeps the tombstone when a reaction lands on a deleted message', () => {
+    const stored: StoredMessage = { ...BASE, isDeleted: true, content: 'deleted' };
+
+    const merged = mergeStoredMessage(stored, { reactions: [{ emoji: '👍', userId: 'bob' }] });
+
+    expect(merged.isDeleted).toBe(true);
+    expect(merged.content).toBe('deleted');
+    expect(merged.reactions).toEqual([{ emoji: '👍', userId: 'bob' }]);
+  });
+
+  it('keeps the edit flags when a read receipt lands on an edited message', () => {
+    const stored: StoredMessage = { ...BASE, isEdited: true, editedAt: 1_700_000_042_000 };
+
+    const merged = mergeStoredMessage(stored, { readBy: ['bob'], readAt: 1_700_000_050_000 });
+
+    expect(merged.isEdited).toBe(true);
+    expect(merged.editedAt).toBe(1_700_000_042_000);
+    expect(merged.readBy).toEqual(['bob']);
+  });
+
+  it('leaves a field alone when the patch carries it as undefined', () => {
+    // Handlers build patches with spread and optionals, so an absent value arrives as `undefined`
+    // rather than as a missing key. It must read as "I know nothing about this field".
+    const stored: StoredMessage = { ...BASE, serverTimestamp: 1_700_000_002_000 };
+
+    const merged = mergeStoredMessage(stored, { serverTimestamp: undefined, readBy: ['bob'] });
+
+    expect(merged.serverTimestamp).toBe(1_700_000_002_000);
+  });
+
+  it('clears a field when the patch says so explicitly', () => {
+    // An edit resets readBy, and removing the last reaction empties the list. Clearing has to stay
+    // expressible, or the merge would make some mutations impossible.
+    const stored: StoredMessage = {
+      ...BASE,
+      readBy: ['bob'],
+      reactions: [{ emoji: '👍', userId: 'bob' }],
+    };
+
+    const merged = mergeStoredMessage(stored, { readBy: [], reactions: [] });
+
+    expect(merged.readBy).toEqual([]);
+    expect(merged.reactions).toEqual([]);
+    // And an empty list is stored as no list at all, which is how a removal becomes durable.
+    expect(Object.keys(toMessagePayload(merged)).sort()).toEqual(['content', 'senderId']);
+  });
+
+  it('never lets a patch move a message to another conversation', () => {
+    // The type forbids it, but the guarantee is enforced here too: the patch API is keyed by id,
+    // so a row that changed conversation would vanish from both.
+    const rogue = { content: 'edited', id: 'other-msg', conversationId: 'other-conv' };
+    const merged = mergeStoredMessage(BASE, rogue as Parameters<typeof mergeStoredMessage>[1]);
+
+    expect(merged.id).toBe(BASE.id);
+    expect(merged.conversationId).toBe(BASE.conversationId);
+    expect(merged.content).toBe('edited');
   });
 });

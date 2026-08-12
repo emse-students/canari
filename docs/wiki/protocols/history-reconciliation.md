@@ -228,7 +228,7 @@ from the audit and carry its references.
 
 | # | Defect | Where | Confirmed |
 | --- | --- | --- | --- |
-| D1 | `saveMessage` is a full-row `put` and `toMessagePayload` omits absent fields, so every partial write **erases** the fields it does not carry. Six mutation handlers each pass a different subset - a reaction landing on a deleted message clears the tombstone; a read receipt on an edited message clears `isEdited`. The read-before-write pattern already exists at `history.ts:502-548` | `messagePayload.ts:28-41`, `indexeddb.ts:248-283` | yes |
+| D1 | ~~`saveMessage` is a full-row `put` and `toMessagePayload` omits absent fields, so every partial write **erases** the fields it does not carry. Six mutation handlers each pass a different subset - a reaction landing on a deleted message clears the tombstone; a read receipt on an edited message clears `isEdited`~~ **FIXED**: see [Persisting a mutation](#persisting-a-mutation) | `messagePayload.ts`, `types.ts`, both backends | yes |
 | D2 | The reading device never persists **its own** read state - the optimistic update is a bare `conversations.set`. After a reload, messages it read return as unread until a peer's bundle hands them back | `MainChatPage.svelte:434-445` | audit |
 | D3 | Reaction removal never converges: a bundle's reactions are adopted only when the receiver holds none | `systemMessageHandler.ts:717` | yes |
 | D4 | `editedAt` is not serialised into the bundle although `isEdited` is, so a device restored by bundle shows "edited" with no timestamp, permanently | `groupActions.ts:450-465` | audit |
@@ -239,6 +239,37 @@ from the audit and carry its references.
 Three defects measured the same day are covered here rather than patched separately, by decision: the
 stuck `isMessageCatchupActive` overlay, the post-ingest render freeze, and the 15 s `scheduleRetry`
 loop that re-raises the overlay.
+
+### Persisting a mutation
+
+`IStorage.updateMessage(id, patch, deviceKeyB64)` is the only way to write a mutation of an existing
+message. It reads the row by primary key, decrypts it, applies `mergeStoredMessage`, and writes it
+back - the same read-modify-write `updateOutboxEntry` has always used, and the same cost in a
+conversation of ten messages and one of ten thousand.
+
+The merge rule is one sentence: **a key the patch does not carry is a key the handler knows nothing
+about, so the stored value stands.** A key present as `undefined` counts as absent, because handlers
+build patches by spreading optionals. Clearing stays expressible, but only deliberately - `[]`,
+`false`, `0` - which is what an edit resetting `readBy`, or the removal of the last reaction, needs.
+`id` and `conversationId` are dropped from any patch: the API is keyed by id, and a row that changed
+conversation would vanish from both.
+
+What this replaces: every handler used to rebuild the WHOLE row out of what it happened to know, and
+`saveMessage` is a full-row replace, so the row's contents depended on which mutation touched it
+last. Each patch now carries exactly what its own mutation changes - a receipt writes read state, a
+reaction writes reactions, a deletion writes the tombstone and the replacement body.
+
+A patch on a row that is not there yet is a no-op, where a full-row write used to CREATE the row.
+That is the correct reading in the case it actually happens - a channel message, whose row is
+deliberately not stored, no longer gets one conjured by a reaction - and in the remaining window (a
+message buffered by a bulk ingest but not yet flushed to disk) the mutation is still applied in
+memory and the row converges on the next reconciliation, which is what the rest of this page is for.
+
+Two writers stay on `saveMessage` on purpose, and neither is a mutation of accumulated state:
+`persistSent` writes a message the device has just sent, under the LIVE conversation key, which a
+patch cannot move a row to; and the FCM-preview upgrade replaces a placeholder with the real body.
+Both now write back every field the in-memory message still carries, so neither erases anything
+either.
 
 ---
 

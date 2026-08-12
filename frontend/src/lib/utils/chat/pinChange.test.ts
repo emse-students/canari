@@ -32,6 +32,7 @@ function makeEncryptedStorage(): IStorage & { rows: EncryptedMessageRow[] } {
         else rows.push(row);
       }
     }),
+    updateMessage: vi.fn().mockResolvedValue(undefined),
     getMessages: vi.fn(),
     getMessagesPage: vi.fn(),
     deleteOldMessages: vi.fn().mockResolvedValue(0),

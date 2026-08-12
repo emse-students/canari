@@ -196,6 +196,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const found = findMessage(messageId);
     if (!found) return;
     const m = found.convo.messages[found.idx];
+    // A full-row write, not a patch: `liveConvId` may differ from the key the optimistic row was
+    // written under (the group was re-keyed mid-send), and a patch cannot move a row. So every
+    // field the in-memory message still carries is written back rather than dropped.
     await storage
       .saveMessage(
         {
@@ -205,7 +208,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           content: m.content,
           timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
           readBy: m.readBy,
+          readAt: m.readAt,
           reactions: m.reactions,
+          serverTimestamp: m.serverTimestamp,
+          isDeleted: m.isDeleted,
+          isEdited: m.isEdited,
+          ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
         },
         deviceKeyB64
       )

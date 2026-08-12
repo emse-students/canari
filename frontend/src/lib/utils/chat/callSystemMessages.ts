@@ -116,17 +116,10 @@ export async function recordCallEnded(
   ctx.conversations.set(groupId, { ...convo, messages: msgs });
 
   if (ctx.storage) {
+    // Rewriting the call-ended text is a mutation of an existing row: only the body changes, and
+    // a full-row write here erased every other field the row carried.
     await ctx.storage
-      .saveMessage(
-        {
-          id: messageId,
-          conversationId: groupId,
-          senderId: 'system',
-          content: nextContent,
-          timestamp: msg.timestamp.getTime(),
-        },
-        ctx.deviceKeyB64
-      )
+      .updateMessage(messageId, { content: nextContent }, ctx.deviceKeyB64)
       .catch(() => {});
   }
 }

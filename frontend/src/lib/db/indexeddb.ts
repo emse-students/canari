@@ -6,6 +6,7 @@ import type {
   IStorage,
   OutboxEntry,
   StoredMessage,
+  StoredMessagePatch,
 } from './types';
 import {
   decodeOutboxEntry,
@@ -13,7 +14,7 @@ import {
   mergeOutboxEntry,
   outboxClearColumns,
 } from './outboxCodec';
-import { fromMessagePayload, toMessagePayload } from './messagePayload';
+import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
 
 // ---------------------------------------------------------------------------
 // IndexedDB implementation (Web / PWA)
@@ -280,6 +281,41 @@ export class IndexedDbStorage implements IStorage {
         store.put(row);
       }
     });
+  }
+
+  /**
+   * Merge `patch` into the stored message (read-modify-write; re-encrypts the payload).
+   * No-op if the row is absent or undecryptable.
+   *
+   * Keyed lookup, so the cost is the same in a conversation of ten messages and one of ten
+   * thousand - which is what makes this usable on every mutation.
+   */
+  async updateMessage(id: string, patch: StoredMessagePatch, deviceKeyB64: string): Promise<void> {
+    const db = this.ensureDb();
+    const existing: any = await new Promise((resolve, reject) => {
+      const tx = db.transaction('messages', 'readonly');
+      const req = tx.objectStore('messages').get(id);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (!existing) return;
+    let msg: StoredMessage;
+    try {
+      const payload = (await decryptData(existing.cipherText, existing.iv, deviceKeyB64)) as Record<
+        string,
+        unknown
+      >;
+      msg = fromMessagePayload(
+        { id: existing.id, conversationId: existing.conversationId, timestamp: existing.timestamp },
+        payload
+      );
+    } catch {
+      // A row we cannot read is a row we must not overwrite: replacing it with the patch alone
+      // would turn an undecryptable message into a truncated one.
+      console.warn('Failed to decrypt message for update', id);
+      return;
+    }
+    await this.saveMessage(mergeStoredMessage(msg, patch), deviceKeyB64);
   }
 
   /** Decrypt and return all messages for `conversationId`, sorted oldest-first. Rows that fail decryption (wrong key or corruption) are silently skipped. */

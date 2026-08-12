@@ -9,7 +9,6 @@ import {
 import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { messageTime } from '$lib/utils/chat/messageOrder';
 import { isSolicitInFlight, noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
 import { digestIdentity, noteDigestReceived } from '$lib/utils/chat/historyDigestRendezvous';
@@ -498,18 +497,11 @@ export async function handleSystemEvent(
             const m = updatedMessages.find((x) => x.id === msgId);
             if (m) {
               try {
-                await storage.saveMessage(
-                  {
-                    id: m.id,
-                    conversationId: convoKey,
-                    senderId: m.senderId,
-                    content: m.content,
-                    timestamp: messageTime(m),
-                    readBy: m.readBy,
-                    readAt: m.readAt,
-                    reactions: messageReactions.get(m.id),
-                    serverTimestamp: m.serverTimestamp,
-                  },
+                // A receipt changes read state and nothing else. Writing the whole row here used
+                // to clear `isDeleted` / `isEdited` / `editedAt`, which this handler never knows.
+                await storage.updateMessage(
+                  m.id,
+                  { readBy: m.readBy, readAt: m.readAt },
                   deviceKeyB64
                 );
               } catch {
@@ -547,17 +539,11 @@ export async function handleSystemEvent(
         });
         if (storage) {
           try {
-            await storage.saveMessage(
-              {
-                id: deletedMsg.id,
-                conversationId: convoKey,
-                senderId: deletedMsg.senderId,
-                content: deletedMsg.content,
-                timestamp: messageTime(deletedMsg),
-                readBy: deletedMsg.readBy,
-                reactions: messageReactions.get(deletedMsg.id),
-                isDeleted: true,
-              },
+            // The tombstone and the replacement body, nothing else: the edit flags and the read
+            // state of the message being deleted are not this handler's to rewrite.
+            await storage.updateMessage(
+              deletedMsg.id,
+              { isDeleted: true, content: deletedMsg.content },
               deviceKeyB64
             );
           } catch {
@@ -591,15 +577,13 @@ export async function handleSystemEvent(
         });
         if (storage) {
           try {
-            await storage.saveMessage(
+            // `readBy: []` is a deliberate reset - an edited body has been read by nobody - and
+            // survives the merge because an empty array is a value, not an omission.
+            await storage.updateMessage(
+              editedMsg.id,
               {
-                id: editedMsg.id,
-                conversationId: convoKey,
-                senderId: editedMsg.senderId,
                 content: data.newContent,
-                timestamp: messageTime(editedMsg),
                 readBy: [],
-                reactions: messageReactions.get(editedMsg.id),
                 isEdited: true,
                 editedAt: editedAt.getTime(),
               },
@@ -754,13 +738,12 @@ export async function handleSystemEvent(
               for (const msg of nextMessages) {
                 if (!changedIds.has(msg.id)) continue;
                 try {
-                  await storage.saveMessage(
+                  // Only the metadata the merge above may have moved. The body is untouched here,
+                  // and `editedAt` - which a bundle does not carry - is left where it is rather
+                  // than erased.
+                  await storage.updateMessage(
+                    msg.id,
                     {
-                      id: msg.id,
-                      conversationId: convoKey,
-                      senderId: msg.senderId,
-                      content: msg.content,
-                      timestamp: messageTime(msg),
                       readBy: msg.readBy,
                       readAt: msg.readAt,
                       reactions: messageReactions.get(msg.id) ?? msg.reactions,
@@ -797,20 +780,8 @@ export async function handleSystemEvent(
         nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: filtered };
         conversations.set(convoKey, { ...c, messages: nextMsgs });
         if (storage) {
-          const target = nextMsgs[msgIdx];
           try {
-            await storage.saveMessage(
-              {
-                id: target.id,
-                conversationId: convoKey,
-                senderId: target.senderId,
-                content: target.content,
-                timestamp: target.timestamp.getTime(),
-                readBy: target.readBy,
-                reactions: filtered,
-              },
-              deviceKeyB64
-            );
+            await storage.updateMessage(nextMsgs[msgIdx].id, { reactions: filtered }, deviceKeyB64);
           } catch {
             // Non-blocking
           }

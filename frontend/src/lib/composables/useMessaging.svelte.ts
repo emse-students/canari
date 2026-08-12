@@ -329,6 +329,9 @@ export function useMessaging() {
         });
         if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
           try {
+            // The row is replaced wholesale, so everything the merged message still carries has to
+            // be written back: a reaction that landed on the FCM preview before the real body
+            // arrived would otherwise be erased by the upgrade.
             await ctx.storage.saveMessage(
               {
                 id: upgraded.id,
@@ -337,6 +340,12 @@ export function useMessaging() {
                 content: upgraded.content,
                 timestamp: upgraded.timestamp.getTime(),
                 serverTimestamp: upgraded.serverTimestamp,
+                readBy: upgraded.readBy,
+                readAt: upgraded.readAt,
+                reactions: upgraded.reactions,
+                isDeleted: upgraded.isDeleted,
+                isEdited: upgraded.isEdited,
+                ...(upgraded.editedAt ? { editedAt: upgraded.editedAt.getTime() } : {}),
                 isFcmPreview: false,
               },
               ctx.deviceKeyB64
@@ -810,20 +819,15 @@ export function useMessaging() {
    * Best-effort by design: the control event is already durable in the outbox, so a failed write
    * costs a stale local row, never a lost mutation for the group.
    */
-  async function persistLocalMutation(
-    msg: ChatMessage,
-    conversationKey: string,
-    ctx: MessagingContext
-  ): Promise<void> {
+  async function persistLocalMutation(msg: ChatMessage, ctx: MessagingContext): Promise<void> {
     if (!ctx.storage) return;
     try {
-      await ctx.storage.saveMessage(
+      // A patch, not a rewrite: `readAt` and `serverTimestamp` are known to the delivery path and
+      // not to this one, and a full-row write erased them every time the user reacted.
+      await ctx.storage.updateMessage(
+        msg.id,
         {
-          id: msg.id,
-          conversationId: conversationKey,
-          senderId: msg.senderId,
           content: msg.content,
-          timestamp: msg.timestamp.getTime(),
           readBy: msg.readBy,
           reactions: messageReactions.get(msg.id),
           isDeleted: msg.isDeleted,
@@ -866,7 +870,7 @@ export function useMessaging() {
       const nextMsgs = [...convo.messages];
       nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
       ctx.conversations.set(conversationKey, { ...convo, messages: nextMsgs });
-      await persistLocalMutation(nextMsgs[msgIdx], conversationKey, ctx);
+      await persistLocalMutation(nextMsgs[msgIdx], ctx);
     }
 
     const reactionDeps = {
@@ -904,7 +908,7 @@ export function useMessaging() {
     if (idx !== -1) {
       msgs[idx] = { ...msgs[idx], isDeleted: true, content: chat_system_message_deleted() };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
-      await persistLocalMutation(msgs[idx], ctx.selectedContact, ctx);
+      await persistLocalMutation(msgs[idx], ctx);
     }
   }
 
@@ -935,7 +939,7 @@ export function useMessaging() {
         readBy: [],
       };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
-      await persistLocalMutation(msgs[idx], ctx.selectedContact, ctx);
+      await persistLocalMutation(msgs[idx], ctx);
     }
   }
 

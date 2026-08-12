@@ -57,6 +57,14 @@ export interface StoredMessage {
 }
 
 /**
+ * The fields of a stored message a mutation is allowed to change.
+ *
+ * `id` and `conversationId` are the row's identity, never patchable: a reaction may not move a
+ * message to another conversation. Applied by `mergeStoredMessage`.
+ */
+export type StoredMessagePatch = Partial<Omit<StoredMessage, 'id' | 'conversationId'>>;
+
+/**
  * Raw encrypted message row as persisted on disk (IndexedDB or SQLite).
  * The content field of StoredMessage is never stored in plaintext - only this encrypted form exists on disk.
  */
@@ -170,6 +178,14 @@ export interface IStorage {
   saveMessage(msg: StoredMessage, deviceKeyB64: string): Promise<void>;
   /** Encrypt and persist a batch of messages in a single atomic write. */
   saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void>;
+  /**
+   * Merge `patch` into the stored message (read-modify-write; re-encrypts the payload).
+   * No-op if the row is absent or undecryptable.
+   *
+   * The way to persist a MUTATION of an existing message: `saveMessage` replaces the whole row, so
+   * a handler using it erases every field it did not itself carry. See `mergeStoredMessage`.
+   */
+  updateMessage(id: string, patch: StoredMessagePatch, deviceKeyB64: string): Promise<void>;
   /** Decrypt and return all messages for a conversation, sorted oldest-first. */
   getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]>;
   /** Return the most recent `limit` messages, optionally those strictly before `beforeTimestamp`. */

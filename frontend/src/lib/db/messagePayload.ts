@@ -11,7 +11,7 @@
  * no version tag and none is needed, because the payload only ever grows optional keys.
  */
 
-import type { StoredMessage } from './types';
+import type { StoredMessage, StoredMessagePatch } from './types';
 
 /** Identity fields stored in plaintext columns rather than inside the encrypted payload. */
 export interface StoredMessageRowKeys {
@@ -38,6 +38,25 @@ export function toMessagePayload(msg: StoredMessage): Record<string, unknown> {
   if (msg.isEdited) payload.isEdited = true;
   if (msg.editedAt) payload.editedAt = msg.editedAt;
   return payload;
+}
+
+/**
+ * Apply a patch to a stored message, returning a new message.
+ *
+ * A key the patch does not carry - absent, or present as `undefined` - leaves the stored value
+ * alone. That is the whole point. Persisting a mutation used to mean rebuilding the WHOLE row out
+ * of what the handler happened to know, and since `saveMessage` is a full-row replace, every field
+ * the handler did not know about was erased: a reaction landing on a deleted message cleared the
+ * tombstone, a read receipt on an edited one cleared `isEdited`. Each handler carried a different
+ * subset, so the row's contents depended on which mutation touched it last.
+ *
+ * Clearing a field is still expressible, but only on purpose: pass `false`, `[]` or `0`.
+ */
+export function mergeStoredMessage(msg: StoredMessage, patch: StoredMessagePatch): StoredMessage {
+  const defined = Object.entries(patch).filter(
+    ([key, value]) => value !== undefined && key !== 'id' && key !== 'conversationId'
+  );
+  return Object.assign({ ...msg }, Object.fromEntries(defined));
 }
 
 /** Read a positive number out of an untrusted decrypted payload, or `undefined`. */

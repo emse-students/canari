@@ -682,20 +682,11 @@ async function handleKnownGroup({
             next[idx] = { ...next[idx], reactions: updated };
             conversations.set(convoKey, { ...c, messages: next });
             if (storage) {
-              const t = next[idx];
+              // A reaction changes the reactions. Writing the whole row here used to clear the
+              // delete/edit flags, so reacting to an edited message resurrected the original body
+              // on the next reload.
               await storage
-                .saveMessage(
-                  {
-                    id: t.id,
-                    conversationId: convoKey,
-                    senderId: t.senderId,
-                    content: t.content,
-                    timestamp: t.timestamp.getTime(),
-                    readBy: t.readBy,
-                    reactions: updated,
-                  },
-                  deviceKeyB64
-                )
+                .updateMessage(next[idx].id, { reactions: updated }, deviceKeyB64)
                 .catch(() => {});
             }
           }
