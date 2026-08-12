@@ -406,6 +406,18 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
 - A cross-process contract is only as good as its test: pin the PATHS as well as the field names,
   or a writer on one OS fills a directory nothing ever reads.
 - Never let a capability probe swallow its own failure, and never branch on an error MESSAGE.
+- **MAKING A DEAD CODE PATH REACHABLE RE-OPENS EVERY CHECK THAT PATH NEVER HAD.** The replay handlers
+  for `delete_message` / `edit_message` applied a mutation by id with NO author check, which had
+  cost nothing while no mutation ever entered the shared log; putting them there made the handlers
+  the path every mutation takes, and re-opened one layer down a hole the live path had closed six
+  months earlier (`f0dc3296`, `f924932b`). Before enabling dead code, audit it as NEW code - it has
+  never been subject to any review the reachable paths went through.
+- **CARRY THE EVIDENCE THAT THE WINDOW OPENED, OR A GREEN RESULT CANNOT BE TOLD FROM AN UNEXERCISED
+  ONE.** Re-running MSG-1 after its fix PASSED - vacuously: the store was warm, the probe found
+  nothing, the replay never ran, so the race window the bug lives in never opened. Any check whose
+  bug needs a window must assert the window opened (`msg1b.mjs` refuses to report PASS unless the
+  message pane actually grew), and the same rule is why a source-reading guard needs a vacuity
+  assertion (`historyStateKeyInvalidation.test.ts` fails if it finds fewer write sites than exist).
 - **A DISTRIBUTION IS NOT A DIAGNOSIS: BEFORE BLAMING A CAUSE, CHECK WHETHER THE MECHANISM THAT
   WOULD HAVE PREVENTED IT IS ALREADY RUNNING.** "p90 4.25 MB, i.e. unmodified phone photos" named a
   cause from a shape and planned an x5-10 lever on it; `compressImage` was already on every upload

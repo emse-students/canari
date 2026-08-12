@@ -92,13 +92,10 @@ the narrative to the wiki page the entry points at. **Do not reconstruct shipped
 running on the device (0 lock timeouts, 1 MLS thread, 0 kills, against 97/20+/1 before). **The iOS
 half of it is compile-verified only** and joins the owed device list below.
 
-**THE HISTORY-RECONCILIATION REWORK IS CODE-COMPLETE.** Everything specified in
-**[history-reconciliation](docs/wiki/protocols/history-reconciliation.md)** is implemented: the
-durability split, D1-D7 with the two security fixes they exposed, the read watermark, the floor +
-device window (SQLite v7), the `since` clipping, the state key and its cache, the reconciliation
-exchange on connect, the scrollback, every deletion under "What disappears", and the three measured
-defects. **That page is the spec AND the record - read it, do not re-derive the design here and do
-NOT re-open a decision in its Decisions table. Its Open questions section is now empty.**
+**THE HISTORY-RECONCILIATION REWORK IS CODE-COMPLETE**, all of it, and
+**[history-reconciliation](docs/wiki/protocols/history-reconciliation.md)** is both the spec and the
+record: read it, do not re-derive the design here, do NOT re-open a decision in its Decisions table.
+Its Open questions section is empty.
 
 **NOTHING OF IT HAS RUN ON A DEVICE OR IN A BROWSER.** The gates are green (0 svelte-check errors,
 1351/1351 frontend tests) and that is ALL they prove. **The next task is the deploy, then the
@@ -132,20 +129,10 @@ Four things a future session must not undo, because the wiki explains them but t
   Each stream entry records its own `silent`, and `redeliverMissedDuringActivationWindow` filters on
   it or it rings the user for every reaction.
 
-**The two security holes found while verifying D7 (`f0dc3296`) are worth remembering as a SHAPE:**
-the replay path applied `delete_message`/`edit_message` by id with NO author check (the live path has
-had one since `f924932b`), so making dead handlers reachable re-opened a hole one layer down; and
-`POST mls/send` never compared `body.senderId` to the authenticated `x-user-id`.
-`historySystemEvents.test.ts` is that module's first test file, which is why a dead handler went
-unnoticed as long as it did.
-
-The chain that produced the rework, kept only because it explains why the spec looks like it does:
-MSG-1 failed, was root-caused to a history load ASSIGNING a freshly read page over the rendered list
-(fixed, `dabed2f2`, `mergeMessagePage`). Re-running MSG-1 then PASSED **vacuously** - the store was
-warm, the probe found nothing, the replay never ran. `msg1b.mjs` forces the window open and refuses
-to report PASS unless the pane grew: **carry the evidence that the window opened, or a green result
-cannot be told from an unexercised one.** That check then exposed the durable `unreadable-frames`
-marker no peer could ever discharge, which is what this whole rework removed.
+Two SHAPES from it, both written up in [durable-rules](docs/wiki/durable-rules.md): **making a dead
+code path reachable re-opens every check that path never had** (`f0dc3296`, the replay applying
+`delete_message` with no author check), and **carry the evidence that the window opened, or a green
+result cannot be told from an unexercised one** (`msg1b.mjs`, after MSG-1 passed vacuously).
 
 
 **A1 IS UNREACHABLE: the phone dropped off USB mid-session** (`adb devices` empty, survives
@@ -155,10 +142,9 @@ off, so the app sits on the PIN screen with an EMPTY local store - which reads a
 is not one), and the **A1-vs-W1 reconciliation**, the one MULTI measurement the browsers cannot
 make.
 
-**The order the user set governs what comes next:** the roadmap is clear, so the remaining task is to
-**re-run the cross-client campaign from the START (post-setup)**. The scripts exist, so it should be
-fast, and it exercises everything. **Commit AND push are authorised so prod picks changes up: prod IS
-the test server** until a `dev.canari-emse.fr` exists.
+**The order the user set governs what comes next:** re-run the cross-client campaign from the START
+(post-setup) - the scripts exist, and it exercises everything. **Commit AND push are authorised so
+prod picks changes up: prod IS the test server** until a `dev.canari-emse.fr` exists.
 
 **Standing architectural directives from the user, verbatim:** *"le probleme doit etre
 architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout soit
