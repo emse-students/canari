@@ -20,7 +20,7 @@ import type { Conversation } from '$lib/types';
 import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
 import { forgetAwaitingHistory } from './historySolicit';
 import { mergeMessagePage } from './messageMerge';
-import { isUnreadForUser } from './unread';
+import { isUnreadForUser, watermarkFor } from './readState';
 import { isChannelConversationId } from './channelCrypto';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -63,6 +63,33 @@ export function parseDirectPeerFromName(rawName: string, userId: string): string
 /** Canonical direct-conversation group name for a peer: `self::peer` (both lowercased). */
 export function canonicalDirectName(userId: string, peerId: string): string {
   return `${userId.toLowerCase()}::${peerId.toLowerCase()}`;
+}
+
+/**
+ * Projects a live conversation onto the metadata row persisted for it.
+ *
+ * One place, because the row is written WHOLE: a caller that built it by hand and forgot a field
+ * would silently erase that field - and one of them is now the conversation's entire read state.
+ *
+ * @param id Key under which the conversation is held (equals the MLS group id).
+ * @param userId Current user, used to build the canonical `self::peer` name of a direct chat.
+ */
+export function toConversationMeta(
+  id: string,
+  convo: Conversation,
+  userId: string
+): ConversationMeta {
+  return {
+    id,
+    name:
+      (convo.conversationType ?? 'group') === 'direct'
+        ? canonicalDirectName(userId, convo.directPeerId ?? convo.contactName)
+        : convo.name,
+    lifecycle: convo.lifecycle,
+    // The last-message timestamp, so the sidebar sort order survives DB reloads.
+    updatedAt: convo.lastMessageAt ?? Date.now(),
+    readWatermarks: convo.readWatermarks,
+  };
 }
 
 /**
@@ -803,6 +830,11 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           storage: ctx.storage,
           getConversation: (name) => ctx.conversations.get(name),
           setConversation: (name, next) => ctx.conversations.set(name, next),
+          saveConversation: async (name) => {
+            const convo = ctx.conversations.get(name);
+            if (convo)
+              await ctx.storage.saveConversation(toConversationMeta(name, convo, ctx.userId));
+          },
           messageReactions: ctx.messageReactions,
           log: ctx.log,
           primedFirstPage: batchFirstPages.get(meta.id),
@@ -823,16 +855,16 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         const current = ctx.conversations.get(meta.id);
         if (current) {
           // "Arrived during this replay" is only a PROXY for "not seen yet", and it breaks when
-          // the replay carries a history bundle - hence the readBy check in isUnreadForUser.
+          // the replay carries a history bundle - hence the watermark check in isUnreadForUser.
           //
           // COUNTED OVER THE MERGED LIST, NOT OVER THE PAGE. The page is one window of the store and
           // a message delivered live while the replay ran is not in it, so counting the page alone
           // both dropped that message from the display and then wrote a badge that did not include
           // it - the same stale read, once as a loss and once as an undercount.
-          const meNorm = ctx.userId.toLowerCase();
+          const myWatermark = watermarkFor(current.readWatermarks, ctx.userId.toLowerCase());
           const messages = mergeMessagePage(current.messages, refreshedMsgs);
           const newUnreadCount = messages.filter(
-            (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, meNorm)
+            (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, myWatermark)
           ).length;
           ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
           for (const m of refreshedMsgs) {

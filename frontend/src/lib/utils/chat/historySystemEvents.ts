@@ -1,8 +1,18 @@
 import { canari } from '$lib/proto/canari.js';
-import type { AddMessageToChatOptions, Conversation, MessageReaction } from '$lib/types';
+import type {
+  AddMessageToChatOptions,
+  Conversation,
+  MessageReaction,
+  ReadWatermarks,
+} from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
+import {
+  mergeReadWatermark,
+  parseReadWatermarks,
+  watermarkAfterReading,
+} from '$lib/utils/chat/readState';
 import {
   chat_system_message_deleted,
   chat_system_group_renamed,
@@ -34,12 +44,10 @@ export type PendingHistoryMessage = {
   content: string;
 } & AddMessageToChatOptions & {
     reactions?: MessageReaction[];
-    readBy?: string[];
     isDeleted?: boolean;
     isEdited?: boolean;
     /** Unix ms of the last edit, as carried by a history_bundle. */
     editedAt?: number;
-    readAt?: number;
   };
 
 /**
@@ -67,8 +75,12 @@ export interface ReplaySystemEventCtx {
   deletedMessages: Map<string, { by: string }>;
   /** Messages edited via an `edit_message` event, with their new content and who claims to edit. */
   editedMessages: Map<string, { content: string; editedAt: Date; by: string }>;
-  /** Read receipts to re-apply to DB after the batch save (which would otherwise drop readBy). */
-  readReceiptDbUpdates: Array<{ msgId: string; senderNorm: string; readAt?: number }>;
+  /**
+   * Read state accumulated over the page, one instant per participant, merged as `max`. Written to
+   * the conversation once at the end of the replay rather than message by message - which is the
+   * whole economy of the watermark: a page of a thousand messages costs one entry per reader.
+   */
+  readWatermarkUpdates: ReadWatermarks;
   /** Queues a decoded message for the page batch (assigns ingestSequence + bumps the added count). */
   pushPendingMessage: (entry: Omit<PendingHistoryMessage, 'ingestSequence'>) => void;
 }
@@ -115,9 +127,15 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     reactionUpdates,
     deletedMessages,
     editedMessages,
-    readReceiptDbUpdates,
+    readWatermarkUpdates,
     pushPendingMessage,
   } = ctx;
+
+  /** Records a participant's read state into the page accumulator, keeping the later instant. */
+  const noteReadUpTo = (userNorm: string, at: number): void => {
+    const merged = mergeReadWatermark(readWatermarkUpdates, userNorm, at);
+    if (merged) Object.assign(readWatermarkUpdates, merged);
+  };
 
   if (!parsed.system) return;
 
@@ -201,32 +219,22 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     } else if (parsed.system.event === 'groupDeleted') {
       const getName = await resolveDisplayNames([senderNorm]);
       systemContent = chat_system_conversation_deleted({ sender: getName(senderNorm) });
+    } else if (parsed.system.event === 'read_watermark') {
+      noteReadUpTo(senderNorm, Number(data.at));
     } else if (parsed.system.event === 'read_receipt') {
+      // The pre-watermark shape, which names message ids instead of an instant. Translated using
+      // the messages we hold: an id we do not have says nothing this could act on.
       const msgIds: string[] = data.messageIds ?? [];
       const convo = getConversation(contactName);
       if (convo && msgIds.length > 0) {
-        const readAt = parseServerTimestampMs(msg.timestamp) ?? Date.now();
-        let updated = false;
-        const newMsgs = [...convo.messages];
-        for (const msgId of msgIds) {
-          const idx = newMsgs.findIndex((m) => m.id === msgId);
-          if (idx !== -1) {
-            const current = newMsgs[idx];
-            const readBy = current.readBy || [];
-            if (!readBy.includes(senderNorm)) {
-              newMsgs[idx] = {
-                ...current,
-                readBy: [...readBy, senderNorm],
-                readAt: current.readAt ?? readAt,
-              };
-              updated = true;
-            }
-          }
-          readReceiptDbUpdates.push({ msgId, senderNorm, readAt });
-        }
-        if (updated) {
-          setConversation(contactName, { ...convo, messages: newMsgs });
-        }
+        const idSet = new Set(msgIds);
+        noteReadUpTo(
+          senderNorm,
+          watermarkAfterReading(
+            convo.messages.filter((mm) => idSet.has(mm.id)),
+            0
+          )
+        );
       }
     } else if (parsed.system.event === 'delete_message' && data.messageId) {
       const convo = getConversation(contactName);
@@ -258,7 +266,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           ...convo,
           messages: convo.messages.map((mm) =>
             mm.id === data.messageId
-              ? { ...mm, isEdited: true, editedAt, content: data.newContent, readBy: [] }
+              ? { ...mm, isEdited: true, editedAt, content: data.newContent }
               : mm
           ),
         });
@@ -288,20 +296,24 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // device coming online after the queue TTL (7 days) still recovers the history
       // from Redis Streams.
       const bundleData = data.messages;
+      // Read state travels once for the whole conversation, so it is taken even from a bundle
+      // carrying no messages at all - "you are missing nothing, and here is who has read what".
+      const bundleWatermarks = parseReadWatermarks(data.readWatermarks);
+      if (bundleWatermarks) {
+        for (const [userNorm, at] of Object.entries(bundleWatermarks)) noteReadUpTo(userNorm, at);
+      }
       if (Array.isArray(bundleData) && bundleData.length > 0) {
         const existingIds = new Set(
           (getConversation(contactName)?.messages ?? []).map((m) => m.id)
         );
         const serverMs = parseServerTimestampMs(msg.timestamp);
-        // Merge transport-carried read state / reactions onto messages we ALREADY have (e.g. our
+        // Merge transport-carried reactions and edit times onto messages we ALREADY have (e.g. our
         // own sent messages): they are skipped by the "add new" loop below, so without this their
-        // bundle readBy/readAt/reactions would be lost and the "read" status never shows.
+        // bundle metadata would be lost.
         const convoForMerge = getConversation(contactName);
         if (convoForMerge) {
           type BundleMeta = {
             id?: string;
-            readBy?: string[];
-            readAt?: number;
             reactions?: MessageReaction[];
             editedAt?: number;
           };
@@ -314,26 +326,6 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             const b = bundleById.get(existing.id);
             if (!b) return existing;
             let next = existing;
-            if (Array.isArray(b.readBy) && b.readBy.length > 0) {
-              const lowered = b.readBy.map((u) => String(u).toLowerCase());
-              const union = new Set([...(next.readBy ?? []), ...lowered]);
-              if (union.size !== (next.readBy?.length ?? 0)) {
-                next = { ...next, readBy: [...union] };
-                mergedAny = true;
-              }
-              // Persist each reader after the page batch (which would otherwise drop readBy).
-              for (const reader of lowered) {
-                readReceiptDbUpdates.push({
-                  msgId: existing.id,
-                  senderNorm: reader,
-                  readAt: b.readAt,
-                });
-              }
-            }
-            if (typeof b.readAt === 'number' && (next.readAt == null || b.readAt < next.readAt)) {
-              next = { ...next, readAt: b.readAt };
-              mergedAny = true;
-            }
             // Merged pair by pair, larger timestamp wins - the same rule as the live path. Seeding
             // only when we held nothing left a removal unable to reach a stale placement (D3).
             if (Array.isArray(b.reactions) && b.reactions.length > 0) {
@@ -368,17 +360,16 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
               // Preserve each message's original serverTimestamp (stable ordering).
               // Fall back on serverMs (bundle timestamp) only when absent.
               serverTimestamp: typeof m.serverTimestamp === 'number' ? m.serverTimestamp : serverMs,
-              // Metadata transferred from the source device: reactions, receipts,
-              // deletions and edits - full state at migration time.
+              // Metadata transferred from the source device: reactions, deletions and edits -
+              // full state at migration time. Read state is not here: it belongs to the
+              // conversation, not to any one message.
               ...(Array.isArray(m.reactions) && m.reactions.length > 0
                 ? { reactions: m.reactions }
                 : {}),
-              ...(Array.isArray(m.readBy) && m.readBy.length > 0 ? { readBy: m.readBy } : {}),
               ...(m.isDeleted === true ? { isDeleted: true } : {}),
               ...(m.isEdited === true ? { isEdited: true } : {}),
               // Carried with the flag, or the message shows "edited" with no time for ever.
               ...(typeof m.editedAt === 'number' && m.editedAt > 0 ? { editedAt: m.editedAt } : {}),
-              ...(typeof m.readAt === 'number' ? { readAt: m.readAt } : {}),
             });
           }
         }

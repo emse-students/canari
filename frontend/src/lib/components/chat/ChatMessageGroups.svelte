@@ -2,7 +2,8 @@
   import { SvelteSet } from 'svelte/reactivity';
   import Avatar from '../shared/Avatar.svelte';
   import MessageBubble from '../messages/MessageBubble.svelte';
-  import type { ChatMessage, MessageReaction } from '$lib/types';
+  import type { ChatMessage, MessageReaction, ReadWatermarks } from '$lib/types';
+  import { readersOf } from '$lib/utils/chat/readState';
   import {
     isMessageGroupRow,
     type MessageGroup,
@@ -55,6 +56,11 @@
     isDirect?: boolean;
     /** When true, enables mobile-specific interactions in message bubbles. */
     isMobile?: boolean;
+    /**
+     * The conversation's read state - one instant per participant. Who has read a given message is
+     * DERIVED from it here rather than stored on the message, so there is one copy of the fact.
+     */
+    readWatermarks?: ReadWatermarks;
   }
 
   let {
@@ -79,7 +85,11 @@
     authToken,
     isDirect = false,
     isMobile = false,
+    readWatermarks,
   }: Props = $props();
+
+  /** Everyone who has read `msg`, its author excluded. */
+  const readersOfMessage = (msg: ChatMessage): string[] => readersOf(msg, readWatermarks);
 
   const pinnedSet = $derived(new Set(pinnedIds));
 
@@ -104,7 +114,7 @@
           isMessageGroupRow(g) &&
           g.message.isOwn &&
           !g.message.isSystem &&
-          (g.message.readBy?.length ?? 0) > 0
+          readersOfMessage(g.message).length > 0
       )?.message.id ?? null
   );
 
@@ -265,8 +275,7 @@
               isSystem={msg.isSystem}
               replyTo={msg.replyTo}
               {reactions}
-              readBy={msg.readBy}
-              readAt={msg.readAt}
+              readBy={readersOfMessage(msg)}
               isLastOwn={msg.id === lastOwnMessageId}
               isReadReceiptAnchor={msg.id === lastReadOwnMessageId}
               isEdited={msg.isEdited}

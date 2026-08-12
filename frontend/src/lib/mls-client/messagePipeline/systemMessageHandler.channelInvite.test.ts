@@ -23,7 +23,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     saveConversation: vi.fn().mockResolvedValue(undefined),
     getSelectedContact: () => 'dm1',
     setSelectedContact: vi.fn(),
-    onReadReceiptReceived: vi.fn(),
+    onReadStateAdvanced: vi.fn(),
     log: vi.fn(),
     convo: { id: 'dm1', lifecycle: 'active', messages: [] },
     convoKey: 'dm1',

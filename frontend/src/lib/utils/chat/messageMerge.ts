@@ -59,21 +59,20 @@ function isUnsent(msg: ChatMessage): boolean {
 
 /**
  * Reconciles one message present on BOTH sides. The stored row is authoritative for content and
- * server-assigned fields, with two exceptions that are corrections rather than preferences:
+ * server-assigned fields, with one exception that is a correction rather than a preference: it may
+ * never DOWNGRADE an envelope already on screen back to a notification preview, which is what
+ * taking the page verbatim would do when the page still holds the FCM row.
  *
- *   - it may never DOWNGRADE an envelope already on screen back to a notification preview, which is
- *     what taking the page verbatim would do when the page still holds the FCM row;
- *   - `readBy` is grow-only. Reading is optimistically applied in memory before the network ACK, so
- *     taking the page's array wholesale un-reads what the user just read and the badge comes back.
+ * Read state used to need a rule here too - the page's `readBy` would un-read what the user had
+ * just read. It no longer lives on the message at all, so a page read cannot carry a stale copy of
+ * it: see `$lib/utils/chat/readState`.
  */
 function reconcile(existing: ChatMessage, incoming: ChatMessage): ChatMessage {
-  const base = shouldUpgradeMessage(existing, incoming.content)
+  return shouldUpgradeMessage(existing, incoming.content)
     ? mergeMessageUpgrade(existing, incoming)
     : isEnvelopeContent(existing.content) && isFcmPreviewContent(incoming.content)
       ? existing
       : { ...incoming };
-  const readBy = [...new Set([...(existing.readBy ?? []), ...(incoming.readBy ?? [])])];
-  return readBy.length > 0 ? { ...base, readBy } : base;
 }
 
 /**

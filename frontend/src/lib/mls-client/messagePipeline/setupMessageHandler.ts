@@ -931,11 +931,9 @@ async function upsertConversation(
             senderId: m.senderId,
             content: m.content,
             timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
-            readBy: m.readBy,
             reactions: m.reactions,
             isDeleted: m.isDeleted,
             isEdited: m.isEdited,
-            readAt: m.readAt,
             serverTimestamp: m.serverTimestamp,
           }));
         if (toSave.length > 0) {

@@ -15,10 +15,8 @@
     isReadReceiptAnchor: boolean;
     /** Current send status of the message. */
     status?: 'pending' | 'sending' | 'sent' | 'error';
-    /** List of user IDs who have read the message. */
+    /** User IDs who have read the message, derived from the conversation's read watermarks. */
     readBy: string[];
-    /** Timestamp of first read receipt - kept for API compat, detail shown in tooltip. */
-    readAt?: number;
     /** When true, renders outside the bubble (delivery/read indicators). */
     outsideBubble?: boolean;
     /** Send time of the message, shown inside the bubble. */
@@ -37,7 +35,6 @@
     isReadReceiptAnchor = false,
     status,
     readBy,
-    readAt: _readAt,
     outsideBubble = false,
     timestamp,
     groupPosition,

@@ -44,11 +44,8 @@ export interface ChatSessionCallbacks {
     messageId: string;
     deletedBy?: string;
   }) => void;
-  onReadReceiptReceived?: (event: {
-    conversationKey: string;
-    senderId: string;
-    messageIds: string[];
-  }) => void;
+  /** A participant's read watermark moved forward - `at` is how far they have now read. */
+  onReadStateAdvanced?: (event: { conversationKey: string; senderId: string; at: number }) => void;
   /** Drains the orphan buffer for a conversation once it is added to the map
    *  (e.g. after processing an MLS Welcome). Called through MessageHandlerDeps. */
   drainOrphanMessages?: (convoKey: string) => void;

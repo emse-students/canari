@@ -28,7 +28,7 @@ function makeCtx(senderNorm: string, owner = 'peer') {
     saveConversation: vi.fn().mockResolvedValue(undefined),
     getSelectedContact: () => null,
     setSelectedContact: vi.fn(),
-    onReadReceiptReceived: vi.fn(),
+    onReadStateAdvanced: vi.fn(),
     log: vi.fn(),
     convo: {},
     convoKey: 'g1',

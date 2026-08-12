@@ -2,6 +2,7 @@ import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
+import type { ReadWatermarks } from '$lib/types';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
@@ -445,8 +446,9 @@ export async function kickStaleLeaf(
 /**
  * Serialises a `StoredMessage` for transport in a `history_bundle`.
  *
- * Includes all metadata (reactions, read receipts, isDeleted, isEdited, secondary timestamps)
- * so the recipient gets the complete state and can sort messages stably after a group migration.
+ * Includes all metadata (reactions, isDeleted, isEdited, secondary timestamp) so the recipient gets
+ * the complete state and can sort messages stably after a group migration. Read state is NOT here:
+ * it belongs to the conversation, and travels once per bundle rather than once per message.
  */
 function serializeForBundle(m: StoredMessage) {
   return {
@@ -455,16 +457,13 @@ function serializeForBundle(m: StoredMessage) {
     content: m.content,
     timestamp: typeof m.timestamp === 'number' ? m.timestamp : Number(m.timestamp),
     ...(m.reactions?.length ? { reactions: m.reactions } : {}),
-    ...(m.readBy?.length ? { readBy: m.readBy } : {}),
     ...(m.isDeleted ? { isDeleted: true } : {}),
     ...(m.isEdited ? { isEdited: true } : {}),
     // The edit TIME travels with the edit flag. Sending one without the other left a device
     // restored from a bundle showing "edited" with no time, permanently - there is no second
     // source for it, since the sender's own edit is never echoed back over MLS.
     ...(m.editedAt ? { editedAt: m.editedAt } : {}),
-    // Secondary timestamps: needed for stable post-migration sorting and for correctly
-    // displaying the first read-receipt date.
-    ...(m.readAt ? { readAt: m.readAt } : {}),
+    // Secondary timestamp: needed for stable post-migration sorting.
     ...(m.serverTimestamp ? { serverTimestamp: m.serverTimestamp } : {}),
   };
 }
@@ -487,13 +486,43 @@ function serializeForBundle(m: StoredMessage) {
  * and narrowing the set on an application message burns the sender ratchet budget
  * (`sender_ratchet_config` is (2000, 2000)) into a generation gap the other members can never close.
  */
-function bundleFrame(messages: unknown[], to: string, vouched?: boolean): Uint8Array {
+function bundleFrame(
+  messages: unknown[],
+  to: string,
+  opts: { vouched?: boolean; readWatermarks?: ReadWatermarks } = {}
+): Uint8Array {
+  const { vouched, readWatermarks } = opts;
   return encodeAppMessage(
     mkSystem(
       'history_bundle',
-      JSON.stringify({ messages, to, ...(vouched === false ? { vouched: false } : {}) })
+      JSON.stringify({
+        messages,
+        to,
+        ...(vouched === false ? { vouched: false } : {}),
+        // The conversation's read state: a handful of numbers, sent whole with every frame
+        // because merging it is `max` and therefore free to repeat. Sending it once would make
+        // its delivery depend on which chunk survived.
+        ...(readWatermarks ? { readWatermarks } : {}),
+      })
     )
   );
+}
+
+/**
+ * The read state stored for `groupId`, read from the conversation row rather than the messages.
+ *
+ * Returns `undefined` when there is none or the read fails - a bundle carrying no read state is a
+ * perfectly ordinary bundle, and the receiver's own state is left where it was.
+ */
+async function storedReadWatermarks(
+  groupId: string,
+  storage: IStorage
+): Promise<ReadWatermarks | undefined> {
+  try {
+    return (await storage.getConversations()).find((c) => c.id === groupId)?.readWatermarks;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -542,6 +571,7 @@ export async function sendFullHistoryBundle(
     log(`[HISTORY_BUNDLE] Read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
     return;
   }
+  const readWatermarks = await storedReadWatermarks(groupId, storage);
   if (messages.length === 0) {
     if (isAwaitingHistory(selfUserId, groupId)) {
       log(
@@ -549,7 +579,8 @@ export async function sendFullHistoryBundle(
       );
       return;
     }
-    const bytes = bundleFrame([], to);
+    // A group with no messages can still have read state worth handing over.
+    const bytes = bundleFrame([], to, { readWatermarks });
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
       log(`[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (group has no history)`);
@@ -559,7 +590,7 @@ export async function sendFullHistoryBundle(
     return;
   }
 
-  await sendBundleChunks(groupId, messages, { mlsService, log }, { chunkSize, to });
+  await sendBundleChunks(groupId, messages, { mlsService, log }, { chunkSize, to, readWatermarks });
   log(`[HISTORY_BUNDLE] Full history sent: ${messages.length} message(s)`);
 }
 
@@ -582,12 +613,16 @@ async function sendBundleChunks(
   groupId: string,
   messages: StoredMessage[],
   { mlsService, log }: HistorySendDeps,
-  { chunkSize, to }: { chunkSize: number; to: string }
+  {
+    chunkSize,
+    to,
+    readWatermarks,
+  }: { chunkSize: number; to: string; readWatermarks?: ReadWatermarks }
 ): Promise<void> {
   const totalChunks = Math.ceil(messages.length / chunkSize);
   for (let i = 0; i < messages.length; i += chunkSize) {
     const payload = messages.slice(i, i + chunkSize).map(serializeForBundle);
-    const bytes = bundleFrame(payload, to);
+    const bytes = bundleFrame(payload, to, { readWatermarks });
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
       log(
@@ -752,6 +787,7 @@ export async function sendHistoryBundleForIds(
     return;
   }
 
+  const readWatermarks = await storedReadWatermarks(groupId, storage);
   const wanted = new Set(ids);
   let selected: StoredMessage[] = [];
   if (wanted.size > 0) {
@@ -776,7 +812,7 @@ export async function sendHistoryBundleForIds(
     // ABSENCE means vouched, which is what every client shipped before this field assumes when it
     // reads an empty bundle - so an old responder stays correctly interpreted by a new requester.
     const vouched = emptyMeans === 'complete';
-    const bytes = bundleFrame([], to, vouched);
+    const bytes = bundleFrame([], to, { vouched, readWatermarks });
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
       log(
@@ -788,7 +824,7 @@ export async function sendHistoryBundleForIds(
     return;
   }
 
-  await sendBundleChunks(groupId, selected, { mlsService, log }, { chunkSize, to });
+  await sendBundleChunks(groupId, selected, { mlsService, log }, { chunkSize, to, readWatermarks });
   log(
     `[HISTORY_BUNDLE] Diff sent for ${groupId.slice(0, 8)}…: ${selected.length} of ${wanted.size} requested message(s)`
   );

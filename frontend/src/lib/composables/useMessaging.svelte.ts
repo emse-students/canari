@@ -342,8 +342,6 @@ export function useMessaging() {
                 content: upgraded.content,
                 timestamp: upgraded.timestamp.getTime(),
                 serverTimestamp: upgraded.serverTimestamp,
-                readBy: upgraded.readBy,
-                readAt: upgraded.readAt,
                 reactions: upgraded.reactions,
                 isDeleted: upgraded.isDeleted,
                 isEdited: upgraded.isEdited,
@@ -431,7 +429,6 @@ export function useMessaging() {
             timestamp: newMsg.timestamp.getTime(),
             serverTimestamp: options.serverTimestamp,
             ...(options.isFcmPreview ? { isFcmPreview: true } : {}),
-            ...(options.isSystem ? { readBy: [] } : {}),
           },
           ctx.deviceKeyB64
         );
@@ -824,13 +821,12 @@ export function useMessaging() {
   async function persistLocalMutation(msg: ChatMessage, ctx: MessagingContext): Promise<void> {
     if (!ctx.storage) return;
     try {
-      // A patch, not a rewrite: `readAt` and `serverTimestamp` are known to the delivery path and
-      // not to this one, and a full-row write erased them every time the user reacted.
+      // A patch, not a rewrite: `serverTimestamp` is known to the delivery path and not to this
+      // one, and a full-row write erased it every time the user reacted.
       await ctx.storage.updateMessage(
         msg.id,
         {
           content: msg.content,
-          readBy: msg.readBy,
           reactions: messageReactions.get(msg.id),
           isDeleted: msg.isDeleted,
           isEdited: msg.isEdited,
@@ -941,13 +937,7 @@ export function useMessaging() {
     const msgs = [...convo.messages];
     const idx = msgs.findIndex((m) => m.id === messageId);
     if (idx !== -1) {
-      msgs[idx] = {
-        ...msgs[idx],
-        isEdited: true,
-        editedAt: new SvelteDate(),
-        content: text,
-        readBy: [],
-      };
+      msgs[idx] = { ...msgs[idx], isEdited: true, editedAt: new SvelteDate(), content: text };
       ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
       await persistLocalMutation(msgs[idx], ctx);
     }

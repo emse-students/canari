@@ -29,6 +29,13 @@ export interface MessageReaction {
   removed?: boolean;
 }
 
+/**
+ * Read state for a conversation: `userId (lowercase) -> the instant that user has read up to`,
+ * compared against a message's own client timestamp. Merged as `max`, which is what makes it
+ * converge. See `$lib/utils/chat/readState` for the merge and every derived question.
+ */
+export type ReadWatermarks = Record<string, number>;
+
 /** Compact reference to a quoted/replied-to message. Used in ChatMessage, envelopes, and addMessageToChat options. */
 export type MessageReference = {
   id: string;
@@ -73,9 +80,6 @@ export interface ChatMessage {
   status?: 'pending' | 'sending' | 'sent' | 'error';
   replyTo?: MessageReference;
   reactions?: MessageReaction[];
-  readBy?: string[];
-  /** Unix ms when the first read receipt for this message was received locally. Persisted to DB. */
-  readAt?: number;
   isEdited?: boolean;
   isDeleted?: boolean;
   /** In-session ordering during bulk catch-up (not persisted); use serverTimestamp for stable reload ordering. */
@@ -113,6 +117,12 @@ export interface Conversation {
   lifecycle: ConversationLifecycle;
   mlsStateHex: string | null;
   unreadCount?: number;
+  /**
+   * Read state for the whole conversation: one monotone instant per participant, merged as `max`.
+   * Replaces the per-message `readBy` array - see `$lib/utils/chat/readState` for why the read
+   * state of a conversation cannot live on its messages.
+   */
+  readWatermarks?: ReadWatermarks;
   conversationType?: 'direct' | 'group' | 'channel';
   directPeerId?: string;
   /** Media-service ID of the group image (unencrypted avatar). Channels never carry one. */

@@ -237,12 +237,36 @@ a deleted body, at a price. **Open question** - see the table at the end.
 
 ### Read state becomes a watermark
 
-One monotone value per participant - *read up to T* - merged as `max`, replacing the per-message
-`readBy` array. It goes in the shared log, so a new or reinstalled device recovers its read state
-without needing a peer online.
+**SHIPPED.** One monotone value per participant - *read up to T* - merged as `max`, replacing the
+per-message `readBy` array. It lives on the conversation (`Conversation.readWatermarks`,
+`ConversationMeta.readWatermarks`, SQLite schema v6), travels as a `read_watermark` frame - a
+mutation, so silent and durable - and rides on every `history_bundle`. Everything derived from it -
+who has read a message, the unread count, how far reading a conversation moves the mark - is in
+`$lib/utils/chat/readState.ts`, which absorbed `unread.ts`.
 
-It also removes a hazard in the present shape: because the watermark does not depend on which
-messages a device holds, a history catch-up can no longer mark an old message unread.
+**T is the message's own client timestamp**, `messageTime` - the PRIMARY key display order uses, not
+`serverTimestamp`, which is only a tie-break. A watermark ordered differently from the list it
+describes would leave a message marked read while the one visibly above it stayed unread. And it is
+drawn from the MESSAGES rather than from the clock: a device an hour fast would otherwise mark an
+hour of unread messages read for everyone, permanently, the merge being `max`.
+
+What it buys, beyond travelling in the shared log so a reinstall recovers read state with no peer
+online:
+
+- **it does not depend on which messages a device holds.** A `readBy` entry can only exist where the
+  message does, so a catch-up delivering an older message marked it unread - the receipt for it had
+  gone out long before. A watermark already covers messages the device has not seen yet;
+- **one value per participant instead of one array per message**, so a page of a thousand messages
+  costs one entry per reader, and read state is untouched by the batch save that writes them;
+- **D2 falls out of it**: the reading device writes its own watermark to its own row (`MainChatPage`,
+  optimistic update + `saveConversation`), so what this device read survives a reload without waiting
+  for a peer to hand it back.
+
+Two consequences to keep: an edit no longer resets read state (`readBy: []` used to mean "read by
+nobody again"), because a monotone value cannot express it and a peer that never saw the edit would
+never agree to move back; and the pre-watermark `read_receipt` frame is still DECODED, translated
+into an instant using the messages the device holds - see
+[legacy-compatibility](../legacy-compatibility.md).
 
 ### Scrollback below the window
 
@@ -267,7 +291,7 @@ from the audit and carry its references.
 | # | Defect | Where | Confirmed |
 | --- | --- | --- | --- |
 | D1 | ~~`saveMessage` is a full-row `put` and `toMessagePayload` omits absent fields, so every partial write **erases** the fields it does not carry. Six mutation handlers each pass a different subset - a reaction landing on a deleted message clears the tombstone; a read receipt on an edited message clears `isEdited`~~ **FIXED**: see [Persisting a mutation](#persisting-a-mutation) | `messagePayload.ts`, `types.ts`, both backends | yes |
-| D2 | The reading device never persists **its own** read state - the optimistic update is a bare `conversations.set`. After a reload, messages it read return as unread until a peer's bundle hands them back | `MainChatPage.svelte:434-445` | audit |
+| D2 | ~~The reading device never persists **its own** read state - the optimistic update is a bare `conversations.set`. After a reload, messages it read return as unread until a peer's bundle hands them back~~ **FIXED** as part of the watermark, which is the only place it could be fixed: see [Read state becomes a watermark](#read-state-becomes-a-watermark) | `MainChatPage.svelte`, `readState.ts` | audit |
 | D3 | ~~Reaction removal never converges: a bundle's reactions are adopted only when the receiver holds none~~ **FIXED**: see [Reactions](#reactions) | `messageReactions.ts`, both merge sites | yes |
 | D4 | ~~`editedAt` is not serialised into the bundle although `isEdited` is, so a device restored by bundle shows "edited" with no timestamp, permanently~~ **FIXED**: written by `serializeForBundle`, read by both merge paths and by the replay's row builder | `groupActions.ts`, `systemMessageHandler.ts`, `historySystemEvents.ts`, `history.ts` | audit |
 | D5 | ~~Bundle merge flags `isDeleted` without replacing `content`, and writes the original text back to disk~~ **FIXED at rest**; dropping the shared-log entry is a separate decision, see [Deletion purges](#deletion-purges) | `systemMessageHandler.ts`, the bundle merge and its write | yes |

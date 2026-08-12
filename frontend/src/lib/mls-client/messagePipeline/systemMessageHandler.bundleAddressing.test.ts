@@ -32,7 +32,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     saveConversation: vi.fn().mockResolvedValue(undefined),
     getSelectedContact: () => null,
     setSelectedContact: vi.fn(),
-    onReadReceiptReceived: vi.fn(),
+    onReadStateAdvanced: vi.fn(),
     log: vi.fn(),
     convo: conversations.get(GROUP),
     convoKey: GROUP,

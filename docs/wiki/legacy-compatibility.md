@@ -60,6 +60,25 @@ past the rollout, on top of the usual `minClientVersion` gate.
 rather than by the sender's clock. Only distinguishable if a placement and its removal were sent
 within the same delivery, which cannot happen - the outbox serialises them.
 
+### `read_receipt` naming message ids - since v0.14
+
+**Site:** `systemMessageHandler.ts` (live) and `historySystemEvents.ts` (replay), the `read_receipt`
+branches; and the per-message `readBy` / `readAt` still sitting inside encrypted rows written before
+the change.
+**Shim:** a receipt is translated into a watermark - the latest instant among the named messages
+THIS DEVICE HOLDS. An id it does not hold contributes nothing, which is the only honest reading: the
+frame names messages, and without one there is no instant to compare against.
+**Replacement:** `read_watermark`, one monotone instant per participant merged as `max`. See
+[history-reconciliation](protocols/history-reconciliation.md#read-state-becomes-a-watermark).
+**On removal:** delete both branches and the `event === 'read_receipt'` half of their conditions.
+Nothing else has to move - the stored `readBy`/`readAt` are already ignored on read, and the
+watermark column is additive (SQLite v6).
+**Same shape as `remove_reaction` below:** the shared history stream still HOLDS receipts written
+before the rollout, so the branches decode data at rest, not a live peer. Retire them when the
+retention window has elapsed past the rollout, on top of the `minClientVersion` gate.
+**Cost of keeping it:** a receipt for messages this device never had reads as no read state at all,
+where the sender did read something. It corrects itself on the next watermark that peer sends.
+
 ### `history_bundle` with no `vouched` - predates v0.13
 
 **Site:** `historySolicit.ts`, `noteHistoryBundleReceived`.

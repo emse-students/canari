@@ -30,9 +30,7 @@ export function toMessagePayload(msg: StoredMessage): Record<string, unknown> {
     senderId: msg.senderId.trim().toLowerCase(),
     content: msg.content,
   };
-  if (msg.readBy && msg.readBy.length > 0) payload.readBy = msg.readBy;
   if (msg.reactions && msg.reactions.length > 0) payload.reactions = msg.reactions;
-  if (msg.readAt) payload.readAt = msg.readAt;
   if (msg.serverTimestamp) payload.serverTimestamp = msg.serverTimestamp;
   if (msg.isDeleted) payload.isDeleted = true;
   if (msg.isEdited) payload.isEdited = true;
@@ -78,11 +76,9 @@ export function fromMessagePayload(
     timestamp: keys.timestamp,
     senderId: payload.senderId as string,
     content: payload.content as string,
-    readBy: Array.isArray(payload.readBy) ? (payload.readBy as string[]) : undefined,
     reactions: Array.isArray(payload.reactions)
       ? (payload.reactions as StoredMessage['reactions'])
       : undefined,
-    readAt: positiveNumber(payload.readAt),
     serverTimestamp: positiveNumber(payload.serverTimestamp),
     isDeleted: payload.isDeleted === true ? true : undefined,
     isEdited: payload.isEdited === true ? true : undefined,

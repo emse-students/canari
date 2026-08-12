@@ -15,7 +15,14 @@ import { purgeConversation, retireConversation } from '$lib/utils/chat/conversat
 import { digestIdentity, noteDigestReceived } from '$lib/utils/chat/historyDigestRendezvous';
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { readHistoryEntries, sendHistoryBundleForIds } from '$lib/utils/chat/groupActions';
-import { countUnreadForUser } from '$lib/utils/chat/unread';
+import {
+  countUnreadForUser,
+  mergeReadWatermark,
+  mergeReadWatermarks,
+  parseReadWatermarks,
+  watermarkAfterReading,
+  watermarkFor,
+} from '$lib/utils/chat/readState';
 import { applyPin } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
@@ -95,7 +102,7 @@ export async function handleSystemEvent(
     saveConversation,
     getSelectedContact,
     setSelectedContact,
-    onReadReceiptReceived,
+    onReadStateAdvanced,
     log,
     convo,
     convoKey,
@@ -462,60 +469,36 @@ export async function handleSystemEvent(
     return true;
   }
 
-  if (event === 'read_receipt') {
-    const msgIds: string[] = data.messageIds ?? [];
+  if (event === 'read_watermark' || event === 'read_receipt') {
     const c = conversations.get(convoKey);
-    if (c && msgIds.length > 0) {
-      const msgIdSet = new Set(msgIds);
-      let updated = false;
-      const updatedMessages = c.messages.map((m) => {
-        if (!msgIdSet.has(m.id)) return m;
-        const readBy = m.readBy ?? [];
-        if (readBy.includes(senderNorm)) return m;
-        updated = true;
-        return {
-          ...m,
-          readBy: [...readBy, senderNorm],
-          readAt: m.readAt ?? deliveryMeta?.queuedCreatedAt ?? Date.now(),
-        };
-      });
-      // Receipt emitted by OURSELVES from another device: we read this
-      // conversation elsewhere → reset the unread count to zero to synchronise
-      // the "read" state across our devices (readBy alone does not drive the unread badge).
+    if (c) {
+      // `read_receipt` is the shape senders used before the watermark, and it names message ids
+      // instead of an instant. Translated rather than dropped: the ids we hold give the instant
+      // directly, and ids we do not hold say nothing we could act on anyway.
+      const at =
+        event === 'read_watermark'
+          ? Number(data.at)
+          : watermarkAfterReading(
+              c.messages.filter((m) => (data.messageIds ?? []).includes(m.id)),
+              0
+            );
+      const merged = mergeReadWatermark(c.readWatermarks, senderNorm, at);
+      // Read by OURSELVES on another device: clear the badge here too, which is the whole point of
+      // the watermark travelling between our own devices.
       const selfRead = senderNorm === userId;
-      if (updated || selfRead) {
+      if (merged || selfRead) {
         conversations.set(convoKey, {
           ...c,
-          messages: updated ? updatedMessages : c.messages,
+          ...(merged ? { readWatermarks: merged } : {}),
           ...(selfRead ? { unreadCount: 0 } : {}),
         });
-        if (selfRead) await saveConversation?.(convoKey).catch(() => {});
+        // The read state lives on the conversation row, so this save is what persists it - for a
+        // peer's watermark as much as for our own.
+        await saveConversation?.(convoKey).catch(() => {});
       }
-      if (updated) {
-        log(`[READ] Receipt from ${senderNorm} → ${msgIds.length} message(s) marked read`);
-        if (storage) {
-          for (const msgId of msgIds) {
-            const m = updatedMessages.find((x) => x.id === msgId);
-            if (m) {
-              try {
-                // A receipt changes read state and nothing else. Writing the whole row here used
-                // to clear `isDeleted` / `isEdited` / `editedAt`, which this handler never knows.
-                await storage.updateMessage(
-                  m.id,
-                  { readBy: m.readBy, readAt: m.readAt },
-                  deviceKeyB64
-                );
-              } catch {
-                // Non-blocking
-              }
-            }
-          }
-        }
-        onReadReceiptReceived?.({
-          conversationKey: convoKey,
-          senderId: senderNorm,
-          messageIds: msgIds,
-        });
+      if (merged) {
+        log(`[READ] ${senderNorm} has read up to ${new Date(at).toISOString()}`);
+        onReadStateAdvanced?.({ conversationKey: convoKey, senderId: senderNorm, at });
       }
     }
     return true;
@@ -565,29 +548,19 @@ export async function handleSystemEvent(
       if (idx !== -1) {
         const orig = c.messages[idx];
         const editedAt = typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();
-        const editedMsg = {
-          ...orig,
-          isEdited: true,
-          editedAt,
-          content: data.newContent,
-          readBy: [] as string[],
-        };
+        // No read state is reset here. It used to clear `readBy`, so an edited message showed as
+        // read by nobody - which the watermark cannot express and should not: a watermark is
+        // monotone, and a peer that never sees the edit would never agree to move back anyway.
+        const editedMsg = { ...orig, isEdited: true, editedAt, content: data.newContent };
         conversations.set(convoKey, {
           ...c,
           messages: c.messages.map((m, i) => (i === idx ? editedMsg : m)),
         });
         if (storage) {
           try {
-            // `readBy: []` is a deliberate reset - an edited body has been read by nobody - and
-            // survives the merge because an empty array is a value, not an omission.
             await storage.updateMessage(
               editedMsg.id,
-              {
-                content: data.newContent,
-                readBy: [],
-                isEdited: true,
-                editedAt: editedAt.getTime(),
-              },
+              { content: data.newContent, isEdited: true, editedAt: editedAt.getTime() },
               deviceKeyB64
             );
           } catch {
@@ -639,8 +612,6 @@ export async function handleSystemEvent(
         senderId: string;
         content: string;
         timestamp: number;
-        readBy?: string[];
-        readAt?: number;
         reactions?: import('$lib/types').MessageReaction[];
         isDeleted?: boolean;
         isEdited?: boolean;
@@ -648,12 +619,28 @@ export async function handleSystemEvent(
         serverTimestamp?: number;
       };
       const msgs: BundleMsg[] = Array.isArray(data.messages) ? data.messages : [];
+
+      // 0) Read state, which travels ONCE for the whole conversation rather than once per message.
+      //    Merged before anything else so the unread recount in step 3 sees it, and merged even
+      //    for an empty bundle - "you are missing no messages, and here is who has read what" is a
+      //    perfectly ordinary answer.
+      const beforeMerge = conversations.get(convoKey);
+      if (beforeMerge) {
+        const mergedWatermarks = mergeReadWatermarks(
+          beforeMerge.readWatermarks,
+          parseReadWatermarks(data.readWatermarks)
+        );
+        if (mergedWatermarks) {
+          conversations.set(convoKey, { ...beforeMerge, readWatermarks: mergedWatermarks });
+          await saveConversation?.(convoKey).catch(() => {});
+        }
+      }
+
       if (msgs.length > 0) {
         const existingIds = new Set(convo.messages.map((m) => m.id));
         // 1) Add only the genuinely new messages. The add-path (AddMessageToChatOptions) cannot
-        //    carry readBy/reactions/etc, so the metadata is merged in step 2 for new AND existing
-        //    messages alike - which is why bundle read receipts for our OWN already-present
-        //    messages (previously skipped as duplicates) now land.
+        //    carry reactions/tombstones, so that metadata is merged in step 2 for new AND existing
+        //    messages alike.
         const toAdd = msgs
           .filter((m) => !existingIds.has(m.id))
           .map((m) => ({
@@ -678,8 +665,8 @@ export async function handleSystemEvent(
           }
         }
 
-        // 2) Merge transport-carried state (read receipts, reactions, delete/edit) onto the
-        //    conversation messages - both the ones just added and any that already existed.
+        // 2) Merge transport-carried state (reactions, delete/edit) onto the conversation
+        //    messages - both the ones just added and any that already existed.
         const bundleById = new Map(msgs.map((m) => [m.id, m]));
         const c = conversations.get(convoKey);
         if (c) {
@@ -688,22 +675,6 @@ export async function handleSystemEvent(
             const b = bundleById.get(existing.id);
             if (!b) return existing;
             let next = existing;
-            // readBy: union of local + bundle.
-            if (Array.isArray(b.readBy) && b.readBy.length > 0) {
-              const merged = new Set([
-                ...(next.readBy ?? []),
-                ...b.readBy.map((u) => u.toLowerCase()),
-              ]);
-              if (merged.size !== (next.readBy?.length ?? 0)) {
-                next = { ...next, readBy: [...merged] };
-                changedIds.add(existing.id);
-              }
-            }
-            // readAt: keep the earliest known read time.
-            if (typeof b.readAt === 'number' && (next.readAt == null || b.readAt < next.readAt)) {
-              next = { ...next, readAt: b.readAt };
-              changedIds.add(existing.id);
-            }
             // reactions: merged pair by pair, larger timestamp wins. This used to seed from the
             // bundle ONLY when we held none, so a removal never reached a device holding a stale
             // placement and the two never converged (D3).
@@ -737,15 +708,17 @@ export async function handleSystemEvent(
             }
             return next;
           });
-          // 3) Recount the unread badge now that the receipts have landed. Step 1 went through
-          //    the add-path, which counts EVERY incoming message as unread because it cannot see
-          //    readBy - the receipts only arrive with the merge above. A message this user already
-          //    acknowledged from another device carries their own id in readBy (the peer persisted
-          //    the receipt and sends it back in the bundle), so it must not raise a badge here.
+          // 3) Recount the unread badge against our own watermark, which step 0 may have just
+          //    advanced. Step 1 went through the add-path, which counts EVERY incoming message as
+          //    unread because it cannot see read state - a message this user already read on
+          //    another device is below the watermark and must not raise a badge here.
           //    Clamped to the current value: an open conversation was already zeroed by the
-          //    add-path and must never regain a badge, and a genuine new member - whose id is in
-          //    no readBy - keeps the full count.
-          const stillUnread = countUnreadForUser(nextMessages, userId.toLowerCase());
+          //    add-path and must never regain a badge, and a genuine new member - whose watermark
+          //    is 0 - keeps the full count.
+          const stillUnread = countUnreadForUser(
+            nextMessages,
+            watermarkFor(c.readWatermarks, userId.toLowerCase())
+          );
           const nextUnreadCount = Math.min(c.unreadCount ?? 0, stillUnread);
           if (changedIds.size > 0 || nextUnreadCount !== (c.unreadCount ?? 0)) {
             conversations.set(convoKey, {
@@ -766,8 +739,6 @@ export async function handleSystemEvent(
                   await storage.updateMessage(
                     msg.id,
                     {
-                      readBy: msg.readBy,
-                      readAt: msg.readAt,
                       reactions: messageReactions.get(msg.id) ?? msg.reactions,
                       serverTimestamp: msg.serverTimestamp,
                       ...(msg.isDeleted ? { isDeleted: true, content: msg.content } : {}),

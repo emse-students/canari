@@ -1,6 +1,7 @@
 import { encryptData, decryptData } from '../encryption';
 import { readStoredTimestampMs } from '$lib/utils/dates';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
+import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import type {
   ConversationMeta,
   EncryptedMessageRow,
@@ -104,10 +105,11 @@ export class SqliteStorage implements IStorage {
     // Older databases (with an `is_ready` column) are migrated in v4 below.
     await this.db.execute(`
             CREATE TABLE IF NOT EXISTS conversations (
-                id         TEXT    PRIMARY KEY,
-                name       TEXT    NOT NULL,
-                lifecycle  TEXT    DEFAULT 'pending',
-                updated_at INTEGER DEFAULT 0
+                id               TEXT    PRIMARY KEY,
+                name             TEXT    NOT NULL,
+                lifecycle        TEXT    DEFAULT 'pending',
+                updated_at       INTEGER DEFAULT 0,
+                read_watermarks  TEXT
             )
         `);
 
@@ -202,6 +204,19 @@ export class SqliteStorage implements IStorage {
       // and re-encrypted with the device key. Conversations (plaintext) are preserved.
       await this.db.execute('DELETE FROM messages');
       await this.db.execute('DELETE FROM outbox');
+      await this.db.execute('PRAGMA user_version = 5');
+    }
+
+    if (currentVersion < 6) {
+      // v5->v6: read state moved off the messages and onto the conversation, as one monotone
+      // instant per participant (see `$lib/utils/chat/readState`). Additive: the column is added
+      // when missing, and a database that has none simply starts everyone at "has read nothing",
+      // which the next reconciliation fills in. Nothing is dropped - the `readBy` arrays still
+      // inside old encrypted payloads are ignored on read.
+      const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
+      if (!cols.some((c) => c.name === 'read_watermarks')) {
+        await this.db.execute('ALTER TABLE conversations ADD COLUMN read_watermarks TEXT');
+      }
       await this.db.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     }
   }
@@ -211,8 +226,14 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at) VALUES ($1, $2, $3, $4)',
-      [conv.id, conv.name, conv.lifecycle, conv.updatedAt]
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks) VALUES ($1, $2, $3, $4, $5)',
+      [
+        conv.id,
+        conv.name,
+        conv.lifecycle,
+        conv.updatedAt,
+        conv.readWatermarks ? JSON.stringify(conv.readWatermarks) : null,
+      ]
     );
   }
 
@@ -226,6 +247,7 @@ export class SqliteStorage implements IStorage {
       name: r.name,
       lifecycle: normalizeConversationLifecycle(r.lifecycle, r.is_ready === 1),
       updatedAt: r.updated_at,
+      readWatermarks: parseReadWatermarks(r.read_watermarks),
     }));
   }
 
@@ -420,8 +442,14 @@ export class SqliteStorage implements IStorage {
   async mergeConversation(conv: ConversationMeta): Promise<void> {
     // INSERT OR IGNORE: only insert if no row with this id already exists.
     await this.db.execute(
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at) VALUES ($1, $2, $3, $4)',
-      [conv.id, conv.name, conv.lifecycle, conv.updatedAt]
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks) VALUES ($1, $2, $3, $4, $5)',
+      [
+        conv.id,
+        conv.name,
+        conv.lifecycle,
+        conv.updatedAt,
+        conv.readWatermarks ? JSON.stringify(conv.readWatermarks) : null,
+      ]
     );
   }
 

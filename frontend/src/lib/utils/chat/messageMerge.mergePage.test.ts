@@ -67,20 +67,6 @@ describe('mergeMessagePage', () => {
     expect(mergeMessagePage(current, page)[0].content).toContain('"kind"');
   });
 
-  it('keeps an optimistic read that the stored page has not caught up with', () => {
-    // Reading is applied in memory before the network ACK; taking the page's array un-reads it and
-    // the badge the user just cleared comes straight back.
-    const current = [msg('a', 1000, { readBy: ['me'] })];
-    const merged = mergeMessagePage(current, [msg('a', 1000, { readBy: [] })]);
-    expect(merged[0].readBy).toEqual(['me']);
-  });
-
-  it('unions readers from both sides rather than choosing one', () => {
-    const current = [msg('a', 1000, { readBy: ['me'] })];
-    const merged = mergeMessagePage(current, [msg('a', 1000, { readBy: ['peer'] })]);
-    expect([...(merged[0].readBy ?? [])].sort()).toEqual(['me', 'peer']);
-  });
-
   it('takes the stored row for everything else, tombstones included', () => {
     const current = [msg('a', 1000)];
     const merged = mergeMessagePage(current, [msg('a', 1000, { isDeleted: true, isEdited: true })]);

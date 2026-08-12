@@ -1,5 +1,5 @@
 import { canari } from '$lib/proto/canari.js';
-import type { ChatMessage, Conversation, MessageReaction } from '$lib/types';
+import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import { applyReplaySystemEvent, type HistoryRow } from './historySystemEvents';
 
 /**
@@ -55,7 +55,7 @@ async function replay(
   deletedMessages: Map<string, { by: string }>;
   editedMessages: Map<string, { content: string; editedAt: Date; by: string }>;
   reactionUpdates: Map<string, MessageReaction[]>;
-  readReceiptDbUpdates: Array<{ msgId: string; senderNorm: string; readAt?: number }>;
+  readWatermarkUpdates: ReadWatermarks;
   pushed: unknown[];
 }> {
   let convo = conversation(messages);
@@ -63,7 +63,7 @@ async function replay(
     deletedMessages: new Map<string, { by: string }>(),
     editedMessages: new Map<string, { content: string; editedAt: Date; by: string }>(),
     reactionUpdates: new Map<string, MessageReaction[]>(),
-    readReceiptDbUpdates: [] as Array<{ msgId: string; senderNorm: string; readAt?: number }>,
+    readWatermarkUpdates: {} as ReadWatermarks,
     pushed: [] as unknown[],
   };
   await applyReplaySystemEvent({
@@ -79,7 +79,7 @@ async function replay(
     reactionUpdates: sinks.reactionUpdates,
     deletedMessages: sinks.deletedMessages,
     editedMessages: sinks.editedMessages,
-    readReceiptDbUpdates: sinks.readReceiptDbUpdates,
+    readWatermarkUpdates: sinks.readWatermarkUpdates,
     pushPendingMessage: (entry) => sinks.pushed.push(entry),
   });
   return { convo, ...sinks };
@@ -119,7 +119,7 @@ describe('replaying a deletion', () => {
 });
 
 describe('replaying an edit', () => {
-  it("applies the author's own edit, with its time, and resets who has read it", async () => {
+  it("applies the author's own edit, with its time", async () => {
     const result = await replay(
       systemEvent('edit_message', {
         messageId: 'm1',
@@ -127,12 +127,11 @@ describe('replaying an edit', () => {
         editedAt: 1_700_000_042_000,
       }),
       OWNER,
-      [{ ...message('m1', OWNER), readBy: [OTHER] }]
+      [message('m1', OWNER)]
     );
 
     expect(result.convo.messages[0]).toMatchObject({ content: 'corrected', isEdited: true });
     expect(result.convo.messages[0].editedAt?.getTime()).toBe(1_700_000_042_000);
-    expect(result.convo.messages[0].readBy).toEqual([]);
     expect(result.editedMessages.get('m1')).toMatchObject({ content: 'corrected', by: OWNER });
   });
 
@@ -149,23 +148,48 @@ describe('replaying an edit', () => {
   });
 });
 
-describe('replaying a read receipt', () => {
-  it('records the reader once, in memory and for the post-batch write', async () => {
+describe('replaying read state', () => {
+  it('accumulates a watermark for the page rather than touching each message', async () => {
+    const result = await replay(systemEvent('read_watermark', { at: 1_700_000_000_000 }), OTHER, [
+      message('m1', OWNER),
+    ]);
+
+    expect(result.readWatermarkUpdates).toEqual({ [OTHER]: 1_700_000_000_000 });
+  });
+
+  it('keeps the furthest of several, whichever order they replay in', async () => {
+    // Two frames from the same reader in one page: `max` is what makes the order irrelevant.
+    const later = await replay(systemEvent('read_watermark', { at: 2_000 }), OTHER, []);
+    const earlier = await replay(systemEvent('read_watermark', { at: 1_000 }), OTHER, []);
+
+    expect(later.readWatermarkUpdates).toEqual({ [OTHER]: 2_000 });
+    expect(earlier.readWatermarkUpdates).toEqual({ [OTHER]: 1_000 });
+  });
+
+  it('translates a legacy read_receipt into the instant of the messages it names', async () => {
     const result = await replay(systemEvent('read_receipt', { messageIds: ['m1'] }), OTHER, [
       message('m1', OWNER),
     ]);
 
-    expect(result.convo.messages[0].readBy).toEqual([OTHER]);
-    expect(result.readReceiptDbUpdates).toHaveLength(1);
-    expect(result.readReceiptDbUpdates[0]).toMatchObject({ msgId: 'm1', senderNorm: OTHER });
+    expect(result.readWatermarkUpdates).toEqual({ [OTHER]: 1_700_000_000_000 });
   });
 
-  it('does not add the same reader twice', async () => {
-    const result = await replay(systemEvent('read_receipt', { messageIds: ['m1'] }), OTHER, [
-      { ...message('m1', OWNER), readBy: [OTHER] },
+  it('takes nothing from a legacy receipt naming messages this device does not hold', async () => {
+    const result = await replay(systemEvent('read_receipt', { messageIds: ['gone'] }), OTHER, [
+      message('m1', OWNER),
     ]);
 
-    expect(result.convo.messages[0].readBy).toEqual([OTHER]);
+    expect(result.readWatermarkUpdates).toEqual({});
+  });
+
+  it('takes the read state a bundle carries, even one with no messages', async () => {
+    const result = await replay(
+      systemEvent('history_bundle', { messages: [], readWatermarks: { [OTHER]: 4_000 } }),
+      OTHER,
+      [message('m1', OWNER)]
+    );
+
+    expect(result.readWatermarkUpdates).toEqual({ [OTHER]: 4_000 });
   });
 });
 

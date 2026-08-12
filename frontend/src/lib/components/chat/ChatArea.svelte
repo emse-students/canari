@@ -984,6 +984,7 @@
             {isLoadingOlder}
             {messageReactions}
             {currentUserId}
+            readWatermarks={conversation?.readWatermarks}
             searchQuery={searchQuery.trim()}
             {onReply}
             {onForward}

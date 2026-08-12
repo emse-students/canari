@@ -47,9 +47,7 @@ describe('message payload round trip', () => {
   it('round-trips every optional field a mutation can set', () => {
     const full = roundTrip({
       ...BASE,
-      readBy: ['bob'],
       reactions: [{ emoji: '👍', userId: 'bob' }],
-      readAt: 1_700_000_001_000,
       serverTimestamp: 1_700_000_002_000,
       isDeleted: true,
       isEdited: true,
@@ -57,9 +55,7 @@ describe('message payload round trip', () => {
     });
 
     expect(full).toMatchObject({
-      readBy: ['bob'],
       reactions: [{ emoji: '👍', userId: 'bob' }],
-      readAt: 1_700_000_001_000,
       serverTimestamp: 1_700_000_002_000,
       isDeleted: true,
       isEdited: true,
@@ -68,7 +64,7 @@ describe('message payload round trip', () => {
   });
 
   it('omits empty optionals rather than storing them', () => {
-    const payload = toMessagePayload({ ...BASE, readBy: [], reactions: [], editedAt: 0 });
+    const payload = toMessagePayload({ ...BASE, reactions: [], editedAt: 0 });
 
     expect(Object.keys(payload).sort()).toEqual(['content', 'senderId']);
   });
@@ -79,14 +75,10 @@ describe('message payload round trip', () => {
     const hostile = fromMessagePayload(KEYS, {
       senderId: 'alice',
       content: 'x',
-      readAt: '1700000000000',
       editedAt: -1,
-      readBy: 'bob',
       isEdited: 'yes',
     });
-    expect(hostile.readAt).toBeUndefined();
     expect(hostile.editedAt).toBeUndefined();
-    expect(hostile.readBy).toBeUndefined();
     expect(hostile.isEdited).toBeUndefined();
   });
 });
@@ -107,14 +99,14 @@ describe('merging a mutation onto a stored message', () => {
     expect(merged.reactions).toEqual([{ emoji: '👍', userId: 'bob' }]);
   });
 
-  it('keeps the edit flags when a read receipt lands on an edited message', () => {
+  it('keeps the edit flags when a later mutation lands on an edited message', () => {
     const stored: StoredMessage = { ...BASE, isEdited: true, editedAt: 1_700_000_042_000 };
 
-    const merged = mergeStoredMessage(stored, { readBy: ['bob'], readAt: 1_700_000_050_000 });
+    const merged = mergeStoredMessage(stored, { reactions: [{ emoji: '👍', userId: 'bob' }] });
 
     expect(merged.isEdited).toBe(true);
     expect(merged.editedAt).toBe(1_700_000_042_000);
-    expect(merged.readBy).toEqual(['bob']);
+    expect(merged.reactions).toEqual([{ emoji: '👍', userId: 'bob' }]);
   });
 
   it('leaves a field alone when the patch carries it as undefined', () => {
@@ -122,23 +114,18 @@ describe('merging a mutation onto a stored message', () => {
     // rather than as a missing key. It must read as "I know nothing about this field".
     const stored: StoredMessage = { ...BASE, serverTimestamp: 1_700_000_002_000 };
 
-    const merged = mergeStoredMessage(stored, { serverTimestamp: undefined, readBy: ['bob'] });
+    const merged = mergeStoredMessage(stored, { serverTimestamp: undefined, isEdited: true });
 
     expect(merged.serverTimestamp).toBe(1_700_000_002_000);
   });
 
   it('clears a field when the patch says so explicitly', () => {
-    // An edit resets readBy, and removing the last reaction empties the list. Clearing has to stay
-    // expressible, or the merge would make some mutations impossible.
-    const stored: StoredMessage = {
-      ...BASE,
-      readBy: ['bob'],
-      reactions: [{ emoji: '👍', userId: 'bob' }],
-    };
+    // Removing the last reaction empties the list. Clearing has to stay expressible, or the merge
+    // would make some mutations impossible.
+    const stored: StoredMessage = { ...BASE, reactions: [{ emoji: '👍', userId: 'bob' }] };
 
-    const merged = mergeStoredMessage(stored, { readBy: [], reactions: [] });
+    const merged = mergeStoredMessage(stored, { reactions: [] });
 
-    expect(merged.readBy).toEqual([]);
     expect(merged.reactions).toEqual([]);
     // And an empty list is stored as no list at all, which is how a removal becomes durable.
     expect(Object.keys(toMessagePayload(merged)).sort()).toEqual(['content', 'senderId']);

@@ -1,5 +1,6 @@
 import { encryptData, decryptData } from '../encryption';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
+import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import type {
   ConversationMeta,
   EncryptedMessageRow,
@@ -197,6 +198,9 @@ export class IndexedDbStorage implements IStorage {
         const rows = (req.result as Array<ConversationMeta & { isReady?: boolean }>).map((r) => ({
           ...r,
           lifecycle: normalizeConversationLifecycle(r.lifecycle, r.isReady),
+          // Validated on the way out, like every other store: a structured-clone round trip
+          // preserves whatever was written, including a value an older build got wrong.
+          readWatermarks: parseReadWatermarks(r.readWatermarks),
         }));
         resolve(rows);
       };

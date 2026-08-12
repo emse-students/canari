@@ -2,7 +2,7 @@
 // Shared types and the IStorage interface for Canari's local message store.
 // ---------------------------------------------------------------------------
 
-import type { ConversationLifecycle, MessageReaction } from '$lib/types';
+import type { ConversationLifecycle, MessageReaction, ReadWatermarks } from '$lib/types';
 
 /** Lightweight metadata row for a conversation stored in the local DB (no message payload). */
 export interface ConversationMeta {
@@ -18,6 +18,12 @@ export interface ConversationMeta {
   lifecycle: ConversationLifecycle;
   /** Unix milliseconds - used for ordering conversations by recency. */
   updatedAt: number;
+  /**
+   * Read state for the whole conversation, one monotone instant per participant. It lives here
+   * rather than on each message so that OUR OWN read state survives a reload without waiting for a
+   * peer to hand it back (D2), and so that marking a thousand messages read is one write.
+   */
+  readWatermarks?: ReadWatermarks;
 }
 
 /** A decrypted message as stored in and read from the local database. */
@@ -32,16 +38,12 @@ export interface StoredMessage {
   content: string;
   /** Creation time as Unix milliseconds. */
   timestamp: number;
-  /** User IDs that have acknowledged reading this message. */
-  readBy?: string[];
   /**
    * One entry per `(user, emoji)` pair, INCLUDING the ones taken back - a removal is an entry with
    * `removed: true`, which is what lets it reach a device still holding the placement. See
    * `$lib/utils/chat/messageReactions`.
    */
   reactions?: MessageReaction[];
-  /** Unix ms when the first read receipt for this message was received locally. */
-  readAt?: number;
   /**
    * Server queue creation time (Unix ms) - stable secondary sort key when two messages share
    * the same client `sentAt` timestamp.  Set from `queuedCreatedAt` in the delivery envelope.

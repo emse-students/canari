@@ -301,15 +301,22 @@ export async function setMessagePinned(
   );
 }
 
-/** Captures a "read_receipt" system event in the durable outbox so peers update delivered/read status. Returns false only when the list is empty (the send itself is durable, never dropped). */
-export async function sendReadReceipt(
-  messageIds: string[],
-  deps: MessageActionDeps
-): Promise<boolean> {
-  if (messageIds.length === 0) return false;
+/**
+ * Captures a "read_watermark" system event in the durable outbox: *I have read this conversation
+ * up to `at`*, one monotone instant rather than a list of message ids.
+ *
+ * `at` is drawn from the messages themselves (see `watermarkAfterReading`), never from the clock,
+ * so it compares correctly against the population it will be compared against on every other
+ * device.
+ *
+ * @returns false only when there is nothing to announce (`at` not ahead of what peers were last
+ *          told), which is what keeps an open conversation from emitting a frame per render.
+ */
+export async function sendReadWatermark(at: number, deps: MessageActionDeps): Promise<boolean> {
+  if (!Number.isFinite(at) || at <= 0) return false;
   await enqueueControlEvent(
     deps.conversation.id,
-    encodeAppMessage(mkSystem('read_receipt', JSON.stringify({ messageIds })))
+    encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at })))
   );
   return true;
 }

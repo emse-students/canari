@@ -13,7 +13,12 @@
   import { fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
-  import { sendReadReceipt } from '$lib/utils/chat/messaging';
+  import { sendReadWatermark } from '$lib/utils/chat/messaging';
+  import {
+    mergeReadWatermark,
+    watermarkAfterReading,
+    watermarkFor,
+  } from '$lib/utils/chat/readState';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import {
     isChannelConversationId,
@@ -247,11 +252,7 @@
       onSendError: (msg: string) => {
         convs.sendError = msg;
       },
-      onReadReceiptReceived: (e: {
-        conversationKey: string;
-        senderId: string;
-        messageIds: string[];
-      }) => {
+      onReadStateAdvanced: (e: { conversationKey: string; senderId: string; at: number }) => {
         // Sound only when someone else reads MY message, in the currently open conversation
         // on the visible tab (never for my own cross-device reads).
         if (e.senderId === session.userId) return;
@@ -407,59 +408,55 @@
     };
   });
 
-  // ─── Read receipts (debounced 2 s) ────────────────────────────────────────
-  let pendingReadReceipts: string[] = [];
+  // ─── Read watermark (debounced 2 s) ───────────────────────────────────────
+  let pendingReadWatermark = 0;
   let readReceiptTimer: ReturnType<typeof setTimeout> | null = null;
 
   $effect(() => {
     if (!convs.selectedContact || !session.isLoggedIn) return;
     if (!isWindowFocused || !isTabVisible) return;
-    // Channels are server-authoritative and have no MLS group: their read receipts must never
-    // go through the MLS outbox (sendReadReceipt -> enqueueControlEvent), otherwise the flusher
+    // Channels are server-authoritative and have no MLS group: their read state must never
+    // go through the MLS outbox (sendReadWatermark -> enqueueControlEvent), otherwise the flusher
     // loops forever on resolveTerminalGroup/welcome-request 500s for a channel_ conversation id.
     if (isSelectedChannel) return;
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo || convo.lifecycle !== 'active') return;
 
     const meNorm = session.userId.toLowerCase();
-    const unread = convo.messages.filter(
-      (m) => !m.isOwn && !m.isSystem && !(m.readBy || []).includes(meNorm)
-    );
-    if (unread.length === 0) return;
+    const held = watermarkFor(convo.readWatermarks, meNorm);
+    const target = watermarkAfterReading(convo.messages, held);
+    if (target <= held) return;
 
-    const ids = unread.map((m) => m.id);
     const currentContact = convs.selectedContact;
 
-    // Optimistically mark as read in-memory without waiting for the network ACK.
+    // Mark it read here and now, on this device, for good: the optimistic update goes into the
+    // conversation AND onto disk. It used to be a bare in-memory `conversations.set`, so a reload
+    // brought back as unread everything this device had read but no peer had echoed (D2).
     untrack(() => {
       setTimeout(() => {
         const fresh = convs.conversations.get(currentContact);
         if (!fresh) return;
-        convs.conversations.set(currentContact, {
-          ...fresh,
-          messages: fresh.messages.map((m) =>
-            ids.includes(m.id) ? { ...m, readBy: [...(m.readBy || []), meNorm] } : m
-          ),
-        });
+        const merged = mergeReadWatermark(fresh.readWatermarks, meNorm, target);
+        if (!merged) return;
+        convs.conversations.set(currentContact, { ...fresh, readWatermarks: merged });
+        void convs.saveConversation(currentContact, convCtx());
       }, 0);
     });
 
-    ids.forEach((id) => {
-      if (!pendingReadReceipts.includes(id)) pendingReadReceipts.push(id);
-    });
+    pendingReadWatermark = Math.max(pendingReadWatermark, target);
 
     if (!readReceiptTimer) {
       readReceiptTimer = setTimeout(() => {
         untrack(() => {
-          const toSend = [...pendingReadReceipts];
-          pendingReadReceipts = [];
+          const toSend = pendingReadWatermark;
+          pendingReadWatermark = 0;
           readReceiptTimer = null;
-          if (toSend.length === 0) return;
+          if (toSend <= 0) return;
           try {
             const mlsService = session.ensureMls();
             const fresh = convs.conversations.get(currentContact);
             if (!fresh) return;
-            sendReadReceipt(toSend, {
+            sendReadWatermark(toSend, {
               mlsService,
               userId: session.userId,
               deviceKeyB64: session.deviceKeyB64,
@@ -473,7 +470,7 @@
     }
 
     // Only cancel the timer when the user navigates to a different conversation.
-    // Same-conversation re-runs (e.g. from the optimistic readBy update below) must
+    // Same-conversation re-runs (e.g. from the optimistic update above) must
     // not cancel the pending timer - that was the root cause of receipts never firing.
     return () => {
       if (convs.selectedContact !== currentContact) {
@@ -481,7 +478,7 @@
           clearTimeout(readReceiptTimer);
           readReceiptTimer = null;
         }
-        pendingReadReceipts = [];
+        pendingReadWatermark = 0;
       }
     };
   });
@@ -572,7 +569,7 @@
         clearTimeout(readReceiptTimer);
         readReceiptTimer = null;
       }
-      pendingReadReceipts = [];
+      pendingReadWatermark = 0;
       convs.selectedContact = null;
       channels.selectedChannelConversationId = '';
       convs.isChannelSettingsModalOpen = false;

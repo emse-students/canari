@@ -732,11 +732,7 @@
           log: appendLog,
         });
       },
-      onReadReceiptReceived: (e: {
-        conversationKey: string;
-        senderId: string;
-        messageIds: string[];
-      }) => {
+      onReadStateAdvanced: (e: { conversationKey: string; senderId: string; at: number }) => {
         // Sound only when another user reads MY message, in the open conversation on the visible tab
         // (never for my own cross-device reads).
         if (e.senderId === globalSession.userId) return;

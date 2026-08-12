@@ -66,11 +66,8 @@ export interface MessageHandlerDeps {
     messageId: string;
     deletedBy?: string;
   }) => void;
-  onReadReceiptReceived?: (event: {
-    conversationKey: string;
-    senderId: string;
-    messageIds: string[];
-  }) => void;
+  /** A participant's read watermark moved forward - `at` is how far they have now read. */
+  onReadStateAdvanced?: (event: { conversationKey: string; senderId: string; at: number }) => void;
   onCallSignal?: (senderId: string, groupId: string, callMsg: unknown) => void;
   /**
    * Called when a Welcome is processed successfully and the group is ready.

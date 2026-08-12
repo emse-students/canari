@@ -41,6 +41,7 @@ import { requestReAdd } from '$lib/utils/chat/recovery';
 import {
   loadExistingConversations,
   purgeConversation,
+  toConversationMeta,
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
@@ -207,22 +208,12 @@ export function useConversations() {
 
   // ── Storage helpers ───────────────────────────────────────────────────────
 
-  /** Persists a conversation's metadata (name, lifecycle, updatedAt) to IndexedDB. For direct conversations the name is stored as "userId::peerId". */
+  /** Persists a conversation's metadata row (see `toConversationMeta` for what it carries). */
   async function saveConversation(id: string, ctx: ConversationContext) {
     if (!ctx.storage) return;
     const convo = conversations.get(id);
     if (!convo) return;
-    const persistedName =
-      (convo.conversationType ?? 'group') === 'direct'
-        ? `${ctx.userId.toLowerCase()}::${(convo.directPeerId ?? convo.contactName).toLowerCase()}`
-        : convo.name;
-    await ctx.storage.saveConversation({
-      id: id,
-      name: persistedName,
-      lifecycle: convo.lifecycle,
-      // Use the last-message timestamp so the sidebar sort order survives DB reloads.
-      updatedAt: convo.lastMessageAt ?? Date.now(),
-    });
+    await ctx.storage.saveConversation(toConversationMeta(id, convo, ctx.userId));
   }
 
   /** Fetches and decrypts conversation history from the network, then reloads the latest page from IndexedDB. For channel conversations delegates to loadChannelHistory instead of MLS replay. */
@@ -297,6 +288,7 @@ export function useConversations() {
           storage: ctx.storage,
           getConversation: (name) => conversations.get(name),
           setConversation: (name, next) => conversations.set(name, next),
+          saveConversation: (name) => saveConversation(name, ctx),
           messageReactions: ctx.messageReactions,
           log: ctx.log,
         })

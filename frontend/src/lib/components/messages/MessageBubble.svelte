@@ -69,8 +69,6 @@
     reactions?: MessageReaction[];
     /** User IDs who have read the message, shown in the info tooltip. */
     readBy?: string[];
-    /** Timestamp of first read receipt (Date.now() on receiving device). */
-    readAt?: number;
     /** When true, shows send status on the last own message. */
     isLastOwn?: boolean;
     /** When true, shows the read receipt below this message. */
@@ -135,7 +133,6 @@
     replyTo,
     reactions = [],
     readBy = [],
-    readAt,
     isLastOwn = false,
     isReadReceiptAnchor = false,
     isEdited = false,
@@ -707,7 +704,6 @@
           isReadReceiptAnchor={false}
           {status}
           {readBy}
-          {readAt}
           {timestamp}
           {groupPosition}
         />
@@ -754,7 +750,6 @@
       {isReadReceiptAnchor}
       {status}
       {readBy}
-      {readAt}
       outsideBubble
     />
 

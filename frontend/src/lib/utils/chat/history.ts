@@ -1,7 +1,7 @@
 import type { HistoryStreamRow } from '$lib/mls-client/historyTypes';
 import { fromBase64 } from '$lib/utils/hex';
 import type { IStorage, StoredMessage } from '$lib/db';
-import type { ChatMessage, Conversation, MessageReaction } from '$lib/types';
+import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import type { MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
 import {
@@ -25,6 +25,7 @@ import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
+import { mergeReadWatermarks } from '$lib/utils/chat/readState';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -142,9 +143,7 @@ export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[],
       timestamp: toValidDate(readStoredTimestampMs(m.timestamp)),
       isOwn: isOwnMessage(m.senderId, userId),
       isSystem: m.senderId === 'system',
-      readBy: m.readBy,
       reactions: m.reactions,
-      readAt: m.readAt,
       serverTimestamp: m.serverTimestamp,
       ...(m.isDeleted ? { isDeleted: true } : {}),
       ...(m.isEdited ? { isEdited: true } : {}),
@@ -197,6 +196,8 @@ export async function replayConversationHistory(params: {
   storage: IStorage | null;
   getConversation: (contactName: string) => Conversation | undefined;
   setConversation: (contactName: string, next: Conversation) => void;
+  /** Persists the conversation's metadata row - which is where the read watermarks live. */
+  saveConversation?: (contactName: string) => Promise<void>;
   messageReactions: Map<string, MessageReaction[]>;
   log: (msg: string) => void;
   /** First page already fetched (e.g. login batch history) — skipped on the first loop iteration. */
@@ -211,6 +212,7 @@ export async function replayConversationHistory(params: {
     storage,
     getConversation,
     setConversation,
+    saveConversation,
     messageReactions,
     log,
     primedFirstPage,
@@ -277,14 +279,14 @@ export async function replayConversationHistory(params: {
     // read after the batch save.
     const deletedMessages = new Map<string, { by: string }>();
     const editedMessages = new Map<string, { content: string; editedAt: Date; by: string }>();
-    // Read receipts from history update in-memory state but NOT the DB; the batch
-    // save below writes regular messages without readBy (full replace via IndexedDB
-    // put), which would overwrite any readBy already saved for those messages.
-    // We collect the receipts here and re-apply them to DB after the batch save.
-    const readReceiptDbUpdates: Array<{ msgId: string; senderNorm: string; readAt?: number }> = [];
+    // Read state accumulated over the whole page: one instant per participant, merged as `max`,
+    // applied to the conversation once at the end. It is conversation-level state, so it is not
+    // affected by the batch save below at all - which is exactly what made the per-message version
+    // fragile enough to need a repair pass of its own.
+    const readWatermarkUpdates: ReadWatermarks = {};
 
     // Batch-collect decoded messages to flush in one UI update at the end.
-    // The reactions/readBy/isDeleted/isEdited fields are optional and come only from the
+    // The reactions/isDeleted/isEdited fields are optional and come only from the
     // history_bundle path (migration) - AddMessageToChatOptions does not include them
     // because addMessageToChat does not need them (the mutations arrive via separate MLS
     // events during a normal session).
@@ -412,7 +414,7 @@ export async function replayConversationHistory(params: {
               reactionUpdates,
               deletedMessages,
               editedMessages,
-              readReceiptDbUpdates,
+              readWatermarkUpdates,
               pushPendingMessage,
             });
             mlsUpdated = true;
@@ -546,11 +548,6 @@ export async function replayConversationHistory(params: {
                 ? prev.content
                 : pm.content,
           timestamp: resolveMessageTimestamp(pm, [], isOwnMessage(pm.senderId, userId)).getTime(),
-          ...(pm.isSystem
-            ? { readBy: [] }
-            : (pm.readBy ?? []).length > 0
-              ? { readBy: pm.readBy }
-              : {}),
           ...(prev?.isDeleted || pm.isDeleted ? { isDeleted: true } : {}),
           ...(prev?.isEdited || pm.isEdited ? { isEdited: true } : {}),
           // Same two sources as `content` above. What we already hold wins - it came from the edit
@@ -559,41 +556,36 @@ export async function replayConversationHistory(params: {
           ...(prev?.editedAt || pm.editedAt ? { editedAt: prev?.editedAt ?? pm.editedAt } : {}),
           ...((pm.reactions ?? []).length > 0 ? { reactions: pm.reactions } : {}),
           ...(pm.serverTimestamp != null ? { serverTimestamp: pm.serverTimestamp } : {}),
-          ...(pm.readAt != null ? { readAt: pm.readAt } : {}),
         };
       });
       await storage.saveMessages(toStore, deviceKeyB64);
     }
 
-    // Single post-save read: apply readBy, reaction, delete/edit mutations in one pass.
-    // All three update types need the post-batch-save DB state and touch independent fields,
+    // The read state the page carried, applied to the conversation in one step. It is not part of
+    // the message pass below and never was a per-message concern: what it costs is one entry per
+    // participant, whether the page held ten messages or ten thousand.
+    const convoForRead = getConversation(contactName);
+    if (convoForRead) {
+      const mergedWatermarks = mergeReadWatermarks(
+        convoForRead.readWatermarks,
+        readWatermarkUpdates
+      );
+      if (mergedWatermarks) {
+        setConversation(contactName, { ...convoForRead, readWatermarks: mergedWatermarks });
+        await saveConversation?.(contactName).catch(() => {});
+      }
+    }
+
+    // Single post-save read: apply reaction and delete/edit mutations in one pass.
+    // All of them need the post-batch-save DB state and touch independent fields,
     // so they can be merged and written back in a single saveMessages call.
     const needsPostUpdate =
-      storage &&
-      (readReceiptDbUpdates.length > 0 ||
-        reactionUpdates.size > 0 ||
-        deletedMessages.size > 0 ||
-        editedMessages.size > 0);
+      storage && (reactionUpdates.size > 0 || deletedMessages.size > 0 || editedMessages.size > 0);
     if (needsPostUpdate) {
       try {
         const allMessages = await storage!.getMessages(id, deviceKeyB64);
         // Collect all mutations keyed by message ID, merging updates for the same message.
         const updatesById = new Map<string, StoredMessage>();
-
-        for (const { msgId, senderNorm, readAt } of readReceiptDbUpdates) {
-          const base = updatesById.get(msgId) ?? allMessages.find((x) => x.id === msgId);
-          if (base) {
-            const cur = updatesById.get(msgId) ?? base;
-            const readBy = cur.readBy ?? [];
-            if (!readBy.includes(senderNorm)) {
-              updatesById.set(msgId, {
-                ...cur,
-                readBy: [...readBy, senderNorm],
-                ...(readAt != null && cur.readAt == null ? { readAt } : {}),
-              });
-            }
-          }
-        }
 
         for (const m of allMessages) {
           if (reactionUpdates.has(m.id)) {
@@ -705,7 +697,6 @@ export async function retroactivelyResolveHexIds(
         senderId: 'system',
         content: m.content,
         timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
-        readBy: m.readBy ?? [],
         reactions: m.reactions,
         ...(m.isDeleted ? { isDeleted: true } : {}),
         ...(m.isEdited ? { isEdited: true } : {}),

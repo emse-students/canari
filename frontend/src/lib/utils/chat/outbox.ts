@@ -207,8 +207,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           senderId: m.senderId,
           content: m.content,
           timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
-          readBy: m.readBy,
-          readAt: m.readAt,
           reactions: m.reactions,
           serverTimestamp: m.serverTimestamp,
           isDeleted: m.isDeleted,
