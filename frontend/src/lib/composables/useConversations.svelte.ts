@@ -44,6 +44,7 @@ import {
   INITIAL_MESSAGES_PAGE,
 } from '$lib/utils/chat/conversations';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
+import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -266,7 +267,7 @@ export function useConversations() {
                 if (current) {
                   conversations.set(contactName, {
                     ...current,
-                    messages: [...msgs].sort(compareMessageOrder),
+                    messages: mergeMessagePage(current.messages, msgs),
                   });
                   for (const m of msgs) {
                     if (m.reactions && m.reactions.length > 0) {
@@ -318,7 +319,7 @@ export function useConversations() {
         if (current) {
           conversations.set(contactName, {
             ...current,
-            messages: [...msgs].sort(compareMessageOrder),
+            messages: mergeMessagePage(current.messages, msgs),
           });
           for (const m of msgs) {
             if (m.reactions && m.reactions.length > 0) {
@@ -400,7 +401,12 @@ export function useConversations() {
 
       const current = conversations.get(channelConversationId);
       if (current) {
-        conversations.set(channelConversationId, { ...current, messages: loaded });
+        // Same race as the DM path, and worse: decrypting 200 channel rows takes seconds, and every
+        // live message posted meanwhile used to be discarded when this resolved.
+        conversations.set(channelConversationId, {
+          ...current,
+          messages: mergeMessagePage(current.messages, loaded),
+        });
         channelHistoryLoadedAt.set(channelConversationId, {
           loadedAt: Date.now(),
           userId: ctx.userId,

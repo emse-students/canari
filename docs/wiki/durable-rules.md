@@ -170,6 +170,16 @@ The queue, its barrier, the token rules and the native mirror are on those two p
 carry in the head:
 
 - The outbox is best-effort at every step, so every swallowed branch logs - that is all a loss leaves.
+- **A PAGE READ IS EVIDENCE ABOUT A WINDOW OF THE PAST, NEVER A STATEMENT THAT NOTHING ELSE EXISTS -
+  so it is MERGED into what is on screen, never ASSIGNED over it.** Every history load has the shape
+  fetch -> decrypt -> persist -> re-read a page to render, and the read is issued seconds after the
+  load began: anything delivered meanwhile is on screen and is wiped by the assignment. Four sites
+  had it, and it is invisible in a test because a test never delivers mid-load - it took a
+  continuous sample of the receiver (`trace-arrival.mjs`) to see the row appear at +0.5 s and go at
+  +3.4 s. The merge rule needs no timer and holds at any conversation size: the page decides only
+  BETWEEN its oldest and newest row, memory keeps everything outside that window, and an unsent
+  message is kept wherever it sits because no page can ever carry it. Any COUNT derived from the
+  page has the same fault and must be computed over the merged list.
 - A tab is "read-only" only where something CHECKS: leadership gated the socket, not the queue, so
   the follower encrypted anyway. And gating a writer freezes its state - whoever inherits the role
   must reload it, or it resumes exactly as far behind as the tab it replaced had moved on.

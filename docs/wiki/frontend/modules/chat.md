@@ -922,10 +922,45 @@ the raw state. The invariant it guarantees is the one worth remembering: **a non
 yields a non-empty window.** `renderWindow.test.ts` pins it across every combination of stored index
 and list length, which is the assertion that fails against the old arithmetic.
 
-Still true and deliberately NOT changed here: that refresh DISCARDS older messages the reader had
-paginated in, because it replaces the list with one page instead of merging. That costs scroll
-position and a re-fetch, and it is now merely annoying rather than invisible - but it is the reason
-the window and the list can disagree at all.
+The replacement itself - the reason the window and the list could disagree at all - is gone as of
+2026-08-12, see below.
+
+## A page read is merged into the list, never assigned over it
+
+`loadHistoryForConversation` used to END by assigning `getMessagesPage(id, key,
+INITIAL_MESSAGES_PAGE)` over `conversation.messages`, and three other loads did the same: the
+`limit=1` fast path, the startup restore in `utils/chat/conversations.ts`, and `loadChannelHistory`.
+The read is issued at the END of a load that takes seconds, so it answers a question that was asked
+before it began, and the assignment threw away everything that had arrived in between.
+
+**Measured on the live DM, 2026-08-12** (`trace-arrival.mjs` in the harness, which samples the
+receiver every 250 ms instead of twice): the message rendered at **+0.5 s** and disappeared at
+**+3.4 s**, exactly as the pane grew from 2 808 to 15 756 characters - the page landing. Scrolling to
+the bottom did not bring it back; a reload did. So the store had it and the rendered list did not.
+The same run also exposed why two readings can never settle this: a count of 0 with the composer
+gone is a missing PANE and says nothing about the message, while a count of 0 with a present composer
+and 15 000 characters of pane is a missing MESSAGE. The probe carries both, plus which conversation
+is open, because "not in the pane" also has a harness reading - the sidebar preview of a row nobody
+opened.
+
+`mergeMessagePage` (`utils/chat/messageMerge.ts`) is the single replacement for all four sites. Its
+rule needs no timer and does not care how large the conversation is:
+
+- the page is authoritative INSIDE the window it covers, so a message it omits from between its
+  oldest and newest row is genuinely gone and is dropped - deletions and tombstones still land;
+- memory is authoritative OUTSIDE it, which keeps both newer arrivals the read could not have seen
+  and the older pages the reader had scrolled back to (the cost this section used to record as
+  "deliberately not changed");
+- an UNSENT message is kept wherever it sits, because no page can ever carry it;
+- an empty page asserts nothing and therefore removes nothing.
+
+Two corrections ride on the same seam, because they are the same stale read wearing different
+clothes. `readBy` is unioned rather than taken from the page: reading is applied optimistically in
+memory before the network ACK, so taking the page's array un-reads what the user just read and the
+badge comes back. And the page may never DOWNGRADE an on-screen envelope back to an FCM preview,
+which taking it verbatim would do whenever the stored row is still the notification one. The unread
+COUNT in the startup restore is now computed over the merged list too - counting the page alone lost
+the same message twice, once from the display and once from the badge.
 
 ## UI features
 

@@ -19,7 +19,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
 import { forgetAwaitingHistory } from './historySolicit';
-import { compareMessageOrder } from './messageOrder';
+import { mergeMessagePage } from './messageMerge';
 import { isUnreadForUser } from './unread';
 import { isChannelConversationId } from './channelCrypto';
 
@@ -824,15 +824,17 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         if (current) {
           // "Arrived during this replay" is only a PROXY for "not seen yet", and it breaks when
           // the replay carries a history bundle - hence the readBy check in isUnreadForUser.
+          //
+          // COUNTED OVER THE MERGED LIST, NOT OVER THE PAGE. The page is one window of the store and
+          // a message delivered live while the replay ran is not in it, so counting the page alone
+          // both dropped that message from the display and then wrote a badge that did not include
+          // it - the same stale read, once as a loss and once as an undercount.
           const meNorm = ctx.userId.toLowerCase();
-          const newUnreadCount = refreshedMsgs.filter(
+          const messages = mergeMessagePage(current.messages, refreshedMsgs);
+          const newUnreadCount = messages.filter(
             (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, meNorm)
           ).length;
-          ctx.conversations.set(meta.id, {
-            ...current,
-            messages: [...refreshedMsgs].sort(compareMessageOrder),
-            unreadCount: newUnreadCount,
-          });
+          ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
           for (const m of refreshedMsgs) {
             if (m.reactions && m.reactions.length > 0) {
               ctx.messageReactions.set(m.id, m.reactions);
