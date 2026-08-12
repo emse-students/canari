@@ -82,6 +82,20 @@ three that must be seen without opening one:
   never runs", "the pull runs and everything fails" and "there is nothing to do". Count at the drop,
   name the causes apart, and report ONCE PER DRAIN (per frame is hundreds of lines that still never
   say how many) - and after the queue is idle, since enqueuing is not handling.
+- **A TIMER THAT COMPENSATES FOR TWO TRANSPORTS BEING UNORDERED IS A GUESS; MAKE THE FRAME SAY WHICH
+  CASE IT IS.** The 3 s `HISTORY_DIGEST_GRACE_MS` could not tell "the digest is a moment behind" from
+  "this peer will never send one", so every value was wrong for one of them. One boolean on the
+  election frame (`withDigest`) separates them: no promise = answer now, promise = wait for the
+  EVENT. What is left is a BOUND, and the test of a legitimate bound is that its being reached is
+  not a tuning question - here it means the frame never arrived, and the answer is the same fallback
+  as before. Put the discriminator in the payload, never in the transport's addressing, and keep the
+  DATA (here, which ids a device retains) out of the server's reach.
+- **EVERY COMPATIBILITY SHIM GOES IN [legacy-compatibility](legacy-compatibility.md), WITH THE
+  CONDITION THAT RETIRES IT.** A shim is invisible once it works - nothing fails, nothing warns, and
+  the retiring condition is never re-checked - so it is written down where somebody will read it,
+  with a comment at the site pointing back. The gate is never "the release is out": it is
+  `minClientVersion` raised past it, which is what makes "no old client remains" a fact rather than a
+  hope.
 - MLS membership says who can decrypt; `DeviceGroupMembership` says who is actually sent to.
 - A join is NOT evidence of a gap: the message store and the seen-frame ledger are keyed by USER, so
   a rotated identity rejoins every group while the browser still holds every message.

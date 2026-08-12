@@ -21,7 +21,7 @@ import type { HistoryDigest } from './historyManifest';
  */
 
 /** How long a digest stays usable after arriving. Beyond this it describes a store that has moved. */
-const DIGEST_TTL_MS = 60_000;
+export const DIGEST_TTL_MS = 60_000;
 
 type StoredDigest = { digest: HistoryDigest; at: number };
 

@@ -442,7 +442,12 @@ export class WebMlsService extends BaseMlsService {
             console.log(
               `[WS RCV] history_request from ${sanitizeForLog(requesterUserId)}:${sanitizeForLog(requesterDeviceId)} for group ${sanitizeForLog(groupId)}`
             );
-            this.historyRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+            this.historyRequestCallback?.(
+              requesterUserId,
+              requesterDeviceId,
+              groupId,
+              msg.withDigest === true
+            );
             return;
           }
           if (msg.type === 'epoch_rejected') {

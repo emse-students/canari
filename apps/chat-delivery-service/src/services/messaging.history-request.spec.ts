@@ -76,6 +76,30 @@ describe('MessagingService - notifyHistoryRequest', () => {
     expect(redis.publish).toHaveBeenCalledTimes(1);
   });
 
+  it('relays withDigest so the responder knows whether waiting for a digest is pointless', async () => {
+    redis.smembers.mockResolvedValue(['ua:da']);
+    redis.exists.mockResolvedValue(1);
+
+    await service.notifyHistoryRequest('reqU', { ...body, withDigest: true });
+
+    const published = JSON.parse(redis.publish.mock.calls[0][1] as string) as { proto: string };
+    const relayed = JSON.parse(Buffer.from(published.proto, 'base64').toString());
+    expect(relayed.withDigest).toBe(true);
+  });
+
+  it('defaults withDigest to false, so an older client is answered at once', async () => {
+    // Absent means "this client cannot send a digest". Relaying it as anything but false would make
+    // the elected responder wait out its whole bound for a frame that is never coming.
+    redis.smembers.mockResolvedValue(['ua:da']);
+    redis.exists.mockResolvedValue(1);
+
+    await service.notifyHistoryRequest('reqU', body);
+
+    const published = JSON.parse(redis.publish.mock.calls[0][1] as string) as { proto: string };
+    const relayed = JSON.parse(Buffer.from(published.proto, 'base64').toString());
+    expect(relayed.withDigest).toBe(false);
+  });
+
   it('returns no_peer_online and publishes nothing when no member is online', async () => {
     redis.smembers.mockResolvedValue(['ua:da', 'ub:db']);
     redis.exists.mockResolvedValue(0);

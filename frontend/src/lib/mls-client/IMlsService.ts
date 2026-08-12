@@ -515,14 +515,23 @@ export interface IMlsService {
    * Ask one online member to resend the history bundle after this device self-joined a group via an
    * external commit. History-only (already a member), never a re-add. Best-effort, online-only.
    */
-  sendHistoryRequest(groupId: string): Promise<HistoryRequestOutcome>;
+  sendHistoryRequest(
+    groupId: string,
+    opts?: { withDigest?: boolean }
+  ): Promise<HistoryRequestOutcome>;
 
   /**
    * Register a callback invoked when a member device receives a history_request for a group it
    * belongs to (the requester joined via external commit and wants the pre-join history).
    */
   onHistoryRequest(
-    callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
+    callback: (
+      requesterUserId: string,
+      requesterDeviceId: string,
+      groupId: string,
+      /** The requester promised a digest. False = an older client; answer at once, do not wait. */
+      withDigest: boolean
+    ) => void
   ): void;
 
   /**

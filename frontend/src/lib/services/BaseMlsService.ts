@@ -71,7 +71,12 @@ export abstract class BaseMlsService implements IMlsService {
     | null = null;
 
   protected historyRequestCallback:
-    | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
+    | ((
+        requesterUserId: string,
+        requesterDeviceId: string,
+        groupId: string,
+        withDigest: boolean
+      ) => void)
     | null = null;
 
   protected welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
@@ -294,7 +299,12 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   onHistoryRequest(
-    callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
+    callback: (
+      requesterUserId: string,
+      requesterDeviceId: string,
+      groupId: string,
+      withDigest: boolean
+    ) => void
   ): void {
     this.historyRequestCallback = callback;
   }
@@ -686,11 +696,17 @@ export abstract class BaseMlsService implements IMlsService {
    * that failed to reach the server, or answered something unparseable, proves nothing about who is
    * reachable, and concluding "nobody" from it would abandon a solicitation on a dropped packet.
    */
-  async sendHistoryRequest(groupId: string): Promise<HistoryRequestOutcome> {
+  async sendHistoryRequest(
+    groupId: string,
+    opts: { withDigest?: boolean } = {}
+  ): Promise<HistoryRequestOutcome> {
     const answer = await this.delivery.deliveryPost('history-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
+      // A PROMISE, not a preference: the responder skips its wait entirely unless this is true, so
+      // it must be sent exactly when a digest really will follow.
+      withDigest: opts.withDigest === true,
     });
     return { noPeerOnline: answer?.status === 'no_peer_online' };
   }

@@ -7,6 +7,7 @@ import {
   cancelAllHistorySolicit,
   isSolicitInFlight,
   startAwaitingHistorySweep,
+  setHistoryDigestBroadcaster,
 } from './historySolicit';
 import { enumerateAwaitingHistory, markAwaitingHistory } from './awaitingHistoryRegistry';
 import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
@@ -51,7 +52,7 @@ describe('solicitHistory', () => {
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(0);
 
     vi.advanceTimersByTime(INITIAL);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1');
+    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1', { withDigest: false });
 
     // The property the whole rewrite exists for: one call produces one request, for good. There
     // were two independent backoff ladders here, so a single detection kept generating traffic for
@@ -98,6 +99,56 @@ describe('solicitHistory', () => {
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
   });
 
+  describe('the digest is conditional on a responder having been elected', () => {
+    afterEach(() => setHistoryDigestBroadcaster(null));
+
+    it('asks FIRST and broadcasts the digest only once a peer was elected', async () => {
+      const order: string[] = [];
+      const mls = {
+        sendHistoryRequest: vi.fn().mockImplementation(async () => {
+          order.push('ask');
+          return { noPeerOnline: false };
+        }),
+      };
+      setHistoryDigestBroadcaster(async () => {
+        order.push('digest');
+        return true;
+      });
+
+      solicitHistory(mls, 'g1', log);
+      await vi.advanceTimersByTimeAsync(INITIAL);
+
+      // The order is the fix: a digest sent first is an MLS frame every member of the group
+      // decrypts, for a repair the server may be about to refuse outright.
+      expect(order).toEqual(['ask', 'digest']);
+      expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1', { withDigest: true });
+    });
+
+    it('sends NO digest at all when the server says nobody was online', async () => {
+      const mls = {
+        sendHistoryRequest: vi.fn().mockResolvedValue({ noPeerOnline: true }),
+      };
+      const broadcast = vi.fn().mockResolvedValue(true);
+      setHistoryDigestBroadcaster(broadcast);
+
+      solicitHistory(mls, 'g1', log);
+      await vi.advanceTimersByTimeAsync(INITIAL);
+
+      expect(broadcast).not.toHaveBeenCalled();
+      expect(historyRequestPendingStore.getPhase('g1')).toBe('pending-unsent');
+    });
+
+    it('tells the responder NOT to wait when this device cannot describe itself', async () => {
+      // No broadcaster registered: promising a digest would make the elected peer wait out its
+      // whole bound for a frame that is never coming.
+      const mls = makeMls();
+      solicitHistory(mls, 'g1', log);
+      await vi.advanceTimersByTimeAsync(INITIAL);
+
+      expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1', { withDigest: false });
+    });
+  });
+
   it('cancelHistorySolicit only affects the named group', () => {
     const mls = makeMls();
     solicitHistory(mls, 'g1', log);
@@ -107,7 +158,7 @@ describe('solicitHistory', () => {
     vi.advanceTimersByTime(INITIAL);
 
     expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g2');
+    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g2', { withDigest: false });
   });
 
   it('moves the reactive pending state to pending-unanswered when the window elapses', () => {
@@ -212,7 +263,7 @@ describe('solicitHistoryIfMissing', () => {
 
     expect(enumerateAwaitingHistory(USER)).toEqual(['g1']);
     vi.advanceTimersByTime(INITIAL);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1');
+    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1', { withDigest: false });
   });
 
   it('stays silent when the store already holds the conversation (identity rotation)', async () => {
@@ -261,7 +312,7 @@ describe('solicitHistoryIfMissing', () => {
     });
 
     vi.advanceTimersByTime(INITIAL);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1');
+    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1', { withDigest: false });
     expect(enumerateAwaitingHistory(USER)).toEqual(['g1']);
   });
 
@@ -281,7 +332,7 @@ describe('solicitHistoryIfMissing', () => {
     });
 
     vi.advanceTimersByTime(INITIAL);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1');
+    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1', { withDigest: false });
   });
 });
 
@@ -418,7 +469,7 @@ describe('reSolicitAwaitingHistory', () => {
     const mls = makeMls();
     reSolicitAwaitingHistory(mls, USER, ['g1'], log);
     vi.advanceTimersByTime(INITIAL);
-    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1');
+    expect(mls.sendHistoryRequest).toHaveBeenCalledWith('g1', { withDigest: false });
   });
 
   it('skips groups that are not held locally (recovery re-joins them instead)', () => {

@@ -118,6 +118,15 @@ export interface NotifyWelcomeRequestBody {
   groupId: string;
   requesterUserId: string;
   requesterDeviceId: string;
+  /**
+   * History requests only: the requester promises to broadcast a history digest inside MLS.
+   *
+   * It is a BOOLEAN and never the digest itself, deliberately. The elected responder needs to know
+   * whether waiting for one is pointless (an older client sends none) or certain (a current one
+   * always does), which is all that removes the timing guess - while the digest, which names the
+   * message ids a device retains, stays inside MLS where this service cannot read it.
+   */
+  withDigest?: boolean;
 }
 
 /** One group cursor for batch history fetch. */
@@ -1358,11 +1367,16 @@ export class MessagingService {
       }
     }
 
+    // `withDigest` is relayed verbatim so the responder knows whether a digest is coming. Absent
+    // means "an older client, no digest ever": the responder answers at once with its whole store
+    // instead of waiting out a grace period for something that will never arrive.
+    const withDigest = body.withDigest === true;
     const notification = JSON.stringify({
       type: 'history_request',
       groupId,
       requesterUserId,
       requesterDeviceId,
+      withDigest,
     });
 
     // Forward to a RANDOM online member rather than always the first. A backgrounded Android holds

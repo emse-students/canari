@@ -523,11 +523,28 @@ requester lacks, and sends `history_pull {to, ids|prefixes+depth}` for what IT l
 bundle and a bundle asks for nothing, so the exchange cannot re-enter itself - the WP-RETRANSMIT-1
 lesson, applied by construction.
 
-**The rendezvous.** The two halves travel by different transports and nothing orders them: the
-elected responder can be handed the WS request before or after the digest reaches its inbound MLS
-queue. So it waits `HISTORY_DIGEST_GRACE_MS` (3 s) for the digest, then falls back to
-`sendFullHistoryBundle`. A stored digest is CONSUMED on take - a later request must diff against a
-fresh snapshot, never a minute-old claim (TTL 60 s).
+**The rendezvous, and why it no longer guesses.** The two halves travel by different transports and
+nothing orders them: the elected responder can be handed the WS request before or after the digest
+reaches its inbound MLS queue. That used to be covered by a 3 s `HISTORY_DIGEST_GRACE_MS`, which is
+exactly the shape of timer this codebase treats as a defect - it could not tell "the digest is a
+moment behind" from "this peer will never send one", so every value was wrong for one of them: too
+short dumped a whole store on a current peer, too long made every older peer wait for nothing.
+
+The election frame now carries **`withDigest`** - a boolean, never the digest itself, which names the
+ids a device retains and stays inside MLS where the delivery service cannot read it. False or absent
+(an older client) means answer AT ONCE with the whole store, no wait at all. True means wait for the
+digest EVENT, bounded by `DIGEST_TTL_MS` (60 s) because beyond that a digest describes a store that
+has moved and would be refused anyway. Reaching the bound is not a tuning question: it means the MLS
+frame never arrived, and the answer is the same full store the old fallback sent.
+
+**The requester ASKS BEFORE IT DESCRIBES ITSELF.** `solicitHistory` sends the WS request first and
+broadcasts the digest only once the server reports that a responder was elected - a digest sent
+first is an MLS frame every member decrypts, for a repair `no_peer_online` may be about to refuse
+outright. That ordering is only affordable because of `withDigest`: under a grace period, asking
+first would have guaranteed the digest arrived after the request and burned the whole window.
+
+A stored digest is CONSUMED on take - a later request must diff against a fresh snapshot, never a
+minute-old claim (TTL 60 s).
 
 **Two digest modes, by size.** `ids` (the sorted id list) below `DIGEST_ID_MODE_MAX` (1000), `range`
 above it: the id space is cut into `16^depth` slices and each carries a count plus a truncated

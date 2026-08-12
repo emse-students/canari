@@ -1,0 +1,59 @@
+# Legacy compatibility - what to delete once every client is current
+
+Every entry here is a branch that exists ONLY to keep working against a client too old to speak the
+current protocol. Each one is dead weight the day the last such client is gone, and each one is a
+place where a future reader has to reason about two protocols at once.
+
+**Why this file exists rather than a comment per site.** A compatibility shim is invisible once it
+works: nothing fails, nothing warns, and the condition that would retire it is never re-checked. So
+the condition is written down HERE, next to the thing it retires, and the removal becomes a decision
+somebody takes rather than an archaeology exercise. Every shim below also carries a comment at its
+site pointing back here.
+
+**The gate is the same for all of them:** the store rollout has reached the devices, `minClientVersion`
+has been raised past the release that introduced the replacement, and the fleet is confirmed on it -
+not merely "the release is out". `minClientVersion` is the mechanism that makes the claim true: while
+it sits below that release, an old client is not just possible, it is *supported*.
+
+---
+
+## Open
+
+### `history_bundle` with no `to` - since v0.13.2
+
+**Site:** `systemMessageHandler.ts`, the `history_bundle` branch.
+**Shim:** a bundle carrying no `to` is accepted as an answer to OUR wait when
+`isSolicitInFlight(groupId)` is true.
+**Replacement:** every bundle is addressed at the requester's `digestIdentity` (`bundleFrame`).
+**On removal:** drop the `isSolicitInFlight` fallback; an unaddressed bundle is then ingested for its
+messages and discharges nothing, which is the correct reading of a frame that names nobody.
+**Cost of keeping it:** small and non-lossy - it can only leave a marker up one exchange too long.
+
+### `history_request` with no `withDigest` - since v0.13.2
+
+**Site:** `actions.ts`, `handleHistoryRequest` (`requesterHasDigest`); relayed by
+`messaging.service.ts`, `notifyHistoryRequest`.
+**Shim:** an election frame without `withDigest` is read as "this client sends no digest", and the
+responder answers immediately with its whole store.
+**Replacement:** the requester states on the election frame whether a digest is coming, so the
+responder waits for an EVENT instead of guessing at a duration.
+**On removal:** make `withDigest` required in `NotifyWelcomeRequestBody`, drop the `= false` default
+on `requesterHasDigest`, and delete the "client too old to send one" branch of the log line.
+**Cost of keeping it:** a full-store dump per solicitation from those clients - bandwidth, never
+correctness.
+
+### `history_bundle` with no `vouched` - predates v0.13
+
+**Site:** `historySolicit.ts`, `noteHistoryBundleReceived`.
+**Shim:** an absent `vouched` is read as `true`, because every client shipped before the field sent a
+bare `{ messages: [] }` exactly when it was entitled to vouch.
+**Replacement:** `vouched: false` is explicit on a bundle from a responder that is itself awaiting.
+**On removal:** default `vouched` to nothing and treat its absence as malformed.
+**Cost of keeping it:** none measurable; it is a defaulting rule, not a branch.
+
+---
+
+## Closed
+
+Nothing yet. Move an entry here with the date and the release that made it safe, rather than deleting
+the entry outright - the next reader wants to know the shim existed and why it could go.

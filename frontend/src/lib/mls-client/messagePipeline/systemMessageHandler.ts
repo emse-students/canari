@@ -625,7 +625,7 @@ export async function handleSystemEvent(
     //
     // A bundle with no `to` predates the field. It is answered the legacy way - only while OUR OWN
     // solicitation is outstanding - so the ambiguity resolves in the direction that costs a retry
-    // rather than the one that costs messages.
+    // rather than the one that costs messages. Due for deletion: `docs/wiki/legacy-compatibility.md`.
     const addressee = String(data?.to ?? '');
     const forUs = addressee
       ? addressee.toLowerCase() === digestIdentity(userId, mlsService.getDeviceId()).toLowerCase()

@@ -275,7 +275,12 @@ export class TauriMlsService extends BaseMlsService {
             console.log(
               `[WS RCV] history_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
             );
-            this.historyRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+            this.historyRequestCallback?.(
+              requesterUserId,
+              requesterDeviceId,
+              groupId,
+              parsed.withDigest === true
+            );
             return;
           }
           if (msgType === 'epoch_rejected') {

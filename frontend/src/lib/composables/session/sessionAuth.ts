@@ -946,9 +946,14 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     });
 
     mlsService.onHistoryRequest(
-      async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {
+      async (
+        requesterUserId: string,
+        requesterDeviceId: string,
+        groupId: string,
+        withDigest: boolean
+      ) => {
         cb.log(
-          `[SYNC] history_request received from ${requesterUserId}:${requesterDeviceId} for ${groupId}`
+          `[SYNC] history_request received from ${requesterUserId}:${requesterDeviceId} for ${groupId}${withDigest ? ' (digest promised)' : ' (no digest - older client)'}`
         );
         try {
           await handleHistoryRequest({
@@ -961,6 +966,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             requesterDeviceId,
             selfUserId: ctx.getUserId(),
             groupId,
+            requesterHasDigest: withDigest,
           });
         } catch (e) {
           cb.log(

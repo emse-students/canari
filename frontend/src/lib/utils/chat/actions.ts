@@ -16,7 +16,11 @@ import {
   isGroupActiveOnServer,
   handleDuplicateLeafError,
 } from '$lib/utils/chat/groupActions';
-import { awaitDigest, digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
+import {
+  awaitDigest,
+  digestIdentity,
+  DIGEST_TTL_MS,
+} from '$lib/utils/chat/historyDigestRendezvous';
 import {
   diffHistoryDigest,
   isEmptyHistoryDiff,
@@ -960,15 +964,23 @@ export async function handleWelcomeRequest(params: {
 }
 
 /**
- * How long the elected responder waits for the requester's digest before answering with its whole
- * store.
+ * How long the elected responder waits for a digest it was TOLD is coming.
  *
- * The two halves of a solicitation travel by different transports - the election over the WebSocket,
- * the digest inside MLS - and nothing orders them, so deciding on arrival would answer roughly half
- * of them the old way. Long enough to cover that reordering, short enough that a peer running a
- * version too old to send a digest is not left waiting for its history.
+ * This is not the old 3 s grace, and the difference is the point. That value had to be a
+ * compromise: the two halves of a solicitation travel by different transports - the election over
+ * the WebSocket, the digest inside MLS - so the responder could not tell "the digest is a moment
+ * behind" from "this peer will never send one", and every value was wrong for one of them. Too
+ * short answered a current peer with a full store dump it did not need; too long left an older peer
+ * waiting for its history.
+ *
+ * The election frame now carries `withDigest`, so the two cases are DISTINGUISHED rather than
+ * traded off: no promise means answer immediately, a promise means wait for the digest EVENT. What
+ * is left is a bound on that wait, and it is the one duration the digest already has - beyond
+ * `DIGEST_TTL_MS` a digest describes a store that has moved and would be refused anyway. Its being
+ * reached is not a tuning question: it means the MLS frame never arrived, and the answer is the
+ * same full store the old fallback sent.
  */
-const HISTORY_DIGEST_GRACE_MS = 3_000;
+const HISTORY_DIGEST_WAIT_MS = DIGEST_TTL_MS;
 
 /**
  * Handles an incoming history_request: a device asks for history it cannot decrypt on its own. We
@@ -982,9 +994,11 @@ const HISTORY_DIGEST_GRACE_MS = 3_000;
  * tells US what the requester has and we do not, so a solicitation repairs both devices at once
  * instead of pushing history one way.
  *
- * A requester that sends NO digest gets the old behaviour. That is the rollout story rather than a
- * safety net: the web deploys in one step and the phones do not, so both halves of this protocol
- * have to work against a peer that only speaks the other one.
+ * A requester that sends NO digest gets the old behaviour, and now SAYS SO on the election frame
+ * (`requesterHasDigest`) instead of being inferred from a silence. That is the rollout story rather
+ * than a safety net: the web deploys in one step and the phones do not, so both halves of this
+ * protocol have to work against a peer that only speaks the other one. It is also the one piece of
+ * this exchange due for deletion once every client is current - see `legacy-compatibility.md`.
  */
 export async function handleHistoryRequest(params: {
   mlsService: IMlsService;
@@ -998,8 +1012,13 @@ export async function handleHistoryRequest(params: {
   /** OUR user id - the responder's, not the requester's. */
   selfUserId: string;
   groupId: string;
+  /**
+   * The requester promised a digest on the election frame. FALSE (or absent, from a client too old
+   * to say) means none is coming, so nothing is waited for at all.
+   */
+  requesterHasDigest?: boolean;
   /** Overridable for tests only. */
-  digestGraceMs?: number;
+  digestWaitMs?: number;
 }): Promise<void> {
   const {
     mlsService,
@@ -1011,7 +1030,8 @@ export async function handleHistoryRequest(params: {
     requesterDeviceId,
     selfUserId,
     groupId,
-    digestGraceMs = HISTORY_DIGEST_GRACE_MS,
+    requesterHasDigest = false,
+    digestWaitMs = HISTORY_DIGEST_WAIT_MS,
   } = params;
   const short = groupId.slice(0, 8);
   if (!mlsService.getLocalGroups().includes(groupId)) {
@@ -1025,11 +1045,15 @@ export async function handleHistoryRequest(params: {
 
   const deps = { storage, deviceKeyB64, mlsService, log };
   const requesterIdentity = digestIdentity(requesterUserId, requesterDeviceId);
-  const digest = await awaitDigest(groupId, requesterIdentity, digestGraceMs);
+  // Nothing is waited for unless a digest was PROMISED. A peer too old to promise one is answered
+  // at once - it was the grace period's only real cost, paid on every one of its solicitations.
+  const digest = requesterHasDigest
+    ? await awaitDigest(groupId, requesterIdentity, digestWaitMs)
+    : null;
 
   if (!digest) {
     log(
-      `[HISTORY_REQ] no digest from ${requesterIdentity} for ${short}... - sending the whole store`
+      `[HISTORY_REQ] no digest from ${requesterIdentity} for ${short}... (${requesterHasDigest ? 'promised but never arrived' : 'client too old to send one'}) - sending the whole store`
     );
     await sendFullHistoryBundle(groupId, { ...deps, selfUserId, to: requesterIdentity }).catch(
       (e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)

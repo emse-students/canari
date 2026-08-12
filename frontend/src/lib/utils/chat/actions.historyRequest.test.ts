@@ -82,9 +82,11 @@ function baseParams(overrides: Record<string, unknown> = {}) {
       getLocalGroups: vi.fn().mockReturnValue([GROUP]),
       getDeviceId: vi.fn().mockReturnValue(SELF_DEVICE),
     }),
-    // No digest is ever going to arrive in these tests unless one was posted before the call, so
-    // the grace window is collapsed to keep the suite fast.
-    digestGraceMs: 1,
+    // The default case in these tests is a requester that promised a digest; the ones about an
+    // older client override it. No digest ever ARRIVES here unless one was posted before the call,
+    // so the wait is collapsed to keep the suite fast - it is a bound, never a schedule.
+    requesterHasDigest: true,
+    digestWaitMs: 1,
     ...overrides,
   } as Parameters<typeof handleHistoryRequest>[0];
 }
@@ -116,6 +118,18 @@ describe('handleHistoryRequest - guards', () => {
 });
 
 describe('handleHistoryRequest - no digest (a peer on an older build)', () => {
+  it('answers a peer that promised nothing IMMEDIATELY, without waiting for anything', async () => {
+    // The whole point of `withDigest` on the election frame. With a grace period, this peer paid it
+    // on every solicitation it ever made, waiting out a window for a frame it does not know how to
+    // send. A wait long enough to be worth measuring here would be a wait it should never do at all.
+    const params = baseParams({ requesterHasDigest: false, digestWaitMs: 60_000 });
+    const before = Date.now();
+    await handleHistoryRequest(params);
+
+    expect(Date.now() - before).toBeLessThan(1_000);
+    expect(sendFullHistoryBundle).toHaveBeenCalled();
+  });
+
   it('falls back to the whole store, which is exactly what that peer expects', async () => {
     await handleHistoryRequest(baseParams());
     // `selfUserId` must be OUR id, never the requester's: it decides whether our empty store is

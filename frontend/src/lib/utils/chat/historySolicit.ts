@@ -124,35 +124,43 @@ export function solicitHistory(
     // Opens the response window: from here "outstanding" means "waiting for an answer".
     historyRequestPendingStore.start(groupId);
 
-    // Say what we HOLD before asking, so the elected member can answer with the difference. Sent
-    // first and awaited: it rides inside MLS while the request goes over the WebSocket, and the
-    // responder only waits a few seconds for it before falling back to its whole store. Failing to
-    // describe ourselves is not a reason to skip the ask - the fallback is exactly the old
-    // behaviour, which is also what a peer running an older build will do anyway.
-    if (broadcastDigest) {
-      await broadcastDigest(groupId).catch((e) =>
-        log(
-          `[HISTORY_REQ] digest broadcast failed for ${groupId.slice(0, 8)}...: ${String(e).slice(0, 120)}`
-        )
-      );
-    } else {
+    if (!broadcastDigest) {
       log(
         `[HISTORY_REQ] no digest broadcaster registered - asking ${groupId.slice(0, 8)}... for its whole store`
       );
     }
 
+    // ASK FIRST. The server elects the responder and answers `no_peer_online` immediately when
+    // there is none, so asking first is what makes the digest conditional: a broadcast sent before
+    // the ask is an MLS frame every member decrypts, for a repair that was never started. It also
+    // costs nothing to order it this way, because the responder no longer guesses whether a digest
+    // is coming - the request itself says so (`withDigest`), so it waits for the EVENT rather than
+    // for a duration chosen to cover the reordering of two transports.
     return mlsService
-      .sendHistoryRequest(groupId)
-      .then((outcome) => {
+      .sendHistoryRequest(groupId, { withDigest: !!broadcastDigest })
+      .then(async (outcome) => {
         if (outcome?.noPeerOnline) {
           // The server elects the responder, so it already knows there was none. Waiting out the
           // response window for an answer nobody was asked for tells the user nothing; the next
           // edge - a peer coming online, a reconnect, the sweep - is what asks again.
-          log(`[HISTORY_REQ] no member online for ${groupId.slice(0, 8)}...`);
+          log(
+            `[HISTORY_REQ] no member online for ${groupId.slice(0, 8)}... - digest not broadcast`
+          );
           historyRequestPendingStore.markUnsent(groupId);
           return;
         }
         log(`[HISTORY_REQ] solicited ${groupId.slice(0, 8)}...`);
+        // Say what we HOLD, so the elected member answers with the difference instead of its whole
+        // store. A failure here is not a reason to undo the ask: the responder's wait expires and
+        // it sends everything, which is exactly what it would have done for a peer too old to
+        // describe itself.
+        if (broadcastDigest) {
+          await broadcastDigest(groupId).catch((e) =>
+            log(
+              `[HISTORY_REQ] digest broadcast failed for ${groupId.slice(0, 8)}...: ${String(e).slice(0, 120)}`
+            )
+          );
+        }
       })
       .catch((e) => {
         // A THROW MEANS IT NEVER LEFT THE DEVICE - offline, DNS, TLS, a 502 from the proxy, an
