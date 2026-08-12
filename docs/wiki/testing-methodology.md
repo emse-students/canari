@@ -362,6 +362,36 @@ by anyone who has not met them.
   so "no banner" is meaningless unless the check asserts the conversation is open **and** the
   observation window spans a fresh attempt. After a reload, "no banner" is guaranteed and proves
   nothing.
+- **THE PIN GATE ONLY MOUNTS ON `/chat` AND `/communities`, so a LOCKED client reads as unlocked
+  everywhere else.** Any launch, kill, reboot, radio cycle, `install -r` or self-restart re-locks the
+  encryption PIN, and a locked client decrypts nothing and ACKs nothing - every number taken from it
+  is wrong, and it never says so. `input[type=password]` is doubly wrong: the mobile shape is a
+  KEYPAD with no input element at all. `state.mjs` therefore answers `LOCKED` / `unlocked` /
+  `unknown (gate not on this route)` - `unknown` means *run `pin.mjs`*, which is idempotent, so
+  running it when it was not needed costs nothing while skipping it costs the whole measurement.
+- **`client()` turns FOCUS EMULATION on, and an emulated-focus page is pinned `visible`.** That is
+  what lets three clients each be "the focused window" at once, and it silently defeats every attempt
+  to background one: `window.open` really does open a sibling tab and the page stays `visible`
+  anyway. `background()` now toggles it off for the duration; closing the sibling also does not
+  necessarily re-select the app, so the restore asks for `Page.bringToFront` explicitly. A failed
+  attempt must close its own tab, or the next run inherits a window full of stale `about:blank`.
+- **A node script holding an open CDP socket never exits**, so a PowerShell pipeline that buffers
+  (`| Select-Object -Last N`) prints NOTHING and reads as a hang - after the script has already
+  computed and printed a perfectly good answer. Redirect to a file and read the file. This cost three
+  runs in one session before it was recognised.
+- **The message store is CIPHERTEXT at rest**, so searching its rows for a marker string finds
+  nothing whether or not the message is there: only `id` and `conversationId` are plaintext. A probe
+  written that way is VACUOUS, not negative - and it will happily "confirm" a loss that never
+  happened. Assert on the rendered pane for presence, on id sets for reconciliation.
+- **A frozen Chrome renderer still answers `/json/list` over HTTP** while every `Runtime.enable`
+  times out, so the browser looks alive and each individual check looks broken. Opening a fresh tab
+  on the same profile does NOT help - the whole browser process is the thing that is wedged. Relaunch
+  it with `launch.mjs`, whose profile is on disk, then re-enter the PIN.
+- **The phone's devtools socket is named after the PID and the app restarts on its own**, so a
+  forward left from earlier in the session points at nothing while the app is perfectly healthy - and
+  a process with no WebView (the background push handler) is *also* a valid `pidof` answer that has
+  no devtools socket at all. Re-derive it (`a1forward.mjs`), and treat "no targets" as "re-forward",
+  never as "the app is down".
 
 ---
 
