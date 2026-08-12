@@ -102,15 +102,34 @@ desktop 5 years - bounded, not infinite, so the floor has something to move for 
 bounded domain), and **nothing may move the floor for now**. The two still open are the new
 `MAXLEN` (answered below) and the state key's fan-out cost for a user in many groups.
 
-**IMPLEMENTATION HAS STARTED. Phase 1 is committed** - the `silent` split, mutations in the shared
-log, and the caps. What it changed, so nothing re-derives it: `DELIVERY` in
+**IMPLEMENTATION IS UNDER WAY. D1-D7 ARE ALL DONE AND PUSHED, plus the read watermark (D2).** What
+is left is the list under "What disappears" in the spec plus the floor/window, the state key, the
+reconciliation exchange and the scrollback - read the spec, do not re-derive them here.
+
+What phase 1 changed, so nothing re-derives it: `DELIVERY` in
 `frontend/src/lib/mls-client/frameDelivery.ts` is the ONLY classification (`visible` / `mutation` /
 `transport`) and every send site names one; the server gate reads `body.durable`, not `!silent`. Two
 consequences were handled at the same time and must not be undone: the stream now carries silent
 frames so **each entry records its own `silent`**, and `redeliverMissedDuringActivationWindow`
 filters on it or it rings the user for every reaction; and **D7 inverted** - the mutation replay
 handlers were dead because no mutation reached the stream, they are now the path every mutation
-takes on replay, so they are to be VERIFIED, not deleted.
+takes on replay, so they were VERIFIED, not deleted.
+
+**That verification found two security holes, both fixed in `f0dc3296`** and worth remembering as a
+shape: the replay path applied `delete_message`/`edit_message` by id with NO author check (the live
+path has had one since `f924932b`) - phase 1 made those handlers reachable and so re-opened the hole
+one layer down; and `POST mls/send` never compared `body.senderId` to the authenticated
+`x-user-id`, so a member could write frames into a group's shared log under another member's name.
+`historySystemEvents.test.ts` is the module's first test file, which is why a dead handler went
+unnoticed as long as it did.
+
+**The read watermark replaced per-message `readBy`/`readAt` outright** - `readState.ts` (which
+absorbed `unread.ts`), `Conversation.readWatermarks`, `ConversationMeta.readWatermarks`, SQLite v6.
+Two things not to undo: the compared instant is the message's own CLIENT timestamp (`messageTime`,
+the primary sort key) and is drawn from the messages rather than the clock, or a fast device marks
+everything read for everyone for ever; and `toConversationMeta` is the single projection of a
+conversation onto its row, because that row is written whole. An edit no longer resets read state,
+deliberately.
 
 The chain that produced it, kept only because it explains why the page looks like it does: MSG-1
 failed, was root-caused to a history load ASSIGNING a freshly read page over the rendered list
@@ -132,6 +151,16 @@ copy at all. **A clean break, no compatibility layer**, so the deploy
 sequence is: publish to the stores, VERIFY the store serves the new build, only then deploy the
 server and raise `minClientVersion` - raising it first traps users on an update screen whose button
 leads to the old version.
+
+**Where the rework stands, 2026-08-12.** Done and pushed: phase 1, D1, D3, D4, D5 (at rest), D6, D7
++ the two security fixes, and the read watermark carrying D2. **Nothing of the rework has been
+exercised on a device or a browser yet** - the frontend gates are green (0 svelte-check errors,
+1308/1308 tests) and that is all they prove. Still open, in the spec's own order: the conversation
+floor + device window, the state key, the reconciliation exchange on connect, the scrollback, the
+deletion-from-the-log open question, and the deletions listed under "What disappears" - the banner,
+the durable marker AS A TRIGGER, the retry, the vouching, the 30-day horizon, the 15-minute sweep -
+plus the three measured defects (stuck catchup overlay, post-ingest render freeze, 15 s
+`scheduleRetry` loop).
 
 **A1 IS UNREACHABLE: the phone dropped off USB mid-session** (`adb devices` empty, survives
 `kill-server`). It needs a replug and the USB-debugging prompt accepted. Two things are owed the
