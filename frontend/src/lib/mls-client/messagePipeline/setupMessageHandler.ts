@@ -12,6 +12,7 @@ import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
+import { noteUnackedFrame } from './unackedFrames';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
 import { markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
 import { solicitHistory } from '$lib/utils/chat/historySolicit';
@@ -514,6 +515,7 @@ async function handleUnknownGroup({
 
   if (buf.msgs.length < 20) buf.msgs.push({ sender, content });
 
+  noteUnackedFrame(groupId, 'unknown-group');
   return false; // Keep in queue for replay when the Welcome arrives
 }
 
@@ -561,6 +563,7 @@ async function handleKnownGroup({
   const convo = conversations.get(convoKey);
   if (!convo) {
     log(`[MLS] Message for absent conversation ${convoKey.slice(0, 8)}… - retry after restore`);
+    noteUnackedFrame(groupId, 'absent-conversation');
     return false;
   }
 

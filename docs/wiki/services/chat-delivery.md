@@ -168,6 +168,30 @@ its 10 s budget too. The original timeout is not reproduced. What is established
 property the fix is made of, which is independent of link speed — partial progress, page by page —
 and reproducing the timeout would need a backlog no composer can build in under an hour.
 
+#### A drain that acknowledges nothing now says so
+
+WP-PENDING-1 fixed the pull. What it did not fix is that **a row nothing acknowledges is invisible
+from either end**. Only what reaches `enqueueMessage` can ever be ACKed, and two places drop a row
+before that without a word:
+
+- `BaseMlsService.enqueuePendingRows` skips a row whose `proto` is absent or decodes to zero bytes
+  (and used to swallow a decode failure into a single `console.error` with no tally);
+- the inbound handler returns `false` for an unknown group (buffered pending a Welcome) or an absent
+  conversation (waiting on the store restore) - correct in both cases, and silent in aggregate.
+
+A device in either state re-fetches the same rows on every reconnect for the 90 days of the
+retention window, and the only external symptom is a backlog that grows and never shrinks. That
+reads identically to "the pull never runs", to "the pull runs and everything fails", and to a device
+with nothing to do - three causes, three opposite fixes, and no server-side count separates them.
+This is exactly the rule about a report having to carry the evidence that separates the causes it
+cannot itself distinguish.
+
+So both are counted and named. `enqueuePendingRows` emits one line per page splitting **empty
+payload** from **undecodable payload** with a sample of ids; `unackedFrames.ts` tallies the handler's
+refusals by reason with a sample of group ids, and `fetchPendingMessages` reports it **after
+`waitForMessageQueueIdle`** - the rows are enqueued, not handled, so what was refused is only known
+once the queue has drained. Silent when there is nothing to say.
+
 ### A revoked device id never comes back
 
 `DELETE /mls/devices/:userId/:deviceId` purges the device footprint **and** writes a permanent

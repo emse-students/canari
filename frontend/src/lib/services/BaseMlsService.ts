@@ -27,6 +27,7 @@ import {
   recordPendingMessagesFetched,
 } from '$lib/mls-client/catchupBenchmark';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { reportUnackedFrames } from '$lib/mls-client/messagePipeline/unackedFrames';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 
@@ -577,13 +578,29 @@ export abstract class BaseMlsService implements IMlsService {
       console.error(`[PENDING] Pending fetch failed after ${fetched} messages:`, e);
     }
     await this.waitForMessageQueueIdle();
+    // Only now is the answer complete: the rows were enqueued, not handled, so what the handler
+    // refused to acknowledge is known only once the queue has drained. Without this, a device that
+    // re-fetches the same backlog on every reconnect reports a perfectly healthy pull each time.
+    reportUnackedFrames((msg) => console.warn(msg));
   }
 
   /**
    * Routes one page of raw pending rows through the serialized queue, so they never race with live
    * WebSocket messages calling messageCallback.
+   *
+   * **A ROW THIS DROPS IS NEVER ACKED, SO IT IS DRAINED AGAIN FOR EVER.** Only what reaches
+   * `enqueueMessage` can ever be acknowledged: anything the loop passes over stays in
+   * `queued_message` until the 90-day retention, is re-fetched on every reconnect, and makes the
+   * backlog a number that only ever grows. That is invisible from the outside - a pull that returns
+   * 500 rows and acknowledges none looks exactly like a pull that had nothing to do - so the rows
+   * are COUNTED and NAMED here, with their two causes kept apart because they call for opposite
+   * fixes: a payload that is absent or empty is a producer writing a row it never filled, while one
+   * that fails to decode is a corrupt or truncated write.
    */
   private enqueuePendingRows(rows: Record<string, unknown>[]): void {
+    /** Rows this page will not acknowledge, by cause. Bounded by the page size, so keeping ids is cheap. */
+    const undeliverable: { empty: string[]; malformed: string[] } = { empty: [], malformed: [] };
+
     for (const msg of rows) {
       const msgId = (msg.id || msg._id) as string | undefined;
       const queuedCreatedAt = parseServerTimestampMs(msg.createdAt);
@@ -623,11 +640,27 @@ export abstract class BaseMlsService implements IMlsService {
               queuedMessageId: msgId,
               queuedCreatedAt,
             });
+            continue;
           }
         } catch (e) {
           console.error('[PENDING] Failed to enqueue proto message:', e);
+          undeliverable.malformed.push(msgId ?? '(no id)');
+          continue;
         }
       }
+      // Reached only by a row carrying no usable payload: no `proto` at all, or one that decoded to
+      // zero bytes. Nothing was enqueued, so nothing will ACK it.
+      undeliverable.empty.push(msgId ?? '(no id)');
+    }
+
+    const stuck = undeliverable.empty.length + undeliverable.malformed.length;
+    if (stuck > 0) {
+      const sample = (ids: string[]) => ids.slice(0, 5).join(', ') + (ids.length > 5 ? ', …' : '');
+      console.warn(
+        `[PENDING] ${stuck}/${rows.length} row(s) of this page cannot be delivered and will NOT be acknowledged - they will be re-fetched on every reconnect until the retention window expires. ` +
+          `empty payload: ${undeliverable.empty.length}${undeliverable.empty.length ? ` [${sample(undeliverable.empty)}]` : ''}; ` +
+          `undecodable payload: ${undeliverable.malformed.length}${undeliverable.malformed.length ? ` [${sample(undeliverable.malformed)}]` : ''}`
+      );
     }
   }
 

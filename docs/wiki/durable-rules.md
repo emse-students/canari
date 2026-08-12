@@ -75,6 +75,13 @@ three that must be seen without opening one:
   is (2000, 2000): a per-recipient re-encryption burns that budget into a generation gap the other
   members cannot close (`forgetGroup` + re-Welcome). Addressing belongs in the PAYLOAD; it is not a
   secrecy boundary and must never be documented as one.
+- **A ROW NOTHING ACKNOWLEDGES IS INVISIBLE FROM BOTH ENDS, SO THE DROP SITE MUST COUNT IT.** Only
+  what reaches `enqueueMessage` can ever be ACKed; a row skipped for an empty or undecodable payload,
+  and a frame the handler returns `false` for, are re-fetched on every reconnect for the whole
+  retention window. The external symptom - a backlog that only grows - is identical for "the pull
+  never runs", "the pull runs and everything fails" and "there is nothing to do". Count at the drop,
+  name the causes apart, and report ONCE PER DRAIN (per frame is hundreds of lines that still never
+  say how many) - and after the queue is idle, since enqueuing is not handling.
 - MLS membership says who can decrypt; `DeviceGroupMembership` says who is actually sent to.
 - A join is NOT evidence of a gap: the message store and the seen-frame ledger are keyed by USER, so
   a rotated identity rejoins every group while the browser still holds every message.
