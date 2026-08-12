@@ -180,6 +180,16 @@ On connect, in this order - the order is load-bearing:
 2. **MLS sync** - join/refresh groups, apply commits.
 3. **Drain the mailbox** (`queued_message`) to completion. *Comparing before this finishes reports a
    difference the device is in the middle of closing by itself.*
+
+> **The seams these map to already exist, and one of them is a clock that must go.**
+> `openGatewayConnection` connects and calls `fetchPendingMessages`, which pages the mailbox and then
+> `await`s `waitForMessageQueueIdle()` - a real completion signal, not a delay, so step 3 needs
+> nothing invented. `syncConnectionAfterWsOpen` is step 2. It ends with
+> `await new Promise((r) => setTimeout(r, 500))` described as *"small delay to let the first batch of
+> messages arrive"*, and **that sleep is what step 4 must replace**: a comparison placed after a
+> guessed delay reports differences the device was still closing, and reports them differently on a
+> fast network than a slow one. `waitForMessageQueueIdle` is the honest bound and is already
+> available on `IMlsService`.
 4. **Then, silently, in the background:** send the elected online peer a compact **state key** for
    the requester's window and ask whether it matches.
 
@@ -232,6 +242,24 @@ messages, while an over-eager invalidation only costs a walk.
 
 Election is unchanged: the server picks one online member, so the exchange stays two-party. A
 broadcast digest would cost every member a decryption for a repair concerning two devices.
+
+**And the key must ride that same election, for a reason the digest only half had.** A digest costs
+every member who receives it a decryption; a state key costs each of them the WALK behind computing
+their own to compare against, which is the expensive half of this whole mechanism. So the key is not
+broadcast to be answered by whoever feels like it: the requester elects a responder exactly as it
+does today (`sendHistoryRequest` over the WebSocket) and puts the key inside MLS, and only the
+elected device compares. The rendezvous that already joins those two transports
+(`historyDigestRendezvous`) is the same shape and should carry the key rather than gain a twin.
+
+The resulting flow, which is today's with one probe in front of it:
+
+| | today | with the key |
+| --- | --- | --- |
+| stores agree | digest → diff → empty vouched bundle | key → empty vouched bundle |
+| stores differ | digest → diff → bundle | key → *"send me your digest"* → digest → diff → bundle |
+
+One round trip is added to the case that differs and one whole digest is removed from the case that
+does not - which is the common one, and the only one paid on every connect of every device.
 
 ### Why it converges, and why a third device needs nothing extra
 
