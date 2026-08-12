@@ -310,7 +310,7 @@ export class MessagingService {
     scope: string
   ): void {
     const authUserId = sanitizeOptionalQueryValue(authUserIdRaw, 'x-user-id');
-    if (authUserId && authUserId !== requesterUserId) {
+    if (authUserId && authUserId.toLowerCase() !== requesterUserId.toLowerCase()) {
       this.logger.warn(
         `[${scope}][${traceId}] AUTHZ FAIL caller=${authUserId} != requester=${requesterUserId}`
       );
@@ -496,8 +496,17 @@ export class MessagingService {
    * For online recipients, publishes via Redis pub/sub and schedules a deferred FCM fallback.
    * For offline recipients, schedules an immediate FCM push (non-blocking).
    */
-  async sendMessage(body: SendMessageBody): Promise<SendMessageResult> {
+  async sendMessage(body: SendMessageBody, authUserIdRaw?: string): Promise<SendMessageResult> {
     const traceId = this.makeTraceId('send');
+
+    // `senderId` is what the shared log records as the author of the frame, and what a device
+    // replaying the log attributes the message - and every mutation in it - to. It was taken from
+    // the body and never compared to the authenticated caller, so a member could write frames into
+    // a group's log under another member's name. Absent header = an internal caller (the gateway),
+    // which never crosses nginx and therefore has none; same rule as every other route here.
+    if (body.senderId) {
+      this.assertRequesterMatchesCaller(authUserIdRaw, body.senderId, traceId, 'SEND');
+    }
 
     const ops: QueuedMessage[] = [];
     let sentCount = 0;

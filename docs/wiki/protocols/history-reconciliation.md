@@ -272,7 +272,7 @@ from the audit and carry its references.
 | D4 | ~~`editedAt` is not serialised into the bundle although `isEdited` is, so a device restored by bundle shows "edited" with no timestamp, permanently~~ **FIXED**: written by `serializeForBundle`, read by both merge paths and by the replay's row builder | `groupActions.ts`, `systemMessageHandler.ts`, `historySystemEvents.ts`, `history.ts` | audit |
 | D5 | ~~Bundle merge flags `isDeleted` without replacing `content`, and writes the original text back to disk~~ **FIXED at rest**; dropping the shared-log entry is a separate decision, see [Deletion purges](#deletion-purges) | `systemMessageHandler.ts`, the bundle merge and its write | yes |
 | D6 | ~~`serverTimestamp` is dropped on the live bundle add path, giving unstable ordering for messages sharing a client timestamp. The replay path preserves it~~ **FIXED**: carried onto the add path, matching the replay path | `systemMessageHandler.ts`, the `toAdd` mapping | audit |
-| D7 | The replay handlers for `reaction`, `read_receipt`, `delete_message`, `edit_message`, `remove_reaction` are unreachable for MLS groups, because those frames never enter the stream. **Inverted by the durability split**: they are now the path every mutation takes on replay, so the work is to verify them rather than delete them | `historySystemEvents.ts:173-238`, `history.ts:378-388` | audit |
+| D7 | ~~The replay handlers for `reaction`, `read_receipt`, `delete_message`, `edit_message`, `remove_reaction` are unreachable for MLS groups, because those frames never enter the stream~~ **Inverted by the durability split**, then VERIFIED - and the verification found a hole the split had opened: see [Who may mutate on replay](#who-may-mutate-on-replay) | `historySystemEvents.ts`, `history.ts` | yes |
 
 Three defects measured the same day are covered here rather than patched separately, by decision: the
 stuck `isMessageCatchupActive` overlay, the post-ingest render freeze, and the 15 s `scheduleRetry`
@@ -302,6 +302,36 @@ That is the correct reading in the case it actually happens - a channel message,
 deliberately not stored, no longer gets one conjured by a reaction - and in the remaining window (a
 message buffered by a bulk ingest but not yet flushed to disk) the mutation is still applied in
 memory and the row converges on the next reconciliation, which is what the rest of this page is for.
+
+### Who may mutate on replay
+
+Only the author of a message may edit or delete it. The live path has enforced that since
+`f924932b`; **the replay path never did**, and until the durability split it did not matter, because
+no `delete_message` or `edit_message` frame ever entered the shared log for anything to replay. The
+split made those handlers reachable, and by doing so re-opened the hole one layer down: any member
+could have written a deletion of any message in the group and had every device that later replayed
+the log apply it.
+
+The check is `replayMutationIsAuthorised(target, senderNorm, kind)`, and it runs at both places a
+replayed mutation can land, because the two see different evidence:
+
+- **in memory**, against the message already in the conversation, in `historySystemEvents.ts`;
+- **after the batch save**, against the stored row, in `history.ts` - the frame may have arrived
+  before the message it mutates, so the handler records WHO claimed it (`deletedMessages` and
+  `editedMessages` are maps to `{ by }`, not sets) and the apply pass compares that to the row's real
+  `senderId` once the row exists.
+
+A refusal logs and records nothing, so a rejected frame cannot reach the DB pass through the
+accumulator either. `historySystemEvents.test.ts` covers both directions; it is the module's first
+test file, which is the reason a dead handler could go unnoticed for as long as it did.
+
+The other half of the same question is on the server: `POST mls/send` took `senderId` from the body
+and never compared it to the authenticated `x-user-id`, so a member could write frames into a group's
+shared log under another member's name - and `senderId` is exactly what a replaying device
+attributes a message, and every mutation in it, to. It now goes through the service's own
+`assertRequesterMatchesCaller` (case-insensitive; skipped for an internal caller, which never crosses
+nginx and has no header). The background twin `mls/push/send` was already sound: it authenticates the
+claimed `userId` against that user's PushSecret before it becomes `senderId`.
 
 Two writers stay on `saveMessage` on purpose, and neither is a mutation of accumulated state:
 `persistSent` writes a message the device has just sent, under the LIVE conversation key, which a

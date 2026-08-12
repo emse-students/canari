@@ -118,6 +118,32 @@ describe('MessagingService - visibility vs durability', () => {
     service = module.get(MessagingService);
   });
 
+  describe('who the shared log records as the author', () => {
+    it('rejects a frame claiming to come from another user', async () => {
+      // `senderId` is what a device replaying the log attributes the message - and every mutation
+      // in it - to. It came from the body and was never compared to the authenticated caller, so a
+      // member could write frames into a group's log under another member's name.
+      await expect(service.sendMessage(send({ senderId: 'victim' }), 'attacker')).rejects.toThrow(
+        'requesterUserId does not match the authenticated caller'
+      );
+      expect(redis.xadd).not.toHaveBeenCalled();
+    });
+
+    it('accepts the caller sending as itself, whatever the case', async () => {
+      await service.sendMessage(send({ senderId: 'Alice' }), 'alice');
+
+      expect(redis.xadd).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips the check for an internal caller, which never crosses nginx', async () => {
+      // The gateway calls the service directly and has no `x-user-id`; same rule as every other
+      // route in this service.
+      await service.sendMessage(send({}), undefined);
+
+      expect(redis.xadd).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('what reaches the shared log', () => {
     it('keeps a silent mutation, so a device that was absent can still obtain it', async () => {
       // The whole defect in one assertion: a reaction is silent AND durable.

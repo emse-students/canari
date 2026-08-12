@@ -20,8 +20,8 @@ export class MessagingController {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/send')
-  async sendMessage(@Body() body: SendMessageBody) {
-    return this.messagingService.sendMessage(body);
+  async sendMessage(@Body() body: SendMessageBody, @Headers('x-user-id') authUserId?: string) {
+    return this.messagingService.sendMessage(body, authUserId);
   }
 
   @UseGuards(HeaderAuthGuard)

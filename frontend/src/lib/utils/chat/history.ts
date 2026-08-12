@@ -4,7 +4,11 @@ import type { IStorage, StoredMessage } from '$lib/db';
 import type { ChatMessage, Conversation, MessageReaction } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import type { MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
-import { applyReplaySystemEvent, type PendingHistoryMessage } from './historySystemEvents';
+import {
+  applyReplaySystemEvent,
+  replayMutationIsAuthorised,
+  type PendingHistoryMessage,
+} from './historySystemEvents';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted } from '$lib/paraglide/messages';
@@ -269,8 +273,10 @@ export async function replayConversationHistory(params: {
     // delete_message / edit_message events from history: collected here and persisted
     // to DB after the main batch save so the DB reload in loadExistingConversations
     // reflects the correct state without a second network round-trip.
-    const deletedMessageIds = new Set<string>();
-    const editedMessages = new Map<string, { content: string; editedAt: Date }>();
+    // Each carries WHO claims the mutation: the author check needs the stored row, which is only
+    // read after the batch save.
+    const deletedMessages = new Map<string, { by: string }>();
+    const editedMessages = new Map<string, { content: string; editedAt: Date; by: string }>();
     // Read receipts from history update in-memory state but NOT the DB; the batch
     // save below writes regular messages without readBy (full replace via IndexedDB
     // put), which would overwrite any readBy already saved for those messages.
@@ -404,7 +410,7 @@ export async function replayConversationHistory(params: {
               setConversation,
               messageReactions,
               reactionUpdates,
-              deletedMessageIds,
+              deletedMessages,
               editedMessages,
               readReceiptDbUpdates,
               pushPendingMessage,
@@ -566,7 +572,7 @@ export async function replayConversationHistory(params: {
       storage &&
       (readReceiptDbUpdates.length > 0 ||
         reactionUpdates.size > 0 ||
-        deletedMessageIds.size > 0 ||
+        deletedMessages.size > 0 ||
         editedMessages.size > 0);
     if (needsPostUpdate) {
       try {
@@ -596,14 +602,18 @@ export async function replayConversationHistory(params: {
               reactions: reactionUpdates.get(m.id),
             });
           }
-          if (deletedMessageIds.has(m.id)) {
+          // The stored row is the first place the author is known for a mutation whose message was
+          // not in memory when the event was replayed, so the claim is checked HERE too - not only
+          // in `applyReplaySystemEvent`.
+          const deletion = deletedMessages.get(m.id);
+          const edit = editedMessages.get(m.id);
+          if (deletion && replayMutationIsAuthorised(m, deletion.by, 'delete')) {
             updatesById.set(m.id, {
               ...(updatesById.get(m.id) ?? m),
               isDeleted: true,
               content: chat_system_message_deleted(),
             });
-          } else if (editedMessages.has(m.id)) {
-            const edit = editedMessages.get(m.id)!;
+          } else if (edit && replayMutationIsAuthorised(m, edit.by, 'edit')) {
             updatesById.set(m.id, {
               ...(updatesById.get(m.id) ?? m),
               isEdited: true,

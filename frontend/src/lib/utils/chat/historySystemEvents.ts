@@ -59,14 +59,42 @@ export interface ReplaySystemEventCtx {
   messageReactions: Map<string, MessageReaction[]>;
   /** msgId -> final reaction list, applied to DB after the batch save. */
   reactionUpdates: Map<string, MessageReaction[]>;
-  /** Message ids deleted via a `delete_message` event during this replay. */
-  deletedMessageIds: Set<string>;
-  /** Message ids edited via an `edit_message` event, with their new content. */
-  editedMessages: Map<string, { content: string; editedAt: Date }>;
+  /**
+   * Messages deleted via a `delete_message` event during this replay, each with the id of the
+   * member that sent the event. The author check cannot always happen here - the message may not be
+   * in memory yet - so the claim is carried to whoever can verify it against the stored row.
+   */
+  deletedMessages: Map<string, { by: string }>;
+  /** Messages edited via an `edit_message` event, with their new content and who claims to edit. */
+  editedMessages: Map<string, { content: string; editedAt: Date; by: string }>;
   /** Read receipts to re-apply to DB after the batch save (which would otherwise drop readBy). */
   readReceiptDbUpdates: Array<{ msgId: string; senderNorm: string; readAt?: number }>;
   /** Queues a decoded message for the page batch (assigns ingestSequence + bumps the added count). */
   pushPendingMessage: (entry: Omit<PendingHistoryMessage, 'ingestSequence'>) => void;
+}
+
+/**
+ * May `senderNorm` rewrite or remove `target`? Only its own author may - the replay twin of
+ * `mutationIsAuthorised` in `systemMessageHandler.ts`, where the reasoning is written out.
+ *
+ * The identity here is the shared log's `sender_id`, which the server now binds to the
+ * authenticated caller on send. It is weaker than the live path's, which is the identity MLS itself
+ * authenticated for the frame - so this is a second line, not a replacement for that one.
+ *
+ * Silent to the user and never silent in the log, for the same reason as the live check.
+ */
+export function replayMutationIsAuthorised(
+  target: { senderId?: string },
+  senderNorm: string,
+  kind: 'edit' | 'delete'
+): boolean {
+  const owner = (target.senderId ?? '').toLowerCase();
+  if (owner && owner === senderNorm.toLowerCase()) return true;
+  console.warn(
+    `[HISTORY_REPLAY] Refused ${kind === 'edit' ? 'an edit' : 'a delete'} of a message owned by ` +
+      `${owner.slice(0, 8) || 'unknown'} from ${senderNorm.slice(0, 8)} - only the author may mutate it`
+  );
+  return false;
 }
 
 /**
@@ -85,7 +113,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     setConversation,
     messageReactions,
     reactionUpdates,
-    deletedMessageIds,
+    deletedMessages,
     editedMessages,
     readReceiptDbUpdates,
     pushPendingMessage,
@@ -202,37 +230,44 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       }
     } else if (parsed.system.event === 'delete_message' && data.messageId) {
       const convo = getConversation(contactName);
-      if (convo) {
-        const idx = convo.messages.findIndex((m) => m.id === data.messageId);
-        if (idx !== -1) {
-          const newMsgs = [...convo.messages];
-          newMsgs[idx] = {
-            ...newMsgs[idx],
-            isDeleted: true,
-            content: chat_system_message_deleted(),
-          };
-          setConversation(contactName, { ...convo, messages: newMsgs });
-        }
+      const known = convo?.messages.find((m) => m.id === data.messageId);
+      // Only the author may delete. The live path has enforced this since the mutation-ownership
+      // fix; the replay path never did, because these frames could not reach the shared log and so
+      // this branch was dead. The durability split made it live again, hole and all.
+      if (known && !replayMutationIsAuthorised(known, senderNorm, 'delete')) return;
+      if (convo && known) {
+        setConversation(contactName, {
+          ...convo,
+          messages: convo.messages.map((mm) =>
+            mm.id === data.messageId
+              ? { ...mm, isDeleted: true, content: chat_system_message_deleted() }
+              : mm
+          ),
+        });
       }
-      deletedMessageIds.add(data.messageId);
+      // Recorded with the claimed author when the message is not in memory: the row it applies to
+      // is read later, and that is where the claim can still be checked.
+      deletedMessages.set(data.messageId, { by: senderNorm });
     } else if (parsed.system.event === 'edit_message' && data.messageId && data.newContent) {
       const editedAt = typeof data.editedAt === 'number' ? new Date(data.editedAt) : new Date();
       const convo = getConversation(contactName);
-      if (convo) {
-        const idx = convo.messages.findIndex((m) => m.id === data.messageId);
-        if (idx !== -1) {
-          const newMsgs = [...convo.messages];
-          newMsgs[idx] = {
-            ...newMsgs[idx],
-            isEdited: true,
-            editedAt,
-            content: data.newContent,
-            readBy: [],
-          };
-          setConversation(contactName, { ...convo, messages: newMsgs });
-        }
+      const known = convo?.messages.find((m) => m.id === data.messageId);
+      if (known && !replayMutationIsAuthorised(known, senderNorm, 'edit')) return;
+      if (convo && known) {
+        setConversation(contactName, {
+          ...convo,
+          messages: convo.messages.map((mm) =>
+            mm.id === data.messageId
+              ? { ...mm, isEdited: true, editedAt, content: data.newContent, readBy: [] }
+              : mm
+          ),
+        });
       }
-      editedMessages.set(data.messageId, { content: data.newContent, editedAt });
+      editedMessages.set(data.messageId, {
+        content: data.newContent,
+        editedAt,
+        by: senderNorm,
+      });
     } else if (parsed.system.event === 'remove_reaction' && data.messageId && data.emoji) {
       // LEGACY FRAME, replay side. Taking a reaction back now travels as a `ReactionMsg` with
       // `removed` set; this only ever sees log entries written before that change. Dated with the
