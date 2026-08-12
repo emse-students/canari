@@ -515,6 +515,8 @@ jobs:
           CERCLE_API_KEY: ${{ secrets.CERCLE_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          LYDIA_PROVIDER_TOKEN: ${{ secrets.LYDIA_PROVIDER_TOKEN }}
+          LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.LYDIA_PROVIDER_PRIVATE_TOKEN }}
           AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           AUTHENTIK_CLIENT_SECRET: ${{ secrets.AUTHENTIK_CLIENT_SECRET }}
@@ -638,6 +640,18 @@ jobs:
             upsert_env_var "STRIPE_WEBHOOK_SECRET" "$STRIPE_WEBHOOK_SECRET"
           else
             echo "⚠️ STRIPE_WEBHOOK_SECRET is not set in GitHub secrets (Stripe webhooks will be rejected in production)"
+          fi
+
+          if [ -n "$LYDIA_PROVIDER_TOKEN" ]; then
+            upsert_env_var "LYDIA_PROVIDER_TOKEN" "$LYDIA_PROVIDER_TOKEN"
+          else
+            echo "⚠️ LYDIA_PROVIDER_TOKEN is not set in GitHub secrets (Lydia payments unavailable if selected as the active provider)"
+          fi
+
+          if [ -n "$LYDIA_PROVIDER_PRIVATE_TOKEN" ]; then
+            upsert_env_var "LYDIA_PROVIDER_PRIVATE_TOKEN" "$LYDIA_PROVIDER_PRIVATE_TOKEN"
+          else
+            echo "⚠️ LYDIA_PROVIDER_PRIVATE_TOKEN is not set in GitHub secrets (Lydia payments unavailable if selected as the active provider)"
           fi
 
           if [ -n "$CLOUDFLARE_CALLS_API_TOKEN" ]; then
@@ -903,6 +917,8 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          LYDIA_PROVIDER_TOKEN: ${{ secrets.LYDIA_PROVIDER_TOKEN }}
+          LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.LYDIA_PROVIDER_PRIVATE_TOKEN }}
         run: |
           if [ -z "$JWT_SECRET" ]; then
             echo "::error::Missing required GitHub secret: JWT_SECRET"
@@ -944,6 +960,27 @@ jobs:
 
             if [ -z "$core_webhook_sha" ] || [ "$core_webhook_sha" != "$expected_webhook_sha" ]; then
               echo "::error::STRIPE_WEBHOOK_SECRET is not correctly applied in core-service"
+              exit 1
+            fi
+          fi
+
+          # Lydia (WP-LYDIA-1): core-service only, unlike Stripe - social-service never reads these.
+          if [ -n "$LYDIA_PROVIDER_TOKEN" ]; then
+            expected_lydia_token_sha=$(printf '%s' "$LYDIA_PROVIDER_TOKEN" | sha256sum | awk '{print $1}')
+            core_lydia_token_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T core-service sh -lc 'printf %s \"$LYDIA_PROVIDER_TOKEN\" | sha256sum | awk \"{print \\\$1}\"'" || true)
+
+            if [ -z "$core_lydia_token_sha" ] || [ "$core_lydia_token_sha" != "$expected_lydia_token_sha" ]; then
+              echo "::error::LYDIA_PROVIDER_TOKEN is not correctly applied in core-service"
+              exit 1
+            fi
+          fi
+
+          if [ -n "$LYDIA_PROVIDER_PRIVATE_TOKEN" ]; then
+            expected_lydia_private_sha=$(printf '%s' "$LYDIA_PROVIDER_PRIVATE_TOKEN" | sha256sum | awk '{print $1}')
+            core_lydia_private_sha=$(eval "$DOCKER_COMPOSE -f infrastructure/docker-compose.prod.yml exec -T core-service sh -lc 'printf %s \"$LYDIA_PROVIDER_PRIVATE_TOKEN\" | sha256sum | awk \"{print \\\$1}\"'" || true)
+
+            if [ -z "$core_lydia_private_sha" ] || [ "$core_lydia_private_sha" != "$expected_lydia_private_sha" ]; then
+              echo "::error::LYDIA_PROVIDER_PRIVATE_TOKEN is not correctly applied in core-service"
               exit 1
             fi
           fi

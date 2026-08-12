@@ -59,7 +59,7 @@ for **server deployment**:
 | Media storage (MinIO) | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` |
 | Auth (Authentik) | `AUTHENTIK_URL`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET`, `MICONNECT_PG_PASS`, `MICONNECT_AUTHENTIK_SECRET_KEY` |
 | App / frontend | `BASE_URL`, `STRIPE_PUB_KEY`, `KLIPY_API_KEY`, `ANDROID_APP_LINK_SHA256`, `APPLE_TEAM_ID` |
-| Payments | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
+| Payments | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `LYDIA_PROVIDER_TOKEN`, `LYDIA_PROVIDER_PRIVATE_TOKEN` (WP-LYDIA-1; core-service only, unlike Stripe's secrets which also reach social-service unused - which provider is actually live is `platform_config.paymentProvider`, an admin setting at `/admin/platform`, not an env var) |
 | Push / calls / avatars | `FIREBASE_SERVICE_ACCOUNT_JSON`, `CLOUDFLARE_CALLS_API_TOKEN`, `CLOUDFLARE_TURN_KEY_ID`, `MIGALLERY_API_KEY` |
 | iOS calls (CallKit, optional) | `APNS_VOIP_KEY_P8` (APNs .p8 key, raw PEM or base64), `APNS_VOIP_KEY_ID`, `APNS_VOIP_TEAM_ID` (`4CLNB8SR6L`) — direct VoIP push to APNs to ring CallKit when the app is killed; without these, iOS falls back to an FCM banner |
 | External API (Sky) | `EXTERNAL_API_KEY` (key for `/api/external/*`, public profile; must match `CANARI_API_KEY` on Sky's side); `SKY_API_KEY` (key for reading the Sky sponsorship tree displayed on profiles; must match `SKY_API_KEY` on Sky's side) |

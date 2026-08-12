@@ -239,6 +239,11 @@ services:
       DB_DATABASE: auth_db
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      # Lydia (WP-LYDIA-1) - which provider is actually live is an admin-editable platform_config
+      # setting, not env-driven; these are only the credentials, read by whichever provider is active.
+      LYDIA_ENV: ${LYDIA_ENV:-homologation}
+      LYDIA_PROVIDER_TOKEN: ${LYDIA_PROVIDER_TOKEN:-}
+      LYDIA_PROVIDER_PRIVATE_TOKEN: ${LYDIA_PROVIDER_PRIVATE_TOKEN:-}
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       # Account deletion fans out to media-service to remove the user's own uploads.

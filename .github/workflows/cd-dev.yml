@@ -430,6 +430,8 @@ jobs:
           SERVICE_ACCOUNT_USER_ID: ${{ secrets.SERVICE_ACCOUNT_USER_ID }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          LYDIA_PROVIDER_TOKEN: ${{ secrets.LYDIA_PROVIDER_TOKEN }}
+          LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.LYDIA_PROVIDER_PRIVATE_TOKEN }}
           AUTHENTIK_BASE_URL: ${{ secrets.AUTHENTIK_URL }}
           AUTHENTIK_CLIENT_ID: ${{ secrets.AUTHENTIK_CLIENT_ID }}
           AUTHENTIK_CLIENT_SECRET: ${{ secrets.AUTHENTIK_CLIENT_SECRET }}
@@ -502,6 +504,18 @@ jobs:
             upsert_env_var "STRIPE_WEBHOOK_SECRET" "$STRIPE_WEBHOOK_SECRET"
           else
             echo "⚠️ STRIPE_WEBHOOK_SECRET is not set in GitHub secrets"
+          fi
+
+          if [ -n "$LYDIA_PROVIDER_TOKEN" ]; then
+            upsert_env_var "LYDIA_PROVIDER_TOKEN" "$LYDIA_PROVIDER_TOKEN"
+          else
+            echo "⚠️ LYDIA_PROVIDER_TOKEN is not set in GitHub secrets"
+          fi
+
+          if [ -n "$LYDIA_PROVIDER_PRIVATE_TOKEN" ]; then
+            upsert_env_var "LYDIA_PROVIDER_PRIVATE_TOKEN" "$LYDIA_PROVIDER_PRIVATE_TOKEN"
+          else
+            echo "⚠️ LYDIA_PROVIDER_PRIVATE_TOKEN is not set in GitHub secrets"
           fi
 
           if [ -n "$CLOUDFLARE_CALLS_API_TOKEN" ]; then
