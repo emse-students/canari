@@ -92,14 +92,28 @@ the narrative to the wiki page the entry points at. **Do not reconstruct shipped
 running on the device (0 lock timeouts, 1 MLS thread, 0 kills, against 97/20+/1 before). **The iOS
 half of it is compile-verified only** and joins the owed device list below.
 
-**THE CAMPAIGN RE-RUN IS AT MSG, AND MSG-1 FAILED.** Root-caused, fixed and pushed as `dabed2f2`: a
-history load ENDED by assigning a freshly read page over the rendered list, so anything delivered
-while it ran was on screen and then wiped (measured: shown at +0.5 s, gone at +3.4 s). Four sites,
-one merge (`mergeMessagePage`). **Nothing is verified yet on the deployed build** - the first thing
-owed is CD landing, `reload.mjs` + `bundle-id.mjs` on W1/W2, then MSG-1..10 from the top. A1 runs
-APK-bundled assets, so it does NOT get this fix until a rebuild. The instrument written for it,
-`trace-arrival.mjs`, is the pattern for any check that can fail by disappearance: sample
-continuously, and carry the pane/composer/header facts that separate a harness fault from a loss.
+**THE CAMPAIGN IS PAUSED. THE WORK IS THE HISTORY-RECONCILIATION REWORK**, specified in
+**[history-reconciliation](docs/wiki/protocols/history-reconciliation.md)** - read that page, do not
+re-derive the design here and do NOT re-open a decision listed in its Decisions table. It carries the
+measured constraints, the seven defects to fix (D1-D7, with a column saying which were verified by
+hand), what disappears, and the four remaining open questions. Implementation has NOT started.
+
+The chain that produced it, kept only because it explains why the page looks like it does: MSG-1
+failed, was root-caused to a history load ASSIGNING a freshly read page over the rendered list
+(fixed, `dabed2f2`, `mergeMessagePage`, four sites). Re-running MSG-1 then PASSED **vacuously** - the
+store was warm, the `limit=1` probe found nothing, the replay never ran, so the race window never
+opened. `msg1b.mjs` forces it open and refuses to report PASS unless the pane grew, which is the
+pattern for any check whose bug needs a window: **carry the evidence that the window opened, or a
+green result cannot be told from an unexercised one**. That check then exposed the real fault - a
+durable `unreadable-frames` marker that no peer can ever discharge, because both devices of a DM
+carry it and neither may vouch for the other.
+
+**Order of work, decided:** Redis durability (DONE - volume + `appendonly`, in
+`docker-compose.prod.yml`) → raise `maxmemory` → raise `MAXLEN ~1000` → the rework itself → then the
+campaign from MSG-1 on the reworked build. **A clean break, no compatibility layer**, so the deploy
+sequence is: publish to the stores, VERIFY the store serves the new build, only then deploy the
+server and raise `minClientVersion` - raising it first traps users on an update screen whose button
+leads to the old version.
 
 **A1 IS UNREACHABLE: the phone dropped off USB mid-session** (`adb devices` empty, survives
 `kill-server`). It needs a replug and the USB-debugging prompt accepted. Two things are owed the

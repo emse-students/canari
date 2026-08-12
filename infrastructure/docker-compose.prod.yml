@@ -42,7 +42,31 @@ services:
     # those are gone it degrades to exactly the previous behaviour (write errors) instead of
     # taking the host down. Current usage is 2.29 MB, so this cap does not bind in normal
     # operation - it is a ceiling, not a budget.
-    command: ["redis-server", "--maxmemory", "1gb", "--maxmemory-policy", "volatile-lru"]
+    #
+    # PERSISTED, because this is not a cache. `history:{groupId}` is the only SHARED copy of a
+    # conversation's messages - the per-device queue is deleted on ACK, and MLS forward secrecy means
+    # a device cannot re-read what it did not decrypt at the time. Without a volume the stream lived
+    # in the container's writable layer and died with it. Measured 2026-08-12: the container had been
+    # recreated 31 hours earlier and the busiest DM's stream went back exactly 22.6 hours, while a
+    # peer still held twice as many messages. AOF and not RDB alone: the default snapshot points
+    # (`3600 1 300 100 60 10000`) lose everything written since the last one.
+    #
+    # Losing the rest of this database is survivable, which is why the volume can be added without a
+    # migration: presence keys regenerate on reconnect, rendezvous digests have a 60 s TTL, and
+    # `group:members:*` is repopulated from `device_group_membership` whenever the set is found
+    # empty (see that entity's docblock, role 1).
+    command:
+      [
+        "redis-server",
+        "--maxmemory",
+        "1gb",
+        "--maxmemory-policy",
+        "volatile-lru",
+        "--appendonly",
+        "yes",
+      ]
+    volumes:
+      - redis_data:/data
     expose:
       - "6379"
     healthcheck:
@@ -409,5 +433,7 @@ services:
 volumes:
   mongo_data:
   postgres_data:
+  # The shared message log. See the redis service above for why this is not optional.
+  redis_data:
   minio_data:
   media_meta:
