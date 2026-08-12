@@ -1,6 +1,7 @@
 import { encryptData, decryptData } from '../encryption';
 import { readStoredTimestampMs } from '$lib/utils/dates';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
+import { parseHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import type {
   ConversationMeta,
@@ -109,7 +110,8 @@ export class SqliteStorage implements IStorage {
                 name             TEXT    NOT NULL,
                 lifecycle        TEXT    DEFAULT 'pending',
                 updated_at       INTEGER DEFAULT 0,
-                read_watermarks  TEXT
+                read_watermarks  TEXT,
+                history_floor    INTEGER
             )
         `);
 
@@ -217,6 +219,20 @@ export class SqliteStorage implements IStorage {
       if (!cols.some((c) => c.name === 'read_watermarks')) {
         await this.db.execute('ALTER TABLE conversations ADD COLUMN read_watermarks TEXT');
       }
+      // Stamped at 6, NOT at SCHEMA_VERSION: a branch that stamps the CURRENT version claims every
+      // migration written after it, so the next one never runs on the databases this one touched.
+      await this.db.execute('PRAGMA user_version = 6');
+    }
+
+    if (currentVersion < 7) {
+      // v6->v7: the conversation carries the shared history floor - where its history begins, as
+      // every member agrees it does (see `$lib/utils/chat/historyWindow`). Additive and worth zero
+      // on arrival: an absent floor reads as "history begins at the beginning", which is what every
+      // conversation means today, and the merge that would raise it is `max`.
+      const cols: any[] = await this.db.select('PRAGMA table_info(conversations)');
+      if (!cols.some((c) => c.name === 'history_floor')) {
+        await this.db.execute('ALTER TABLE conversations ADD COLUMN history_floor INTEGER');
+      }
       await this.db.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     }
   }
@@ -226,13 +242,14 @@ export class SqliteStorage implements IStorage {
   /** Upsert a conversation metadata row (INSERT OR REPLACE). */
   async saveConversation(conv: ConversationMeta): Promise<void> {
     await this.db.execute(
-      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks) VALUES ($1, $2, $3, $4, $5)',
+      'INSERT OR REPLACE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor) VALUES ($1, $2, $3, $4, $5, $6)',
       [
         conv.id,
         conv.name,
         conv.lifecycle,
         conv.updatedAt,
         conv.readWatermarks ? JSON.stringify(conv.readWatermarks) : null,
+        conv.historyFloor ?? null,
       ]
     );
   }
@@ -248,6 +265,7 @@ export class SqliteStorage implements IStorage {
       lifecycle: normalizeConversationLifecycle(r.lifecycle, r.is_ready === 1),
       updatedAt: r.updated_at,
       readWatermarks: parseReadWatermarks(r.read_watermarks),
+      historyFloor: parseHistoryFloor(r.history_floor),
     }));
   }
 
@@ -442,13 +460,14 @@ export class SqliteStorage implements IStorage {
   async mergeConversation(conv: ConversationMeta): Promise<void> {
     // INSERT OR IGNORE: only insert if no row with this id already exists.
     await this.db.execute(
-      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks) VALUES ($1, $2, $3, $4, $5)',
+      'INSERT OR IGNORE INTO conversations (id, name, lifecycle, updated_at, read_watermarks, history_floor) VALUES ($1, $2, $3, $4, $5, $6)',
       [
         conv.id,
         conv.name,
         conv.lifecycle,
         conv.updatedAt,
         conv.readWatermarks ? JSON.stringify(conv.readWatermarks) : null,
+        conv.historyFloor ?? null,
       ]
     );
   }

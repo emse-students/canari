@@ -1,5 +1,6 @@
 import { encryptData, decryptData } from '../encryption';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
+import { parseHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import type {
   ConversationMeta,
@@ -201,6 +202,7 @@ export class IndexedDbStorage implements IStorage {
           // Validated on the way out, like every other store: a structured-clone round trip
           // preserves whatever was written, including a value an older build got wrong.
           readWatermarks: parseReadWatermarks(r.readWatermarks),
+          historyFloor: parseHistoryFloor(r.historyFloor),
         }));
         resolve(rows);
       };

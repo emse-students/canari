@@ -26,6 +26,7 @@ import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { mergeReadWatermarks } from '$lib/utils/chat/readState';
+import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -284,6 +285,9 @@ export async function replayConversationHistory(params: {
     // affected by the batch save below at all - which is exactly what made the per-message version
     // fragile enough to need a repair pass of its own.
     const readWatermarkUpdates: ReadWatermarks = {};
+    // The shared history floor the page carried, merged the same way and applied in the same write.
+    // A box rather than a number, because the handler that fills it cannot reassign a local.
+    const historyFloorUpdate = { at: 0 };
 
     // Batch-collect decoded messages to flush in one UI update at the end.
     // The reactions/isDeleted/isEdited fields are optional and come only from the
@@ -415,6 +419,7 @@ export async function replayConversationHistory(params: {
               deletedMessages,
               editedMessages,
               readWatermarkUpdates,
+              historyFloorUpdate,
               pushPendingMessage,
             });
             mlsUpdated = true;
@@ -561,17 +566,23 @@ export async function replayConversationHistory(params: {
       await storage.saveMessages(toStore, deviceKeyB64);
     }
 
-    // The read state the page carried, applied to the conversation in one step. It is not part of
-    // the message pass below and never was a per-message concern: what it costs is one entry per
-    // participant, whether the page held ten messages or ten thousand.
+    // The conversation-level state the page carried - read watermarks and the shared floor - applied
+    // in one step. Neither is part of the message pass below and neither ever was a per-message
+    // concern: what they cost is one entry per participant, whether the page held ten messages or
+    // ten thousand.
     const convoForRead = getConversation(contactName);
     if (convoForRead) {
       const mergedWatermarks = mergeReadWatermarks(
         convoForRead.readWatermarks,
         readWatermarkUpdates
       );
-      if (mergedWatermarks) {
-        setConversation(contactName, { ...convoForRead, readWatermarks: mergedWatermarks });
+      const mergedFloor = mergeHistoryFloor(convoForRead.historyFloor, historyFloorUpdate.at);
+      if (mergedWatermarks || mergedFloor !== null) {
+        setConversation(contactName, {
+          ...convoForRead,
+          ...(mergedWatermarks ? { readWatermarks: mergedWatermarks } : {}),
+          ...(mergedFloor !== null ? { historyFloor: mergedFloor } : {}),
+        });
         await saveConversation?.(contactName).catch(() => {});
       }
     }

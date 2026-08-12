@@ -56,6 +56,7 @@ async function replay(
   editedMessages: Map<string, { content: string; editedAt: Date; by: string }>;
   reactionUpdates: Map<string, MessageReaction[]>;
   readWatermarkUpdates: ReadWatermarks;
+  historyFloorUpdate: { at: number };
   pushed: unknown[];
 }> {
   let convo = conversation(messages);
@@ -64,6 +65,7 @@ async function replay(
     editedMessages: new Map<string, { content: string; editedAt: Date; by: string }>(),
     reactionUpdates: new Map<string, MessageReaction[]>(),
     readWatermarkUpdates: {} as ReadWatermarks,
+    historyFloorUpdate: { at: 0 },
     pushed: [] as unknown[],
   };
   await applyReplaySystemEvent({
@@ -80,6 +82,7 @@ async function replay(
     deletedMessages: sinks.deletedMessages,
     editedMessages: sinks.editedMessages,
     readWatermarkUpdates: sinks.readWatermarkUpdates,
+    historyFloorUpdate: sinks.historyFloorUpdate,
     pushPendingMessage: (entry) => sinks.pushed.push(entry),
   });
   return { convo, ...sinks };
@@ -222,5 +225,46 @@ describe('events a replay must not act on', () => {
       expect(result.pushed).toEqual([]);
       expect(result.convo.messages[0]).toMatchObject({ content: 'hello' });
     }
+  });
+});
+
+describe('the shared history floor', () => {
+  it('takes the floor a bundle carries, whether or not the bundle carries messages', async () => {
+    const result = await replay(
+      systemEvent('history_bundle', { messages: [], floor: 4000 }),
+      OTHER,
+      []
+    );
+
+    expect(result.historyFloorUpdate.at).toBe(4000);
+  });
+
+  it('keeps the larger floor when two bundles disagree, in either order', async () => {
+    // The merge is `max`, so the order chunks land in cannot change where the floor ends up.
+    for (const order of [
+      [4000, 9000],
+      [9000, 4000],
+    ]) {
+      let seen = 0;
+      for (const floor of order) {
+        const result = await replay(
+          systemEvent('history_bundle', { messages: [], floor }),
+          OTHER,
+          []
+        );
+        seen = Math.max(seen, result.historyFloorUpdate.at);
+      }
+      expect(seen).toBe(9000);
+    }
+  });
+
+  it('ignores a floor that is not a usable instant', async () => {
+    const result = await replay(
+      systemEvent('history_bundle', { messages: [], floor: 'whenever' }),
+      OTHER,
+      []
+    );
+
+    expect(result.historyFloorUpdate.at).toBe(0);
   });
 });

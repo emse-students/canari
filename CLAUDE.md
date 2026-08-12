@@ -102,9 +102,27 @@ desktop 5 years - bounded, not infinite, so the floor has something to move for 
 bounded domain), and **nothing may move the floor for now**. The two still open are the new
 `MAXLEN` (answered below) and the state key's fan-out cost for a user in many groups.
 
-**IMPLEMENTATION IS UNDER WAY. D1-D7 ARE ALL DONE AND PUSHED, plus the read watermark (D2).** What
-is left is the list under "What disappears" in the spec plus the floor/window, the state key, the
-reconciliation exchange and the scrollback - read the spec, do not re-derive them here.
+**IMPLEMENTATION IS UNDER WAY. D1-D7 ARE ALL DONE AND PUSHED, plus the read watermark (D2) and the
+floor + device window.** What is left is the list under "What disappears" in the spec plus the
+`since` clipping of the exchange (the next item), the state key, the reconciliation exchange and the
+scrollback - read the spec, do not re-derive them here.
+
+The floor/window step, so nothing re-derives it: `frontend/src/lib/utils/chat/historyWindow.ts` is
+the only place either boundary is decided. The floor is SHARED, monotone, merged as `max`, rides on
+the bundle frames next to the watermarks, and is stored (SQLite v7, `history_floor`). **It ships
+worth zero on purpose** - nothing moves it, per the user's decision. The window is LOCAL and fixed by
+platform (`isTauriRuntime()` alone: web 90 d, mobile and desktop 5 y). `historyRangeStart` /
+`parseHistorySince` / `isWithinHistoryRange` exist and are tested but **have no consumer yet** - that
+is the clipping step. Two rules the next step must not undo: **`since` is STATED by the asker, never
+recomputed by the answerer** (the window slides, so two devices computing it a second apart disagree
+by a message), and **a bundle nobody asked for is not clipped** (the invite push states no window
+because it asked nothing; over-delivering costs disk, under-delivering loses messages).
+
+That step also found the D2 fix silently defeated: the in-memory conversation SEED in
+`loadExistingConversations` never restored `readWatermarks` from the row it had just written, so read
+state was correct until the first restart. `toConversationMeta` and that seed are MIRRORS and must be
+edited together - a field persisted but never read back is worse than one never stored, because the
+write succeeds and nothing reports it.
 
 What phase 1 changed, so nothing re-derives it: `DELIVERY` in
 `frontend/src/lib/mls-client/frameDelivery.ts` is the ONLY classification (`visible` / `mutation` /
@@ -153,10 +171,10 @@ server and raise `minClientVersion` - raising it first traps users on an update 
 leads to the old version.
 
 **Where the rework stands, 2026-08-12.** Done and pushed: phase 1, D1, D3, D4, D5 (at rest), D6, D7
-+ the two security fixes, and the read watermark carrying D2. **Nothing of the rework has been
-exercised on a device or a browser yet** - the frontend gates are green (0 svelte-check errors,
-1308/1308 tests) and that is all they prove. Still open, in the spec's own order: the conversation
-floor + device window, the state key, the reconciliation exchange on connect, the scrollback, the
++ the two security fixes, the read watermark carrying D2, and the floor + device window (schema v7).
+**Nothing of the rework has been exercised on a device or a browser yet** - the frontend gates are
+green (0 svelte-check errors, 1327/1327 tests) and that is all they prove. Still open, in the spec's
+own order: clipping the exchange to the asker's `since`, the state key, the reconciliation exchange on connect, the scrollback, the
 deletion-from-the-log open question, and the deletions listed under "What disappears" - the banner,
 the durable marker AS A TRIGGER, the retry, the vouching, the 30-day horizon, the 15-minute sweep -
 plus the three measured defects (stuck catchup overlay, post-ingest render freeze, 15 s

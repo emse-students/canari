@@ -123,6 +123,12 @@ export interface Conversation {
    * state of a conversation cannot live on its messages.
    */
   readWatermarks?: ReadWatermarks;
+  /**
+   * Where the shared history of this conversation begins - below it nobody claims and nobody
+   * answers. Monotone, merged as `max`, absent meaning zero. Nothing moves it today; see
+   * `$lib/utils/chat/historyWindow`.
+   */
+  historyFloor?: number;
   conversationType?: 'direct' | 'group' | 'channel';
   directPeerId?: string;
   /** Media-service ID of the group image (unencrypted avatar). Channels never carry one. */

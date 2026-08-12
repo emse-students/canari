@@ -8,6 +8,7 @@ import type {
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
+import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
   mergeReadWatermark,
   parseReadWatermarks,
@@ -81,6 +82,12 @@ export interface ReplaySystemEventCtx {
    * whole economy of the watermark: a page of a thousand messages costs one entry per reader.
    */
   readWatermarkUpdates: ReadWatermarks;
+  /**
+   * The shared history floor seen over the page, kept as a mutable box because it is ONE value
+   * rather than a map: the accumulators are written by the handler and read by the caller once the
+   * page is saved, and a number cannot be mutated in place.
+   */
+  historyFloorUpdate: { at: number };
   /** Queues a decoded message for the page batch (assigns ingestSequence + bumps the added count). */
   pushPendingMessage: (entry: Omit<PendingHistoryMessage, 'ingestSequence'>) => void;
 }
@@ -128,6 +135,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     deletedMessages,
     editedMessages,
     readWatermarkUpdates,
+    historyFloorUpdate,
     pushPendingMessage,
   } = ctx;
 
@@ -302,6 +310,9 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       if (bundleWatermarks) {
         for (const [userNorm, at] of Object.entries(bundleWatermarks)) noteReadUpTo(userNorm, at);
       }
+      // The floor rides on the same frames, for the same reason and with the same merge.
+      const mergedFloor = mergeHistoryFloor(historyFloorUpdate.at, data.floor);
+      if (mergedFloor !== null) historyFloorUpdate.at = mergedFloor;
       if (Array.isArray(bundleData) && bundleData.length > 0) {
         const existingIds = new Set(
           (getConversation(contactName)?.messages ?? []).map((m) => m.id)

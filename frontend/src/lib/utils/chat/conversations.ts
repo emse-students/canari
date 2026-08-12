@@ -89,6 +89,7 @@ export function toConversationMeta(
     // The last-message timestamp, so the sidebar sort order survives DB reloads.
     updatedAt: convo.lastMessageAt ?? Date.now(),
     readWatermarks: convo.readWatermarks,
+    historyFloor: convo.historyFloor,
   };
 }
 
@@ -709,6 +710,13 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       imageMediaId: prev?.imageMediaId ?? null,
       // Seed from DB so the sidebar can sort before messages are loaded.
       lastMessageAt: meta.updatedAt,
+      // The conversation-level state, restored from the row it was written to. This seed is the
+      // mirror of `toConversationMeta` and has to carry everything that projection writes: a field
+      // persisted but never read back is worse than one that was never stored, because the write
+      // succeeds and the value is silently absent for the rest of the session - the unread recount
+      // below would then count messages this user has already read on another device.
+      readWatermarks: meta.readWatermarks,
+      historyFloor: meta.historyFloor,
     });
   }
 

@@ -489,9 +489,9 @@ function serializeForBundle(m: StoredMessage) {
 function bundleFrame(
   messages: unknown[],
   to: string,
-  opts: { vouched?: boolean; readWatermarks?: ReadWatermarks } = {}
+  opts: { vouched?: boolean; state?: ConversationHistoryState } = {}
 ): Uint8Array {
-  const { vouched, readWatermarks } = opts;
+  const { vouched, state } = opts;
   return encodeAppMessage(
     mkSystem(
       'history_bundle',
@@ -499,29 +499,37 @@ function bundleFrame(
         messages,
         to,
         ...(vouched === false ? { vouched: false } : {}),
-        // The conversation's read state: a handful of numbers, sent whole with every frame
-        // because merging it is `max` and therefore free to repeat. Sending it once would make
-        // its delivery depend on which chunk survived.
-        ...(readWatermarks ? { readWatermarks } : {}),
+        // The conversation's own state - read watermarks and the shared history floor. A handful of
+        // numbers, sent whole with every frame because both merges are `max` and therefore free to
+        // repeat. Sending them once would make their delivery depend on which chunk survived.
+        ...(state?.readWatermarks ? { readWatermarks: state.readWatermarks } : {}),
+        ...(state?.historyFloor ? { floor: state.historyFloor } : {}),
       })
     )
   );
 }
 
+/** What a conversation carries beyond its messages, and what every bundle restates. */
+type ConversationHistoryState = {
+  readWatermarks?: ReadWatermarks;
+  historyFloor?: number;
+};
+
 /**
- * The read state stored for `groupId`, read from the conversation row rather than the messages.
+ * The conversation-level state stored for `groupId`, read from its row rather than its messages.
  *
- * Returns `undefined` when there is none or the read fails - a bundle carrying no read state is a
- * perfectly ordinary bundle, and the receiver's own state is left where it was.
+ * Returns an empty state when there is none or the read fails - a bundle carrying neither is a
+ * perfectly ordinary bundle, and the receiver's own values are left where they were.
  */
-async function storedReadWatermarks(
+async function storedConversationState(
   groupId: string,
   storage: IStorage
-): Promise<ReadWatermarks | undefined> {
+): Promise<ConversationHistoryState> {
   try {
-    return (await storage.getConversations()).find((c) => c.id === groupId)?.readWatermarks;
+    const row = (await storage.getConversations()).find((c) => c.id === groupId);
+    return { readWatermarks: row?.readWatermarks, historyFloor: row?.historyFloor };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -571,7 +579,7 @@ export async function sendFullHistoryBundle(
     log(`[HISTORY_BUNDLE] Read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
     return;
   }
-  const readWatermarks = await storedReadWatermarks(groupId, storage);
+  const state = await storedConversationState(groupId, storage);
   if (messages.length === 0) {
     if (isAwaitingHistory(selfUserId, groupId)) {
       log(
@@ -579,8 +587,8 @@ export async function sendFullHistoryBundle(
       );
       return;
     }
-    // A group with no messages can still have read state worth handing over.
-    const bytes = bundleFrame([], to, { readWatermarks });
+    // A group with no messages can still have read state and a floor worth handing over.
+    const bytes = bundleFrame([], to, { state });
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
       log(`[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (group has no history)`);
@@ -590,7 +598,7 @@ export async function sendFullHistoryBundle(
     return;
   }
 
-  await sendBundleChunks(groupId, messages, { mlsService, log }, { chunkSize, to, readWatermarks });
+  await sendBundleChunks(groupId, messages, { mlsService, log }, { chunkSize, to, state });
   log(`[HISTORY_BUNDLE] Full history sent: ${messages.length} message(s)`);
 }
 
@@ -613,16 +621,12 @@ async function sendBundleChunks(
   groupId: string,
   messages: StoredMessage[],
   { mlsService, log }: HistorySendDeps,
-  {
-    chunkSize,
-    to,
-    readWatermarks,
-  }: { chunkSize: number; to: string; readWatermarks?: ReadWatermarks }
+  { chunkSize, to, state }: { chunkSize: number; to: string; state?: ConversationHistoryState }
 ): Promise<void> {
   const totalChunks = Math.ceil(messages.length / chunkSize);
   for (let i = 0; i < messages.length; i += chunkSize) {
     const payload = messages.slice(i, i + chunkSize).map(serializeForBundle);
-    const bytes = bundleFrame(payload, to, { readWatermarks });
+    const bytes = bundleFrame(payload, to, { state });
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
       log(
@@ -787,7 +791,7 @@ export async function sendHistoryBundleForIds(
     return;
   }
 
-  const readWatermarks = await storedReadWatermarks(groupId, storage);
+  const state = await storedConversationState(groupId, storage);
   const wanted = new Set(ids);
   let selected: StoredMessage[] = [];
   if (wanted.size > 0) {
@@ -812,7 +816,7 @@ export async function sendHistoryBundleForIds(
     // ABSENCE means vouched, which is what every client shipped before this field assumes when it
     // reads an empty bundle - so an old responder stays correctly interpreted by a new requester.
     const vouched = emptyMeans === 'complete';
-    const bytes = bundleFrame([], to, { vouched, readWatermarks });
+    const bytes = bundleFrame([], to, { vouched, state });
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
       log(
@@ -824,7 +828,7 @@ export async function sendHistoryBundleForIds(
     return;
   }
 
-  await sendBundleChunks(groupId, selected, { mlsService, log }, { chunkSize, to, readWatermarks });
+  await sendBundleChunks(groupId, selected, { mlsService, log }, { chunkSize, to, state });
   log(
     `[HISTORY_BUNDLE] Diff sent for ${groupId.slice(0, 8)}…: ${selected.length} of ${wanted.size} requested message(s)`
   );

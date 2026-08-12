@@ -14,6 +14,7 @@ import { isSolicitInFlight, noteHistoryBundleReceived } from '$lib/utils/chat/hi
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
 import { digestIdentity, noteDigestReceived } from '$lib/utils/chat/historyDigestRendezvous';
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
+import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { readHistoryEntries, sendHistoryBundleForIds } from '$lib/utils/chat/groupActions';
 import {
   countUnreadForUser,
@@ -620,18 +621,24 @@ export async function handleSystemEvent(
       };
       const msgs: BundleMsg[] = Array.isArray(data.messages) ? data.messages : [];
 
-      // 0) Read state, which travels ONCE for the whole conversation rather than once per message.
-      //    Merged before anything else so the unread recount in step 3 sees it, and merged even
-      //    for an empty bundle - "you are missing no messages, and here is who has read what" is a
-      //    perfectly ordinary answer.
+      // 0) The conversation's own state - read watermarks and the shared history floor - which
+      //    travels ONCE for the whole conversation rather than once per message. Merged before
+      //    anything else so the unread recount in step 3 sees it, and merged even for an empty
+      //    bundle: "you are missing no messages, and here is who has read what" is a perfectly
+      //    ordinary answer. Both merges are `max`, so a value restated by every chunk is free.
       const beforeMerge = conversations.get(convoKey);
       if (beforeMerge) {
         const mergedWatermarks = mergeReadWatermarks(
           beforeMerge.readWatermarks,
           parseReadWatermarks(data.readWatermarks)
         );
-        if (mergedWatermarks) {
-          conversations.set(convoKey, { ...beforeMerge, readWatermarks: mergedWatermarks });
+        const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, data.floor);
+        if (mergedWatermarks || mergedFloor !== null) {
+          conversations.set(convoKey, {
+            ...beforeMerge,
+            ...(mergedWatermarks ? { readWatermarks: mergedWatermarks } : {}),
+            ...(mergedFloor !== null ? { historyFloor: mergedFloor } : {}),
+          });
           await saveConversation?.(convoKey).catch(() => {});
         }
       }

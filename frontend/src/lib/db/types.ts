@@ -24,6 +24,12 @@ export interface ConversationMeta {
    * peer to hand it back (D2), and so that marking a thousand messages read is one write.
    */
   readWatermarks?: ReadWatermarks;
+  /**
+   * Where the shared history of this conversation begins, merged as `max` across members. Stored
+   * next to the read state because both are properties of the conversation rather than of any
+   * message, and both travel in the same reconciliation frames.
+   */
+  historyFloor?: number;
 }
 
 /** A decrypted message as stored in and read from the local database. */

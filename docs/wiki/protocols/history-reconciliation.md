@@ -8,7 +8,10 @@ in [`mls-recovery-ladder.md`](mls-recovery-ladder.md). That machinery was measur
 below was taken with the product owner on that date and is recorded, with what it displaced, in
 [Decisions](#decisions-taken) - do not re-litigate one without going back there.
 
-> **Status: SPECIFICATION.** Nothing here is implemented.
+> **Status: PARTLY IMPLEMENTED.** D1-D7, the durability split, the read watermark, and the
+> conversation floor + device window are shipped - each is marked where it is described. What is
+> left, in order: clipping the exchange to the asker's `since`, the state key, the reconciliation
+> exchange on connect, the scrollback, and the deletions under [What disappears](#what-disappears).
 
 ---
 
@@ -109,6 +112,13 @@ Two consequences, both handled where the assumption lived:
   coordination). It is what makes pruning safe.
 : **Hard constraint:** it may never sit below what some member can still supply, or the system
   promises a completeness nobody can honour.
+: **SHIPPED, worth zero.** `Conversation.historyFloor` / `ConversationMeta.historyFloor` (SQLite
+  schema v7), merged by `mergeHistoryFloor` wherever a bundle lands - live and on replay - and
+  restated on every `history_bundle` chunk, since a `max` is free to repeat. Nothing moves it: it is
+  present so that the day something does, the field is already converged across the fleet. A floor
+  claimed in the FUTURE is clamped to now at the parse boundary, for the same reason
+  `parseReadWatermarks` exists - a `max` merge has no way to take a bad value back, and a floor
+  above the messages would hide the conversation on every device that merged it.
 
 **The device window** - local, **fixed per platform. Never a user-visible setting.**
 : *"What this device intends to retain."* **Web: 90 days. Mobile and desktop: 5 years.**
@@ -121,6 +131,20 @@ Two consequences, both handled where the assumption lived:
   renderer. First, an unbounded window gives the floor nothing to move for, ever. Second, the
   [state key](#completeness-is-asked-from-the-requesters-side) is computed over the window, and an
   unbounded domain makes its worst case unbounded too.
+: **SHIPPED as a value, not yet as a bound.** `$lib/utils/chat/historyWindow.ts` holds the two
+  constants, the platform split (`isTauriRuntime`, the only distinction that matters here - mobile
+  and desktop answer the same) and `historyRangeStart(floor, now)`, the later of the floor and the
+  window. What still has to use it is the ASK: `history_digest` and `history_pull` must state their
+  `since`, and an answering device must clip its bundle to the `since` it was given. Until they do,
+  a diff is computed over both stores whole.
+: **`since` is STATED, never recomputed by the answering side.** The window slides, so two devices
+  computing `now - 90 days` a second apart get two different boundaries - and a boundary that
+  disagrees by a second is a message neither side believes it owes. The asker states it; the
+  answerer obeys it; one exchange uses one number.
+: **A bundle nobody asked for is not clipped**, and that is deliberate: `sendFullHistoryBundle` is
+  pushed to a device being INVITED, which has stated no window because it has not asked anything.
+  Over-delivering there costs the receiver disk and nothing else - and under-delivering would lose
+  messages the joiner has no other way to obtain. It is bounded by the sender's own window anyway.
 
 ### Completeness is asked from the requester's side
 
