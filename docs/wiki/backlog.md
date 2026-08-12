@@ -81,6 +81,38 @@ property this area is held to.
 
 ---
 
+## Security - blocked upstream
+
+### P2 - `libcrux-chacha20poly1305` panic on an overlong ciphertext buffer, in the MLS path
+
+**The only one of the 16 open Dependabot alerts that reaches attacker-controlled input on a path that
+matters.** `frontend/mls-wasm/Cargo.lock` pins 0.0.7; the advisory is fixed in 0.0.8. It arrives
+transitively as `openmls_rust_crypto` → `hpke-rs` → `hpke-rs-libcrux` → `libcrux-aead` →
+`libcrux-chacha20poly1305`, i.e. it IS the HPKE half of the MLS crypto provider, and it processes
+ciphertext supplied by whoever sends this device a frame. A panic there kills the MLS client inside
+the WASM module. Availability, not confidentiality - no key material is exposed.
+
+**It cannot be bumped today, and this was tried rather than assumed.** `libcrux-aead 0.0.7` pins
+`libcrux-chacha20poly1305 = "=0.0.7"`, and a `0.0.x` requirement is exact in Cargo semver, so the
+whole chain has to move together:
+
+| crate | locked | needed | available |
+| --- | --- | --- | --- |
+| `libcrux-chacha20poly1305` | 0.0.7 | 0.0.8 | yes |
+| `libcrux-aead` | 0.0.7 | 0.0.8 | yes |
+| `hpke-rs-libcrux` | 0.6.1 | 0.7 | yes |
+| `hpke-rs` | 0.6.1 | 0.7 | yes |
+| `openmls_rust_crypto` | 0.5.1 | 0.6 | **release candidates only** (0.6.0-rc.1, 0.6.0-rc.2) |
+
+So closing this alert means shipping a release candidate of the MLS crypto provider. That is not a
+dependency bump, it is an openmls provider upgrade with a full MLS re-verification behind it, and it
+must not ride along with anything else.
+
+**Re-check when `openmls_rust_crypto 0.6.0` goes stable** - that is the whole condition. Until then
+the alert stays open on purpose, and the reason is here rather than in somebody's memory.
+
+---
+
 ## Reported by users - to reproduce first
 
 ### P1 - a community whose only channel is left becomes unmanageable

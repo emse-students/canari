@@ -91,6 +91,16 @@ function storageWith(entries: HistoryEntry[] | 'broken', historyFloor?: number):
       .mockResolvedValue([
         { id: GROUP, name: 'Test', lifecycle: 'active', updatedAt: 0, historyFloor },
       ]),
+    // The single-row read the window actually uses. Kept consistent with `getConversations` above
+    // on purpose: a fixture that answers one and not the other would let a caller that reads the
+    // row see no floor at all, which is what this file exists to assert about.
+    getConversation: vi
+      .fn()
+      .mockImplementation(async (id: string) =>
+        id === GROUP
+          ? { id: GROUP, name: 'Test', lifecycle: 'active', updatedAt: 0, historyFloor }
+          : null
+      ),
   } as unknown as IStorage;
 }
 

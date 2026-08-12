@@ -125,6 +125,61 @@ describe('historyDigestRendezvous', () => {
     await expect(awaitProbe('keep-me', PEER, 1000)).resolves.toEqual(solicited(other));
   });
 
+  describe('a probe that predates the ask (three online devices upward)', () => {
+    // Every member stores every probe - the frame is a group broadcast and knows nothing about the
+    // election - and probes outlive the asker's coalescing window (60 s vs 30 s). So a member
+    // elected for the SECOND ask can be holding the FIRST ask's probe.
+
+    it('prefers the probe that arrived AFTER the election over the one already held', async () => {
+      noteDigestReceived(GROUP, PEER, digest); // the first ask's probe
+      await vi.advanceTimersByTimeAsync(35_000); // past PROBE_COALESCE_MS, inside DIGEST_TTL_MS
+
+      const electedAt = Date.now();
+      const pending = awaitProbe(GROUP, PEER, 20_000, electedAt);
+      noteDigestReceived(GROUP, PEER, other); // the second ask's probe, on its way
+
+      await expect(pending).resolves.toEqual(solicited(other));
+    });
+
+    it('falls back to the older probe when nothing fresher arrives', async () => {
+      // The safety of the whole thing: `notBefore` rests on an ordering between two independent
+      // transports, so being wrong about it must cost a stale comparison - what happened before -
+      // and never a silent responder.
+      noteDigestReceived(GROUP, PEER, digest);
+      await vi.advanceTimersByTimeAsync(35_000);
+
+      const pending = awaitProbe(GROUP, PEER, 5000, Date.now());
+      await vi.advanceTimersByTimeAsync(5000);
+
+      await expect(pending).resolves.toEqual(solicited(digest));
+    });
+
+    it('never falls back to a probe that expired during the wait', async () => {
+      noteDigestReceived(GROUP, PEER, digest);
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      const pending = awaitProbe(GROUP, PEER, 40_000, Date.now());
+      await vi.advanceTimersByTimeAsync(40_000); // total age 70 s > DIGEST_TTL_MS
+
+      await expect(pending).resolves.toBeNull();
+    });
+
+    it('takes a probe that postdates the election immediately, without waiting', async () => {
+      const electedAt = Date.now();
+      await vi.advanceTimersByTimeAsync(10);
+      noteDigestReceived(GROUP, PEER, digest);
+
+      await expect(awaitProbe(GROUP, PEER, 20_000, electedAt)).resolves.toEqual(solicited(digest));
+    });
+
+    it('is off by default, so every other caller keeps the old behaviour', async () => {
+      noteDigestReceived(GROUP, PEER, digest);
+      await vi.advanceTimersByTimeAsync(35_000);
+
+      await expect(awaitProbe(GROUP, PEER, 1000)).resolves.toEqual(solicited(digest));
+    });
+  });
+
   describe('the window the asker stated', () => {
     // `since` and the digest are ONE ask and must not be separable: an answerer holding the digest
     // without the window can only answer in full, which is the behaviour the window exists to end.

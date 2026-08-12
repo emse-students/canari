@@ -214,6 +214,88 @@ describe('MessagingService - visibility vs durability', () => {
     });
   });
 
+  describe('who a transport frame is queued for', () => {
+    /** Two peer devices, so one can be online and the other not. */
+    const twoPeers = { recipients: [{ userId: 'u2', deviceId: 'dA' }, { userId: 'u2', deviceId: 'dB' }] };
+
+    /** `dA` online, `dB` offline. */
+    const onlyAOnline = () =>
+      redis.exists.mockImplementation((k: string) =>
+        Promise.resolve(k === 'user:online:u2:dA' ? 1 : 0)
+      );
+
+    /** Both private; spied on the instance so the assertion does not depend on FCM itself. */
+    const pushSpies = () => ({
+      deferred: jest
+        .spyOn(service as unknown as { scheduleDeferredPush: () => void }, 'scheduleDeferredPush')
+        .mockImplementation(() => {}),
+      immediate: jest
+        .spyOn(
+          service as unknown as { sendFcmForQueued: () => Promise<void> },
+          'sendFcmForQueued'
+        )
+        .mockResolvedValue(undefined),
+    });
+
+    it('queues a transport frame ONLY for the devices that are online', async () => {
+      // The election that summons a responder only ever picks an online device, so an offline one
+      // could not have answered even holding the frame - and the rendezvous it belongs to expires
+      // in 60 s, long before that device drains its mailbox.
+      onlyAOnline();
+      pushSpies();
+
+      await service.sendMessage(send({ silent: true, durable: false, ...twoPeers }));
+
+      const queued = queuedMessageRepo.save.mock.calls[0][0] as unknown as { deviceId: string }[];
+      expect(queued.map((q) => q.deviceId)).toEqual(['dA']);
+    });
+
+    it('sends NO push at all for a transport frame', async () => {
+      onlyAOnline();
+      const { deferred, immediate } = pushSpies();
+
+      await service.sendMessage(send({ silent: true, durable: false, ...twoPeers }));
+
+      expect(deferred).not.toHaveBeenCalled();
+      expect(immediate).not.toHaveBeenCalled();
+    });
+
+    it('reports the number of rows it WROTE, not the number it considered', async () => {
+      // A log that still counted the candidates would describe rows that do not exist.
+      onlyAOnline();
+      pushSpies();
+
+      const res = await service.sendMessage(send({ silent: true, durable: false, ...twoPeers }));
+
+      expect(res).toEqual(expect.objectContaining({ queued: 1 }));
+    });
+
+    it('still queues a DURABLE frame for an offline device, and pushes to it', async () => {
+      // The whole point of the distinction: a real message must survive the recipient being away.
+      onlyAOnline();
+      const { immediate } = pushSpies();
+
+      await service.sendMessage(send({ silent: false, durable: true, ...twoPeers }));
+
+      const queued = queuedMessageRepo.save.mock.calls[0][0] as unknown as { deviceId: string }[];
+      expect(queued.map((q) => q.deviceId)).toEqual(['dA', 'dB']);
+      expect(immediate).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks Redis whether a device is online ONCE, not once per pass', async () => {
+      // The filter and the delivery loop used to ask the same question separately.
+      onlyAOnline();
+      pushSpies();
+
+      await service.sendMessage(send({ silent: true, durable: false, ...twoPeers }));
+
+      const onlineChecks = redis.exists.mock.calls.filter((c: string[]) =>
+        String(c[0]).startsWith('user:online:')
+      );
+      expect(onlineChecks).toHaveLength(2);
+    });
+  });
+
   describe('redelivery to a device that just became active', () => {
     it('notifies for a visible message it missed', async () => {
       redis.xrange.mockResolvedValue([entry('u2', 'visible')]);

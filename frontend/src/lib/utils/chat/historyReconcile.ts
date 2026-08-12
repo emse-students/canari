@@ -12,9 +12,15 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
  * days, neither able to vouch for the other.
  *
  * **The question is gone rather than answered: asking is no longer expensive.** A state key is one
- * small frame and, on a cache hit, no store read at all, so a device may simply ask on every
- * connection and believe the answer. Nothing has to be remembered between sessions, so nothing has
- * to be discharged.
+ * small frame, one conversation row, and - on a cache hit - no read of the messages at all, so a
+ * device may simply ask on every connection and believe the answer. Nothing has to be remembered
+ * between sessions, so nothing has to be discharged.
+ *
+ * "Not expensive" is a claim about the FAN-OUT as much as about this device, and it was measured
+ * rather than assumed: the probe is an MLS group broadcast, so the server used to write a queued row
+ * and fire a silent push per member device - waking devices that the election can never pick,
+ * because it only ever picks one that is online. A transport frame is now delivered to the online
+ * members and to nobody else (`messaging.service.ts`, `postApplicationMessage`).
  *
  * What is left here is small on purpose:
  *

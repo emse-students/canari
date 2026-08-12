@@ -109,18 +109,35 @@ export function noteProbeReceived(
  * A probe already in hand is CONSUMED, not reused: it answers this request and no later one, so a
  * second solicitation always compares against a fresh snapshot rather than a stale claim. That is
  * also what lets one exchange await twice - a `state` first, then the `digest` it asked for.
+ *
+ * **`notBefore` is what makes that true from three online devices upward.** Every member stores
+ * every probe - the frame is a group broadcast and knows nothing about the election that picked a
+ * responder - and probes live for `DIGEST_TTL_MS` (60 s) while the asker re-probes after
+ * `PROBE_COALESCE_MS` (30 s). So a member elected for the SECOND ask could be holding the FIRST
+ * ask's probe and answer with it, comparing against a state key up to a minute old.
+ *
+ * **It is a PREFERENCE, not a rejection**, and the difference is the whole safety of it. A probe
+ * older than `notBefore` is set aside rather than consumed, and the caller waits for the one that
+ * should be on its way; if none arrives before the deadline, the older one is used after all. So the
+ * good case gets a fresh comparison and the bad case degrades to exactly the previous behaviour.
+ *
+ * That matters because the ordering this rests on - the asker sends its election before its probe,
+ * and the server publishes the election before answering - is a property of two independent
+ * transports, and this module has always been written on the basis that neither sequences the other.
+ * Making it a hard rejection would turn any violation into a silent lost repair.
  */
 export function awaitProbe(
   groupId: string,
   fromIdentity: string,
   timeoutMs: number,
+  notBefore: number = 0,
   now: number = Date.now()
 ): Promise<SolicitedProbe | null> {
   const k = key(groupId, fromIdentity);
   purgeExpired(now);
 
   const stored = probes.get(k);
-  if (stored) {
+  if (stored && stored.at >= notBefore) {
     probes.delete(k);
     return Promise.resolve(stored.probe);
   }
@@ -141,6 +158,20 @@ export function awaitProbe(
         const next = list.filter((fn) => fn !== onProbe);
         if (next.length > 0) waiters.set(k, next);
         else waiters.delete(k);
+      }
+      // NOTHING FRESH CAME, so fall back to the probe we set aside rather than answering nothing.
+      // This is what keeps `notBefore` a PREFERENCE and not a gamble: if the ordering assumption it
+      // rests on is ever wrong, the exchange still happens with the older snapshot - exactly what it
+      // did before - instead of the responder going silent and the repair being lost.
+      //
+      // Purged first: the wait itself can outlive the probe's TTL, and falling back to one that has
+      // expired would be the very staleness `notBefore` exists to bound.
+      purgeExpired(Date.now());
+      const setAside = probes.get(k);
+      if (setAside) {
+        probes.delete(k);
+        finish(setAside.probe);
+        return;
       }
       finish(null);
     }, timeoutMs);

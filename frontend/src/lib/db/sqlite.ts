@@ -258,19 +258,42 @@ export class SqliteStorage implements IStorage {
     );
   }
 
-  /** Return all stored conversation metadata rows ordered most-recently-updated first. */
-  async getConversations(): Promise<ConversationMeta[]> {
-    const rows: any[] = await this.db.select(
-      'SELECT * FROM conversations ORDER BY updated_at DESC'
-    );
-    return rows.map((r) => ({
+  /**
+   * One row as callers see it. Shared by the list read and the single-row read so the two cannot
+   * drift - a field parsed in one and passed through raw in the other is the exact shape that made
+   * `readWatermarks` correct until the first restart.
+   */
+  private rowToMeta(r: any): ConversationMeta {
+    return {
       id: r.id,
       name: r.name,
       lifecycle: normalizeConversationLifecycle(r.lifecycle, r.is_ready === 1),
       updatedAt: r.updated_at,
       readWatermarks: parseReadWatermarks(r.read_watermarks),
       historyFloor: parseHistoryFloor(r.history_floor),
-    }));
+    };
+  }
+
+  /** Return all stored conversation metadata rows ordered most-recently-updated first. */
+  async getConversations(): Promise<ConversationMeta[]> {
+    const rows: any[] = await this.db.select(
+      'SELECT * FROM conversations ORDER BY updated_at DESC'
+    );
+    return rows.map((r) => this.rowToMeta(r));
+  }
+
+  /**
+   * One conversation's metadata row, or `null` when there is none.
+   *
+   * Exists because every caller that wanted a single conversation was reading the whole table and
+   * filtering it in JS - which inside a per-group loop makes the work grow with the square of the
+   * number of conversations, for a question the primary key answers directly.
+   */
+  async getConversation(id: string): Promise<ConversationMeta | null> {
+    const rows: any[] = await this.db.select('SELECT * FROM conversations WHERE id = $1 LIMIT 1', [
+      id,
+    ]);
+    return rows.length > 0 ? this.rowToMeta(rows[0]) : null;
   }
 
   /** Delete the conversation row and all of its messages (messages first to respect the foreign key). */

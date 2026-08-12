@@ -524,9 +524,18 @@ async function storedConversationState(
   storage: IStorage
 ): Promise<ConversationHistoryState> {
   try {
-    const row = (await storage.getConversations()).find((c) => c.id === groupId);
+    // ONE row, by key. This used to read every conversation and filter in JS, which is invisible on
+    // a single call and quadratic in `reconcileAllGroups` - one whole-table read per group, on every
+    // connection, even when the state key itself was cached and read nothing.
+    const row = await storage.getConversation(groupId);
     return { readWatermarks: row?.readWatermarks, historyFloor: row?.historyFloor };
-  } catch {
+  } catch (e) {
+    // The empty state is deliberate (see the docstring) but it must not be SILENT: an unreadable row
+    // and a conversation with no floor produce the same answer here, and the caller then asks over a
+    // wider window without anything saying why. This branch is all a failed read leaves behind.
+    console.warn(
+      `[HISTORY_WINDOW] conversation row unreadable for ${groupId.slice(0, 8)}… - asking over the bare window: ${String(e).slice(0, 120)}`
+    );
     return {};
   }
 }
@@ -709,9 +718,10 @@ export async function historyStateKeyFor(
  * Tells the elected responder what this device holds, in 16 characters, and asks whether it agrees.
  *
  * The FIRST leg of every reconciliation and usually the only one. A digest describes a store in
- * proportion to its size and costs a walk on both sides; this costs one frame and, on a cache hit,
- * no store read at all. Only when the two keys differ is a digest worth exchanging - see
- * `handleHistoryRequest`, which asks for one at that point and not before.
+ * proportion to its size and costs a walk on both sides; this costs one frame, one conversation row
+ * for the window, and - on a cache hit - no read of the MESSAGES at all. Only when the two keys
+ * differ is a digest worth exchanging - see `handleHistoryRequest`, which asks for one at that point
+ * and not before.
  *
  * Like the digest it rides inside MLS and never over the WebSocket: what a device holds is metadata
  * the server does not have and must not learn.

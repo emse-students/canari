@@ -1039,10 +1039,20 @@ export async function handleHistoryRequest(params: {
   const requesterIdentity = digestIdentity(requesterUserId, requesterDeviceId);
   const selfIdentity = digestIdentity(selfUserId, mlsService.getDeviceId());
 
+  // WHEN THE ELECTION REACHED US, taken before any await. Every probe older than this belongs to an
+  // earlier ask - this device stores every probe it can decrypt, elected or not - and answering with
+  // one would compare against a state key up to `DIGEST_TTL_MS` old. See `awaitProbe`.
+  //
+  // The asker ORDERS the two - `reconcileGroup` awaits the election's HTTP response before sending
+  // the probe, and the server publishes the election before answering that request - so a probe for
+  // THIS ask should postdate this line. `awaitProbe` treats that as a preference and not a rule: if
+  // the order is ever broken it waits, then uses the older probe anyway rather than going silent.
+  const electedAt = Date.now();
+
   // Answer from a settled store, not from one still being written - see the note above.
   await mlsService.waitForMessageQueueIdle().catch(() => {});
 
-  let probe = await awaitProbe(groupId, requesterIdentity, probeWaitMs);
+  let probe = await awaitProbe(groupId, requesterIdentity, probeWaitMs, electedAt);
   if (!probe) {
     log(`[HISTORY_REQ] no probe from ${requesterIdentity} for ${short}... - nothing to answer`);
     return;
@@ -1075,8 +1085,11 @@ export async function handleHistoryRequest(params: {
       return;
     }
 
+    // Same rule for the second leg, dated from OUR request rather than from the election: a digest
+    // that predates the request cannot be an answer to it.
+    const askedAt = Date.now();
     await sendHistoryDigestRequest(groupId, { from: selfIdentity, to: requesterIdentity }, deps);
-    const answer = await awaitProbe(groupId, requesterIdentity, probeWaitMs);
+    const answer = await awaitProbe(groupId, requesterIdentity, probeWaitMs, askedAt);
     if (answer?.kind !== 'digest') {
       log(
         `[HISTORY_REQ] ${short}... asked ${requesterIdentity} to describe itself, no digest came`

@@ -10,6 +10,7 @@ function makeEncryptedStorage(): IStorage & { rows: EncryptedMessageRow[] } {
     init: vi.fn().mockResolvedValue(undefined),
     saveConversation: vi.fn().mockResolvedValue(undefined),
     getConversations: vi.fn().mockResolvedValue([]),
+    getConversation: vi.fn().mockResolvedValue(null),
     deleteConversation: vi.fn().mockResolvedValue(undefined),
     deleteMessagesForConversation: vi.fn().mockResolvedValue(undefined),
     saveMessage: vi.fn(),

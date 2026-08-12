@@ -189,6 +189,13 @@ export interface IStorage {
   saveConversation(conv: ConversationMeta): Promise<void>;
   /** Return all stored conversation metadata rows, ordered by recency. */
   getConversations(): Promise<ConversationMeta[]>;
+  /**
+   * Return one conversation's metadata row, or `null` when there is none.
+   *
+   * Prefer this over filtering `getConversations()`: a whole-table read inside a per-group loop
+   * makes the work grow with the square of the number of conversations.
+   */
+  getConversation(id: string): Promise<ConversationMeta | null>;
   /** Delete the conversation row and cascade-delete all of its messages. */
   deleteConversation(id: string): Promise<void>;
   /** Delete all messages for a conversation without removing its metadata row. */

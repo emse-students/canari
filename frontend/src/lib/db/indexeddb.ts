@@ -192,6 +192,24 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  /**
+   * One row as callers see it. Shared by the list read and the single-row read so the two cannot
+   * drift - a field parsed in one and passed through raw in the other is the exact shape that made
+   * `readWatermarks` correct until the first restart.
+   *
+   * Normalizes legacy rows (the `isReady` field, from before `lifecycle` was introduced), and
+   * validates on the way OUT like every other store: a structured-clone round trip preserves
+   * whatever was written, including a value an older build got wrong.
+   */
+  private rowToMeta(r: ConversationMeta & { isReady?: boolean }): ConversationMeta {
+    return {
+      ...r,
+      lifecycle: normalizeConversationLifecycle(r.lifecycle, r.isReady),
+      readWatermarks: parseReadWatermarks(r.readWatermarks),
+      historyFloor: parseHistoryFloor(r.historyFloor),
+    };
+  }
+
   /** Return all stored conversation metadata rows (unordered - callers should sort). */
   async getConversations(): Promise<ConversationMeta[]> {
     const db = this.ensureDb();
@@ -199,16 +217,30 @@ export class IndexedDbStorage implements IStorage {
       const tx = db.transaction('conversations', 'readonly');
       const req = tx.objectStore('conversations').getAll();
       req.onsuccess = () => {
-        // Normalize legacy rows (the `isReady` field, from before `lifecycle` was introduced).
-        const rows = (req.result as Array<ConversationMeta & { isReady?: boolean }>).map((r) => ({
-          ...r,
-          lifecycle: normalizeConversationLifecycle(r.lifecycle, r.isReady),
-          // Validated on the way out, like every other store: a structured-clone round trip
-          // preserves whatever was written, including a value an older build got wrong.
-          readWatermarks: parseReadWatermarks(r.readWatermarks),
-          historyFloor: parseHistoryFloor(r.historyFloor),
-        }));
+        const rows = (req.result as Array<ConversationMeta & { isReady?: boolean }>).map((r) =>
+          this.rowToMeta(r)
+        );
         resolve(rows);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /**
+   * One conversation's metadata row, or `null` when there is none.
+   *
+   * Exists because every caller that wanted a single conversation was reading the whole store and
+   * filtering it in JS - which inside a per-group loop makes the work grow with the square of the
+   * number of conversations, for a question the key path answers directly.
+   */
+  async getConversation(id: string): Promise<ConversationMeta | null> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('conversations', 'readonly');
+      const req = tx.objectStore('conversations').get(id);
+      req.onsuccess = () => {
+        const row = req.result as (ConversationMeta & { isReady?: boolean }) | undefined;
+        resolve(row ? this.rowToMeta(row) : null);
       };
       req.onerror = () => reject(req.error);
     });

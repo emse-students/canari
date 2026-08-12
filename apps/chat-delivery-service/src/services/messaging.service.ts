@@ -665,10 +665,41 @@ export class MessagingService {
       }
     }
 
+    // The sender declares durability (`body.durable`); the server sees ciphertext and can classify
+    // nothing. It is needed BEFORE the persist below, because it decides who is even a recipient.
+    const durable = body.durable ?? !body.silent;
+
+    // Who is reachable right now. Asked once and reused by both the filter below and the delivery
+    // loop, which used to ask Redis the same question a second time per recipient.
+    const online = new Map<string, boolean>();
+    for (const queued of ops) {
+      const k = `${queued.recipientId}:${queued.deviceId}`;
+      if (!online.has(k)) online.set(k, !!(await this.redis.exists(`user:online:${k}`)));
+    }
+
+    // A TRANSPORT frame is addressed to whoever is online NOW, and to nobody else.
+    //
+    // It is the same argument that keeps these frames out of the history stream one block below, and
+    // it is stronger here. A transport frame is one half of a rendezvous that expires in 60 s
+    // (`DIGEST_TTL_MS`), so a row drained by a device that reconnects later is answered by nothing
+    // at all - and the reconciliation probe is elected only among devices Redis reports ONLINE, so
+    // an offline device could not have been the responder even if it had the frame. Queueing it
+    // wrote a row per member device and woke each of them with a silent FCM push, for an exchange
+    // they were structurally unable to join. A device that comes back probes on its own connection.
+    const toDeliver = durable
+      ? ops
+      : ops.filter((q) => online.get(`${q.recipientId}:${q.deviceId}`) === true);
+    if (!durable && toDeliver.length < ops.length) {
+      this.logger.log(
+        `[SEND][${traceId}] TRANSPORT_SKIPPED_OFFLINE count=${ops.length - toDeliver.length} ` +
+          `group=${body.groupId ?? ''} - no row, no push: the rendezvous would expire first`
+      );
+    }
+
     // 1. Persist ALL messages first (survives crashes / timing races)
-    if (ops.length > 0) {
-      await this.queuedMessageRepo.save(ops);
-      this.logger.log(`[SEND][${traceId}] QUEUED count=${ops.length}`);
+    if (toDeliver.length > 0) {
+      await this.queuedMessageRepo.save(toDeliver);
+      this.logger.log(`[SEND][${traceId}] QUEUED count=${toDeliver.length}`);
     } else {
       this.logger.warn(`[SEND][${traceId}] No message queued after validation`);
     }
@@ -676,8 +707,8 @@ export class MessagingService {
     // 1b. Append to the group's shared history stream, so a device that was absent can obtain the
     // frame without a peer being online.
     //
-    // The sender declares durability (`body.durable`); the server sees ciphertext and can classify
-    // nothing. Two things are still excluded here rather than by the client:
+    // `durable` is computed above, where it also decides the recipient set. Two things are still
+    // excluded here rather than by the client:
     //  - Welcome / Commit: MLS epoch-transition frames that cannot be replayed out of order.
     //  - anything without a group or a sender: there is no stream to write to.
     //
@@ -685,7 +716,6 @@ export class MessagingService {
     // construction, that excluded every reaction, edit, deletion and read receipt from the only
     // shared copy that exists - the defect this rework removes
     // (`docs/wiki/protocols/history-reconciliation.md`).
-    const durable = body.durable ?? !body.silent;
     if (
       body.proto &&
       !body.isWelcome &&
@@ -726,11 +756,13 @@ export class MessagingService {
     }
 
     // 2. Best-effort real-time delivery for online recipients
-    for (const queued of ops) {
-      const redisKey = `user:online:${queued.recipientId}:${queued.deviceId}`;
-      const isOnline = await this.redis.exists(redisKey);
+    for (const queued of toDeliver) {
+      // Reuses the answer taken above rather than asking Redis a second time. A device that went
+      // offline in between is covered the same way it always was: the row survives and its next
+      // pull redelivers it.
+      const isOnline = online.get(`${queued.recipientId}:${queued.deviceId}`) === true;
       this.logger.log(
-        `[SEND][${traceId}] recipient=${queued.recipientId}:${queued.deviceId} online=${!!isOnline} queuedId=${queued.id}`
+        `[SEND][${traceId}] recipient=${queued.recipientId}:${queued.deviceId} online=${isOnline} queuedId=${queued.id}`
       );
       if (isOnline) {
         const envelope = JSON.stringify({
@@ -758,36 +790,47 @@ export class MessagingService {
         // silently → fall back to FCM so the user still gets a notification.
         // Welcome packages use a silent push (no visible notification) so the
         // app can process the MLS welcome without spamming the user.
-        if (!body.isCommit) {
+        //
+        // NOT for a transport frame. The fallback exists to deliver something LATER that is still
+        // worth having; a rendezvous half is worth nothing after 60 s, so the push would wake the
+        // device to hand it an expired exchange. The Redis PUBLISH above is the whole delivery
+        // mechanism for this class, and missing it costs one deferred repair, not a message.
+        if (durable) {
           this.scheduleDeferredPush(
             queued,
             traceId,
             body.groupId ?? '',
             body.senderId ?? '',
-            body.isWelcome ? true : (body.silent ?? false)
+            body.isCommit || body.isWelcome ? true : (body.silent ?? false)
           );
-        } else {
-          this.scheduleDeferredPush(queued, traceId, body.groupId ?? '', body.senderId ?? '', true);
         }
       } else {
         // Offline recipient: FCM push (silent for commits/welcomes).
         // Fire-and-forget: the message is already persisted; blocking on FCM
         // (often 2-5 s per device) would stall POST /send for the sender.
-        void this.sendFcmForQueued(
-          queued,
-          traceId,
-          body.groupId ?? '',
-          body.senderId ?? '',
-          body.isCommit || body.isWelcome ? true : (body.silent ?? false)
-        ).catch((e) =>
-          this.logger.warn(`[PUSH_SEND][${traceId}] async FCM error queuedId=${queued.id}: ${e}`)
-        );
+        //
+        // Unreachable for a transport frame - the filter above kept only online recipients - and
+        // guarded anyway, so that changing the filter cannot quietly restore the push.
+        if (durable) {
+          void this.sendFcmForQueued(
+            queued,
+            traceId,
+            body.groupId ?? '',
+            body.senderId ?? '',
+            body.isCommit || body.isWelcome ? true : (body.silent ?? false)
+          ).catch((e) =>
+            this.logger.warn(`[PUSH_SEND][${traceId}] async FCM error queuedId=${queued.id}: ${e}`)
+          );
+        }
       }
     }
 
-    this.logger.log(`[SEND][${traceId}] DONE queued=${ops.length} realtime=${sentCount}`);
+    // The count REPORTED is the count actually written, not the count considered - a transport frame
+    // drops its offline recipients above, and a log that still said `ops.length` would describe rows
+    // that do not exist.
+    this.logger.log(`[SEND][${traceId}] DONE queued=${toDeliver.length} realtime=${sentCount}`);
 
-    return { status: 'processed', queued: ops.length, sent: sentCount };
+    return { status: 'processed', queued: toDeliver.length, sent: sentCount };
   }
 
   /**
