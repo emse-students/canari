@@ -29,6 +29,19 @@ const SAMPLE_LIMIT = 5;
 
 const tally = new Map<UnackedReason, { count: number; groups: Set<string> }>();
 
+/**
+ * The same frames, kept a second way: full group ids per reason, so the EVENT that discharges a
+ * reason can ask for them again.
+ *
+ * Separate from `tally` on purpose. The tally is a report - truncated ids, cleared by the reporter -
+ * and this is a work list, cleared only by whoever acts on it. Sharing one structure would mean a
+ * log line silently cancelling a retry.
+ *
+ * Bounded by the number of groups this device is in, and every entry is discharged by an event
+ * rather than a clock: a Welcome for the group, or the conversation store finishing its restore.
+ */
+const awaiting = new Map<UnackedReason, Set<string>>();
+
 /** Records one frame left in the queue. Cheap enough to call on every such frame. */
 export function noteUnackedFrame(groupId: string, reason: UnackedReason): void {
   let entry = tally.get(reason);
@@ -38,6 +51,28 @@ export function noteUnackedFrame(groupId: string, reason: UnackedReason): void {
   }
   entry.count++;
   if (entry.groups.size < SAMPLE_LIMIT) entry.groups.add(groupId.slice(0, 8));
+
+  let waiting = awaiting.get(reason);
+  if (!waiting) {
+    waiting = new Set();
+    awaiting.set(reason, waiting);
+  }
+  waiting.add(groupId);
+}
+
+/**
+ * Returns the groups left behind for `reason` and forgets them, so the caller owns the retry.
+ *
+ * TAKE, not read: the point of asking is to act, and an entry that survived the action would make
+ * the next event re-ask for a frame already re-fetched. A frame the retry cannot process is noted
+ * again by the handler on the way through, so nothing is lost by clearing - the work list is
+ * rebuilt from what actually failed rather than from what once did.
+ */
+export function takeGroupsAwaiting(reason: UnackedReason): string[] {
+  const waiting = awaiting.get(reason);
+  if (!waiting || waiting.size === 0) return [];
+  awaiting.delete(reason);
+  return [...waiting];
 }
 
 /**
@@ -66,7 +101,8 @@ export function reportUnackedFrames(log: (msg: string) => void): void {
   );
 }
 
-/** Test seam: drops the tally without reporting it. */
+/** Test seam: drops the tally and the work list without reporting either. */
 export function resetUnackedFrames(): void {
   tally.clear();
+  awaiting.clear();
 }

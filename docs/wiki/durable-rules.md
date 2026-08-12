@@ -251,13 +251,17 @@ carry in the head:
 - **IDEMPOTENCE COMES FROM DURABLE STATE, TERMINATION FROM A PROOF - never from a clock.** One
   question ("what am I missing, and who has it") was answered by NINE independent durations across
   three files, two of them retry ladders driving the same request, so the traffic was their product.
-  The rule that replaced them: one request per STATE EDGE, the durable `awaitingHistory` marker makes
-  a second one a no-op, and each diff exchange strictly reduces the symmetric difference, so the
-  empty diff - the only thing entitled to clear the marker - is reached by construction rather than
-  by budget. A duration is legitimate only when it schedules NO traffic: `REQUEST_TIMEOUT_MS` exists
-  solely to notice an attempt went unanswered, and `INITIAL_SOLICIT_DELAY_MS` is an epoch-ordering
-  constraint, not a backoff. Ask of every timer what it would mean if it were wrong; if the answer is
-  "more traffic", it is load-bearing and it should not be.
+  The rule that replaced them: one request per STATE EDGE, and each diff exchange strictly reduces
+  the symmetric difference, so termination is reached by construction rather than by budget. **The
+  durable marker that first carried the idempotence is itself gone (2026-08-12)** - see the entry
+  below on lifetime, and [history-reconciliation](protocols/history-reconciliation.md). What
+  replaced it is cheaper than the state it was protecting: a state key costs one small frame, so a
+  device may simply ASK on every connection and believe the answer, and the only note kept is an
+  in-memory one collapsing a burst of identical triggers. Two clocks went with it - the 500 ms sleep
+  before comparing became `waitForMessageQueueIdle()`, a real completion signal, and the 15 s retry
+  of an unacknowledged frame became the EVENT that discharges it (the Welcome, or the store restore
+  finishing). Ask of every timer what it would mean if it were wrong; if the answer is "more
+  traffic", it is load-bearing and it should not be.
 - **BUT THE DURABLE STATE IS IDEMPOTENCE ONLY FOR THE QUESTION IT WAS WRITTEN TO ANSWER, AND THE TWO
   QUESTIONS CAN DIFFER ONLY IN LIFETIME.** The rule above was applied one line too far: the guard
   became `if (isAwaitingHistory(...)) return` in front of the loss trigger. The marker answers "is
@@ -268,6 +272,28 @@ carry in the head:
   mechanism. "Is an attempt outstanding" has exactly one witness, `isSolicitInFlight` (scheduled, or
   inside the response window). Same family as `updatedAt` and the epoch-verdict rule, with the twist
   that both answers were TRUE - only the questions differed. `setupMessageHandler.lostFrame.test.ts`.
+  **The whole gate was deleted on 2026-08-12**, and the reason generalises: the marker existed
+  because ASKING was expensive (the answer was a full store dump), so it had to be justified by
+  stored evidence. Make the ask cheap - a 64-bit state key, one frame, silence when it matches - and
+  the evidence, its ranks, its vouching and its give-up horizon all become unnecessary at once.
+  **When durable state is hard to discharge, check whether the thing it is rationing still needs
+  rationing.**
+- **A RETRY MUST TERMINATE ON THE EVENT THAT CHANGES THE ANSWER, NOT ON A CLOCK - AND THE EVENT IS
+  USUALLY ALREADY NAMED SOMEWHERE.** An unacknowledged inbound frame was re-fetched every 15 s. The
+  handler leaves one behind for exactly two reasons and both were already enumerated as a TYPE
+  (`UnackedReason`): an unknown group needs its Welcome, an absent conversation needs the store
+  restore. Neither is discharged by waiting, so every cycle re-fetched the same rows, failed them
+  identically, and re-raised the catch-up overlay - for the whole session, on a device whose group
+  never came back. `refetchFramesLeftBehind` is now fired where each event actually happens. No
+  event, no ask, and no cycle to bound. The type that classified the failure was also the work list;
+  a reason enumerated for a LOG is usually enough to drive the fix.
+- **A LOOKUP INSIDE A PER-ITEM LOOP IS A COST THAT GROWS WITH THE WRONG THING.** `batchAddMessages`
+  asked `convo.messages.find(...)` twice per incoming message, so a catch-up of `m` into a
+  conversation of `n` cost `2·n·m` main-thread comparisons - about sixteen million for a large
+  bundle, measured at ten minutes of frozen list with nothing lost. Fixed by one index built once
+  per batch, and by making `resolveMessageTimestamp` take a LOOKUP rather than the array, so the
+  cost is visible at each call site and no future one can reintroduce the scan silently. An index
+  replacing a `find` must keep FIRST-wins, or making a path faster changes what it renders.
 - A cause is not a label: `pending-offline` meant both "the request never left" and "it left and
   nobody answered", and the string named the first, so a silent peer was reported as an empty room.
   Two causes under one label is a WRONG answer, not a vague one - it points the user at the wrong fix.

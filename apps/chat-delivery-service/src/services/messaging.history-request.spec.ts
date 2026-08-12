@@ -25,12 +25,21 @@ describe('MessagingService - notifyHistoryRequest', () => {
   };
   const deviceGroupRepo = { find: jest.fn().mockResolvedValue([]) };
 
+  /**
+   * A repository that holds nothing - which is NOT the same as one that answers `undefined`.
+   *
+   * `find` on a real TypeORM repository returns `[]`, and a bare `jest.fn()` returns `undefined`,
+   * so every caller reading `.length` off the result threw a TypeError instead of taking the
+   * empty-set branch. Isolated, the throw landed inside a caller that swallows it; alongside
+   * another spec it surfaced as a failure, which is why this read as cross-file pollution and was
+   * not - the fixture was simply lying about what a repository does.
+   */
   const emptyRepo = () => ({
-    find: jest.fn(),
-    findOne: jest.fn(),
-    save: jest.fn(),
-    delete: jest.fn(),
-    create: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue(null),
+    save: jest.fn().mockImplementation(async (e: unknown) => e),
+    delete: jest.fn().mockResolvedValue({ affected: 0 }),
+    create: jest.fn().mockImplementation((e: unknown) => e),
   });
 
   const body = {
@@ -76,20 +85,10 @@ describe('MessagingService - notifyHistoryRequest', () => {
     expect(redis.publish).toHaveBeenCalledTimes(1);
   });
 
-  it('relays withDigest so the responder knows whether waiting for a digest is pointless', async () => {
-    redis.smembers.mockResolvedValue(['ua:da']);
-    redis.exists.mockResolvedValue(1);
-
-    await service.notifyHistoryRequest('reqU', { ...body, withDigest: true });
-
-    const published = JSON.parse(redis.publish.mock.calls[0][1] as string) as { proto: string };
-    const relayed = JSON.parse(Buffer.from(published.proto, 'base64').toString());
-    expect(relayed.withDigest).toBe(true);
-  });
-
-  it('defaults withDigest to false, so an older client is answered at once', async () => {
-    // Absent means "this client cannot send a digest". Relaying it as anything but false would make
-    // the elected responder wait out its whole bound for a frame that is never coming.
+  it('relays the election and NOTHING about what is being asked for', async () => {
+    // What the requester wants - a state key, a digest, a range - travels inside MLS, which this
+    // service cannot read. Anything about it appearing here would be metadata the server is not
+    // supposed to hold, and there is nothing for it to carry: the responder waits for the MLS frame.
     redis.smembers.mockResolvedValue(['ua:da']);
     redis.exists.mockResolvedValue(1);
 
@@ -97,7 +96,12 @@ describe('MessagingService - notifyHistoryRequest', () => {
 
     const published = JSON.parse(redis.publish.mock.calls[0][1] as string) as { proto: string };
     const relayed = JSON.parse(Buffer.from(published.proto, 'base64').toString());
-    expect(relayed.withDigest).toBe(false);
+    expect(relayed).toEqual({
+      type: 'history_request',
+      groupId: body.groupId,
+      requesterUserId: body.requesterUserId,
+      requesterDeviceId: body.requesterDeviceId,
+    });
   });
 
   it('returns no_peer_online and publishes nothing when no member is online', async () => {

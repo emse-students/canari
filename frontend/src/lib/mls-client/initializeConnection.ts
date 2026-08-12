@@ -1,7 +1,7 @@
 import type { IMlsService, UserGroupRow } from './IMlsService';
 import { getIsTabLeader } from './tabLeader';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
-import { reSolicitAwaitingHistory } from '$lib/utils/chat/historySolicit';
+import { reconcileAllGroups } from '$lib/utils/chat/historyReconcile';
 
 /** Dependencies injected into initializeConnection; only the tab-leader tab calls this function. */
 export interface ConnectionDeps {
@@ -210,18 +210,24 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
   }
 
-  // Cross-session history retry: re-solicit the pre-join bundle for any group we hold locally that
-  // is still awaiting it (durable registry). Covers the case where the sole reachable member was
-  // offline during the in-session solicitation window at join time - each reconnect gives it a
-  // fresh chance. Groups absent from WASM are handled above by the recovery seam, which solicits on
-  // a successful (re)join.
-  reSolicitAwaitingHistory(mlsService, userId, mlsService.getLocalGroups(), log);
-
-  // Small delay to let the first batch of messages arrive.
-  await new Promise((r) => setTimeout(r, 500));
-
   // 4. Invitations de nos autres devices (multi-device sync)
+  //
+  // WAIT FOR THE DRAIN, DO NOT SLEEP THROUGH IT. There used to be `await new Promise(r =>
+  // setTimeout(r, 500))` here, described as "a small delay to let the first batch of messages
+  // arrive" - a guess that is too long on a fast network and far too short on a slow one, and one
+  // that decides how much of its own inbound queue the device has processed before it starts
+  // comparing itself against its peers. `waitForMessageQueueIdle` is the same intent stated as a
+  // fact: the queue is empty, whenever that happens to be.
+  await mlsService.waitForMessageQueueIdle().catch(() => {});
+
   processDeviceInvitationsLocally().catch(() => {});
+
+  // 5. Reconciliation. LAST, and after the drain above for a reason that is the whole shape of this
+  // mechanism: a device comparing what it holds while its own mailbox is still being applied
+  // reports a difference it is in the middle of closing by itself, and then repairs it by asking a
+  // peer for messages already on their way. Every group is asked, unconditionally - one small frame
+  // each, answered by silence when the two agree, which is the common case on every connection.
+  await reconcileAllGroups(mlsService, mlsService.getLocalGroups(), log);
 }
 
 /**

@@ -17,9 +17,10 @@ vi.mock('$lib/utils/chat/groupActions', () => ({
   persistMlsStateAfterMutation: vi.fn().mockResolvedValue(undefined),
 }));
 
-// Prevent re-soliciting history from triggering side effects.
-vi.mock('$lib/utils/chat/historySolicit', () => ({
-  reSolicitAwaitingHistory: vi.fn(),
+// Keep the reconciliation pass out of these cases: it is exercised on its own, and here it would
+// only assert that a session which registered no probe sender sends no probe.
+vi.mock('$lib/utils/chat/historyReconcile', () => ({
+  reconcileAllGroups: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { initializeConnection } from './initializeConnection';
@@ -76,6 +77,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
         { groupId: 'g-not-in-wasm', name: 'NotInWasm', isGroup: true },
       ]),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
     const setIsWsConnected = vi.fn();
     const setReconnectAttempts = vi.fn();
@@ -132,6 +134,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
         },
       ]),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
     const log = vi.fn();
     const onGroupDeletedRemotely = vi.fn();
@@ -172,6 +175,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
         .fn()
         .mockResolvedValue([{ groupId: 'g-live', name: 'Live', isGroup: true }]),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
     const log = vi.fn();
     const onGroupMissing = vi.fn().mockResolvedValue(undefined);

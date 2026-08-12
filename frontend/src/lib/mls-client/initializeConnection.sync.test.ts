@@ -5,14 +5,8 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
 import { syncConnectionAfterWsOpen } from './initializeConnection';
 
 describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
+  // No fake timers here any more: the 500 ms sleep this used to advance past is gone, replaced by
+  // `waitForMessageQueueIdle`. Advancing a clock that nothing reads would only hide a real one.
   it('does not forget or log when ineligible group is already absent from WASM', async () => {
     const mls = {
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
@@ -31,6 +25,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       forgetGroup: vi.fn(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
     const log = vi.fn();
 
@@ -41,7 +36,6 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       log,
     });
-    await vi.advanceTimersByTimeAsync(600);
     await done;
 
     expect(mls.forgetGroup).not.toHaveBeenCalled();
@@ -60,6 +54,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       forgetGroup: vi.fn(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
     const log = vi.fn();
 
@@ -71,7 +66,6 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       log,
       onGroupMissing: vi.fn().mockResolvedValue(undefined),
     });
-    await vi.advanceTimersByTimeAsync(600);
     await done;
 
     expect(mls.forgetGroup).not.toHaveBeenCalled();
@@ -87,6 +81,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       forgetGroup: vi.fn(),
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
     const log = vi.fn();
 
@@ -97,7 +92,6 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
       log,
     });
-    await vi.advanceTimersByTimeAsync(600);
     await done;
 
     expect(mls.forgetGroup).not.toHaveBeenCalled();

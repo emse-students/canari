@@ -2,6 +2,10 @@ import { encryptData, decryptData } from '../encryption';
 import { readStoredTimestampMs } from '$lib/utils/dates';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
 import { parseHistoryFloor } from '$lib/utils/chat/historyWindow';
+import {
+  invalidateAllHistoryStateKeys,
+  invalidateHistoryStateKey,
+} from '$lib/utils/chat/historyStateKey';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import type {
   ConversationMeta,
@@ -277,6 +281,7 @@ export class SqliteStorage implements IStorage {
 
   /** Delete all messages for a conversation without removing its metadata row. */
   async deleteMessagesForConversation(conversationId: string): Promise<void> {
+    invalidateHistoryStateKey(conversationId);
     await this.db.execute('DELETE FROM messages WHERE conversation_id = $1', [conversationId]);
   }
 
@@ -294,6 +299,9 @@ export class SqliteStorage implements IStorage {
    * No salt column — the deviceKeyB64 is imported directly as an AES-256-GCM key.
    */
   async saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void> {
+    // Every write through this class passes here - `saveMessage` and `updateMessage` both delegate
+    // to it - so this is where the reconciliation's cached state key is dropped.
+    for (const msg of msgs) invalidateHistoryStateKey(msg.conversationId);
     const encryptedMessages = await Promise.all(
       msgs.map(async (msg) => {
         const encrypted = await encryptData(toMessagePayload(msg), deviceKeyB64);
@@ -474,6 +482,7 @@ export class SqliteStorage implements IStorage {
 
   /** Non-destructive insert: write the encrypted row only if no row with this id already exists. */
   async importEncryptedRow(row: EncryptedMessageRow): Promise<void> {
+    invalidateHistoryStateKey(row.conversationId);
     // INSERT OR IGNORE: skip rows that already exist on this device so that
     // messages received after the backup was taken are never overwritten.
     await this.db.execute(
@@ -492,6 +501,8 @@ export class SqliteStorage implements IStorage {
 
   /** Delete messages older than `maxAgeMs` milliseconds using a single DELETE statement; returns the number of affected rows. */
   async deleteOldMessages(maxAgeMs: number): Promise<number> {
+    // Age-based, so it cannot name the conversations it touched: everything goes.
+    invalidateAllHistoryStateKeys();
     const result = await this.db.execute('DELETE FROM messages WHERE timestamp < $1', [
       Date.now() - maxAgeMs,
     ]);
@@ -600,6 +611,7 @@ export class SqliteStorage implements IStorage {
 
   /** Delete all rows from the messages, conversations, and outbox tables (account reset / testing). */
   async clear(): Promise<void> {
+    invalidateAllHistoryStateKeys();
     await this.db.execute('DELETE FROM messages');
     await this.db.execute('DELETE FROM conversations');
     await this.db.execute('DELETE FROM outbox');

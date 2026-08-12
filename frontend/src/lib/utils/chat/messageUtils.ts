@@ -37,9 +37,32 @@ export function computeMessageListSwitchTime(messages: readonly ChatMessage[]): 
   return messages.reduce((max, m) => Math.max(max, messageTime(m)), 0);
 }
 
+/**
+ * How the resolver finds a message the conversation may already hold.
+ *
+ * A LOOKUP rather than the list itself, and that is the whole point: the caller decides what one
+ * lookup costs. A single arriving message can afford a scan; a batch of five hundred cannot, and
+ * passing the array made that cost invisible at the only call site where it mattered - `n` scans of
+ * `m` rendered messages, on the main thread, which is the post-ingest freeze.
+ */
+export type MessageById = (id: string) => ChatMessage | undefined;
+
+/**
+ * Indexes a rendered conversation by message id, for a batch that will look up many times.
+ *
+ * FIRST wins, because the scan it replaces was `Array.find` and a list holding one id twice must
+ * not start answering differently for having become faster. That the list should never hold one
+ * twice is a separate matter, and not one to settle silently here.
+ */
+export function indexMessagesById(messages: readonly ChatMessage[]): Map<string, ChatMessage> {
+  const byId = new Map<string, ChatMessage>();
+  for (const m of messages) if (!byId.has(m.id)) byId.set(m.id, m);
+  return byId;
+}
+
 export function resolveMessageTimestamp(
   options: Pick<AddMessageToChatOptions, 'timestamp' | 'messageId'>,
-  existingMessages: readonly ChatMessage[],
+  findExisting: MessageById,
   isOwn: boolean,
   fallbackMs?: number
 ): Date {
@@ -52,7 +75,7 @@ export function resolveMessageTimestamp(
   }
   const messageId = normalizeMessageId(options.messageId);
   if (messageId) {
-    const existing = existingMessages.find((m) => m.id === messageId);
+    const existing = findExisting(messageId);
     if (existing) {
       return existing.timestamp instanceof Date ? existing.timestamp : new Date(existing.timestamp);
     }

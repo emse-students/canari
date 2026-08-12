@@ -79,14 +79,19 @@ retention window has elapsed past the rollout, on top of the `minClientVersion` 
 **Cost of keeping it:** a receipt for messages this device never had reads as no read state at all,
 where the sender did read something. It corrects itself on the next watermark that peer sends.
 
-### `history_bundle` with no `vouched` - predates v0.13
+### `history_bundle` with no `since` - predates v0.14
 
-**Site:** `historySolicit.ts`, `noteHistoryBundleReceived`.
-**Shim:** an absent `vouched` is read as `true`, because every client shipped before the field sent a
-bare `{ messages: [] }` exactly when it was entitled to vouch.
-**Replacement:** `vouched: false` is explicit on a bundle from a responder that is itself awaiting.
-**On removal:** default `vouched` to nothing and treat its absence as malformed.
-**Cost of keeping it:** none measurable; it is a defaulting rule, not a branch.
+**Site:** `sendHistoryBundleForIds` (`groupActions.ts`).
+**Shim:** a bundle whose ask stated no window is answered UNCLIPPED (`since` defaults to 0). Two
+senders are entitled to that: the invite push, which nobody asked for, and a client too old to state
+a window. Neither has declined anything, so clipping their answer would be inventing a boundary on
+their behalf.
+**Replacement:** every ask - `history_digest`, `history_pull`, `history_range` - carries the asker's
+own `since`, and the answer is clipped to the one it was given. The digest itself is never clipped:
+it says what a device HAS, while `since` says what the asker WANTS.
+**On removal:** make `since` required on the ask and treat its absence as malformed.
+**Cost of keeping it:** an old client is served more than it asked for, which it will store or
+ignore. Bandwidth, never correctness.
 
 ---
 

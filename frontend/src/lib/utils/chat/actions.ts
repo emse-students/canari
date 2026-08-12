@@ -7,9 +7,12 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   sendFullHistoryBundle,
   sendHistoryBundleForIds,
+  sendHistoryDigestRequest,
   sendHistoryPull,
+  sendHistoryRangeBundle,
   readHistoryEntries,
   historyRangeStartFor,
+  historyStateKeyFor,
   persistMlsStateAfterMutation,
   forgetMlsGroupIfPresent,
   purgeLocalConversationRecord,
@@ -17,17 +20,12 @@ import {
   isGroupActiveOnServer,
   handleDuplicateLeafError,
 } from '$lib/utils/chat/groupActions';
-import {
-  awaitDigest,
-  digestIdentity,
-  DIGEST_TTL_MS,
-} from '$lib/utils/chat/historyDigestRendezvous';
+import { awaitProbe, digestIdentity, DIGEST_TTL_MS } from '$lib/utils/chat/historyDigestRendezvous';
 import {
   diffHistoryDigest,
   isEmptyHistoryDiff,
   selectEntryIdsForPrefixes,
 } from '$lib/utils/chat/historyManifest';
-import { isAwaitingHistory, markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
 import { resolveDirectPeerId, retireConversation } from '$lib/utils/chat/conversations';
 import {
   classifyServerStatus,
@@ -214,7 +212,6 @@ export async function processPendingInvitations(params: {
             deviceKeyB64,
             mlsService,
             log,
-            selfUserId: userId,
             to: digestIdentity(inv.userId, inv.deviceId),
           }).catch((e) =>
             log(`[HISTORY_BUNDLE] History send error to ${inv.userId}: ${String(e)}`)
@@ -387,7 +384,6 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
-            userId,
             deleteConversation,
             log,
           });
@@ -430,7 +426,6 @@ export async function discoverMissingGroups(params: {
             conversations,
             contactKey: key,
             groupId: convo.id,
-            userId,
             deleteConversation,
             log,
           });
@@ -441,7 +436,6 @@ export async function discoverMissingGroups(params: {
             conversations,
             key,
             groupId: convo.id,
-            userId,
             saveConversation,
           });
           log(`[DISCOVERY] UI group "${label}" ${fate.reason} - marked removed`);
@@ -930,7 +924,6 @@ export async function handleWelcomeRequest(params: {
       deviceKeyB64,
       mlsService,
       log,
-      selfUserId: userId,
       to: digestIdentity(requesterUserId, requesterDeviceId),
     }).catch((e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`));
   } catch (e) {
@@ -965,41 +958,45 @@ export async function handleWelcomeRequest(params: {
 }
 
 /**
- * How long the elected responder waits for a digest it was TOLD is coming.
+ * How long the elected responder waits for the MLS half of a solicitation.
  *
- * This is not the old 3 s grace, and the difference is the point. That value had to be a
- * compromise: the two halves of a solicitation travel by different transports - the election over
- * the WebSocket, the digest inside MLS - so the responder could not tell "the digest is a moment
- * behind" from "this peer will never send one", and every value was wrong for one of them. Too
- * short answered a current peer with a full store dump it did not need; too long left an older peer
- * waiting for its history.
+ * The two halves travel by different transports - the election over the WebSocket, the probe inside
+ * MLS - and nothing orders them, so the responder has to wait for an EVENT rather than guess a
+ * delay. The bound on that wait is the one duration a probe already has: beyond `DIGEST_TTL_MS` it
+ * describes a store that has moved and would be refused anyway.
  *
- * The election frame now carries `withDigest`, so the two cases are DISTINGUISHED rather than
- * traded off: no promise means answer immediately, a promise means wait for the digest EVENT. What
- * is left is a bound on that wait, and it is the one duration the digest already has - beyond
- * `DIGEST_TTL_MS` a digest describes a store that has moved and would be refused anyway. Its being
- * reached is not a tuning question: it means the MLS frame never arrived, and the answer is the
- * same full store the old fallback sent.
+ * Reaching it is not a tuning question. It means the MLS frame never arrived, and the answer to that
+ * is silence: the requester asks again on its next edge, which costs one small frame, where
+ * answering a device that named nothing means dumping a whole store on a peer that may need none of
+ * it. That fallback is what this rework removed.
  */
-const HISTORY_DIGEST_WAIT_MS = DIGEST_TTL_MS;
+const HISTORY_PROBE_WAIT_MS = DIGEST_TTL_MS;
 
 /**
- * Handles an incoming history_request: a device asks for history it cannot decrypt on its own. We
- * are already co-members (it is in the MLS tree), so we only resend messages re-encrypted at the
- * current epoch - no re-add, no commit. Guarded to active members holding the group locally; the
- * delivery service already picks a single online responder, so no throttle is needed here.
+ * Handles an incoming history_request: a device asks whether it holds the same history as us, and
+ * for whatever it turns out to be missing. We are already co-members (it is in the MLS tree), so we
+ * only resend messages re-encrypted at the current epoch - no re-add, no commit. Guarded to active
+ * members holding the group locally; the delivery service already picks a single online responder,
+ * so no throttle is needed here.
  *
- * **What is sent is a DIFFERENCE, not a store** (WP-HIST-3). The requester broadcasts what it holds;
- * we diff it against what we hold and send only the messages it is short of - which is usually
- * nothing at all, and used to be everything. Because the diff is symmetric, the same exchange also
- * tells US what the requester has and we do not, so a solicitation repairs both devices at once
- * instead of pushing history one way.
+ * **THE ANSWER DEPENDS ON WHICH PROBE ARRIVES**, and there are three:
  *
- * A requester that sends NO digest gets the old behaviour, and now SAYS SO on the election frame
- * (`requesterHasDigest`) instead of being inferred from a silence. That is the rollout story rather
- * than a safety net: the web deploys in one step and the phones do not, so both halves of this
- * protocol have to work against a peer that only speaks the other one. It is also the one piece of
- * this exchange due for deletion once every client is current - see `legacy-compatibility.md`.
+ * - `state` - a 64-bit key over the asker's window. We compute ours over the SAME window and, when
+ *   they match, say NOTHING AT ALL. That is the common case on every connection of every device,
+ *   and it costs one frame and no store read on either side. When they differ we ask for a digest
+ *   and the exchange continues below;
+ * - `digest` - the hierarchical manifest, either as the second leg of the above or from a device
+ *   that went straight to it. We diff it against our store and send what it lacks;
+ * - `range` - scrollback, a bounded page below what the asker holds.
+ *
+ * **We answer from a settled store.** `waitForMessageQueueIdle` is awaited first because an
+ * external-commit self-join lands the requester one epoch ahead of a peer that has not yet applied
+ * its commit, and a bundle re-encrypted at the old epoch is undecryptable to it and wasted. The
+ * requester used to compensate with a 2.5 s pause before asking - a delay standing in for an
+ * ordering neither side could observe. The ordering IS observable, on this side, and this is it.
+ *
+ * Because the diff is symmetric, the same exchange also tells US what the requester has and we do
+ * not, so one solicitation repairs both devices instead of pushing history one way.
  */
 export async function handleHistoryRequest(params: {
   mlsService: IMlsService;
@@ -1013,13 +1010,8 @@ export async function handleHistoryRequest(params: {
   /** OUR user id - the responder's, not the requester's. */
   selfUserId: string;
   groupId: string;
-  /**
-   * The requester promised a digest on the election frame. FALSE (or absent, from a client too old
-   * to say) means none is coming, so nothing is waited for at all.
-   */
-  requesterHasDigest?: boolean;
   /** Overridable for tests only. */
-  digestWaitMs?: number;
+  probeWaitMs?: number;
 }): Promise<void> {
   const {
     mlsService,
@@ -1031,8 +1023,7 @@ export async function handleHistoryRequest(params: {
     requesterDeviceId,
     selfUserId,
     groupId,
-    requesterHasDigest = false,
-    digestWaitMs = HISTORY_DIGEST_WAIT_MS,
+    probeWaitMs = HISTORY_PROBE_WAIT_MS,
   } = params;
   const short = groupId.slice(0, 8);
   if (!mlsService.getLocalGroups().includes(groupId)) {
@@ -1046,31 +1037,58 @@ export async function handleHistoryRequest(params: {
 
   const deps = { storage, deviceKeyB64, mlsService, log };
   const requesterIdentity = digestIdentity(requesterUserId, requesterDeviceId);
-  // Nothing is waited for unless a digest was PROMISED. A peer too old to promise one is answered
-  // at once - it was the grace period's only real cost, paid on every one of its solicitations.
-  const solicited = requesterHasDigest
-    ? await awaitDigest(groupId, requesterIdentity, digestWaitMs)
-    : null;
+  const selfIdentity = digestIdentity(selfUserId, mlsService.getDeviceId());
 
-  if (!solicited) {
-    log(
-      `[HISTORY_REQ] no digest from ${requesterIdentity} for ${short}... (${requesterHasDigest ? 'promised but never arrived' : 'client too old to send one'}) - sending the whole store`
-    );
-    // Unclipped on purpose: the window a bundle honours is the one the ASKER stated, and no digest
-    // means nothing was stated. A window invented on this side would silently withhold messages the
-    // requester never declined.
-    await sendFullHistoryBundle(groupId, { ...deps, selfUserId, to: requesterIdentity }).catch(
-      (e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
-    );
+  // Answer from a settled store, not from one still being written - see the note above.
+  await mlsService.waitForMessageQueueIdle().catch(() => {});
+
+  let probe = await awaitProbe(groupId, requesterIdentity, probeWaitMs);
+  if (!probe) {
+    log(`[HISTORY_REQ] no probe from ${requesterIdentity} for ${short}... - nothing to answer`);
     return;
   }
 
-  const { digest, since } = solicited;
+  if (probe.kind === 'range') {
+    await sendHistoryRangeBundle(groupId, deps, {
+      to: requesterIdentity,
+      before: probe.before,
+      limit: probe.limit,
+      since: probe.since,
+    }).catch((e) => log(`[HISTORY_RANGE] Answer failed for ${short}...: ${String(e)}`));
+    return;
+  }
+
+  if (probe.kind === 'state') {
+    // OUR key over THE ASKER'S window. Computing it over our own would compare two different
+    // questions and never match, which is why `since` is stated by the asker and obeyed here.
+    const ourKey = await historyStateKeyFor(groupId, probe.since, deps);
+    if (ourKey === null) {
+      // A read that FAILED proves nothing about the group. Staying silent lets the requester ask
+      // another member on its next edge.
+      log(`[HISTORY_REQ] ${short}... store unreadable - staying silent so another member answers`);
+      return;
+    }
+    if (ourKey === probe.key) {
+      log(
+        `[HISTORY_REQ] ${short}... same state as ${requesterIdentity} (${ourKey}) - nothing to do`
+      );
+      return;
+    }
+
+    await sendHistoryDigestRequest(groupId, { from: selfIdentity, to: requesterIdentity }, deps);
+    const answer = await awaitProbe(groupId, requesterIdentity, probeWaitMs);
+    if (answer?.kind !== 'digest') {
+      log(
+        `[HISTORY_REQ] ${short}... asked ${requesterIdentity} to describe itself, no digest came`
+      );
+      return;
+    }
+    probe = answer;
+  }
+
+  const { digest, since } = probe;
   const entries = await readHistoryEntries(groupId, deps);
   if (entries === null) {
-    // A read that FAILED proves nothing about the group. Staying silent lets the requester retry
-    // against another member, where answering "you are missing nothing" would end its solicitation
-    // on the strength of a store we could not open.
     log(`[HISTORY_REQ] ${short}... store unreadable - staying silent so another member answers`);
     return;
   }
@@ -1081,35 +1099,25 @@ export async function handleHistoryRequest(params: {
       ? diff.missingOnPeer
       : selectEntryIdsForPrefixes(entries, diff.pushPrefixes, digest.depth);
 
-  // We compared our WHOLE store against the digest either way, so the answer is never silence. What
-  // differs is whether we may VOUCH: a device that is itself awaiting cannot say "you are complete",
-  // but it can say "our stores are identical", which is the fact it actually measured. Saying
-  // nothing at all was the deadlock: two peers both awaiting, both holding nothing the other lacked,
-  // each waiting for an answer only the other was entitled to give (WP-HISTBANNER-1).
-  //
   // The diff is computed over our WHOLE store and clipped only on the way out, which is what keeps
   // the two sides symmetric: a stored timestamp can differ by a hair between devices (see
   // `historyManifest`), so clipping the COMPARISON would let a message near the boundary read as
   // missing on one side and present on the other, for ever. Clipping the ANSWER cannot: the worst it
   // does is decline to send something the asker did not ask for.
-  const emptyMeans = isAwaitingHistory(selfUserId, groupId) ? 'identical' : 'complete';
   await sendHistoryBundleForIds(groupId, idsToSend, deps, {
-    emptyMeans,
     to: requesterIdentity,
     since,
   }).catch((e) => log(`[HISTORY_BUNDLE] Diff send error to ${requesterUserId}: ${String(e)}`));
 
   const idsToPull = digest.mode === 'ids' ? diff.missingLocally : [];
   if (idsToPull.length > 0 || diff.pullPrefixes.length > 0) {
-    // The requester listed messages we do not have. That is the strongest evidence of a gap this
-    // client can obtain - not a presumption from an empty store, but ids another device named - so
-    // it is recorded durably before the pull is even sent: if the answer never comes, the reconnect
-    // seam re-solicits, and the marker clears itself the moment a later diff comes back empty.
-    markAwaitingHistory(selfUserId, groupId, 'peer-holds-more');
+    // The requester listed messages we do not have, so we ask for them on the same exchange. Nothing
+    // is recorded if the answer never comes: our own next connection compares again, which is
+    // strictly better evidence than a note we wrote about a moment that has passed.
     await sendHistoryPull(
       groupId,
       {
-        from: digestIdentity(selfUserId, mlsService.getDeviceId()),
+        from: selfIdentity,
         to: requesterIdentity,
         ids: idsToPull,
         prefixes: diff.pullPrefixes,

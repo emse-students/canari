@@ -10,12 +10,16 @@ import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
-import { isSolicitInFlight, noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
-import { digestIdentity, noteDigestReceived } from '$lib/utils/chat/historyDigestRendezvous';
+import { digestIdentity, noteProbeReceived } from '$lib/utils/chat/historyDigestRendezvous';
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { mergeHistoryFloor, parseHistorySince } from '$lib/utils/chat/historyWindow';
-import { readHistoryEntries, sendHistoryBundleForIds } from '$lib/utils/chat/groupActions';
+import { parseHistoryStateKey } from '$lib/utils/chat/historyStateKey';
+import {
+  readHistoryEntries,
+  sendHistoryBundleForIds,
+  sendHistoryDigest,
+} from '$lib/utils/chat/groupActions';
 import {
   countUnreadForUser,
   mergeReadWatermark,
@@ -78,6 +82,41 @@ function mutationIsAuthorised(
 }
 
 /**
+ * The most this device will answer to one scrollback ask, whatever the asker requests.
+ *
+ * The bound belongs on the ANSWERING side as well as the asking one: `limit` arrives from a peer,
+ * and a peer that names a million turns a reader's scroll into an unbounded store dump. Sized to a
+ * few screens, which is what a scroll gesture is worth - reaching further is more scrolling.
+ */
+const HISTORY_RANGE_MAX = 200;
+
+/**
+ * Validates the `from` of a probe and returns it, or `null` after logging why it was refused.
+ *
+ * MLS authenticates the sending USER; the device half is self-asserted. Cross-checking the user
+ * means the only thing a member can misreport is which of its OWN devices it is - which costs a
+ * mis-addressed bundle its owner can already read, never another member's history.
+ *
+ * One function because all four legs of the exchange establish identity the same way, and a check
+ * copied four times is a check that will exist in three places after the next edit.
+ */
+function probeSender(
+  data: any,
+  senderNorm: string,
+  log: (msg: string) => void,
+  tag: string
+): string | null {
+  const from = String(data?.from ?? '');
+  const claimedUser = from.split(':')[0]?.toLowerCase();
+  const deviceId = from.slice(from.indexOf(':') + 1);
+  if (!claimedUser || !deviceId || claimedUser !== senderNorm) {
+    log(`[${tag}] Rejected: "${from}" does not match the MLS sender ${senderNorm}`);
+    return null;
+  }
+  return from;
+}
+
+/**
  * Dispatches a decoded MLS system event to the appropriate handler.
  *
  * Called from setupMessageHandler after JSON-parsing `msg.system.data`.
@@ -123,37 +162,89 @@ export async function handleSystemEvent(
     return true;
   }
 
-  // A peer is telling us what it holds for this conversation, so that whichever member the server
-  // elects can answer a solicitation with the DIFFERENCE rather than its whole store (WP-HIST-3).
-  // Only recorded here: the election arrives by a different transport, and the two are joined by the
+  // A peer is telling us, in sixteen characters, everything it holds for this conversation, so the
+  // elected member can answer "we agree" without either side opening its store. The first leg of
+  // every reconciliation and usually the only one.
+  //
+  // Only RECORDED here: the election arrives by a different transport, and the two are joined by the
   // rendezvous so they can land in either order.
-  if (event === 'history_digest') {
-    const from = String(data?.from ?? '');
-    const claimedUser = from.split(':')[0]?.toLowerCase();
-    const deviceId = from.slice(from.indexOf(':') + 1);
-    // MLS authenticates the sending USER; the device half is self-asserted. Cross-checking the user
-    // means the only thing a member can misreport is which of its OWN devices it is - which costs a
-    // mis-addressed bundle its owner can already read, never another member's history.
-    if (!claimedUser || !deviceId || claimedUser !== senderNorm) {
-      log(`[HISTORY_DIGEST] Rejected: "${from}" does not match the MLS sender ${senderNorm}`);
+  if (event === 'history_state') {
+    const from = probeSender(data, senderNorm, log, 'HISTORY_STATE');
+    if (!from) return true;
+    const key = parseHistoryStateKey(data?.key);
+    if (!key) {
+      log(`[HISTORY_STATE] Malformed key from ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
+    const since = parseHistorySince(data?.since);
+    noteProbeReceived(convoKey, from, { kind: 'state', key, since });
+    log(
+      `[HISTORY_STATE] From ${senderNorm} for ${convoKey.slice(0, 8)}… - ${key}, from ${since > 0 ? new Date(since).toISOString() : 'the beginning'}`
+    );
+    return true;
+  }
+
+  // The elected member compared our state key against its own, found them different, and is asking
+  // us to describe ourselves properly. The SECOND leg of one solicitation, which is why the digest
+  // it triggers lands on the same rendezvous rather than starting a new exchange.
+  if (event === 'history_digest_request') {
+    const me = digestIdentity(userId, mlsService.getDeviceId());
+    if (String(data?.to ?? '').toLowerCase() !== me.toLowerCase()) return true;
+    if (!probeSender(data, senderNorm, log, 'HISTORY_STATE')) return true;
+
+    log(
+      `[HISTORY_STATE] ${senderNorm} holds something different for ${convoKey.slice(0, 8)}… - describing our store`
+    );
+    await sendHistoryDigest(convoKey, me, { storage, deviceKeyB64, mlsService, log }).catch((e) =>
+      log(`[HISTORY_DIGEST] Could not answer ${senderNorm}: ${String(e).slice(0, 120)}`)
+    );
+    return true;
+  }
+
+  // A peer is telling us what it holds for this conversation, so that whichever member the server
+  // elects can answer a solicitation with the DIFFERENCE rather than its whole store (WP-HIST-3).
+  if (event === 'history_digest') {
+    const from = probeSender(data, senderNorm, log, 'HISTORY_DIGEST');
+    if (!from) return true;
     const digest = parseHistoryDigest(data?.digest);
     if (!digest) {
       log(`[HISTORY_DIGEST] Malformed digest from ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
     // The window the asker drew, carried to whichever leg of the exchange ends up answering. A frame
-    // that states none parses as 0, which answers in full - the right reading of a client too old to
-    // have a window to state.
+    // that states none parses as 0, which answers in full.
     const since = parseHistorySince(data?.since);
-    noteDigestReceived(convoKey, from, digest, since);
+    noteProbeReceived(convoKey, from, { kind: 'digest', digest, since });
     const size =
       digest.mode === 'ids'
         ? `${digest.ids.length} id(s)`
         : `${digest.ranges.length} slice(s) at depth ${digest.depth}`;
     log(
       `[HISTORY_DIGEST] From ${senderNorm} for ${convoKey.slice(0, 8)}… - ${digest.mode}, ${size}, asking from ${since > 0 ? new Date(since).toISOString() : 'the beginning'}`
+    );
+    return true;
+  }
+
+  // Scrollback: a reader reached the top of what their device holds and is asking for the page
+  // before it. Same rendezvous, same election, different boundary - and bounded by `limit`, so the
+  // answer is one page whatever the conversation's size.
+  if (event === 'history_range') {
+    const from = probeSender(data, senderNorm, log, 'HISTORY_RANGE');
+    if (!from) return true;
+    const before = Number(data?.before);
+    const limit = Number(data?.limit);
+    if (!Number.isFinite(before) || before <= 0 || !Number.isFinite(limit) || limit <= 0) {
+      log(`[HISTORY_RANGE] Unusable range from ${senderNorm} for ${convoKey.slice(0, 8)}…`);
+      return true;
+    }
+    noteProbeReceived(convoKey, from, {
+      kind: 'range',
+      before: Math.floor(before),
+      limit: Math.min(Math.floor(limit), HISTORY_RANGE_MAX),
+      since: parseHistorySince(data?.since),
+    });
+    log(
+      `[HISTORY_RANGE] ${senderNorm} wants up to ${limit} message(s) before ${new Date(before).toISOString()} in ${convoKey.slice(0, 8)}…`
     );
     return true;
   }
@@ -169,16 +260,10 @@ export async function handleSystemEvent(
     if (String(data?.to ?? '').toLowerCase() !== me.toLowerCase()) return true;
 
     // Our answer is a group broadcast addressed back to the puller, so its identity is established
-    // here, exactly as `history_digest` does it: MLS authenticates the sending USER, the device half
-    // is self-asserted, and the worst a member can do by lying about it is address a bundle at one of
-    // its OWN devices. An unusable `from` is dropped rather than answered to nobody - a bundle with
-    // no addressee discharges no marker and is pure traffic.
-    const puller = String(data?.from ?? '');
-    const pullerUser = puller.split(':')[0]?.toLowerCase();
-    if (!pullerUser || !puller.includes(':') || pullerUser !== senderNorm) {
-      log(`[HISTORY_PULL] Rejected: "${puller}" does not match the MLS sender ${senderNorm}`);
-      return true;
-    }
+    // here exactly as every other leg does it. An unusable `from` is dropped rather than answered to
+    // nobody - a bundle with no addressee is pure traffic.
+    const puller = probeSender(data, senderNorm, log, 'HISTORY_PULL');
+    if (!puller) return true;
 
     const deps = { storage, deviceKeyB64, mlsService, log };
     const ids = Array.isArray(data?.ids)
@@ -219,13 +304,9 @@ export async function handleSystemEvent(
     log(
       `[HISTORY_PULL] ${senderNorm} wants ${wanted.length} message(s) from ${convoKey.slice(0, 8)}…`
     );
-    // `silence`: we were asked about a SUBSET, so holding none of it says nothing about whether the
-    // asker is complete - and an empty bundle would end its solicitation for good.
-    //
     // The puller's own window, which is NOT the one we would have used: it may retain five years
     // where we keep ninety days, or the reverse. Only the asker may set the bound on its answer.
     await sendHistoryBundleForIds(convoKey, wanted, deps, {
-      emptyMeans: 'silence',
       to: puller,
       since: parseHistorySince(data?.since),
     }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
@@ -393,7 +474,6 @@ export async function handleSystemEvent(
         conversations,
         key: convoKey,
         groupId: convo.id,
-        userId,
         saveConversation,
       });
       log(`[INFO] Excluded from group "${convoKey}" by ${getName(senderNorm)} - marked removed`);
@@ -453,7 +533,6 @@ export async function handleSystemEvent(
         conversations,
         key: convoKey,
         groupId: convo.id,
-        userId,
         deleteStored: deleteConversation,
       });
       log(`[INFO] Group deleted on another device - conversation removed immediately`);
@@ -470,7 +549,6 @@ export async function handleSystemEvent(
         conversations,
         key: convoKey,
         groupId: convo.id,
-        userId,
         saveConversation,
       });
       log(`[INFO] Group deleted by ${senderName} - conversation marked removed`);
@@ -582,37 +660,19 @@ export async function handleSystemEvent(
   }
 
   if (event === 'history_bundle') {
-    // INGESTION IS FOR EVERYONE, THE ANSWER IS FOR THE ADDRESSEE. A bundle is a group broadcast, so
-    // every member sees an exchange between two of them. The messages are free to take - the merge
-    // below dedupes by id - but the ANSWER is not: `noteHistoryBundleReceived` discharges the
-    // awaiting-history marker, and a device that never asked has had nothing compared against its
-    // store. Reading somebody else's answer as our own dropped a proven marker on another device's
-    // evidence and stopped the solicitation for good: history missing here, and never asked for
-    // again.
+    // INGESTION IS FOR EVERYONE. A bundle is a group broadcast, so every member sees an exchange
+    // between two of them, and the messages are free to take - the merge below dedupes by id.
     //
-    // A bundle with no `to` predates the field. It is answered the legacy way - only while OUR OWN
-    // solicitation is outstanding - so the ambiguity resolves in the direction that costs a retry
-    // rather than the one that costs messages. Due for deletion: `docs/wiki/legacy-compatibility.md`.
+    // Nothing else about the addressee matters any more, and that is a simplification the state key
+    // paid for. A bundle used to DISCHARGE the receiver's durable awaiting-history marker, so
+    // reading somebody else's answer as our own stopped a solicitation on another device's evidence
+    // and lost history for good. There is no marker to discharge: what a device holds is compared
+    // again on its next connection, so an answer meant for a peer is simply free messages.
     const addressee = String(data?.to ?? '');
-    const forUs = addressee
-      ? addressee.toLowerCase() === digestIdentity(userId, mlsService.getDeviceId()).toLowerCase()
-      : isSolicitInFlight(convoKey);
-    if (forUs) {
-      // Whether an answer ENDS the wait depends on what it carries - an empty bundle is the peer
-      // saying "you are missing nothing", a full one is just messages - and
-      // `noteHistoryBundleReceived` owns that distinction.
-      //
-      // An ABSENT `vouched` means vouched: every client shipped before the field existed sent a bare
-      // `{ messages: [] }` when it was entitled to vouch, and only when it was.
-      noteHistoryBundleReceived(
-        userId,
-        convoKey,
-        Array.isArray(data.messages) ? data.messages.length : 0,
-        { vouched: data.vouched !== false }
-      );
-    } else {
+    const me = digestIdentity(userId, mlsService.getDeviceId()).toLowerCase();
+    if (addressee && addressee.toLowerCase() !== me) {
       log(
-        `[HISTORY_BUNDLE] ${convoKey.slice(0, 8)}… - answer for ${addressee ? addressee.slice(0, 8) + '…' : 'nobody in particular'}, ingesting without discharging our own wait`
+        `[HISTORY_BUNDLE] ${convoKey.slice(0, 8)}… - answer for ${addressee.slice(0, 8)}…, ingesting it anyway`
       );
     }
     try {

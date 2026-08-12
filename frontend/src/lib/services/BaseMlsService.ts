@@ -28,7 +28,11 @@ import {
   recordPendingMessagesFetched,
 } from '$lib/mls-client/catchupBenchmark';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import { reportUnackedFrames } from '$lib/mls-client/messagePipeline/unackedFrames';
+import {
+  reportUnackedFrames,
+  takeGroupsAwaiting,
+  type UnackedReason,
+} from '$lib/mls-client/messagePipeline/unackedFrames';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 
@@ -39,7 +43,7 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
  * - All `/api/mls/*` delivery REST wrappers (delegated to {@link MlsDeliveryApi})
  * - WebSocket callback registrations (onMessage, onDisconnect, etc.)
  * - Queue plumbing (enqueueMessage, waitForMessageQueueIdle, processQueue, fetchPendingMessages)
- * - Pending-retry scheduling (pendingRetryTimer / scheduleRetry)
+ * - Event-driven re-fetch of frames the handler left unacknowledged (refetchFramesLeftBehind)
  * - Lifecycle boilerplate (init promise dedup, destroy base listeners)
  *
  * Platform-specific code lives exclusively in the subclasses:
@@ -72,12 +76,7 @@ export abstract class BaseMlsService implements IMlsService {
     | null = null;
 
   protected historyRequestCallback:
-    | ((
-        requesterUserId: string,
-        requesterDeviceId: string,
-        groupId: string,
-        withDigest: boolean
-      ) => void)
+    | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
 
   protected welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
@@ -102,14 +101,6 @@ export abstract class BaseMlsService implements IMlsService {
   protected heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   protected _visibilityHandler: (() => void) | null = null;
   protected _onlineHandler: (() => void) | null = null;
-
-  // ── In-session retry timer ────────────────────────────────────────────────
-  /**
-   * Reschedules `fetchPendingMessages` after PENDING_RETRY_DELAY_MS when a queued
-   * message returned `false` from the callback (rather than waiting for a reconnect).
-   */
-  private pendingRetryTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly PENDING_RETRY_DELAY_MS = 15_000;
 
   // ── Message queue ─────────────────────────────────────────────────────────
   /** Per-conversation queues with round-robin scheduling and a global MLS mutex. */
@@ -247,10 +238,9 @@ export abstract class BaseMlsService implements IMlsService {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
-    if (this.pendingRetryTimer !== null) {
-      clearTimeout(this.pendingRetryTimer);
-      this.pendingRetryTimer = null;
-    }
+    // The work list of unacknowledged frames belongs to the session, not to this client: it is
+    // dropped by `resetUnackedFrames` at logout, and a destroy that kept the socket's successor
+    // running must not lose what still needs re-fetching.
     if (this._visibilityHandler) {
       document.removeEventListener('visibilitychange', this._visibilityHandler);
       this._visibilityHandler = null;
@@ -300,12 +290,7 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   onHistoryRequest(
-    callback: (
-      requesterUserId: string,
-      requesterDeviceId: string,
-      groupId: string,
-      withDigest: boolean
-    ) => void
+    callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
   ): void {
     this.historyRequestCallback = callback;
   }
@@ -363,6 +348,11 @@ export abstract class BaseMlsService implements IMlsService {
     return this.messageScheduler.waitUntilIdle();
   }
 
+  /** @inheritdoc */
+  notifyConversationsRestored(): void {
+    this.refetchFramesLeftBehind('absent-conversation', 'conversations restored');
+  }
+
   /** Runs `fn` under the global MLS client mutex (shared with the drain and catch-up sessions). */
   runUnderMlsLock<T>(fn: () => Promise<T>): Promise<T> {
     return this.messageScheduler.runUnderMlsLock(fn);
@@ -377,19 +367,33 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * Schedules an in-session retry of `fetchPendingMessages` after PENDING_RETRY_DELAY_MS.
-   * Only fires if the WebSocket is still open at the time of execution.
-   * Cancels any previously scheduled retry before registering a new one.
+   * Re-fetches the delivery queue because the thing that was blocking `reason` has just happened.
+   *
+   * THIS REPLACED A 15-SECOND TIMER, and the difference is the whole point. The handler leaves a
+   * frame unacknowledged for exactly two reasons, and neither of them is discharged by waiting: an
+   * unknown group needs its Welcome, an absent conversation needs the local store restore. A clock
+   * asking again every fifteen seconds re-fetched the same rows, failed them the same way, and
+   * re-opened the catch-up overlay on every cycle - for the whole session, on a device whose group
+   * never came back. So the ask is now driven by the EVENT that changes the answer, and there is no
+   * cycle to bound: no event, no ask.
+   *
+   * Silent and free when nothing is waiting, so callers may fire it on any occurrence of the event.
    */
-  protected scheduleRetry(): void {
-    if (this.pendingRetryTimer !== null) clearTimeout(this.pendingRetryTimer);
-    this.pendingRetryTimer = setTimeout(() => {
-      this.pendingRetryTimer = null;
-      if (this.isWsOpen()) {
-        console.log('[QUEUE] In-session retry: fetchPendingMessages (unacknowledged message)');
-        void this.fetchPendingMessages();
-      }
-    }, BaseMlsService.PENDING_RETRY_DELAY_MS);
+  protected refetchFramesLeftBehind(reason: UnackedReason, trigger: string): void {
+    const groups = takeGroupsAwaiting(reason);
+    if (groups.length === 0) return;
+    if (!this.isWsOpen()) {
+      // Nothing to re-fetch over: the reconnect runs a pull of its own, and the handler will note
+      // whatever still fails. Dropping the note here is safe for the same reason `take` is.
+      console.log(`[QUEUE] ${trigger}: socket closed, the reconnect pull covers it`);
+      return;
+    }
+    console.log(
+      `[QUEUE] ${trigger}: re-fetching for ${groups.length} group(s) left behind as ${reason} [${groups
+        .map((g) => g.slice(0, 8))
+        .join(', ')}]`
+    );
+    void this.fetchPendingMessages();
   }
 
   /** Drains per-group queues with round-robin scheduling and a global MLS mutex. */
@@ -400,7 +404,8 @@ export abstract class BaseMlsService implements IMlsService {
     }
 
     const ackIds: string[] = [];
-    let hadFailedQueuedMessage = false;
+    /** Groups whose Welcome landed in this drain: the one event that unblocks an unknown group. */
+    const welcomedGroups: string[] = [];
 
     await this.messageScheduler.drain(
       async (msg) => {
@@ -459,7 +464,8 @@ export abstract class BaseMlsService implements IMlsService {
           if (shouldAckAfterSuccess(cbResult, flags) && msg.queuedMessageId) {
             ackIds.push(msg.queuedMessageId);
           } else if (flags.hasQueuedId && cbResult === false) {
-            hadFailedQueuedMessage = true;
+            // The handler already recorded WHY, against the group, in `unackedFrames`. Nothing to
+            // note here: what discharges it is an event, not this drain ending.
             logMlsMetric({
               kind: 'queue_skip_ack',
               platform: this.platform,
@@ -472,6 +478,7 @@ export abstract class BaseMlsService implements IMlsService {
           if (msg.isWelcome && groupId) {
             this.messageScheduler.reinjectAfterWelcome(groupId);
             this.welcomeProcessedCallback?.(groupId);
+            welcomedGroups.push(groupId);
           }
 
           // Platform hook: called after each successful message (e.g. Tauri epoch cache refresh).
@@ -527,10 +534,11 @@ export abstract class BaseMlsService implements IMlsService {
               .catch((e) => console.warn('[ACK] drain ack failed:', e));
           }
 
-          // In-session retry: if a message was not ACKed, reschedule fetchPendingMessages
-          // rather than waiting for the next reconnect.
-          if (hadFailedQueuedMessage) {
-            this.scheduleRetry();
+          // A Welcome landing is the proof that frames buffered for an unknown group can now be
+          // read. `reinjectAfterWelcome` replays the ones this session buffered in memory; this
+          // asks the server for the ones it left unacknowledged in earlier drains.
+          if (welcomedGroups.length > 0) {
+            this.refetchFramesLeftBehind('unknown-group', 'welcome processed');
           }
 
           finishQueueDrainBench(ackIds.length);
@@ -689,25 +697,19 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * Asks one online member to resend the history bundle after this device self-joined `groupId`
-   * via an external commit. History-only (we are already a member): no re-add. Best-effort.
+   * Asks the server to elect ONE online member to reconcile `groupId` with us. What we want is
+   * stated separately, inside MLS, so this frame carries nothing about the conversation's contents.
    *
    * The server elects the responder, so it alone knows whether there was one, and it says so:
    * `noPeerOnline` reports that answer. It is true ONLY on an explicit `no_peer_online` - a request
    * that failed to reach the server, or answered something unparseable, proves nothing about who is
-   * reachable, and concluding "nobody" from it would abandon a solicitation on a dropped packet.
+   * reachable, and concluding "nobody" from it would abandon a reconciliation on a dropped packet.
    */
-  async sendHistoryRequest(
-    groupId: string,
-    opts: { withDigest?: boolean } = {}
-  ): Promise<HistoryRequestOutcome> {
+  async sendHistoryRequest(groupId: string): Promise<HistoryRequestOutcome> {
     const answer = await this.delivery.deliveryPost('history-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
-      // A PROMISE, not a preference: the responder skips its wait entirely unless this is true, so
-      // it must be sent exactly when a digest really will follow.
-      withDigest: opts.withDigest === true,
     });
     return { noPeerOnline: answer?.status === 'no_peer_online' };
   }

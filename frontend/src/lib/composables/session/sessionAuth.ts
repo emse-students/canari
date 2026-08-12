@@ -25,16 +25,14 @@ import { m } from '$lib/paraglide/messages';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import {
-  solicitHistoryIfMissing,
-  cancelAllHistorySolicit,
-  reSolicitAwaitingHistory,
-  setHistoryDigestBroadcaster,
-  startAwaitingHistorySweep,
-} from '$lib/utils/chat/historySolicit';
+  reconcileGroup,
+  reconcileGroupsAwaitingResponder,
+  resetHistoryReconciliation,
+  setHistoryProbeSender,
+} from '$lib/utils/chat/historyReconcile';
 import { onPeersCameOnline } from '$lib/stores/presenceStore';
-import { sendHistoryDigest } from '$lib/utils/chat/groupActions';
+import { sendHistoryStateKey } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
-import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
@@ -101,9 +99,6 @@ import { startSyncWatchdogImpl } from './sessionWatchdogs';
  * any one session, so the subscription has to be revocable from logout, which is elsewhere.
  */
 let unregisterPeerReturn: (() => void) | null = null;
-
-/** Stops this session's periodic awaiting-history sweep. Module-level for the same reason. */
-let stopAwaitingSweep: (() => void) | null = null;
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
@@ -850,16 +845,9 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
               .catch((e) => cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`));
             // Fresh join: the Welcome lands us at the current epoch with no pre-join history. The
             // inviter pushes a bundle on the foreground add path, but its background twin
-            // (send-welcome-and-commit) does not, so we also solicit it ourselves (idempotent,
-            // receipt-driven retries) - but only when the local store cannot already show it.
-            await solicitHistoryIfMissing({
-              mlsService,
-              storage: ctx.getStorage(),
-              userId: ctx.getUserId(),
-              deviceKeyB64: ctx.getDeviceKey(),
-              groupId,
-              log: cb.log,
-            });
+            // (send-welcome-and-commit) does not, so we compare here as well - which costs one
+            // frame when the bundle already arrived, and repairs the group when it did not.
+            await reconcileGroup(mlsService, groupId, cb.log);
           }
           cb.onLoadHistoryForConversation(groupId, groupId).catch((e) =>
             cb.log(`[WARN] Error refreshing conv ${groupId}: ${e}`)
@@ -904,12 +892,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       }
     );
 
-    // WP-HIST-3: the only place holding the store, the device key and the MLS client at once, so it
-    // is where the digest broadcaster is installed. Every solicitation now says what this device
-    // HOLDS before asking, which is what lets the answer be a difference instead of a whole store.
-    setHistoryDigestBroadcaster(async (groupId: string) => {
+    // The only place holding the store, the device key and the MLS client at once, so it is where
+    // the reconciliation's probe sender is installed. Every solicitation says what this device HOLDS
+    // before asking anything, which is what lets the usual answer be silence.
+    setHistoryProbeSender(async (groupId: string) => {
       const mls = ctx.ensureMls();
-      return sendHistoryDigest(groupId, digestIdentity(ctx.getUserId(), mls.getDeviceId()), {
+      return sendHistoryStateKey(groupId, digestIdentity(ctx.getUserId(), mls.getDeviceId()), {
         storage: ctx.getStorage(),
         deviceKeyB64: ctx.getDeviceKey(),
         mlsService: mls,
@@ -917,10 +905,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       });
     });
 
-    // A solicitation that found nobody reachable is not retried until its own backoff or the next
-    // reconnect, although presence tells us within ten seconds that a peer is back. This is that
-    // seam: an offline -> online edge re-solicits every group still awaiting history. Groups already
-    // soliciting are skipped inside `reSolicitAwaitingHistory`, so a burst of peers costs one round.
+    // A reconciliation the server could not elect anybody for has to wait for a member to return,
+    // and presence tells us that within ten seconds. This is that seam, and it retries ONLY the
+    // groups that found nobody - every other group was already compared on this connection, and a
+    // presence edge says nothing new about them.
     unregisterPeerReturn?.();
     unregisterPeerReturn = onPeersCameOnline(() => {
       // `ensureMls` CREATES the service when there is none, so it must never be reached from a
@@ -928,32 +916,14 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       // uses. Without it a stray edge after teardown would build an MLS client for nobody.
       if (!ctx.getStorage()) return;
       const mls = ctx.ensureMls();
-      cb.log('[HISTORY_REQ] a peer came back online - re-soliciting what is still awaited');
-      reSolicitAwaitingHistory(mls, ctx.getUserId(), mls.getLocalGroups(), cb.log);
-    });
-
-    // Every other trigger is an event, and a session left open all day is not guaranteed another
-    // one: presence is only polled for peers the UI displays, and a reconnect may never come. This
-    // is the floor under them - see `AWAITING_SWEEP_INTERVAL_MS`. Same live-session guard as above.
-    stopAwaitingSweep?.();
-    stopAwaitingSweep = startAwaitingHistorySweep({
-      mlsService: {
-        sendHistoryRequest: (groupId) => ctx.ensureMls().sendHistoryRequest(groupId),
-      },
-      userId: ctx.getUserId(),
-      getLocalGroups: () => (ctx.getStorage() ? ctx.ensureMls().getLocalGroups() : []),
-      log: cb.log,
+      cb.log('[HISTORY_RECONCILE] a peer came back online - retrying what nobody could answer');
+      void reconcileGroupsAwaitingResponder(mls, mls.getLocalGroups(), cb.log);
     });
 
     mlsService.onHistoryRequest(
-      async (
-        requesterUserId: string,
-        requesterDeviceId: string,
-        groupId: string,
-        withDigest: boolean
-      ) => {
+      async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {
         cb.log(
-          `[SYNC] history_request received from ${requesterUserId}:${requesterDeviceId} for ${groupId}${withDigest ? ' (digest promised)' : ' (no digest - older client)'}`
+          `[SYNC] history_request received from ${requesterUserId}:${requesterDeviceId} for ${groupId}`
         );
         try {
           await handleHistoryRequest({
@@ -966,7 +936,6 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             requesterDeviceId,
             selfUserId: ctx.getUserId(),
             groupId,
-            requesterHasDigest: withDigest,
           });
         } catch (e) {
           cb.log(
@@ -1372,17 +1341,14 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   // Detach the reconnect listener too, or a regained network would promote a session that no
   // longer exists - reopening a WebSocket for the user who just signed out.
   unregisterOfflinePromotion();
-  cancelAllHistorySolicit();
-  // The broadcaster closes over this session's storage and device key, so it must not outlive it:
-  // a solicitation from the next login would otherwise describe the previous user's store.
-  setHistoryDigestBroadcaster(null);
-  // Same reason, and the presence poll outlives a logout: an edge arriving afterwards would solicit
-  // history for the user who just signed out.
+  resetHistoryReconciliation();
+  // The probe sender closes over this session's storage and device key, so it must not outlive it:
+  // a reconciliation from the next login would otherwise describe the previous user's store.
+  setHistoryProbeSender(null);
+  // Same reason, and the presence poll outlives a logout: an edge arriving afterwards would
+  // reconcile history for the user who just signed out.
   unregisterPeerReturn?.();
   unregisterPeerReturn = null;
-  stopAwaitingSweep?.();
-  stopAwaitingSweep = null;
-  historyRequestPendingStore.cancelAll();
   void flushActiveMlsStateEncrypted().finally(() => {
     uninstallMlsStatePersisterLifecycle();
     unregisterMlsStatePersister();

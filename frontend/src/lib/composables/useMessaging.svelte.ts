@@ -8,7 +8,7 @@
  */
 import { tick } from 'svelte';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
-import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
+import { SvelteMap, SvelteDate } from 'svelte/reactivity';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { getToken } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
@@ -22,6 +22,7 @@ import {
 } from '$lib/utils/chat/messaging';
 import { applyPin, isMessagePinned } from '$lib/stores/pinStore.svelte';
 import {
+  indexMessagesById,
   isStaleInboundMessage,
   normalizeMessageId,
   resolveMessageTimestamp,
@@ -301,7 +302,13 @@ export function useMessaging() {
     }
 
     const isOwn = isOwnMessage(senderId, ctx.userId);
-    const resolvedTimestamp = resolveMessageTimestamp(options, convo.messages, isOwn);
+    // One arriving message, so one scan: building an index here would cost the same walk and throw
+    // it away. The batch path below is the one that had to change.
+    const resolvedTimestamp = resolveMessageTimestamp(
+      options,
+      (id) => convo.messages.find((m) => m.id === id),
+      isOwn
+    );
     const newMsg: ChatMessage = {
       id: normalizeMessageId(options.messageId) ?? crypto.randomUUID(),
       senderId: senderId.toLowerCase(),
@@ -459,7 +466,13 @@ export function useMessaging() {
     const convo = ctx.conversations.get(normalized);
     if (!convo) return;
 
-    const existingIds = new SvelteSet(convo.messages.map((m) => m.id));
+    // ONE index, built once, for the two questions this loop asks of every incoming message: "do we
+    // already hold it" and "what timestamp did we give it". Both used to be a linear scan of the
+    // rendered list, so a catch-up of `m` messages into a conversation of `n` cost `2·n·m`
+    // comparisons on the main thread - the post-ingest freeze, and a cost that grows with the
+    // conversation rather than with the batch. It has to work at any size, so it is an index.
+    // Ids seen during THIS batch are added to it too, which is what the separate dedup set did.
+    const byId = indexMessagesById(convo.messages);
     const toStore: StoredMessage[] = [];
     const upgradedById = new SvelteMap<string, ChatMessage>();
     const brandNew: ChatMessage[] = [];
@@ -471,7 +484,7 @@ export function useMessaging() {
       if (processedCount % 50 === 0) await yieldToMainThread();
 
       const id = normalizeMessageId(pm.messageId) ?? crypto.randomUUID();
-      const existingMsg = convo.messages.find((m) => m.id === id);
+      const existingMsg = byId.get(id);
       if (existingMsg && shouldUpgradeMessage(existingMsg, pm.content)) {
         const upgraded = mergeMessageUpgrade(existingMsg, {
           content: pm.content,
@@ -493,11 +506,10 @@ export function useMessaging() {
         }
         continue;
       }
-      if (existingIds.has(id)) continue;
-      existingIds.add(id);
+      if (existingMsg) continue;
 
       const isOwn = isOwnMessage(pm.senderId, ctx.userId);
-      const resolvedTimestamp = resolveMessageTimestamp(pm, convo.messages, isOwn);
+      const resolvedTimestamp = resolveMessageTimestamp(pm, (mid) => byId.get(mid), isOwn);
       const newMsg: ChatMessage = {
         id,
         senderId: pm.senderId.toLowerCase(),
@@ -509,6 +521,8 @@ export function useMessaging() {
         ingestSequence: pm.ingestSequence,
       };
       brandNew.push(newMsg);
+      // The index is also the dedup set: a batch carrying the same id twice must add it once.
+      byId.set(id, newMsg);
 
       if (ctx.storage) {
         toStore.push({

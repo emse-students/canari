@@ -10,7 +10,7 @@
  * not enumerating the writers of a state, so the last test here reads the source and refuses a
  * sixth writer.
  */
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { SvelteMap } from 'svelte/reactivity';
@@ -20,68 +20,66 @@ import {
   purgeConversation,
   markConversationDeletedRemotely,
 } from './conversations';
-import { markAwaitingHistory, isAwaitingHistory } from './awaitingHistoryRegistry';
+import { forgetGroupReconciliation } from './historyReconcile';
+
+vi.mock('./historyReconcile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./historyReconcile')>();
+  return { ...actual, forgetGroupReconciliation: vi.fn(actual.forgetGroupReconciliation) };
+});
 
 const USER = 'user-a';
 const GROUP = 'group-1';
+
+/** Whether the conversation's reconciliation state was forgotten during this case. */
+const forgotten = () => vi.mocked(forgetGroupReconciliation).mock.calls.some(([g]) => g === GROUP);
 
 const makeConvo = (over: Partial<Conversation> = {}): Conversation =>
   ({ id: GROUP, name: 'G', messages: [], ...over }) as unknown as Conversation;
 
 describe('retireConversation', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    vi.mocked(forgetGroupReconciliation).mockClear();
+  });
 
-  it('marks the row removed and forgets the awaiting-history marker', async () => {
+  it('marks the row removed and forgets the conversation reconciliation state', async () => {
     const conversations = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
-    markAwaitingHistory(USER, GROUP, 'unreadable-frames');
 
-    const changed = await retireConversation({
-      conversations,
-      key: 'k',
-      groupId: GROUP,
-      userId: USER,
-    });
+    const changed = await retireConversation({ conversations, key: 'k', groupId: GROUP });
 
     expect(changed).toBe(true);
     expect(conversations.get('k')?.lifecycle).toBe('removed');
-    expect(isAwaitingHistory(USER, GROUP)).toBe(false);
+    expect(forgotten()).toBe(true);
   });
 
   it('forgets the marker even when persisting the row rejects', async () => {
     // The forget must not be downstream of the save: a rejected write would otherwise leave the
     // conversation retired in memory and the marker soliciting for ever.
     const conversations = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
-    markAwaitingHistory(USER, GROUP, 'unreadable-frames');
 
     await retireConversation({
       conversations,
       key: 'k',
       groupId: GROUP,
-      userId: USER,
       saveConversation: () => Promise.reject(new Error('quota')),
     });
 
-    expect(isAwaitingHistory(USER, GROUP)).toBe(false);
+    expect(forgotten()).toBe(true);
   });
 
   it('is a no-op on a row that is already retired', async () => {
     const conversations = new SvelteMap<string, Conversation>([
       ['k', makeConvo({ lifecycle: 'removed' })],
     ]);
-    markAwaitingHistory(USER, GROUP, 'unreadable-frames');
 
-    expect(
-      await retireConversation({ conversations, key: 'k', groupId: GROUP, userId: USER })
-    ).toBe(false);
-    // An early return has no side effects: another path may still be working on this marker.
-    expect(isAwaitingHistory(USER, GROUP)).toBe(true);
+    expect(await retireConversation({ conversations, key: 'k', groupId: GROUP })).toBe(false);
+    // An early return has no side effects: another path may still be working on this conversation.
+    expect(forgotten()).toBe(false);
   });
 
   it('is a no-op when the row does not exist', async () => {
     const conversations = new SvelteMap<string, Conversation>();
-    expect(
-      await retireConversation({ conversations, key: 'k', groupId: GROUP, userId: USER })
-    ).toBe(false);
+    expect(await retireConversation({ conversations, key: 'k', groupId: GROUP })).toBe(false);
   });
 
   it('merges a patch while still retiring the row', async () => {
@@ -90,7 +88,6 @@ describe('retireConversation', () => {
       conversations,
       key: 'k',
       groupId: GROUP,
-      userId: USER,
       patch: { id: GROUP },
     });
     expect(conversations.get('k')?.id).toBe(GROUP);
@@ -99,61 +96,55 @@ describe('retireConversation', () => {
 
   it('markConversationDeletedRemotely finds the row by group id and retires it', async () => {
     const conversations = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
-    markAwaitingHistory(USER, GROUP, 'unreadable-frames');
 
     expect(markConversationDeletedRemotely(conversations, GROUP, USER)).toBe(true);
     expect(conversations.get('k')?.lifecycle).toBe('removed');
-    expect(isAwaitingHistory(USER, GROUP)).toBe(false);
+    expect(forgotten()).toBe(true);
   });
 });
 
 describe('purgeConversation', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    vi.mocked(forgetGroupReconciliation).mockClear();
+  });
 
-  it('removes the row and forgets the awaiting-history marker', async () => {
+  it('removes the row and forgets the conversation reconciliation state', async () => {
     const conversations = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
-    markAwaitingHistory(USER, GROUP, 'unreadable-frames');
 
-    expect(await purgeConversation({ conversations, key: 'k', groupId: GROUP, userId: USER })).toBe(
-      true
-    );
+    expect(await purgeConversation({ conversations, key: 'k', groupId: GROUP })).toBe(true);
     expect(conversations.has('k')).toBe(false);
-    expect(isAwaitingHistory(USER, GROUP)).toBe(false);
+    expect(forgotten()).toBe(true);
   });
 
   it("falls back to the row's own group id when the caller does not pass one", async () => {
     // The two exits reach this with different information: the system-message handler holds the
     // group id, the UI handler holds only the map key.
     const conversations = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
-    markAwaitingHistory(USER, GROUP, 'unreadable-frames');
 
-    await purgeConversation({ conversations, key: 'k', userId: USER });
+    await purgeConversation({ conversations, key: 'k' });
 
-    expect(isAwaitingHistory(USER, GROUP)).toBe(false);
+    expect(forgotten()).toBe(true);
   });
 
   it('forgets the marker even when deleting the stored row rejects', async () => {
     // Same ordering rule as retiring: a failed write must not be able to strand the marker.
     const conversations = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
-    markAwaitingHistory(USER, GROUP, 'unreadable-frames');
 
     await purgeConversation({
       conversations,
       key: 'k',
       groupId: GROUP,
-      userId: USER,
       deleteStored: () => Promise.reject(new Error('quota')),
     });
 
     expect(conversations.has('k')).toBe(false);
-    expect(isAwaitingHistory(USER, GROUP)).toBe(false);
+    expect(forgotten()).toBe(true);
   });
 
   it('reports false when there was no row to remove', async () => {
     const conversations = new SvelteMap<string, Conversation>();
-    expect(await purgeConversation({ conversations, key: 'k', groupId: GROUP, userId: USER })).toBe(
-      false
-    );
+    expect(await purgeConversation({ conversations, key: 'k', groupId: GROUP })).toBe(false);
   });
 });
 
@@ -174,10 +165,9 @@ describe('the single-writer invariant', () => {
   /**
    * The file with its comments removed.
    *
-   * Without this the check fails on the prose that EXPLAINS the invariant - the docblocks in
-   * `historySolicit.ts` quote `lifecycle: 'removed'` to say why the banner outlived its
-   * conversation. A guard that punishes the documentation of the rule it enforces is a guard
-   * people delete.
+   * Without this the check fails on the prose that EXPLAINS the invariant - docblocks quote
+   * `lifecycle: 'removed'` to say why per-conversation state outlived its conversation. A guard
+   * that punishes the documentation of the rule it enforces is a guard people delete.
    */
   const codeOnly = (text: string) =>
     text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');

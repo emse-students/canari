@@ -20,7 +20,7 @@ import {
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
-import { markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
+import { reconcileGroup } from '$lib/utils/chat/historyReconcile';
 import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
@@ -225,6 +225,12 @@ export async function replayConversationHistory(params: {
   const groupWasLocal = mlsService.getLocalGroups().includes(id);
   const epochBefore = groupWasLocal ? mlsService.getEpoch(id) : -1;
   let sawEpochGap = false;
+  /**
+   * A frame in this replay will never be readable here, so a peer has to re-encrypt it. Carried to
+   * the end of the replay rather than acted on where it is discovered: a page can hold forty such
+   * frames and they are all one difference.
+   */
+  let sawUnreadableFrame = false;
 
   let session: MlsDecryptSession | null = null;
   try {
@@ -442,15 +448,14 @@ export async function replayConversationHistory(params: {
             // But WHICH message it was is the whole question, and this is the one place that holds
             // the evidence to answer it: a frame already read carries a fingerprint in
             // `seenCipherHashes` and is skipped before ever reaching the decrypt, so anything
-            // arriving HERE is a frame this device has never read. That is real loss, and the
-            // durable marker is the only thing that will solicit the history diff able to recover
-            // it. A false positive costs exactly one diff exchange: an empty diff clears the
-            // marker, which is what makes recording it on suspicion safe.
+            // arriving HERE is a frame this device has never read. That is real loss, and a
+            // reconciliation is the only thing that can recover it. A false positive costs exactly
+            // one comparison, which is what makes reconciling on suspicion safe.
             seenCipherHashes.add(cipherFingerprint);
             seenUpdated = true;
-            markAwaitingHistory(userId, id, 'unreadable-frames');
+            sawUnreadableFrame = true;
             console.warn(
-              `[History] frame never read here and unreadable for good (${kind}); awaiting a history diff (group ${id})`
+              `[History] frame never read here and unreadable for good (${kind}); will reconcile (group ${id})`
             );
             continue;
           }
@@ -482,11 +487,12 @@ export async function replayConversationHistory(params: {
               retryUpdated = true;
               // This is the ONLY moment the app learns that history is genuinely missing rather
               // than merely late: a frame we saw, will never read, and can only obtain re-encrypted
-              // from a member. Record it so the bundle is solicited on the next connection - the
-              // frame itself is about to be consumed and will never fail again to remind us.
-              markAwaitingHistory(userId, id, 'unreadable-frames');
+              // from a member. The frame itself is about to be consumed and will never fail again
+              // to remind us, so the replay carries the fact to its own end and reconciles there -
+              // once for the whole page, whatever the number of dead frames in it.
+              sawUnreadableFrame = true;
               console.warn(
-                `[History] permanently undecryptable after ${attempts} attempts (${kind}); marking seen and awaiting bundle`
+                `[History] permanently undecryptable after ${attempts} attempts (${kind}); marking seen and reconciling`
               );
             }
           } else {
@@ -552,7 +558,13 @@ export async function replayConversationHistory(params: {
               : prev?.isEdited
                 ? prev.content
                 : pm.content,
-          timestamp: resolveMessageTimestamp(pm, [], isOwnMessage(pm.senderId, userId)).getTime(),
+          // No lookup: this path builds rows from the bundle, and what we already hold is read from
+          // `prev` above rather than searched for.
+          timestamp: resolveMessageTimestamp(
+            pm,
+            () => undefined,
+            isOwnMessage(pm.senderId, userId)
+          ).getTime(),
           ...(prev?.isDeleted || pm.isDeleted ? { isDeleted: true } : {}),
           ...(prev?.isEdited || pm.isEdited ? { isEdited: true } : {}),
           // Same two sources as `content` above. What we already hold wins - it came from the edit
@@ -646,6 +658,13 @@ export async function replayConversationHistory(params: {
     if (shouldFlagStaleEpochGap(groupWasLocal, sawEpochGap, epochBefore, mlsService.getEpoch(id))) {
       markEpochGap(id);
       log(`[HISTORY] ${id.slice(0, 8)}… epoch gap during replay - flagged for recovery`);
+    }
+
+    // Something in this replay is lost to this device for good. Ask a peer that still holds it -
+    // once, now that the whole page has been walked and the store is settled.
+    if (sawUnreadableFrame) {
+      log(`[HISTORY] ${id.slice(0, 8)}… holds frames it can never read - reconciling`);
+      void reconcileGroup(mlsService, id, log);
     }
 
     if (!fetchedAnyPage) return undefined;

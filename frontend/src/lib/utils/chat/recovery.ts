@@ -5,7 +5,7 @@ import type { SvelteMap } from 'svelte/reactivity';
 import { persistMlsStateAfterMutation, purgeLocalConversationRecord } from './groupActions';
 import { classifyServerStatus } from './groupLifecycle';
 import { markGroupNotReady, clearGroupNotReady } from './notReadyRegistry';
-import { solicitHistoryIfMissing } from './historySolicit';
+import { reconcileGroup } from './historyReconcile';
 import { retireConversation } from './conversations';
 
 /**
@@ -68,7 +68,6 @@ async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Pr
       conversations: deps.conversations,
       contactKey: entry[0],
       groupId,
-      userId: deps.userId,
       deleteConversation: deps.deleteConversation,
       log: deps.log,
     });
@@ -163,7 +162,6 @@ export async function requestReAdd(
       conversations: deps.conversations,
       key: groupId,
       groupId,
-      userId: deps.userId,
       saveConversation: deps.saveConversation,
       patch: { id: groupId },
     });
@@ -195,18 +193,12 @@ export async function requestReAdd(
       deps.conversations.set(groupId, { ...convo, lifecycle: 'active' });
       await deps.saveConversation(groupId).catch(() => {});
     }
-    // Solicit the pre-join history from one online member: an external join lands at the current
-    // epoch WITHOUT the peer-driven history bundle. Only when something is actually missing - this
+    // An external join lands at the current epoch WITHOUT the pre-join history, which only a member
+    // can re-encrypt. Nothing has to decide whether anything is actually missing any more - this
     // very path also runs for a device that merely rotated its MLS identity and whose store, keyed
-    // by user, still holds the whole conversation.
-    await solicitHistoryIfMissing({
-      mlsService: deps.mlsService,
-      storage: deps.storage,
-      userId: deps.userId,
-      deviceKeyB64: deps.deviceKeyB64,
-      groupId,
-      log: deps.log,
-    });
+    // by user, still holds the whole conversation, and the comparison answers "we agree" for it in
+    // one frame. That guess used to be a durable marker, and getting it wrong was permanent.
+    await reconcileGroup(deps.mlsService, groupId, deps.log);
     deps.log(`[READD] ${groupId.slice(0, 8)}... external-join path done`);
     return;
   }

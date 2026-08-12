@@ -14,8 +14,7 @@ import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame } from './unackedFrames';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
-import { markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
-import { solicitHistory } from '$lib/utils/chat/historySolicit';
+import { reconcileGroup } from '$lib/utils/chat/historyReconcile';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { createMlsStatePersister } from '../mlsStatePersister';
@@ -552,7 +551,6 @@ async function handleKnownGroup({
     conversations,
     messageReactions,
     storage,
-    userId,
     deviceKeyB64,
     addMessageToChat,
     onCallSignal,
@@ -597,21 +595,15 @@ async function handleKnownGroup({
     // strictly: we send what we HOLD, the peer computes what we lack and names it from its durable
     // store, and re-encrypts it at the current generation. See `historyManifest.ts`.
     //
-    // Nothing here is rate-limited by a clock, and nothing here decides whether to ask either:
-    // `solicitHistory` owns that, and it answers it from the only fact that settles it - is an
-    // attempt outstanding, i.e. scheduled or inside its response window.
-    //
-    // There used to be an `if (isAwaitingHistory(...)) return` in front of this, on the reasoning
-    // that the durable marker is the idempotence. It is - for the question "is this group missing
-    // history", which is what it was written to answer. It was being asked "have I already asked",
-    // and it is the wrong witness for that: the marker SURVIVES SESSIONS and is cleared only by an
-    // empty diff, so the first lost frame in any group that had ever been broken found it already
-    // set and returned, and this path never solicited again. Measured on prod 2026-08-10: twelve
-    // `LOST frame` lines on the receiver, zero solicitations, the conversation left to the
-    // fifteen-minute sweep, and a standing "history pending" banner with no attempt behind it.
-    log(`[MLS] Frames are being lost in ${convoKey.slice(0, 8)}… - soliciting a history diff`);
-    markAwaitingHistory(userId, groupId, 'unreadable-frames');
-    solicitHistory(mlsService, groupId, log);
+    // Nothing here is rate-limited by a clock, and nothing here records anything durable either.
+    // A marker used to be written at this point, and it was the wrong witness for the question it
+    // was asked: it recorded "this group is missing history" and was read as "have I already
+    // asked", so the first lost frame in a group that had ever been broken found it already set and
+    // this path never solicited again (measured on prod 2026-08-10: twelve `LOST frame` lines,
+    // zero solicitations). `reconcileGroup` coalesces a burst instead, which is the only thing that
+    // was ever needed here - a replay giving up on forty frames of one conversation asks once.
+    log(`[MLS] Frames are being lost in ${convoKey.slice(0, 8)}… - reconciling this conversation`);
+    void reconcileGroup(mlsService, groupId, log);
   };
 
   try {

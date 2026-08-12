@@ -494,56 +494,64 @@ DM and a DM message into a channel. Only the transport differs (MLS group vs cha
 a media forward re-sends the same envelope in both cases, so no blob is re-uploaded and the CEK
 travels with it.
 
-## Pooling history between devices (BUILT 2026-08-07, deploy owed)
+## Pooling history between devices
 
-Today's exchange used to be all-or-nothing: `sendFullHistoryBundle` shipped the responder's ENTIRE
+**Read [history-reconciliation](../../protocols/history-reconciliation.md) first.** It is the
+specification - the model, the two boundaries, the exchange, the scrollback, and every decision
+behind them, none of which is re-derived here. This section covers only what a reader of THIS module
+needs: the digest's arithmetic, and the traps in the three legs it travels on.
+
+A history exchange used to be all-or-nothing: `sendFullHistoryBundle` shipped the responder's ENTIRE
 store and the receiver deduped by id, one way, with neither side knowing what the other held. It is
-now a diff. The design was settled on 2026-08-02 by reading the code; what shipped differs from it on
-exactly one point, recorded below.
+now a diff, and since 2026-08-12 the diff is itself behind a **state key**: a 64-bit fold of what a
+device holds in its window, compared first, so the common case - the two devices agree - costs one
+small frame and no store read on either side. A digest is exchanged only when the keys differ.
 
 **The algorithm already existed and was tested** in the QR sync engine (`sync/syncEngine.ts`, since
 deleted with that feature): a sorted manifest of message ids per conversation, and a symmetric
 difference over two of them. What was missing was the TRANSPORT, and that is what
-`utils/chat/historyManifest.ts` (pure, 42 tests) plus `utils/chat/historyDigestRendezvous.ts`
-(11 tests) now carry - this time between the account's own devices, with no user gesture at all.
+`utils/chat/historyManifest.ts` (pure) plus `utils/chat/historyDigestRendezvous.ts` now carry - this
+time between the account's own devices, with no user gesture at all.
 
-**THE DIRECTION IS FLIPPED against the design above - deliberately, do not restore it.** The design
-had the RESPONDER send the digest and the REQUESTER diff. It ships the other way round: the
-**requester broadcasts its digest, the elected responder diffs**. Two reasons, both structural. It is
-backwards compatible with no negotiation - an old responder ignores an event it does not know and
-sends a full bundle, which is exactly right; a new responder receiving nothing from an old requester
-falls back to the same. And it costs one round trip fewer, because the responder's reply already
-carries the data instead of asking for it.
+**THE DIRECTION IS FLIPPED against the obvious design - deliberately, do not restore it.** The
+obvious design has the RESPONDER send the digest and the REQUESTER diff. It ships the other way
+round: the **requester states what it wants, the elected responder diffs**. It costs one round trip
+fewer, because the responder's reply already carries the data instead of asking for it.
 
-**The legs as built.** Leg 1 is the WS `history_request`, unchanged - server-side election is what
-keeps one responder instead of a storm. Leg 2 is `history_digest`, broadcast inside MLS by the
-requester (`setHistoryDigestBroadcaster`, awaited by `historySolicit.fire` before the WS request).
-Leg 3 is the responder's answer: it diffs, sends a `history_bundle` filtered by id for what the
-requester lacks, and sends `history_pull {to, ids|prefixes+depth}` for what IT lacks. A pull is answered by a
-bundle and a bundle asks for nothing, so the exchange cannot re-enter itself - the WP-RETRANSMIT-1
-lesson, applied by construction.
 
-**The rendezvous, and why it no longer guesses.** The two halves travel by different transports and
-nothing orders them: the elected responder can be handed the WS request before or after the digest
+**The legs as built.** Leg 1 is the WS `history_request` - server-side election is what keeps one
+responder instead of a storm. Leg 2 is the **probe**, sent inside MLS by the requester, and it is one
+of three asks on the same rendezvous: `history_state` (the key), `history_digest` (the manifest, only
+after two keys came out different) and `history_range` (the scrollback). Leg 3 is the responder's
+answer: it compares, sends a `history_bundle` filtered by id for what the requester lacks, and sends
+`history_pull {to, ids|prefixes+depth, since}` for what IT lacks. A pull is answered by a bundle and
+a bundle asks for nothing, so the exchange cannot re-enter itself - the WP-RETRANSMIT-1 lesson,
+applied by construction.
+
+**Every ask states its own window and the answer is clipped to it.** `since` rides on all three
+probe kinds and on the pull. Four rules hold the whole thing together and none may be undone: it is
+STATED by the asker and never recomputed by the answerer (the window slides, so two devices deriving
+it a second apart disagree by whatever was sent in between); the DIGEST is not clipped, because it
+says what a device HAS while `since` says what it WANTS, and a device must be able to serve a peer
+whose window reaches further back than its own; the clip is on the ANSWER and never on the
+COMPARISON, which is why it lives in `sendHistoryBundleForIds` alone; and each leg states its OWN
+window, or every device in a conversation ends up capped at the shortest one in it.
+
+**The rendezvous, and why it does not guess.** The two halves travel by different transports and
+nothing orders them: the elected responder can be handed the WS request before or after the probe
 reaches its inbound MLS queue. That used to be covered by a 3 s `HISTORY_DIGEST_GRACE_MS`, which is
-exactly the shape of timer this codebase treats as a defect - it could not tell "the digest is a
-moment behind" from "this peer will never send one", so every value was wrong for one of them: too
-short dumped a whole store on a current peer, too long made every older peer wait for nothing.
+exactly the shape of timer this codebase treats as a defect - it could not tell "the probe is a
+moment behind" from "this peer will never send one". The responder now WAITS for the probe, bounded
+by `DIGEST_TTL_MS` (60 s) because beyond that a probe describes a store that has moved and would be
+refused anyway. Reaching the bound means the MLS frame never arrived, and a responder that was told
+nothing answers nothing - a device that cannot say what it wants is not owed a full store.
 
-The election frame now carries **`withDigest`** - a boolean, never the digest itself, which names the
-ids a device retains and stays inside MLS where the delivery service cannot read it. False or absent
-(an older client) means answer AT ONCE with the whole store, no wait at all. True means wait for the
-digest EVENT, bounded by `DIGEST_TTL_MS` (60 s) because beyond that a digest describes a store that
-has moved and would be refused anyway. Reaching the bound is not a tuning question: it means the MLS
-frame never arrived, and the answer is the same full store the old fallback sent.
+**The requester ASKS BEFORE IT DESCRIBES ITSELF.** The election goes out first and the probe only
+once the server reports a responder was elected - a probe sent first is an MLS frame every member
+decrypts, for a repair `no_peer_online` may be about to refuse outright. `historyReconcile.test.ts`
+pins the ORDER, not merely the presence of both.
 
-**The requester ASKS BEFORE IT DESCRIBES ITSELF.** `solicitHistory` sends the WS request first and
-broadcasts the digest only once the server reports that a responder was elected - a digest sent
-first is an MLS frame every member decrypts, for a repair `no_peer_online` may be about to refuse
-outright. That ordering is only affordable because of `withDigest`: under a grace period, asking
-first would have guaranteed the digest arrived after the request and burned the whole window.
-
-A stored digest is CONSUMED on take - a later request must diff against a fresh snapshot, never a
+A stored probe is CONSUMED on take - a later request must compare against a fresh snapshot, never a
 minute-old claim (TTL 60 s).
 
 **Two digest modes, by size.** `ids` (the sorted id list) below `DIGEST_ID_MODE_MAX` (1000), `range`
@@ -588,9 +596,11 @@ than the exchange gaining a round trip: still exactly one, still terminating, ju
 difference. That is deliberate - a recursive refinement would be smaller on the wire and would put
 multi-round-trip state back into the one mechanism this whole area was just simplified down to.
 
-**`announceComplete` distinguishes two silences.** "I compared my WHOLE store and you are complete"
-may send an empty bundle (it clears the requester's marker); "I was asked about a SUBSET and hold
-none of it" must stay silent, or it would clear a marker it never answered.
+**Silence is the fast path, and it needs no flag to say so.** Two agreeing keys send nothing at all,
+so an empty bundle no longer has to carry what its emptiness MEANT - `vouched` and the three-way
+`EmptyBundleMeaning` were deleted with the marker they existed to discharge. A responder that holds
+nothing of a SUBSET it was asked about also stays silent, for the same reason it always did: it has
+answered nothing about the rest.
 
 **A failed store read is not an empty store.** `readHistoryEntries` returns `null` rather than `[]`
 on a read error, and the responder then says nothing at all - an empty store is a fact worth telling
@@ -619,19 +629,15 @@ diff, and both flavours of empty bundle), and the receiver splits what it does w
 
 - **the messages are taken by every member** - the merge dedupes by id, so over-delivery costs
   bandwidth and nothing else;
-- **the ANSWER is read only by the addressee** - `noteHistoryBundleReceived` discharges the durable
-  awaiting-history marker, and a device that never asked has had nothing compared against its store.
+- **the addressing decides who it was FOR**, which used to matter far more than it does now: the
+  answer once discharged a durable marker, so one repair between two peers permanently cleared the
+  marker of every other member, and whatever was missing on those devices stayed missing. That whole
+  class went with the marker - a device that finds itself short simply asks again on its next
+  connection - but the field stays, because a bundle a device did not ask for is still a bundle it
+  cannot interpret as an answer about its own store.
 
-Before this, one repair between two peers cleared the marker of every other member of the
-conversation. That is not a delay, it is a permanent loss: the marker is the evidence, so once it is
-gone no reconnect, no sweep and no election ever asks again, and whatever was missing on those
-devices stays missing. The empty bundle is the worst case of all - it carries no messages at all and
-exists purely to say "you are complete".
-
-A bundle with **no `to`** predates the field, and is answered the legacy way: only while this
-device's own solicitation is outstanding (`isSolicitInFlight`). The ambiguity therefore resolves
-towards a marker that stays up - one extra diff on the next edge, which is free when there is no
-difference - rather than towards one wrongly cleared.
+A bundle with **no `to`** is a bundle nobody solicited: the invite push sends one, and so does a
+client too old to address it. It is ingested like any other and answers nothing.
 
 **Why not address the frame itself.** The obvious fix is the `recipients` field of `POST /send`.
 Do not: MLS re-encrypts per recipient set, and narrowing it on an application message burns the
@@ -654,83 +660,34 @@ every load, so pooling would fight the refresh (`isChannelConversationId`).
 This subsumes the `no-local-history` clause of the current marker: "awaiting history" becomes "my
 diff with at least one peer is non-empty", which empties itself.
 
-### Order of work
+### What ended the wait, and why there is no wait left
 
-1. **DONE** - the pure `historyManifest.ts` plus its tests: the digest build and the diff, no
-   transport.
-2. **DONE** - the wiring: the requester broadcasts a digest, `handleHistoryRequest` awaits it and
-   diffs, `systemMessageHandler` gained the digest and pull branches, `groupActions` gained
-   `sendHistoryBundleForIds` / `sendHistoryDigest` / `sendHistoryPull` / `readHistoryEntries`.
-3. **DONE** - marker semantics: see below.
-4. **SUPERSEDED 2026-08-10** - the give-up counter and the ring it arbitrated are deleted outright,
-   along with the narrow rung they existed to govern. See the section below: there is one repair now.
-5. Wiki + `CHANGELOG.md` - done. **What is left is the web deploy**, then re-running the campaign
-   checks that touch the repair mechanism.
+Kept because the shape recurs, not because the code is still there. The exchange used to be gated by
+a durable marker recording that a group was short of history AND the evidence for it - a
+**presumption** (`no-local-history`) void the moment any message landed, or a **proof**
+(`unreadable-frames`, `peer-holds-more`) that other messages arriving could not unlearn - and only an
+empty **vouched** bundle from a responder entitled to claim completeness could discharge it.
 
-### What ends the wait, and what merely interrupts it
+That argument was about the DATA, and it quietly assumed some peer was entitled to vouch. Once BOTH
+peers of a DM carried a marker and their stores were equal, the difference was zero on both sides,
+both stayed silent, and neither marker could ever clear (WP-HISTBANNER-1). It was patched once - a
+three-way `EmptyBundleMeaning` separating what a responder MEASURED from what it may CLAIM - and
+measured again on 2026-08-12 still holding markers 1.9 days old on both devices of a DM.
 
-The marker (`awaitingHistoryRegistry.ts`) records that a group is short of history AND the evidence
-for it, because the evidence decides what may end it. There are two kinds:
+**The whole gate is deleted.** The reason it existed was that asking was expensive: a full-store dump
+had to be justified by evidence. A state key costs one small frame, so a device simply asks on every
+connection and believes the answer, and there is no durable claim left to discharge, vouch for or
+rank. `EmptyBundleMeaning`, `vouched`, `REASON_RANK`, `isProvenAwaitingReason` and the 30-day horizon
+are gone with it.
 
-- A **presumption** - `no-local-history`, "I hold nothing for this group, so I cannot tell an empty
-  conversation from a missing one". It is void the moment any message lands.
-- A **proof** - `unreadable-frames` (the replay gave up on a frame it can never decrypt) or
-  `peer-holds-more` (a peer's digest named ids we lack). Neither is unlearnt by other messages
-  arriving.
+**Two claims made about that defect were wrong and are recorded because the error is instructive.**
+The banner was said to latch "for the life of the tab": it did not, because the 15-minute sweep
+re-solicited on a visible tab. And "Nouvelle tentative automatique" was called a lie left over from
+the deleted retry ladder: deleting the LADDER had not deleted the SWEEP, and the string was accurate
+throughout. **A claim that a user-facing string is stale must name the mechanism that would honour it
+and show that mechanism gone** - one grep for the sweep constant would have refuted both before they
+were written.
 
-So a bundle does not end a wait by existing. An empty **vouched** bundle does, whatever the evidence
-was: it is the authoritative "you are missing nothing", sent by a responder that compared its whole
-store and was not itself awaiting history. A NON-EMPTY bundle carries messages and
-nothing more: it voids a presumption, and against a proof it leaves the marker standing, so the next
-edge asks for what is still missing. That is what makes
-the marker empty ITSELF: each exchange strictly reduces the difference, so it converges on the empty
-bundle rather than on a bundle count. It also fixes a defect that predates the diff - a history big
-enough to be chunked arrives as several non-empty bundles, and the first of them used to end the
-solicitation.
-
-`REASON_RANK` is what keeps a proof from being overwritten by a presumption, in both directions: on
-write (`markAwaitingHistory` keeps the higher rank) and on clear (`isProvenAwaitingReason`).
-
-#### Two waiting peers were a fixed point the convergence argument did not cover (WP-HISTBANNER-1, FIXED 2026-08-11)
-
-The convergence above is an argument about the DATA, and it quietly assumes some peer is entitled to
-vouch. A responder that is itself awaiting is correctly forbidden from claiming completeness - but
-that was implemented as SILENCE, and silence is not an answer. Once both peers carried a marker and
-their stores were equal, `idsToSend` was 0 on both sides, both stayed silent, and neither marker
-could ever clear. Seen live on both browsers over a conversation that had healed 14/14 the same
-evening: a permanent "historique en attente" over a complete conversation, which is the worst kind of
-notice because it teaches the user to ignore every future one.
-
-The fix is to separate what a responder MEASURED from what it is entitled to CLAIM, which a boolean
-could not express - hence `EmptyBundleMeaning` (`groupActions.ts`) with three values, one per call
-site: `complete` (whole store compared, not awaiting, may vouch), `identical` (whole store compared,
-awaiting, may state only that the two stores match) and `silence` (a pull asked about a SUBSET, or
-the local read failed - nothing about the peer was measured). Only `identical` puts anything new on
-the wire, `{ messages: [], vouched: false }`; an ABSENT `vouched` means vouched, which is exactly
-what every client shipped before the field assumed, so an old responder stays correctly read by a
-new requester.
-
-What the requester does with it is the subtle half, and the two proofs must NOT be swept together:
-
-- `peer-holds-more` is **discharged**. Its evidence was "this peer listed ids I lack", and an empty
-  symmetric difference with that same peer falsifies it outright - whether the peer is itself
-  awaiting is irrelevant, because the claim is about OUR store, not its.
-- `unreadable-frames` and `no-local-history` **survive**. A frame both devices lack is still lost,
-  and only a third device can produce it. Discharging them here would convert "nobody present has
-  it" into "you are complete" and stop the group ever asking the one device that might still hold it.
-
-The banner comes down in every case, because an answer arrived - and that, not the marker, was the
-visible symptom. Pinned by `historySolicit.test.ts` (the discharge table) and
-`actions.historyRequest.test.ts` (the responder now answers `identical` instead of staying silent);
-both were validated as negative controls against the unfixed code first.
-
-**Two claims made about this defect were wrong and are recorded because the error is instructive.**
-The banner was said to latch "for the life of the tab": it does not, because the 15-minute
-`AWAITING_SWEEP_INTERVAL_MS` sweep re-solicits on a visible tab and refreshes the phase, bounding the
-stale window. And "Nouvelle tentative automatique" was called a lie left over from the deleted retry
-ladder: deleting the LADDER did not delete the SWEEP, and the string was accurate throughout. **A
-claim that a user-facing string is stale must name the mechanism that would honour it and show that
-mechanism gone** - one grep for the sweep constant would have refuted both before they were written.
 
 ### There is ONE repair, and deleting the other one is what fixed the escalation (2026-08-10)
 
@@ -754,10 +711,10 @@ the diff repaired the conversation completely (`32 to send, 1 to pull`). Measure
 2026-08-10: ~450 frames/min across three devices for over ten minutes, nothing repaired. The
 `decrypt_failed` branch survives only to IGNORE the event from a peer running an older build.
 
-What replaces the ladder is not a better ladder. A detected loss marks `unreadable-frames` durably and
-solicits the diff, with nothing rate-limiting it. Termination is a property rather than a budget:
-each exchange strictly reduces the difference between the two stores, so the sequence converges on
-the empty diff, which is the only thing entitled to clear the marker.
+What replaces the ladder is not a better ladder. A detected loss reconciles the group, with nothing
+rate-limiting it beyond the 30 s coalescing of an identical burst. Termination is a property rather
+than a budget: each exchange strictly reduces the difference between the two stores, so the sequence
+converges on two matching state keys - and matching keys send nothing at all.
 
 #### The idempotence was briefly asked of the wrong witness (FIXED 2026-08-10)
 
@@ -777,20 +734,21 @@ Measured on prod 2026-08-10 with `heal-web.mjs`: twelve `LOST frame` lines on th
 solicitations in 139 lines of log, `escalated=false, history diff ran=false`, `PARTIAL - 2/14`, and a
 standing "history pending" banner with no attempt behind it.
 
-`isSolicitInFlight` in `historySolicit.ts` is the right witness and already existed - `scheduled.has(groupId) ||
-phase === 'pending'`, i.e. an attempt is scheduled or inside its response window - so the fix is a
-deletion, not an addition. Pinned by `setupMessageHandler.lostFrame.test.ts`, whose negative control
-against the guard is `Number of calls: 0`.
+The witness had to be one that expires with the attempt, not with the problem. Pinned by
+`setupMessageHandler.lostFrame.test.ts`, whose negative control against the guard is
+`Number of calls: 0`. The successor keeps that shape and drops the durable half entirely: what
+coalesces a burst today is a 30 s in-memory note per group, which cannot outlive the session and
+re-opens the moment an ask fails to go out.
 
 Same class as WP-GHOST-1's `updatedAt` and as an epoch verdict answering a generation question: **a
 piece of durable state is evidence only for the question it was written to answer.** The general form
 is in CLAUDE.md's DURABLE RULES; what this instance adds is that the two questions can differ only in
 their LIFETIME and still make the substitution wrong.
 
-One duration remains in the whole mechanism, the response window in `historyRequestPending.svelte.ts`.
-Its only job is to decide that an attempt went unanswered, which nothing else can observe, and it
-schedules no traffic. Re-asking rides on state EDGES instead: a reconnect, a peer coming back online,
-a newly detected loss, and a slow sweep as the floor under them.
+Two durations remain in the whole mechanism and neither schedules traffic: `DIGEST_TTL_MS` (60 s),
+which is how long a probe describes a store that has not moved, and `PROBE_COALESCE_MS` (30 s),
+which only decides whether the NEXT edge is a duplicate. Re-asking rides on state EDGES - see the
+trigger table above - and there is no sweep under them any more.
 
 ### Three defects that belonged to this work, or to nothing (FIXED 2026-08-07)
 
@@ -798,13 +756,14 @@ Left out of WP-HIST-2 on purpose, because each is only worth fixing once the exc
 All three are now fixed, and the rule each taught outlives it:
 
 - **The client ignored the `no_peer_online` the server already returns.** `deliveryKeepalivePost`
-  swallowed the response body, so the requester burnt a 30 s window waiting on a question that had
-  been answered immediately. It now returns the parsed body, and `sendHistoryRequest` surfaces
+  swallowed the response body, so the requester waited on a question that had been answered
+  immediately. It now returns the parsed body, and `sendHistoryRequest` surfaces
   `{ noPeerOnline }`. The name matters: the function returns `null` for a transport failure, a
   non-2xx, a non-JSON body and a JSON array alike, and **`null` means "no answer", never "no"** - a
   boolean would have made silence read as a negative and cancelled a legitimate retry.
 - **Nothing re-solicited when a peer came back**, even though presence is polled every 10 s.
-  `onPeersCameOnline` now fires `reSolicitAwaitingHistory` for every group still carrying a marker.
+  `onPeersCameOnline` now fires `reconcileGroupsAwaitingResponder` for every group whose last attempt
+  found nobody online.
   It is an **EDGE, not a level**: only offline -> online, so a user already known online says
   nothing new and a user seen online for the FIRST time is not "back" - treating the level as the
   edge would re-solicit on every page load. Its registration guards on `ctx.getStorage()`, because
@@ -814,60 +773,50 @@ All three are now fixed, and the rule each taught outlives it:
   request rather than turned away, so `await checkPresenceNow()` still means "presence is fresh" for
   everyone.
 
-### When completeness is checked - and the defect that silenced all of it
+### When a device compares - the triggers, and what stops it asking twice
 
-There is no periodic comparison of histories. There is a durable marker (30 days) written only when
-a client has EVIDENCE it is short, and five things that make it ask again:
+There is no periodic comparison and no durable evidence gating one. Asking costs a single frame, so a
+device asks whenever something could have changed the answer:
 
 | Trigger | Where |
 |---|---|
-| a frame proved lost | `setupMessageHandler.ts` -> `solicitHistory` |
-| every (re)connect | `initializeConnection.ts` -> `reSolicitAwaitingHistory` |
-| a peer going offline -> online | `onPeersCameOnline` |
-| a fresh join with no local history | `solicitHistoryIfMissing` |
-| a slow sweep while the session is open | `startAwaitingHistorySweep`, 15 min |
+| every (re)connect, over every local group | `initializeConnection.ts` -> `reconcileAllGroups` |
+| a frame proved lost during a replay | `history.ts`, `sawUnreadableFrame` -> `reconcileGroup` |
+| a frame proved lost live | `setupMessageHandler.ts` -> `reconcileGroup` |
+| a fresh Welcome join | `sessionAuth.ts`, `onWelcomeProcessed` |
+| a re-add recovery completing | `recovery.ts` |
+| a peer coming back online | `sessionAuth.ts` -> `reconcileGroupsAwaitingResponder` |
 
-Every row is an EDGE. There is no backoff ladder anywhere in this list: one edge produces one
-request, and a second edge while that request is outstanding produces nothing. The sweep is the floor,
-because every other row is an event a long-lived session is not guaranteed to see again - presence is
-only polled for users the UI actually DISPLAYS (`ConversationTile`, `ChatHeader`,
-`ChannelMembersSidebar`), so it covers DMs while the list is on screen and a channel only when its
-member panel is open. It pauses while the document is hidden, which also makes returning to the
-foreground fire it at once.
+Every row is an EDGE, and the list has no sweep in it - the 15-minute one is deleted. Two notes in
+`historyReconcile.ts` keep it from turning into traffic, and **both are in memory and both describe a
+MOMENT rather than a conversation**, which is precisely what the durable marker did not:
 
-**Two defects here, and the second is why the first kept happening.** In 2026-08-07 `pending` was read
-with `pending.has(groupId)` and nothing removed an entry when a burst ended unanswered, so a group
-whose peers were all offline during its burst was skipped by every later trigger for the life of the
-tab - the situation the retries exist for was the one that disabled them. It was patched by computing
-the end of the burst up front. The real fault was underneath: **"is an attempt outstanding" was being
-derived by comparing clocks, when it is a STATE that an event ends.** There is no burst now, so there
-is no schedule to reason about: `isSolicitInFlight` reads the response window, which the answer, the
-timeout or a teardown closes. A stale entry cannot outlive the thing it describes.
+- **`PROBE_COALESCE_MS` (30 s)** collapses a burst of identical triggers into one ask. It SCHEDULES
+  nothing: the window only decides whether the next edge is a duplicate, and it re-opens at once if
+  the election went out but the probe did not, because the responder is then waiting for a key that
+  will never arrive.
+- **the awaiting-responder set** answers exactly one question - "did the last attempt find nobody
+  online?" - and it is what the presence edge retries. It is written ONLY on an explicit
+  `noPeerOnline` from the server; an election that never left the device (offline, DNS, a 502) writes
+  nothing, because none of those is an answer about anybody else. That distinction is the whole
+  lesson of the marker it replaces, which was written on exactly this path and then outlived the
+  outage by thirty days.
 
-### What still has no answer: nobody online when a device joins
+Both are dropped per conversation by `forgetGroupReconciliation` (leaving a group, purging a
+conversation) and wholesale by `resetHistoryReconciliation` at logout. State describing a
+conversation may not outlive one.
 
-`notifyHistoryRequest` (`chat-delivery-service`) forwards to a random online member and otherwise
-returns `{ status: 'no_peer_online' }` - **and nothing else**. Compare `notifyWelcomeRequest`, which
-in the same situation persists the demand to Redis (`pending_welcome:<group>` plus
-`pending_welcome_notify:{userId}`, 24 h TTL) and sends `sendFcmWelcomeRequestPending` to wake a
-sleeping peer before returning the same string. So the Welcome survives an empty room and the
-history request does not: a device can be admitted to a group by the durable path and hold no
-history at all, with the server keeping no trace that anyone owes it one.
+### What happens when nobody is online
 
-The client covers that gap by asking again rather than by being answered later - the five triggers
-above - so the recovery always waits for THIS device to notice. The symmetric fix would be to store
-the request as `welcome_request` is stored, and it is **deliberately not done**, for a reason worth
-recording so it is not "fixed" later by reflex: a stored request drained hours afterwards arrives
-with no digest, because the digest rides inside MLS with a 60 s rendezvous, so the responder falls
-back to `sendFullHistoryBundle` - the whole-store dump this work exists to remove - for a device that
-may by then need nothing. The requester has to reconnect to READ anything anyway, and reconnecting
-re-solicits. So the gain would be latency, and the cost a full dump. The docstring on
-`notifyHistoryRequest` already recorded the related half of this decision: no FCM wake, because a
-missing Welcome BLOCKS a group while missing history only degrades it.
+The election returns `no_peer_online`, nothing is sent, and the group is noted as awaiting a
+responder. Nothing retries on a schedule: the next connection asks again anyway, and a peer coming
+back online retries only the groups that found nobody - re-asking every group on a presence edge
+would put the mechanism straight back where the sweep it replaces was.
 
-One gap none of this closes: a device holding SOME of a conversation, missing older messages, and
-never failing to decrypt anything carries no marker - so it never asks. It learns of the difference
-only opportunistically, when it happens to be the elected responder to someone else's solicitation.
+A group this device no longer holds is dropped from that set rather than re-elected: there is
+nothing to reconcile it against, and asking the server about a group we are not in is a question with
+no honest answer.
+
 
 ### Devices compare identities, never counts
 

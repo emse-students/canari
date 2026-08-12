@@ -1,16 +1,17 @@
 import { handleSystemEvent } from './systemMessageHandler';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
-import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
-import { markAwaitingHistory, isAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
 
 /**
  * A `history_bundle` is a GROUP BROADCAST, so every member sees an answer meant for one device.
  *
- * Taking the messages is free - they dedupe by id - but taking the ANSWER is not: it discharges the
- * awaiting-history marker, and a device that never asked has had nothing compared against its store.
- * Before the `to` field, one repair between two peers silenced the solicitation of every other
- * member of the group, permanently: the marker was gone, so no reconnect, sweep or election ever
- * asked again, and whatever was missing here stayed missing.
+ * Deciding what to do with somebody else's answer used to be delicate: a bundle DISCHARGED the
+ * receiver's durable awaiting-history marker, so reading one addressed elsewhere stopped this
+ * device's own solicitation on another device's evidence - permanently, since nothing re-armed it.
+ * That is why `to` exists.
+ *
+ * There is no marker any more, and these cases pin what replaced the rule rather than the rule: the
+ * messages are taken whoever they were for, because taking them is free and the comparison that
+ * decides whether anything is still missing runs again on the next connection.
  */
 const ME = 'me';
 const MY_DEVICE = 'device-me';
@@ -45,27 +46,20 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
 /** One message from the peer, in the wire shape a bundle carries. */
 const BUNDLE_MSG = { id: 'm1', senderId: 'peer', content: 'hi', timestamp: 1000 };
 
-beforeEach(() => {
-  localStorage.clear();
-  historyRequestPendingStore.noteReceived(GROUP);
-});
-afterEach(() => localStorage.clear());
-
 describe('history_bundle addressing', () => {
-  it("keeps our marker when the bundle answers ANOTHER device's request", async () => {
-    markAwaitingHistory(ME, GROUP, 'no-local-history');
+  it('ingests a bundle addressed at THIS device', async () => {
     const ctx = makeCtx();
 
     await handleSystemEvent(
       'history_bundle',
-      { messages: [], to: digestIdentity('someone-else', 'their-device') },
+      { messages: [BUNDLE_MSG], to: digestIdentity(ME, MY_DEVICE) },
       ctx as any
     );
 
-    expect(isAwaitingHistory(ME, GROUP)).toBe(true);
+    expect(ctx.batchAddMessages).toHaveBeenCalled();
   });
 
-  it('still INGESTS a bundle addressed elsewhere - the messages are free to take', async () => {
+  it("ingests a bundle answering ANOTHER device's request - the messages are free to take", async () => {
     const ctx = makeCtx();
 
     await handleSystemEvent(
@@ -77,65 +71,41 @@ describe('history_bundle addressing', () => {
     expect(ctx.batchAddMessages).toHaveBeenCalled();
   });
 
-  it('discharges the marker when the bundle is addressed at THIS device', async () => {
-    markAwaitingHistory(ME, GROUP, 'no-local-history');
+  it('ingests a bundle addressed at another DEVICE of our own user', async () => {
     const ctx = makeCtx();
 
     await handleSystemEvent(
       'history_bundle',
-      { messages: [], to: digestIdentity(ME, MY_DEVICE) },
+      { messages: [BUNDLE_MSG], to: digestIdentity(ME, 'another-device-of-mine') },
       ctx as any
     );
 
-    expect(isAwaitingHistory(ME, GROUP)).toBe(false);
+    expect(ctx.batchAddMessages).toHaveBeenCalled();
   });
 
-  it('matches the addressee case-insensitively, as `digestIdentity` normalises the user half', async () => {
-    markAwaitingHistory(ME, GROUP, 'no-local-history');
+  it('ingests a bundle that names no addressee at all', async () => {
+    const ctx = makeCtx();
+
+    await handleSystemEvent('history_bundle', { messages: [BUNDLE_MSG] }, ctx as any);
+
+    expect(ctx.batchAddMessages).toHaveBeenCalled();
+  });
+
+  it('merges the conversation state carried by a bundle meant for somebody else', async () => {
+    // Read watermarks and the floor are `max` merges and cost nothing to repeat, so an answer
+    // passing by is as good a carrier as one addressed here.
     const ctx = makeCtx();
 
     await handleSystemEvent(
       'history_bundle',
-      { messages: [], to: digestIdentity(ME, MY_DEVICE).toUpperCase() },
+      {
+        messages: [],
+        to: digestIdentity('someone-else', 'their-device'),
+        readWatermarks: { peer: 5000 },
+      },
       ctx as any
     );
 
-    expect(isAwaitingHistory(ME, GROUP)).toBe(false);
-  });
-
-  it('ignores a bundle addressed at another DEVICE of our own user', async () => {
-    // A user with three devices must be able to solicit from one without the other two concluding
-    // they are complete on the strength of an answer that diffed a different store.
-    markAwaitingHistory(ME, GROUP, 'no-local-history');
-    const ctx = makeCtx();
-
-    await handleSystemEvent(
-      'history_bundle',
-      { messages: [], to: digestIdentity(ME, 'another-device-of-mine') },
-      ctx as any
-    );
-
-    expect(isAwaitingHistory(ME, GROUP)).toBe(true);
-  });
-
-  describe('a legacy bundle, from a peer too old to address one', () => {
-    it('is answered only while OUR OWN solicitation is outstanding', async () => {
-      markAwaitingHistory(ME, GROUP, 'no-local-history');
-      historyRequestPendingStore.start(GROUP);
-      const ctx = makeCtx();
-
-      await handleSystemEvent('history_bundle', { messages: [] }, ctx as any);
-
-      expect(isAwaitingHistory(ME, GROUP)).toBe(false);
-    });
-
-    it('leaves the marker alone when we asked for nothing - the retry is the cheap failure', async () => {
-      markAwaitingHistory(ME, GROUP, 'no-local-history');
-      const ctx = makeCtx();
-
-      await handleSystemEvent('history_bundle', { messages: [] }, ctx as any);
-
-      expect(isAwaitingHistory(ME, GROUP)).toBe(true);
-    });
+    expect(ctx.conversations.get(GROUP).readWatermarks).toEqual({ peer: 5000 });
   });
 });

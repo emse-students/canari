@@ -1,6 +1,10 @@
 import { encryptData, decryptData } from '../encryption';
 import { normalizeConversationLifecycle } from '$lib/utils/chat/groupLifecycle';
 import { parseHistoryFloor } from '$lib/utils/chat/historyWindow';
+import {
+  invalidateAllHistoryStateKeys,
+  invalidateHistoryStateKey,
+} from '$lib/utils/chat/historyStateKey';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import type {
   ConversationMeta,
@@ -234,6 +238,7 @@ export class IndexedDbStorage implements IStorage {
   }
 
   private deleteMessagesInTransaction(tx: IDBTransaction, conversationId: string): void {
+    invalidateHistoryStateKey(conversationId);
     const index = tx.objectStore('messages').index('byConversation');
     const cursorReq = index.openCursor(IDBKeyRange.only(conversationId));
     cursorReq.onerror = () => {
@@ -263,6 +268,9 @@ export class IndexedDbStorage implements IStorage {
    * PBKDF2 derivation or per-message salt needed).
    */
   async saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void> {
+    // Every write through this class passes here - `saveMessage` and `updateMessage` both delegate
+    // to it - so this is where the reconciliation's cached state key is dropped.
+    for (const msg of msgs) invalidateHistoryStateKey(msg.conversationId);
     const db = this.ensureDb();
     const encryptedMessages = await Promise.all(
       msgs.map(async (msg) => {
@@ -446,6 +454,7 @@ export class IndexedDbStorage implements IStorage {
 
   /** Non-destructive insert: write the encrypted row only if no row with this id already exists. */
   async importEncryptedRow(row: EncryptedMessageRow): Promise<void> {
+    invalidateHistoryStateKey(row.conversationId);
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('messages', 'readwrite');
@@ -468,6 +477,8 @@ export class IndexedDbStorage implements IStorage {
 
   /** Scan all messages and delete any whose timestamp is older than `maxAgeMs` milliseconds; returns the number of deleted rows. */
   async deleteOldMessages(maxAgeMs: number): Promise<number> {
+    // Age-based, so it cannot name the conversations it touched: everything goes.
+    invalidateAllHistoryStateKeys();
     const db = this.ensureDb();
     const cutoff = Date.now() - maxAgeMs;
     return new Promise((resolve, reject) => {
@@ -588,6 +599,7 @@ export class IndexedDbStorage implements IStorage {
 
   /** Erase all rows from the conversations, messages, and outbox stores in a single transaction. */
   async clear(): Promise<void> {
+    invalidateAllHistoryStateKeys();
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(['conversations', 'messages', 'outbox'], 'readwrite');

@@ -31,7 +31,10 @@ import {
   leaveGroupAndBroadcast,
   isGroupActiveOnServer,
   purgeOrphanGroup,
+  historyRangeStartFor,
+  sendHistoryRangeRequest,
 } from '$lib/utils/chat/groupActions';
+import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import {
   createNewGroup as createGroup,
   inviteMembersToGroup,
@@ -61,6 +64,15 @@ import {
 
 /** Messages loaded per scroll-up DB page request. */
 const OLDER_MESSAGES_PAGE = 50;
+
+/**
+ * How many messages one scrollback ask may bring back.
+ *
+ * A page, not a store: the reader asks again by scrolling further, so this bounds the answer without
+ * bounding what they can eventually reach. Matched to {@link OLDER_MESSAGES_PAGE} so a page fetched
+ * from a peer fills the list exactly as a page read from disk does.
+ */
+const SCROLLBACK_PAGE = OLDER_MESSAGES_PAGE;
 /** Skip channel REST history refetch when the in-memory copy was loaded recently. */
 const CHANNEL_HISTORY_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -502,6 +514,10 @@ export function useConversations() {
       });
     } finally {
       conversationsRestored = true;
+      // A frame that reached the handler while this map was still empty was left in the server
+      // queue rather than dropped. The restore finishing is what makes it readable, so it is the
+      // trigger to ask again - there is no timer waiting to notice.
+      ctx.ensureMls().notifyConversationsRestored();
     }
   }
 
@@ -550,6 +566,72 @@ export function useConversations() {
 
     conversations.set(contactName, { ...current, messages: merged });
     return older.length === OLDER_MESSAGES_PAGE;
+  }
+
+  /**
+   * Asks a peer for the page BELOW what this device holds, once the local store is exhausted.
+   *
+   * The scrollback. It exists because the device window is finite - ninety days on the web - so a
+   * browser that never received the older past has no way to obtain it except from a member that
+   * did. Same election and same rendezvous as the reconciliation, different boundary: this one is
+   * driven by a reader scrolling, not by a connection.
+   *
+   * Bounded by construction: it asks for the page immediately before the oldest message it holds,
+   * and the reader asks again by scrolling further. A conversation of any size is paged the same way.
+   *
+   * @returns `asked` when a peer was elected and the ask went out - the messages arrive later, as an
+   *          ordinary bundle; `no-peer` when nobody was online to answer, which is the one outcome
+   *          worth telling the reader about; `unavailable` when this device cannot ask at all.
+   */
+  async function requestOlderFromPeers(
+    contactName: string,
+    ctx: ConversationContext
+  ): Promise<'asked' | 'no-peer' | 'unavailable'> {
+    if (isChannelConversationId(contactName)) return 'unavailable';
+    const convo = conversations.get(contactName);
+    if (!convo || !ctx.storage) return 'unavailable';
+
+    const timestamps = convo.messages
+      .map((m) =>
+        m.timestamp instanceof Date
+          ? m.timestamp.getTime()
+          : new SvelteDate(m.timestamp as any).getTime()
+      )
+      .filter((t) => Number.isFinite(t));
+    // Nothing held means nothing to ask BEFORE. That case is the reconciliation's, not this one's:
+    // an empty conversation is repaired by the state key comparison on connect.
+    if (timestamps.length === 0) return 'unavailable';
+    const before = Math.min(...timestamps);
+
+    const since = await historyRangeStartFor(convo.id, ctx.storage);
+    if (before <= since) {
+      // We already hold everything down to the floor of our own window. There is nothing below it
+      // that anybody is entitled to send us.
+      ctx.log(`[HISTORY_RANGE] ${convo.id.slice(0, 8)}… already reaches its floor - not asking`);
+      return 'unavailable';
+    }
+
+    const mls = ctx.ensureMls();
+    let outcome;
+    try {
+      outcome = await mls.sendHistoryRequest(convo.id);
+    } catch (e) {
+      ctx.log(`[HISTORY_RANGE] could not reach the service: ${String(e).slice(0, 120)}`);
+      return 'no-peer';
+    }
+    if (outcome?.noPeerOnline) return 'no-peer';
+
+    const sent = await sendHistoryRangeRequest(
+      convo.id,
+      {
+        from: digestIdentity(ctx.userId, mls.getDeviceId()),
+        before,
+        limit: SCROLLBACK_PAGE,
+        since,
+      },
+      { mlsService: mls, log: ctx.log }
+    );
+    return sent ? 'asked' : 'unavailable';
   }
 
   // ── Selection + navigation ────────────────────────────────────────────────
@@ -979,7 +1061,6 @@ export function useConversations() {
     await purgeConversation({
       conversations,
       key: contactKey,
-      userId: ctx.userId,
       deleteStored: ctx.storage ? (key) => ctx.storage!.deleteConversation(key) : undefined,
     });
     selectedContact = null;
@@ -1141,6 +1222,8 @@ export function useConversations() {
     loadAndRestoreConversations,
     /** Prepends an older page of messages from IndexedDB to the conversation. */
     loadOlderMessages,
+    /** Asks a peer for the page below what this device holds, once the local store is exhausted. */
+    requestOlderFromPeers,
     /** Selects a conversation without a ctx (clears unread badge). */
     selectConversation,
     /** Selects a conversation with a ctx (also verifies membership). */

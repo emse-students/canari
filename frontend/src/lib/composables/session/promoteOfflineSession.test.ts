@@ -6,7 +6,6 @@ const initializeConnection = vi.hoisted(() => vi.fn());
 const flushOutbox = vi.hoisted(() => vi.fn());
 const applyOutboxPendingStatuses = vi.hoisted(() => vi.fn(async () => {}));
 const startPushService = vi.hoisted(() => vi.fn(async () => {}));
-const onResume = vi.hoisted(() => vi.fn());
 const runGroupDiscoveryImpl = vi.hoisted(() => vi.fn());
 const startConnectionWatchdogImpl = vi.hoisted(() => vi.fn());
 const startSyncWatchdogImpl = vi.hoisted(() => vi.fn());
@@ -21,9 +20,6 @@ vi.mock('$lib/utils/chat/connection', () => ({
 }));
 vi.mock('$lib/utils/chat/outbox', () => ({ flushOutbox, applyOutboxPendingStatuses }));
 vi.mock('$lib/services/PushNotificationService', () => ({ startPushService }));
-vi.mock('$lib/stores/historyRequestPending.svelte', () => ({
-  historyRequestPendingStore: { onResume },
-}));
 vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => true }));
 vi.mock('./sessionConnection', () => ({ runGroupDiscoveryImpl, startConnectionWatchdogImpl }));
 vi.mock('./sessionWatchdogs', () => ({ startSyncWatchdogImpl }));
@@ -84,7 +80,8 @@ describe('promoteOfflineSession', () => {
     expect(state.offlineSession).toBe(false);
     expect(initializeConnection).toHaveBeenCalledTimes(1);
     expect(flushOutbox).toHaveBeenCalledTimes(1);
-    expect(onResume).toHaveBeenCalledTimes(1);
+    // Nothing here reconciles history: `initializeConnection` ends with a reconciliation pass over
+    // every local group, so a promotion that re-opens the socket has already asked.
     expect(startPushService).toHaveBeenCalledWith(
       'https://example.test',
       'fresh-token',

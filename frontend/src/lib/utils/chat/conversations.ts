@@ -18,7 +18,7 @@ import { migrateFromLocalStorage } from '../migration';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
 import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/displayName';
-import { forgetAwaitingHistory } from './historySolicit';
+import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
 import { isUnreadForUser, watermarkFor } from './readState';
 import { isChannelConversationId } from './channelCrypto';
@@ -181,16 +181,15 @@ export async function retireConversation(params: {
   key: string;
   /** The MLS group id, which is what the group-keyed leftovers are keyed by. */
   groupId: string;
-  userId: string;
   saveConversation?: (key: string) => Promise<void>;
   /** Extra fields to merge into the row, for callers that repair it in the same write. */
   patch?: Partial<Conversation>;
 }): Promise<boolean> {
-  const { conversations, key, groupId, userId, saveConversation, patch } = params;
+  const { conversations, key, groupId, saveConversation, patch } = params;
   const convo = conversations.get(key);
   if (!convo || convo.lifecycle === 'removed') return false;
   conversations.set(key, { ...convo, ...patch, lifecycle: 'removed' });
-  forgetAwaitingHistory(userId, groupId);
+  forgetGroupReconciliation(groupId);
   await saveConversation?.(key).catch(() => {});
   return true;
 }
@@ -209,9 +208,9 @@ export async function retireConversation(params: {
  * `lifecycle: 'removed'`, it deletes the row instead, so it was never a writer of the state that
  * test watches. Two exits, two seams, one cleanup.
  *
- * Harmless today, because `reSolicitAwaitingHistory` filters on `mls.getLocalGroups()` and a group
- * that is gone can never re-arm the banner - an orphan marker just sits there until its 30-day
- * horizon. That is a reason it was not visible, not a reason to leave it.
+ * The state it forgets is in memory now rather than in `localStorage`, so an orphan can no longer
+ * outlive a session - but the seam stays, because the rule it enforces is about lifetimes and not
+ * about where the value happens to live.
  *
  * @returns whether a row was actually removed
  */
@@ -220,13 +219,12 @@ export async function purgeConversation(params: {
   key: string;
   /** The MLS group id. Falls back to the row's own id when the caller only holds the key. */
   groupId?: string;
-  userId: string;
   deleteStored?: (key: string) => Promise<void>;
 }): Promise<boolean> {
-  const { conversations, key, userId, deleteStored } = params;
+  const { conversations, key, deleteStored } = params;
   const convo = conversations.get(key);
   const groupId = params.groupId ?? convo?.id;
-  if (groupId) forgetAwaitingHistory(userId, groupId);
+  if (groupId) forgetGroupReconciliation(groupId);
   await deleteStored?.(key).catch(() => {});
   return conversations.delete(key);
 }
@@ -245,7 +243,7 @@ export function markConversationDeletedRemotely(
   if (!key) return false;
   const convo = conversations.get(key);
   if (!convo || convo.lifecycle === 'removed') return false;
-  void retireConversation({ conversations, key, groupId, userId, saveConversation });
+  void retireConversation({ conversations, key, groupId, saveConversation });
   return true;
 }
 

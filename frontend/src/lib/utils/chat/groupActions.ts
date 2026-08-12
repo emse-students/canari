@@ -6,9 +6,9 @@ import type { ReadWatermarks } from '$lib/types';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
-import { isAwaitingHistory } from './awaitingHistoryRegistry';
-import { forgetAwaitingHistory } from './historySolicit';
+import { forgetGroupReconciliation } from './historyReconcile';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
+import { cachedHistoryStateKey } from './historyStateKey';
 import {
   buildHistoryDigest,
   chunkIds,
@@ -145,10 +145,9 @@ export async function deleteGroupAndBroadcast(params: {
     /* non-blocking */
   }
 
-  // 4. Forget any outstanding "this conversation is missing history" state. Nothing else will:
-  // every clear path waits for a bundle to arrive, and the group we have just deleted from the
-  // server cannot produce one.
-  forgetAwaitingHistory(userId, groupId);
+  // 4. Forget any outstanding reconciliation state for this conversation - per-conversation state
+  // may not outlive the conversation, and the group we have just deleted cannot answer anything.
+  forgetGroupReconciliation(groupId);
 
   // 5. Persist MLS state (forgetGroup modified the WASM tree)
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
@@ -342,15 +341,14 @@ export async function purgeLocalConversationRecord(params: {
   conversations: Map<string, Conversation>;
   contactKey: string;
   groupId: string;
-  userId: string;
   deleteConversation?: (key: string) => Promise<void>;
   log?: (msg: string) => void;
 }): Promise<void> {
-  const { conversations, contactKey, groupId, userId, deleteConversation, log } = params;
+  const { conversations, contactKey, groupId, deleteConversation, log } = params;
   localStorage.removeItem(`discovery_pending:${groupId}`);
   // Same reason as the `discovery_pending` key above, and the same lifetime: per-conversation local
   // state may not outlive the conversation. This one was user-visible when it did.
-  forgetAwaitingHistory(userId, groupId);
+  forgetGroupReconciliation(groupId);
   if (deleteConversation) {
     await deleteConversation(contactKey).catch(() => {});
   }
@@ -376,7 +374,7 @@ export async function purgeOrphanGroup(params: {
   if (mlsChanged) {
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
   }
-  await purgeLocalConversationRecord({ ...uiParams, groupId, userId, log });
+  await purgeLocalConversationRecord({ ...uiParams, groupId, log });
 }
 
 /** Returns whether the group is still active for this user on the server (null = unknown). */
@@ -474,32 +472,31 @@ function serializeForBundle(m: StoredMessage) {
  *
  * **WHY EVERY BUNDLE CARRIES A `to`.** The frame is an MLS group broadcast - there is no such thing
  * as a private send here - so every member of the conversation receives an answer meant for ONE
- * device. The messages themselves are harmless to over-deliver (the receiver dedupes by id), but the
- * ANSWER is not: a bundle discharges the receiver's awaiting-history marker, and a device that was
- * never asked has had nothing compared against its store. It would drop a proven marker on somebody
- * else's evidence and stop asking, which is how history is lost rather than merely delayed.
- *
- * `to` is the requester's `digestIdentity` - user AND device, because a user with three devices
- * must be able to solicit from one without discharging the markers of the other two. Addressing is
- * the ONLY thing it does: it is not a secrecy boundary and must never be read as one.
+ * device. `to` is the requester's `digestIdentity` - user AND device, because a user with three
+ * devices must be able to solicit from one of them and be answered on that one. Addressing is the
+ * ONLY thing it does: it is not a secrecy boundary and must never be read as one.
  *
  * It is deliberately not the `recipients` field of `POST /send`: MLS re-encrypts per recipient set,
  * and narrowing the set on an application message burns the sender ratchet budget
  * (`sender_ratchet_config` is (2000, 2000)) into a generation gap the other members can never close.
+ *
+ * There is no `vouched` flag any more, and its absence is the point. It existed to tell a durable
+ * marker whether it might be discharged - "I compared my whole store and you are complete" as
+ * opposed to "our stores merely look the same". Nothing carries a marker now: the comparison is
+ * re-run on the next connection, so an answer no longer has to certify anything about the future.
  */
 function bundleFrame(
   messages: unknown[],
   to: string,
-  opts: { vouched?: boolean; state?: ConversationHistoryState } = {}
+  opts: { state?: ConversationHistoryState } = {}
 ): Uint8Array {
-  const { vouched, state } = opts;
+  const { state } = opts;
   return encodeAppMessage(
     mkSystem(
       'history_bundle',
       JSON.stringify({
         messages,
         to,
-        ...(vouched === false ? { vouched: false } : {}),
         // The conversation's own state - read watermarks and the shared history floor. A handful of
         // numbers, sent whole with every frame because both merges are `max` and therefore free to
         // repeat. Sending them once would make their delivery depend on which chunk survived.
@@ -565,12 +562,10 @@ export async function historyRangeStartFor(
  * The recipient deduplicates messages by `id` on receipt - multiple calls are idempotent.
  * Stops at the first chunk error to avoid spamming the network.
  *
- * **An empty group is answered, not ignored.** Returning silently made "there is no history" and
- * "nobody answered" the same signal to the requester, so every join of a brand-new conversation
- * timed out into `pending-offline`, showed the offline banner and kept its durable awaiting-history
- * marker - re-soliciting on every reconnect for the 30 days of the give-up horizon. An empty bundle
- * closes that loop (the receiver clears the marker before it even reads `messages`). It is only sent
- * when our emptiness is authoritative: see {@link isAwaitingHistory}.
+ * **An empty group is answered, not ignored**, and this is the one path where an empty bundle still
+ * earns its frame: the receiver is a member being INVITED, so it has no conversation row yet, and
+ * the bundle is what hands it the shared floor and the read watermarks. Everywhere else an empty
+ * selection is simply not sent - see {@link sendHistoryBundleForIds}.
  */
 export async function sendFullHistoryBundle(
   groupId: string,
@@ -579,14 +574,12 @@ export async function sendFullHistoryBundle(
     deviceKeyB64: string;
     mlsService: IMlsService;
     log: (msg: string) => void;
-    /** OUR user id, for the authoritative-emptiness check. Not the requester's. */
-    selfUserId: string;
     /** The device that asked, as `digestIdentity` spells it - see {@link bundleFrame}. */
     to: string;
   },
   chunkSize = 200
 ): Promise<void> {
-  const { storage, deviceKeyB64, mlsService, log, selfUserId, to } = deps;
+  const { storage, deviceKeyB64, mlsService, log, to } = deps;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
@@ -603,12 +596,6 @@ export async function sendFullHistoryBundle(
   }
   const state = await storedConversationState(groupId, storage);
   if (messages.length === 0) {
-    if (isAwaitingHistory(selfUserId, groupId)) {
-      log(
-        `[HISTORY_BUNDLE] Empty and still awaiting history ourselves for ${groupId.slice(0, 8)}… - staying silent`
-      );
-      return;
-    }
     // A group with no messages can still have read state and a floor worth handing over.
     const bytes = bundleFrame([], to, { state });
     try {
@@ -669,20 +656,151 @@ async function sendBundleChunks(
  */
 export async function readHistoryEntries(
   groupId: string,
-  { storage, deviceKeyB64, log }: HistoryStoreDeps
+  deps: HistoryStoreDeps
 ): Promise<HistoryEntry[] | null> {
+  const messages = await readHistoryMessages(groupId, deps);
+  if (messages === null) return null;
+  return messages.map((m) => ({
+    id: m.id,
+    timestamp: typeof m.timestamp === 'number' ? m.timestamp : Number(m.timestamp),
+  }));
+}
+
+/**
+ * Reads the whole local store for `groupId`, or `null` when it cannot be read.
+ *
+ * The distinction {@link readHistoryEntries} rests on, kept in one place: an empty store is a fact
+ * worth telling a peer, a failed read is a claim we are not entitled to make. Exposed separately
+ * because the reconciliation needs the MESSAGES, not just their ids and dates - a state key covers
+ * deletions, edits and reactions, none of which a manifest entry carries - and reading the store
+ * twice for one exchange is the cost this whole mechanism exists to avoid.
+ */
+export async function readHistoryMessages(
+  groupId: string,
+  { storage, deviceKeyB64, log }: HistoryStoreDeps
+): Promise<StoredMessage[] | null> {
   if (!storage) return null;
   try {
-    const messages = await storage.getMessages(groupId, deviceKeyB64);
-    return messages.map((m) => ({
-      id: m.id,
-      timestamp: typeof m.timestamp === 'number' ? m.timestamp : Number(m.timestamp),
-    }));
+    return await storage.getMessages(groupId, deviceKeyB64);
   } catch (e) {
     log(
       `[HISTORY_DIGEST] Store read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`
     );
     return null;
+  }
+}
+
+/**
+ * The state key for `groupId` over this device's own window, reading the store only on a cache miss.
+ *
+ * Both sides of the comparison go through here: the asker to say what it holds, the responder to
+ * check whether it agrees. That is what makes the common case free - two devices that agree exchange
+ * one small frame and neither opens its store.
+ */
+export async function historyStateKeyFor(
+  groupId: string,
+  since: number,
+  deps: HistoryStoreDeps
+): Promise<string | null> {
+  return cachedHistoryStateKey(groupId, since, () => readHistoryMessages(groupId, deps));
+}
+
+/**
+ * Tells the elected responder what this device holds, in 16 characters, and asks whether it agrees.
+ *
+ * The FIRST leg of every reconciliation and usually the only one. A digest describes a store in
+ * proportion to its size and costs a walk on both sides; this costs one frame and, on a cache hit,
+ * no store read at all. Only when the two keys differ is a digest worth exchanging - see
+ * `handleHistoryRequest`, which asks for one at that point and not before.
+ *
+ * Like the digest it rides inside MLS and never over the WebSocket: what a device holds is metadata
+ * the server does not have and must not learn.
+ *
+ * @returns `false` when nothing went out - an unreadable store, or a send that failed. The caller
+ *          treats that as "this group was not reconciled", never as "we agree".
+ */
+export async function sendHistoryStateKey(
+  groupId: string,
+  from: string,
+  deps: HistoryStoreDeps
+): Promise<boolean> {
+  const { mlsService, log, storage } = deps;
+  const since = await historyRangeStartFor(groupId, storage);
+  const key = await historyStateKeyFor(groupId, since, deps);
+  if (key === null) {
+    log(`[HISTORY_STATE] Cannot describe ${groupId.slice(0, 8)}… - no readable store`);
+    return false;
+  }
+
+  const bytes = encodeAppMessage(mkSystem('history_state', JSON.stringify({ from, key, since })));
+  try {
+    await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
+    log(
+      `[HISTORY_STATE] Sent for ${groupId.slice(0, 8)}… - ${key}, from ${new Date(since).toISOString()}`
+    );
+    return true;
+  } catch (e) {
+    log(`[HISTORY_STATE] Send failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
+    return false;
+  }
+}
+
+/**
+ * The responder's answer to a state key that did NOT match: *"we differ - describe yourself
+ * properly."*
+ *
+ * It is addressed at the asking device rather than broadcast, for the same reason every other leg
+ * is: building a digest is the expensive half of this mechanism, and only one device was elected to
+ * do it. The asker answers with `sendHistoryDigest`, which lands on the SAME rendezvous - the second
+ * probe of one solicitation, not a new one.
+ */
+export async function sendHistoryDigestRequest(
+  groupId: string,
+  request: { from: string; to: string },
+  { mlsService, log }: HistorySendDeps
+): Promise<void> {
+  const bytes = encodeAppMessage(
+    mkSystem('history_digest_request', JSON.stringify({ ...request }))
+  );
+  try {
+    await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
+    log(
+      `[HISTORY_STATE] Keys differ for ${groupId.slice(0, 8)}… - asked ${request.to} to describe`
+    );
+  } catch (e) {
+    log(
+      `[HISTORY_STATE] Could not ask ${request.to} to describe ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`
+    );
+  }
+}
+
+/**
+ * Asks the elected responder for a bounded slice of history OLDER than anything this device holds -
+ * the scrollback, driven by a reader rather than by a connection.
+ *
+ * It states `before` (we hold nothing older than this) and `limit` (how much we will take at once),
+ * so the answer is bounded whatever the conversation's size. `since` is stated too and is what stops
+ * the ask from reaching below the shared floor.
+ *
+ * A range is a third kind of probe on the same rendezvous rather than a mechanism of its own,
+ * because it is the same question asked at a different boundary - and it must go through the same
+ * election, or every member would answer one reader's scroll.
+ */
+export async function sendHistoryRangeRequest(
+  groupId: string,
+  request: { from: string; before: number; limit: number; since: number },
+  { mlsService, log }: HistorySendDeps
+): Promise<boolean> {
+  const bytes = encodeAppMessage(mkSystem('history_range', JSON.stringify({ ...request })));
+  try {
+    await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
+    log(
+      `[HISTORY_RANGE] Asked for up to ${request.limit} message(s) before ${new Date(request.before).toISOString()} in ${groupId.slice(0, 8)}…`
+    );
+    return true;
+  } catch (e) {
+    log(`[HISTORY_RANGE] Send failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
+    return false;
   }
 }
 
@@ -791,31 +909,17 @@ export async function sendHistoryPull(
 }
 
 /**
- * What an EMPTY selection means, which is a property of what the responder COMPARED - never of how
- * much it happens to be sending. The three answers are not interchangeable and a boolean could only
- * carry two of them, which is how the third came to be expressed as silence and deadlocked a pair of
- * peers (WP-HISTBANNER-1).
- *
- * - `complete` - we compared our WHOLE store against the peer's digest and it is missing nothing,
- *   and we are not ourselves awaiting, so we may vouch for that. "You are complete" and "nobody
- *   answered" must not be the same signal: conflating them leaves a device that is already up to
- *   date showing the pending banner and re-soliciting for the whole 30-day give-up horizon.
- * - `identical` - we compared our WHOLE store and the peer lacks nothing we hold, but we are
- *   ourselves awaiting history, so we cannot vouch for completeness. We can still state the fact we
- *   DID measure - our stores are identical - which is exactly enough to falsify `peer-holds-more`
- *   on the requester and nothing more. Silence here is what let two waiting peers wait on each
- *   other for ever: each was entitled to answer and neither did.
- * - `silence` - we were asked for a SUBSET (a pull) and hold none of it, or our own read failed.
- *   Either way we measured nothing about the peer's completeness, so we say nothing and let another
- *   member answer.
- */
-export type EmptyBundleMeaning = 'complete' | 'identical' | 'silence';
-
-/**
  * Sends only the messages named by `ids`, which is what a diff resolves to.
  *
- * `emptyMeans` decides what an empty selection says; see {@link EmptyBundleMeaning}. `to` addresses
- * the answer at the device that asked; see {@link bundleFrame}.
+ * `to` addresses the answer at the device that asked; see {@link bundleFrame}.
+ *
+ * **An empty selection sends nothing at all**, and that is a simplification the state key paid for.
+ * An empty bundle used to be an ANSWER - "I compared my whole store and you are missing nothing" -
+ * because a durable marker on the other side needed something authoritative to discharge it. There
+ * is no marker: a device that receives nothing simply holds what it held, and the comparison runs
+ * again on the next connection. So the three-way `emptyMeans` and the `vouched` flag it put on the
+ * wire are both gone, along with the deadlock they existed to work around (two peers each entitled
+ * to answer, neither able to vouch).
  *
  * **This is where the asker's window is honoured, and the only place it can be.** The clip is by
  * timestamp, and an id list carries no timestamps - only the device HOLDING a message knows when it
@@ -823,40 +927,34 @@ export type EmptyBundleMeaning = 'complete' | 'identical' | 'silence';
  * than every caller filtering an id list it cannot date.
  *
  * `since` defaults to 0, which answers in full. That is what a path with no window to state means:
- * the bundle pushed to a member being invited was asked for by nobody, and a requester too old to
- * state one is owed the whole store. Over-answering costs bandwidth; under-answering loses messages.
+ * the bundle pushed to a member being invited was asked for by nobody. Over-answering costs
+ * bandwidth; under-answering loses messages.
  */
 export async function sendHistoryBundleForIds(
   groupId: string,
   ids: readonly string[],
   deps: HistoryStoreDeps,
-  opts: { emptyMeans: EmptyBundleMeaning; to: string; chunkSize?: number; since?: number }
+  opts: { to: string; chunkSize?: number; since?: number }
 ): Promise<void> {
-  const { storage, deviceKeyB64, mlsService, log } = deps;
-  const { emptyMeans, to, chunkSize = 200, since = 0 } = opts;
+  const { storage, mlsService, log } = deps;
+  const { to, chunkSize = 200, since = 0 } = opts;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
   }
 
-  const state = await storedConversationState(groupId, storage);
   const wanted = new Set(ids);
-  let selected: StoredMessage[] = [];
-  let clipped = 0;
-  if (wanted.size > 0) {
-    try {
-      const held = (await storage.getMessages(groupId, deviceKeyB64)).filter((m) =>
-        wanted.has(m.id)
-      );
-      selected = held.filter((m) => isWithinHistoryRange(Number(m.timestamp), since));
-      clipped = held.length - selected.length;
-    } catch (e) {
-      // A read that FAILED proves nothing about the group: stay silent so the requester retries
-      // against another member rather than concluding it is already complete.
-      log(`[HISTORY_BUNDLE] Read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
-      return;
-    }
+  if (wanted.size === 0) return;
+
+  const held = await readHistoryMessages(groupId, deps);
+  if (held === null) {
+    // A read that FAILED proves nothing about the group: stay silent so the requester retries
+    // against another member rather than concluding it is already complete.
+    return;
   }
+  const matching = held.filter((m) => wanted.has(m.id));
+  const selected = matching.filter((m) => isWithinHistoryRange(Number(m.timestamp), since));
+  const clipped = matching.length - selected.length;
   if (clipped > 0) {
     log(
       `[HISTORY_BUNDLE] Held ${clipped} message(s) below the asker's window for ${groupId.slice(0, 8)}… - not sent`
@@ -864,36 +962,65 @@ export async function sendHistoryBundleForIds(
   }
 
   if (selected.length === 0) {
-    if (emptyMeans === 'silence') {
-      log(
-        `[HISTORY_BUNDLE] Hold none of the ${wanted.size} message(s) asked for in ${groupId.slice(0, 8)}… - staying silent so another member can answer`
-      );
-      return;
-    }
-    // `vouched` is the whole difference between the two answers, so it goes on the wire. Its
-    // ABSENCE means vouched, which is what every client shipped before this field assumes when it
-    // reads an empty bundle - so an old responder stays correctly interpreted by a new requester.
-    //
-    // An emptiness produced by the CLIP still vouches, and that is not a leniency: completeness was
-    // defined by the asker's own `since`, so "everything you lack is below the line you drew" is the
-    // same answer as "you lack nothing". Vouching on a narrower range than the asker named would be
-    // the bug; this is exactly the range it named.
-    const vouched = emptyMeans === 'complete';
-    const bytes = bundleFrame([], to, { vouched, state });
-    try {
-      await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
-      log(
-        `[HISTORY_BUNDLE] Nothing to add for ${groupId.slice(0, 8)}… - empty bundle sent (${vouched ? 'vouching for completeness' : 'stores identical, not vouching'})`
-      );
-    } catch (e) {
-      log(`[HISTORY_BUNDLE] Empty bundle send error: ${String(e).slice(0, 120)}`);
-    }
+    log(
+      `[HISTORY_BUNDLE] Nothing to add for ${groupId.slice(0, 8)}… - saying nothing, the comparison runs again on the next connection`
+    );
     return;
   }
 
+  const state = await storedConversationState(groupId, storage);
   await sendBundleChunks(groupId, selected, { mlsService, log }, { chunkSize, to, state });
   log(
     `[HISTORY_BUNDLE] Diff sent for ${groupId.slice(0, 8)}…: ${selected.length} of ${wanted.size} requested message(s)`
+  );
+}
+
+/**
+ * Answers a scrollback ask: the newest messages strictly OLDER than `before`, at most `limit` of
+ * them, never below `since`.
+ *
+ * Bounded from both ends on purpose, which is what makes it usable on a conversation of any size: a
+ * reader scrolling up asks again when it reaches the top of what arrived, so the cost is paid one
+ * page at a time by the person actually reading, rather than as one unbounded answer that has to be
+ * chunked and freezes the list when it lands.
+ *
+ * NEWEST-first selection, oldest-first delivery: the page a reader wants is the one immediately
+ * before what they can already see, and the messages inside it must still arrive in reading order.
+ */
+export async function sendHistoryRangeBundle(
+  groupId: string,
+  deps: HistoryStoreDeps,
+  opts: { to: string; before: number; limit: number; since?: number }
+): Promise<void> {
+  const { storage, mlsService, log } = deps;
+  const { to, before, limit, since = 0 } = opts;
+  if (!storage) {
+    log(`[HISTORY_RANGE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
+    return;
+  }
+
+  const held = await readHistoryMessages(groupId, deps);
+  if (held === null) return;
+
+  const inRange = held.filter((m) => {
+    const at = Number(m.timestamp);
+    // An undated message cannot be placed in a range, and a scrollback is entirely about placement:
+    // including it would put it at an arbitrary point of the reader's list on one device only.
+    if (!Number.isFinite(at)) return false;
+    return at < before && at >= since;
+  });
+  if (inRange.length === 0) {
+    log(
+      `[HISTORY_RANGE] Hold nothing before that point in ${groupId.slice(0, 8)}… - staying silent`
+    );
+    return;
+  }
+
+  const page = inRange.slice(-Math.max(1, limit));
+  const state = await storedConversationState(groupId, storage);
+  await sendBundleChunks(groupId, page, { mlsService, log }, { chunkSize: 200, to, state });
+  log(
+    `[HISTORY_RANGE] Sent ${page.length} of ${inRange.length} message(s) older than ${new Date(before).toISOString()} for ${groupId.slice(0, 8)}…`
   );
 }
 

@@ -1,10 +1,8 @@
 import { sendFullHistoryBundle, sendHistoryBundleForIds } from './groupActions';
-import { markAwaitingHistory } from './awaitingHistoryRegistry';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';
 import type { IStorage, StoredMessage } from '$lib/db';
 
-const SELF = 'user-a';
 const GROUP = 'g1';
 /** The device that asked - every bundle is addressed at one, never at the group at large. */
 const REQUESTER = 'user-b:device-b';
@@ -42,16 +40,15 @@ describe('sendFullHistoryBundle', () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
 
-  it('answers an empty group with an empty bundle, so the requester stops waiting', async () => {
-    // Silence used to mean both "no history" and "nobody answered", which left a brand-new
-    // conversation in pending-offline and re-soliciting on every reconnect for 30 days.
+  it('answers an empty group with an empty bundle, which carries the floor and the watermarks', async () => {
+    // The ONE empty bundle still worth a frame: the receiver is a member being invited, so it has
+    // no conversation row at all and this is what gives it one.
     const mlsService = createMlsServiceStub();
     await sendFullHistoryBundle(GROUP, {
       storage: storageWith([]),
       deviceKeyB64: 'k',
       mlsService,
       log: vi.fn(),
-      selfUserId: SELF,
       to: REQUESTER,
     });
 
@@ -59,51 +56,29 @@ describe('sendFullHistoryBundle', () => {
     const { event, data } = sentBundle(mlsService);
     expect(event).toBe('history_bundle');
     expect(data.messages).toEqual([]);
-    // The empty bundle is the one that DISCHARGES a marker, so it is the one that most needs an
-    // addressee: unaddressed, it tells every other member of the group to stop waiting too.
     expect(data.to).toBe(REQUESTER);
   });
 
-  it('stays silent when empty AND still awaiting history itself (emptiness proves nothing)', async () => {
-    // A device that just joined has an empty store for a group that may hold years of history:
-    // answering "empty" here would wrongly close the requester's loop.
-    markAwaitingHistory(SELF, GROUP, 'unreadable-frames');
-    const mlsService = createMlsServiceStub();
-    await sendFullHistoryBundle(GROUP, {
-      storage: storageWith([]),
-      deviceKeyB64: 'k',
-      mlsService,
-      log: vi.fn(),
-      selfUserId: SELF,
-      to: REQUESTER,
-    });
-
-    expect(mlsService.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it('stays silent when the local read fails - a failed read proves nothing either', async () => {
+  it('stays silent when the local read fails - a failed read proves nothing', async () => {
     const mlsService = createMlsServiceStub();
     await sendFullHistoryBundle(GROUP, {
       storage: storageWith(new Error('sqlite locked')),
       deviceKeyB64: 'k',
       mlsService,
       log: vi.fn(),
-      selfUserId: SELF,
       to: REQUESTER,
     });
 
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('still sends the real history when there is some, awaiting marker or not', async () => {
-    markAwaitingHistory(SELF, GROUP, 'unreadable-frames');
+  it('sends the real history when there is some', async () => {
     const mlsService = createMlsServiceStub();
     await sendFullHistoryBundle(GROUP, {
       storage: storageWith([storedMessage('m1'), storedMessage('m2')]),
       deviceKeyB64: 'k',
       mlsService,
       log: vi.fn(),
-      selfUserId: SELF,
       to: REQUESTER,
     });
 
@@ -135,7 +110,6 @@ describe('sendFullHistoryBundle', () => {
       deviceKeyB64: 'k',
       mlsService,
       log: vi.fn(),
-      selfUserId: SELF,
       to: REQUESTER,
     });
 
@@ -170,7 +144,7 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
         GROUP,
         allIds(msgs),
         { storage: storageWith(msgs), deviceKeyB64: 'k', mlsService, log: vi.fn() },
-        { emptyMeans: 'complete', to: REQUESTER, since }
+        { to: REQUESTER, since }
       ),
     };
   }
@@ -203,16 +177,14 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
     expect(sentBundle(mlsService).data.messages).toHaveLength(2);
   });
 
-  it('still VOUCHES when the clip is what emptied the answer', async () => {
-    // Completeness was defined by the asker's own line, so "everything you lack is below it" and
-    // "you lack nothing" are the same answer. Withholding the vouch here would leave a device that
-    // is complete for its window re-soliciting for ever.
+  it('sends NOTHING when the clip is what emptied the answer', async () => {
+    // An empty bundle used to be an answer - "you are missing nothing" - because a durable marker
+    // on the other side needed something authoritative to discharge it. There is no marker: a
+    // device that receives nothing keeps what it holds and compares again on its next connection.
     const { mlsService, done } = serve([storedMessage('old', OLD)], SINCE);
     await done;
 
-    const { data } = sentBundle(mlsService);
-    expect(data.messages).toEqual([]);
-    expect((data as { vouched?: boolean }).vouched).toBeUndefined();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
   });
 
   it('keeps a message whose timestamp cannot be compared, rather than silently dropping it', async () => {

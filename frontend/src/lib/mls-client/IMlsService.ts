@@ -342,6 +342,14 @@ export interface IMlsService {
   fetchPendingMessages(): Promise<void>;
   /** Resolves when the internal MLS message queue is drained. */
   waitForMessageQueueIdle(): Promise<void>;
+  /**
+   * Tells the service the local conversation store is now authoritative.
+   *
+   * A frame that arrived before the restore finished was left in the server queue with nothing to
+   * render it into. This is the event that discharges it - the answer changed, so the ask is worth
+   * repeating. Free and silent when nothing was left behind.
+   */
+  notifyConversationsRestored(): void;
 
   // Group management
   /** Returns the list of group IDs for which this device holds local MLS state. */
@@ -521,26 +529,18 @@ export interface IMlsService {
   ): void;
 
   /**
-   * Ask one online member to resend the history bundle after this device self-joined a group via an
-   * external commit. History-only (already a member), never a re-add. Best-effort, online-only.
+   * Ask the server to elect ONE online member to reconcile a conversation's history with us. The
+   * ask itself travels inside MLS (a state key, a digest or a range); this only decides who answers.
+   * Best-effort, online-only.
    */
-  sendHistoryRequest(
-    groupId: string,
-    opts?: { withDigest?: boolean }
-  ): Promise<HistoryRequestOutcome>;
+  sendHistoryRequest(groupId: string): Promise<HistoryRequestOutcome>;
 
   /**
-   * Register a callback invoked when a member device receives a history_request for a group it
-   * belongs to (the requester joined via external commit and wants the pre-join history).
+   * Register a callback invoked when this device is the member elected to answer a history_request.
+   * What is actually being asked arrives separately, over MLS - see `handleHistoryRequest`.
    */
   onHistoryRequest(
-    callback: (
-      requesterUserId: string,
-      requesterDeviceId: string,
-      groupId: string,
-      /** The requester promised a digest. False = an older client; answer at once, do not wait. */
-      withDigest: boolean
-    ) => void
+    callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
   ): void;
 
   /**

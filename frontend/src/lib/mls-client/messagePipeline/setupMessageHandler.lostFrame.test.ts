@@ -1,15 +1,15 @@
 /**
- * A frame lost to a rewound sender must SOLICIT, and the durable marker must not be what stops it.
+ * A frame lost to a rewound sender must trigger a RECONCILIATION, and nothing durable may stop it.
  *
  * The defect this pins shipped and was measured on prod (2026-08-10): the receiver logged twelve
  * `LOST frame` lines and solicited nothing, because `handleConsumedGeneration` opened with
- * `if (isAwaitingHistory(...)) return`. The marker is DURABLE - it survives reloads and sessions and
- * is cleared only by an empty diff - so the reasoning "while it stands, this group is already being
- * reconciled" quietly became "a group that has ever been broken never asks again from this path",
- * and recovery fell back to the fifteen-minute sweep.
+ * `if (isAwaitingHistory(...)) return`. That marker was DURABLE - it survived reloads and sessions
+ * and was cleared only by an empty diff - so the reasoning "while it stands, this group is already
+ * being reconciled" quietly became "a group that has ever been broken never asks again from this
+ * path", and recovery fell back to the fifteen-minute sweep.
  *
- * Deciding whether asking would duplicate an attempt belongs to `solicitHistory` alone, which reads
- * the only fact that answers it: is one scheduled, or inside its response window.
+ * The marker is gone. Deciding whether asking would duplicate one belongs to `reconcileGroup` alone,
+ * which coalesces a burst and forgets it - nothing survives the session to gate a later edge.
  */
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
@@ -39,20 +39,12 @@ vi.mock('$lib/services/ChannelService', () => ({
   },
 }));
 
-vi.mock('$lib/utils/chat/historySolicit', () => ({
-  solicitHistory: vi.fn(),
-}));
-
-vi.mock('$lib/utils/chat/awaitingHistoryRegistry', () => ({
-  // The whole point: this stands from a PREVIOUS session, as it does on any device that has ever
-  // lost a frame in this group.
-  isAwaitingHistory: vi.fn(() => true),
-  markAwaitingHistory: vi.fn(),
+vi.mock('$lib/utils/chat/historyReconcile', () => ({
+  reconcileGroup: vi.fn().mockResolvedValue(true),
 }));
 
 import { setupMessageHandler } from './setupMessageHandler';
-import { solicitHistory } from '$lib/utils/chat/historySolicit';
-import { markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
+import { reconcileGroup } from '$lib/utils/chat/historyReconcile';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
 import {
@@ -111,22 +103,16 @@ async function deliver(deps: ReturnType<typeof baseDeps>, body: number[]): Promi
 describe('a frame lost to a rewound sender', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('solicits a history diff even though the durable marker already stands', async () => {
+  it('reconciles the conversation, with nothing durable able to suppress it', async () => {
     const deps = baseDeps();
 
     expect(await deliver(deps, [9, 9, 9])).toBe(true);
 
-    // The regression: with the marker consulted as "have I already asked", this was never reached.
-    expect(vi.mocked(solicitHistory)).toHaveBeenCalledWith(
+    // The regression: with a marker consulted as "have I already asked", this was never reached.
+    expect(vi.mocked(reconcileGroup)).toHaveBeenCalledWith(
       deps.mlsService,
       groupId,
       expect.any(Function)
-    );
-    // Re-marked rather than skipped: the evidence is refreshed, it just does not gate the request.
-    expect(vi.mocked(markAwaitingHistory)).toHaveBeenCalledWith(
-      'user-a',
-      groupId,
-      'unreadable-frames'
     );
   });
 
@@ -158,20 +144,15 @@ describe('a frame from an epoch whose secrets are gone', () => {
 
   beforeEach(() => vi.clearAllMocks());
 
-  it('solicits a history diff and ACKs, exactly like a consumed generation', async () => {
+  it('reconciles and ACKs, exactly like a consumed generation', async () => {
     const deps = pastEpochDeps();
 
     expect(await deliver(deps, [4, 4, 4])).toBe(true);
 
-    expect(vi.mocked(solicitHistory)).toHaveBeenCalledWith(
+    expect(vi.mocked(reconcileGroup)).toHaveBeenCalledWith(
       deps.mlsService,
       groupId,
       expect.any(Function)
-    );
-    expect(vi.mocked(markAwaitingHistory)).toHaveBeenCalledWith(
-      'user-a',
-      groupId,
-      'unreadable-frames'
     );
   });
 

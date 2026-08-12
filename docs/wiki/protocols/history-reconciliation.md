@@ -8,10 +8,16 @@ in [`mls-recovery-ladder.md`](mls-recovery-ladder.md). That machinery was measur
 below was taken with the product owner on that date and is recorded, with what it displaced, in
 [Decisions](#decisions-taken) - do not re-litigate one without going back there.
 
-> **Status: PARTLY IMPLEMENTED.** D1-D7, the durability split, the read watermark, the conversation
-> floor + device window, and the `since` clipping of the exchange are shipped - each is marked where
-> it is described. What is left, in order: the state key, the reconciliation exchange on connect, the
-> scrollback, and the deletions under [What disappears](#what-disappears).
+> **Status: IMPLEMENTED.** Everything specified here is shipped - D1-D7, the durability split, the
+> read watermark, the conversation floor + device window, the `since` clipping, the state key and its
+> cache, the reconciliation exchange on connect, the scrollback, the deletions under
+> [What disappears](#what-disappears), and the three measured defects.
+>
+> **Green gates are all that has been established.** Not one line of it has run on a device or in a
+> browser: the frontend suite passes and `svelte-check` reports nothing, which proves it compiles and
+> that its units behave, and says nothing about a real conversation between two real devices. The
+> [cross-client campaign](../cross-client-testing.md) is what would, and it is owed from MSG-1 on this
+> build.
 
 ---
 
@@ -96,9 +102,19 @@ Two consequences, both handled where the assumption lived:
 ### Also measured that day
 
 - solicitation fired at **+3 s**, while the device's own inbound drain was still running - a
-  difference it was itself in the middle of closing;
+  difference it was itself in the middle of closing. **FIXED**: the ask now waits on
+  `waitForMessageQueueIdle()` rather than on a delay, so it compares a settled store by construction
+  and not by luck;
 - the rendered list froze for ~10 minutes after a large bundle ingest. Nothing was lost - all four
-  probe markers were present after a reload - but nothing appeared on screen either.
+  probe markers were present after a reload - but nothing appeared on screen either. **FIXED**, and
+  the cause was arithmetic rather than anything to do with history: `batchAddMessages` asked
+  `convo.messages.find(...)` twice per incoming message - once to decide whether to upgrade it, once
+  inside `resolveMessageTimestamp` - so ingesting `m` messages into a conversation of `n` cost
+  `2·n·m` comparisons on the main thread. A bundle of a thousand into a store of eight thousand is
+  sixteen million, which is the ten minutes. Both now read one index built once per batch
+  (`indexMessagesById`), and `resolveMessageTimestamp` takes a LOOKUP rather than a list so no call
+  site can quietly reintroduce the scan. The cost is now proportional to the batch and not to the
+  conversation, which is what "any size" requires.
 
 ---
 
@@ -226,12 +242,20 @@ could never hit. `deviceWindowStart` now rounds DOWN to the day, so every device
 same day asks from the same instant. Either side of midnight they disagree and exchange a digest,
 which is what the digest is for.
 
-**The cache is not built yet, and deliberately so:** it has no consumer until the exchange below
-exists, and its cost is worth measuring rather than assuming. What it will have to protect against
-is the WALK - computing a key reads and decrypts the whole window, which on a 5-year store is the
-same order of work as the post-ingest freeze this rework is meant to remove, not create. Its
-invalidation must be conservative in the sound direction: a stale key claiming agreement loses
-messages, while an over-eager invalidation only costs a walk.
+**The cache is SHIPPED** (`cachedHistoryStateKey`), and what it protects against is the WALK:
+computing a key reads and decrypts the whole window, which on a 5-year store is the same order of
+work as the post-ingest freeze this rework removes. It is keyed by `(conversation, since)` - a key
+computed over a wider range is not an answer about a narrower one - and a failed read is never
+cached, because a failure is not an empty store and caching it would tell every peer this device
+holds nothing.
+
+**The invalidation lives at the storage layer, not at the call sites**, and is conservative by
+construction: a stale key claiming agreement loses messages silently, while an over-eager
+invalidation costs one walk. Every `IStorage` method that writes message rows drops the entry -
+per conversation where it can name one, wholesale where it cannot (`deleteOldMessages`, `clear`).
+Both backends are separate classes with separate write sites, so "IndexedDB was updated and SQLite
+was not" is the shape the mistake takes; `historyStateKeyInvalidation.test.ts` reads both sources to
+keep it from being made, and carries a vacuity guard so it cannot quietly stop checking.
 
 - **Keys match** → nothing is sent, nothing is displayed. The common case, and it must cost one small
   frame.
@@ -250,6 +274,12 @@ broadcast to be answered by whoever feels like it: the requester elects a respon
 does today (`sendHistoryRequest` over the WebSocket) and puts the key inside MLS, and only the
 elected device compares. The rendezvous that already joins those two transports
 (`historyDigestRendezvous`) is the same shape and should carry the key rather than gain a twin.
+
+**SHIPPED, and the rendezvous carries all three asks rather than gaining a twin.** A probe names its
+KIND - `state`, `digest` or `range` - and all three carry a `since`, because all three are asks and
+an answer is clipped to the window it was given. Silence is the fast path: when the keys match
+nothing is sent at all, which is why `vouched` and the three-way `EmptyBundleMeaning` could be
+deleted outright rather than kept for the agreeing case.
 
 The resulting flow, which is today's with one probe in front of it:
 
@@ -375,6 +405,20 @@ answered only within the floor. Same frame shape as a reconciliation answer, dif
 user gesture instead of a connection. Without it, pruning on the browser would mean the browser can
 never show the old past again.
 
+**SHIPPED.** `requestOlderFromPeers` asks for the page immediately before the OLDEST message held -
+the oldest, not the last rendered, because the list is not required to be sorted where the boundary
+is read - and states its own `since`, which the answerer honours rather than recomputing. It refuses
+to ask at all once what it holds already reaches its floor: there is nothing below it a peer is
+entitled to send, so the frame would cost every member a decryption for an answer that must be
+empty.
+
+The trigger is **automatic, with the state made visible**: reaching the top of a conversation whose
+local store is exhausted asks by itself, and the reader is shown a loading row while the ask is out
+and a message when nobody was online to answer it. That distinction is the whole reason the function
+returns `asked` / `no-peer` / `unavailable` rather than a boolean - a silent nothing would read as
+"there is no more history", which is a different statement and usually a false one. The answer is
+recognised by the list reaching further back than it did when the ask went out, not by a timer.
+
 ### Media
 
 Blobs keep their own 30-day idle retention; **text and attachments have different horizons on
@@ -400,7 +444,22 @@ from the audit and carry its references.
 
 Three defects measured the same day are covered here rather than patched separately, by decision: the
 stuck `isMessageCatchupActive` overlay, the post-ingest render freeze, and the 15 s `scheduleRetry`
-loop that re-raises the overlay.
+loop that re-raises the overlay. **All three are FIXED**, and two of them turned out to be one:
+
+- the **render freeze** was a pair of linear scans per ingested message - see
+  [Also measured that day](#also-measured-that-day);
+- the **15 s loop** was a clock standing in for a proof. The inbound handler leaves a frame in the
+  server queue for exactly two reasons, both named in `unackedFrames.ts`, and neither is discharged
+  by waiting: an unknown group needs its Welcome, an absent conversation needs the local store
+  restore. Asking again every fifteen seconds re-fetched the same rows, failed them identically, and
+  raised the catch-up overlay on every cycle - for the whole session, on a device whose group never
+  came back. The ask is now driven by the EVENT that changes the answer
+  (`refetchFramesLeftBehind`), fired where the Welcome is processed and where the restore finishes.
+  No event, no ask, and nothing to bound;
+- the **stuck overlay** was that loop seen from the outside: `showOverlay` is raised by any drain of
+  more than one frame, and lowered in the drain's own `finally`, so a single cycle always ends. What
+  never ended was the supply of cycles. Removing the clock removes it; no separate fix was needed,
+  and inventing one would have been a second mechanism guarding a case that no longer occurs.
 
 ### Persisting a mutation
 
@@ -467,7 +526,8 @@ either.
 
 ## What disappears
 
-Deleted outright, not deprecated:
+Deleted outright, not deprecated. **All of it is gone** - a grep for each name below returns
+nothing, which is the only form this claim may take:
 
 - the durable awaiting-history registry **as a trigger** (`awaitingHistoryRegistry.ts`);
 - the retry - the next state edge *is* the retry, so there is nothing to re-attempt;
@@ -476,7 +536,17 @@ Deleted outright, not deprecated:
 - the response-window store and the **"history pending" banner**. If a repair is needed and possible
   it happens silently; if no peer is online it does not happen, and there is no waiting state left to
   describe;
-- the per-message `readBy` array, replaced by the watermark.
+- the three-way `EmptyBundleMeaning` and the `vouched` flag it put on the wire: with silence as the
+  fast path, an empty bundle no longer has to carry what it meant;
+- the per-message `readBy` array, replaced by the watermark. The NAME survives one layer up, as a
+  prop `MessageMetadata` receives, but it is now derived per render by `readersOf(msg, watermarks)`
+  and nothing stores it.
+
+What replaced the durable marker as a trigger is `historyReconcile.ts`, and it holds two notes, both
+in memory and both about a MOMENT rather than a conversation: which groups the last attempt found
+nobody online for, and which were asked within the last 30 s. Neither can outlive the session, which
+is the property the marker lacked - it answered "is this conversation broken" from state whose
+discharge condition was unreachable.
 
 Surviving in a reduced role: a note that a **specific message** was never readable. It drives no
 traffic; its only use is telling the user there is a gap.
@@ -522,12 +592,16 @@ With the product owner, 2026-08-12. Each replaced an alternative rejected for th
 
 ## Open questions
 
-Two were closed on 2026-08-12 and moved into [Decisions](#decisions-taken): what may move the floor
-(nothing, for now) and who chooses the window (the platform, not the user). What is left:
+**None are open.** Two were closed on 2026-08-12 and moved into [Decisions](#decisions-taken) - what
+may move the floor (nothing, for now) and who chooses the window (the platform, not the user) - and
+the three below were closed by measurement or by decision. They are kept struck through rather than
+deleted because each records why an alternative was rejected, which is the part a later reader needs.
 
-- **The new cap.** Order is fixed and must be respected: Redis persisted (done) → raise `maxmemory`
-  → raise `MAXLEN`. The number needs the mutation budget, which is only known once mutations are
-  actually written to the log.
+- ~~**The new cap.**~~ **DONE.** The order was respected: Redis persisted → `maxmemory` 1→2 GB →
+  `HISTORY_STREAM_MAXLEN` 1000→8000 (`retention.constants.ts`). Worth re-deriving rather than
+  re-deciding if the mutation budget turns out differently: the cap is per group and `maxmemory` is
+  for the whole store, so raising the per-group cap first would let eviction choose which
+  conversations keep a shared copy at all.
 - ~~**State key cost at scale.**~~ **MEASURED 2026-08-12, not a problem.** Off production:
   `dm_group_members` holds 41 memberships over 23 users and 21 groups - a median of ONE conversation
   per user, a maximum of 8, plus at most 9 channels for the busiest account. The fan-out is one
@@ -535,7 +609,13 @@ Two were closed on 2026-08-12 and moved into [Decisions](#decisions-taken): what
   magnitude of growth before the *frame count* mattered. Re-measure with that same `GROUP BY` if the
   population changes shape; what is worth watching is not the frames but the WALK behind each key
   (see below).
-- **Whether a deletion must also drop the shared-log entry**, and at what price - the three options
-  are set out under [Deletion purges](#deletion-purges). Correctness does not wait on this: the
-  deletion is itself in the log and a replay converges on the tombstone. What is at stake is whether
-  the original ciphertext of a deleted message may sit in the log until eviction.
+- ~~**Whether a deletion must also drop the shared-log entry.**~~ **CLOSED 2026-08-12: leave it as
+  it is**, and the reason is that correctness never depended on it. The `delete_message` mutation is
+  itself an entry in the shared log, so any device replaying that log converges on the tombstone
+  whether or not the original entry is still there. What remains is a retention question and not a
+  convergence one: the original ciphertext of a deleted message sits in the stream until the cap or
+  the TTL evicts it, alongside every other message of that conversation, and buying its removal
+  would mean either rewriting a Redis stream in place or teaching every reader to skip entries a
+  later entry cancels - two mechanisms, both permanent, for a window that closes on its own.
+  Re-open it only if the log's retention is ever extended far enough for "until eviction" to stop
+  being an answer.

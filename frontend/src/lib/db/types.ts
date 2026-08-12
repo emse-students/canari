@@ -170,6 +170,15 @@ export interface OutboxEntry {
  * device key (32-byte key derived from the PIN via Argon2id once at first login) using AES-256-GCM.
  * No PBKDF2 or per-message salt is needed — the device key is imported directly as a CryptoKey.
  */
+/**
+ * The local store.
+ *
+ * **Any method added here that WRITES messages must drop the reconciliation's cached state key**
+ * (`invalidateHistoryStateKey`, or `invalidateAllHistoryStateKeys` when it cannot name the
+ * conversation). The key stands for "what this device holds", so a write that leaves it in place
+ * makes the device claim an agreement it no longer has - and that loses messages silently, where an
+ * unnecessary invalidation only costs one walk of the store.
+ */
 export interface IStorage {
   /** Open the underlying database and run any pending schema migrations. Must be called once before any other method. */
   init(): Promise<void>;

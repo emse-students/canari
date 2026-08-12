@@ -772,13 +772,18 @@ Four properties worth keeping:
   `test-accounts.json`, navigates to a route where the gate actually MOUNTS, and spawns `pin.mjs` -
   so the recurring "you forgot the PIN" costs one idempotent command, and no real first name has to
   be typed into a shell line.
-- **`awaiting.mjs`** carries the same wrong-store guard as `recon.mjs`; its first run called all six
-  of A1's markers orphans. It was also wrong twice in the same shape: it looked for the evidence in a
-  `_reason` companion key when `awaitingHistoryRegistry.ts` stores `{since, reason}` as the JSON
-  *value*, so it reported every marker on every client as legacy - a unanimous answer contradicting a
-  measurement taken the day before, which is what a vacuous probe always looks like. And it returned
-  `[]` rather than `null` when it could not read a store, which is "a failed read is not an empty
-  store" broken inside the instrument that exists to enforce it.
+- **`awaiting.mjs`** is **OBSOLETE as an instrument** - the durable awaiting-history registry it
+  reads no longer exists (see
+  [history-reconciliation](protocols/history-reconciliation.md#what-disappears)); a re-run would find
+  an empty store on every client and report health it cannot observe. Kept here only for the two
+  faults it taught, both of which apply to any probe: it looked for the evidence in a `_reason`
+  companion key when the registry stored `{since, reason}` as the JSON *value*, so it reported every
+  marker on every client as legacy - a unanimous answer contradicting a measurement taken the day
+  before, which is what a vacuous probe always looks like. And it returned `[]` rather than `null`
+  when it could not read a store, which is "a failed read is not an empty store" broken inside the
+  instrument that exists to enforce it. **What replaces it** for the reworked build is a probe of the
+  reconciliation's in-memory notes, which no longer survive a reload - so the observable is now the
+  LOG line (`[HISTORY_RECONCILE] … group(s) asked`), not a stored key.
 - **`testgroup.mjs`** is the group fixture (create, invite, prove the roster moved), shared by the
   DEL and GRP rigs.
 - **`trace-arrival.mjs`** is the continuous sampler that replaces any two-sample arrival check.

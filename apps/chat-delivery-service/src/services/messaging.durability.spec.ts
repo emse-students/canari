@@ -45,12 +45,21 @@ describe('MessagingService - visibility vs durability', () => {
     delete: jest.fn(),
   };
 
+  /**
+   * A repository that holds nothing - which is NOT the same as one that answers `undefined`.
+   *
+   * `find` on a real TypeORM repository returns `[]`, and a bare `jest.fn()` returns `undefined`,
+   * so every caller reading `.length` off the result threw a TypeError instead of taking the
+   * empty-set branch. Isolated, the throw landed inside a caller that swallows it; alongside
+   * another spec it surfaced as a failure, which is why this read as cross-file pollution and was
+   * not - the fixture was simply lying about what a repository does.
+   */
   const emptyRepo = () => ({
-    find: jest.fn(),
-    findOne: jest.fn(),
-    save: jest.fn(),
-    delete: jest.fn(),
-    create: jest.fn(),
+    find: jest.fn().mockResolvedValue([]),
+    findOne: jest.fn().mockResolvedValue(null),
+    save: jest.fn().mockImplementation(async (e: unknown) => e),
+    delete: jest.fn().mockResolvedValue({ affected: 0 }),
+    create: jest.fn().mockImplementation((e: unknown) => e),
   });
 
   /** A proto send with no resolvable recipient: nothing is queued, so only the log write is exercised. */

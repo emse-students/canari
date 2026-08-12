@@ -3,26 +3,41 @@ import type { IStorage, StoredMessage } from '$lib/db';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 
 // Mock only the outbound history senders so each can be asserted, keeping the rest of groupActions
-// (persist helpers, `readHistoryEntries`) intact - the diff under test is computed from a REAL store
-// read, so stubbing that too would leave nothing being tested.
-const { sendFullHistoryBundle, sendHistoryBundleForIds, sendHistoryPull } = vi.hoisted(() => ({
+// (persist helpers, `readHistoryEntries`, the state key) intact - the comparison under test is
+// computed from a REAL store read, so stubbing that too would leave nothing being tested.
+const {
+  sendFullHistoryBundle,
+  sendHistoryBundleForIds,
+  sendHistoryPull,
+  sendHistoryDigestRequest,
+  sendHistoryRangeBundle,
+} = vi.hoisted(() => ({
   sendFullHistoryBundle: vi.fn().mockResolvedValue(undefined),
   sendHistoryBundleForIds: vi.fn().mockResolvedValue(undefined),
   sendHistoryPull: vi.fn().mockResolvedValue(undefined),
+  sendHistoryDigestRequest: vi.fn().mockResolvedValue(undefined),
+  sendHistoryRangeBundle: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/groupActions')>();
-  return { ...actual, sendFullHistoryBundle, sendHistoryBundleForIds, sendHistoryPull };
+  return {
+    ...actual,
+    sendFullHistoryBundle,
+    sendHistoryBundleForIds,
+    sendHistoryPull,
+    sendHistoryDigestRequest,
+    sendHistoryRangeBundle,
+  };
 });
 
 import { handleHistoryRequest } from './actions';
 import { buildHistoryDigest, historyRangeOf, type HistoryEntry } from './historyManifest';
 import {
   digestIdentity,
-  noteDigestReceived,
+  noteProbeReceived,
   resetHistoryDigestRendezvousForTests,
 } from './historyDigestRendezvous';
-import { clearAwaitingHistory, markAwaitingHistory } from './awaitingHistoryRegistry';
+import { historyStateKey, invalidateAllHistoryStateKeys } from './historyStateKey';
 
 const GROUP = 'g1';
 const SELF_USER = 'u1';
@@ -30,6 +45,7 @@ const SELF_DEVICE = 'dev-self';
 const REQUESTER_USER = 'u2';
 const REQUESTER_DEVICE = 'dev-requester';
 const REQUESTER = digestIdentity(REQUESTER_USER, REQUESTER_DEVICE);
+const SELF = digestIdentity(SELF_USER, SELF_DEVICE);
 
 function activeConversations(groupId: string): Map<string, Conversation> {
   return new Map([
@@ -47,6 +63,16 @@ function activeConversations(groupId: string): Map<string, Conversation> {
   ]);
 }
 
+/** The stored row a manifest entry stands for, so one fixture drives both the digest and the key. */
+const rowOf = (e: HistoryEntry): StoredMessage =>
+  ({
+    id: e.id,
+    conversationId: GROUP,
+    senderId: 'someone',
+    content: 'x',
+    timestamp: e.timestamp,
+  }) as StoredMessage;
+
 /**
  * A store holding exactly `entries`, or one that throws when `entries` is the string 'broken'.
  *
@@ -58,16 +84,7 @@ function storageWith(entries: HistoryEntry[] | 'broken', historyFloor?: number):
   return {
     getMessages: vi.fn().mockImplementation(async () => {
       if (entries === 'broken') throw new Error('store unreadable');
-      return entries.map(
-        (e) =>
-          ({
-            id: e.id,
-            conversationId: GROUP,
-            senderId: 'someone',
-            content: 'x',
-            timestamp: e.timestamp,
-          }) as StoredMessage
-      );
+      return entries.map(rowOf);
     }),
     getConversations: vi
       .fn()
@@ -93,21 +110,32 @@ function baseParams(overrides: Record<string, unknown> = {}) {
       getLocalGroups: vi.fn().mockReturnValue([GROUP]),
       getDeviceId: vi.fn().mockReturnValue(SELF_DEVICE),
     }),
-    // The default case in these tests is a requester that promised a digest; the ones about an
-    // older client override it. No digest ever ARRIVES here unless one was posted before the call,
-    // so the wait is collapsed to keep the suite fast - it is a bound, never a schedule.
-    requesterHasDigest: true,
-    digestWaitMs: 1,
+    // No probe ever ARRIVES here unless one was posted before the call, so the wait is collapsed to
+    // keep the suite fast - it is a bound, never a schedule.
+    probeWaitMs: 1,
     ...overrides,
   } as Parameters<typeof handleHistoryRequest>[0];
 }
 
+/** Nothing at all left this device. The fast path's whole assertion. */
+function expectSilence(): void {
+  expect(sendFullHistoryBundle).not.toHaveBeenCalled();
+  expect(sendHistoryBundleForIds).not.toHaveBeenCalled();
+  expect(sendHistoryPull).not.toHaveBeenCalled();
+  expect(sendHistoryDigestRequest).not.toHaveBeenCalled();
+  expect(sendHistoryRangeBundle).not.toHaveBeenCalled();
+}
+
 beforeEach(() => {
   resetHistoryDigestRendezvousForTests();
-  clearAwaitingHistory(SELF_USER, GROUP);
+  // The state key is cached per conversation, and every case here builds a different store behind
+  // the same group id - a cache surviving between them would answer the previous case's question.
+  invalidateAllHistoryStateKeys();
   sendFullHistoryBundle.mockClear();
   sendHistoryBundleForIds.mockClear();
   sendHistoryPull.mockClear();
+  sendHistoryDigestRequest.mockClear();
+  sendHistoryRangeBundle.mockClear();
 });
 
 describe('handleHistoryRequest - guards', () => {
@@ -117,59 +145,137 @@ describe('handleHistoryRequest - guards', () => {
         mlsService: createMlsServiceStub({ getLocalGroups: vi.fn().mockReturnValue([]) }),
       })
     );
-    expect(sendFullHistoryBundle).not.toHaveBeenCalled();
-    expect(sendHistoryBundleForIds).not.toHaveBeenCalled();
+    expectSilence();
   });
 
   it('skips when the conversation is not active locally', async () => {
     await handleHistoryRequest(baseParams({ conversations: new Map() }));
-    expect(sendFullHistoryBundle).not.toHaveBeenCalled();
-    expect(sendHistoryBundleForIds).not.toHaveBeenCalled();
+    expectSilence();
+  });
+
+  it('answers from a SETTLED store - the inbound queue is drained first', async () => {
+    // An external-commit self-join lands the requester one epoch ahead of a peer that has not yet
+    // applied its commit, and a bundle re-encrypted at the old epoch is undecryptable to it. The
+    // requester used to pause 2.5 s before asking, standing in for an ordering neither side could
+    // observe; it is observable here, and this is where it is awaited.
+    const params = baseParams();
+    await handleHistoryRequest(params);
+    expect(params.mlsService.waitForMessageQueueIdle).toHaveBeenCalled();
   });
 });
 
-describe('handleHistoryRequest - no digest (a peer on an older build)', () => {
-  it('answers a peer that promised nothing IMMEDIATELY, without waiting for anything', async () => {
-    // The whole point of `withDigest` on the election frame. With a grace period, this peer paid it
-    // on every solicitation it ever made, waiting out a window for a frame it does not know how to
-    // send. A wait long enough to be worth measuring here would be a wait it should never do at all.
-    const params = baseParams({ requesterHasDigest: false, digestWaitMs: 60_000 });
-    const before = Date.now();
-    await handleHistoryRequest(params);
-
-    expect(Date.now() - before).toBeLessThan(1_000);
-    expect(sendFullHistoryBundle).toHaveBeenCalled();
+describe('handleHistoryRequest - a probe that never arrives', () => {
+  it('says nothing rather than dumping the whole store', async () => {
+    // The old fallback. A device that named nothing was answered with everything, on the reasoning
+    // that it might be too old to describe itself - which meant every dropped MLS frame cost a full
+    // store transfer to a peer that may have needed none of it. There is no such peer any more: the
+    // requester states its ask on every solicitation, and asking again costs one frame.
+    await handleHistoryRequest(baseParams({ probeWaitMs: 1 }));
+    expectSilence();
   });
 
-  it('falls back to the whole store, which is exactly what that peer expects', async () => {
+  it('ignores a probe sent by a DIFFERENT device of the same user', async () => {
+    // The election named one device. Answering another device's snapshot would compare against a
+    // store that is not the asker's.
+    noteProbeReceived(GROUP, digestIdentity(REQUESTER_USER, 'some-other-device'), {
+      kind: 'digest',
+      digest: { mode: 'ids', ids: ['a'] },
+      since: 0,
+    });
     await handleHistoryRequest(baseParams());
-    // `selfUserId` must be OUR id, never the requester's: it decides whether our empty store is
-    // authoritative enough to answer "this group has no history".
-    expect(sendFullHistoryBundle).toHaveBeenCalledWith(
+    expectSilence();
+  });
+});
+
+describe('handleHistoryRequest - the state key', () => {
+  /** Posts the requester's state key, computed over the same rule both devices apply. */
+  async function postKey(entries: HistoryEntry[], since = 0): Promise<void> {
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'state',
+      key: await historyStateKey(entries.map(rowOf), since),
+      since,
+    });
+  }
+
+  const rows = [
+    { id: 'm1', timestamp: at('2026-01-01T00:00:00Z') },
+    { id: 'm2', timestamp: at('2026-01-02T00:00:00Z') },
+  ];
+
+  it('says NOTHING when the two keys agree - the common case, and it must cost one frame', async () => {
+    await postKey(rows);
+    await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
+    expectSilence();
+  });
+
+  it('agrees on two empty stores, rather than reading emptiness as a difference', async () => {
+    await postKey([]);
+    await handleHistoryRequest(baseParams({ storage: storageWith([]) }));
+    expectSilence();
+  });
+
+  it('asks the requester to describe itself when the keys differ', async () => {
+    await postKey([rows[0]]);
+    await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
+
+    expect(sendHistoryDigestRequest).toHaveBeenCalledWith(
       GROUP,
-      // `to` is the requesting DEVICE: the bundle is a group broadcast, and only the device that
-      // asked may read it as an answer to its own wait.
-      expect.objectContaining({ selfUserId: SELF_USER, to: REQUESTER })
+      { from: SELF, to: REQUESTER },
+      expect.anything()
     );
+    // And nothing is sent on that turn: the digest decides what, and it has not arrived yet.
     expect(sendHistoryBundleForIds).not.toHaveBeenCalled();
   });
 
-  it('ignores a digest sent by a DIFFERENT device of the same user', async () => {
-    // The election named one device. Answering another device's snapshot would diff against a store
-    // that is not the asker's.
-    noteDigestReceived(GROUP, digestIdentity(REQUESTER_USER, 'some-other-device'), {
-      mode: 'ids',
-      ids: ['a'],
+  it('computes ITS key over the window the requester stated, not over its own', async () => {
+    // Two devices comparing over two different ranges can never agree, so the fast path would never
+    // fire - and every connection would pay a digest exchange for stores that match.
+    const SINCE = at('2026-01-02T00:00:00Z');
+    await postKey(rows, SINCE);
+    await handleHistoryRequest(
+      baseParams({ storage: storageWith(rows, at('2020-01-01T00:00:00Z')) })
+    );
+
+    // `m1` falls below the stated window on both sides, so the keys match and nothing is sent.
+    expectSilence();
+  });
+
+  it('stays silent when its own store cannot be read - a failed read proves nothing', async () => {
+    await postKey(rows);
+    await handleHistoryRequest(baseParams({ storage: storageWith('broken') }));
+    expectSilence();
+  });
+
+  it('goes on to the diff when the digest it asked for arrives', async () => {
+    // The second leg of ONE solicitation: the digest lands on the same rendezvous, and the exchange
+    // continues exactly as it would have with a digest sent up front.
+    await postKey([rows[0]]);
+    const params = baseParams({ storage: storageWith(rows) });
+    sendHistoryDigestRequest.mockImplementationOnce(async () => {
+      noteProbeReceived(GROUP, REQUESTER, {
+        kind: 'digest',
+        digest: await buildHistoryDigest([rows[0]]),
+        since: 0,
+      });
     });
-    await handleHistoryRequest(baseParams());
-    expect(sendFullHistoryBundle).toHaveBeenCalled();
+
+    await handleHistoryRequest(params);
+
+    expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, ['m2'], expect.anything(), {
+      to: REQUESTER,
+      since: 0,
+    });
   });
 });
 
 describe('handleHistoryRequest - with a digest', () => {
   /** Posts the requester's digest so the rendezvous can hand it to the call under test. */
-  async function postDigest(entries: HistoryEntry[], idModeMax?: number): Promise<void> {
-    noteDigestReceived(GROUP, REQUESTER, await buildHistoryDigest(entries, idModeMax));
+  async function postDigest(entries: HistoryEntry[], idModeMax?: number, since = 0): Promise<void> {
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'digest',
+      digest: await buildHistoryDigest(entries, idModeMax),
+      since,
+    });
   }
 
   it('sends ONLY what the requester lacks, never the whole store', async () => {
@@ -188,21 +294,19 @@ describe('handleHistoryRequest - with a digest', () => {
       GROUP,
       ['only-ours'],
       expect.anything(),
-      // Our whole store was compared, so an empty result here really would mean "you are complete".
       // `since: 0` is the requester's own window, restated: this digest stated none.
-      { emptyMeans: 'complete', to: REQUESTER, since: 0 }
+      { to: REQUESTER, since: 0 }
     );
   });
 
-  it('answers identical stores with an empty selection instead of silence', async () => {
-    // Silence and "you are missing nothing" must not be the same signal, or a device that is
-    // already up to date keeps the offline banner and re-solicits until the give-up horizon.
+  it('sends an empty selection for identical stores, which sends nothing at all', async () => {
+    // `sendHistoryBundleForIds` drops an empty selection on the floor, so this is a call with an
+    // empty id list rather than a frame. There is no marker on the other side to discharge.
     const rows = [{ id: 'same', timestamp: at('2026-01-01T00:00:00Z') }];
     await postDigest(rows);
     await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
 
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, [], expect.anything(), {
-      emptyMeans: 'complete',
       to: REQUESTER,
       since: 0,
     });
@@ -222,64 +326,17 @@ describe('handleHistoryRequest - with a digest', () => {
 
     expect(sendHistoryPull).toHaveBeenCalledWith(
       GROUP,
-      expect.objectContaining({
-        from: digestIdentity(SELF_USER, SELF_DEVICE),
-        to: REQUESTER,
-        ids: ['theirs'],
-      }),
+      expect.objectContaining({ from: SELF, to: REQUESTER, ids: ['theirs'] }),
       expect.anything()
     );
   });
 
-  it('records the gap durably BEFORE pulling, so a lost answer is retried on reconnect', async () => {
-    const { isAwaitingHistory } = await import('./awaitingHistoryRegistry');
-    await postDigest([{ id: 'theirs', timestamp: at('2026-01-01T00:00:00Z') }]);
-    await handleHistoryRequest(baseParams({ storage: storageWith([]) }));
-
-    expect(isAwaitingHistory(SELF_USER, GROUP)).toBe(true);
-  });
-
-  it('answers "identical" - never silence - while it is itself awaiting history', async () => {
-    // "You are missing nothing" is a claim a device that is itself short is not entitled to make.
-    // But SILENCE was worse than a wrong claim: with both peers awaiting and their stores equal,
-    // each was the other's only responder and neither answered, so both markers stood for ever and
-    // both banners with them (WP-HISTBANNER-1). `identical` says only what was measured - our
-    // stores match - which the requester weighs against its OWN evidence.
-    markAwaitingHistory(SELF_USER, GROUP, 'unreadable-frames');
-    const rows = [{ id: 'same', timestamp: at('2026-01-01T00:00:00Z') }];
-    await postDigest(rows);
-    await handleHistoryRequest(baseParams({ storage: storageWith(rows) }));
-
-    expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, [], expect.anything(), {
-      emptyMeans: 'identical',
-      to: REQUESTER,
-      since: 0,
-    });
-  });
-
-  it('still sends what it holds while awaiting history, since that part is not a claim', async () => {
-    markAwaitingHistory(SELF_USER, GROUP, 'unreadable-frames');
-    await postDigest([]);
-    await handleHistoryRequest(
-      baseParams({ storage: storageWith([{ id: 'ours', timestamp: at('2026-01-01T00:00:00Z') }]) })
-    );
-
-    expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, ['ours'], expect.anything(), {
-      emptyMeans: 'identical',
-      to: REQUESTER,
-      since: 0,
-    });
-  });
-
   it('stays silent when its own store cannot be read', async () => {
-    // A failed read proves nothing about the group. Answering anything would end the requester's
-    // solicitation on the strength of a store we could not open.
+    // A failed read proves nothing about the group.
     await postDigest([{ id: 'theirs', timestamp: at('2026-01-01T00:00:00Z') }]);
     await handleHistoryRequest(baseParams({ storage: storageWith('broken') }));
 
-    expect(sendHistoryBundleForIds).not.toHaveBeenCalled();
-    expect(sendFullHistoryBundle).not.toHaveBeenCalled();
-    expect(sendHistoryPull).not.toHaveBeenCalled();
+    expectSilence();
   });
 
   it('resolves a range-mode digest to whole SLICES of the id space, in both directions', async () => {
@@ -305,7 +362,7 @@ describe('handleHistoryRequest - with a digest', () => {
       GROUP,
       ['ours-a', 'ours-b'],
       expect.anything(),
-      { emptyMeans: 'complete', to: REQUESTER, since: 0 }
+      { to: REQUESTER, since: 0 }
     );
     // Their slice is theirs alone, so it is pulled - and the DEPTH travels with the prefix, or it
     // names a slice the answering device cannot compute.
@@ -315,69 +372,85 @@ describe('handleHistoryRequest - with a digest', () => {
       expect.anything()
     );
   });
-});
 
-describe('handleHistoryRequest - whose window bounds what', () => {
-  // The rule this fixes in place: on the leg where we ANSWER we honour the requester's window, and
-  // on the leg where we ASK we state our own. One handler plays both roles in a single exchange,
-  // which is exactly why the two are easy to confuse.
+  describe('whose window bounds what', () => {
+    // The rule this fixes in place: on the leg where we ANSWER we honour the requester's window, and
+    // on the leg where we ASK we state our own. One handler plays both roles in a single exchange,
+    // which is exactly why the two are easy to confuse.
 
-  /** A floor recent enough to sit above any device window, so it alone decides the range start. */
-  const OUR_FLOOR = Date.now() - 60_000;
-  const THEIR_SINCE = 1_700_000_000_000;
+    /** A floor recent enough to sit above any device window, so it alone decides the range start. */
+    const OUR_FLOOR = Date.now() - 60_000;
+    const THEIR_SINCE = 1_700_000_000_000;
 
-  async function postDigestAsking(entries: HistoryEntry[], since: number): Promise<void> {
-    noteDigestReceived(GROUP, REQUESTER, await buildHistoryDigest(entries), since);
-  }
+    it('bounds the ANSWER by the window the requester stated, not by its own', async () => {
+      await postDigest([], undefined, THEIR_SINCE);
+      await handleHistoryRequest(
+        baseParams({
+          storage: storageWith([{ id: 'ours', timestamp: at('2026-01-01T00:00:00Z') }], OUR_FLOOR),
+        })
+      );
 
-  it('bounds the ANSWER by the window the requester stated, not by its own', async () => {
-    await postDigestAsking([], THEIR_SINCE);
-    await handleHistoryRequest(
-      baseParams({
-        storage: storageWith([{ id: 'ours', timestamp: at('2026-01-01T00:00:00Z') }], OUR_FLOOR),
-      })
-    );
+      expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, ['ours'], expect.anything(), {
+        to: REQUESTER,
+        since: THEIR_SINCE,
+      });
+    });
 
-    expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, ['ours'], expect.anything(), {
-      emptyMeans: 'complete',
-      to: REQUESTER,
-      since: THEIR_SINCE,
+    it("bounds what it ASKS BACK for by its OWN window, never by the requester's", async () => {
+      // A phone diffing against a browser's digest asks back for five years. Reusing the browser's
+      // ninety days would cap every device in the conversation at the shortest window in it.
+      await postDigest(
+        [{ id: 'theirs', timestamp: at('2026-01-01T00:00:00Z') }],
+        undefined,
+        THEIR_SINCE
+      );
+      await handleHistoryRequest(baseParams({ storage: storageWith([], OUR_FLOOR) }));
+
+      expect(sendHistoryPull).toHaveBeenCalledWith(
+        GROUP,
+        expect.objectContaining({ ids: ['theirs'], since: OUR_FLOOR }),
+        expect.anything()
+      );
+    });
+
+    it('answers in full when the requester stated no window, rather than inventing one', async () => {
+      // A client that states no window has not declined anything. Clipping it to a bound we chose
+      // for it would withhold messages nobody refused.
+      await postDigest([]);
+      await handleHistoryRequest(
+        baseParams({
+          storage: storageWith([{ id: 'ours', timestamp: at('2020-01-01T00:00:00Z') }], OUR_FLOOR),
+        })
+      );
+
+      expect(sendHistoryBundleForIds).toHaveBeenCalledWith(
+        GROUP,
+        ['ours'],
+        expect.anything(),
+        expect.objectContaining({ since: 0 })
+      );
     });
   });
+});
 
-  it("bounds what it ASKS BACK for by its OWN window, never by the requester's", async () => {
-    // A phone diffing against a browser's digest asks back for five years. Reusing the browser's
-    // ninety days would cap every device in the conversation at the shortest window in it.
-    await postDigestAsking([{ id: 'theirs', timestamp: at('2026-01-01T00:00:00Z') }], THEIR_SINCE);
-    await handleHistoryRequest(baseParams({ storage: storageWith([], OUR_FLOOR) }));
+describe('handleHistoryRequest - scrollback', () => {
+  it('answers a range probe with the bounded page it named', async () => {
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'range',
+      before: at('2026-01-05T00:00:00Z'),
+      limit: 50,
+      since: at('2020-01-01T00:00:00Z'),
+    });
+    await handleHistoryRequest(baseParams());
 
-    expect(sendHistoryPull).toHaveBeenCalledWith(
-      GROUP,
-      expect.objectContaining({ ids: ['theirs'], since: OUR_FLOOR }),
-      expect.anything()
-    );
+    expect(sendHistoryRangeBundle).toHaveBeenCalledWith(GROUP, expect.anything(), {
+      to: REQUESTER,
+      before: at('2026-01-05T00:00:00Z'),
+      limit: 50,
+      since: at('2020-01-01T00:00:00Z'),
+    });
+    // A scrollback is not a reconciliation: it compares nothing and asks for nothing back.
+    expect(sendHistoryDigestRequest).not.toHaveBeenCalled();
+    expect(sendHistoryPull).not.toHaveBeenCalled();
   });
-
-  it('answers in full when the requester stated no window, rather than inventing one', async () => {
-    // A client too old to state a window has not declined anything. Clipping it to a bound we chose
-    // for it would withhold messages nobody refused - the failure mode the default guards against.
-    await postDigest([]);
-    await handleHistoryRequest(
-      baseParams({
-        storage: storageWith([{ id: 'ours', timestamp: at('2020-01-01T00:00:00Z') }], OUR_FLOOR),
-      })
-    );
-
-    expect(sendHistoryBundleForIds).toHaveBeenCalledWith(
-      GROUP,
-      ['ours'],
-      expect.anything(),
-      expect.objectContaining({ since: 0 })
-    );
-  });
-
-  /** Posts a digest that states no window, the way a client too old to have one does. */
-  async function postDigest(entries: HistoryEntry[]): Promise<void> {
-    noteDigestReceived(GROUP, REQUESTER, await buildHistoryDigest(entries));
-  }
 });

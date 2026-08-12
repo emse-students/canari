@@ -33,10 +33,6 @@
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
-  import {
-    historyRequestPendingStore,
-    type HistoryRequestPhase,
-  } from '$lib/stores/historyRequestPending.svelte';
 
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
@@ -149,10 +145,13 @@
     isLoadingHistory?: boolean;
     /** Whether MLS is catching up messages after reconnect (shows a blocking overlay). */
     isCatchingUpMessages?: boolean;
-    /** Phase of this conversation's history solicitation, or null when none is being tracked. */
-    historyRequestPhase?: HistoryRequestPhase | null;
     /** Called when in-memory groups are exhausted; should load older messages from DB. Returns true if more may be available. */
     onLoadOlderMessages?: () => Promise<boolean>;
+    /**
+     * Called when the LOCAL store is exhausted too, to ask a peer for the page below it. Resolves
+     * with what happened, which is what the reader is shown - see `scrollbackState`.
+     */
+    onRequestOlderFromPeers?: () => Promise<'asked' | 'no-peer' | 'unavailable'>;
     /** Exposes the scrollable messages element (for programmatic scroll from messaging). */
     onMessagesScrollEl?: (el: HTMLDivElement | null) => void;
   }
@@ -210,8 +209,8 @@
     currentUserId = '',
     isLoadingHistory = false,
     isCatchingUpMessages = false,
-    historyRequestPhase = null,
     onLoadOlderMessages,
+    onRequestOlderFromPeers,
     onMessagesScrollEl,
   }: Props = $props();
 
@@ -253,6 +252,19 @@
   /** Whether local DB may have messages older than what's currently in memory. */
   let hasMoreInDb = $state(true);
   let isLoadingOlder = $state(false);
+  /**
+   * Where this conversation's scrollback stands - the ask made once the LOCAL store is exhausted
+   * and only a peer can supply what is older.
+   *
+   * `asked` is not a success: the answer arrives later as an ordinary bundle, or not at all. What
+   * moves it back to `idle` is the list actually growing, which is the only honest evidence that a
+   * peer answered - see the effect below. `no-peer` is the one state worth showing the reader,
+   * because it is the only one they can act on (wait, or open the app where the history is).
+   */
+  type ScrollbackState = 'idle' | 'asking' | 'asked' | 'no-peer' | 'unavailable';
+  let scrollbackState = $state<ScrollbackState>('idle');
+  /** The oldest instant held when the last scrollback ask went out, to notice an answer landing. */
+  let scrollbackAskedAt = $state<number | null>(null);
   /**
    * True from the moment a conversation is switched until the list has been pinned to the
    * latest message. While set, the rendered messages are held invisible (layout still
@@ -429,21 +441,6 @@
       : text || m.chat_pinned_message_default_label();
   }
 
-  /**
-   * Reactive banner text when a history solicitation ended without an answer.
-   *
-   * The phase, not a boolean: the two ways an attempt ends are different facts and only one of them
-   * is about anybody else being reachable, which is the only part a user can act on.
-   */
-  const historyPendingLabel = $derived.by(() => {
-    if (historyRequestPhase === 'pending-unsent') return m.chat_history_request_pending_unsent();
-    if (historyRequestPhase === 'pending-unanswered')
-      return m.chat_history_request_pending_unanswered();
-    if (historyRequestPhase === 'pending-unreachable')
-      return m.chat_history_request_pending_unreachable();
-    return '';
-  });
-
   /** Reactive "X is typing…" label for the active conversation, excluding the current user. */
   const typingLabel = $derived.by(() => {
     const convId = chatView?.conversation.id;
@@ -495,7 +492,9 @@
     // walk a window that is already past the end.
     if (renderWindow.start > 0) {
       windowStart = Math.max(0, renderWindow.start - RENDER_GROUPS_STEP);
-    } else if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
+      return;
+    }
+    if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
       isLoadingOlder = true;
       try {
         const prevScrollHeight = chatContainer?.scrollHeight ?? 0;
@@ -511,8 +510,44 @@
       } finally {
         isLoadingOlder = false;
       }
+      return;
+    }
+    // The local store is exhausted. Everything above this point may still exist on a peer that
+    // retains more than this device does - a browser keeps ninety days, a phone five years - so ask
+    // for it. Once per conversation-visit: a scroll gesture fires this handler repeatedly, and the
+    // answer arrives as an ordinary bundle rather than as a return value.
+    if (onRequestOlderFromPeers && !hasMoreInDb && scrollbackState === 'idle') {
+      scrollbackState = 'asking';
+      scrollbackAskedAt = oldestHeldAt;
+      scrollbackState = (await onRequestOlderFromPeers().catch(() => 'unavailable')) as Exclude<
+        ScrollbackState,
+        'asking'
+      >;
     }
   }
+
+  /** The oldest instant currently in the rendered list, or `null` when it is empty. */
+  const oldestHeldAt = $derived.by(() => {
+    const first = chatView?.conversation.messages[0]?.timestamp;
+    if (first === undefined) return null;
+    const at = first instanceof Date ? first.getTime() : new Date(first as never).getTime();
+    return Number.isFinite(at) ? at : null;
+  });
+
+  /**
+   * A scrollback answer landed: the list now reaches further back than it did when we asked.
+   *
+   * This is what ends the `asked` state, rather than a timer. A peer's bundle is merged into the
+   * conversation like any other, so the list growing downwards IS the answer arriving - and going
+   * back to `idle` is what lets the reader scroll up again for the page below this one.
+   */
+  $effect(() => {
+    if (scrollbackState !== 'asked' || scrollbackAskedAt === null || oldestHeldAt === null) return;
+    if (oldestHeldAt < scrollbackAskedAt) {
+      scrollbackState = 'idle';
+      scrollbackAskedAt = null;
+    }
+  });
 
   function jumpToLatest() {
     windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
@@ -645,6 +680,8 @@
         switchTime = computeMessageListSwitchTime(c.messages);
         windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
         hasMoreInDb = !isChannel;
+        scrollbackState = 'idle';
+        scrollbackAskedAt = null;
         // Hold the list invisible until fillViewportThenPin() lands it at the bottom, so the
         // entry never flashes the top of the conversation before teleporting down.
         entering = true;
@@ -941,17 +978,6 @@
             {m.chat_mls_sync_in_progress()}
           </div>
         {/if}
-
-        {#if historyPendingLabel}
-          <div
-            class="flex items-center justify-center gap-2 py-1.5 px-4 bg-sky-500/10 text-sky-600 dark:text-sky-400 text-xs font-medium border-b border-sky-500/20"
-            role="status"
-            aria-live="polite"
-          >
-            <CloudOff size={11} class="shrink-0" strokeWidth={2.5} />
-            {historyPendingLabel}
-          </div>
-        {/if}
       </div>
 
       <div
@@ -979,6 +1005,32 @@
             {/each}
           </div>
         {:else}
+          <!--
+            The top of what this device holds. Everything above it, if anything exists, is on a peer
+            that retains more - so reaching it is an ask over the network, and the reader is told
+            when that ask is running and when nobody could answer it. Silence on success: the
+            messages simply appear.
+          -->
+          {#if scrollbackState === 'asking'}
+            <div
+              class="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground"
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+            >
+              <Loader2 size={12} class="animate-spin shrink-0" strokeWidth={2.5} />
+              {m.chat_scrollback_loading()}
+            </div>
+          {:else if scrollbackState === 'no-peer'}
+            <div
+              class="flex items-center justify-center gap-2 py-2 px-4 text-xs text-muted-foreground"
+              role="status"
+              aria-live="polite"
+            >
+              <CloudOff size={12} class="shrink-0" strokeWidth={2.5} />
+              {m.chat_scrollback_no_peer()}
+            </div>
+          {/if}
           <ChatMessageGroups
             {visibleMessageGroups}
             {isLoadingOlder}

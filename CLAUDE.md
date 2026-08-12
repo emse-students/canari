@@ -92,118 +92,61 @@ the narrative to the wiki page the entry points at. **Do not reconstruct shipped
 running on the device (0 lock timeouts, 1 MLS thread, 0 kills, against 97/20+/1 before). **The iOS
 half of it is compile-verified only** and joins the owed device list below.
 
-**THE CAMPAIGN IS PAUSED. THE WORK IS THE HISTORY-RECONCILIATION REWORK**, specified in
-**[history-reconciliation](docs/wiki/protocols/history-reconciliation.md)** - read that page, do not
-re-derive the design here and do NOT re-open a decision listed in its Decisions table. It carries the
-measured constraints, the seven defects to fix (D1-D7, with a column saying which were verified by
-hand), what disappears, and the open questions - **two of which the user closed on 2026-08-12** and
-which are now Decisions rows: the device window is **fixed per platform** (web 90 days, mobile and
-desktop 5 years - bounded, not infinite, so the floor has something to move for and the state key a
-bounded domain), and **nothing may move the floor for now**. The two still open are the new
-`MAXLEN` (answered below) and the state key's fan-out cost for a user in many groups.
+**THE HISTORY-RECONCILIATION REWORK IS CODE-COMPLETE.** Everything specified in
+**[history-reconciliation](docs/wiki/protocols/history-reconciliation.md)** is implemented: the
+durability split, D1-D7 with the two security fixes they exposed, the read watermark, the floor +
+device window (SQLite v7), the `since` clipping, the state key and its cache, the reconciliation
+exchange on connect, the scrollback, every deletion under "What disappears", and the three measured
+defects. **That page is the spec AND the record - read it, do not re-derive the design here and do
+NOT re-open a decision in its Decisions table. Its Open questions section is now empty.**
 
-**IMPLEMENTATION IS UNDER WAY. D1-D7 ARE ALL DONE AND PUSHED, plus the read watermark (D2), the
-floor + device window, and the `since` clipping of the exchange.** What is left is the list under
-"What disappears" in the spec plus the state key (the next item), the reconciliation exchange and the
-scrollback - read the spec, do not re-derive them here.
+**NOTHING OF IT HAS RUN ON A DEVICE OR IN A BROWSER.** The gates are green (0 svelte-check errors,
+1351/1351 frontend tests) and that is ALL they prove. **The next task is the deploy, then the
+cross-client campaign from MSG-1 on the reworked build.**
 
-The floor/window step, so nothing re-derives it: `frontend/src/lib/utils/chat/historyWindow.ts` is
-the only place either boundary is decided. The floor is SHARED, monotone, merged as `max`, rides on
-the bundle frames next to the watermarks, and is stored (SQLite v7, `history_floor`). **It ships
-worth zero on purpose** - nothing moves it, per the user's decision. The window is LOCAL and fixed by
-platform (`isTauriRuntime()` alone: web 90 d, mobile and desktop 5 y).
+Deploy order, a constraint and not a preference - **a clean break, no compatibility layer**: publish
+to the stores → VERIFY the store serves the new build → only then deploy the server and raise
+`minClientVersion`. Raising it first traps users on an update screen whose button leads to the old
+version. The Redis prerequisites are already done and verified on prod (named volume
+`infrastructure_redis_data` at `/data` + `appendonly yes`; `maxmemory` 1→2 GB; `HISTORY_STREAM_MAXLEN`
+1000→8000 in `retention.constants.ts`).
 
-The state key so far: `frontend/src/lib/utils/chat/historyStateKey.ts` is the RULE (pure, 22 tests),
-not yet the exchange. Per message: id + `isDeleted` + the edit's own `editedAt` + every reaction pair
-with its instant and standing, SHA-256'd and **XOR-folded** - so the key cannot depend on walk order,
-which is also why a duplicated id must be skipped (XOR is not idempotent, a doubled message cancels
-itself out). Content, sender and timestamp are EXCLUDED (a purged deletion must still match a peer
-that purged it), and so are the read watermarks and the floor (they converge through the log the
-reconciliation drains first; including them would fire a digest exchange on every read). **The
-cache does not exist yet on purpose** - no consumer until the exchange, and the thing it must
-protect against is the WALK, not the frames. **Fan-out was MEASURED on prod 2026-08-12 and is a
-non-issue** (41 memberships / 23 users / 21 groups, median 1 conversation per user, max 8 + 9
-channels) - that open question is closed in the spec.
+Four things a future session must not undo, because the wiki explains them but the temptation is to
+"simplify" them back:
 
-That step also forced `deviceWindowStart` to round DOWN to the day. Unrounded, `since` slides
-continuously, so two devices computing a key a second apart compare over different ranges and the
-fast path can never fire. Rounding down asks for slightly more, which is the safe direction.
+- **`historyWindow.ts` is the only place either boundary is decided.** The floor is SHARED, monotone,
+  merged as `max`, and **ships worth zero on purpose**. The window is LOCAL and fixed by platform
+  (`isTauriRuntime()` alone: web 90 d, mobile and desktop 5 y), and `deviceWindowStart` rounds DOWN
+  to the day - unrounded, two devices a second apart compare different ranges and the fast path can
+  never fire.
+- **`since` is STATED by the asker, never recomputed by the answerer; the digest is NOT clipped; the
+  clip is on the ANSWER, never the COMPARISON; each leg states its OWN window.** All four, or a
+  boundary message goes permanently missing on one side, or every device is capped at the shortest
+  window in the conversation.
+- **`toConversationMeta` and the in-memory seed in `loadExistingConversations` are MIRRORS and must
+  be edited together.** The D2 fix was silently defeated by exactly this: `readWatermarks` was
+  written and never read back, so read state was correct until the first restart. A field persisted
+  but never read back is worse than one never stored - the write succeeds and nothing reports it.
+- **`DELIVERY` in `frameDelivery.ts` is the ONLY classification** (`visible` / `mutation` /
+  `transport`) and every send site names one; the server gate reads `body.durable`, not `!silent`.
+  Each stream entry records its own `silent`, and `redeliverMissedDuringActivationWindow` filters on
+  it or it rings the user for every reaction.
 
-The clipping step, four rules that must not be undone: **`since` is STATED by the asker, never
-recomputed by the answerer** (the window slides, so two devices computing it a second apart disagree
-by a message); **the digest says what a device HAS, `since` says what it WANTS** - the digest is NOT
-clipped, or a device could never serve a peer whose window reaches further back than its own; **the
-clip is on the ANSWER, never on the COMPARISON**, and lives in `sendHistoryBundleForIds` alone
-because an id list carries no dates - clipping the comparison would let a stored timestamp differing
-by a hair between two devices make a boundary message permanently missing on one side; and **each
-leg states its OWN window** - `handleHistoryRequest` answers within the requester's `since` and
-states its own on the pull it sends back, or every device is capped at the shortest window in the
-conversation. `history_digest` and `history_pull` both carry `since`; the rendezvous carries the
-digest's through as one `SolicitedDigest`. A bundle nobody asked for is unclipped (`since` defaults
-to 0): the invite push and a client too old to state a window have declined nothing.
-
-That step also found the D2 fix silently defeated: the in-memory conversation SEED in
-`loadExistingConversations` never restored `readWatermarks` from the row it had just written, so read
-state was correct until the first restart. `toConversationMeta` and that seed are MIRRORS and must be
-edited together - a field persisted but never read back is worse than one never stored, because the
-write succeeds and nothing reports it.
-
-What phase 1 changed, so nothing re-derives it: `DELIVERY` in
-`frontend/src/lib/mls-client/frameDelivery.ts` is the ONLY classification (`visible` / `mutation` /
-`transport`) and every send site names one; the server gate reads `body.durable`, not `!silent`. Two
-consequences were handled at the same time and must not be undone: the stream now carries silent
-frames so **each entry records its own `silent`**, and `redeliverMissedDuringActivationWindow`
-filters on it or it rings the user for every reaction; and **D7 inverted** - the mutation replay
-handlers were dead because no mutation reached the stream, they are now the path every mutation
-takes on replay, so they were VERIFIED, not deleted.
-
-**That verification found two security holes, both fixed in `f0dc3296`** and worth remembering as a
-shape: the replay path applied `delete_message`/`edit_message` by id with NO author check (the live
-path has had one since `f924932b`) - phase 1 made those handlers reachable and so re-opened the hole
-one layer down; and `POST mls/send` never compared `body.senderId` to the authenticated
-`x-user-id`, so a member could write frames into a group's shared log under another member's name.
-`historySystemEvents.test.ts` is the module's first test file, which is why a dead handler went
+**The two security holes found while verifying D7 (`f0dc3296`) are worth remembering as a SHAPE:**
+the replay path applied `delete_message`/`edit_message` by id with NO author check (the live path has
+had one since `f924932b`), so making dead handlers reachable re-opened a hole one layer down; and
+`POST mls/send` never compared `body.senderId` to the authenticated `x-user-id`.
+`historySystemEvents.test.ts` is that module's first test file, which is why a dead handler went
 unnoticed as long as it did.
 
-**The read watermark replaced per-message `readBy`/`readAt` outright** - `readState.ts` (which
-absorbed `unread.ts`), `Conversation.readWatermarks`, `ConversationMeta.readWatermarks`, SQLite v6.
-Two things not to undo: the compared instant is the message's own CLIENT timestamp (`messageTime`,
-the primary sort key) and is drawn from the messages rather than the clock, or a fast device marks
-everything read for everyone for ever; and `toConversationMeta` is the single projection of a
-conversation onto its row, because that row is written whole. An edit no longer resets read state,
-deliberately.
+The chain that produced the rework, kept only because it explains why the spec looks like it does:
+MSG-1 failed, was root-caused to a history load ASSIGNING a freshly read page over the rendered list
+(fixed, `dabed2f2`, `mergeMessagePage`). Re-running MSG-1 then PASSED **vacuously** - the store was
+warm, the probe found nothing, the replay never ran. `msg1b.mjs` forces the window open and refuses
+to report PASS unless the pane grew: **carry the evidence that the window opened, or a green result
+cannot be told from an unexercised one.** That check then exposed the durable `unreadable-frames`
+marker no peer could ever discharge, which is what this whole rework removed.
 
-The chain that produced it, kept only because it explains why the page looks like it does: MSG-1
-failed, was root-caused to a history load ASSIGNING a freshly read page over the rendered list
-(fixed, `dabed2f2`, `mergeMessagePage`, four sites). Re-running MSG-1 then PASSED **vacuously** - the
-store was warm, the `limit=1` probe found nothing, the replay never ran, so the race window never
-opened. `msg1b.mjs` forces it open and refuses to report PASS unless the pane grew, which is the
-pattern for any check whose bug needs a window: **carry the evidence that the window opened, or a
-green result cannot be told from an unexercised one**. That check then exposed the real fault - a
-durable `unreadable-frames` marker that no peer can ever discharge, because both devices of a DM
-carry it and neither may vouch for the other.
-
-**Order of work, decided:** Redis durability (DONE, and VERIFIED on prod - named volume
-`infrastructure_redis_data` mounted at `/data`, `appendonly yes`) → raise `maxmemory` (DONE, 1→2 GB)
-→ raise `MAXLEN` (DONE, 1000→8000, `HISTORY_STREAM_MAXLEN` in `retention.constants.ts`) → **the rest
-of the rework** → then the campaign from MSG-1 on the reworked build. That order is a constraint, not
-a preference: the per-group cap decides what one conversation may hold, `maxmemory` what the whole
-store may, so raising the per-group cap first lets eviction choose which conversations keep a shared
-copy at all. **A clean break, no compatibility layer**, so the deploy
-sequence is: publish to the stores, VERIFY the store serves the new build, only then deploy the
-server and raise `minClientVersion` - raising it first traps users on an update screen whose button
-leads to the old version.
-
-**Where the rework stands, 2026-08-12.** Done and pushed: phase 1, D1, D3, D4, D5 (at rest), D6, D7
-+ the two security fixes, the read watermark carrying D2, the floor + device window (schema v7), and
-the `since` clipping of the exchange.
-**Nothing of the rework has been exercised on a device or a browser yet** - the frontend gates are
-green (0 svelte-check errors, 1339/1339 tests) and that is all they prove. Still open, in the spec's
-own order: the state key, the reconciliation exchange on connect, the scrollback, the
-deletion-from-the-log open question, and the deletions listed under "What disappears" - the banner,
-the durable marker AS A TRIGGER, the retry, the vouching, the 30-day horizon, the 15-minute sweep -
-plus the three measured defects (stuck catchup overlay, post-ingest render freeze, 15 s
-`scheduleRetry` loop).
 
 **A1 IS UNREACHABLE: the phone dropped off USB mid-session** (`adb devices` empty, survives
 `kill-server`). It needs a replug and the USB-debugging prompt accepted. Two things are owed the
@@ -235,8 +178,8 @@ out behind a button leading to the old version.
 #### Known, and deliberately NOT a Work Package - do not "fix" these by reflex
 
 - **Nothing tells the RECEIVER's user that a message was lost** (the residue of WP-LOSS-1). A deliberate gap, not a defect.
-- **A device only asks for history when something TELLS it to** - a decrypt failure, a fresh join with no local store, being elected responder and finding the peer holds more, or a reconnect re-soliciting an existing marker. So a device missing older messages and never failing to decrypt carries no marker and never asks; it converges only once something else elects it. Narrower than it was, but not closed. **Do not "fix" it with a periodic unconditional solicitation**: that is a broadcast on a timer, the exact shape this area was just cleared of.
-- **`history_request` is deliberately NOT made durable** the way `welcome_request` is (Redis + FCM): a stored request drained hours later has no digest (60 s rendezvous TTL), so the responder falls back to the full-store dump the diff exists to remove, for a device that may need nothing - and the requester must reconnect to read anything anyway, which re-solicits. The related half: a missing Welcome BLOCKS a group, missing history only degrades it.
+- **A device only asks for history when something TELLS it to** - but since the rework the commonest trigger is EVERY connection, unconditionally, over every local group. What is left of the gap: a device that never connects is never repaired, and one whose peers are never online at the same moment waits for the first that is. **Do not "fix" that with a periodic solicitation**: that is a broadcast on a timer, the exact shape this area was just cleared of, and the connection edge already asks as often as it honestly can.
+- **`history_request` is deliberately NOT made durable** the way `welcome_request` is (Redis + FCM): a stored request drained hours later has no probe (60 s rendezvous TTL), so it is answered with nothing at all - and the requester must reconnect to read anything anyway, which asks again by itself. The related half: a missing Welcome BLOCKS a group, missing history only degrades it.
 - **One MLS client in a SharedWorker**, shared by every tab (the successor to WP-MULTITAB-1). It would remove the class outright rather than gating each write path one at a time. Cost is why it is not the fix: the worker transport, startup, the PIN unlock and the Safari/mobile fallback where `SharedWorker` is absent all have to be redone. Evaluate relevance and cost before starting.
 - **The `mongo` service in `docker-compose.prod.yml` is dead** - production holds no application database there (only `admin`, `config`, `local`) and nothing in the codebase carries a MongoDB connection string. A candidate for removal, not a fault; removing it is a prod service change and needs the user.
 - **A new device or a reinstall still sees no media older than 30 days.** That is what makes the storage forecast survivable, and it may not be what the user intends - a POLICY question, not a rendering one ([storage-forecast](docs/wiki/infrastructure/storage-forecast.md), section 6). The clock is now honest: it is refreshed on a client cache HIT, not only on a server download.

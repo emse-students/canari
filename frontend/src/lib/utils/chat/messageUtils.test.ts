@@ -5,6 +5,7 @@ import {
   appMsgToEnvelope,
   appMsgToChannelSystemEnvelope,
   computeMessageListSwitchTime,
+  indexMessagesById,
   isStaleInboundMessage,
   normalizeMessageId,
   resolveAppMessageTimestampMs,
@@ -24,21 +25,58 @@ describe('resolveMessageTimestamp', () => {
     },
   ];
 
+  /** The lookup the caller supplies, over the fixture above. */
+  const byId = indexMessagesById(existing);
+  const find = (id: string) => byId.get(id);
+
   it('prefers explicit timestamp in options', () => {
     const ts = new Date('2024-01-01T00:00:00Z');
-    expect(resolveMessageTimestamp({ timestamp: ts }, existing, false).getTime()).toBe(
-      ts.getTime()
-    );
+    expect(resolveMessageTimestamp({ timestamp: ts }, find, false).getTime()).toBe(ts.getTime());
   });
 
   it('reuses timestamp from an existing message with the same id', () => {
-    const ts = resolveMessageTimestamp({ messageId: 'm1' }, existing, false);
+    const ts = resolveMessageTimestamp({ messageId: 'm1' }, find, false);
     expect(ts.getTime()).toBe(existing[0].timestamp.getTime());
   });
 
   it('uses fallbackMs when provided', () => {
     const fallback = Date.parse('2023-12-01T12:00:00Z');
-    expect(resolveMessageTimestamp({}, existing, false, fallback).getTime()).toBe(fallback);
+    expect(resolveMessageTimestamp({}, find, false, fallback).getTime()).toBe(fallback);
+  });
+
+  it('never scans: it asks the lookup exactly once, and only when it needs to', () => {
+    // The reason the parameter is a function at all. A caller ingesting a batch supplies an index,
+    // and a resolver that scanned instead would put the cost back where the freeze came from.
+    const lookup = vi.fn(find);
+
+    resolveMessageTimestamp({ timestamp: new Date('2024-01-01T00:00:00Z') }, lookup, false);
+    expect(lookup).not.toHaveBeenCalled();
+
+    resolveMessageTimestamp({ messageId: 'm1' }, lookup, false);
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('indexMessagesById', () => {
+  it('keys every message by its id', () => {
+    const a = { id: 'a' } as ChatMessage;
+    const b = { id: 'b' } as ChatMessage;
+    expect([...indexMessagesById([a, b])]).toEqual([
+      ['a', a],
+      ['b', b],
+    ]);
+  });
+
+  it('keeps the FIRST message for a duplicated id, exactly as the scan it replaces did', () => {
+    // A list holding one id twice is a defect elsewhere; the index must not invent a different
+    // answer from the one `Array.find` gave, or making the path faster changes what it renders.
+    const first = { id: 'a', content: 'first' } as ChatMessage;
+    const second = { id: 'a', content: 'second' } as ChatMessage;
+    expect(indexMessagesById([first, second]).get('a')).toBe(first);
+  });
+
+  it('is empty for an empty conversation', () => {
+    expect(indexMessagesById([]).size).toBe(0);
   });
 });
 

@@ -129,3 +129,70 @@ export function parseHistoryStateKey(raw: unknown): string | null {
   const key = raw.trim().toLowerCase();
   return key.length === STATE_KEY_HEX_CHARS && /^[0-9a-f]+$/.test(key) ? key : null;
 }
+
+// ---------------------------------------------------------------------------
+// The cache
+//
+// WHAT IT PROTECTS AGAINST IS THE WALK, not the frames. Computing a key reads and decrypts the
+// whole window, which on a five-year store is the same order of work as the post-ingest freeze this
+// rework exists to remove - and the reconciliation asks for one on EVERY connect of EVERY group,
+// where the mechanism it replaces read the store only for the few groups carrying a marker. Without
+// this, connect cost grows with retention.
+//
+// The fast path is what makes it worth having on both sides: two devices that agree exchange one
+// small frame and neither one opens its store.
+//
+// INVALIDATION IS CONSERVATIVE IN THE ONLY DIRECTION THAT IS SAFE. A stale key claiming agreement
+// loses messages, silently and permanently; an over-eager invalidation costs one walk. So every
+// write path drops the entry, including the ones that cannot say which conversation they touched -
+// those drop everything. See `IStorage`, where the rule is stated for the next method added.
+// ---------------------------------------------------------------------------
+
+/** The last key computed for a conversation, and the window it was computed over. */
+const cache = new Map<string, { since: number; key: string }>();
+
+/**
+ * The state key for `groupId`, reading the store only when there is nothing usable cached.
+ *
+ * `since` is part of the identity of a cached entry, not a detail of it: a key computed over a
+ * different window answers a different question, and `deviceWindowStart` moves the boundary once a
+ * day. A day boundary therefore costs one walk per conversation, which is the point of rounding it.
+ *
+ * @param loadMessages Reads the window from the store. Called ONLY on a miss, and returning `null`
+ *                     (an unreadable store) yields `null` rather than a key: a store we could not
+ *                     open is not a store we may describe.
+ */
+export async function cachedHistoryStateKey(
+  groupId: string,
+  since: number,
+  loadMessages: () => Promise<readonly StoredMessage[] | null>
+): Promise<string | null> {
+  const hit = cache.get(groupId);
+  if (hit && hit.since === since) return hit.key;
+
+  const messages = await loadMessages();
+  if (messages === null) return null;
+  const key = await historyStateKey(messages, since);
+  cache.set(groupId, { since, key });
+  return key;
+}
+
+/**
+ * Drops the cached key for one conversation. Called by every storage write that knows which
+ * conversation it touched.
+ */
+export function invalidateHistoryStateKey(conversationId: string): void {
+  cache.delete(conversationId);
+}
+
+/**
+ * Drops every cached key. Called by the writes that cannot name a conversation - a patch by message
+ * id, a bulk import, an age-based purge, a wipe.
+ *
+ * Dropping more than necessary is the correct trade here and not a shortcut: the cost is a walk on
+ * the next reconciliation, against a key that would otherwise claim an agreement that no longer
+ * holds.
+ */
+export function invalidateAllHistoryStateKeys(): void {
+  cache.clear();
+}

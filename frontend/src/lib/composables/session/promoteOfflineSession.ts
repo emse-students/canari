@@ -15,7 +15,6 @@
  */
 import { getToken, SessionExpiredError } from '$lib/stores/auth';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { historyRequestPendingStore } from '$lib/stores/historyRequestPending.svelte';
 import { startPushService } from '$lib/services/PushNotificationService';
 import { initializeConnection, getIsTabLeader } from '$lib/utils/chat/connection';
 import { flushOutbox, applyOutboxPendingStatuses } from '$lib/utils/chat/outbox';
@@ -116,11 +115,7 @@ async function runPromotion(
   flushOutbox();
   await applyOutboxPendingStatuses().catch(() => {});
 
-  // 5. History solicitations that gave up while offline get their retry budget spent now that a
-  //    peer can actually answer.
-  historyRequestPendingStore.onResume();
-
-  // 6. Background upkeep that login skips on an offline session. Starting the connection watchdog
+  // 5. Background upkeep that login skips on an offline session. Starting the connection watchdog
   //    earlier would have burnt the reconnect budget against a network that was not there and left
   //    the circuit open.
   if (getIsTabLeader()) {
