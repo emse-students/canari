@@ -1,73 +1,81 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
-import Stripe from 'stripe';
-import {
-  buildStripeConnectStatusResponse,
-  type StripeConnectStatusResponse,
-} from './stripeConnectStatus';
+import { Injectable, Logger } from '@nestjs/common';
+import type Stripe from 'stripe';
+import { StripePaymentProvider } from './stripe-payment-provider';
+import { LydiaPaymentProvider } from './lydia-payment-provider';
+import { PlatformService } from '../platform/platform.service';
+import type { StripeConnectStatusResponse } from './stripeConnectStatus';
+import type {
+  BusinessLegalProfile,
+  ChargeResult,
+  CheckoutLineItem,
+  CheckoutSessionInfo,
+  CheckoutSessionResult,
+  ConnectBalanceSummary,
+  PaymentProvider,
+  PaymentProviderId,
+  PayerRecipient,
+  SavedPaymentMethod,
+} from './payment-provider.interface';
 
-export interface ChargeResult {
-  ok: boolean;
-  requiresAction?: boolean;
-  clientSecret?: string;
-  error?: string;
-  /** Set when the PaymentIntent succeeded (used to fulfill boutique purchases). */
-  paymentIntentId?: string;
-}
+export type { ChargeResult, CheckoutSessionInfo, ConnectBalanceSummary };
 
-/** Stripe Connect balance snapshot for a connected account (single currency). */
-export interface ConnectBalanceSummary {
-  availableCents: number;
-  pendingCents: number;
-  currency: string;
-}
-
-/** Service wrapping Stripe SDK calls for Connect onboarding, checkout, and payment method management. */
+/**
+ * Orchestrates payment operations against the active PaymentProvider (Stripe today; Lydia is being
+ * added alongside it, see docs/wiki - WP-LYDIA-1). Selection is an admin-editable platform_config
+ * field (`paymentProvider`, PATCH /api/users/admin/platform), not an env var - PlatformService reads
+ * straight from Postgres on every call with no caching (same pattern as maintenanceEnabled /
+ * minClientVersion), so flipping the switch in the admin UI takes effect immediately, no restart.
+ * Both provider instances are built once at startup from their env-held secrets (STRIPE_SECRET_KEY,
+ * LYDIA_PROVIDER_TOKEN/_PRIVATE_TOKEN) - only the choice of WHICH one is live moves to the DB.
+ *
+ * Line items and session shapes are translated here from the legacy Stripe-flavored wire contract
+ * (still used by payment.controller.ts and social-service) into the provider-agnostic types in
+ * payment-provider.interface.ts - callers of this service are unaffected by which provider is active.
+ */
 @Injectable()
 export class PaymentService {
-  private readonly stripe: Stripe | null;
+  private readonly stripeProvider: PaymentProvider;
+  private readonly lydiaProvider: PaymentProvider;
   private readonly logger = new Logger(PaymentService.name);
 
-  constructor() {
-    const key = process.env.STRIPE_SECRET_KEY;
-    this.stripe = key ? new Stripe(key, { apiVersion: '2026-06-24.dahlia' }) : null;
-    this.logger.log(`Stripe configured: ${key ? 'yes' : 'no'}`);
+  constructor(private readonly platformService: PlatformService) {
+    this.stripeProvider = new StripePaymentProvider(process.env.STRIPE_SECRET_KEY);
+    this.lydiaProvider = new LydiaPaymentProvider({
+      LYDIA_ENV: process.env.LYDIA_ENV,
+      LYDIA_PROVIDER_TOKEN: process.env.LYDIA_PROVIDER_TOKEN,
+      LYDIA_PROVIDER_PRIVATE_TOKEN: process.env.LYDIA_PROVIDER_PRIVATE_TOKEN,
+    });
   }
 
-  /** Returns true when a Stripe secret key is present and the client is initialized. */
-  isConfigured(): boolean {
-    return !!this.stripe;
+  /** Reads the admin-configured provider choice and returns the matching instance. */
+  private async getProvider(): Promise<PaymentProvider> {
+    const { paymentProvider } = await this.platformService.getConfig();
+    return paymentProvider === 'lydia' ? this.lydiaProvider : this.stripeProvider;
   }
 
-  /** Creates or resumes a Stripe Connect account onboarding link for the given association. */
+  /** Returns true when the active provider has valid credentials configured. */
+  async isConfigured(): Promise<boolean> {
+    return (await this.getProvider()).isConfigured();
+  }
+
+  /** Identifies the active provider so callers (e.g. the association edit UI) can render the right onboarding flow. */
+  async getActiveProviderId(): Promise<PaymentProviderId> {
+    return (await this.getProvider()).id;
+  }
+
+  /** Creates or resumes a Connect-style onboarding link for the given association. */
   async createConnectOnboarding(params: {
     associationId: string;
     refreshUrl: string;
     returnUrl: string;
     existingAccountId?: string;
+    /** Required by Lydia's business/create, ignored by Stripe. */
+    legalProfile?: BusinessLegalProfile;
   }): Promise<{ url: string; accountId: string }> {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-
-    // Reuse existing account or create a new one
-    const accountId =
-      params.existingAccountId ||
-      (
-        await this.stripe.accounts.create({
-          type: 'standard',
-          metadata: { associationId: params.associationId },
-        })
-      ).id;
-
-    const accountLink = await this.stripe.accountLinks.create({
-      account: accountId,
-      refresh_url: params.refreshUrl,
-      return_url: params.returnUrl,
-      type: 'account_onboarding',
-    });
-
-    return { url: accountLink.url, accountId };
+    return (await this.getProvider()).createOnboarding(params);
   }
 
-  /** Creates a Stripe Checkout session in payment mode with optional Connect destination charge. */
+  /** Creates a one-off checkout session with optional Connect destination. */
   async createCheckoutSession(params: {
     lineItems: Stripe.Checkout.SessionCreateParams.LineItem[];
     successUrl: string;
@@ -76,195 +84,71 @@ export class PaymentService {
     stripeConnectAccountId?: string;
     customerId?: string;
     saveForFuture?: boolean;
+    /** Payer identity, required by Lydia's request/do, ignored by Stripe. Not yet wired up from any caller. */
+    payerRecipient?: PayerRecipient;
     /** Stable key for idempotency; derived from submission ID or a client-supplied UUID. */
     idempotencyKey?: string;
-  }): Promise<Stripe.Checkout.Session> {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-
-    const sessionParams: Stripe.Checkout.SessionCreateParams = {
-      mode: 'payment',
-      payment_method_types: ['card'],
-      line_items: params.lineItems,
+  }): Promise<CheckoutSessionResult> {
+    return (await this.getProvider()).createCheckoutSession({
+      lineItems: params.lineItems.map(toGenericLineItem),
+      successUrl: params.successUrl,
+      cancelUrl: params.cancelUrl,
       metadata: params.metadata,
-      success_url: params.successUrl,
-      cancel_url: params.cancelUrl,
-    };
-
-    if (params.customerId) {
-      sessionParams.customer = params.customerId;
-    }
-
-    if (params.saveForFuture) {
-      sessionParams.payment_intent_data = {
-        ...sessionParams.payment_intent_data,
-        setup_future_usage: 'off_session',
-      };
-    }
-
-    // Destination charge: funds go to the connected account
-    if (params.stripeConnectAccountId) {
-      sessionParams.payment_intent_data = {
-        ...sessionParams.payment_intent_data,
-        transfer_data: {
-          destination: params.stripeConnectAccountId,
-        },
-      };
-    }
-
-    const requestOptions: Stripe.RequestOptions | undefined = params.idempotencyKey
-      ? { idempotencyKey: `checkout_${params.idempotencyKey}` }
-      : undefined;
-
-    const session = await this.stripe.checkout.sessions.create(sessionParams, requestOptions);
-
-    return session;
+      payerRecipient: params.payerRecipient,
+      connectAccountId: params.stripeConnectAccountId,
+      customerId: params.customerId,
+      saveForFuture: params.saveForFuture,
+      idempotencyKey: params.idempotencyKey,
+    });
   }
 
-  /** Retrieves the charges-enabled status for a Stripe Connect account. */
+  /** Retrieves the charges-enabled status for a Connect-style account. */
   async getAccountStatus(accountId: string): Promise<{ chargesEnabled: boolean }> {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-    const account = await this.stripe.accounts.retrieve(accountId);
-    return { chargesEnabled: account.charges_enabled ?? false };
+    return (await this.getProvider()).getAccountStatus(accountId);
   }
 
-  /** Returns treasurer-facing Connect lifecycle state from the live Stripe account. */
+  /** Returns treasurer-facing Connect lifecycle state from the live account. */
   async getConnectAccountStatus(accountId: string): Promise<StripeConnectStatusResponse> {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-    const account = await this.stripe.accounts.retrieve(accountId);
-    this.logger.debug(
-      `[Stripe] Connect status account=${accountId.slice(0, 8)} charges=${account.charges_enabled} details=${account.details_submitted}`
-    );
-    return buildStripeConnectStatusResponse(account);
+    return (await this.getProvider()).getConnectAccountStatus(accountId);
   }
 
-  /**
-   * Returns available and pending balances for a Connect Standard account.
-   * Prefers EUR when present; otherwise uses the first currency in the response.
-   */
-  async getConnectBalance(stripeAccountId: string): Promise<ConnectBalanceSummary> {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-
-    // v22: stripeAccount is a request option, no longer mixed into params.
-    const balance = await this.stripe.balance.retrieve({}, { stripeAccount: stripeAccountId });
-    const currency =
-      balance.available.find((b) => b.currency === 'eur')?.currency ??
-      balance.available[0]?.currency ??
-      balance.pending[0]?.currency ??
-      'eur';
-    const available = balance.available.find((b) => b.currency === currency)?.amount ?? 0;
-    const pending = balance.pending.find((b) => b.currency === currency)?.amount ?? 0;
-
-    this.logger.debug(
-      `[Stripe] Connect balance account=${stripeAccountId.slice(0, 8)} available=${available} pending=${pending} ${currency}`
-    );
-
-    return {
-      availableCents: available,
-      pendingCents: pending,
-      currency,
-    };
+  /** Returns available and pending balances for a Connect-style account. */
+  async getConnectBalance(accountId: string): Promise<ConnectBalanceSummary> {
+    return (await this.getProvider()).getConnectBalance(accountId);
   }
 
-  /**
-   * Returns a URL to manage payouts for a Connect account.
-   * Express accounts get a single-use login link; Standard accounts use dashboard.stripe.com
-   * (createLoginLink is Express-only and fails on Standard accounts).
-   */
-  async createConnectDashboardLink(stripeAccountId: string): Promise<string> {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-
-    const account = await this.stripe.accounts.retrieve(stripeAccountId);
-    this.logger.debug(
-      `[Stripe] Dashboard link account=${stripeAccountId.slice(0, 8)} type=${account.type}`
-    );
-
-    if (account.type === 'express') {
-      const link = await this.stripe.accounts.createLoginLink(stripeAccountId);
-      return link.url;
-    }
-
-    return 'https://dashboard.stripe.com';
+  /** Returns a URL to manage payouts for a Connect-style account. */
+  async createConnectDashboardLink(accountId: string): Promise<string> {
+    return (await this.getProvider()).createConnectDashboardLink(accountId);
   }
 
   // ── Customer & Payment Methods ────────────────────────────────────────────
 
-  /** Returns the existing Stripe customer ID or creates a new customer and returns its ID. */
+  /** Returns the existing customer ID or creates a new customer and returns its ID. */
   async getOrCreateCustomer(
     existingCustomerId: string | null | undefined,
     meta: { userId: string; displayName?: string | null }
   ): Promise<string> {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-
-    if (existingCustomerId) {
-      try {
-        const customer = await this.stripe.customers.retrieve(existingCustomerId);
-        if (!customer.deleted) return existingCustomerId;
-      } catch {
-        // Customer no longer exists - create a new one
-      }
-    }
-
-    // Idempotency key scoped to the userId prevents duplicate Stripe customers when
-    // two concurrent requests both see stripeCustomerId as null.
-    const customer = await this.stripe.customers.create(
-      {
-        metadata: { userId: meta.userId },
-        name: meta.displayName ?? undefined,
-      },
-      { idempotencyKey: `customer-create-${meta.userId}` }
-    );
-    return customer.id;
+    return (await this.getProvider()).getOrCreateCustomer(existingCustomerId, meta);
   }
 
-  /** Creates a Stripe Checkout session in setup mode so a customer can save a card for future use. */
+  /** Creates a setup session so a customer can save a card for future use. */
   async createSetupCheckoutSession(params: {
     customerId: string;
     successUrl: string;
     cancelUrl: string;
   }): Promise<{ url: string; sessionId: string }> {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-
-    const session = await this.stripe.checkout.sessions.create({
-      mode: 'setup',
-      customer: params.customerId,
-      payment_method_types: ['card'],
-      success_url: params.successUrl,
-      cancel_url: params.cancelUrl,
-    });
-
-    return { url: session.url!, sessionId: session.id };
+    return (await this.getProvider()).createSetupCheckoutSession(params);
   }
 
-  /** Lists all saved card payment methods attached to the given Stripe customer. */
-  async listPaymentMethods(customerId: string): Promise<
-    {
-      id: string;
-      brand: string;
-      last4: string;
-      expMonth: number;
-      expYear: number;
-    }[]
-  > {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-
-    const methods = await this.stripe.paymentMethods.list({
-      customer: customerId,
-      type: 'card',
-    });
-
-    return methods.data.map((pm) => ({
-      id: pm.id,
-      brand: pm.card?.brand ?? 'unknown',
-      last4: pm.card?.last4 ?? '????',
-      expMonth: pm.card?.exp_month ?? 0,
-      expYear: pm.card?.exp_year ?? 0,
-    }));
+  /** Lists all saved card payment methods attached to the given customer. */
+  async listPaymentMethods(customerId: string): Promise<SavedPaymentMethod[]> {
+    return (await this.getProvider()).listPaymentMethods(customerId);
   }
 
-  /** Detaches a payment method from its Stripe customer so it can no longer be charged. */
+  /** Detaches a payment method so it can no longer be charged. */
   async detachPaymentMethod(paymentMethodId: string): Promise<void> {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-    await this.stripe.paymentMethods.detach(paymentMethodId);
+    return (await this.getProvider()).detachPaymentMethod(paymentMethodId);
   }
 
   /** Charges a saved payment method off-session and returns the payment result or required-action details. */
@@ -278,77 +162,33 @@ export class PaymentService {
     /** Stable key for idempotency - prevents double-charge on network retry. */
     idempotencyKey?: string;
   }): Promise<ChargeResult> {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-
-    const intentParams: Stripe.PaymentIntentCreateParams = {
-      amount: params.amountCents,
-      currency: params.currency.toLowerCase(),
-      customer: params.customerId,
-      payment_method: params.paymentMethodId,
-      // Required for off-session charges with a saved card - dynamic payment methods
-      // do not apply when creating a PaymentIntent directly (unlike Checkout).
-      payment_method_types: ['card'],
-      confirm: true,
-      off_session: true,
+    return (await this.getProvider()).chargeWithSavedMethod({
+      customerId: params.customerId,
+      paymentMethodId: params.paymentMethodId,
+      amountCents: params.amountCents,
+      currency: params.currency,
       metadata: params.metadata,
-    };
-
-    if (params.stripeConnectAccountId) {
-      intentParams.transfer_data = {
-        destination: params.stripeConnectAccountId,
-      };
-    }
-
-    const requestOptions: Stripe.RequestOptions = {};
-    if (params.idempotencyKey) {
-      requestOptions.idempotencyKey = `charge_${params.idempotencyKey}`;
-    }
-
-    try {
-      const intent = await this.stripe.paymentIntents.create(intentParams, requestOptions);
-      if (intent.status === 'succeeded') {
-        return { ok: true, paymentIntentId: intent.id };
-      }
-      if (intent.status === 'requires_action' && intent.client_secret) {
-        return {
-          ok: false,
-          requiresAction: true,
-          clientSecret: intent.client_secret,
-        };
-      }
-      return {
-        ok: false,
-        error: `Unexpected payment status: ${intent.status}`,
-      };
-    } catch (err: unknown) {
-      const stripeErr = err as {
-        code?: string;
-        payment_intent?: { client_secret?: string };
-        message?: string;
-      };
-      if (
-        stripeErr?.code === 'authentication_required' &&
-        stripeErr?.payment_intent?.client_secret
-      ) {
-        return {
-          ok: false,
-          requiresAction: true,
-          clientSecret: stripeErr.payment_intent.client_secret,
-        };
-      }
-      this.logger.error(
-        `[Stripe] chargeWithSavedMethod failed: ${stripeErr?.message ?? (err instanceof Error ? err.message : String(err))}`
-      );
-      return {
-        ok: false,
-        error: stripeErr?.message ?? 'Payment failed',
-      };
-    }
+      connectAccountId: params.stripeConnectAccountId,
+      idempotencyKey: params.idempotencyKey,
+    });
   }
 
-  /** Retrieves a Stripe Checkout session by ID. */
-  async retrieveSession(sessionId: string): Promise<Stripe.Checkout.Session> {
-    if (!this.stripe) throw new BadRequestException('Stripe not configured');
-    return this.stripe.checkout.sessions.retrieve(sessionId);
+  /** Retrieves a checkout session by ID. */
+  async retrieveSession(sessionId: string): Promise<CheckoutSessionInfo> {
+    return (await this.getProvider()).retrieveSession(sessionId);
   }
+}
+
+/** Adapts the legacy Stripe-shaped wire line item into the provider-agnostic CheckoutLineItem. */
+function toGenericLineItem(item: Stripe.Checkout.SessionCreateParams.LineItem): CheckoutLineItem {
+  const priceData = item.price_data;
+  if (!priceData || typeof priceData.unit_amount !== 'number' || !priceData.product_data?.name) {
+    throw new Error('Line item must specify price_data.{currency,unit_amount,product_data.name}');
+  }
+  return {
+    productName: priceData.product_data.name,
+    unitAmountCents: priceData.unit_amount,
+    quantity: item.quantity ?? 1,
+    currency: priceData.currency,
+  };
 }

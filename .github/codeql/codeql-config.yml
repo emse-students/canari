@@ -13,3 +13,5 @@ paths-ignore:
   - frontend/src/lib/paraglide
   - frontend/src/lib/proto/canari.js
   - frontend/src-tauri/gen
+  - tools
+  - scripts

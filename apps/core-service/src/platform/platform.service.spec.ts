@@ -20,6 +20,7 @@ describe('PlatformService', () => {
       maintenanceEnabled: true,
       maintenanceMessage: 'Pause',
       minClientVersion: '1.0.0',
+      paymentProvider: 'stripe' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(true);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -30,6 +31,7 @@ describe('PlatformService', () => {
       maintenanceEnabled: false,
       maintenanceMessage: null,
       minClientVersion: '0.0.0',
+      paymentProvider: 'stripe' as const,
     };
     expect(service.isAccessBlockedByMaintenance(config, false)).toBe(false);
     expect(service.isAccessBlockedByMaintenance(config, true)).toBe(false);
@@ -42,6 +44,7 @@ describe('PlatformService', () => {
       maintenanceEnabled: false,
       maintenanceMessage: null,
       minClientVersion: '0.0.0',
+      paymentProvider: 'stripe',
     });
 
     await service.ensureDefaults();
@@ -49,5 +52,23 @@ describe('PlatformService', () => {
     expect(repo.save).toHaveBeenCalledWith(
       expect.objectContaining({ id: 1, maintenanceEnabled: false })
     );
+  });
+
+  it('updateConfig switches paymentProvider and leaves other fields untouched', async () => {
+    const existing: PlatformConfig = {
+      id: 1,
+      maintenanceEnabled: false,
+      maintenanceMessage: null,
+      minClientVersion: '0.13.0',
+      paymentProvider: 'stripe',
+    };
+    repo.findOne.mockResolvedValue(existing);
+    repo.findOneOrFail.mockResolvedValue(existing);
+    repo.save.mockImplementation(async (row) => row as PlatformConfig);
+
+    const result = await service.updateConfig({ paymentProvider: 'lydia' });
+
+    expect(result.paymentProvider).toBe('lydia');
+    expect(result.minClientVersion).toBe('0.13.0');
   });
 });

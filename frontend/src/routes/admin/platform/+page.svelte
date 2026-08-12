@@ -12,6 +12,7 @@
     maintenanceEnabled: boolean;
     maintenanceMessage: string | null;
     minClientVersion: string;
+    paymentProvider: 'stripe' | 'lydia';
   };
 
   let loading = $state(true);
@@ -22,6 +23,7 @@
   let maintenanceEnabled = $state(false);
   let maintenanceMessage = $state('');
   let minClientVersion = $state('0.0.0');
+  let paymentProvider = $state<'stripe' | 'lydia'>('stripe');
 
   async function loadConfig() {
     loading = true;
@@ -34,6 +36,7 @@
       maintenanceEnabled = data.maintenanceEnabled;
       maintenanceMessage = data.maintenanceMessage ?? '';
       minClientVersion = data.minClientVersion;
+      paymentProvider = data.paymentProvider;
     } catch (e) {
       error = e instanceof Error ? e.message : m.admin_platform_load_error();
     } finally {
@@ -53,6 +56,7 @@
           maintenanceEnabled,
           maintenanceMessage: maintenanceMessage.trim() || null,
           minClientVersion: minClientVersion.trim(),
+          paymentProvider,
         }),
       });
       if (!res.ok) {
@@ -63,6 +67,7 @@
       maintenanceEnabled = data.maintenanceEnabled;
       maintenanceMessage = data.maintenanceMessage ?? '';
       minClientVersion = data.minClientVersion;
+      paymentProvider = data.paymentProvider;
       savedMessage = m.admin_platform_saved_label();
       void refreshAppVersionCheck();
     } catch (e) {
@@ -155,6 +160,23 @@
         <p class="text-xs text-text-muted">
           {m.admin_platform_min_version_hint_prefix()} <code>major.minor.patch</code>
           {m.admin_platform_min_version_hint_suffix()}
+        </p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="payment-provider" class="text-sm font-bold text-text-main">
+          {m.admin_platform_payment_provider_label()}
+        </label>
+        <select
+          id="payment-provider"
+          bind:value={paymentProvider}
+          class="w-full max-w-xs rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+        >
+          <option value="stripe">Stripe</option>
+          <option value="lydia">Lydia</option>
+        </select>
+        <p class="text-xs text-text-muted">
+          {m.admin_platform_payment_provider_hint()}
         </p>
       </div>
 

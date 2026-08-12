@@ -1627,6 +1627,53 @@ export async function startStripeOnboarding(
   return (await res.json()) as { url: string; accountId: string };
 }
 
+// ── Payment provider (WP-LYDIA-1) ───────────────────────────────────────────
+
+export type PaymentProviderId = 'stripe' | 'lydia';
+
+/** Which payment provider core-service is currently configured to use. */
+export async function fetchActivePaymentProvider(): Promise<PaymentProviderId> {
+  const base = coreUrl();
+  const res = await apiFetch(`${base}/api/payments/provider`);
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    throw new Error(`provider ${res.status}: ${details || res.statusText}`);
+  }
+  const data = (await res.json()) as { provider: PaymentProviderId };
+  return data.provider;
+}
+
+/**
+ * The association's legal profile, required upfront by Lydia's business/create - Lydia has no
+ * hosted collection page like Stripe's accountLinks, so Canari collects it itself.
+ */
+export interface LydiaBusinessLegalProfile {
+  name: string;
+  address: string;
+  zipcode: string;
+  city: string;
+  country: string;
+  businessEmail: string;
+  businessPhone: string;
+}
+
+/** Creates a Lydia Business for the association and returns its vendor token + Lydia console URL. */
+export async function startLydiaOnboarding(
+  associationId: string,
+  legalProfile: LydiaBusinessLegalProfile
+): Promise<{ url: string; accountId: string }> {
+  const base = coreUrl();
+  const res = await apiFetch(`${base}/api/payments/onboarding`, {
+    method: 'POST',
+    body: JSON.stringify({ associationId, legalProfile }),
+  });
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    throw new Error(`onboarding ${res.status}: ${details || res.statusText}`);
+  }
+  return (await res.json()) as { url: string; accountId: string };
+}
+
 // ── Association categories (thematic taxonomy) ───────────────────────────────
 
 /** A managed thematic category used to group associations on the poster and directory. */

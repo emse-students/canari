@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 /** Body for PATCH /api/users/admin/platform - partial platform settings update. */
 export class UpdatePlatformConfigDto {
@@ -17,4 +17,8 @@ export class UpdatePlatformConfigDto {
     message: 'minClientVersion must be a semver major.minor.patch string',
   })
   minClientVersion?: string;
+
+  @IsOptional()
+  @IsIn(['stripe', 'lydia'])
+  paymentProvider?: 'stripe' | 'lydia';
 }

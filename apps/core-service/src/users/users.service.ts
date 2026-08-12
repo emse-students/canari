@@ -393,7 +393,9 @@ export class UsersService implements OnModuleInit {
     // recorded uploader is the ONLY thing that can attribute a blob - anything stored before that
     // was recorded stays reachable by the retention sweep alone.
     await axios
-      .delete(`${this.mediaUrl}/api/media/internal/users/${encodeURIComponent(userId)}`, { headers })
+      .delete(`${this.mediaUrl}/api/media/internal/users/${encodeURIComponent(userId)}`, {
+        headers,
+      })
       .then((r) =>
         this.logger.log(
           `[deleteUser] media deleted userId=${userId} count=${r.data?.deleted ?? '?'}`

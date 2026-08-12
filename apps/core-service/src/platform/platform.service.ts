@@ -8,6 +8,7 @@ export type PlatformConfigPublic = {
   maintenanceEnabled: boolean;
   maintenanceMessage: string | null;
   minClientVersion: string;
+  paymentProvider: 'stripe' | 'lydia';
 };
 
 const DEFAULT_ROW: PlatformConfig = {
@@ -15,6 +16,7 @@ const DEFAULT_ROW: PlatformConfig = {
   maintenanceEnabled: false,
   maintenanceMessage: null,
   minClientVersion: '0.0.0',
+  paymentProvider: 'stripe',
 };
 
 /** Reads and updates the singleton platform configuration row in PostgreSQL. */
@@ -62,9 +64,12 @@ export class PlatformService implements OnModuleInit {
     if (dto.minClientVersion !== undefined) {
       row.minClientVersion = dto.minClientVersion.trim();
     }
+    if (dto.paymentProvider !== undefined) {
+      row.paymentProvider = dto.paymentProvider;
+    }
 
     this.logger.debug(
-      `Platform config updated maintenance=${row.maintenanceEnabled} minClient=${row.minClientVersion}`
+      `Platform config updated maintenance=${row.maintenanceEnabled} minClient=${row.minClientVersion} paymentProvider=${row.paymentProvider}`
     );
     const saved = await this.repo.save(row);
     return toPublic(saved);
@@ -81,5 +86,6 @@ function toPublic(row: PlatformConfig): PlatformConfigPublic {
     maintenanceEnabled: row.maintenanceEnabled,
     maintenanceMessage: row.maintenanceMessage,
     minClientVersion: row.minClientVersion,
+    paymentProvider: row.paymentProvider,
   };
 }

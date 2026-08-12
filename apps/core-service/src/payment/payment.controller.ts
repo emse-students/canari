@@ -119,7 +119,13 @@ export class PaymentController {
     }
   }
 
-  /** Starts or resumes a Stripe Connect onboarding flow for an association and returns the onboarding URL. */
+  /** Returns which payment provider is active, so the frontend can render the matching onboarding flow. */
+  @Get('provider')
+  async getActiveProvider() {
+    return { provider: await this.paymentService.getActiveProviderId() };
+  }
+
+  /** Starts or resumes a Connect-style onboarding flow for an association and returns the onboarding URL. */
   @Post('onboarding')
   @HttpCode(200)
   async createOnboarding(
@@ -129,11 +135,21 @@ export class PaymentController {
       existingAccountId?: string;
       returnUrl?: string;
       refreshUrl?: string;
+      /** Required by Lydia's business/create, ignored when Stripe is active. */
+      legalProfile?: {
+        name: string;
+        address: string;
+        zipcode: string;
+        city: string;
+        country: string;
+        businessEmail: string;
+        businessPhone: string;
+      };
     },
     @Req() req: Request
   ) {
-    if (!this.paymentService.isConfigured()) {
-      return { ok: false, message: 'Stripe not configured' };
+    if (!(await this.paymentService.isConfigured())) {
+      return { ok: false, message: 'Payment provider not configured' };
     }
 
     const assocId = body.associationId?.trim();
@@ -144,6 +160,18 @@ export class PaymentController {
       await this.assertCanManageAssociation(req, assocId);
     }
 
+    const legalProfile = body.legalProfile
+      ? {
+          name: String(body.legalProfile.name ?? '').trim(),
+          address: String(body.legalProfile.address ?? '').trim(),
+          zipcode: String(body.legalProfile.zipcode ?? '').trim(),
+          city: String(body.legalProfile.city ?? '').trim(),
+          country: String(body.legalProfile.country ?? '').trim(),
+          businessEmail: String(body.legalProfile.businessEmail ?? '').trim(),
+          businessPhone: String(body.legalProfile.businessPhone ?? '').trim(),
+        }
+      : undefined;
+
     const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost').replace(/\/$/, '');
     const returnUrl = body.returnUrl?.trim() || `${frontendUrl}/associations`;
     const refreshUrl = body.refreshUrl?.trim() || returnUrl;
@@ -152,6 +180,7 @@ export class PaymentController {
       existingAccountId: body.existingAccountId,
       refreshUrl,
       returnUrl,
+      legalProfile,
     });
 
     // Persist the Stripe account ID on the association (social-service)
@@ -186,7 +215,7 @@ export class PaymentController {
     }
     await this.assertCanManageAssociation(req, associationId);
 
-    if (!this.paymentService.isConfigured()) {
+    if (!(await this.paymentService.isConfigured())) {
       return {
         status: 'unavailable' as const,
         message: 'Stripe not configured',
@@ -281,7 +310,7 @@ export class PaymentController {
     }
     await this.assertCanManageAssociation(req, associationId);
 
-    if (!this.paymentService.isConfigured()) {
+    if (!(await this.paymentService.isConfigured())) {
       throw new BadRequestException('Stripe not configured');
     }
 
@@ -322,7 +351,7 @@ export class PaymentController {
       throw new BadRequestException('Invalid payload');
     }
 
-    if (!this.paymentService.isConfigured()) {
+    if (!(await this.paymentService.isConfigured())) {
       return { ok: false, message: 'Stripe not configured' };
     }
 
@@ -354,13 +383,13 @@ export class PaymentController {
     if (!body?.sessionId || !/^cs_[a-zA-Z0-9_]+$/.test(body.sessionId)) {
       throw new BadRequestException('Invalid sessionId');
     }
-    if (!this.paymentService.isConfigured()) {
+    if (!(await this.paymentService.isConfigured())) {
       return { ok: false, message: 'Stripe not configured' };
     }
 
     const session = await this.paymentService.retrieveSession(body.sessionId);
 
-    if (session.payment_status !== 'paid') {
+    if (!session.paid) {
       return { ok: false, message: 'Payment not completed' };
     }
 
@@ -393,14 +422,14 @@ export class PaymentController {
     if (!body?.sessionId || !/^cs_[a-zA-Z0-9_]+$/.test(body.sessionId)) {
       throw new BadRequestException('Invalid sessionId');
     }
-    if (!this.paymentService.isConfigured()) {
+    if (!(await this.paymentService.isConfigured())) {
       return { ok: false, message: 'Stripe not configured' };
     }
 
     const session = await this.paymentService.retrieveSession(body.sessionId);
 
     // Safety guard: never cancel a session that was actually paid
-    if (session.payment_status === 'paid') {
+    if (session.paid) {
       return { ok: false, message: 'Session already paid' };
     }
 
@@ -434,7 +463,7 @@ export class PaymentController {
     @Headers('x-user-id') userId: string,
     @Body() body: { successUrl?: string; cancelUrl?: string } = {}
   ) {
-    if (!this.paymentService.isConfigured()) {
+    if (!(await this.paymentService.isConfigured())) {
       return { ok: false, message: 'Stripe not configured' };
     }
 
@@ -473,7 +502,7 @@ export class PaymentController {
   @UseGuards(NginxAuthGuard)
   @Get('payment-methods')
   async listPaymentMethods(@Headers('x-user-id') userId: string) {
-    if (!this.paymentService.isConfigured()) {
+    if (!(await this.paymentService.isConfigured())) {
       return [];
     }
 
@@ -490,7 +519,7 @@ export class PaymentController {
     @Headers('x-user-id') userId: string,
     @Param('id') paymentMethodId: string
   ) {
-    if (!this.paymentService.isConfigured()) {
+    if (!(await this.paymentService.isConfigured())) {
       throw new BadRequestException('Stripe not configured');
     }
 
@@ -522,7 +551,7 @@ export class PaymentController {
   async getOrCreateCustomerForUser(
     @Body() body: { userId: string }
   ): Promise<{ customerId: string | null }> {
-    if (!this.paymentService.isConfigured()) {
+    if (!(await this.paymentService.isConfigured())) {
       return { customerId: null };
     }
     if (!body?.userId || !/^[a-zA-Z0-9_@.-]{1,256}$/.test(body.userId)) {
@@ -558,7 +587,7 @@ export class PaymentController {
     @Headers('x-user-id') userId: string,
     @Body() body: { submissionId: string; paymentMethodId: string }
   ) {
-    if (!this.paymentService.isConfigured()) {
+    if (!(await this.paymentService.isConfigured())) {
       return { ok: false, message: 'Stripe not configured' };
     }
 
@@ -677,7 +706,7 @@ export class PaymentController {
       customAmountCents?: number;
     }
   ) {
-    if (!this.paymentService.isConfigured()) {
+    if (!(await this.paymentService.isConfigured())) {
       return { ok: false, message: 'Stripe not configured' };
     }
 
@@ -750,13 +779,13 @@ export class PaymentController {
       idempotencyKey,
     });
 
-    if (result.ok && result.paymentIntentId) {
+    if (result.ok && result.paymentReference) {
       try {
         await this.markProductPurchaseCompletedInternal(
           productId,
           userId,
           chargeContext.amountCents,
-          result.paymentIntentId
+          result.paymentReference
         );
       } catch (err: unknown) {
         const error = err as Error & { response?: { data?: unknown } };

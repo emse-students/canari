@@ -10,7 +10,9 @@
     openStripeConnectDashboard,
     formatStripeConnectAmount,
     isStripeConnectReady,
+    fetchActivePaymentProvider,
     type StripeConnectStatusResult,
+    type PaymentProviderId,
     hasPermissionFlag,
     ensureAssociationSuperAdmin,
     AssociationPermissionFlag,
@@ -44,6 +46,7 @@
   import EditFormsTab from '$lib/components/associations/edit/EditFormsTab.svelte';
   import EditCotisationsTab from '$lib/components/associations/edit/EditCotisationsTab.svelte';
   import EditDelegationTab from '$lib/components/associations/edit/EditDelegationTab.svelte';
+  import LydiaBusinessOnboardingForm from '$lib/components/associations/edit/LydiaBusinessOnboardingForm.svelte';
   import { m } from '$lib/paraglide/messages';
 
   let asso = $state<Association | null>(null);
@@ -62,6 +65,8 @@
   let stripeDashboardLoading = $state(false);
   let stripeConnectStatus = $state<StripeConnectStatusResult | null>(null);
   let stripeStatusLoading = $state(false);
+  /** Which payment provider core-service is configured to use (WP-LYDIA-1) - defaults to 'stripe' until fetched. */
+  let activePaymentProvider = $state<PaymentProviderId>('stripe');
 
   let stripePaymentsReady = $derived(
     isStripeConnectReady(stripeConnectStatus) || !!asso?.stripeOnboardingComplete
@@ -175,6 +180,16 @@
       error = err instanceof Error ? err.message : 'Association not found';
     } finally {
       loading = false;
+    }
+  }
+
+  /** Fetches which payment provider is active, once per page visit (it's server config, not per-association). */
+  async function refreshActivePaymentProvider() {
+    try {
+      activePaymentProvider = await fetchActivePaymentProvider();
+    } catch (err) {
+      console.warn('[Payments] Failed to load active provider, defaulting to stripe:', err);
+      activePaymentProvider = 'stripe';
     }
   }
 
@@ -346,6 +361,7 @@
             type="button"
             onclick={() => {
               editSection = 'payments';
+              void refreshActivePaymentProvider();
               if (canManageStripeConnect) void refreshStripeConnectStatus();
             }}
             class="inline-flex items-center gap-2 shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
@@ -444,7 +460,14 @@
 
     {#if editSection === 'payments' && canManagePaymentsSection && asso}
       <div class="space-y-6">
-        {#if canManageStripeConnect}
+        {#if canManageStripeConnect && activePaymentProvider === 'lydia'}
+          <LydiaBusinessOnboardingForm
+            {asso}
+            onAccountCreated={(accountId) => {
+              if (asso) asso = { ...asso, stripeAccountId: accountId };
+            }}
+          />
+        {:else if canManageStripeConnect}
           <div
             class="rounded-2xl border border-cn-border bg-[var(--cn-surface)]/95 p-6 space-y-4 shadow-sm"
           >

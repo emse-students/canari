@@ -22,4 +22,13 @@ export class PlatformConfig {
     default: '0.0.0',
   })
   minClientVersion!: string;
+
+  /** Which payment provider PaymentService routes to (WP-LYDIA-1). Admin-editable, no restart needed. */
+  @Column({
+    name: 'payment_provider',
+    type: 'varchar',
+    length: 16,
+    default: 'stripe',
+  })
+  paymentProvider!: 'stripe' | 'lydia';
 }
