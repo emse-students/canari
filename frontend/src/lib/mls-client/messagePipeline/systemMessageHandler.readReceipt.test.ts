@@ -9,7 +9,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     messages: [{ id: 'm1', senderId: 'peer', readBy: [] }],
   });
   return {
-    mlsService: {},
+    // `getDeviceId` is what an addressed `history_bundle` is matched against - a bundle with no `to`
+    // never reaches it, which is exactly what the legacy frames below exercise.
+    mlsService: { getDeviceId: () => 'device-me' },
     storage: null,
     userId: 'me',
     deviceKeyB64: 'device-key',

@@ -10,7 +10,7 @@ import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { messageTime } from '$lib/utils/chat/messageOrder';
-import { noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
+import { isSolicitInFlight, noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
 import { digestIdentity, noteDigestReceived } from '$lib/utils/chat/historyDigestRendezvous';
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
@@ -156,6 +156,18 @@ export async function handleSystemEvent(
     const me = digestIdentity(userId, mlsService.getDeviceId());
     if (String(data?.to ?? '').toLowerCase() !== me.toLowerCase()) return true;
 
+    // Our answer is a group broadcast addressed back to the puller, so its identity is established
+    // here, exactly as `history_digest` does it: MLS authenticates the sending USER, the device half
+    // is self-asserted, and the worst a member can do by lying about it is address a bundle at one of
+    // its OWN devices. An unusable `from` is dropped rather than answered to nobody - a bundle with
+    // no addressee discharges no marker and is pure traffic.
+    const puller = String(data?.from ?? '');
+    const pullerUser = puller.split(':')[0]?.toLowerCase();
+    if (!pullerUser || !puller.includes(':') || pullerUser !== senderNorm) {
+      log(`[HISTORY_PULL] Rejected: "${puller}" does not match the MLS sender ${senderNorm}`);
+      return true;
+    }
+
     const deps = { storage, deviceKeyB64, mlsService, log };
     const ids = Array.isArray(data?.ids)
       ? (data.ids as unknown[]).filter((id): id is string => typeof id === 'string' && !!id.trim())
@@ -197,9 +209,10 @@ export async function handleSystemEvent(
     );
     // `silence`: we were asked about a SUBSET, so holding none of it says nothing about whether the
     // asker is complete - and an empty bundle would end its solicitation for good.
-    await sendHistoryBundleForIds(convoKey, wanted, deps, { emptyMeans: 'silence' }).catch((e) =>
-      log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`)
-    );
+    await sendHistoryBundleForIds(convoKey, wanted, deps, {
+      emptyMeans: 'silence',
+      to: puller,
+    }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
     return true;
   }
 
@@ -602,19 +615,39 @@ export async function handleSystemEvent(
   }
 
   if (event === 'history_bundle') {
-    // A bundle arrived: somebody answered, so the pending banner comes down. Whether it also ENDS
-    // the wait depends on what it carries, which is why both facts are read before anything is
-    // ingested - an empty bundle is the peer saying "you are missing nothing", a full one is just
-    // messages. `noteHistoryBundleReceived` owns that distinction.
+    // INGESTION IS FOR EVERYONE, THE ANSWER IS FOR THE ADDRESSEE. A bundle is a group broadcast, so
+    // every member sees an exchange between two of them. The messages are free to take - the merge
+    // below dedupes by id - but the ANSWER is not: `noteHistoryBundleReceived` discharges the
+    // awaiting-history marker, and a device that never asked has had nothing compared against its
+    // store. Reading somebody else's answer as our own dropped a proven marker on another device's
+    // evidence and stopped the solicitation for good: history missing here, and never asked for
+    // again.
     //
-    // An ABSENT `vouched` means vouched: every client shipped before the field existed sent a bare
-    // `{ messages: [] }` when it was entitled to vouch, and only when it was.
-    noteHistoryBundleReceived(
-      userId,
-      convoKey,
-      Array.isArray(data.messages) ? data.messages.length : 0,
-      { vouched: data.vouched !== false }
-    );
+    // A bundle with no `to` predates the field. It is answered the legacy way - only while OUR OWN
+    // solicitation is outstanding - so the ambiguity resolves in the direction that costs a retry
+    // rather than the one that costs messages.
+    const addressee = String(data?.to ?? '');
+    const forUs = addressee
+      ? addressee.toLowerCase() === digestIdentity(userId, mlsService.getDeviceId()).toLowerCase()
+      : isSolicitInFlight(convoKey);
+    if (forUs) {
+      // Whether an answer ENDS the wait depends on what it carries - an empty bundle is the peer
+      // saying "you are missing nothing", a full one is just messages - and
+      // `noteHistoryBundleReceived` owns that distinction.
+      //
+      // An ABSENT `vouched` means vouched: every client shipped before the field existed sent a bare
+      // `{ messages: [] }` when it was entitled to vouch, and only when it was.
+      noteHistoryBundleReceived(
+        userId,
+        convoKey,
+        Array.isArray(data.messages) ? data.messages.length : 0,
+        { vouched: data.vouched !== false }
+      );
+    } else {
+      log(
+        `[HISTORY_BUNDLE] ${convoKey.slice(0, 8)}… - answer for ${addressee ? addressee.slice(0, 8) + '…' : 'nobody in particular'}, ingesting without discharging our own wait`
+      );
+    }
     try {
       type BundleMsg = {
         id: string;

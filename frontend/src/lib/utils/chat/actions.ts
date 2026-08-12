@@ -210,6 +210,7 @@ export async function processPendingInvitations(params: {
             mlsService,
             log,
             selfUserId: userId,
+            to: digestIdentity(inv.userId, inv.deviceId),
           }).catch((e) =>
             log(`[HISTORY_BUNDLE] History send error to ${inv.userId}: ${String(e)}`)
           );
@@ -925,6 +926,7 @@ export async function handleWelcomeRequest(params: {
       mlsService,
       log,
       selfUserId: userId,
+      to: digestIdentity(requesterUserId, requesterDeviceId),
     }).catch((e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`));
   } catch (e) {
     const errStr = String(e);
@@ -1029,8 +1031,8 @@ export async function handleHistoryRequest(params: {
     log(
       `[HISTORY_REQ] no digest from ${requesterIdentity} for ${short}... - sending the whole store`
     );
-    await sendFullHistoryBundle(groupId, { ...deps, selfUserId }).catch((e) =>
-      log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
+    await sendFullHistoryBundle(groupId, { ...deps, selfUserId, to: requesterIdentity }).catch(
+      (e) => log(`[HISTORY_BUNDLE] History send error to ${requesterUserId}: ${String(e)}`)
     );
     return;
   }
@@ -1056,9 +1058,10 @@ export async function handleHistoryRequest(params: {
   // nothing at all was the deadlock: two peers both awaiting, both holding nothing the other lacked,
   // each waiting for an answer only the other was entitled to give (WP-HISTBANNER-1).
   const emptyMeans = isAwaitingHistory(selfUserId, groupId) ? 'identical' : 'complete';
-  await sendHistoryBundleForIds(groupId, idsToSend, deps, { emptyMeans }).catch((e) =>
-    log(`[HISTORY_BUNDLE] Diff send error to ${requesterUserId}: ${String(e)}`)
-  );
+  await sendHistoryBundleForIds(groupId, idsToSend, deps, {
+    emptyMeans,
+    to: requesterIdentity,
+  }).catch((e) => log(`[HISTORY_BUNDLE] Diff send error to ${requesterUserId}: ${String(e)}`));
 
   const idsToPull = digest.mode === 'ids' ? diff.missingLocally : [];
   if (idsToPull.length > 0 || diff.pullPrefixes.length > 0) {

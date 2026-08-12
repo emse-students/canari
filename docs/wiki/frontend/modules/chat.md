@@ -594,6 +594,38 @@ ignores `history_digest` / `history_pull` through an explicit `REPLAY_IGNORED_EV
 negotiation, meaningless when re-read days later, and naming them means adding a branch later has to
 be a decision rather than an accident.
 
+#### The bundle is INGESTED by everyone and ANSWERS one device
+
+The third leg is a broadcast too, and it was the one that lost messages. `history_bundle` carries a
+`to` (the requester's `digestIdentity`, set by `bundleFrame` on every send path - full store, id
+diff, and both flavours of empty bundle), and the receiver splits what it does with it in two:
+
+- **the messages are taken by every member** - the merge dedupes by id, so over-delivery costs
+  bandwidth and nothing else;
+- **the ANSWER is read only by the addressee** - `noteHistoryBundleReceived` discharges the durable
+  awaiting-history marker, and a device that never asked has had nothing compared against its store.
+
+Before this, one repair between two peers cleared the marker of every other member of the
+conversation. That is not a delay, it is a permanent loss: the marker is the evidence, so once it is
+gone no reconnect, no sweep and no election ever asks again, and whatever was missing on those
+devices stays missing. The empty bundle is the worst case of all - it carries no messages at all and
+exists purely to say "you are complete".
+
+A bundle with **no `to`** predates the field, and is answered the legacy way: only while this
+device's own solicitation is outstanding (`isSolicitInFlight`). The ambiguity therefore resolves
+towards a marker that stays up - one extra diff on the next edge, which is free when there is no
+difference - rather than towards one wrongly cleared.
+
+**Why not address the frame itself.** The obvious fix is the `recipients` field of `POST /send`.
+Do not: MLS re-encrypts per recipient set, and narrowing it on an application message burns the
+sender ratchet budget (`sender_ratchet_config()` is `(2000, 2000)`) into a generation gap the other
+members cannot close - `forgetGroup` and a re-Welcome. `to` is addressing, not secrecy, and must
+never be read as the latter.
+
+The responder half is symmetric: `history_pull` is answered with a bundle addressed back at the
+puller, whose claimed `from` is cross-checked against the authenticated MLS sender exactly as
+`history_digest` is. An unusable `from` is dropped rather than answered to nobody.
+
 **A digest names a device, and a member can only misreport its OWN.** `systemMessageHandler`
 cross-checks the `userId` a `history_digest` claims against the authenticated MLS sender before
 recording it; the device half is unverifiable and harmless (the worst a member can do is answer for

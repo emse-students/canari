@@ -122,7 +122,9 @@ describe('handleHistoryRequest - no digest (a peer on an older build)', () => {
     // authoritative enough to answer "this group has no history".
     expect(sendFullHistoryBundle).toHaveBeenCalledWith(
       GROUP,
-      expect.objectContaining({ selfUserId: SELF_USER })
+      // `to` is the requesting DEVICE: the bundle is a group broadcast, and only the device that
+      // asked may read it as an answer to its own wait.
+      expect.objectContaining({ selfUserId: SELF_USER, to: REQUESTER })
     );
     expect(sendHistoryBundleForIds).not.toHaveBeenCalled();
   });
@@ -162,7 +164,7 @@ describe('handleHistoryRequest - with a digest', () => {
       ['only-ours'],
       expect.anything(),
       // Our whole store was compared, so an empty result here really would mean "you are complete".
-      { emptyMeans: 'complete' }
+      { emptyMeans: 'complete', to: REQUESTER }
     );
   });
 
@@ -175,6 +177,7 @@ describe('handleHistoryRequest - with a digest', () => {
 
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, [], expect.anything(), {
       emptyMeans: 'complete',
+      to: REQUESTER,
     });
     expect(sendHistoryPull).not.toHaveBeenCalled();
   });
@@ -222,6 +225,7 @@ describe('handleHistoryRequest - with a digest', () => {
 
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, [], expect.anything(), {
       emptyMeans: 'identical',
+      to: REQUESTER,
     });
   });
 
@@ -234,6 +238,7 @@ describe('handleHistoryRequest - with a digest', () => {
 
     expect(sendHistoryBundleForIds).toHaveBeenCalledWith(GROUP, ['ours'], expect.anything(), {
       emptyMeans: 'identical',
+      to: REQUESTER,
     });
   });
 
@@ -271,7 +276,7 @@ describe('handleHistoryRequest - with a digest', () => {
       GROUP,
       ['ours-a', 'ours-b'],
       expect.anything(),
-      { emptyMeans: 'complete' }
+      { emptyMeans: 'complete', to: REQUESTER }
     );
     // Their slice is theirs alone, so it is pulled - and the DEPTH travels with the prefix, or it
     // names a slice the answering device cannot compute.

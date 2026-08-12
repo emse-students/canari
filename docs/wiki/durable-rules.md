@@ -60,6 +60,21 @@ three that must be seen without opening one:
   the server cannot read the content it cannot police it either, so the RECEIVER enforces it, against
   the identity MLS authenticated for the frame: a member can lie about the id, never about who it is.
   Consume the event and log the refusal; do not re-queue it.
+- **AN ANSWER BROADCAST TO A GROUP IS READ BY EVERY MEMBER, SO IT MUST NAME THE ONE IT ANSWERS.**
+  Every leg of the history exchange is a group frame; `history_pull` had carried a `to` from the
+  start and `history_bundle` had not, so one repair between two peers discharged the
+  awaiting-history marker of every other member - devices that had compared nothing, on evidence
+  that was not theirs. Split the two things a broadcast does: DATA is for everyone (the bundle
+  dedupes by id, over-delivery costs bandwidth), the ANSWER is for the addressee. The empty frame is
+  the dangerous one - it carries no data at all and exists purely to end a wait. Address it at the
+  DEVICE (`digestIdentity`), never the user, or a second device of the same person clears on it. A
+  legacy frame with no addressee resolves towards the marker STAYING UP: an extra diff is free, a
+  marker wrongly cleared is permanent, because the marker is the only thing that makes the device
+  ask again.
+- **DO NOT NARROW AN MLS APPLICATION MESSAGE WITH `recipients` TO ADDRESS IT.** `sender_ratchet_config()`
+  is (2000, 2000): a per-recipient re-encryption burns that budget into a generation gap the other
+  members cannot close (`forgetGroup` + re-Welcome). Addressing belongs in the PAYLOAD; it is not a
+  secrecy boundary and must never be documented as one.
 - MLS membership says who can decrypt; `DeviceGroupMembership` says who is actually sent to.
 - A join is NOT evidence of a gap: the message store and the seen-frame ledger are keyed by USER, so
   a rotated identity rejoins every group while the browser still holds every message.

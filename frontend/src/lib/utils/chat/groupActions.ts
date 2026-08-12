@@ -465,6 +465,33 @@ function serializeForBundle(m: StoredMessage) {
 }
 
 /**
+ * Builds one `history_bundle` frame.
+ *
+ * **WHY EVERY BUNDLE CARRIES A `to`.** The frame is an MLS group broadcast - there is no such thing
+ * as a private send here - so every member of the conversation receives an answer meant for ONE
+ * device. The messages themselves are harmless to over-deliver (the receiver dedupes by id), but the
+ * ANSWER is not: a bundle discharges the receiver's awaiting-history marker, and a device that was
+ * never asked has had nothing compared against its store. It would drop a proven marker on somebody
+ * else's evidence and stop asking, which is how history is lost rather than merely delayed.
+ *
+ * `to` is the requester's `digestIdentity` - user AND device, because a user with three devices
+ * must be able to solicit from one without discharging the markers of the other two. Addressing is
+ * the ONLY thing it does: it is not a secrecy boundary and must never be read as one.
+ *
+ * It is deliberately not the `recipients` field of `POST /send`: MLS re-encrypts per recipient set,
+ * and narrowing the set on an application message burns the sender ratchet budget
+ * (`sender_ratchet_config` is (2000, 2000)) into a generation gap the other members can never close.
+ */
+function bundleFrame(messages: unknown[], to: string, vouched?: boolean): Uint8Array {
+  return encodeAppMessage(
+    mkSystem(
+      'history_bundle',
+      JSON.stringify({ messages, to, ...(vouched === false ? { vouched: false } : {}) })
+    )
+  );
+}
+
+/**
  * Sends the full local history of `groupId` to active group members, encrypted under the
  * current MLS epoch, in chunks of `chunkSize` messages (default 200).
  *
@@ -490,10 +517,12 @@ export async function sendFullHistoryBundle(
     log: (msg: string) => void;
     /** OUR user id, for the authoritative-emptiness check. Not the requester's. */
     selfUserId: string;
+    /** The device that asked, as `digestIdentity` spells it - see {@link bundleFrame}. */
+    to: string;
   },
   chunkSize = 200
 ): Promise<void> {
-  const { storage, deviceKeyB64, mlsService, log, selfUserId } = deps;
+  const { storage, deviceKeyB64, mlsService, log, selfUserId, to } = deps;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
@@ -515,7 +544,7 @@ export async function sendFullHistoryBundle(
       );
       return;
     }
-    const bytes = encodeAppMessage(mkSystem('history_bundle', JSON.stringify({ messages: [] })));
+    const bytes = bundleFrame([], to);
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, true);
       log(`[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (group has no history)`);
@@ -525,7 +554,7 @@ export async function sendFullHistoryBundle(
     return;
   }
 
-  await sendBundleChunks(groupId, messages, { mlsService, log }, chunkSize);
+  await sendBundleChunks(groupId, messages, { mlsService, log }, { chunkSize, to });
   log(`[HISTORY_BUNDLE] Full history sent: ${messages.length} message(s)`);
 }
 
@@ -548,14 +577,12 @@ async function sendBundleChunks(
   groupId: string,
   messages: StoredMessage[],
   { mlsService, log }: HistorySendDeps,
-  chunkSize: number
+  { chunkSize, to }: { chunkSize: number; to: string }
 ): Promise<void> {
   const totalChunks = Math.ceil(messages.length / chunkSize);
   for (let i = 0; i < messages.length; i += chunkSize) {
     const payload = messages.slice(i, i + chunkSize).map(serializeForBundle);
-    const bytes = encodeAppMessage(
-      mkSystem('history_bundle', JSON.stringify({ messages: payload }))
-    );
+    const bytes = bundleFrame(payload, to);
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, true);
       log(
@@ -704,16 +731,17 @@ export type EmptyBundleMeaning = 'complete' | 'identical' | 'silence';
 /**
  * Sends only the messages named by `ids`, which is what a diff resolves to.
  *
- * `emptyMeans` decides what an empty selection says; see {@link EmptyBundleMeaning}.
+ * `emptyMeans` decides what an empty selection says; see {@link EmptyBundleMeaning}. `to` addresses
+ * the answer at the device that asked; see {@link bundleFrame}.
  */
 export async function sendHistoryBundleForIds(
   groupId: string,
   ids: readonly string[],
   deps: HistoryStoreDeps,
-  opts: { emptyMeans: EmptyBundleMeaning; chunkSize?: number }
+  opts: { emptyMeans: EmptyBundleMeaning; to: string; chunkSize?: number }
 ): Promise<void> {
   const { storage, deviceKeyB64, mlsService, log } = deps;
-  const { emptyMeans, chunkSize = 200 } = opts;
+  const { emptyMeans, to, chunkSize = 200 } = opts;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;
@@ -743,12 +771,7 @@ export async function sendHistoryBundleForIds(
     // ABSENCE means vouched, which is what every client shipped before this field assumes when it
     // reads an empty bundle - so an old responder stays correctly interpreted by a new requester.
     const vouched = emptyMeans === 'complete';
-    const bytes = encodeAppMessage(
-      mkSystem(
-        'history_bundle',
-        JSON.stringify(vouched ? { messages: [] } : { messages: [], vouched: false })
-      )
-    );
+    const bytes = bundleFrame([], to, vouched);
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, true);
       log(
@@ -760,7 +783,7 @@ export async function sendHistoryBundleForIds(
     return;
   }
 
-  await sendBundleChunks(groupId, selected, { mlsService, log }, chunkSize);
+  await sendBundleChunks(groupId, selected, { mlsService, log }, { chunkSize, to });
   log(
     `[HISTORY_BUNDLE] Diff sent for ${groupId.slice(0, 8)}…: ${selected.length} of ${wanted.size} requested message(s)`
   );

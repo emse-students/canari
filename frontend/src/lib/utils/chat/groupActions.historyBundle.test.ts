@@ -6,6 +6,8 @@ import type { IStorage, StoredMessage } from '$lib/db';
 
 const SELF = 'user-a';
 const GROUP = 'g1';
+/** The device that asked - every bundle is addressed at one, never at the group at large. */
+const REQUESTER = 'user-b:device-b';
 
 function storageWith(messages: StoredMessage[] | Error): IStorage {
   return {
@@ -32,7 +34,7 @@ function sentBundle(mlsService: ReturnType<typeof createMlsServiceStub>) {
   const decoded = decodeAppMessage(bytes);
   return {
     event: decoded?.system?.event,
-    data: JSON.parse(decoded?.system?.data || '{}') as { messages: unknown[] },
+    data: JSON.parse(decoded?.system?.data || '{}') as { messages: unknown[]; to?: string },
   };
 }
 
@@ -50,12 +52,16 @@ describe('sendFullHistoryBundle', () => {
       mlsService,
       log: vi.fn(),
       selfUserId: SELF,
+      to: REQUESTER,
     });
 
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
     const { event, data } = sentBundle(mlsService);
     expect(event).toBe('history_bundle');
     expect(data.messages).toEqual([]);
+    // The empty bundle is the one that DISCHARGES a marker, so it is the one that most needs an
+    // addressee: unaddressed, it tells every other member of the group to stop waiting too.
+    expect(data.to).toBe(REQUESTER);
   });
 
   it('stays silent when empty AND still awaiting history itself (emptiness proves nothing)', async () => {
@@ -69,6 +75,7 @@ describe('sendFullHistoryBundle', () => {
       mlsService,
       log: vi.fn(),
       selfUserId: SELF,
+      to: REQUESTER,
     });
 
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
@@ -82,6 +89,7 @@ describe('sendFullHistoryBundle', () => {
       mlsService,
       log: vi.fn(),
       selfUserId: SELF,
+      to: REQUESTER,
     });
 
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
@@ -96,11 +104,13 @@ describe('sendFullHistoryBundle', () => {
       mlsService,
       log: vi.fn(),
       selfUserId: SELF,
+      to: REQUESTER,
     });
 
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
     const { event, data } = sentBundle(mlsService);
     expect(event).toBe('history_bundle');
     expect(data.messages).toHaveLength(2);
+    expect(data.to).toBe(REQUESTER);
   });
 });
