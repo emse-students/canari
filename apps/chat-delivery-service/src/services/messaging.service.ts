@@ -686,7 +686,14 @@ export class MessagingService {
     // shared copy that exists - the defect this rework removes
     // (`docs/wiki/protocols/history-reconciliation.md`).
     const durable = body.durable ?? !body.silent;
-    if (body.proto && !body.isWelcome && !body.isCommit && durable && body.groupId && body.senderId) {
+    if (
+      body.proto &&
+      !body.isWelcome &&
+      !body.isCommit &&
+      durable &&
+      body.groupId &&
+      body.senderId
+    ) {
       try {
         const historyKey = `history:${body.groupId}`;
         await this.redis.xadd(
