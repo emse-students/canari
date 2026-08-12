@@ -192,6 +192,37 @@ It is **cached per conversation and invalidated on write**, never recomputed by 
 Connect cost must not grow with retention, or the 5-year window would be paid on every connect for
 a comparison that almost always matches.
 
+**SHIPPED as the rule, not yet as the exchange.** `$lib/utils/chat/historyStateKey.ts` computes it:
+a canonical string per message - id, deleted, the edit's own `editedAt`, and every reaction pair
+with its instant and whether it stands - SHA-256'd and XOR-folded into 64 bits. Four properties are
+load-bearing and each is pinned by a test:
+
+- **the fold is XOR**, so the key cannot depend on the order a store is walked in, and in particular
+  not on a sort two devices might do differently (the mistake `compareIds` exists to prevent);
+- **XOR is not idempotent**, so a duplicated id would cancel its own message out of the key - the
+  walk deduplicates by id before folding, and that guard is not tidiness;
+- **content is excluded**, or a purged deletion would look like a difference for ever between two
+  devices that agree completely - and so are the sender and the timestamp, which no exchange
+  repairs;
+- **read state and the floor are excluded**, deliberately. Both merge as `max`, both ride on every
+  bundle, and both converge through the shared log the reconciliation drains BEFORE comparing.
+  Including them would let the most frequently changing thing in a conversation trigger a digest
+  exchange that repairs messages nobody was missing.
+
+**The boundary had to be quantised for the key to be comparable at all.** A key is computed over
+`[since, now]`, and an unrounded `since` slides continuously: two devices deriving it a second apart
+compute over two different ranges, so the fast path could never fire and a cache keyed by that value
+could never hit. `deviceWindowStart` now rounds DOWN to the day, so every device connecting on the
+same day asks from the same instant. Either side of midnight they disagree and exchange a digest,
+which is what the digest is for.
+
+**The cache is not built yet, and deliberately so:** it has no consumer until the exchange below
+exists, and its cost is worth measuring rather than assuming. What it will have to protect against
+is the WALK - computing a key reads and decrypts the whole window, which on a 5-year store is the
+same order of work as the post-ingest freeze this rework is meant to remove, not create. Its
+invalidation must be conservative in the sound direction: a stale key claiming agreement loses
+messages, while an over-eager invalidation only costs a walk.
+
 - **Keys match** → nothing is sent, nothing is displayed. The common case, and it must cost one small
   frame.
 - **Keys differ** → then, and only then, exchange the hierarchical digest that already exists
@@ -469,9 +500,13 @@ Two were closed on 2026-08-12 and moved into [Decisions](#decisions-taken): what
 - **The new cap.** Order is fixed and must be respected: Redis persisted (done) → raise `maxmemory`
   → raise `MAXLEN`. The number needs the mutation budget, which is only known once mutations are
   actually written to the log.
-- **State key cost at scale.** Caching it removes the *per-conversation* cost of a large window, but
-  not the *fan-out*: one small frame per conversation per connect, for a user in many groups.
-  Measure before shipping.
+- ~~**State key cost at scale.**~~ **MEASURED 2026-08-12, not a problem.** Off production:
+  `dm_group_members` holds 41 memberships over 23 users and 21 groups - a median of ONE conversation
+  per user, a maximum of 8, plus at most 9 channels for the busiest account. The fan-out is one
+  small frame times seventeen in the worst case that exists today, and it would take two orders of
+  magnitude of growth before the *frame count* mattered. Re-measure with that same `GROUP BY` if the
+  population changes shape; what is worth watching is not the frames but the WALK behind each key
+  (see below).
 - **Whether a deletion must also drop the shared-log entry**, and at what price - the three options
   are set out under [Deletion purges](#deletion-purges). Correctness does not wait on this: the
   deletion is itself in the log and a replay converges on the tombstone. What is at stake is whether

@@ -55,9 +55,26 @@ export function deviceWindowMs(): number {
   return isTauriRuntime() ? NATIVE_DEVICE_WINDOW_MS : WEB_DEVICE_WINDOW_MS;
 }
 
-/** The instant this device's window opens. Sliding, and therefore never put on the wire twice. */
+/**
+ * The instant this device's window opens, QUANTISED DOWN to a whole day.
+ *
+ * The quantisation is not cosmetic and not an optimisation - it is what makes the boundary an
+ * agreement rather than a reading of two clocks. Unrounded, the window slides continuously: two
+ * devices deriving it a second apart draw two different lines, so a comparison of what each holds
+ * over "its window" can never come out equal, and any value computed over the window (the state key)
+ * is stale the instant after it is computed. Rounded to the day, every device that connects on the
+ * same day asks from the same instant, so the comparison has a chance of matching and a cached
+ * answer has a chance of being reused.
+ *
+ * It rounds DOWN, which asks for slightly more than the window strictly allows - up to one extra
+ * day. That is the safe direction and the same one every other boundary here takes: over-asking
+ * costs bandwidth, under-asking loses messages.
+ *
+ * Two devices connecting either side of midnight still disagree, and that is not a defect: they
+ * exchange a digest that agrees on nothing cheaper, which is what the digest is for.
+ */
 export function deviceWindowStart(now: number = Date.now()): number {
-  return now - deviceWindowMs();
+  return Math.floor((now - deviceWindowMs()) / DAY_MS) * DAY_MS;
 }
 
 /**

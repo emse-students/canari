@@ -113,6 +113,22 @@ the bundle frames next to the watermarks, and is stored (SQLite v7, `history_flo
 worth zero on purpose** - nothing moves it, per the user's decision. The window is LOCAL and fixed by
 platform (`isTauriRuntime()` alone: web 90 d, mobile and desktop 5 y).
 
+The state key so far: `frontend/src/lib/utils/chat/historyStateKey.ts` is the RULE (pure, 22 tests),
+not yet the exchange. Per message: id + `isDeleted` + the edit's own `editedAt` + every reaction pair
+with its instant and standing, SHA-256'd and **XOR-folded** - so the key cannot depend on walk order,
+which is also why a duplicated id must be skipped (XOR is not idempotent, a doubled message cancels
+itself out). Content, sender and timestamp are EXCLUDED (a purged deletion must still match a peer
+that purged it), and so are the read watermarks and the floor (they converge through the log the
+reconciliation drains first; including them would fire a digest exchange on every read). **The
+cache does not exist yet on purpose** - no consumer until the exchange, and the thing it must
+protect against is the WALK, not the frames. **Fan-out was MEASURED on prod 2026-08-12 and is a
+non-issue** (41 memberships / 23 users / 21 groups, median 1 conversation per user, max 8 + 9
+channels) - that open question is closed in the spec.
+
+That step also forced `deviceWindowStart` to round DOWN to the day. Unrounded, `since` slides
+continuously, so two devices computing a key a second apart compare over different ranges and the
+fast path can never fire. Rounding down asks for slightly more, which is the safe direction.
+
 The clipping step, four rules that must not be undone: **`since` is STATED by the asker, never
 recomputed by the answerer** (the window slides, so two devices computing it a second apart disagree
 by a message); **the digest says what a device HAS, `since` says what it WANTS** - the digest is NOT

@@ -17,6 +17,9 @@ import {
  */
 
 const NOW = Date.UTC(2026, 7, 12, 12, 0, 0);
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Midnight of the day the web window opens on, which is the boundary that goes on the wire. */
+const DAY_START_90_DAYS_BEFORE_NOW = Math.floor((NOW - WEB_DEVICE_WINDOW_MS) / DAY_MS) * DAY_MS;
 
 /**
  * Pretends this process is the Tauri shell, which is the only thing the window size depends on.
@@ -45,8 +48,31 @@ describe('the device window', () => {
     expect(deviceWindowMs()).toBe(NATIVE_DEVICE_WINDOW_MS);
   });
 
-  it('opens one window before the instant it is asked about', () => {
-    expect(deviceWindowStart(NOW)).toBe(NOW - WEB_DEVICE_WINDOW_MS);
+  it('opens one window before the instant it is asked about, rounded down to the day', () => {
+    // NOW is midday, so a raw subtraction lands at midday too. The boundary that goes on the wire
+    // is the midnight at or before it.
+    expect(deviceWindowStart(NOW)).toBe(DAY_START_90_DAYS_BEFORE_NOW);
+    expect(deviceWindowStart(NOW)).toBeLessThan(NOW - WEB_DEVICE_WINDOW_MS);
+  });
+
+  it('gives the SAME boundary all day, which is the whole point of rounding it', () => {
+    // Unrounded, two devices connecting a second apart draw two different lines - so a comparison
+    // of what each holds "over its window" can never come out equal, and anything computed over
+    // the window is stale the instant after it is computed.
+    const morning = Date.UTC(2026, 7, 12, 6, 30, 0);
+    const evening = Date.UTC(2026, 7, 12, 23, 59, 59);
+    expect(deviceWindowStart(morning)).toBe(deviceWindowStart(evening));
+  });
+
+  it('rounds DOWN, so a device asks for slightly more than its window rather than less', () => {
+    // The safe direction, and the same one every other boundary here takes: over-asking costs
+    // bandwidth, under-asking loses messages.
+    expect(deviceWindowStart(NOW)).toBeLessThanOrEqual(NOW - WEB_DEVICE_WINDOW_MS);
+    expect(NOW - WEB_DEVICE_WINDOW_MS - deviceWindowStart(NOW)).toBeLessThan(DAY_MS);
+  });
+
+  it('moves by exactly one day from one day to the next', () => {
+    expect(deviceWindowStart(NOW + DAY_MS)).toBe(deviceWindowStart(NOW) + DAY_MS);
   });
 });
 
@@ -102,7 +128,7 @@ describe('mergeHistoryFloor', () => {
 
 describe('historyRangeStart', () => {
   it('is the window when no floor has been agreed', () => {
-    expect(historyRangeStart(undefined, NOW)).toBe(NOW - WEB_DEVICE_WINDOW_MS);
+    expect(historyRangeStart(undefined, NOW)).toBe(DAY_START_90_DAYS_BEFORE_NOW);
   });
 
   it('is the floor when the floor is the later of the two', () => {
@@ -116,7 +142,7 @@ describe('historyRangeStart', () => {
     expect(historyRangeStart(floor, NOW)).toBe(floor);
     asWeb();
     // The same floor, read on the browser, is below its 90-day window - so the browser claims less.
-    expect(historyRangeStart(floor, NOW)).toBe(NOW - WEB_DEVICE_WINDOW_MS);
+    expect(historyRangeStart(floor, NOW)).toBe(DAY_START_90_DAYS_BEFORE_NOW);
   });
 });
 
