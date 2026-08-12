@@ -4042,6 +4042,8 @@ export const canari = $root.canari = (() => {
          * @typedef {Object} canari.ReactionMsg.$Properties
          * @property {string|null} [messageId] ReactionMsg messageId
          * @property {string|null} [emoji] ReactionMsg emoji
+         * @property {number|null} [at] ReactionMsg at
+         * @property {boolean|null} [removed] ReactionMsg removed
          * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
@@ -4090,6 +4092,22 @@ export const canari = $root.canari = (() => {
         ReactionMsg.prototype.emoji = "";
 
         /**
+         * ReactionMsg at.
+         * @member {number} at
+         * @memberof canari.ReactionMsg
+         * @instance
+         */
+        ReactionMsg.prototype.at = $util.Long ? $util.Long.fromBits(0,0,false) : 0;
+
+        /**
+         * ReactionMsg removed.
+         * @member {boolean} removed
+         * @memberof canari.ReactionMsg
+         * @instance
+         */
+        ReactionMsg.prototype.removed = false;
+
+        /**
          * Creates a new ReactionMsg instance using the specified properties.
          * @function create
          * @memberof canari.ReactionMsg
@@ -4125,6 +4143,10 @@ export const canari = $root.canari = (() => {
                 writer.uint32(/* id 1, wireType 2 =*/10).string(message.messageId);
             if (message.emoji != null && $Object.hasOwnProperty.call(message, "emoji") && message.emoji !== "")
                 writer.uint32(/* id 2, wireType 2 =*/18).string(message.emoji);
+            if (message.at != null && $Object.hasOwnProperty.call(message, "at") && (typeof message.at === "object" ? message.at.low || message.at.high : message.at !== 0))
+                writer.uint32(/* id 3, wireType 0 =*/24).int64(message.at);
+            if (message.removed != null && $Object.hasOwnProperty.call(message, "removed") && message.removed !== false)
+                writer.uint32(/* id 4, wireType 0 =*/32).bool(message.removed);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
                     writer.raw(message.$unknowns[i]);
@@ -4190,6 +4212,24 @@ export const canari = $root.canari = (() => {
                             delete message.emoji;
                         continue;
                     }
+                case 3: {
+                        if (wireType !== 0)
+                            break;
+                        if (typeof (value = reader.int64()) === "object" ? value.low || value.high : value !== 0)
+                            message.at = value;
+                        else
+                            delete message.at;
+                        continue;
+                    }
+                case 4: {
+                        if (wireType !== 0)
+                            break;
+                        if (value = reader.bool())
+                            message.removed = value;
+                        else
+                            delete message.removed;
+                        continue;
+                    }
                 }
                 reader.skipType(wireType, _depth, tag);
                 if (!reader.discardUnknown) {
@@ -4239,6 +4279,12 @@ export const canari = $root.canari = (() => {
             if (message.emoji != null && $Object.hasOwnProperty.call(message, "emoji"))
                 if (!$util.isString(message.emoji))
                     return "emoji: string expected";
+            if (message.at != null && $Object.hasOwnProperty.call(message, "at"))
+                if (!$util.isInteger(message.at) && !(message.at && $util.isInteger(message.at.low) && $util.isInteger(message.at.high)))
+                    return "at: integer|Long expected";
+            if (message.removed != null && $Object.hasOwnProperty.call(message, "removed"))
+                if (typeof message.removed !== "boolean")
+                    return "removed: boolean expected";
             return null;
         };
 
@@ -4266,6 +4312,19 @@ export const canari = $root.canari = (() => {
             if (object.emoji != null)
                 if (typeof object.emoji !== "string" || object.emoji.length)
                     message.emoji = $String(object.emoji);
+            if (object.at != null)
+                if (typeof object.at === "object" ? object.at.low || object.at.high : $Number(object.at) !== 0)
+                    if ($util.Long)
+                        message.at = $util.Long.fromValue(object.at, false);
+                    else if (typeof object.at === "string")
+                        message.at = $parseInt(object.at, 10);
+                    else if (typeof object.at === "number")
+                        message.at = object.at;
+                    else if (typeof object.at === "object")
+                        message.at = new $util.LongBits(object.at.low >>> 0, object.at.high >>> 0).toNumber();
+            if (object.removed != null)
+                if (object.removed)
+                    message.removed = $Boolean(object.removed);
             return message;
         };
 
@@ -4289,11 +4348,26 @@ export const canari = $root.canari = (() => {
             if (options.defaults) {
                 object.messageId = "";
                 object.emoji = "";
+                if ($util.Long) {
+                    let long = new $util.Long(0, 0, false);
+                    object.at = options.longs === $String ? long.toString() : options.longs === $Number ? long.toNumber() : typeof $BigInt !== "undefined" && options.longs === $BigInt ? long.toBigInt() : long;
+                } else
+                    object.at = options.longs === $String ? "0" : typeof $BigInt !== "undefined" && options.longs === $BigInt ? $BigInt("0") : 0;
+                object.removed = false;
             }
             if (message.messageId != null && $Object.hasOwnProperty.call(message, "messageId"))
                 object.messageId = message.messageId;
             if (message.emoji != null && $Object.hasOwnProperty.call(message, "emoji"))
                 object.emoji = message.emoji;
+            if (message.at != null && $Object.hasOwnProperty.call(message, "at"))
+                if (typeof $BigInt !== "undefined" && options.longs === $BigInt)
+                    object.at = typeof message.at === "number" ? $BigInt(message.at) : $util.Long.fromBits(message.at.low >>> 0, message.at.high >>> 0, false).toBigInt();
+                else if (typeof message.at === "number")
+                    object.at = options.longs === $String ? $String(message.at) : message.at;
+                else
+                    object.at = options.longs === $String ? $util.Long.prototype.toString.call(message.at) : options.longs === $Number ? new $util.LongBits(message.at.low >>> 0, message.at.high >>> 0).toNumber() : message.at;
+            if (message.removed != null && $Object.hasOwnProperty.call(message, "removed"))
+                object.removed = message.removed;
             return object;
         };
 

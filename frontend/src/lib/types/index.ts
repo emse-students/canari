@@ -9,10 +9,24 @@
  */
 export type ConversationLifecycle = 'active' | 'pending' | 'removed';
 
-/** A single emoji reaction and the user who placed it on a message. */
+/**
+ * The state of ONE `(user, emoji)` pair on a message - placed or taken back.
+ *
+ * A removal is kept as an entry with `removed: true` rather than dropped from the list, which is
+ * what makes it reach a device that still holds the placement. There is exactly one entry per pair,
+ * so a place/remove cycle does not grow the set: this is bounded, not a growing tombstone log.
+ *
+ * Both fields are optional because rows and frames written before they existed lack them, and both
+ * defaults say the same thing - a bare `{emoji, userId}` is a placement of unknown age, which is
+ * exactly what it was. It therefore loses any merge against a dated entry.
+ */
 export interface MessageReaction {
   emoji: string;
   userId: string;
+  /** Unix ms at which this pair last changed state. The larger one wins the merge. */
+  at?: number;
+  /** True when the user took the reaction back. Absent or false = the reaction stands. */
+  removed?: boolean;
 }
 
 /** Compact reference to a quoted/replied-to message. Used in ChatMessage, envelopes, and addMessageToChat options. */

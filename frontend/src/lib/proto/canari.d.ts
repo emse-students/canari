@@ -1546,6 +1546,12 @@ export namespace canari {
         /** ReactionMsg emoji. */
         emoji: string;
 
+        /** ReactionMsg at. */
+        at: number;
+
+        /** ReactionMsg removed. */
+        removed: boolean;
+
         /**
          * Creates a new ReactionMsg instance using the specified properties.
          * @param [properties] Properties to set
@@ -1635,6 +1641,12 @@ export namespace canari {
 
             /** ReactionMsg emoji */
             emoji?: (string|null);
+
+            /** ReactionMsg at */
+            at?: (number|null);
+
+            /** ReactionMsg removed */
+            removed?: (boolean|null);
 
             /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];

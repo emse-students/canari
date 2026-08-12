@@ -187,15 +187,53 @@ it is forbidden.
 
 Each `(user, emoji)` pair carries its own timestamp and an on/off state; the larger timestamp wins.
 Converges without tombstones, and stays bounded - a place/remove cycle does not grow the set.
-Today's rule seeds reactions from a bundle **only when the receiver has none**
-(`systemMessageHandler.ts:717`), so a removal never reaches anyone holding a stale reaction.
+
+**Shipped.** `messageReactions.ts` holds the whole rule: `applyReaction` for one frame,
+`mergeReactions` for a peer's set, both last-write-wins on `at`, and `activeReactions` for what the
+UI renders. Equal timestamps keep what is already held, so replaying a frame onto its own result is
+a no-op rather than a flip. The rule it replaces adopted a bundle's reactions **only when the
+receiver had none**, so a removal never reached anyone holding a stale placement.
+
+Three consequences worth stating, because each one was a bug in the old shape:
+
+- **A removal is an entry, not a deletion.** Dropping the pair from the list left nothing to send,
+  which is why removals could not travel. It stays, carrying `removed: true` and the time it was
+  taken back, and there is exactly one entry per pair - a place/remove cycle does not grow anything.
+- **Both legs are the same frame.** Taking a reaction back was a `SystemMsg("remove_reaction")`
+  carrying JSON while placing one was a typed `ReactionMsg`; one shape had nowhere to put the
+  timestamp the merge needs on both. `ReactionMsg` now carries `at` and `removed`, and the old event
+  survives only as a decoder for stream entries written before the change
+  ([legacy-compatibility](../legacy-compatibility.md)).
+- **The cap is a send-side rule.** The distinct-emoji cap used to be enforced on the receive path
+  too, so a device at the cap silently refused a frame another device accepted - a permanent
+  divergence produced by the very mechanism meant to prevent one. A frame that reached the group is
+  a fact; the cap now limits only what the user may place.
 
 ### Deletion purges
 
 A deletion replaces the content at rest, everywhere it lands, and removes the corresponding entry
-from the shared log. What remains is the tombstone. Today the flag is set and the original text is
-kept - `systemMessageHandler.ts:724-727` sets `isDeleted` without touching `content`, and the write
-at `:762` puts the original plaintext straight back on disk.
+from the shared log. What remains is the tombstone.
+
+**The at-rest half is shipped.** The bundle merge sets `isDeleted` AND replaces `content` with the
+tombstone, in memory and in the row it writes. It used to set the flag alone, so the write put the
+original plaintext of a deleted message straight back on disk - and the next bundle this device
+answered read that row and sent the original text on to somebody else.
+
+**The shared-log half is not, and it needs a decision.** The server holds ciphertext and cannot tell
+which stream entry carries a given message, so nothing there can act on a deletion by itself. Three
+ways to give it one, none of them free:
+
+- the deleting client locates the entry by replaying the stream and names it - correct, but the cost
+  grows with how far back the message is;
+- the server indexes message id to stream entry id - it would have to be told the id in the clear on
+  every send, which puts a stable per-message identifier in the server's hands;
+- leave it. Correctness does not depend on it: the `delete_message` mutation is itself in the shared
+  log since the durability split, so a device replaying the log applies the deletion after the
+  message and converges on the tombstone. What is lost is only that the original ciphertext stays in
+  the log until the cap or the TTL evicts it.
+
+Correctness is therefore already covered by the third option; the first two buy forward secrecy for
+a deleted body, at a price. **Open question** - see the table at the end.
 
 ### Read state becomes a watermark
 
@@ -230,10 +268,10 @@ from the audit and carry its references.
 | --- | --- | --- | --- |
 | D1 | ~~`saveMessage` is a full-row `put` and `toMessagePayload` omits absent fields, so every partial write **erases** the fields it does not carry. Six mutation handlers each pass a different subset - a reaction landing on a deleted message clears the tombstone; a read receipt on an edited message clears `isEdited`~~ **FIXED**: see [Persisting a mutation](#persisting-a-mutation) | `messagePayload.ts`, `types.ts`, both backends | yes |
 | D2 | The reading device never persists **its own** read state - the optimistic update is a bare `conversations.set`. After a reload, messages it read return as unread until a peer's bundle hands them back | `MainChatPage.svelte:434-445` | audit |
-| D3 | Reaction removal never converges: a bundle's reactions are adopted only when the receiver holds none | `systemMessageHandler.ts:717` | yes |
-| D4 | `editedAt` is not serialised into the bundle although `isEdited` is, so a device restored by bundle shows "edited" with no timestamp, permanently | `groupActions.ts:450-465` | audit |
-| D5 | Bundle merge flags `isDeleted` without replacing `content`, and writes the original text back to disk | `systemMessageHandler.ts:724-727`, `:762` | yes |
-| D6 | `serverTimestamp` is dropped on the live bundle add path, giving unstable ordering for messages sharing a client timestamp. The replay path preserves it | `systemMessageHandler.ts:671-678` | audit |
+| D3 | ~~Reaction removal never converges: a bundle's reactions are adopted only when the receiver holds none~~ **FIXED**: see [Reactions](#reactions) | `messageReactions.ts`, both merge sites | yes |
+| D4 | ~~`editedAt` is not serialised into the bundle although `isEdited` is, so a device restored by bundle shows "edited" with no timestamp, permanently~~ **FIXED**: written by `serializeForBundle`, read by both merge paths and by the replay's row builder | `groupActions.ts`, `systemMessageHandler.ts`, `historySystemEvents.ts`, `history.ts` | audit |
+| D5 | ~~Bundle merge flags `isDeleted` without replacing `content`, and writes the original text back to disk~~ **FIXED at rest**; dropping the shared-log entry is a separate decision, see [Deletion purges](#deletion-purges) | `systemMessageHandler.ts`, the bundle merge and its write | yes |
+| D6 | ~~`serverTimestamp` is dropped on the live bundle add path, giving unstable ordering for messages sharing a client timestamp. The replay path preserves it~~ **FIXED**: carried onto the add path, matching the replay path | `systemMessageHandler.ts`, the `toAdd` mapping | audit |
 | D7 | The replay handlers for `reaction`, `read_receipt`, `delete_message`, `edit_message`, `remove_reaction` are unreachable for MLS groups, because those frames never enter the stream. **Inverted by the durability split**: they are now the path every mutation takes on replay, so the work is to verify them rather than delete them | `historySystemEvents.ts:173-238`, `history.ts:378-388` | audit |
 
 Three defects measured the same day are covered here rather than patched separately, by decision: the
@@ -339,3 +377,7 @@ Two were closed on 2026-08-12 and moved into [Decisions](#decisions-taken): what
 - **State key cost at scale.** Caching it removes the *per-conversation* cost of a large window, but
   not the *fan-out*: one small frame per conversation per connect, for a user in many groups.
   Measure before shipping.
+- **Whether a deletion must also drop the shared-log entry**, and at what price - the three options
+  are set out under [Deletion purges](#deletion-purges). Correctness does not wait on this: the
+  deletion is itself in the log and a replay converges on the tombstone. What is at stake is whether
+  the original ciphertext of a deleted message may sit in the log until eviction.

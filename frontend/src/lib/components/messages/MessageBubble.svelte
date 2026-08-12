@@ -15,6 +15,8 @@
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
   import MessageEditForm from './MessageEditForm.svelte';
   import MessageReactions from './MessageReactions.svelte';
+  import type { MessageReaction } from '$lib/types';
+  import { activeReactions } from '$lib/utils/chat/messageReactions';
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
   import MessageReplyQuote from './MessageReplyQuote.svelte';
   import MessageTextBody from './MessageTextBody.svelte';
@@ -41,11 +43,6 @@
     updateReplySwipeGesture,
     type ReplySwipeGestureState,
   } from '$lib/utils/messageSwipeReply';
-
-  interface MessageReaction {
-    emoji: string;
-    userId: string;
-  }
 
   interface Props {
     /** Unique identifier of the message, used as the DOM anchor for scroll navigation. */
@@ -264,8 +261,12 @@
     });
   });
 
+  // A reaction the user took back is KEPT in the list, carrying the time it was taken back, so the
+  // removal can reach devices that still hold the placement. Only what still stands is rendered.
+  const standingReactions = $derived(activeReactions(reactions));
+
   const groupedReactions = $derived(
-    reactions.reduce(
+    standingReactions.reduce(
       (acc, reaction) => {
         if (!acc[reaction.emoji]) acc[reaction.emoji] = [];
         acc[reaction.emoji].push(reaction.userId);
@@ -276,7 +277,7 @@
   );
 
   const userOwnReactions = $derived(
-    reactions.filter((r) => r.userId === currentUserId).map((r) => r.emoji)
+    standingReactions.filter((r) => r.userId === currentUserId).map((r) => r.emoji)
   );
 
   function confirmEdit() {

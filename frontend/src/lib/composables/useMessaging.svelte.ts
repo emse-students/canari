@@ -34,7 +34,9 @@ import {
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
-  toggleMessageReaction,
+  activeReactions,
+  applyReaction,
+  canAddDistinctReactionEmoji,
 } from '$lib/utils/chat/messageReactions';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
@@ -851,16 +853,24 @@ export function useMessaging() {
     if (!convo) return;
     const meNorm = ctx.userId.toLowerCase();
     const existing = messageReactions.get(messageId) ?? [];
-    const updated = toggleMessageReaction(existing, meNorm, emoji);
+    const alreadyReacted = activeReactions(existing).some(
+      (r) => r.userId === meNorm && r.emoji === emoji
+    );
 
-    if (!updated) {
+    // The cap is enforced HERE and nowhere else: it limits what the user may place, and a device
+    // refusing a frame that already reached the group would never converge with one that took it.
+    if (!alreadyReacted && !canAddDistinctReactionEmoji(existing, emoji)) {
       ctx.log(
         `[REACTION] Maximum of ${MAX_DISTINCT_MESSAGE_REACTIONS} distinct reactions reached on this message.`
       );
       return;
     }
 
-    const alreadyReacted = existing.some((r) => r.userId === meNorm && r.emoji === emoji);
+    // One clock reading for the optimistic update and the frame, so this device and its peers hold
+    // the same timestamp for this pair and the merge is a no-op when the echo comes back.
+    const at = Date.now();
+    const updated = applyReaction(existing, meNorm, emoji, at, alreadyReacted);
+    if (!updated) return;
 
     messageReactions.set(messageId, updated);
 
@@ -881,9 +891,9 @@ export function useMessaging() {
       currentUserDisplayName: getUserDisplayNameSync(ctx.userId),
     };
     if (alreadyReacted) {
-      await removeReaction(messageId, emoji, reactionDeps);
+      await removeReaction(messageId, emoji, at, reactionDeps);
     } else {
-      await addReaction(messageId, emoji, reactionDeps);
+      await addReaction(messageId, emoji, at, reactionDeps);
     }
   }
 

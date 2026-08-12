@@ -218,8 +218,15 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
         let emoji = find_length_delimited_field(&reaction_msg, 2)
             .and_then(|b| String::from_utf8(b).ok())
             .unwrap_or_default();
-        if !emoji.is_empty() {
+        // Field 4 is `removed`: this frame TAKES a reaction back. It travels as the same message
+        // that placed one - previously it was a `remove_reaction` system event, which this scanner
+        // silences by name. Notifying here would ring the user for a reaction being withdrawn.
+        let removed = find_varint_field(&reaction_msg, 4).unwrap_or(0) != 0;
+        if !emoji.is_empty() && !removed {
             return ok_message_json(format!("a réagi {emoji}"), message_id, sent_at, "reaction");
+        }
+        if removed {
+            return serde_json::json!({ "ok": false });
         }
     }
 
@@ -460,6 +467,37 @@ mod tests {
         let data = find_length_delimited_field(&system_msg, 2).unwrap();
         let data_json: serde_json::Value = serde_json::from_slice(&data).unwrap();
         assert_eq!(data_json["messageIds"], serde_json::json!(["m1", "m2"]));
+    }
+
+    #[test]
+    fn placing_a_reaction_previews_it() {
+        // ReactionMsg { message_id=1, emoji=2 } as AppMessage field 3.
+        let mut reaction = Vec::new();
+        write_string_field(&mut reaction, 1, "target-1");
+        write_string_field(&mut reaction, 2, "\u{1f44d}");
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 3, &reaction);
+
+        let info = extract_full_message_info(&msg);
+        assert_eq!(info["ok"], true);
+        assert_eq!(info["type"], "reaction");
+        assert!(info["text"].as_str().unwrap().contains("\u{1f44d}"));
+    }
+
+    #[test]
+    fn taking_a_reaction_back_previews_nothing() {
+        // Both legs are now the same frame - `removed` (field 4) is the only difference. Before
+        // that, taking one back was a `remove_reaction` system event, which this scanner silences
+        // by name; without reading field 4 the same withdrawal would ring the user.
+        let mut reaction = Vec::new();
+        write_string_field(&mut reaction, 1, "target-1");
+        write_string_field(&mut reaction, 2, "\u{1f44d}");
+        write_tag(&mut reaction, 4, 0);
+        write_varint(&mut reaction, 1);
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 3, &reaction);
+
+        assert_eq!(extract_full_message_info(&msg)["ok"], false);
     }
 
     #[test]

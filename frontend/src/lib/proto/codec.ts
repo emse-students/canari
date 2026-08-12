@@ -98,8 +98,18 @@ export function mkReply(
   return { reply: { content, replyTo } };
 }
 
-export function mkReaction(messageId: string, emoji: string): canari.AppMessage.$Properties {
-  return { reaction: { messageId, emoji } };
+/**
+ * Builds the frame for BOTH legs of a reaction. `removed` says which one, `at` is the sender's
+ * clock for this `(user, emoji)` pair - the merge on the far side keeps the larger one, so the two
+ * legs need the same shape and neither may be undated.
+ */
+export function mkReaction(
+  messageId: string,
+  emoji: string,
+  at: number,
+  removed = false
+): canari.AppMessage.$Properties {
+  return { reaction: { messageId, emoji, at, removed } };
 }
 
 export function mkMedia(media: canari.MediaMsg.$Properties): canari.AppMessage.$Properties {

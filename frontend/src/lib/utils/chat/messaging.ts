@@ -228,11 +228,12 @@ export async function notifyReaction(params: {
 export async function addReaction(
   messageId: string,
   emoji: string,
+  at: number,
   deps: MessageActionDeps
 ): Promise<void> {
   const { userId, conversation, currentUserDisplayName } = deps;
 
-  await enqueueControlEvent(conversation.id, encodeAppMessage(mkReaction(messageId, emoji)));
+  await enqueueControlEvent(conversation.id, encodeAppMessage(mkReaction(messageId, emoji, at)));
 
   // Notify the message author (fire-and-forget, non-fatal).
   const targetMsg = conversation.messages.find((m) => m.id === messageId);
@@ -249,17 +250,22 @@ export async function addReaction(
 }
 
 /**
- * Removes an emoji reaction from a message by broadcasting a `remove_reaction`
- * system event through MLS so all peers update their local reaction state.
+ * Takes an emoji reaction back, as the SAME frame that placed it with `removed` set.
+ *
+ * It used to be a `remove_reaction` system event carrying JSON, which left the two legs of one
+ * operation with two shapes and nowhere to put the timestamp the merge needs on both. Peers still
+ * accept the old event when replaying a stream written before this change - see
+ * `docs/wiki/legacy-compatibility.md`.
  */
 export async function removeReaction(
   messageId: string,
   emoji: string,
+  at: number,
   deps: MessageActionDeps
 ): Promise<void> {
   await enqueueControlEvent(
     deps.conversation.id,
-    encodeAppMessage(mkSystem('remove_reaction', JSON.stringify({ messageId, emoji })))
+    encodeAppMessage(mkReaction(messageId, emoji, at, true))
   );
 }
 /** Captures an "edit_message" system event in the durable outbox so all peers update the message content in their local history. */

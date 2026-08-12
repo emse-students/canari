@@ -1,7 +1,7 @@
 import { parseDirectPeerFromName, resolveDirectPeerId } from '$lib/utils/chat/conversations';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
-import { addMessageReaction } from '$lib/utils/chat/messageReactions';
+import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { requestReAdd, cancelReAdd, resetReAddCooldowns } from '$lib/utils/chat/recovery';
 import {
   markEpochGap,
@@ -671,7 +671,16 @@ async function handleKnownGroup({
       const msgId = msg.reaction.messageId ?? '';
       const emoji = msg.reaction.emoji ?? '';
       const reactions = messageReactions.get(msgId) || [];
-      const updated = addMessageReaction(reactions, sender, emoji);
+      // Both legs arrive here: `removed` says which. A frame from before the field existed carries
+      // false, which is what it meant - it could only ever place a reaction.
+      // `at` is the sender's clock; an undated frame reads as 0 and loses to anything dated.
+      const updated = applyReaction(
+        reactions,
+        sender,
+        emoji,
+        Number(msg.reaction.at ?? 0),
+        msg.reaction.removed === true
+      );
       if (updated) {
         messageReactions.set(msgId, updated);
         const c = conversations.get(convoKey);

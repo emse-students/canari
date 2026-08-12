@@ -2,6 +2,7 @@ import { canari } from '$lib/proto/canari.js';
 import type { AddMessageToChatOptions, Conversation, MessageReaction } from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
 import {
   chat_system_message_deleted,
   chat_system_group_renamed,
@@ -36,6 +37,8 @@ export type PendingHistoryMessage = {
     readBy?: string[];
     isDeleted?: boolean;
     isEdited?: boolean;
+    /** Unix ms of the last edit, as carried by a history_bundle. */
+    editedAt?: number;
     readAt?: number;
   };
 
@@ -231,11 +234,20 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       }
       editedMessages.set(data.messageId, { content: data.newContent, editedAt });
     } else if (parsed.system.event === 'remove_reaction' && data.messageId && data.emoji) {
-      const senderReactNorm = msg.sender_id.toLowerCase();
-      const cur = messageReactions.get(data.messageId) || [];
-      const trimmed = cur.filter((r) => !(r.userId === senderReactNorm && r.emoji === data.emoji));
-      messageReactions.set(data.messageId, trimmed);
-      reactionUpdates.set(data.messageId, trimmed);
+      // LEGACY FRAME, replay side. Taking a reaction back now travels as a `ReactionMsg` with
+      // `removed` set; this only ever sees log entries written before that change. Dated with the
+      // entry's own time, so it orders after the placements that precede it in the log.
+      const updated = applyReaction(
+        messageReactions.get(data.messageId) || [],
+        msg.sender_id,
+        String(data.emoji),
+        parseServerTimestampMs(msg.timestamp) ?? 0,
+        true
+      );
+      if (updated) {
+        messageReactions.set(data.messageId, updated);
+        reactionUpdates.set(data.messageId, updated);
+      }
     } else if (parsed.system.event === 'history_bundle') {
       // The bundle is delivered via the message queue; handling it here guarantees that a
       // device coming online after the queue TTL (7 days) still recovers the history
@@ -256,6 +268,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             readBy?: string[];
             readAt?: number;
             reactions?: MessageReaction[];
+            editedAt?: number;
           };
           const bundleById = new Map<string, BundleMeta>();
           for (const m of bundleData as BundleMeta[]) {
@@ -286,12 +299,24 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
               next = { ...next, readAt: b.readAt };
               mergedAny = true;
             }
-            if (Array.isArray(b.reactions) && b.reactions.length > 0 && !next.reactions?.length) {
-              next = { ...next, reactions: b.reactions };
-              if (!messageReactions.get(existing.id)?.length) {
-                messageReactions.set(existing.id, b.reactions);
-                reactionUpdates.set(existing.id, b.reactions);
+            // Merged pair by pair, larger timestamp wins - the same rule as the live path. Seeding
+            // only when we held nothing left a removal unable to reach a stale placement (D3).
+            if (Array.isArray(b.reactions) && b.reactions.length > 0) {
+              const merged = mergeReactions(
+                messageReactions.get(existing.id) ?? next.reactions ?? [],
+                b.reactions
+              );
+              if (merged) {
+                next = { ...next, reactions: merged };
+                messageReactions.set(existing.id, merged);
+                reactionUpdates.set(existing.id, merged);
+                mergedAny = true;
               }
+            }
+            // The edit time, which only the bundle can supply: the sender's own edit is never
+            // echoed back over MLS, so a device restored this way has no other source for it.
+            if (typeof b.editedAt === 'number' && b.editedAt > 0 && next.editedAt == null) {
+              next = { ...next, editedAt: new Date(b.editedAt) };
               mergedAny = true;
             }
             return next;
@@ -316,6 +341,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
               ...(Array.isArray(m.readBy) && m.readBy.length > 0 ? { readBy: m.readBy } : {}),
               ...(m.isDeleted === true ? { isDeleted: true } : {}),
               ...(m.isEdited === true ? { isEdited: true } : {}),
+              // Carried with the flag, or the message shows "edited" with no time for ever.
+              ...(typeof m.editedAt === 'number' && m.editedAt > 0 ? { editedAt: m.editedAt } : {}),
               ...(typeof m.readAt === 'number' ? { readAt: m.readAt } : {}),
             });
           }

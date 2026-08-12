@@ -20,7 +20,7 @@ import { markAwaitingHistory } from '$lib/utils/chat/awaitingHistoryRegistry';
 import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
-import { addMessageReaction } from '$lib/utils/chat/messageReactions';
+import { applyReaction } from '$lib/utils/chat/messageReactions';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -380,8 +380,16 @@ export async function replayConversationHistory(params: {
             const senderNorm = msg.sender_id.toLowerCase();
             const reactions = messageReactions.get(messageId) || [];
             const emoji = parsed.reaction.emoji ?? '';
-            const updated = addMessageReaction(reactions, senderNorm, emoji);
-            if (!updated) continue; // already present or cap reached - no-op
+            // Replay applies both legs: the frame carries `removed`, and the merge is ordered by
+            // `at` rather than by the position the entry happens to hold in the stream.
+            const updated = applyReaction(
+              reactions,
+              senderNorm,
+              emoji,
+              Number(parsed.reaction.at ?? 0),
+              parsed.reaction.removed === true
+            );
+            if (!updated) continue; // already held something at least as recent - no-op
             messageReactions.set(messageId, updated);
             reactionUpdates.set(messageId, updated);
             mlsUpdated = true;
@@ -539,9 +547,10 @@ export async function replayConversationHistory(params: {
               : {}),
           ...(prev?.isDeleted || pm.isDeleted ? { isDeleted: true } : {}),
           ...(prev?.isEdited || pm.isEdited ? { isEdited: true } : {}),
-          // Same preservation as `content` above: the edit time lives only in the DB row, so a
-          // replay that rewrites the row without it silently drops the edit time.
-          ...(prev?.editedAt ? { editedAt: prev.editedAt } : {}),
+          // Same two sources as `content` above. What we already hold wins - it came from the edit
+          // event itself - and the bundle supplies it on a fresh install, which has no row to
+          // preserve it from and would otherwise show "edited" with no time for ever.
+          ...(prev?.editedAt || pm.editedAt ? { editedAt: prev?.editedAt ?? pm.editedAt } : {}),
           ...((pm.reactions ?? []).length > 0 ? { reactions: pm.reactions } : {}),
           ...(pm.serverTimestamp != null ? { serverTimestamp: pm.serverTimestamp } : {}),
           ...(pm.readAt != null ? { readAt: pm.readAt } : {}),

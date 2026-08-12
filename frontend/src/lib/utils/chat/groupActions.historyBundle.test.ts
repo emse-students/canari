@@ -113,4 +113,40 @@ describe('sendFullHistoryBundle', () => {
     expect(data.messages).toHaveLength(2);
     expect(data.to).toBe(REQUESTER);
   });
+
+  it('carries the edit time with the edit flag, and every reaction including the withdrawn ones', async () => {
+    // Two things a device restored from a bundle has NO other source for. `isEdited` without
+    // `editedAt` showed "edited" with no time for ever, since the sender's own edit is never
+    // echoed back over MLS (D4). And a reaction taken back is an entry carrying its removal time -
+    // dropping it from the bundle would hand the receiver back the placement it had removed (D3).
+    const mlsService = createMlsServiceStub();
+    const edited = {
+      ...storedMessage('m1'),
+      isEdited: true,
+      editedAt: 1_700_000_042_000,
+      reactions: [
+        { emoji: '👍', userId: 'user-b', at: 10, removed: true },
+        { emoji: '🎉', userId: 'user-c', at: 20 },
+      ],
+    } as StoredMessage;
+
+    await sendFullHistoryBundle(GROUP, {
+      storage: storageWith([edited]),
+      deviceKeyB64: 'k',
+      mlsService,
+      log: vi.fn(),
+      selfUserId: SELF,
+      to: REQUESTER,
+    });
+
+    const { data } = sentBundle(mlsService);
+    expect(data.messages[0]).toMatchObject({
+      isEdited: true,
+      editedAt: 1_700_000_042_000,
+      reactions: [
+        { emoji: '👍', userId: 'user-b', at: 10, removed: true },
+        { emoji: '🎉', userId: 'user-c', at: 20 },
+      ],
+    });
+  });
 });

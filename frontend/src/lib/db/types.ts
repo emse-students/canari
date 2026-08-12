@@ -2,7 +2,7 @@
 // Shared types and the IStorage interface for Canari's local message store.
 // ---------------------------------------------------------------------------
 
-import type { ConversationLifecycle } from '$lib/types';
+import type { ConversationLifecycle, MessageReaction } from '$lib/types';
 
 /** Lightweight metadata row for a conversation stored in the local DB (no message payload). */
 export interface ConversationMeta {
@@ -34,7 +34,12 @@ export interface StoredMessage {
   timestamp: number;
   /** User IDs that have acknowledged reading this message. */
   readBy?: string[];
-  reactions?: Array<{ emoji: string; userId: string }>;
+  /**
+   * One entry per `(user, emoji)` pair, INCLUDING the ones taken back - a removal is an entry with
+   * `removed: true`, which is what lets it reach a device still holding the placement. See
+   * `$lib/utils/chat/messageReactions`.
+   */
+  reactions?: MessageReaction[];
   /** Unix ms when the first read receipt for this message was received locally. */
   readAt?: number;
   /**

@@ -9,6 +9,7 @@ import {
 import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
+import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
 import { isSolicitInFlight, noteHistoryBundleReceived } from '$lib/utils/chat/historySolicit';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
 import { digestIdentity, noteDigestReceived } from '$lib/utils/chat/historyDigestRendezvous';
@@ -643,6 +644,7 @@ export async function handleSystemEvent(
         reactions?: import('$lib/types').MessageReaction[];
         isDeleted?: boolean;
         isEdited?: boolean;
+        editedAt?: number;
         serverTimestamp?: number;
       };
       const msgs: BundleMsg[] = Array.isArray(data.messages) ? data.messages : [];
@@ -659,6 +661,11 @@ export async function handleSystemEvent(
             content: m.content,
             messageId: m.id,
             timestamp: new Date(m.timestamp),
+            // The secondary sort key. Dropping it here - the replay path keeps it - left two
+            // messages sharing a client timestamp in an order that changed on every reload.
+            ...(typeof m.serverTimestamp === 'number'
+              ? { serverTimestamp: m.serverTimestamp }
+              : {}),
           }));
         if (toAdd.length > 0) {
           log(`[HISTORY_BUNDLE] ${toAdd.length} messages received from the inviting peer`);
@@ -697,20 +704,35 @@ export async function handleSystemEvent(
               next = { ...next, readAt: b.readAt };
               changedIds.add(existing.id);
             }
-            // reactions: seed from the bundle only when we have none locally yet.
-            if (Array.isArray(b.reactions) && b.reactions.length > 0 && !next.reactions?.length) {
-              next = { ...next, reactions: b.reactions };
-              if (!messageReactions.get(existing.id)?.length) {
-                messageReactions.set(existing.id, b.reactions);
+            // reactions: merged pair by pair, larger timestamp wins. This used to seed from the
+            // bundle ONLY when we held none, so a removal never reached a device holding a stale
+            // placement and the two never converged (D3).
+            if (Array.isArray(b.reactions) && b.reactions.length > 0) {
+              const merged = mergeReactions(
+                messageReactions.get(existing.id) ?? next.reactions ?? [],
+                b.reactions
+              );
+              if (merged) {
+                next = { ...next, reactions: merged };
+                messageReactions.set(existing.id, merged);
+                changedIds.add(existing.id);
               }
-              changedIds.add(existing.id);
             }
+            // A deletion REPLACES the body. Setting the flag and keeping the text put the original
+            // plaintext of a deleted message straight back on disk, where the tombstone was
+            // supposed to be the only thing left of it (D5).
             if (b.isDeleted === true && !next.isDeleted) {
-              next = { ...next, isDeleted: true };
+              next = { ...next, isDeleted: true, content: m.chat_system_message_deleted() };
               changedIds.add(existing.id);
             }
             if (b.isEdited === true && !next.isEdited) {
               next = { ...next, isEdited: true };
+              changedIds.add(existing.id);
+            }
+            // The edit time, which only the bundle can supply: the sender's own edit is never
+            // echoed back over MLS, so a device restored this way has no other source for it.
+            if (typeof b.editedAt === 'number' && b.editedAt > 0 && next.editedAt == null) {
+              next = { ...next, editedAt: new Date(b.editedAt) };
               changedIds.add(existing.id);
             }
             return next;
@@ -738,9 +760,9 @@ export async function handleSystemEvent(
               for (const msg of nextMessages) {
                 if (!changedIds.has(msg.id)) continue;
                 try {
-                  // Only the metadata the merge above may have moved. The body is untouched here,
-                  // and `editedAt` - which a bundle does not carry - is left where it is rather
-                  // than erased.
+                  // The metadata the merge above may have moved. The body is left alone EXCEPT on
+                  // a deletion, which must purge it at rest: the tombstone is meant to be all that
+                  // survives, and writing the row without it put the original text back on disk.
                   await storage.updateMessage(
                     msg.id,
                     {
@@ -748,8 +770,9 @@ export async function handleSystemEvent(
                       readAt: msg.readAt,
                       reactions: messageReactions.get(msg.id) ?? msg.reactions,
                       serverTimestamp: msg.serverTimestamp,
-                      ...(msg.isDeleted ? { isDeleted: true } : {}),
+                      ...(msg.isDeleted ? { isDeleted: true, content: msg.content } : {}),
                       ...(msg.isEdited ? { isEdited: true } : {}),
+                      ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
                     },
                     deviceKeyB64
                   );
@@ -767,21 +790,34 @@ export async function handleSystemEvent(
     return true;
   }
 
+  // LEGACY FRAME. Taking a reaction back now travels as a `ReactionMsg` with `removed` set, the
+  // same frame that placed it. This branch only ever sees entries written to the shared log before
+  // that change; no client sends one any more. Removal condition in
+  // `docs/wiki/legacy-compatibility.md`.
   if (event === 'remove_reaction' && data.messageId && data.emoji) {
     const reactions = messageReactions.get(data.messageId) || [];
-    const filtered = reactions.filter((r) => !(r.userId === senderNorm && r.emoji === data.emoji));
-    messageReactions.set(data.messageId, filtered);
+    // Dated with the delivery time, which is the only clock this frame shape carries. It is
+    // therefore ordered after every placement that preceded it in the log, which is what it meant.
+    const updated = applyReaction(
+      reactions,
+      senderNorm,
+      String(data.emoji),
+      deliveryMeta?.queuedCreatedAt ?? Date.now(),
+      true
+    );
+    if (!updated) return true;
+    messageReactions.set(data.messageId, updated);
 
     const c = conversations.get(convoKey);
     if (c) {
       const msgIdx = c.messages.findIndex((m) => m.id === data.messageId);
       if (msgIdx !== -1) {
         const nextMsgs = [...c.messages];
-        nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: filtered };
+        nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
         conversations.set(convoKey, { ...c, messages: nextMsgs });
         if (storage) {
           try {
-            await storage.updateMessage(nextMsgs[msgIdx].id, { reactions: filtered }, deviceKeyB64);
+            await storage.updateMessage(nextMsgs[msgIdx].id, { reactions: updated }, deviceKeyB64);
           } catch {
             // Non-blocking
           }

@@ -42,6 +42,24 @@ on `requesterHasDigest`, and delete the "client too old to send one" branch of t
 **Cost of keeping it:** a full-store dump per solicitation from those clients - bandwidth, never
 correctness.
 
+### `remove_reaction` as a system event - since v0.14
+
+**Site:** `systemMessageHandler.ts` (live) and `historySystemEvents.ts` (replay), the
+`remove_reaction` branches.
+**Shim:** both branches translate the old frame into `applyReaction(..., removed = true)`, dated
+with the entry's own delivery time because that frame shape carries no timestamp of its own.
+**Replacement:** taking a reaction back is the SAME `ReactionMsg` that placed it, with `removed`
+set - so both legs of one operation have one shape and both carry the `at` the merge orders on.
+**On removal:** delete both branches, and drop `remove_reaction` from the silent-event list in
+`proto_fields.rs`.
+**What makes this one different:** no client sends the old frame after the rollout, but the shared
+history stream still HOLDS entries written before it, so these branches are decoding data at rest,
+not humouring a live peer. The condition to retire them is therefore the retention window elapsing
+past the rollout, on top of the usual `minClientVersion` gate.
+**Cost of keeping it:** a removal replayed from an old stream entry is ordered by its delivery time
+rather than by the sender's clock. Only distinguishable if a placement and its removal were sent
+within the same delivery, which cannot happen - the outbox serialises them.
+
 ### `history_bundle` with no `vouched` - predates v0.13
 
 **Site:** `historySolicit.ts`, `noteHistoryBundleReceived`.

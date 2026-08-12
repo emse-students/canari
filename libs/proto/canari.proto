@@ -121,9 +121,18 @@ message ReplyMsg {
 
 // ── Emoji reaction ───────────────────────────────────────────────────────
 
+// Carries BOTH legs of a reaction: placing one and taking it back. Removal used to travel as a
+// `SystemMsg("remove_reaction")` with a JSON body, which left the two legs with different shapes
+// and no room for the timestamp the merge needs on both.
 message ReactionMsg {
   string message_id = 1; // UUID of the reacted-to message
   string emoji      = 2;
+  // Unix ms at which the sender changed the state of this (user, emoji) pair. The merge keeps the
+  // larger one, so a removal reaches a device holding a stale placement and vice versa.
+  int64  at         = 3;
+  // True when the sender is TAKING THE REACTION BACK. Default false = placing it, so a frame from
+  // before this field existed reads as a placement - which is exactly what it was.
+  bool   removed    = 4;
 }
 
 // ── Poll (community channels) ─────────────────────────────────────────────

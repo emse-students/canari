@@ -458,6 +458,10 @@ function serializeForBundle(m: StoredMessage) {
     ...(m.readBy?.length ? { readBy: m.readBy } : {}),
     ...(m.isDeleted ? { isDeleted: true } : {}),
     ...(m.isEdited ? { isEdited: true } : {}),
+    // The edit TIME travels with the edit flag. Sending one without the other left a device
+    // restored from a bundle showing "edited" with no time, permanently - there is no second
+    // source for it, since the sender's own edit is never echoed back over MLS.
+    ...(m.editedAt ? { editedAt: m.editedAt } : {}),
     // Secondary timestamps: needed for stable post-migration sorting and for correctly
     // displaying the first read-receipt date.
     ...(m.readAt ? { readAt: m.readAt } : {}),
