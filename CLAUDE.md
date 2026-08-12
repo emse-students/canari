@@ -92,6 +92,15 @@ the narrative to the wiki page the entry points at. **Do not reconstruct shipped
 running on the device (0 lock timeouts, 1 MLS thread, 0 kills, against 97/20+/1 before). **The iOS
 half of it is compile-verified only** and joins the owed device list below.
 
+**THE CAMPAIGN RE-RUN IS AT MSG, AND MSG-1 FAILED.** Root-caused, fixed and pushed as `dabed2f2`: a
+history load ENDED by assigning a freshly read page over the rendered list, so anything delivered
+while it ran was on screen and then wiped (measured: shown at +0.5 s, gone at +3.4 s). Four sites,
+one merge (`mergeMessagePage`). **Nothing is verified yet on the deployed build** - the first thing
+owed is CD landing, `reload.mjs` + `bundle-id.mjs` on W1/W2, then MSG-1..10 from the top. A1 runs
+APK-bundled assets, so it does NOT get this fix until a rebuild. The instrument written for it,
+`trace-arrival.mjs`, is the pattern for any check that can fail by disappearance: sample
+continuously, and carry the pane/composer/header facts that separate a harness fault from a loss.
+
 **A1 IS UNREACHABLE: the phone dropped off USB mid-session** (`adb devices` empty, survives
 `kill-server`). It needs a replug and the USB-debugging prompt accepted. Two things are owed the
 moment it is back: the **PIN unlock** (a reinstall restarts the process and "Rester connecte" was

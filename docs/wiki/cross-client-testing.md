@@ -135,7 +135,7 @@ harness in the same session.
 
 | Id | What it asks | State |
 | --- | --- | --- |
-| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `to-revalidate` (also re-proved by 38 consecutive sends) |
+| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | **FAILED 2026-08-12**, fixed, awaiting re-run on the deployed build - see below |
 | MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `to-revalidate` |
 | MSG-3 | Reply renders with its quoted parent on both sides | `to-revalidate` |
 | MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `to-revalidate` |
@@ -149,6 +149,33 @@ harness in the same session.
 
 MSG-9 must run on the phone: an offline RECEIVER cannot be faked in a browser
 ([methodology](testing-methodology.md#environment-traps-that-read-as-application-bugs)).
+
+### MSG-1 failed on the very first check of the re-run, and its record contradicted itself
+
+`latencyMs: 987` and `copiesOnReceiver: 0` in the same row: the receiver HAD the marker at one second
+and did not have it three seconds later. A self-contradicting record is not a verdict, and neither
+reading can be believed over the other, because two samples cannot distinguish the three things that
+produce an empty count - the pane gone, the message gone, or one of the samples taken against a
+transient. `trace-arrival.mjs` samples every 250 ms and carries, alongside the count, whether the
+composer is present, how long the pane is, how many times the marker occurs in the whole BODY, and
+which conversation the header names. That last field is not decoration: a marker in the body but not
+in the pane is the sidebar preview of a conversation the harness failed to open, which is a harness
+fault wearing the exact costume of a delivery loss.
+
+It was an application defect, reproducible, and it is fixed: a page read at the end of a history
+load was ASSIGNED over the rendered list, discarding whatever had arrived while the load ran. The
+mechanism, the measurement and the merge rule that replaces it are in
+[chat](frontend/modules/chat.md#a-page-read-is-merged-into-the-list-never-assigned-over-it). Four
+sites had it. **It is invisible to any test that does not deliver mid-load**, which is why 1 259 unit
+tests were green over it, and it is exactly what a cross-client campaign is for.
+
+Two lessons for the rig, both already applied:
+
+- **A check that reads a state TWICE cannot classify what it finds.** MSG-1's two-sample shape is
+  common in this rig; where a check can fail by disappearance, the trace has to be continuous.
+- **Every phase's re-run has to happen against the DEPLOYED build**, so a fix mid-phase re-orders the
+  work: commit, push, wait for CD, re-assert the bundle id, and only then re-run. MSG-1 through
+  MSG-10 are therefore all owed on `dabed2f2` or later.
 
 ## FWD - forwarding
 
