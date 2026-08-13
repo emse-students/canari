@@ -347,6 +347,15 @@ by anyone who has not met them.
   against the local build output - and read them from `performance.getEntriesByType('resource')`, not
   from `script[src]`: SvelteKit boots from an inline module, so a selector-based version of that
   assertion finds nothing and silently asserts nothing.
+- **The phone's message store is NOT IndexedDB, and reading it there reports the phone as wiped.**
+  Measured 2026-08-13: on A1 the `CanariDB_<hash>` database exists with exactly the expected
+  `conversations` / `messages` / `outbox` stores, and all three count **0**, while `/chat` lists a
+  full conversation list on screen. The stores are present and empty because the WebView creates the
+  schema; the data lives in the native (Rust/SQLite) store. A probe that counts IndexedDB on the
+  phone therefore "proves" a total data loss that has not happened - and it will do so most
+  convincingly right after a reinstall, exactly when a wipe is plausible. Assert against the SCREEN,
+  or against the native store, and never carry a browser-shaped store probe over to the device
+  unchanged.
 - **A conversation looked up by NAME is ambiguous once the campaign has created test groups**, since
   a group containing the peer matches the peer's own name. Harmless for a check that only needs
   *some* group, wrong for anything asserting about the DM - resolve the id, and report which

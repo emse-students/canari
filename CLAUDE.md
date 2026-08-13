@@ -171,8 +171,19 @@ same breath, deleting the only thing that could raise it again. **It was masked 
 sweep, so `23e23b08` is what turned it from hidden to permanent.** The whole failure and the rule it
 teaches are in
 [history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-group-that-could-not-heal) -
-do not re-derive it. **The first thing to check on the reworked build is whether `642f389a` heals by
-itself; if it does not, that is a SECOND and distinct fault.**
+do not re-derive it.
+
+**MEASURED ON THE DEVICE 2026-08-13, on the fixed build: `642f389a` DOES NOT heal by itself, and
+that is NOT a second fault - it is the boundary of the fix.** A clean boot (force-stop, relaunch,
+PIN, three devices online) raised exactly ONE reconcile line, `no sweep - away 0 d, inside what the
+server keeps`, and no unreadable frame arrived. The fix HOLDS a repair that is raised; it cannot
+manufacture a trigger for damage whose evidence was consumed before the fix existed - the frames
+that would have raised this one were acked and deleted at the time. **So pre-fix damage is
+unrepairable by any current trigger, and the user's own proposal (delete and recreate the group) is
+the only way to clear THIS group.** What the build changes is that new damage of this shape can no
+longer become permanent. The one thing still owed on it: confirm the group is actually still short
+of messages, by comparing it against a peer through the NATIVE store (see the harness trap below) -
+the campaign's `recon.mjs` is the instrument, not a hand probe.
 
 **The fourth reconciliation trigger the user approved is NOT implemented yet** - *"sonder aussi
 quand la reponse recue est plus courte que la fenetre demandee"*. The trace is done and is the whole
