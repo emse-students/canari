@@ -58,6 +58,7 @@ import {
   installCatchupBenchDevTools,
 } from '$lib/mls-client/catchupBenchmark';
 import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/utils/deviceKeyVault';
+import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import { adoptOrphanedMirrorEntries, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
@@ -249,8 +250,19 @@ export async function resetDeviceAsFreshImpl(
   try {
     const storageToClear = await getStorage(userIdToReset);
     await storageToClear.clear();
-  } catch {
-    // Best-effort cleanup: continue even if local DB is not accessible.
+    await storageToClear.close();
+  } catch (e) {
+    // Best-effort cleanup: continue even if local DB is not accessible - but never silently, since
+    // a connection left open is what makes a later delete block instead of complete.
+    console.warn('[SECURITY] could not clear the local database:', e);
+  }
+
+  // The session's OWN handle, which is a different connection from the one just opened above.
+  // Dropping the reference does not close it, and an open connection defers any later delete.
+  try {
+    await ctx.getStorage()?.close();
+  } catch (e) {
+    console.warn('[SECURITY] could not close the session database:', e);
   }
 
   ctx.resetMls();
@@ -460,9 +472,18 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         throw new LoginFailure('pin_mismatch', m.auth_pin_mismatch());
       }
       if (pinCheckData.resetRequired === true) {
+        // A REVOKED DEVICE IS RETURNED TO A FRESH INSTALL, not merely stripped of its MLS state.
+        // Its owner declared it lost or stolen, so leaving its cached media, its drafts, its
+        // conversation list and its signed-in session behind answers the wrong question. The three
+        // steps are ordered on purpose: tear the session down first, revoke the refresh cookie
+        // while the network context still exists, and only then delete everything local - so
+        // nothing left running can write a key back after the wipe.
         ctx.resetMls();
         await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
+        await clearAuth();
+        await wipeDeviceToFactory();
         ctx.setPin('');
+        cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
         throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
       }
       if (pinCheckData.status === 'registered') cb.log('First device: PIN registered.');
@@ -861,6 +882,27 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         }
       });
     }
+
+    mlsService.onDeviceRevoked(() => {
+      void (async () => {
+        // GATED ON A SERVER FACT, NEVER ON THE FRAME. The frame says "you were deleted"; erasing a
+        // device on the strength of a message is exactly the destructive-control shape that has to
+        // be confirmed first. `isDeviceRevoked` answers false when it cannot reach the server, so a
+        // transport failure can never destroy anything - a status code is an answer, a transport
+        // failure is not.
+        const revoked = await mlsService.isDeviceRevoked();
+        if (!revoked) {
+          cb.log('[SECURITY] device_revoked frame received but the server disagrees - ignored.');
+          return;
+        }
+        cb.log('[SECURITY] This device was revoked by its owner - signing out and resetting.');
+        await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
+        await clearAuth();
+        await wipeDeviceToFactory();
+        ctx.setPin('');
+        cb.onLoginFailed?.(m.auth_device_revoked_reset(), 'device_revoked');
+      })();
+    });
 
     mlsService.onWelcomeRequest(
       async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {

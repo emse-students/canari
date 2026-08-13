@@ -183,6 +183,16 @@ export interface IStorage {
   /** Open the underlying database and run any pending schema migrations. Must be called once before any other method. */
   init(): Promise<void>;
 
+  /**
+   * Release the underlying connection. Idempotent, and safe to call on a store that never opened.
+   *
+   * Exists for one reason: deleting the database while a connection is still open does not fail, it
+   * BLOCKS - `indexedDB.deleteDatabase` fires `onblocked` and completes whenever the last connection
+   * happens to close. A wipe that "completes eventually" is not a wipe you can assert on, and the
+   * one place that needs it is a revoked device, where the point is that nothing survives.
+   */
+  close(): Promise<void>;
+
   // Conversations (stored as plaintext metadata)
 
   /** Upsert a conversation metadata row (create or overwrite). */

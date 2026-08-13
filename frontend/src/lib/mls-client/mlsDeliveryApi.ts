@@ -169,6 +169,32 @@ export class MlsDeliveryApi {
   }
 
   /**
+   * Asks the server whether this device is denylisted.
+   *
+   * Gates a destructive action on a server fact: the `device_revoked` control frame asks a device
+   * to erase itself, and a frame is a message rather than an authority. Answers `false` when the
+   * question cannot be reached - **a transport failure is not a verdict**, and erasing a device
+   * because the network was down would be the worst possible reading of it.
+   */
+  async isDeviceRevoked(): Promise<boolean> {
+    try {
+      const res = await this.f(
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/revoked`,
+        { headers: await this.auth() }
+      );
+      if (!res.ok) {
+        console.warn(`[MLS] revocation check answered ${res.status} - treated as NOT revoked`);
+        return false;
+      }
+      const d = (await res.json()) as { revoked?: boolean };
+      return d.revoked === true;
+    } catch (e) {
+      console.warn('[MLS] revocation check unreachable - treated as NOT revoked:', e);
+      return false;
+    }
+  }
+
+  /**
    * Fetches a single device's consumable KeyPackage (no 30-day list cutoff).
    * Used when pending invitations reference a device not returned by {@link fetchUserDevices}.
    */

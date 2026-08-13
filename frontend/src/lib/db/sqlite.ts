@@ -81,6 +81,19 @@ export class SqliteStorage implements IStorage {
   }
 
   /** Open (or create) the SQLite database, enable WAL mode, create tables, and run migrations up to {@link SCHEMA_VERSION}. */
+  /** Closes the SQLite handle. See {@link IStorage.close}. */
+  async close(): Promise<void> {
+    if (!this.db) return;
+    try {
+      await this.db.close();
+    } catch (e) {
+      // Best-effort: a handle that cannot be closed must not stop the wipe that follows, but it is
+      // the reason a later delete could block, so it is never swallowed silently.
+      console.warn('[DB] SQLite close failed:', e);
+    }
+    this.db = null;
+  }
+
   async init(): Promise<void> {
     const Database = (await import('@tauri-apps/plugin-sql')).default;
     this.db = await Database.load(this.dbPath);

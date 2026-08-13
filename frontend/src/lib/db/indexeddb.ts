@@ -41,6 +41,18 @@ export class IndexedDbStorage implements IStorage {
   }
 
   /** Open (or upgrade) the IndexedDB database and apply schema migrations up to version 6. */
+  /**
+   * Closes the connection so the database can be DELETED deterministically.
+   *
+   * `indexedDB.deleteDatabase` does not fail while a connection is open - it fires `onblocked` and
+   * completes at some later moment nobody controls. See {@link IStorage.close}.
+   */
+  async close(): Promise<void> {
+    if (!this.db) return;
+    this.db.close();
+    this.db = null;
+  }
+
   async init(): Promise<void> {
     return new Promise((resolve, reject) => {
       // Version 3: conversation.id is now the MLS groupId UUID (was human-readable contactName).

@@ -529,6 +529,16 @@ export interface IMlsService {
   ): void;
 
   /**
+   * Register a callback invoked when the server tells this device, while it is connected, that its
+   * owner has revoked it. Distinct from the revocation discovered when enrolling: there is no fresh
+   * identity to continue under here, so the session ends and the device is wiped.
+   */
+  onDeviceRevoked(callback: () => void): void;
+
+  /** Asks the server whether this device is denylisted. `false` when the question cannot be reached. */
+  isDeviceRevoked(): Promise<boolean>;
+
+  /**
    * Ask the server to elect ONE online member to reconcile a conversation's history with us. The
    * ask itself travels inside MLS (a state key, a digest or a range); this only decides who answers.
    * Best-effort, online-only.

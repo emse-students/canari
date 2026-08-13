@@ -403,6 +403,36 @@ export class DevicesController {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Get('mls/devices/:userId/:deviceId/revoked')
+  /**
+   * Says whether a device is currently denylisted.
+   *
+   * Exists to GATE A DESTRUCTIVE ACTION on a server fact. The `device_revoked` control frame tells
+   * a connected device to wipe itself and sign out, and a frame is a message, not an authority - so
+   * the client asks this over its authenticated channel before destroying anything. Cheap, one
+   * indexed row, and the answer is the same one every other revocation check reads.
+   */
+  async isDeviceRevoked(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+    @Headers('x-user-id') headerUserId?: string,
+    @Headers('x-global-admin') headerGlobalAdmin?: string
+  ) {
+    const safeUserId = sanitizeQueryValue(userId, 'userId');
+    const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
+    assertCallerOwnsUserId(
+      headerUserId,
+      headerGlobalAdmin,
+      safeUserId,
+      'Cannot read another user devices'
+    );
+    const revoked = await this.revokedDeviceRepo.findOne({
+      where: activeRevocationWhere({ userId: safeUserId, deviceId: safeDeviceId }),
+    });
+    return { revoked: revoked !== null };
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Get('mls/devices/:userId/:deviceId/prekeys/count')
   /** Returns the count of available one-time prekeys for a device. */
   async getPrekeyCount(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
@@ -552,8 +582,13 @@ export class DevicesController {
       })
     );
 
+    // 3. Tell the device NOW, if it is connected: a delete that leaves a live session open is a
+    //    delete the user has to make twice, and the second half is invisible from the panel they
+    //    used. The denylist row above is the durable half; this is what makes it immediate.
+    const signalled = await this.messagingService.notifyDeviceRevoked(safeUserId, safeDeviceId);
+
     this.logger.log(
-      `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} groupsCleaned=${purge.groupsCleaned} keyPackagesDeleted=${purge.keyPackagesDeleted} oneTimeKeyPackagesDeleted=${purge.oneTimeKeyPackagesDeleted} queuedMessagesDeleted=${purge.queuedMessagesDeleted}`
+      `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} groupsCleaned=${purge.groupsCleaned} keyPackagesDeleted=${purge.keyPackagesDeleted} oneTimeKeyPackagesDeleted=${purge.oneTimeKeyPackagesDeleted} queuedMessagesDeleted=${purge.queuedMessagesDeleted} signalled=${signalled}`
     );
 
     return {

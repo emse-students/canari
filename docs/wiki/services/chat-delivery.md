@@ -264,12 +264,50 @@ refusals by reason with a sample of group ids, and `fetchPendingMessages` report
 `waitForMessageQueueIdle`** - the rows are enqueued, not handled, so what was refused is only known
 once the queue has drained. Silent when there is nothing to say.
 
-### A revoked device id never comes back
+### A revoked device id does not come back for ten years
 
-`DELETE /mls/devices/:userId/:deviceId` purges the device footprint **and** writes a permanent
-`revoked_device` row. Nothing expires it, and the client deliberately restores the *same* device id
-after a reinstall (`resolveDeviceId` reads `localStorage`, then `push_context.json`) - so the
-denylist and re-registration meet on every reinstall of a deleted device.
+`DELETE /mls/devices/:userId/:deviceId` purges the device footprint **and** writes a
+`revoked_device` row. The client deliberately restores the *same* device id after a reinstall
+(`resolveDeviceId` reads `localStorage`, then `push_context.json`) - so the denylist and
+re-registration meet on every reinstall of a deleted device.
+
+The ban lapses after `DEVICE_REVOCATION_TTL_MS` (10 years, 2026-08-13). That is hygiene, not a
+security parameter: a table that only ever grows is one nobody can reason about, and an identifier
+retired a decade ago has no hardware left to come back on. **The bound is applied at the QUESTION,
+not by the purge** - `activeRevocationWhere` at all six sites that ask "is this device banned" - so
+a lapsed row stops banning whether or not `cleanupExpiredRevocations` has run; the daily job only
+reclaims space. If the purge were what enforced it, a service that failed to run it would go on
+banning devices it had promised to release and nothing would say so.
+
+The write-side lookup in `deleteDevice` is deliberately NOT filtered by the window: it asks "have I
+already got a row for this device", which has no age, and filtering there would insert a duplicate
+the unique constraint rejects. Re-revoking refreshes `revokedAt`, so a device banned, un-banned and
+banned again is banned from today - a second, deliberate revocation must never be born expired.
+
+### A deleted device is told at once, and erases itself
+
+The denylist is the DURABLE half of a revocation and would be met at the device's next login anyway.
+It is not the immediate half, and a device its owner has just declared lost keeping a live session
+until then is the wrong answer to what they asked. So `deleteDevice` also calls
+`notifyDeviceRevoked`, which publishes a `device_revoked` control frame on `chat:messages` addressed
+to that `userId:deviceId`. **No gateway change was needed**: `isWelcomeRequest` is that path's
+generic "relay this base64 JSON to the device" flag and the inner `type` is what drives the client.
+
+On the client, `onDeviceRevoked` fires and **confirms the revocation against the server before
+destroying anything** - `GET /mls/devices/:userId/:deviceId/revoked`, over the authenticated
+channel. A frame is a message, not an authority, and a total wipe is a destructive control. That
+check answers `false` when it cannot reach the server, so a transport failure can never erase a
+device: a status code is an answer, a transport failure is not.
+
+Confirmed, the device is returned to a fresh install by `wipeDeviceToFactory` - MLS state, local
+databases, cached responses, every stored preference, and the biometric key - then signed out. Three
+steps in a fixed order: tear the session down, revoke the refresh cookie while the network context
+still exists, then delete everything local, so nothing still running can write a key back after the
+wipe. `IStorage.close()` exists for this: `deleteDatabase` does not fail on an open connection, it
+BLOCKS, and a wipe that completes at some later moment nobody controls is not one you can assert on.
+
+This is the immediate half only. A device that is offline when it is deleted learns at its next
+login, from the denylist, exactly as before.
 
 `registerDevice` therefore refuses a revoked id with **403 `{ code: 'DEVICE_REVOKED' }`**. Before
 that check existed, registration succeeded and the device was then filtered out of `getUserDevices`
@@ -297,6 +335,7 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | PATCH | `/api/mls/devices/:userId/:deviceId/metadata` | Update device name/OS/version |
 | GET | `/api/mls/devices/:userId/:deviceId/key-package` | Get a consumable key package |
 | GET | `/api/mls/devices/:userId` | List all registered devices for a user |
+| GET | `/api/mls/devices/:userId/:deviceId/revoked` | Is this device denylisted (gates the wipe) |
 | GET | `/api/mls/devices/:userId/:deviceId/prekeys/count` | Count remaining OTKPs |
 | GET | `/api/mls/devices/:userId/:deviceId/prekeys/list` | List published prekey IDs |
 | POST | `/api/mls/devices/:userId/:deviceId/prekeys/prune` | Delete targeted orphaned prekeys |

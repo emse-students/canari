@@ -10,6 +10,7 @@
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
+  import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
   import {
     getAppVersionCheck,
     isBelowMinClientVersion,
@@ -175,43 +176,7 @@
   }
 
   async function resetAll() {
-    // IndexedDB cleanup is web-only (Tauri uses native app data instead).
-    if (!isTauriRuntime()) {
-      try {
-        if (indexedDB.databases) {
-          const allDbs = await indexedDB.databases();
-          const deletePromises = allDbs
-            .filter((db) => db.name?.startsWith('CanariDB'))
-            .map((db) => {
-              return new Promise<void>((resolve) => {
-                if (!db.name) return resolve();
-                const req = indexedDB.deleteDatabase(db.name);
-                req.onsuccess = () => resolve();
-                req.onerror = () => resolve();
-                req.onblocked = () => resolve();
-              });
-            });
-          await Promise.all(deletePromises);
-        }
-      } catch (e) {
-        console.warn('Error clearing IndexedDB databases:', e);
-      }
-    } else {
-      const { invoke } = await import('@tauri-apps/api/core');
-
-      await invoke('delete_mls_state');
-
-      await import('$lib/services/biometric').then(({ BiometricService }) =>
-        BiometricService.disable()
-      );
-
-      // Delete all .db files in the Tauri app data directory
-      await invoke('clear_app_data');
-    }
-
-    // Clear all browser storage.
-    localStorage.clear();
-    sessionStorage.clear();
+    await wipeDeviceToFactory();
     loginError = '';
   }
 </script>

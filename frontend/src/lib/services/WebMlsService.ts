@@ -426,6 +426,16 @@ export class WebMlsService extends BaseMlsService {
             });
             return;
           }
+          if (msg.type === 'device_revoked') {
+            // Its owner deleted this device. The denylist row is the durable half and would be
+            // found at the next login anyway; this is what makes it immediate, so a device
+            // declared lost stops holding a live session the moment it is disowned. Never
+            // trusted blindly: the frame is addressed to this device by the gateway, and the
+            // handler re-checks with the server before wiping anything.
+            console.warn('[WS RCV] device_revoked - this device was deleted by its owner');
+            this.deviceRevokedCallback?.();
+            return;
+          }
           if (msg.type === 'welcome_request') {
             const requesterUserId = (msg.requesterUserId as string) || '';
             const requesterDeviceId = (msg.requesterDeviceId as string) || '';

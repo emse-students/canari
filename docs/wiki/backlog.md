@@ -29,13 +29,13 @@ the WASM module. Availability, not confidentiality - no key material is exposed.
 `libcrux-chacha20poly1305 = "=0.0.7"`, and a `0.0.x` requirement is exact in Cargo semver, so the
 whole chain has to move together:
 
-| crate | locked | needed | available |
-| --- | --- | --- | --- |
-| `libcrux-chacha20poly1305` | 0.0.7 | 0.0.8 | yes |
-| `libcrux-aead` | 0.0.7 | 0.0.8 | yes |
-| `hpke-rs-libcrux` | 0.6.1 | 0.7 | yes |
-| `hpke-rs` | 0.6.1 | 0.7 | yes |
-| `openmls_rust_crypto` | 0.5.1 | 0.6 | **release candidates only** (0.6.0-rc.1, 0.6.0-rc.2) |
+| crate                      | locked | needed | available                                            |
+| -------------------------- | ------ | ------ | ---------------------------------------------------- |
+| `libcrux-chacha20poly1305` | 0.0.7  | 0.0.8  | yes                                                  |
+| `libcrux-aead`             | 0.0.7  | 0.0.8  | yes                                                  |
+| `hpke-rs-libcrux`          | 0.6.1  | 0.7    | yes                                                  |
+| `hpke-rs`                  | 0.6.1  | 0.7    | yes                                                  |
+| `openmls_rust_crypto`      | 0.5.1  | 0.6    | **release candidates only** (0.6.0-rc.1, 0.6.0-rc.2) |
 
 So closing this alert means shipping a release candidate of the MLS crypto provider. That is not a
 dependency bump, it is an openmls provider upgrade with a full MLS re-verification behind it, and it
@@ -50,11 +50,11 @@ the alert stays open on purpose, and the reason is here rather than in somebody'
 
 ### P1 - a community whose only channel is left becomes unmanageable
 
-> *"il se passe des trucs bizarres quand je cree une communaute et que je quitte son unique salon. Je
-> ne peux plus rien gerer dedans apres, meme la quitter."*
+> _"il se passe des trucs bizarres quand je cree une communaute et que je quitte son unique salon. Je
+> ne peux plus rien gerer dedans apres, meme la quitter."_
 
 Leaving the last channel of a community appears to remove the surface that carries the community's
-own controls - including *leave the community*, so the state is not recoverable by the user. That is
+own controls - including _leave the community_, so the state is not recoverable by the user. That is
 a user-facing path that is broken and it traps whoever hits it, which is what puts it at P1.
 
 The first task is a REPRODUCTION, not a fix: it decides whether the community is genuinely
@@ -64,8 +64,8 @@ different layers and only one of them needs a migration.
 
 ### P2 - commenting a GIF on a post fails
 
-> *"On ne peut pas commenter un gif sur un post (le bouton est la, mais les requetes echouent j'ai
-> l'impression."*
+> _"On ne peut pas commenter un gif sur un post (le bouton est la, mais les requetes echouent j'ai
+> l'impression."_
 
 A control that is present and does nothing. Capture the failing request first - a 4xx from validation
 and a 5xx from the media path are different defects, and the button's presence says the client
@@ -73,8 +73,8 @@ believes the feature exists.
 
 ### P2 - the same person shows three different profile pictures
 
-> *"Quelqu'un me dit qu'il a une photo differente sur Canari sur son PC, son telephone, et sur
-> MiGallery."*
+> _"Quelqu'un me dit qu'il a une photo differente sur Canari sur son PC, son telephone, et sur
+> MiGallery."_
 
 Three surfaces disagreeing means the cache key does not change when the picture does. The question to
 answer FIRST is what the current cache lifetime actually is and where it is set - HTTP headers at the
@@ -106,12 +106,6 @@ opposite of what a banner is for. Give them an opaque background token. Cosmetic
 urgent, but it applies to every banner rather than to one, so fix it at the token rather than at a
 call site.
 
-### P3 - the Canari admin page has too many tabs
-
-Many tabs behind a selector that has to be dragged sideways to reach the end. The same problem is
-already solved better in the association editor, which wraps onto several rows - so this is a
-question of adopting the pattern that exists rather than inventing one.
-
 ### P3 - merge "Connexions actives" into "Gestion des appareils"
 
 Two panels describe the same thing and neither is complete, so the user reads both to answer one
@@ -132,13 +126,14 @@ of one panel is that every column earns its place.
 **The trap is the last-connection column, and it has already been paid for once.** A liveness clock
 must be written by the thing whose liveness it measures: reusing a row's `updatedAt` once kept nine
 dead devices alive for ever, because every unrelated write refreshed it. Before displaying a
-timestamp, establish which column is written *by the connection* - and if none is, the merge needs
+timestamp, establish which column is written _by the connection_ - and if none is, the merge needs
 that column first. See [durable-rules](durable-rules.md).
 
-**Deleting a device must also DISCONNECT it** (asked 2026-08-13). Today the two panels let a device
-be removed from one while it is still listed as connected in the other, which is the merge's whole
-premise showing through: one object, one state. A delete that leaves a live socket open is a delete
-the user has to make twice, and the second half is invisible from the panel they used.
+**The DISCONNECT half shipped on 2026-08-13 and is no longer part of this entry.** Deleting a device
+now signals it over the gateway's generic control-frame path; the device confirms the revocation
+against the server - a frame is a message, not an authority - and then erases itself back to a fresh
+install and signs out. What remains here is the PANEL merge itself. The premise it proves is the
+merge's own: one object, one state.
 
 **Establish what a delete is supposed to reclaim before designing the panel.** Measured 2026-08-13 on
 an abandoned device of a real account: 1383 undelivered rows in `queued_message`, still growing that
@@ -202,15 +197,15 @@ Same shape as mobile, and the same gap: the web window is a time bound. IndexedD
 the browser's own quota eviction, which can drop the store without asking - the question is what the
 client does when it finds its store gone, not whether it can prevent it.
 
-> **Already shipped, do not re-open:** *"ne garder que les messages les plus recents (dernier mois),
-> et le reste recuperable en demandant l'historique a un appareil mobile"* is exactly the device
+> **Already shipped, do not re-open:** _"ne garder que les messages les plus recents (dernier mois),
+> et le reste recuperable en demandant l'historique a un appareil mobile"_ is exactly the device
 > window plus the scrollback range request delivered in the history-reconciliation rework - web keeps
 > 90 days, mobile and desktop 5 years, and reaching the top of the scrollback asks a peer for the
 > range below the window. See [history-reconciliation](protocols/history-reconciliation.md) and
 > `historyWindow.ts`.
 
-> **Already shipped, do not re-open:** *"pourquoi garder plus d'un accuse de lecture sur de vieux
-> messages ? Si le dernier message a ete lu, le precedent aussi"* is the read watermark that replaced
+> **Already shipped, do not re-open:** _"pourquoi garder plus d'un accuse de lecture sur de vieux
+> messages ? Si le dernier message a ete lu, le precedent aussi"_ is the read watermark that replaced
 > per-message `readBy` in the same rework - read state is now ONE timestamp per (conversation, user),
 > and `readersOf` derives the per-message display from it. Old messages cost nothing extra, and a
 > history catch-up cannot mark a read message unread because the watermark is compared, not the

@@ -81,6 +81,17 @@ export abstract class BaseMlsService implements IMlsService {
 
   protected welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
 
+  /**
+   * Raised when the server says THIS device has been revoked, while it is still connected.
+   *
+   * Distinct from the revocation the key-package path already handles: that one is discovered by
+   * asking, on the next enrolment, and answered by rotating to a fresh identity. This one arrives
+   * unprompted at the moment its owner deletes the device, and the answer is the opposite - there
+   * is no identity to continue under, so the session ends and the device is returned to a fresh
+   * install.
+   */
+  protected deviceRevokedCallback: (() => void) | null = null;
+
   // ── URLs & identity ───────────────────────────────────────────────────────
   protected baseUrl: string;
   protected historyUrl: string;
@@ -297,6 +308,16 @@ export abstract class BaseMlsService implements IMlsService {
 
   onWelcomeProcessed(callback: (groupId?: string) => void): void {
     this.welcomeProcessedCallback = callback;
+  }
+
+  /** @see deviceRevokedCallback */
+  onDeviceRevoked(callback: () => void): void {
+    this.deviceRevokedCallback = callback;
+  }
+
+  /** Asks the server whether this device is denylisted. `false` when the question cannot be reached. */
+  isDeviceRevoked(): Promise<boolean> {
+    return this.delivery.isDeviceRevoked();
   }
 
   addBulkIngestObserver(observer: BulkIngestObserver): void {

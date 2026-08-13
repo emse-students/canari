@@ -1503,6 +1503,50 @@ export class MessagingService {
   }
 
   /**
+   * Tells a device, right now, that it has been revoked - so it wipes itself and signs out instead
+   * of staying live until its next authentication.
+   *
+   * Deleting a device denylists it and purges its server-side footprint, but a device that is
+   * ALREADY connected notices none of that: its socket stays open, its session stays valid, and
+   * everything it still holds locally stays on it. For a device its owner has declared lost or
+   * stolen, "it will find out next time it logs in" is the wrong answer to the question they asked.
+   *
+   * Sent over the gateway's generic control-frame path (`isWelcomeRequest` is that flag's name, and
+   * the inner `type` is what drives the client), so this needs no change in the gateway at all.
+   *
+   * BEST-EFFORT, and deliberately not awaited into the delete's own result: the durable half of a
+   * revocation is the denylist row, which is already written. This only makes it immediate. It is
+   * still logged either way, because a signal nobody sees and nobody reports is indistinguishable
+   * from one that was never sent.
+   */
+  async notifyDeviceRevoked(userId: string, deviceId: string): Promise<boolean> {
+    const notification = JSON.stringify({ type: 'device_revoked', userId, deviceId });
+    try {
+      const receivers = await this.redis.publish(
+        'chat:messages',
+        JSON.stringify({
+          recipientId: userId,
+          deviceId,
+          proto: Buffer.from(notification).toString('base64'),
+          isWelcomeRequest: true,
+          senderId: userId,
+          senderDeviceId: deviceId,
+        })
+      );
+      this.logger.log(
+        `[DEVICE_REVOKED] signalled user=${userId} device=${deviceId} gatewaySubscribers=${receivers}`
+      );
+      return true;
+    } catch (e) {
+      this.logger.error(
+        `[DEVICE_REVOKED] could not signal user=${userId} device=${deviceId} - it will find out at its next login`,
+        e
+      );
+      return false;
+    }
+  }
+
+  /**
    * Broadcasts a welcome_request signal to one online group member to trigger
    * a re-invite for the requesting device.  Falls back to the DB to repopulate
    * the Redis routing cache when the set is empty after a service restart.
