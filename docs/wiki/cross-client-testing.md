@@ -46,17 +46,51 @@ meet.
 | Phase | Scripts | State |
 | --- | --- | --- |
 | SETUP | - | 5 of 9 `passed`; SETUP-2 deliberately skipped, SETUP-7/8 owed (8 before CORRUPT and PIN) |
-| MSG | 12 | ran 2026-08-13: **10 passed, 2 failed, 1 inconclusive** |
+| MSG | 12 | re-ran 2026-08-13 on `e88cc76c`: **6 passed, 1 failed, 1 dirty, 1 inconclusive, 4 recorded nothing** |
 | every other phase | 22 written, 6 with none | `pending` - not yet run on the reworked build |
 
-**Two application defects came out of MSG** and neither was a harness fault. MSG-4's is **fixed and
-not yet seen running**: a group that could never heal, because the repair it asked for was dropped
-whenever no probe sender was installed yet - the failure is written up in
-[history-reconciliation](protocols/history-reconciliation.md#a-group-that-could-not-heal). MSG-10's
-is **open**: a message delivered while the sender was offline appears only after a reload.
+**The whole phase returns to `pending` on `c97b735c`**, which changes when a device may ask for or
+answer a history request at all - so every row that observes delivery was measured against the
+previous build.
 
-**Everything returns to `pending` on the next commit.** The 2026-08-13 work changes when a
-connection reconciles at all, which touches every phase that observes delivery.
+**Four scripts produced a verdict the dashboard could not see**, which is why the run reports nine
+verdicts for twelve scripts. `msg8`, `msg8b`, `msg9` and `msg10` exited on their verdict and never
+recorded it; `msg2` recorded and never exited, so the table printed `done` beside a recorded `FAIL`.
+A script that records nothing is indistinguishable from one that passed, which is the worse
+direction, and the dashboard had those four as `passed` on that basis. Both halves are now one call
+(`finish` in `results.mjs`), and `run.mjs` treats anything that is not a clean `PASS` as work still
+owed - a phase of `PASS-DIRTY` rows used to exit 0 and read as finished.
+
+**What came out of this run:**
+
+- **MSG-2 `failed`, and it is not yet attributed.** A1 saw nothing for 25 s and received on its next
+  reconnect; run alone it passes in 7.3 s. The preflight proves a client is unlocked and rendering,
+  never that its gateway socket is UP - and a delivery check against a client with no transport
+  measures the transport's absence. The gate is owed.
+- **MSG-4 `dirty` on two counts, one of them fixed.** The composer handed a PDF to the browser's
+  native plugin through an `<embed>`, which this site's own CSP forbids (`object-src 'none'`) - so it
+  was blocked for every user on every browser and the preview was a blank tile. Fixed on `c97b735c`.
+  The other is below.
+- **`642f389a` HEALS. The note that said it could not is withdrawn on evidence.** Within one run it
+  raised the ask, both peers answered (`Diff sent … 19 of 19`, `11 of 11`, 17 messages ingested from
+  the inviting peer) and twelve seconds later the two devices reported the SAME state key
+  (`same state as … - nothing to do`). The audit shipped in `24ba3da1` supplied the reason to compare
+  that it lacked. **Deleting and recreating it was never necessary and must not be revived.**
+- **`SecretReuseError` was a FALSE loss signal, on every device, from its own ordinary traffic -
+  CONFIRMED and fixed.** Measured over two consecutive reloads: the first reported two frames
+  `unreadable for good`, the second none, and the seen-fingerprint ledger grew by four - so each
+  frame is reported once and then silenced, and new ones appear only where live traffic has been.
+  The cause was then established in the code rather than inferred: `seenCipherHashes` is written by
+  the REPLAY alone, so a frame delivered live or drained from the queue consumed its ratchet
+  generation and left no mark, and the replay later walked the same archive row, could not decrypt
+  what the device was displaying, and reported real loss. `history.ts` asserted the opposite in so
+  many words - *"anything arriving HERE is a frame this device has never read"* - and that assertion
+  was false. The two paths share no identifier (Redis stream id vs `queued_message` uuid, and the
+  server discards the stream id at write time), so the mark is keyed on the ciphertext. Written up
+  with its evidence in
+  [history-reconciliation](protocols/history-reconciliation.md#that--0-was-true-and-did-not-last---the-noise-regenerates).
+  **What this cost the campaign is the reason it was fixed before climbing another rung: a genuine
+  loss was indistinguishable from this noise, so no run's observation could be believed.**
 
 ## Everything was `pending`, and that was deliberate
 
@@ -303,9 +337,9 @@ reconciles at all - see the [Decisions](protocols/history-reconciliation.md#deci
 | --- | --- | --- | --- |
 | MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | **`passed`** on `2c7b0c3c` - 311 ms (cold: 1549 ms) |
 | MSG-1b | Delivery DURING a bulk-ingest window (the WP-ECHO-1 race) | `W1 W2` | **`inconclusive`** on `2c7b0c3c` - `windowOpened: false`. The check can only conclude when a window happens to open, and the 2026-08-13 work makes those rarer still. **The check needs reworking, not the app** |
-| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | **`passed`** on the 13:08 APK - 7928 ms |
+| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | **`failed`** on `e88cc76c` + the 13:08 APK - `copiesOnPhone: 0` after 25 s, then delivered on A1's next reconnect (`[OK] 1 message(s) caught up`, 28 s after the check gave up). **Run ALONE it passes**, 7 270 ms, 1 copy - so the fixture is the first suspect and the phone the second. Not attributable until the preflight gates on a CONNECTED gateway rather than an unlocked client |
 | MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | **`passed`** on `2c7b0c3c` - 366 ms. Failed the first run and passed alone: the cause was harness isolation, fixed by `ensureConversation` |
-| MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `W1 W2` | **`failed`** on `2c7b0c3c` - assertions HELD (1 copy, 722 ms, decoded) but the run was not clean: `SecretReuseError` / `CannotDecryptOwnMessage` at epoch 6 on group `642f389a`, which **holds frames it can never read and does not heal**. **ROOT-CAUSED and fixed on `23e23b08`+1**: the repair WAS asked for and was dropped, because no probe sender was installed yet - while the frame was acked in the same breath, destroying the only thing that could raise it again. Deferred-and-discharged now; see [history-reconciliation](protocols/history-reconciliation.md#a-group-that-could-not-heal). **MEASURED on the device on the fixed build (2026-08-13): the group does NOT heal, and that is the fix's boundary, not a second fault** - a clean boot with three devices online raised one line, `no sweep - away 0 d, inside what the server keeps`, and no unreadable frame arrived, so nothing asked. The fix holds a repair that is RAISED; the evidence for this group was consumed before the fix existed. Clearing it means deleting and recreating the group |
+| MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `W1 W2` | **`dirty`** on `e88cc76c` - assertions HELD (1 copy each, image 1 258 ms, PDF 636 ms, both decoded) and the run was not clean, on two counts. **(a) FIXED on `c97b735c`**: `object-src 'none'` blocked the composer's `<embed>` PDF preview - our own CSP, correctly, and the last surface not using the pdf.js canvas path. **(b) `SecretReuseError` at epoch 6 on `642f389a`, under investigation as a FALSE positive** - see the run summary above. **The group HEALS**; the note that said it could not is withdrawn, with the bundle exchange and the matching state key as evidence |
 | MSG-5 | Channel message converges on all three; **no `masterSecret` in any payload** | `+A1` | **`passed`** on `2c7b0c3c` |
 | MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`passed`** on `2c7b0c3c` |
 | MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | **`passed`** on `2c7b0c3c` - 4255 ms |

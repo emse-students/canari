@@ -15,6 +15,7 @@ import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame } from './unackedFrames';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
 import { reconcileGroup } from '$lib/utils/chat/historyReconcile';
+import { markHistoryFrameConsumed } from '$lib/utils/chat/history';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { createMlsStatePersister } from '../mlsStatePersister';
@@ -552,6 +553,7 @@ async function handleKnownGroup({
     messageReactions,
     storage,
     deviceKeyB64,
+    userId,
     addMessageToChat,
     onCallSignal,
     log,
@@ -606,6 +608,24 @@ async function handleKnownGroup({
     void reconcileGroup(mlsService, groupId, log);
   };
 
+  /**
+   * This device has spent the frame's ratchet generation: record it in BOTH ledgers.
+   *
+   * They answer different questions over different lifetimes, and using either one for the other's
+   * question is how this seam broke. `noteFrameProcessed` is the in-memory ring that tells a double
+   * delivery from a real loss within seconds, and it dies with the page. The durable mark is what
+   * stops the archive replay - minutes or days later, across reloads - from walking this same frame,
+   * failing on a generation we just consumed, and calling a message we are displaying a loss.
+   *
+   * Both call sites below reach here, including the one with no application payload: a commit
+   * consumes its generation exactly like a message does, and the replay would trip on it the same
+   * way.
+   */
+  const noteConsumed = (): void => {
+    noteFrameProcessed(groupId, fingerprint);
+    markHistoryFrameConsumed(userId, groupId, fingerprint);
+  };
+
   try {
     const decrypted = await mlsService.processIncomingMessage(groupId, content);
 
@@ -634,11 +654,11 @@ async function handleKnownGroup({
       // branching on the TEXT of a log line was never a contract, it was a leak. Measured on the
       // HEAL run of 2026-08-10: eleven arrivals through the thrown error, ZERO through the flag.
       log(`[MLS] No application payload for ${convoKey.slice(0, 8)}… - commit or dropped frame`);
-      noteFrameProcessed(groupId, fingerprint);
+      noteConsumed();
       return true;
     }
 
-    noteFrameProcessed(groupId, fingerprint);
+    noteConsumed();
     const msg = decodeAppMessage(decrypted);
     if (!msg) {
       log(`[MLS] Undecodable payload for ${convoKey.slice(0, 8)}… - ACK`);

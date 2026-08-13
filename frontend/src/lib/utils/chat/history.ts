@@ -18,6 +18,7 @@ import {
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { reconcileGroup } from '$lib/utils/chat/historyReconcile';
@@ -112,13 +113,31 @@ function saveLastStreamId(userId: string, groupId: string, streamId: string): vo
   }
 }
 
-/** Load the set of already-seen ciphertext fingerprints from localStorage (used to skip duplicate history entries). */
+/**
+ * ONE set per (user, group), shared by the archive replay and by live delivery.
+ *
+ * The sharing is a CORRECTNESS requirement, not a saved parse. The replay loads this set when it
+ * starts, mutates it for the whole walk, and writes it back once at the end. A live mark that went
+ * straight to localStorage would therefore be erased by that final write - made from a copy taken
+ * before the mark existed - and the false loss it exists to prevent would return at the next
+ * reload, unchanged. Two writers and one durable slot is last-write-wins; the only fix is that
+ * there be one object.
+ */
+const seenCache = new Map<string, Set<string>>();
+
+/** Load the set of already-seen ciphertext fingerprints for a group, hydrating the shared cache once. */
 function loadSeenCipherHashes(userId: string, groupId: string): Set<string> {
+  const cacheKey = seenHistoryKey(userId, groupId);
+  const cached = seenCache.get(cacheKey);
+  if (cached) return cached;
+  let hydrated: Set<string>;
   try {
-    return new Set(JSON.parse(localStorage.getItem(seenHistoryKey(userId, groupId)) ?? '[]'));
+    hydrated = new Set(JSON.parse(localStorage.getItem(cacheKey) ?? '[]'));
   } catch {
-    return new Set();
+    hydrated = new Set();
   }
+  seenCache.set(cacheKey, hydrated);
+  return hydrated;
 }
 
 /** Persist the seen-ciphertext fingerprint set to localStorage, capped at 5 000 entries to bound storage growth. */
@@ -132,6 +151,73 @@ function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<strin
   } catch {
     /* quota exceeded - graceful degradation */
   }
+}
+
+/** Groups whose shared set holds marks not yet written, drained once at the end of the current tick. */
+const pendingSeenFlush = new Map<string, { userId: string; groupId: string }>();
+let seenFlushScheduled = false;
+
+/**
+ * Persist the marks accumulated on THIS tick, one write per group.
+ *
+ * A microtask, never a timer. It is not a delay hoping more marks turn up - it is the end of the
+ * current turn, so a drain handing over forty frames pays one `JSON.stringify` instead of forty
+ * over a set capped at five thousand entries, and a lone frame is still written before anything can
+ * observe the gap. Nothing is load-bearing if it ran late anyway: the in-memory set is already
+ * correct the instant the mark is added, and the write only has to survive a reload.
+ */
+function scheduleSeenFlush(userId: string, groupId: string): void {
+  pendingSeenFlush.set(seenHistoryKey(userId, groupId), { userId, groupId });
+  if (seenFlushScheduled) return;
+  seenFlushScheduled = true;
+  queueMicrotask(() => {
+    seenFlushScheduled = false;
+    const due = [...pendingSeenFlush.values()];
+    pendingSeenFlush.clear();
+    for (const entry of due) {
+      const set = seenCache.get(seenHistoryKey(entry.userId, entry.groupId));
+      if (set) saveSeenCipherHashes(entry.userId, entry.groupId, set);
+    }
+  });
+}
+
+/**
+ * Record that this device has CONSUMED a frame's ratchet generation outside the archive replay.
+ *
+ * Live delivery and the queue drain both decrypt frames the shared archive also holds, and neither
+ * moves this device's position in that archive. The replay later walks the same row, finds a
+ * generation already spent, and reports it as real loss - for a message the device received
+ * perfectly, displayed, and still holds. That is a false alarm on the one signal that must never
+ * cry wolf, and on prod it fired on every device's own ordinary traffic.
+ *
+ * The mark is keyed on the frame's BYTES because they are the only thing the two paths share: an
+ * archive row is addressed by a Redis stream id, a live envelope by a `queued_message` uuid, and
+ * the two namespaces never intersect - the server discards the stream id at write time. The
+ * ciphertext does intersect: the SAME string is written to the stream and published in the
+ * envelope, with no re-encoding anywhere between them.
+ *
+ * NOT called from the Android background decrypt. That path loads a throwaway copy of the state and
+ * never writes `mls.bin` back (`src-tauri/src/mobile/background.rs`), so the foreground genuinely
+ * does read the frame again from its queue; marking it consumed there would skip a message that
+ * nobody has read.
+ */
+export function markHistoryFrameConsumed(
+  userId: string,
+  groupId: string,
+  fingerprint: string
+): void {
+  if (!userId || !groupId) return;
+  const seen = loadSeenCipherHashes(userId, groupId);
+  if (seen.has(fingerprint)) return;
+  seen.add(fingerprint);
+  scheduleSeenFlush(userId, groupId);
+}
+
+/** @internal Drops the shared sets between Vitest cases, so one case cannot answer another's question. */
+export function resetSeenCipherCacheForTests(): void {
+  seenCache.clear();
+  pendingSeenFlush.clear();
+  seenFlushScheduled = false;
 }
 
 /** Converts raw StoredMessage rows (from IndexedDB) to ChatMessage objects, flagging each as isOwn based on senderId. */
@@ -263,6 +349,20 @@ export async function replayConversationHistory(params: {
     // Track the highest stream ID we process so the next sync starts from there.
     let latestStreamId: string | undefined;
 
+    /**
+     * Move this device's position past a row the replay does not need to decrypt.
+     *
+     * Monotonic and row-by-row on purpose: the cursor only ever advances over entries actually
+     * walked, in stream order, so it can never JUMP over a frame that is genuinely missing. That is
+     * why "consuming a frame live advances the archive position" is implemented as a mark plus this
+     * walk rather than as a direct write of the cursor - a frame delivered live while an earlier one
+     * had already fallen out of the server queue would otherwise carry the cursor past a real hole,
+     * and turn a repairable gap into a permanent one.
+     */
+    const advancePast = (rowId?: string): void => {
+      if (rowId && (!latestStreamId || rowId > latestStreamId)) latestStreamId = rowId;
+    };
+
     const seenCipherHashes = loadSeenCipherHashes(userId, id);
     let seenUpdated = false;
 
@@ -348,16 +448,22 @@ export async function replayConversationHistory(params: {
       for (const msg of history) {
         const cipherFingerprint = msg.id || `${msg.timestamp}:${msg.content.slice(0, 64)}`;
         if (seenCipherHashes.has(cipherFingerprint)) {
-          if (msg.id && (!latestStreamId || msg.id > latestStreamId)) {
-            latestStreamId = msg.id;
-          }
+          advancePast(msg.id);
           continue;
         }
-        pageDecryptWork.push({
-          msg,
-          cipherFingerprint,
-          bytes: fromBase64(msg.content),
-        });
+        const bytes = fromBase64(msg.content);
+        // Consumed already by live delivery or by the queue drain, which read this frame without
+        // ever touching this cursor. Recognised by its bytes - `markHistoryFrameConsumed` says why
+        // no identifier is shared between the two paths. Folded into the stream-id key on first
+        // sight, so every later replay answers from the cheap check above and the position keeps
+        // moving past it without decoding anything.
+        if (seenCipherHashes.has(frameFingerprint(bytes))) {
+          seenCipherHashes.add(cipherFingerprint);
+          seenUpdated = true;
+          advancePast(msg.id);
+          continue;
+        }
+        pageDecryptWork.push({ msg, cipherFingerprint, bytes });
       }
 
       const batchResults =

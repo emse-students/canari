@@ -755,6 +755,50 @@ discharged it silently.
 The other measurement worth keeping: **9 groups in 276 ms on the browser and 1140 ms on the phone**,
 against the 4.35 s the serialised pass used to cost.
 
+#### That `→ 0` was true and did not last - the noise REGENERATES
+
+Measured the same day, on W2, by reloading twice and reading the seen-cipher ledger across the pair
+(2267 → 2271 entries):
+
+| reload | `SecretReuseError` | `frame never read here and unreadable for good` | asks |
+| --- | --- | --- | --- |
+| 1 | 10 | **2** | 1 |
+| 2 | 4, at an ADVANCING generation (263 → 266) | **0** | 0 |
+
+Each frame is reported once and silenced for ever after - which is what the `→ 0` column above
+actually measured. New ones appeared only where live traffic had been since, and that is the tell:
+**the audit did not fail, it was cleaning up after a generator nobody had found yet.**
+
+The generator was the invariant asserted at the `secret-reuse` / `past-epoch-application` branch of
+`history.ts`: *"anything arriving HERE is a frame this device has never read - that is real loss"*.
+It was false. `seenCipherHashes` was written by the replay ALONE. A frame delivered live, or drained
+from the per-device queue, consumed its ratchet generation and left no mark, so the replay walked the
+same archive row, could not decrypt what this device was displaying, and reported real loss. **Every
+online device reconciled on its own ordinary traffic** - and the cost that matters is not the probes,
+it is that a genuine loss became indistinguishable from this noise.
+
+Why no identifier could be used, established before touching anything: an archive row is addressed by
+its **Redis stream id** (`<ms>-<seq>`, from `XADD '*'`), a live envelope by `queuedMessageId`, a
+**`queued_message` uuid**. Disjoint namespaces - and the server *awaits the `XADD` return value and
+discards it* (`messaging.service.ts`), so the stream id is never stored, published or logged. What
+the two paths do share is the **ciphertext**: `body.proto` is destructured once and the same string
+is written to the stream and published in the envelope, with no transformer and no per-recipient
+variation, and `mapHistoryEntries` hands it back to the client untouched.
+
+So the mark is `frameFingerprint(bytes)`, written by `markHistoryFrameConsumed` from the one point
+live delivery and the queue drain both pass through (`setupMessageHandler`, beside the existing
+in-memory `noteFrameProcessed` - two ledgers, two lifetimes, two questions). The replay recognises it
+before decoding anything and folds it into the stream-id key on first sight, so later replays answer
+from the cheap check. Three properties it is held to are in
+[durable-rules](../durable-rules.md): the key is the ciphertext, the set is ONE object shared with the
+replay (which hydrates at its start and writes back at its end, and would otherwise erase the mark),
+and the cursor advances by WALKING rather than jumping - a live frame's position written straight
+into the cursor would carry it over an earlier frame the queue had already expired.
+
+**The Android background decrypt deliberately does not mark.** It loads a throwaway copy of the state
+and never writes `mls.bin` back (`src-tauri/src/mobile/background.rs`), so the foreground genuinely
+does read that frame again from its queue; marking it there would skip a message nobody has read.
+
 ---
 
 ## Open questions

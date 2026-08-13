@@ -361,6 +361,25 @@ carry in the head:
   there is the drain waiting on itself. It is a BARRIER (`waitUntilIdle` resolves on the drain loop
   ending) and never a delay.
   [history-reconciliation](protocols/history-reconciliation.md).
+- **A FRAME READ BY ONE PATH MUST BE MARKED READ FOR EVERY OTHER PATH, OR EACH DEVICE REPORTS ITS OWN
+  TRAFFIC AS LOSS.** Live delivery and the queue drain decrypt frames the shared archive also holds,
+  and neither moved this device's position in that archive. The replay then walked the same row,
+  found the generation already spent, and hit the branch asserting *"anything arriving HERE is a
+  frame this device has never read - that is real loss"*. The assertion was false: `seenCipherHashes`
+  was written by the replay alone. Every online device therefore reconciled on its ordinary traffic,
+  which is a false alarm on the ONE signal that must never cry wolf - a real loss became
+  indistinguishable from noise. Three shapes the repair must keep. **The key must be the CIPHERTEXT,
+  not an id**: an archive row is addressed by a Redis stream id and a live envelope by a
+  `queued_message` uuid, the two namespaces never intersect, and the server discards the stream id at
+  write time - the bytes are the only thing both paths hold. **The set must be ONE OBJECT, not a
+  re-read**: the replay hydrates it at its start and writes it back at its end, so a mark persisted
+  independently mid-walk is erased by that final write, made from a copy predating it. **The cursor
+  advances by WALKING, never by jumping**: marking a frame lets the replay skip it and move past it
+  in stream order, whereas writing the live frame's position straight into the cursor would carry it
+  over an earlier frame the server queue had already expired - turning a repairable gap into a
+  permanent one. And do NOT mark from the Android background decrypt: it loads a throwaway state and
+  never writes `mls.bin` back, so the foreground really does read that frame again.
+  [history-reconciliation](protocols/history-reconciliation.md).
 - **FOUR INVARIANTS OF THE HISTORY EXCHANGE THAT LOOK LIKE COMPLICATIONS AND ARE NOT.** Each one was
   paid for; the recurring temptation is to "simplify" them back.
   [history-reconciliation](protocols/history-reconciliation.md) carries the reasoning.
