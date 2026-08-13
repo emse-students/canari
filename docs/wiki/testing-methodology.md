@@ -83,6 +83,16 @@ contains, not by its index.
 An `aria-label` must never outrank visible text, and a document-wide text match hits the first
 hidden row.
 
+**A reader scoped to a surface answers `0` when that surface is absent, and `0` is exactly what a
+lost message looks like.** `countMessage` reads the message pane; the phone is single-pane, so it
+shows the conversation LIST after a reload and after a fresh launch, and there is no pane to read.
+Two probes came back `0` on 2026-08-13 and were one step from being written up as lost messages -
+both were on screen throughout, one of them visible in the list's own preview line. Any reader of a
+conversation must therefore ESTABLISH the conversation first (`ensureConversation`, which is a no-op
+when it is already open) rather than assume the client stayed where the last step left it. The same
+single-pane fact breaks the writer: `openConversation` hunts a sidebar that no longer exists once a
+conversation is open, so it fails on the phone precisely when the target is already correct.
+
 ### 6. A matcher tests one SPELLING; the absence of an entire VOCABULARY is evidence about the app
 
 When a mechanism leaves no trace, a **stale matcher is the right first suspicion** and it is cheap

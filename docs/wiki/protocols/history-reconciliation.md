@@ -823,7 +823,11 @@ it. Reconciliation stayed silent throughout (`no sweep - away 0 d, every group a
 which is the property that was actually wanted: heavy, therefore exceptional.
 
 The phone is checked the same way and separately, because it runs the assets baked into its APK and
-no web result speaks for it: two live messages, marks 2577 → 2583 (`falseloss-a1.mjs`).
+no web result speaks for it (`falseloss-a1.mjs`). It needs BOTH halves, because writing the mark and
+reading it are different code paths and only the second is ever seen: marks 2577 → 2583 → 2589 over
+two rounds of live traffic, then a webview reload whose replay reported **0 false loss, 0
+`SecretReuseError`, 0 asks**. "The phone carries the fix" on the mark alone would have been a claim
+about storage, not about behaviour.
 
 **Not attributed:** the marks grow by about two per message, not one. Consistent with the device also
 consuming the non-application frames of the same exchange (typing, read watermarks), but unmeasured.

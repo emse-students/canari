@@ -104,9 +104,16 @@ the three shapes the repair must keep are on
 first reload after the deploy still reported 6 and decided nothing.** Only live traffic consumed by
 the NEW bundle discriminates - 0 false loss / 0 `SecretReuseError` / 0 asks, against 6/12/1 for the
 same shape on the old one, with the mark set observed growing. The phone is verified separately
-because it runs its APK's assets. Probes kept in the harness: `falseloss.mjs`, `falseloss-live.mjs`,
+because it runs its APK's assets, and on BOTH halves - the mark being written, and a reload whose
+replay reports nothing. Probes kept in the harness: `falseloss.mjs`, `falseloss-live.mjs`,
 `falseloss-a1.mjs`, `late.mjs`. The `SecretReuseError` left unexplained last session vanished with
 the rest and is closed.
+
+**Residual noise seen on A1 while closing this, NOT investigated and not a WP:** `IPC custom protocol
+failed, Tauri will now use the postMessage interface instead` followed by `[PENDING] Pending fetch
+failed after 0 messages: TypeError: Failed to fetch`, at app startup. Nothing was pending, and it
+reads as the Tauri IPC not being up yet when the first fetch goes out - but it is an error branch and
+it fires every launch, so the observation gates will keep tripping on it until someone looks.
 
 **NO WORK PACKAGE IS OPEN.** Two things are owed and neither is one yet:
 
