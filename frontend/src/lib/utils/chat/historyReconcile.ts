@@ -86,6 +86,108 @@ export function setHistoryProbeSender(fn: HistoryProbeSender | null): void {
   sendProbe = fn;
 }
 
+// ── Whether a connection needs a sweep at all ────────────────────────────────────────────────────
+
+/**
+ * The server's message retention window, mirrored from `RETENTION_WINDOW_MS`
+ * (`apps/chat-delivery-service/src/retention.constants.ts`).
+ *
+ * **THE TWO MUST MOVE TOGETHER, and this one may never be the larger.** It decides how long a device
+ * may be away before it stops trusting the server's queue to have kept everything for it: shorter
+ * than the server's window costs a sweep nobody needed, longer would skip the one sweep that was.
+ */
+const SERVER_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
+const lastConnectedKey = (userId: string, deviceId: string) =>
+  `history_last_connected:${userId}:${deviceId}`;
+
+function readLastConnected(userId: string, deviceId: string): number | null {
+  try {
+    const raw = localStorage.getItem(lastConnectedKey(userId, deviceId));
+    if (!raw) return null;
+    const at = Number(raw);
+    return Number.isFinite(at) ? at : null;
+  } catch {
+    // Unreadable storage is not "connected recently" - fall through to sweeping, which is the
+    // answer that cannot lose a message.
+    return null;
+  }
+}
+
+/**
+ * Whether this connection should compare every group against its peers, and WHY.
+ *
+ * **The sweep used to be unconditional, and that was the whole cost.** Every connection asked every
+ * local group - nine groups on a device meant nine probes out and their answers back, on a server
+ * carrying no other traffic, and the receiving side counted those frames as arriving messages. The
+ * mechanism announced itself as a backlog and, for two people talking, was pure noise.
+ *
+ * It is a HEAL, so it runs on evidence. Three things can leave a gap and only one of them needs a
+ * sweep:
+ *
+ *  - a frame that arrived and could never be applied - already triggers `reconcileGroup` where it
+ *    happens (`handleUnreadableFrame`, the replay's `sawUnreadableFrame`), against the one group
+ *    that saw it;
+ *  - a frame that never arrived - the server still holds it, unacknowledged, and redelivers it. A
+ *    frame the client could not apply is deliberately NOT acked (`shouldAckAfterSuccess`), so the
+ *    queue itself is the record, and no peer needs asking;
+ *  - a frame the server no longer holds, because this device was away longer than it keeps things.
+ *    Nothing local witnesses that, and it is the only case a sweep answers.
+ *
+ * So the question is exactly "could the server have dropped something for me", and the durable
+ * answer is when this device last connected. **This is not a clock driving work**: nothing is
+ * scheduled, nothing fires on an interval, and being wrong costs one sweep or one deferred repair,
+ * never a lost message. An absent record means a new or restored store - which is also the case that
+ * needs everything - so one value answers both.
+ */
+export function connectionSweepDecision(
+  userId: string,
+  deviceId: string,
+  now: number = Date.now()
+): { sweep: boolean; reason: string } {
+  const last = readLastConnected(userId, deviceId);
+  if (last === null) {
+    return { sweep: true, reason: 'no record of an earlier connection - new or restored store' };
+  }
+
+  const awayMs = now - last;
+  if (awayMs < 0) {
+    // The record is in the future: the device clock moved backwards, so the age is unusable. Sweep,
+    // for the same reason unreadable storage sweeps.
+    return { sweep: true, reason: 'last-connected timestamp is in the future - clock moved back' };
+  }
+
+  const awayDays = Math.floor(awayMs / 86_400_000);
+  if (awayMs >= SERVER_RETENTION_MS) {
+    return { sweep: true, reason: `away ${awayDays} d, past what the server keeps` };
+  }
+  return { sweep: false, reason: `away ${awayDays} d, inside what the server keeps` };
+}
+
+/**
+ * Records that this device is connected NOW, which is what the next connection reasons about.
+ *
+ * Written on every connection whether or not it swept: the question is how long the device was
+ * away, not when it last repaired itself.
+ */
+export function noteConnection(userId: string, deviceId: string, now: number = Date.now()): void {
+  try {
+    localStorage.setItem(lastConnectedKey(userId, deviceId), String(now));
+  } catch {
+    // A device that cannot write this sweeps on every connection - the old behaviour, and the safe
+    // one. Logged by the caller, which holds the session's log.
+  }
+}
+
+/** Test seam: forgets this device's connection record so a case starts from a known state. */
+export function resetConnectionRecord(userId: string, deviceId: string): void {
+  try {
+    localStorage.removeItem(lastConnectedKey(userId, deviceId));
+  } catch {
+    /* nothing to forget */
+  }
+}
+
 /** Whether a probe for `groupId` went out recently enough that another would be a duplicate. */
 function recentlyAsked(groupId: string, now: number): boolean {
   const until = asked.get(groupId);

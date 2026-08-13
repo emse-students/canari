@@ -665,11 +665,20 @@ export function useMessaging() {
     // increment. Text/reply are captured into the outbox and never blocked here - they flush
     // automatically once the group becomes sendable.
     if (filesToSend.length > 0 && !isChannel) {
-      if (isMessageCatchupActive) {
-        ctx.log('[SEND] Abort media: MLS catch-up in progress');
-        ctx.setSendError(m.chat_send_sync_in_progress());
-        return;
-      }
+      // WAIT FOR THE DRAIN, DO NOT REFUSE BECAUSE OF IT.
+      //
+      // This used to bail out on `isMessageCatchupActive` and tell the user "Synchronisation en
+      // cours - reessayez dans un instant". That flag is raised from `pendingCount > 1`, a count of
+      // CIPHERTEXTS taken before anything is decrypted, so it cannot tell an arriving message from
+      // the reconciliation's own probe: two probe frames on a server carrying no other traffic were
+      // enough to refuse a photo. The requirement was never "no drain is running" - it is "encrypt
+      // at the current epoch", and `waitForMessageQueueIdle` states exactly that, as a fact rather
+      // than a guess. It is the same barrier the outbox flusher takes before every send, and it
+      // costs nothing when there is no drain to wait for.
+      await ctx
+        .ensureMls()
+        .waitForMessageQueueIdle()
+        .catch((e) => ctx.log(`[SEND] queue-idle barrier failed, sending anyway: ${String(e)}`));
       const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
       if (!stillMember || convo.lifecycle !== 'active') {
         ctx.setSendError(m.chat_send_session_establishing());

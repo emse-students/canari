@@ -92,9 +92,14 @@
   const hasCachedConversations = $derived(convs.conversations.size > 0);
 
   /**
-   * Block the whole UI only on a cold start (nothing cached yet). Once cached
-   * conversations are available we show them immediately and sync in the
-   * background - the per-group scheduler serializes sends safely meanwhile.
+   * Block the whole UI only on a cold start (nothing cached yet). Once cached conversations are
+   * available we show them immediately and sync in the background.
+   *
+   * This used to claim "the per-group scheduler serializes sends safely meanwhile", which is not
+   * what makes it safe: `sendMessage` goes straight to the WASM client and takes no scheduler lock -
+   * that mutex wraps the INBOUND drain. What actually protects a send made during a drain is the
+   * outbox flusher's `waitForMessageQueueIdle` barrier, which is what stops a message being
+   * encrypted at a stale epoch and silently dropped by up-to-date peers.
    */
   const isMessagingBlocked = $derived(
     !session.isLoggedIn || (isSyncing && !hasCachedConversations)
@@ -898,6 +903,7 @@
           onJoinChannel={handleJoinChannel}
           isLoadingHistory={convs.isLoadingHistory}
           isCatchingUpMessages={messaging.isMessageCatchupActive}
+          isCatchupAnnounced={messaging.isCatchupOverlayVisible}
           groupMembers={convs.groupMembers}
           pendingInvites={convs.pendingGroupInvites}
           allowedUserIds={composerAllowedUserIds}

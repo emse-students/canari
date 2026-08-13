@@ -80,8 +80,14 @@ the mailbox has drained.
 Three things follow, and each corrected a belief that was written down before it was measured.
 
 1. **The probe was never expensive in FRAMES, and always expensive in TIME.** A matching digest costs
-   zero reply frames, which is what makes asking on every connection affordable - that part of the
-   design holds. What did not hold is the *shape* of the ask: the elections are HTTP, take no MLS
+   zero reply frames, which was taken to make asking on every connection affordable. **That part of
+   the design did NOT hold either, and the sweep is gone** - see the 2026-08-13 row in
+   [Decisions](#decisions-taken). The frames were cheap for the *sender* and were counted as an
+   arriving backlog by every *receiver*, because a count taken before decryption cannot tell a probe
+   from a message; two people talking got a banner and a locked composer out of it. A sweep now runs
+   only when the server could have dropped something (`connectionSweepDecision`), which is what makes
+   it a heal rather than a heartbeat. What did not hold either is the *shape* of the ask: the
+   elections are HTTP, take no MLS
    mutex, and were serialised for a reason that only ever applied to the sends. They now run with a
    bound of 6 in flight (`ELECTION_CONCURRENCY`); the sends still serialise on the mutex as before.
    The bound is not decoration - a device in fifty conversations would otherwise open fifty requests
@@ -634,6 +640,7 @@ With the product owner, 2026-08-12. Each replaced an alternative rejected for th
 | Shape of a connection pass (2026-08-13) | **Elections concurrent, bounded at 6; sends still serialised** | Sequential: measured at 4.35 s for 9 groups, ~95 % of it serialised HTTP that takes no lock. Unbounded `Promise.all`: a device in fifty conversations opens fifty requests on the radio at reconnect |
 | Announcing a drain (2026-08-13) | **Raised from the decrypted buffer, at 5 real messages** | `pendingCount` at drain start: it counts ciphertexts, and nothing can classify a frame before decrypting it - so a reconnect carrying nine probes and no messages announced a synchronisation for four seconds |
 | Holding the socket through a short background | **Rejected** | The app would ACK over the WebSocket while backgrounded, cancelling the deferred FCM fallback, and nothing establishes the web `Notification` is delivered from a backgrounded WebView |
+| **When a connection sweeps every group (2026-08-13, REVERSES "asking on every connection")** | **Only when the server could have dropped something**: no record of an earlier connection (new or restored store), or an absence at least as long as the server's 90-day retention. Otherwise no sweep at all - `connectionSweepDecision` | Unconditional, which is what shipped: cheap in frames and still wrong. Nine groups meant nine probes and their answers on a server carrying no other traffic, and the receiving side counts frames BEFORE decrypting them, so its own housekeeping read as an arriving backlog - a banner and a locked composer for two people talking. The three gaps were re-enumerated and only one needs a peer asked: a frame that could not be applied already triggers its own group (`handleUnreadableFrame`, `sawUnreadableFrame`) and is deliberately left unacked; a frame that never arrived is still in the server's queue and is redelivered; only a frame the server no longer holds needs a sweep, and nothing local witnesses that. **This is a heal, so it runs on evidence** |
 
 ---
 

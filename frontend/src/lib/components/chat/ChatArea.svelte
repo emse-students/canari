@@ -143,8 +143,21 @@
     currentUserId?: string;
     /** Whether the conversation history is being loaded (shows a skeleton). */
     isLoadingHistory?: boolean;
-    /** Whether MLS is catching up messages after reconnect (shows a blocking overlay). */
+    /**
+     * Whether a multi-frame MLS drain is running. A CONCURRENCY answer, not a user-facing one: it
+     * is raised from a count of CIPHERTEXTS (`pendingCount > 1`), which cannot tell a real message
+     * from the reconciliation's own probe traffic. Use it to gate interaction, never to announce.
+     */
     isCatchingUpMessages?: boolean;
+    /**
+     * Whether there are enough REAL, DECRYPTED messages arriving to be worth telling the user about.
+     *
+     * Separate from `isCatchingUpMessages` because the two questions have different answers: with
+     * nine groups probed on every connection, two probe frames satisfied the old flag and the
+     * conversation announced "Synchronisation MLS en cours" on a server carrying no traffic but our
+     * own. A count taken before decryption cannot classify what it counts.
+     */
+    isCatchupAnnounced?: boolean;
     /** Called when in-memory groups are exhausted; should load older messages from DB. Returns true if more may be available. */
     onLoadOlderMessages?: () => Promise<boolean>;
     /**
@@ -209,6 +222,7 @@
     currentUserId = '',
     isLoadingHistory = false,
     isCatchingUpMessages = false,
+    isCatchupAnnounced = false,
     onLoadOlderMessages,
     onRequestOlderFromPeers,
     onMessagesScrollEl,
@@ -967,7 +981,7 @@
       <!-- One column, so two simultaneous banners STACK instead of hiding one another: both were
            `absolute top-0` and the amber one simply covered the sky one. -->
       <div class="absolute top-0 inset-x-0 z-40 flex flex-col pointer-events-none">
-        {#if isCatchingUpMessages}
+        {#if isCatchupAnnounced}
           <div
             class="flex items-center justify-center gap-2 py-1.5 px-4 bg-amber-500/15 text-amber-600 dark:text-amber-400 text-xs font-medium border-b border-amber-500/20 pointer-events-none"
             role="status"
@@ -1108,6 +1122,15 @@
       </div>
     {:else}
       <div class="absolute inset-x-0 bottom-0 z-20 pointer-events-none">
+        <!-- NOT LOCKED DURING A DRAIN. `interactionLocked={isCatchingUpMessages}` used to sit on
+             <ChatComposer> below - a fourth, undocumented reader of a flag whose three real guards
+             are named elsewhere. It had no protocol justification in either venue: a CHANNEL send
+             shares no key material, no lock and no code path with MLS (AES-GCM epoch key, WebCrypto,
+             REST), and a DM send is captured into the durable outbox, whose flusher already awaits
+             queue-idle before encrypting - that barrier is the correctness mechanism, not this.
+             Inline MEDIA is the one case needing a live group, and it keeps its own guard in
+             `handleSendChat`. Raised on `pendingCount > 1`, this closed the composer for two
+             reconciliation probes on a server carrying no other traffic. -->
         <ChatComposer
           {messageText}
           {allowedUserIds}
@@ -1124,7 +1147,6 @@
           {pendingFiles}
           {onRemovePendingFile}
           {isUploading}
-          interactionLocked={isCatchingUpMessages}
         />
       </div>
     {/if}

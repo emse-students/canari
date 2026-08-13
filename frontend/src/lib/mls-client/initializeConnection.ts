@@ -1,7 +1,11 @@
 import type { IMlsService, UserGroupRow } from './IMlsService';
 import { getIsTabLeader } from './tabLeader';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
-import { reconcileAllGroups } from '$lib/utils/chat/historyReconcile';
+import {
+  connectionSweepDecision,
+  noteConnection,
+  reconcileAllGroups,
+} from '$lib/utils/chat/historyReconcile';
 
 /** Dependencies injected into initializeConnection; only the tab-leader tab calls this function. */
 export interface ConnectionDeps {
@@ -225,9 +229,22 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   // 5. Reconciliation. LAST, and after the drain above for a reason that is the whole shape of this
   // mechanism: a device comparing what it holds while its own mailbox is still being applied
   // reports a difference it is in the middle of closing by itself, and then repairs it by asking a
-  // peer for messages already on their way. Every group is asked, unconditionally - one small frame
-  // each, answered by silence when the two agree, which is the common case on every connection.
-  await reconcileAllGroups(mlsService, mlsService.getLocalGroups(), log);
+  // peer for messages already on their way.
+  //
+  // AND ONLY WHEN THE SERVER COULD HAVE DROPPED SOMETHING. This used to sweep every group on every
+  // connection; the drain above is what makes that unnecessary, because anything the server still
+  // holds for this device has just been delivered by it, and anything that could not be applied
+  // raised its own trigger where it failed. `connectionSweepDecision` states the one remaining
+  // case - see it for why the other two need nobody asked.
+  const deviceId = mlsService.getDeviceId();
+  const { sweep, reason } = connectionSweepDecision(userId, deviceId);
+  if (sweep) {
+    log(`[HISTORY_RECONCILE] sweeping every group - ${reason}`);
+    await reconcileAllGroups(mlsService, mlsService.getLocalGroups(), log);
+  } else {
+    log(`[HISTORY_RECONCILE] no sweep - ${reason}`);
+  }
+  noteConnection(userId, deviceId);
 }
 
 /**

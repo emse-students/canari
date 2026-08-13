@@ -39,7 +39,24 @@ meet.
 
 ---
 
-## Everything is `pending`, and that is deliberate
+## Where the campaign stands
+
+**Updated after every run - this table is the monitor, not a summary written at the end.**
+
+| Phase | Scripts | State |
+| --- | --- | --- |
+| SETUP | - | 5 of 9 `passed`; SETUP-2 deliberately skipped, SETUP-7/8 owed (8 before CORRUPT and PIN) |
+| MSG | 12 | ran 2026-08-13: **8 passed, 2 failed, 1 inconclusive, 2 blocked on the harness** |
+| every other phase | 22 written, 6 with none | `pending` - not yet run on the reworked build |
+
+**Two application defects are open from MSG** and neither is a harness fault: group `642f389a`
+holds frames it can never read and does not heal (MSG-4), and a message delivered while the sender
+was offline appears only after a reload (MSG-10).
+
+**Everything returns to `pending` on the next commit.** The 2026-08-13 work changes when a
+connection reconciles at all, which touches every phase that observes delivery.
+
+## Everything was `pending`, and that was deliberate
 
 The campaign was reset on 2026-08-12. Not because the earlier verdicts were wrong, but because they
 were made against code that is being replaced:
@@ -251,15 +268,15 @@ belong to itself.
 
 | Id | Step | Needs | State |
 | --- | --- | --- | --- |
-| SETUP-1 | Build the debug APK, plus the jniLibs `.so` rescue (`test_adb.py` `_ensure_native_lib_present` - a Windows symlink failure builds an APK with no native lib) | `+A1` | `pending` |
-| SETUP-2 | Clean uninstall + install. **Wipes `mls.bin`** - the device loses its MLS identity and local history, by design | `+A1` | `pending` |
-| SETUP-3 | Start logcat with the 19-tag whitelist from `test_adb.py`. A tag missing there is a verdict that never arrives | `+A1` | re-run each session |
-| SETUP-4 | W1: log in as **owner**, enrol the device, set the PIN | `+user` | `pending` - the 2FA code |
-| SETUP-5 | W2: log in as **peer** (no 2FA on that account), set the PIN | `W1 W2` | `pending` |
-| SETUP-6 | A1: log in as **owner**. **Decline biometrics** so the PIN is always the unlock path | `+A1` `+user` | `pending` |
+| SETUP-1 | Build the debug APK, plus the jniLibs `.so` rescue (`test_adb.py` `_ensure_native_lib_present` - a Windows symlink failure builds an APK with no native lib) | `+A1` | **`passed` 2026-08-13** - built 13:08 from the 13:06 bundle; the `.so` rescue was not needed on this build |
+| SETUP-2 | Clean uninstall + install. **Wipes `mls.bin`** - the device loses its MLS identity and local history, by design | `+A1` | `pending` - **deliberately not run**: `install -r` was used instead, to keep the store and avoid re-paying SETUP-4's 2FA |
+| SETUP-3 | Start logcat with the 19-tag whitelist from `test_adb.py`. A tag missing there is a verdict that never arrives | `+A1` | re-run each session - done 2026-08-13 |
+| SETUP-4 | W1: log in as **owner**, enrol the device, set the PIN | `+user` | **`passed`** - established earlier, re-proven 2026-08-13 by the preflight (unlocked, 10 sidebar rows) |
+| SETUP-5 | W2: log in as **peer** (no 2FA on that account), set the PIN | `W1 W2` | **`passed`** - preflight 2026-08-13, unlocked, 2 sidebar rows |
+| SETUP-6 | A1: log in as **owner**. **Decline biometrics** so the PIN is always the unlock path | `+A1` `+user` | **`passed`** - unlocked 2026-08-13 in 4960 ms via the keypad -> manual-input path |
 | SETUP-7 | **Discovery pass.** Enumerate the real at-rest artefacts rather than guessing them - see [the artefact table](#the-at-rest-artefacts) | `+A1` | `pending` |
-| SETUP-8 | Baseline snapshot of the intact Android app data, so every corruption test can roll back without a re-enrolment | `+A1` | `pending` |
-| SETUP-9 | The dedicated venue for channel traffic | `W1 W2` | `pending` - a **community**, not a channel |
+| SETUP-8 | Baseline snapshot of the intact Android app data, so every corruption test can roll back without a re-enrolment | `+A1` | `pending` - **owed before CORRUPT and PIN** |
+| SETUP-9 | The dedicated venue for channel traffic | `W1 W2` | **`passed`** - confirmed against production 2026-08-13: channel `general` in workspace `Campagne de test`, and it is a **community**, not a channel |
 
 **SETUP-9 is a community, not a private channel**, and the reason is a finding: a private channel in
 an existing association is readable by every admin of that association, so it is not a private venue
@@ -275,19 +292,25 @@ re-enrolment path and MULTI-3 are only testable from a clean device.
 Baseline first. An exotic failure is only meaningful once the plain path is proven on the same
 harness in the same session.
 
+**Run 2026-08-13 against `2c7b0c3c` (web) + the 13:08 debug APK (A1): 8 passed, 1 failed, 1 inconclusive, 2 blocked on the harness.**
+Every row below therefore returns to `pending` for the NEXT commit, which changes when a connection
+reconciles at all - see the [Decisions](protocols/history-reconciliation.md#decisions-taken) row of
+2026-08-13. Verdicts are kept rather than erased: they name the build they hold for.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `pending` |
-| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `pending` |
-| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `pending` |
-| MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `W1 W2` | `pending` |
-| MSG-5 | Channel message converges on all three; **no `masterSecret` in any payload** | `+A1` | `pending` |
-| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `pending` |
-| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `pending` |
-| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` | `pending` |
-| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` | `pending` - with a UX note: the tab TITLE never changes, so a backgrounded tab signals nothing until looked at |
-| MSG-9 | Receiver offline (phone radios), then restored: lands once on reconnect | `+A1` | `pending` |
-| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `pending` |
+| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | **`passed`** on `2c7b0c3c` - 311 ms (cold: 1549 ms) |
+| MSG-1b | Delivery DURING a bulk-ingest window (the WP-ECHO-1 race) | `W1 W2` | **`inconclusive`** on `2c7b0c3c` - `windowOpened: false`. The check can only conclude when a window happens to open, and the 2026-08-13 work makes those rarer still. **The check needs reworking, not the app** |
+| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | **`passed`** on the 13:08 APK - 7928 ms |
+| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | **`passed`** on `2c7b0c3c` - 366 ms. Failed the first run and passed alone: the cause was harness isolation, fixed by `ensureConversation` |
+| MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `W1 W2` | **`failed`** on `2c7b0c3c` - assertions HELD (1 copy, 722 ms, decoded) but the run was not clean: `SecretReuseError` / `CannotDecryptOwnMessage` at epoch 6 on group `642f389a`, which **holds frames it can never read and does not heal**. Under investigation |
+| MSG-5 | Channel message converges on all three; **no `masterSecret` in any payload** | `+A1` | **`passed`** on `2c7b0c3c` |
+| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`passed`** on `2c7b0c3c` |
+| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | **`passed`** on `2c7b0c3c` - 4255 ms |
+| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `blocked` - harness: `ensureChat` reaches the conversation list by clicking "Discussions", which A1's mobile layout hides once a conversation is open. The FIRST run's FAIL was spurious (A1 was left in the campaign channel and sent there) and is what produced `ensureConversation` |
+| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `blocked` - same harness cause. UX note stands: the tab TITLE never changes, so a backgrounded tab signals nothing until looked at |
+| MSG-9 | Receiver offline (phone radios), then restored: lands once on reconnect | `+A1` | **`passed`** on the 13:08 APK - arrived 516 ms after reconnect, 1 copy. **Harness gap: it writes no row to `results.ndjson`**, so the dashboard is the only record |
+| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | **`failed`** on `2c7b0c3c` - `onReceiver: 0` after reconnect but `afterReload: 1`: the message IS delivered and the live view does not show it until a reload. Its observation gate also counts the `ERR_INTERNET_DISCONNECTED` it caused itself as dirt |
 
 MSG-9 cannot be faked in a browser - an offline RECEIVER is a phone with its radios off
 ([methodology](testing-methodology.md#environment-traps-that-read-as-application-bugs)).

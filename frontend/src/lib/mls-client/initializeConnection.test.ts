@@ -19,9 +19,16 @@ vi.mock('$lib/utils/chat/groupActions', () => ({
 
 // Keep the reconciliation pass out of these cases: it is exercised on its own, and here it would
 // only assert that a session which registered no probe sender sends no probe.
-vi.mock('$lib/utils/chat/historyReconcile', () => ({
-  reconcileAllGroups: vi.fn().mockResolvedValue(undefined),
+// The sweep decision is REAL here, not stubbed: these cases connect a device with no stored
+// connection record, which is the "new or restored store" case, so they exercise the branch that
+// still sweeps. Stubbing it would let the call site stop consulting it without any test noticing.
+const { reconcileAllGroupsMock } = vi.hoisted(() => ({
+  reconcileAllGroupsMock: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock('$lib/utils/chat/historyReconcile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/utils/chat/historyReconcile')>();
+  return { ...actual, reconcileAllGroups: reconcileAllGroupsMock };
+});
 
 import { initializeConnection } from './initializeConnection';
 

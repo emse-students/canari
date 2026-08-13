@@ -49,8 +49,6 @@
     onRemovePendingFile?: (index: number) => void;
     /** Whether an upload is currently in progress (disables the send button). */
     isUploading?: boolean;
-    /** When true, the composer is read-only (MLS catch-up in progress). */
-    interactionLocked?: boolean;
     /** When set, only users whose IDs are in this list appear in @mention suggestions. */
     allowedUserIds?: string[];
   }
@@ -70,7 +68,6 @@
     pendingFiles = [],
     onRemovePendingFile,
     isUploading = false,
-    interactionLocked = false,
     allowedUserIds,
   }: Props = $props();
 
@@ -122,7 +119,7 @@
   );
 
   const isSendDisabled = $derived(
-    interactionLocked || (!messageText.trim() && pendingFiles.length === 0) || isUploading
+    (!messageText.trim() && pendingFiles.length === 0) || isUploading
   );
 
   // ── Typing signal (throttled) ──────────────────────────────────────────────
@@ -156,7 +153,7 @@
 
   function handleMessageChange(value: string) {
     onMessageChange(value);
-    if (!interactionLocked && value.trim().length > 0) pingTyping();
+    if (value.trim().length > 0) pingTyping();
     else stopTyping();
   }
 
@@ -557,7 +554,7 @@
       <div class="shrink-0">
         <button
           onclick={() => fileInput?.click()}
-          disabled={isUploading || interactionLocked}
+          disabled={isUploading}
           title={m.chat_attach_file_title()}
           aria-label={m.chat_attach_file_label()}
           class="chat-composer-icon-button"
@@ -576,7 +573,6 @@
           <button
             type="button"
             onclick={() => onCreatePoll()}
-            disabled={interactionLocked}
             title={m.chat_create_poll_title()}
             aria-label={m.chat_create_poll_label()}
             class="chat-composer-icon-button"
@@ -592,7 +588,6 @@
           <button
             type="button"
             onclick={() => (showGifPicker = true)}
-            disabled={interactionLocked}
             title={m.chat_send_gif_title()}
             aria-label={m.chat_send_gif_label()}
             class="chat-composer-icon-button text-[0.7rem] font-extrabold tracking-tight"
@@ -626,11 +621,8 @@
         onchange={handleMessageChange}
         class="flex-1 min-w-0"
         editorClass="chat-composer-textarea"
-        placeholder={interactionLocked
-          ? m.chat_mls_syncing_placeholder()
-          : m.chat_message_placeholder()}
+        placeholder={m.chat_message_placeholder()}
         minHeight="44px"
-        disabled={interactionLocked}
         onfocus={() => onFocusChange?.(true)}
         onblur={() => {
           onFocusChange?.(false);

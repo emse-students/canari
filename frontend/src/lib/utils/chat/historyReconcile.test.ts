@@ -15,6 +15,9 @@ import {
   forgetGroupReconciliation,
   resetHistoryReconciliation,
   setHistoryProbeSender,
+  connectionSweepDecision,
+  noteConnection,
+  resetConnectionRecord,
   type HistoryProbeSender,
 } from './historyReconcile';
 
@@ -293,5 +296,63 @@ describe('forgetting', () => {
 
     expect(groupsAwaitingResponder()).toEqual([]);
     expect(await reconcileGroup(service(), OTHER, log, now + 1)).toBe(true);
+  });
+});
+
+/**
+ * WHEN A CONNECTION IS WORTH A SWEEP AT ALL.
+ *
+ * The sweep used to be unconditional and that was its entire cost: nine groups probed on every
+ * connection, on a server carrying no other traffic, announced to the user as an arriving backlog.
+ * These cases pin the one question it is allowed to ask - "could the server have dropped something
+ * for me" - and, just as importantly, the answers that must NOT provoke one.
+ */
+describe('connectionSweepDecision', () => {
+  const USER = 'user-a';
+  const DEVICE = 'device-1';
+  const DAY = 86_400_000;
+  const NOW = 1_700_000_000_000;
+
+  beforeEach(() => resetConnectionRecord(USER, DEVICE));
+
+  it('sweeps when nothing was ever recorded - a new or restored store holds nothing to trust', () => {
+    const { sweep, reason } = connectionSweepDecision(USER, DEVICE, NOW);
+    expect(sweep).toBe(true);
+    expect(reason).toContain('new or restored');
+  });
+
+  it('does NOT sweep for a device that connected yesterday - the server still holds everything', () => {
+    noteConnection(USER, DEVICE, NOW - DAY);
+    expect(connectionSweepDecision(USER, DEVICE, NOW).sweep).toBe(false);
+  });
+
+  it('does NOT sweep just below the retention window', () => {
+    noteConnection(USER, DEVICE, NOW - 89 * DAY);
+    expect(connectionSweepDecision(USER, DEVICE, NOW).sweep).toBe(false);
+  });
+
+  it('sweeps once the absence reaches what the server keeps', () => {
+    noteConnection(USER, DEVICE, NOW - 90 * DAY);
+    const { sweep, reason } = connectionSweepDecision(USER, DEVICE, NOW);
+    expect(sweep).toBe(true);
+    expect(reason).toContain('past what the server keeps');
+  });
+
+  it('sweeps when the record sits in the future - a backwards clock makes the age unusable', () => {
+    noteConnection(USER, DEVICE, NOW + DAY);
+    expect(connectionSweepDecision(USER, DEVICE, NOW).sweep).toBe(true);
+  });
+
+  it('keeps one record per device, so a second device does not inherit the first ones answer', () => {
+    noteConnection(USER, DEVICE, NOW - DAY);
+    expect(connectionSweepDecision(USER, DEVICE, NOW).sweep).toBe(false);
+    expect(connectionSweepDecision(USER, 'device-2', NOW).sweep).toBe(true);
+    resetConnectionRecord(USER, 'device-2');
+  });
+
+  it('keeps one record per user, so re-logging as somebody else sweeps', () => {
+    noteConnection(USER, DEVICE, NOW - DAY);
+    expect(connectionSweepDecision('user-b', DEVICE, NOW).sweep).toBe(true);
+    resetConnectionRecord('user-b', DEVICE);
   });
 });
