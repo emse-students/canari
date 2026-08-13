@@ -18,6 +18,9 @@ import {
   connectionSweepDecision,
   noteConnection,
   resetConnectionRecord,
+  groupsOwingAudit,
+  noteGroupsAudited,
+  resetAuditRecord,
   type HistoryProbeSender,
 } from './historyReconcile';
 
@@ -392,5 +395,80 @@ describe('connectionSweepDecision', () => {
     noteConnection(USER, DEVICE, NOW - DAY);
     expect(connectionSweepDecision('user-b', DEVICE, NOW).sweep).toBe(true);
     resetConnectionRecord('user-b', DEVICE);
+  });
+});
+
+/**
+ * THE ONE-SHOT AUDIT, for damage that predates the mechanism that would have caught it.
+ *
+ * Every other trigger needs a live witness. A conversation damaged before the repair path worked has
+ * none left - the frame that would have raised it was acked and deleted at the time - so the store
+ * holds an absence, and an absence is not detectable from one side. These cases pin the property the
+ * whole design rests on: the audit is discharged PER GROUP and only for groups an ask really left
+ * for, so a group that could not be compared comes back alone rather than dragging the store with it.
+ */
+describe('the one-shot audit', () => {
+  const USER = 'audit-user';
+  const DEVICE = 'audit-device';
+  const LOCAL = ['g-1', 'g-2', 'g-3'];
+
+  beforeEach(() => resetAuditRecord(USER, DEVICE));
+
+  it('owes the audit for every local group when nothing was ever recorded', () => {
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL)).toEqual(LOCAL);
+  });
+
+  it('stops owing it for the groups an ask really left for', () => {
+    noteGroupsAudited(USER, DEVICE, ['g-1', 'g-3']);
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL)).toEqual(['g-2']);
+  });
+
+  it('STILL owes it for a group that was handed to the pass but never asked', () => {
+    // The pass was given all three; only two probes left (the third was deferred - no peer online).
+    // Recording the INPUT would lose that group for good, which is the whole point of recording the
+    // OUTPUT instead.
+    noteGroupsAudited(USER, DEVICE, ['g-1', 'g-2']);
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL)).toContain('g-3');
+  });
+
+  it('accumulates across connections rather than replacing the record', () => {
+    noteGroupsAudited(USER, DEVICE, ['g-1']);
+    noteGroupsAudited(USER, DEVICE, ['g-2']);
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL)).toEqual(['g-3']);
+  });
+
+  it('writes nothing at all when no ask left, so an empty pass cannot discharge anything', () => {
+    noteGroupsAudited(USER, DEVICE, []);
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL)).toEqual(LOCAL);
+  });
+
+  it('owes it again for a record left by an earlier generation - a bump re-runs the fleet', () => {
+    noteGroupsAudited(USER, DEVICE, LOCAL);
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL)).toEqual([]);
+    localStorage.setItem(
+      `history_audit:${USER}:${DEVICE}`,
+      JSON.stringify({ generation: 0, groupIds: LOCAL })
+    );
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL)).toEqual(LOCAL);
+  });
+
+  it('owes it for everything when the record is unreadable, never silently skips', () => {
+    localStorage.setItem(`history_audit:${USER}:${DEVICE}`, 'not json');
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL)).toEqual(LOCAL);
+  });
+
+  it('owes it for a group joined after the audit ran - one probe, once, and then never again', () => {
+    noteGroupsAudited(USER, DEVICE, LOCAL);
+    expect(groupsOwingAudit(USER, DEVICE, [...LOCAL, 'g-new'])).toEqual(['g-new']);
+    noteGroupsAudited(USER, DEVICE, ['g-new']);
+    expect(groupsOwingAudit(USER, DEVICE, [...LOCAL, 'g-new'])).toEqual([]);
+  });
+
+  it('keeps one record per device and per user', () => {
+    noteGroupsAudited(USER, DEVICE, LOCAL);
+    expect(groupsOwingAudit(USER, 'other-device', LOCAL)).toEqual(LOCAL);
+    expect(groupsOwingAudit('other-user', DEVICE, LOCAL)).toEqual(LOCAL);
+    resetAuditRecord(USER, 'other-device');
+    resetAuditRecord('other-user', DEVICE);
   });
 });

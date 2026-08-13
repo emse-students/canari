@@ -670,6 +670,47 @@ without closing it - a frame can arrive from a background push or a replay at an
 is that a repair which cannot be attempted is REMEMBERED until it can be, and discharged by the event
 that makes it possible.
 
+### And the fix does not reach backwards - hence the audit
+
+Measured on the device once the fix shipped: **the damaged group did not heal, and could not.** A
+clean boot, three devices online, raised exactly one line - `no sweep - away 0 d, inside what the
+server keeps` - and no unreadable frame arrived, so nothing asked. Holding a repair that is RAISED
+cannot manufacture a trigger for damage whose evidence was consumed before the fix existed.
+
+That is the general shape, not one group's bad luck. Every trigger this protocol has needs a live
+witness - an unreadable frame, a replay that gave up, an absence past retention - and a conversation
+damaged earlier has none of them left. What remains locally is an **absence**, and an absence is not
+detectable from one side: nothing on the device records that a message it never read once existed.
+The trace confirmed it end to end - for `secret-reuse` and `past-epoch-application` the durable
+footprint is zero. No tombstone, no placeholder, no field in `StoredMessage` or `ConversationMeta`
+able to represent a gap, and nothing rendered: the user sees an unbroken list with a hole in it.
+
+**So the repair for pre-existing damage cannot be a cleanup - there is nothing to delete.** Deleting
+and recreating the group is strictly worse: it destroys the messages still held and ends where a
+comparison would have ended anyway. The only instrument that finds an absence is the comparison
+itself, and what was missing was a REASON to run one.
+
+**The one-shot audit** (`groupsOwingAudit` / `noteGroupsAudited`, `historyReconcile.ts`) is that
+reason. `HISTORY_AUDIT_GENERATION` names the round; a device records which groups it has really
+audited, and bumping the constant is the only way to run it again, deliberately and fleet-wide.
+
+Two properties it is held to, both learnt above:
+
+- **Discharged PER GROUP, and only for groups an ask actually left for.** `reconcileAllGroups`
+  returns the asked ids rather than a count, and they are what gets written. Recording the pass's
+  INPUT would discharge groups that were merely deferred - every member offline - and lose them for
+  good, which is step 3 of the failure above wearing a different hat. Recording the OUTPUT means a
+  group that could not be compared comes back alone on the next connection instead of dragging the
+  whole store with it.
+- **Idempotence from durable state, termination from a proof.** Nothing is scheduled and nothing
+  fires on an interval. A group joined after the audit ran is indistinguishable from one deferred
+  during it, and costs exactly one probe, once, ever - cheaper than a second durable record of when
+  each group was joined.
+
+What the audit does NOT do: it is not a guarantee. A group whose every peer is offline at each
+connection stays owed, and is asked once per connection - one probe, for the one group that genuinely
+needs it, which is the same honest limit the connection edge already has.
+
 ---
 
 ## Open questions

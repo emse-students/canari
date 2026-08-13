@@ -22,8 +22,11 @@ vi.mock('$lib/utils/chat/groupActions', () => ({
 // The sweep decision is REAL here, not stubbed: these cases connect a device with no stored
 // connection record, which is the "new or restored store" case, so they exercise the branch that
 // still sweeps. Stubbing it would let the call site stop consulting it without any test noticing.
+// RESOLVES TO THE ASKED GROUP IDS, like the real one: the caller feeds them straight to
+// `noteGroupsAudited`, so a mock resolving `undefined` claims a pass asked nothing AND breaks the
+// discharge - which is exactly what it did until the audit gave the return value a meaning.
 const { reconcileAllGroupsMock } = vi.hoisted(() => ({
-  reconcileAllGroupsMock: vi.fn().mockResolvedValue(undefined),
+  reconcileAllGroupsMock: vi.fn().mockResolvedValue([] as string[]),
 }));
 vi.mock('$lib/utils/chat/historyReconcile', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/historyReconcile')>();

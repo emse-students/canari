@@ -116,11 +116,12 @@ from updated peers. That is the clean break working as decided; both halves are 
 stores → VERIFY the store serves it → only THEN raise `minClientVersion` past 0.14. Raising it first
 traps users on an update screen whose button leads to the old version.
 
-**Three P2s were measured in the shipped exchange and are live in prod** - cost and determinism, no
-data loss, none a reason to revert: the probe pushes to offline devices that can never answer,
-`reconcileAllGroups` reads the whole conversations table once per group, and a probe can be compared
-against a key up to 60 s stale from three online devices upward. Each with its evidence and the shape
-of its fix in [backlog](docs/wiki/backlog.md).
+**The three P2s measured in the shipped exchange are FIXED and in prod** - `6387ad57`, which precedes
+the deploy already verified on `23e23b08`. The probe no longer queues or pushes to offline members
+(the server filters recipients on `body.durable`), `historyRangeStartFor` reads ONE row by key in
+both backends, and `awaitProbe` prefers a probe that postdates the election. Their backlog entries
+were deleted on 2026-08-13 after the fix was re-verified in the code; **do not reinstate them from an
+older note.**
 
 **Two defects were found and FIXED on 2026-08-13 by measuring the "Synchronisation des messages…"
 banner the user reported twice** - shipped as `23e23b08`, and **the deploy is verified rather than
@@ -178,12 +179,26 @@ that is NOT a second fault - it is the boundary of the fix.** A clean boot (forc
 PIN, three devices online) raised exactly ONE reconcile line, `no sweep - away 0 d, inside what the
 server keeps`, and no unreadable frame arrived. The fix HOLDS a repair that is raised; it cannot
 manufacture a trigger for damage whose evidence was consumed before the fix existed - the frames
-that would have raised this one were acked and deleted at the time. **So pre-fix damage is
-unrepairable by any current trigger, and the user's own proposal (delete and recreate the group) is
-the only way to clear THIS group.** What the build changes is that new damage of this shape can no
-longer become permanent. The one thing still owed on it: confirm the group is actually still short
-of messages, by comparing it against a peer through the NATIVE store (see the harness trap below) -
-the campaign's `recon.mjs` is the instrument, not a hand probe.
+that would have raised this one were acked and deleted at the time.
+
+**THAT GAP IS NOW CLOSED BY THE ONE-SHOT AUDIT** - `groupsOwingAudit` / `noteGroupsAudited` in
+`historyReconcile.ts`, wired at the connection edge in `initializeConnection.ts`, written up in
+[history-reconciliation](docs/wiki/protocols/history-reconciliation.md#and-the-fix-does-not-reach-backwards---hence-the-audit).
+Every device compares each group ONCE against a peer, because pre-fix damage has no live witness of
+its own. **Do not "simplify" its two properties, both of which are the previous failure wearing a
+different hat:** it is discharged PER GROUP and only for groups an ask actually LEFT for
+(`reconcileAllGroups` returns the asked ids, not a count - recording the pass's INPUT would discharge
+groups that were merely deferred and lose them for good), and `HISTORY_AUDIT_GENERATION` is the only
+way to re-run it, deliberately and fleet-wide. It is not a guarantee: a group whose peers are always
+offline stays owed and is asked once per connection, alone.
+
+**A cleanup was considered and REJECTED on evidence - do not revive it.** The trace established the
+durable footprint of a terminal decrypt failure is ZERO (no tombstone, no placeholder, no field in
+`StoredMessage`/`ConversationMeta` able to hold a gap, nothing rendered), so a destructive control
+would have nothing to target. Delete-and-recreate is strictly worse than a comparison: it destroys
+the messages still held and ends where the comparison would have ended anyway. The one thing still
+owed: confirm `642f389a` was really short of messages, via `recon.mjs` against the NATIVE store (see
+the harness trap below), not a hand probe.
 
 **The fourth reconciliation trigger the user approved is NOT implemented yet** - *"sonder aussi
 quand la reponse recue est plus courte que la fenetre demandee"*. The trace is done and is the whole

@@ -3,7 +3,9 @@ import { getIsTabLeader } from './tabLeader';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import {
   connectionSweepDecision,
+  groupsOwingAudit,
   noteConnection,
+  noteGroupsAudited,
   reconcileAllGroups,
 } from '$lib/utils/chat/historyReconcile';
 
@@ -237,12 +239,31 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   // raised its own trigger where it failed. `connectionSweepDecision` states the one remaining
   // case - see it for why the other two need nobody asked.
   const deviceId = mlsService.getDeviceId();
+  // READ AGAIN HERE, deliberately: the `localGroups` snapshot taken before the sync loop predates
+  // the joins and purges it performs, and reconciling a stale list would audit groups this device
+  // has just left and miss the ones it has just joined.
+  const groupsNow = [...mlsService.getLocalGroups()];
   const { sweep, reason } = connectionSweepDecision(userId, deviceId);
-  if (sweep) {
-    log(`[HISTORY_RECONCILE] sweeping every group - ${reason}`);
-    await reconcileAllGroups(mlsService, mlsService.getLocalGroups(), log);
+
+  // TWO INDEPENDENT REASONS TO COMPARE, and only one of them is about this connection. The sweep
+  // asks "could the server have dropped something for me"; the audit asks "was this group damaged
+  // before anything on this device was able to notice". A device that answers no to the first can
+  // still owe the second, and it owes it exactly once per group - see `groupsOwingAudit`.
+  const owing = groupsOwingAudit(userId, deviceId, groupsNow);
+  const targets = sweep ? groupsNow : owing;
+
+  if (targets.length > 0) {
+    log(
+      sweep
+        ? `[HISTORY_RECONCILE] sweeping every group - ${reason}`
+        : `[HISTORY_RECONCILE] no sweep - ${reason}; auditing ${owing.length} group(s) that never have been`
+    );
+    const askedGroups = await reconcileAllGroups(mlsService, targets, log);
+    // DISCHARGED ON THE ASK ITSELF. `reconcileAllGroups` returns the groups a probe really left for,
+    // which is shorter than `targets` by whatever was deferred - and those come back next time.
+    noteGroupsAudited(userId, deviceId, askedGroups);
   } else {
-    log(`[HISTORY_RECONCILE] no sweep - ${reason}`);
+    log(`[HISTORY_RECONCILE] no sweep - ${reason}; every group already audited`);
   }
   noteConnection(userId, deviceId);
 }

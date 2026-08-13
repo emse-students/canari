@@ -311,6 +311,20 @@ carry in the head:
   clear on the election, an HTTP round trip that asks nobody anything, so a group whose probe then
   failed to encrypt was recorded as attended to.
   [history-reconciliation](protocols/history-reconciliation.md#a-group-that-could-not-heal).
+- **A FIX THAT HOLDS A RAISED TRIGGER DOES NOT REACH BACKWARDS: STATE DAMAGED BEFORE IT SHIPPED HAS
+  NO WITNESS LEFT, AND NEEDS A REASON TO COMPARE - NOT A CLEANUP.** Measured the moment the rule
+  above shipped: the damaged group still did not heal, because every trigger needs a live witness and
+  this one's had been consumed. **Before designing any destructive repair, trace what is actually
+  PERSISTED by the failure** - here the footprint was zero (no tombstone, no placeholder, no field
+  able to hold a gap, nothing rendered), so a cleanup would have had nothing to target and
+  delete-and-recreate was strictly worse than comparing: it destroys what is still held and ends
+  where the comparison ends anyway. **What remains after a silent loss is an ABSENCE, and an absence
+  is undetectable from one side** - only a peer comparison finds it. The instrument for that already
+  existed; what was missing was a reason to run it. So the shape of the fix is a ONE-SHOT audit
+  gated on a durable generation, discharged **per item and only for items the act really happened
+  for** (recording the pass's INPUT rather than its OUTPUT discharges what was merely deferred - the
+  same failure again), with a constant bump as the only way to re-run it.
+  [history-reconciliation](protocols/history-reconciliation.md#and-the-fix-does-not-reach-backwards---hence-the-audit).
 - **A RETRY MUST TERMINATE ON THE EVENT THAT CHANGES THE ANSWER, NOT ON A CLOCK - AND THE EVENT IS
   USUALLY ALREADY NAMED SOMEWHERE.** An unacknowledged inbound frame was re-fetched every 15 s. The
   handler leaves one behind for exactly two reasons and both were already enumerated as a TYPE

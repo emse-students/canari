@@ -217,6 +217,105 @@ export function resetConnectionRecord(userId: string, deviceId: string): void {
   }
 }
 
+// ── The one-shot audit, for damage that predates the mechanism that would have caught it ─────────
+
+/**
+ * Which round of the one-shot audit this build asks for. **Bumping it re-runs the audit on every
+ * device in the fleet, once**, and that is the only way to run it again.
+ *
+ * WHY AN AUDIT EXISTS AT ALL. Every other trigger needs a live witness: an unreadable frame, a
+ * replay that gave up, a device away past what the server keeps. A conversation damaged BEFORE the
+ * repair path worked has none of them left - the frame that would have raised it was acked and
+ * deleted at the time, so the local store holds an ABSENCE, and an absence is not detectable from
+ * one side. Measured on a production DM (2026-08-13): a clean boot with three devices online raised
+ * one line, `no sweep`, and nothing asked, because nothing was left to ask.
+ *
+ * So the audit is not a repair and not a schedule - it is a one-time reason to COMPARE, on devices
+ * that have no reason of their own. Generation 1 is the amnesty for everything that predates the
+ * deferred-ask fix.
+ */
+const HISTORY_AUDIT_GENERATION = 1;
+
+const auditKey = (userId: string, deviceId: string) => `history_audit:${userId}:${deviceId}`;
+
+/** What a device remembers of the audit: which round it ran, and which groups it really asked. */
+type AuditRecord = { generation: number; groupIds: string[] };
+
+function readAuditRecord(userId: string, deviceId: string): AuditRecord | null {
+  try {
+    const raw = localStorage.getItem(auditKey(userId, deviceId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AuditRecord>;
+    // A record from an EARLIER generation is not a weaker record, it is a record of a different
+    // question - discarding it is what makes a bump mean "ask everyone again".
+    if (parsed?.generation !== HISTORY_AUDIT_GENERATION) return null;
+    return {
+      generation: parsed.generation,
+      groupIds: Array.isArray(parsed.groupIds) ? parsed.groupIds : [],
+    };
+  } catch {
+    // Unreadable or malformed storage owes the audit, for the same reason unreadable storage sweeps:
+    // it is the answer that cannot leave a conversation unrepaired.
+    return null;
+  }
+}
+
+/**
+ * The groups that still owe this generation's audit.
+ *
+ * PER GROUP, AND THAT IS THE WHOLE DESIGN. Recording the audit against the DEVICE would discharge
+ * it on a pass during which some group was never actually compared - every member offline, so the
+ * ask was deferred rather than sent - and that group would then never be audited again. Recording
+ * only the groups an ask really left for means the ones that could not be asked come back on the
+ * next connection, alone, instead of dragging the whole store with them.
+ *
+ * A group joined AFTER the audit ran is indistinguishable from one that was deferred, and costs
+ * exactly one probe, once, ever. That is the price of not keeping a second durable record of when
+ * each group was joined, and it is the cheaper of the two.
+ */
+export function groupsOwingAudit(
+  userId: string,
+  deviceId: string,
+  localGroupIds: Iterable<string>
+): string[] {
+  const done = new Set(readAuditRecord(userId, deviceId)?.groupIds ?? []);
+  return [...localGroupIds].filter((id) => !done.has(id));
+}
+
+/**
+ * Records that these groups were really asked, and so no longer owe the audit.
+ *
+ * **Called only with the groups a probe actually LEFT for** - never with the pass's input list. The
+ * two differ by exactly the deferred ones, and writing the input would be discharging a deferral on
+ * a step that precedes the act, the mistake this module has already paid for once.
+ */
+export function noteGroupsAudited(
+  userId: string,
+  deviceId: string,
+  groupIds: Iterable<string>
+): void {
+  const asked = [...groupIds];
+  if (asked.length === 0) return;
+  try {
+    const done = new Set(readAuditRecord(userId, deviceId)?.groupIds ?? []);
+    for (const id of asked) done.add(id);
+    const record: AuditRecord = { generation: HISTORY_AUDIT_GENERATION, groupIds: [...done] };
+    localStorage.setItem(auditKey(userId, deviceId), JSON.stringify(record));
+  } catch {
+    // A device that cannot write this re-audits on every connection - wasteful, never wrong, and it
+    // is the same failure mode as an unwritable connection record. Logged by the caller.
+  }
+}
+
+/** Test seam: forgets this device's audit record so a case starts from a known state. */
+export function resetAuditRecord(userId: string, deviceId: string): void {
+  try {
+    localStorage.removeItem(auditKey(userId, deviceId));
+  } catch {
+    /* nothing to forget */
+  }
+}
+
 /** Whether a probe for `groupId` went out recently enough that another would be a duplicate. */
 function recentlyAsked(groupId: string, now: number): boolean {
   const until = asked.get(groupId);
@@ -344,26 +443,30 @@ export async function reconcileAllGroups(
   mlsService: Pick<IMlsService, 'sendHistoryRequest'>,
   groupIds: Iterable<string>,
   log: (msg: string) => void
-): Promise<void> {
+): Promise<string[]> {
   // A SNAPSHOT the workers shift from, so each group is taken exactly once: `shift` runs to
   // completion between awaits, which is what makes the hand-out safe without a lock.
   const queue = [...groupIds];
   const total = queue.length;
-  let asks = 0;
+  // THE GROUPS AN ASK ACTUALLY LEFT FOR, not the ones the pass was handed. The audit discharges
+  // against this list, so the difference between the two - the deferred groups - is exactly what
+  // comes back on the next connection.
+  const askedGroups: string[] = [];
 
   const worker = async (): Promise<void> => {
     for (;;) {
       const groupId = queue.shift();
       if (groupId === undefined) return;
-      if (await reconcileGroup(mlsService, groupId, log)) asks++;
+      if (await reconcileGroup(mlsService, groupId, log)) askedGroups.push(groupId);
     }
   };
 
   const started = Date.now();
   await Promise.all(Array.from({ length: Math.min(ELECTION_CONCURRENCY, total) }, () => worker()));
   log(
-    `[HISTORY_RECONCILE] reconciliation pass complete - ${asks}/${total} group(s) asked in ${Date.now() - started} ms`
+    `[HISTORY_RECONCILE] reconciliation pass complete - ${askedGroups.length}/${total} group(s) asked in ${Date.now() - started} ms`
   );
+  return askedGroups;
 }
 
 /**
