@@ -379,6 +379,27 @@ fallback shell - is on those two pages, plus `BUILD_WEB` in
 - A deploy being green proves the containers started, never that the site answers: probe the public
   URL for each SHAPE of path (root, an app route, a prerendered file, a dynamic endpoint).
 
+## The edge -> [cloudflare-edge](infrastructure/cloudflare-edge.md), [nginx](infrastructure/nginx.md)
+
+The tunnel topology, the settings that are deliberate and the incident behind all of this are on that
+page. The four that generalise:
+
+- **NGINX OWNS EVERY RESPONSE HEADER; THE EDGE ADDS NONE.** The edge is production infrastructure
+  with no representation in git, so no review, test or deploy can see it change - a hand-made rule
+  there outranks the whole repository and nothing in CI will ever say so.
+- **A SECOND CSP HEADER CAN ONLY REMOVE PERMISSIONS, NEVER GRANT ONE** - a browser enforces each
+  policy independently and the effect is their INTERSECTION. A rule added to "loosen" a policy is
+  structurally incapable of doing that, so its NAME will assert the opposite of its only possible
+  effect. Corollary: deleting such a rule is provably safe, since the result is a superset.
+- **`*` MATCHES NETWORK SCHEMES ONLY** - never `blob:`, `data:` or `filesystem:`. `connect-src *` is
+  therefore STRICTER than `connect-src 'self' blob:` for the case that matters, and a directive
+  spelt out in full next to it (`img-src * data: blob:`) keeps working, which makes the failure look
+  arbitrary instead of systematic.
+- **A CSP REFUSAL IS INDISTINGUISHABLE FROM AN ORDINARY FAILURE, BY DESIGN**: a blocked `fetch` and
+  a dead network both throw `TypeError: Failed to fetch`, and a refused `<video>` reports the same
+  `MEDIA_ERR_SRC_NOT_SUPPORTED` an unplayable codec does. Only `securitypolicyviolation` names the
+  directive - build the probe on that event, or the probe reports the theory it was written with.
+
 ## Server-side fetches -> [chat-delivery](services/chat-delivery.md), [nginx](infrastructure/nginx.md)
 
 The link-preview pipeline, the SSRF guard, the favicon cascade and the undici seam are on that page.
