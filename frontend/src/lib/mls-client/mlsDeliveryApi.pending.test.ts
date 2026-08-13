@@ -31,7 +31,8 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
     const fetchFn = vi
       .fn()
       .mockResolvedValueOnce(json(page(500, '2026-01-01T00:00:00.000Z')))
-      .mockResolvedValueOnce(json(page(2, '2026-01-01T00:01:00.000Z')));
+      .mockResolvedValueOnce(json(page(2, '2026-01-01T00:01:00.000Z')))
+      .mockResolvedValueOnce(json([]));
 
     const pages: number[] = [];
     await api(fetchFn).pullPendingMessagesJson({ onPage: (rows) => void pages.push(rows.length) });
@@ -40,6 +41,23 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
     expect(String(fetchFn.mock.calls[1][0])).toContain(
       `after=${encodeURIComponent('2026-01-01T00:00:00.000Z')}`
     );
+  });
+
+  it('does not read a SHORT page as the end of the queue - only an empty one proves that', async () => {
+    // The server bounds a page in bytes, so it answers a 500-row request with however many rows fit
+    // in a megabyte. Measured on production the day that shipped: 53 rows for a 500-row ask, and a
+    // client terminating on `batch.length < limit` stopped there with 870 frames still queued. The
+    // row count of an answer says nothing about what is left; only an empty answer does.
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(json(page(53, '2026-01-01T00:00:00.000Z')))
+      .mockResolvedValueOnce(json(page(53, '2026-01-01T00:01:00.000Z')))
+      .mockResolvedValueOnce(json([]));
+
+    const rows = await api(fetchFn).pullPendingMessagesJson();
+
+    expect(rows).toHaveLength(106);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
   it('keeps the pages already delivered when a later page fails for good', async () => {
@@ -66,13 +84,14 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
       .fn()
       .mockRejectedValueOnce(new Error('aborted'))
       .mockRejectedValueOnce(new Error('aborted'))
-      .mockResolvedValue(json(page(3, '2026-01-01T00:00:00.000Z')));
+      .mockResolvedValueOnce(json(page(3, '2026-01-01T00:00:00.000Z')))
+      .mockResolvedValueOnce(json([]));
 
     const rows = await api(fetchFn).pullPendingMessagesJson();
 
     expect(rows).toHaveLength(3);
     const limits = fetchFn.mock.calls.map((c) => new URL(String(c[0])).searchParams.get('limit'));
-    expect(limits).toEqual(['500', '250', '125']);
+    expect(limits).toEqual(['500', '250', '125', '125']);
   });
 
   it('gives up only at a page of ONE row, in a bounded number of attempts', async () => {
@@ -96,12 +115,13 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
       .fn()
       .mockRejectedValueOnce(new Error('aborted'))
       .mockResolvedValueOnce(json(page(250, '2026-01-01T00:00:00.000Z')))
-      .mockResolvedValueOnce(json(page(1, '2026-01-01T00:01:00.000Z')));
+      .mockResolvedValueOnce(json(page(1, '2026-01-01T00:01:00.000Z')))
+      .mockResolvedValueOnce(json([]));
 
     await api(fetchFn).pullPendingMessagesJson();
 
     const limits = fetchFn.mock.calls.map((c) => new URL(String(c[0])).searchParams.get('limit'));
-    expect(limits).toEqual(['500', '250', '250']);
+    expect(limits).toEqual(['500', '250', '250', '250']);
   });
 
   it('gives each page its own deadline, never one budget for the whole pull', async () => {

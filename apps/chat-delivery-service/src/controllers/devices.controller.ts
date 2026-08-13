@@ -35,6 +35,7 @@ import {
 } from '../utils/sanitize';
 import { RETENTION_WINDOW_MS, MAX_DEVICES_PER_USER } from '../retention.constants';
 import { resolveUserDisplayName } from '../utils/display-name';
+import { activeRevocationWhere } from '../utils/revocation';
 
 /** Device registration, key packages, device metadata, and device deletion. */
 @Controller()
@@ -74,7 +75,7 @@ export class DevicesController {
     deviceId: string
   ): Promise<string | null> {
     const revoked = await this.revokedDeviceRepo.findOne({
-      where: { userId, deviceId },
+      where: activeRevocationWhere({ userId, deviceId }),
     });
     if (revoked) return null;
 
@@ -140,7 +141,9 @@ export class DevicesController {
     // the device is then filtered out of getUserDevices and resolves to a null KeyPackage
     // forever: registered, invisible, never invitable, with no error anywhere. Refusing here is
     // what makes revocation mean something; the client answers by enrolling under a fresh id.
-    const revoked = await this.revokedDeviceRepo.findOne({ where: { userId, deviceId } });
+    const revoked = await this.revokedDeviceRepo.findOne({
+      where: activeRevocationWhere({ userId, deviceId }),
+    });
     if (revoked) {
       this.logger.warn(
         `[REGISTER_DEVICE] REFUSED revoked device user=${userId} device=${deviceId}`
@@ -377,7 +380,7 @@ export class DevicesController {
     });
 
     const revokedRows = await this.revokedDeviceRepo.find({
-      where: { userId },
+      where: activeRevocationWhere({ userId }),
     });
     const revokedSet = new Set(revokedRows.map((r) => r.deviceId));
     const activeDevices = registeredDevices.filter((d) => !revokedSet.has(d.deviceId));
@@ -532,18 +535,22 @@ export class DevicesController {
 
     // 2. Denylist the device to prevent immediate re-registration (explicit deletion only;
     //    the GC does not denylist).
+    //    Deliberately NOT filtered by the ban window: this asks "have I already got a row for this
+    //    device", which has no age - filtering here would insert a duplicate that the unique
+    //    constraint on (userId, deviceId) then rejects, turning a re-revocation into a 500. What
+    //    the window changes is the DATE: revoking again restarts it, so a device banned, un-banned
+    //    and banned again is banned from today rather than from the first time.
     const existingRevoked = await this.revokedDeviceRepo.findOne({
       where: { userId: safeUserId, deviceId: safeDeviceId },
     });
-    if (!existingRevoked) {
-      await this.revokedDeviceRepo.save(
-        this.revokedDeviceRepo.create({
-          id: crypto.randomUUID(),
-          userId: safeUserId,
-          deviceId: safeDeviceId,
-        })
-      );
-    }
+    await this.revokedDeviceRepo.save(
+      this.revokedDeviceRepo.create({
+        id: existingRevoked?.id ?? crypto.randomUUID(),
+        userId: safeUserId,
+        deviceId: safeDeviceId,
+        revokedAt: new Date(),
+      })
+    );
 
     this.logger.log(
       `[DELETE_DEVICE] user=${safeUserId} device=${safeDeviceId} groupsCleaned=${purge.groupsCleaned} keyPackagesDeleted=${purge.keyPackagesDeleted} oneTimeKeyPackagesDeleted=${purge.oneTimeKeyPackagesDeleted} queuedMessagesDeleted=${purge.queuedMessagesDeleted}`

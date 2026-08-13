@@ -36,12 +36,19 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
   /** The whole queue this fake table holds, oldest first. */
   let table: Array<Partial<QueuedMessage>>;
 
-  const row = (id: string, bytes: number): Partial<QueuedMessage> => ({
+  const BASE = Date.UTC(2026, 0, 1, 0, 0, 0);
+
+  /**
+   * One queued row. `atMs` is its `createdAt` offset from the base instant, and it matters: the
+   * page must never end inside a group of rows sharing one `createdAt`, so tests that do not mean
+   * to exercise that case must give every row its own instant.
+   */
+  const row = (id: string, bytes: number, atMs: number): Partial<QueuedMessage> => ({
     id,
     // `proto` is base64 text and the service sizes a row by its length, so a string of N
     // characters is a row of N bytes for the purpose being tested.
     proto: 'x'.repeat(bytes),
-    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    createdAt: new Date(BASE + atMs),
   });
 
   const queryBuilder = () => {
@@ -125,7 +132,7 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
   it('stops at the byte budget even when the row limit is nowhere near reached', async () => {
     // 40 rows of 100 kB = 4 MB asked for as 500 rows: the defect exactly, at a tenth of its size.
     const big = 100 * 1024;
-    table = Array.from({ length: 40 }, (_, i) => row(`m${i}`, big));
+    table = Array.from({ length: 40 }, (_, i) => row(`m${i}`, big, i));
 
     const page = await fetch(500);
 
@@ -138,7 +145,7 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
   it('always sends at least one row, however big that row is', async () => {
     // A frame larger than the whole budget must remain deliverable. Trimming it to nothing would
     // block its device's queue for ever - the failure being fixed, not a smaller version of it.
-    table = [row('huge', PENDING_PAGE_MAX_BYTES * 3), row('next', 10)];
+    table = [row('huge', PENDING_PAGE_MAX_BYTES * 3, 0), row('next', 10, 1)];
 
     const page = await fetch(500);
 
@@ -148,7 +155,7 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
   it('reads the table in small chunks, so answering never loads the whole backlog', async () => {
     // Without this the service reads `limit` rows before trimming: 500 rows at 88 kB is 44 MB
     // pulled out of Postgres to return 1 MB, once per request, per device.
-    table = Array.from({ length: 400 }, (_, i) => row(`m${i}`, 100 * 1024));
+    table = Array.from({ length: 400 }, (_, i) => row(`m${i}`, 100 * 1024, i));
 
     await fetch(500);
 
@@ -160,20 +167,73 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
   it('keeps paging across chunks while the rows are small, up to the row limit', async () => {
     // Small frames must still fill a page: the byte budget is a ceiling, never a new, lower
     // row limit. 120 rows of 100 bytes is 12 kB - nothing here should stop before the limit.
-    table = Array.from({ length: 500 }, (_, i) => row(`m${i}`, 100));
+    table = Array.from({ length: 500 }, (_, i) => row(`m${i}`, 100, i));
 
     const page = await fetch(120);
 
     expect(page).toHaveLength(120);
+    // Chunks are a fixed size: the read cannot be clamped to what is left of the row limit, because
+    // the page may have to reach PAST that limit to finish a group of rows sharing one instant.
     expect(asked).toEqual([
       { skip: 0, take: 50 },
       { skip: 50, take: 50 },
-      { skip: 100, take: 20 },
+      { skip: 100, take: 50 },
     ]);
   });
 
+  it('never ends a page inside a group of rows sharing one createdAt', async () => {
+    // The client resumes with `createdAt > <last row seen>`, which is STRICT - so a page split
+    // inside such a group drops the rest of it from every later page and the frame is never
+    // delivered at all. `@CreateDateColumn` writes millisecond precision from the application, so
+    // this is measured rather than theoretical: one colliding pair sat in the live queue the day
+    // the byte cap shipped, and byte-capping is what makes truncation the normal case.
+    const big = 100 * 1024;
+    // Ten rows fill the megabyte; rows 9, 10 and 11 share an instant, so the cut cannot fall
+    // between them and all three must travel together.
+    table = Array.from({ length: 20 }, (_, i) => row(`m${i}`, big, i < 9 ? i : 9));
+
+    const page = await fetch(500);
+
+    expect(page.map((m) => m.id)).toEqual([
+      'm0',
+      'm1',
+      'm2',
+      'm3',
+      'm4',
+      'm5',
+      'm6',
+      'm7',
+      'm8',
+      'm9',
+      'm10',
+      'm11',
+      'm12',
+      'm13',
+      'm14',
+      'm15',
+      'm16',
+      'm17',
+      'm18',
+      'm19',
+    ]);
+  });
+
+  it('lets the row limit be exceeded too, rather than splitting such a group', async () => {
+    // Same rule, the other cap: a page of exactly `limit` rows is not worth losing a frame for.
+    table = [
+      ...Array.from({ length: 4 }, (_, i) => row(`m${i}`, 10, i)),
+      row('tie1', 10, 99),
+      row('tie2', 10, 99),
+      row('after', 10, 100),
+    ];
+
+    const page = await fetch(5);
+
+    expect(page.map((m) => m.id)).toEqual(['m0', 'm1', 'm2', 'm3', 'tie1', 'tie2']);
+  });
+
   it('returns what the queue holds and stops, when that is less than a page', async () => {
-    table = [row('a', 10), row('b', 10)];
+    table = [row('a', 10, 0), row('b', 10, 1)];
 
     const page = await fetch(500);
 

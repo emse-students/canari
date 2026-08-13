@@ -97,6 +97,25 @@ export const PENDING_PAGE_MAX_BYTES = 1024 * 1024;
 export const PENDING_FETCH_CHUNK_ROWS = 50;
 
 /**
+ * How long a revoked device identifier stays denylisted.
+ *
+ * The denylist exists because `resolveDeviceId` deliberately restores the SAME identifier after a
+ * reinstall - so without it, deleting a device writes a row, returns 200, and the device re-registers
+ * under the id its owner just retired. The row is what makes revocation mean something; the client
+ * answers it by enrolling under a fresh id (`rotateDeviceIdentity`), because an MLS credential is
+ * literally `userId:deviceId` and the old one can never be reused.
+ *
+ * Ten years is not a security parameter, it is HYGIENE: a table that only ever grows is a table
+ * nobody can reason about, and an identifier retired a decade ago cannot plausibly still be trying
+ * to come back - the physical device is long gone and its owner has re-enrolled many times over.
+ * The bound is enforced where it matters, at the QUESTION "is this device banned", so a row past its
+ * date stops answering that question whether or not the purge has run yet; the daily purge only
+ * reclaims the space. A clock alone would be a fragile mechanism, which is why it is not one here:
+ * the row is durable state, and the date narrows what that state asserts rather than replacing it.
+ */
+export const DEVICE_REVOCATION_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+
+/**
  * Entries kept per group in the shared history stream `history:{groupId}` (`XADD ... MAXLEN ~`).
  *
  * This is the only SHARED copy of a conversation: the per-device queue is deleted on ACK, and MLS

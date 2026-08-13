@@ -17,6 +17,7 @@ import {
   QUEUE_DEPTH_WARN_PER_DEVICE,
   QUEUE_DEPTH_REPORT_TOP_N,
 } from './retention.constants';
+import { activeRevocationCutoff } from './utils/revocation';
 import { MessagingService } from './services/messaging.service';
 
 /**
@@ -35,6 +36,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
   private cleanupOrphanedMemberRowsInterval: ReturnType<typeof setInterval>;
   private cleanupStalePendingInvitationsInterval: ReturnType<typeof setInterval>;
+  private cleanupExpiredRevocationsInterval: ReturnType<typeof setInterval>;
   private reportQueueDepthInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
@@ -164,6 +166,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
+    // Reclaim device revocations past DEVICE_REVOCATION_TTL_MS. The ban is enforced at every
+    // lookup, so this only frees the space - see cleanupExpiredRevocations.
+    this.cleanupExpiredRevocationsInterval = setInterval(() => {
+      void this.cleanupExpiredRevocations().catch((e) =>
+        this.logger.error('[CRON] cleanupExpiredRevocations failed', e)
+      );
+    }, 24 * ONE_HOUR);
+
     // Observe the undelivered queue. Purely a report: it deletes nothing, and it exists because
     // a single device silently accumulated 29 499 frames (39 MB) in five hours on production and
     // nothing said so - the shape was only found by hand, a day later.
@@ -177,7 +187,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'stale device GC (1h), queue depth report (1h), orphaned Redis groups cleanup (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
-        'orphaned member rows purge (24h), stale pending invitations purge (24h) scheduled'
+        'orphaned member rows purge (24h), stale pending invitations purge (24h), ' +
+        'expired device revocations purge (24h) scheduled'
     );
 
     // A `setInterval` FIRES FOR THE FIRST TIME ONE INTERVAL LATER, so a job scheduled every 24 h
@@ -204,6 +215,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['cleanupStalePushTokens', () => this.cleanupStalePushTokens()],
       ['cleanupOrphanedMemberRows', () => this.cleanupOrphanedMemberRows()],
       ['cleanupStalePendingInvitations', () => this.cleanupStalePendingInvitations()],
+      ['cleanupExpiredRevocations', () => this.cleanupExpiredRevocations()],
       ['pruneExpiredCommitLog', () => this.messagingService.pruneExpiredCommitLog()],
       // Last on purpose: it reports the queue as the GC leaves it, not as it found it.
       ['reportQueueDepth', () => this.reportQueueDepth()],
@@ -254,6 +266,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupStalePushTokensInterval);
     clearInterval(this.cleanupOrphanedMemberRowsInterval);
     clearInterval(this.cleanupStalePendingInvitationsInterval);
+    clearInterval(this.cleanupExpiredRevocationsInterval);
     clearInterval(this.reportQueueDepthInterval);
     clearTimeout(this.initialSweepTimeout);
   }
@@ -595,6 +608,27 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     if (result.affected && result.affected > 0) {
       this.logger.log(
         `[CRON] cleanupStalePushTokens: deleted ${result.affected} token(s) not renewed in 90 days`
+      );
+    }
+  }
+
+  /**
+   * Reclaims device revocations past their window.
+   *
+   * Purely hygiene, and deliberately so: the ban is already enforced by
+   * {@link activeRevocationWhere} at every site that asks whether a device is banned, so a row
+   * still sitting here bans nobody. That ordering matters - if this job were what enforced the
+   * bound, a service that failed to run it would keep banning devices it had promised to release,
+   * and nothing would say so. Deleting is what keeps a table that only ever grows from becoming
+   * one nobody can reason about.
+   */
+  private async cleanupExpiredRevocations() {
+    const result = await this.revokedDeviceRepo.delete({
+      revokedAt: LessThan(activeRevocationCutoff()),
+    });
+    if (result.affected && result.affected > 0) {
+      this.logger.log(
+        `[CRON] cleanupExpiredRevocations: deleted ${result.affected} revocation(s) past their window`
       );
     }
   }

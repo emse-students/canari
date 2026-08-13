@@ -170,6 +170,22 @@ The queue, its barrier, the token rules and the native mirror are on those two p
 carry in the head:
 
 - The outbox is best-effort at every step, so every swallowed branch logs - that is all a loss leaves.
+- **A PAGE IS A UNIT OF TRANSFER, SO BOUND IT IN THE UNIT THAT DECIDES HOW LONG THE TRANSFER TAKES.**
+  Rows do not: 500 frames carrying media was 12 MB, the client aborted on its own deadline having
+  received nothing, ACKed nothing, and met the same 12 MB every time - a closed loop no retry
+  escapes. Bounding the DEADLINE per page and leaving the page unbounded only moves it. A page
+  always carries at least one row, whatever its size, or one oversized frame blocks its queue for
+  ever.
+- **TERMINATE A PAGED PULL ON AN EMPTY PAGE, NEVER ON A SHORT ONE.** "Fewer rows than I asked for"
+  is an INFERENCE from the row limit being the only bound, and it silently stopped being true the
+  day the server capped a page in bytes: 53 rows for a 500-row ask read as "queue empty" with 870
+  frames still waiting. Only an empty answer is a proof, and it costs one request.
+- **A PAGINATION CURSOR MUST BE A TOTAL ORDER, OR A PAGE BOUNDARY DELETES A ROW.** Resuming at
+  `createdAt > last` is strict, `@CreateDateColumn` writes milliseconds from the application, and
+  rows sharing an instant exist (one pair in the live queue the day this was found). Split such a
+  group and its tail is skipped by every later page - queued for ever, delivered never. Either make
+  the cursor total, or never end a page inside a group sharing the cursor's value; the second is what
+  ships, because it also fixes clients too old to send anything else.
 - **"ONE SMALL FRAME" BOUNDS THE BYTES AND SAYS NOTHING ABOUT THE LATENCY OF ASKING PERMISSION TO
   SEND IT.** A per-item loop is serialised for a reason; check that the reason still covers what the
   loop actually spends its time on. The reconciliation pass awaited each group in turn, justified by

@@ -23,6 +23,7 @@ import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { resolveUserDisplayName, resolveUserDisplayNamesBatch } from '../utils/display-name';
+import { activeRevocationWhere } from '../utils/revocation';
 import {
   buildPushDataFields,
   buildApnsRequest,
@@ -224,7 +225,9 @@ export class MessagingService {
     userId: string,
     deviceId: string
   ): Promise<{ ok: boolean; reason?: 'revoked' | 'no_key_package' }> {
-    const revoked = await this.revokedDeviceRepo.findOne({ where: { userId, deviceId } });
+    const revoked = await this.revokedDeviceRepo.findOne({
+      where: activeRevocationWhere({ userId, deviceId }),
+    });
     if (revoked) return { ok: false, reason: 'revoked' };
     const keyPackage = await this.keyPackageRepo.findOne({
       where: { userId, deviceId },
@@ -1960,17 +1963,17 @@ export class MessagingService {
     const messages: QueuedMessage[] = [];
     let pageBytes = 0;
     let offset = 0;
-    let truncatedByBytes = false;
+    let cappedBy: 'bytes' | 'rows' | null = null;
+    let done = false;
 
-    while (messages.length < safeLimit) {
-      const chunkRows = Math.min(PENDING_FETCH_CHUNK_ROWS, safeLimit - messages.length);
+    while (!done) {
       const qb = this.queuedMessageRepo
         .createQueryBuilder('q')
         .where('q.recipientId = :userId', { userId: safeUserId })
         .andWhere('q.deviceId = :deviceId', { deviceId: safeDeviceId })
         .orderBy('q.createdAt', 'ASC')
         .skip(offset)
-        .take(chunkRows);
+        .take(PENDING_FETCH_CHUNK_ROWS);
 
       if (after?.trim()) {
         qb.andWhere('q.createdAt > :after', { after: new Date(after) });
@@ -1982,23 +1985,40 @@ export class MessagingService {
 
       for (const row of chunk) {
         const size = row.proto?.length ?? 0;
-        // ALWAYS at least one row. A frame bigger than the whole budget must still be deliverable,
+        const last = messages[messages.length - 1];
+        const sameInstant = last !== undefined && +row.createdAt === +last.createdAt;
+
+        // ALWAYS at least one row: a frame bigger than the whole budget must still be deliverable,
         // or it blocks its device's queue permanently - which is the failure being fixed, not a
-        // smaller version of it.
-        if (messages.length > 0 && pageBytes + size > PENDING_PAGE_MAX_BYTES) {
-          truncatedByBytes = true;
+        // smaller version of it. Hence `messages.length > 0` on both caps.
+        if (cappedBy === null && messages.length > 0) {
+          if (pageBytes + size > PENDING_PAGE_MAX_BYTES) cappedBy = 'bytes';
+          else if (messages.length >= safeLimit) cappedBy = 'rows';
+        }
+
+        // A PAGE NEVER ENDS INSIDE A GROUP OF ROWS SHARING ONE `createdAt`. The client resumes with
+        // `createdAt > <last row seen>`, which is strict - so splitting such a group drops the rest
+        // of it from every later page, permanently, and the frame is never delivered at all.
+        // `@CreateDateColumn` writes millisecond precision from the application, so collisions are
+        // real rather than theoretical: one pair was present in the live queue when this was
+        // written. Rows sharing the boundary instant are therefore taken even past the cap, which
+        // is why a page can exceed its budget by one group and never by more.
+        if (cappedBy !== null && !sameInstant) {
+          done = true;
           break;
         }
+
         messages.push(row);
         pageBytes += size;
       }
 
-      if (truncatedByBytes || chunk.length < chunkRows) break;
+      // A short chunk is the end of the queue; there is nothing left to read.
+      if (chunk.length < PENDING_FETCH_CHUNK_ROWS) break;
     }
 
-    if (truncatedByBytes) {
+    if (cappedBy !== null) {
       this.logger.log(
-        `[MSG_FETCH][${traceId}] page capped by size at ${messages.length} row(s), ${pageBytes} byte(s) - the client pages again from the last createdAt`
+        `[MSG_FETCH][${traceId}] page capped by ${cappedBy} at ${messages.length} row(s), ${pageBytes} byte(s) - the client pages again from the last createdAt`
       );
     }
 

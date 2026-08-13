@@ -38,6 +38,7 @@ import {
 } from '../utils/url-guard';
 import { checkSafeBrowsing } from '../utils/safe-browsing';
 import { TtlCache } from '../utils/ttl-cache';
+import { activeRevocationWhere } from '../utils/revocation';
 
 /** A preview we managed to build, or the fact that we could not. */
 type CachedPreview = { ok: true; payload: LinkPreviewPayload } | { ok: false; message: string };
@@ -166,7 +167,7 @@ export class SecurityController {
     let resetRequired = false;
     if (match && safeDeviceId) {
       const revoked = await this.revokedDeviceRepo.findOne({
-        where: { userId: safeUserId, deviceId: safeDeviceId },
+        where: activeRevocationWhere({ userId: safeUserId, deviceId: safeDeviceId }),
       });
       if (revoked) {
         // One-shot reset: signal the client once, then clear marker so the

@@ -194,6 +194,52 @@ its 10 s budget too. The original timeout is not reproduced. What is established
 property the fix is made of, which is independent of link speed — partial progress, page by page —
 and reproducing the timeout would need a backlog no composer can build in under an hour.
 
+#### A page is a unit of transfer, so it is bounded in BYTES (2026-08-13)
+
+WP-PENDING-1 bounded the DEADLINE per page and left the page itself bounded in ROWS, which is the
+wrong unit and only moved the failure. Measured on production: one phone was asked for 500 rows,
+which for its queue meant **12 MB**, because a quarter of its frames carried media at up to 89 kB
+each. It aborted on its own 10 s per-page deadline having received nothing, ACKed nothing, and met
+the same 12 MB on every later attempt. The backlog went **959 -> 965 -> 976** over three consecutive
+hourly reports and never once fell, for weeks.
+
+Nobody was told, and that half matters as much: `QUEUE_DEPTH_WARN_PER_DEVICE` is **2000 rows**,
+calibrated on the retransmission storm of 2026-08-10, and 976 rows weighing 36 MB never came near
+it - a predicate that named the last incident does not name the next one. The report now warns on
+`QUEUE_BYTES_WARN_PER_DEVICE` as well and orders the top-N by size.
+
+Three mechanisms, each independently sufficient for a different failure:
+
+| Where | What | Why it is not the others |
+| --- | --- | --- |
+| `fetchMessages` | fills a page to `PENDING_PAGE_MAX_BYTES` (1 MB), reading `PENDING_FETCH_CHUNK_ROWS` (50) at a time | bounds the SERVICE's memory too: reading 500 rows before trimming would load 44 MB to return 1 MB |
+| `pullPendingMessagesJson` | halves `limit` when a page does not arrive, down to 1 | survives an OLD server, and a link too slow for any fixed budget; terminates on a proof (nine steps), never a clock |
+| both | a page always carries **at least one row**, whatever its size | an oversized frame must stay deliverable, or it blocks its own queue for ever |
+
+**Verified on production the same evening.** The server logged
+`page capped by bytes at 53 row(s), 1 039 524 byte(s)` for that device and the queue fell **976 ->
+923** - the first downward movement ever recorded on it. Total fleet queue 2266 rows / 38 MB across
+55 devices, largest frame 89 600 bytes, **0 frames above 1 MB**, so a one-row page is at most 87 kB
+and the halving ladder really does terminate.
+
+**Two faults that only running it revealed**, both now fixed and both worth keeping in the head:
+
+- **Termination was an inference.** The client stopped when `batch.length < pageLimit`, which was
+  true only while rows were the sole bound. With the byte cap it read 53 < 500 as "queue empty" and
+  stopped with 870 frames waiting - one reconnection per page. **Only an empty page proves there is
+  nothing left**, and that is now the terminator; it costs one extra request per drain.
+- **The cursor is not a total order.** The client resumes at `createdAt > last`, strict, and
+  `@CreateDateColumn` writes milliseconds from the application - so two rows can share an instant
+  (one such pair was in the live queue that day). A page split inside such a group drops its tail
+  from every later page: queued for ever, delivered never. Byte-capping makes truncation the normal
+  case, so this went from theoretical to likely. **A page never ends inside a group sharing one
+  `createdAt`**, even when finishing the group takes it past its budget or its row limit. Fixed
+  server-side on purpose: it covers clients too old to send a better cursor.
+
+The residual imperfection, recorded rather than hidden: the 10 s per-page deadline is a TOTAL, not a
+progress deadline, so it cannot tell a slow transfer from a stopped one. It is a hang-guard now that
+pages fit in a megabyte. The right form and its cost are in [backlog](../backlog.md).
+
 #### A drain that acknowledges nothing now says so
 
 WP-PENDING-1 fixed the pull. What it did not fix is that **a row nothing acknowledges is invisible

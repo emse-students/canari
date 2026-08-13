@@ -29,6 +29,7 @@ import { sanitizeQueryValue, assertCallerOwnsUserId } from '../utils/sanitize';
 import { In } from 'typeorm';
 import { MessagingService } from '../services/messaging.service';
 import { groupInviteIsValid, resolveGroupInvitePreview } from '../utils/group-invite';
+import { activeRevocationWhere } from '../utils/revocation';
 
 /** Device-group membership management: pending invitations, status updates, kick-stale. */
 @Controller()
@@ -144,7 +145,7 @@ export class InvitationsController {
       where: { userId: callerId },
     });
     const revoked = await this.revokedDeviceRepo.find({
-      where: { userId: callerId },
+      where: activeRevocationWhere({ userId: callerId }),
     });
     const revokedKeys = new Set(revoked.map((r) => `${r.userId}:${r.deviceId}`));
     const deviceIds = [
@@ -264,7 +265,7 @@ export class InvitationsController {
 
     const inviteeUserIds = [...new Set(pending.map((p) => p.userId))];
     const revokedRows = await this.revokedDeviceRepo.find({
-      where: { userId: In(inviteeUserIds) },
+      where: activeRevocationWhere({ userId: In(inviteeUserIds) }),
     });
     const revokedKeys = new Set(revokedRows.map((r) => `${r.userId}:${r.deviceId}`));
     const keyPackages = await this.keyPackageRepo.find({

@@ -148,7 +148,13 @@ export class MlsDeliveryApi {
       if (opts?.onPage) await opts.onPage(batch);
       else all.push(...batch);
 
-      if (batch.length < pageLimit) break;
+      // TERMINATION IS AN EMPTY PAGE, never a short one. A short page used to mean "the queue is
+      // exhausted", which was an INFERENCE from the row limit being the only thing that bounded a
+      // page - and it stopped being true the moment the server started capping a page in bytes.
+      // Measured on production the day that shipped: the server capped a 500-row request at 53
+      // rows / 1 039 524 bytes, the client read 53 < 500 as the end of the queue, and stopped with
+      // 870 frames still waiting. It would have taken one reconnection per page. An empty page is
+      // the only answer that PROVES there is nothing left, and it costs one extra request.
 
       const lastCreatedAt = batch[batch.length - 1]?.createdAt;
       if (!lastCreatedAt || lastCreatedAt === afterCreatedAt) break;
