@@ -91,6 +91,11 @@ owed - a phase of `PASS-DIRTY` rows used to exit 0 and read as finished.
   [history-reconciliation](protocols/history-reconciliation.md#that--0-was-true-and-did-not-last---the-noise-regenerates).
   **What this cost the campaign is the reason it was fixed before climbing another rung: a genuine
   loss was indistinguishable from this noise, so no run's observation could be believed.**
+  **VERIFIED ON PROD 2026-08-13**, and note what the verification had to be: the fix is prospective,
+  so the first reload after the deploy still reported 6 - a number that fits both hypotheses and
+  decides nothing. The discriminating run is live traffic consumed by the NEW bundle, then a reload:
+  0 false loss, 0 `SecretReuseError`, 0 asks, against 6/12/1 for the same shape on the old one. The
+  phone is verified separately (its APK, not the deployed bundle): marks 2577 -> 2583.
 
 ## Everything was `pending`, and that was deliberate
 

@@ -89,8 +89,8 @@ Everything wanted but NOT scheduled is [backlog](docs/wiki/backlog.md) - file it
 
 ### CANARI - what is open
 
-**WP-FALSELOSS-1 IS WRITTEN AND DEPLOYED, NOT YET VERIFIED - that measurement is the FIRST thing to
-do on resume.** A frame delivered live consumed its ratchet generation without moving this device's
+**WP-FALSELOSS-1 IS SHIPPED AND VERIFIED ON PROD (2026-08-13) - do not re-open it.** A frame
+delivered live consumed its ratchet generation without moving this device's
 position in the archive, so the replay walked the same row, failed on a spent generation, and took
 the branch asserting real loss: **every online device reconciled on its own ordinary traffic.** The
 fix marks a consumed frame by its CIPHERTEXT BYTES - the only thing the two paths share, the stream
@@ -100,15 +100,15 @@ the three shapes the repair must keep are on
 [history-reconciliation](docs/wiki/protocols/history-reconciliation.md); the rule is in
 [durable-rules](docs/wiki/durable-rules.md).
 
-**What is owed is the only proof that counts: reload W1 on the deployed build and read its console.
-Zero `frame never read here and unreadable for good` on traffic the device holds, or the fix is not
-one.** Left open on purpose and to be re-examined on that same measurement: **four Rust-side
-`SecretReuseError` at an ADVANCING generation (263 -> 266)** seen on a second reload with no
-`unreadable for good` beside them. Unexplained by the false loss - plausibly a real double delivery
-the in-memory ring absorbs, but NOT proven. They must either vanish or stand alone and explain
-themselves.
+**The verification is on the wiki page and its shape is the lesson: the fix is PROSPECTIVE, so the
+first reload after the deploy still reported 6 and decided nothing.** Only live traffic consumed by
+the NEW bundle discriminates - 0 false loss / 0 `SecretReuseError` / 0 asks, against 6/12/1 for the
+same shape on the old one, with the mark set observed growing. The phone is verified separately
+because it runs its APK's assets. Probes kept in the harness: `falseloss.mjs`, `falseloss-live.mjs`,
+`falseloss-a1.mjs`, `late.mjs`. The `SecretReuseError` left unexplained last session vanished with
+the rest and is closed.
 
-Two other things are owed and neither is a Work Package yet:
+**NO WORK PACKAGE IS OPEN.** Two things are owed and neither is one yet:
 
 - **The fourth reconciliation trigger** the user approved - *"sonder aussi quand la reponse recue est
   plus courte que la fenetre demandee"*. NOT implemented; the trace and the design input are in

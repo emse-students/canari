@@ -799,6 +799,37 @@ into the cursor would carry it over an earlier frame the queue had already expir
 and never writes `mls.bin` back (`src-tauri/src/mobile/background.rs`), so the foreground genuinely
 does read that frame again from its queue; marking it there would skip a message nobody has read.
 
+#### Verified on prod, 2026-08-13 - and the first measurement proved nothing
+
+The fix is **prospective**: it marks frames as they are consumed, so it can say nothing about frames
+already consumed by the bundle that shipped before it. The first reload after the deploy therefore
+still reported 6 false losses, and that number is evidence for neither side. A measurement that
+cannot come out differently under the two hypotheses is not a measurement.
+
+What separates them is traffic consumed live **by the new bundle**. Three runs on W1, same probe
+(`falseloss.mjs` / `falseloss-live.mjs` in the harness), build id asserted equal to the deployed one
+each time:
+
+| reload | traffic before it | false loss | `SecretReuseError` | asks |
+| --- | --- | --- | --- | --- |
+| 1 | live, on the OLD bundle | **6** | 12 | 1 |
+| 2 (control) | none | 0 | 0 | 0 |
+| 3 | live, on the NEW bundle | **0** | 0 | 0 |
+
+Row 3 is the verdict, and row 1 is what makes it one: before the fix, live traffic between two
+reloads regenerated the noise every time. The durable mark set grew 2172 → 2178 over the three
+messages, so the deployed bundle is demonstrably running the marker rather than merely containing
+it. Reconciliation stayed silent throughout (`no sweep - away 0 d, every group already audited`),
+which is the property that was actually wanted: heavy, therefore exceptional.
+
+The phone is checked the same way and separately, because it runs the assets baked into its APK and
+no web result speaks for it: two live messages, marks 2577 → 2583 (`falseloss-a1.mjs`).
+
+**Not attributed:** the marks grow by about two per message, not one. Consistent with the device also
+consuming the non-application frames of the same exchange (typing, read watermarks), but unmeasured.
+It cannot cause a false loss - marking more consumed frames can only prevent them - so it is recorded
+rather than chased.
+
 ---
 
 ## Open questions

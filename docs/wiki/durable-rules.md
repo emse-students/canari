@@ -380,6 +380,15 @@ carry in the head:
   permanent one. And do NOT mark from the Android background decrypt: it loads a throwaway state and
   never writes `mls.bin` back, so the foreground really does read that frame again.
   [history-reconciliation](protocols/history-reconciliation.md).
+- **A PROSPECTIVE FIX CANNOT BE VERIFIED BY THE FIRST MEASUREMENT AFTER ITS DEPLOY.** A fix that
+  records something as it happens says nothing about what happened before it shipped, so the first
+  run still shows the old damage - and that number fits "it works" and "it does nothing" equally
+  well. Reading it either way is the mistake: a measurement whose outcome is the same under both
+  hypotheses is not a measurement. Build the run that discriminates instead - here, traffic
+  generated AFTER the new build is confirmed running, which the old code could not have marked -
+  and take a control with no traffic at all, so the difference is attributable. Corollary: assert
+  the build id, never the deploy. A green CD proves containers started; a client left open across
+  a deploy keeps running the old bundle and reads exactly like one that was reloaded.
 - **FOUR INVARIANTS OF THE HISTORY EXCHANGE THAT LOOK LIKE COMPLICATIONS AND ARE NOT.** Each one was
   paid for; the recurring temptation is to "simplify" them back.
   [history-reconciliation](protocols/history-reconciliation.md) carries the reasoning.
