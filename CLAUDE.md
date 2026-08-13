@@ -109,11 +109,32 @@ replay reports nothing. Probes kept in the harness: `falseloss.mjs`, `falseloss-
 `falseloss-a1.mjs`, `late.mjs`. The `SecretReuseError` left unexplained last session vanished with
 the rest and is closed.
 
-**Residual noise seen on A1 while closing this, NOT investigated and not a WP:** `IPC custom protocol
-failed, Tauri will now use the postMessage interface instead` followed by `[PENDING] Pending fetch
-failed after 0 messages: TypeError: Failed to fetch`, at app startup. Nothing was pending, and it
-reads as the Tauri IPC not being up yet when the first fetch goes out - but it is an error branch and
-it fires every launch, so the observation gates will keep tripping on it until someone looks.
+**THE A1 STARTUP NOISE WAS TWO REAL DEFECTS AND BOTH ARE FIXED (2026-08-13).** Refusing to file it as
+residual is what found them - the observation bar working exactly as intended. `IPC custom protocol
+failed` was OUR routing rule hijacking Tauri's own IPC bridge (`ipc.localhost` matched `^https?://`
+and went to the HTTP plugin), which permanently downgraded all IPC to `postMessage` on every cold
+start; the rule now matches the `.localhost` SUFFIX, reserved by RFC 6761 for exactly this. `Blocked
+call to navigator.vibrate` was an unconditional `vibrate(0)` cancelling a vibration nobody started.
+Both confirmed gone by measurement (`ipcFailed=0`, 4/4 cold starts).
+
+**The `[PENDING] Pending fetch failed` line was NOT the same cause, and saying so is the point:** the
+hypothesis was refuted by measurement (it persisted with `ipcFailed=0`). It was **the undrained
+queue**, now fixed and deployed - see below.
+
+**WP-PENDING-2 (the undrained queue) IS SHIPPED. THE DRAIN IS UNDER MEASUREMENT, NOT YET FINISHED.**
+A page was bounded in ROWS, which is the wrong unit for a transfer: 500 rows of media frames was
+12 MB, the client aborted on its 10 s per-page deadline having received nothing, ACKed nothing, and
+met the same 12 MB every time. Measured: **976 rows / 36 MB on A1, rising every hour for weeks and
+never once falling.** Nobody was warned because `QUEUE_DEPTH_WARN_PER_DEVICE` counts ROWS (2000,
+calibrated on the 2026-08-10 storm). Three commits: `8ad1cdb5` (byte-bounded page + client halving +
+byte WARN), `b82b241e` (termination on an EMPTY page, and never splitting a `createdAt` group),
+`58a55ff8` (revocation: 10-year ban, immediate signal, full device wipe). **Deployed and verified
+firing on prod** - `page capped by bytes at 53 row(s), 1 039 524 byte(s)` - with A1 falling
+**976 -> 923 -> 884 -> 864**, its first ever decrease. It drains one page per reconnection because it
+runs the OLD bundle; the APK rebuild is what finishes it. The mechanism, its two follow-on faults and
+the verification are on [chat-delivery](docs/wiki/services/chat-delivery.md); the three rules are in
+[durable-rules](docs/wiki/durable-rules.md); the one accepted residual (a progress deadline instead
+of a total one) is in [backlog](docs/wiki/backlog.md) at the user's explicit request.
 
 **NO WORK PACKAGE IS OPEN.** Two things are owed and neither is one yet:
 
