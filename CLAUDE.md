@@ -136,7 +136,30 @@ the verification are on [chat-delivery](docs/wiki/services/chat-delivery.md); th
 [durable-rules](docs/wiki/durable-rules.md); the one accepted residual (a progress deadline instead
 of a total one) is in [backlog](docs/wiki/backlog.md) at the user's explicit request.
 
-**NO WORK PACKAGE IS OPEN.** Two things are owed and neither is one yet:
+**WP-FALSELOSS-2 IS OPEN (2026-08-13) - the false loss is not gone, it moved to the HEAD of the
+stream.** WP-FALSELOSS-1 above stays fixed and verified; its `0` was measured over the path it was
+written for and says nothing about this one. A receiver refuses a RECENT frame on the test DM
+(`642f389a`, epoch 6) with `SecretReuseError` -> `[MLS] LOST frame` -> a reconciliation, which then
+answers `same state as <peer> - nothing to do`: **nothing was actually lost, the app proves that
+itself.** The generations complained about TRACK THE HEAD (296, 340, 379, 438, 439 across successive
+runs, climbing with traffic), so it is not a pre-fix relic behind the cursor. Both directions are hit
+(W1 and W2 refused generation 183 in the same second, for a frame from A1), and multi-tab is REFUTED
+by measurement - one app target per profile. Cost: a wasted round trip, and **one run in four lost
+the MSG-6 message outright** (`arrived: false`). **Do not fix it by suppressing the trigger** - firing
+on an unreadable frame is correct. Full evidence in
+[cross-client-testing](docs/wiki/cross-client-testing.md#wp-falseloss-2---the-false-loss-is-not-gone-it-moved-to-the-head-of-the-stream).
+
+**Found only because the observation gate was closed.** `SecretReuseError` and `LOST frame` were
+`notable`, and `notable` did not break `clean`, so MSG-6 recorded `PASS` with `receiverClean: true`
+TWICE with those lines inside its own record. `watch.mjs` now has a `severe` bucket that breaks
+`clean` (excluding `CannotDecryptOwnMessage`, which is RFC 9420 working).
+
+**The avatar 404s are attributed and are a SERVER fault, not a client one.** `[AvatarService] Error
+fetching avatar` in `core-service`, 17 outbound HTTPS timeouts to Cloudflare IPs over one 5-minute
+run: the endpoint proxies a remote avatar, the fetch times out, it answers 404. The UI falls back to
+initials. Not a WP yet - a fix needs the user's call on whether that proxy should exist.
+
+**Two things are owed and neither is a Work Package yet:**
 
 - **The fourth reconciliation trigger** the user approved - *"sonder aussi quand la reponse recue est
   plus courte que la fenetre demandee"*. NOT implemented; the trace and the design input are in
@@ -188,6 +211,24 @@ not design a staging environment before that conversation.**
 - **One MLS client in a SharedWorker**, shared by every tab (the successor to WP-MULTITAB-1). It would remove the class outright rather than gating each write path one at a time. Cost is why it is not the fix: the worker transport, startup, the PIN unlock and the Safari/mobile fallback where `SharedWorker` is absent all have to be redone. Evaluate relevance and cost before starting.
 - **The `mongo` service in `docker-compose.prod.yml` is dead** - production holds no application database there (only `admin`, `config`, `local`) and nothing in the codebase carries a MongoDB connection string. A candidate for removal, not a fault; removing it is a prod service change and needs the user.
 - **A new device or a reinstall still sees no media older than 30 days.** That is what makes the storage forecast survivable, and it may not be what the user intends - a POLICY question, not a rendering one ([storage-forecast](docs/wiki/infrastructure/storage-forecast.md), section 6). The clock is now honest: it is refreshed on a client cache HIT, not only on a server download.
+
+**THE MSG PHASE IS RUN AND EVERY DELIVERY ASSERTION HOLDS (2026-08-13 21:07Z, `58a55ff8` + the 21:33
+APK): 10 PASS, 2 dirty, 1 with noise, no failure, no inconclusive.** One copy everywhere, nothing
+lost, duplicated or out of order. The three unclean rows carry WP-FALSELOSS-2 between them and
+nothing else. Three of the run's answers had been the INSTRUMENT reporting about itself, and all
+three fixes are shared primitives:
+
+- **A browser CAN be offline at the gateway, and MSG-9 had never once managed it.** Measured: W2 cut,
+  `fetch` severed in 13 ms, presence key refreshed WITHOUT A GAP FOR 60 s. CDP offline emulation
+  leaves an established WebSocket alone, so `cut()` cannot ever produce a receiver-side
+  disconnection. `net.mjs` now has `armCut` + `cutHard` (capture the socket at construction, offline
+  FIRST so the reconnect fails, then close it).
+- **MSG-1b's window is now a FACT** - fire on the observed in-flight `GET /api/mls/history/<group>`,
+  assert it had not settled - and deterministic, because the primer waits for the history route to go
+  QUIET (the list bootstrap was swallowing it). 3/3 identical runs.
+- **`ssh` resolved to Git's binary under Bash**, which mangles the cloudflared `ProxyCommand`, so the
+  gateway probe answered differently depending on which shell launched the run. All prod access now
+  goes through `ssh.mjs`, which picks Windows OpenSSH explicitly.
 
 ### CANARI - the test campaign
 

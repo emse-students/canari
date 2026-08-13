@@ -46,27 +46,27 @@ meet.
 | Phase | Scripts | State |
 | --- | --- | --- |
 | SETUP | - | 5 of 9 `passed`; SETUP-2 deliberately skipped, SETUP-7/8 owed (8 before CORRUPT and PIN) |
-| MSG | 12 | re-ran 2026-08-13 on `e88cc76c`: **6 passed, 1 failed, 1 dirty, 1 inconclusive, 4 recorded nothing** |
-| every other phase | 22 written, 6 with none | `pending` - not yet run on the reworked build |
+| MSG | 12 | re-ran 2026-08-13 21:07Z on `58a55ff8`: **every delivery assertion held - 10 passed, 2 dirty, 1 passed-with-noise, no failure**. The three that are not clean carry one defect between them, WP-FALSELOSS-2 |
+| every other phase | 22 written, 6 with none | `pending` - not yet run on this build |
 
-**The whole phase returns to `pending` on `c97b735c`**, which changes when a device may ask for or
-answer a history request at all - so every row that observes delivery was measured against the
-previous build.
-
-**Four scripts produced a verdict the dashboard could not see**, which is why the run reports nine
-verdicts for twelve scripts. `msg8`, `msg8b`, `msg9` and `msg10` exited on their verdict and never
-recorded it; `msg2` recorded and never exited, so the table printed `done` beside a recorded `FAIL`.
-A script that records nothing is indistinguishable from one that passed, which is the worse
-direction, and the dashboard had those four as `passed` on that basis. Both halves are now one call
-(`finish` in `results.mjs`), and `run.mjs` treats anything that is not a clean `PASS` as work still
-owed - a phase of `PASS-DIRTY` rows used to exit 0 and read as finished.
+**Every verdict is now recorded AND exited on.** `msg8`, `msg8b`, `msg9` and `msg10` used to exit on
+their verdict and never record it; `msg2` recorded and never exited, so the table printed `done`
+beside a recorded `FAIL`; `msg67` exited 0 unconditionally. A script that records nothing is
+indistinguishable from one that passed, which is the worse direction, and the dashboard had four
+scripts as `passed` on that basis. Both halves are one call (`finish` in `results.mjs`), and
+`run.mjs` treats anything that is not a clean `PASS` as work still owed.
 
 **What came out of this run:**
 
-- **MSG-2 `failed`, and it is not yet attributed.** A1 saw nothing for 25 s and received on its next
-  reconnect; run alone it passes in 7.3 s. The preflight proves a client is unlocked and rendering,
-  never that its gateway socket is UP - and a delivery check against a client with no transport
-  measures the transport's absence. The gate is owed.
+- **The observation gate had a hole big enough to pass a lost frame through.** `SecretReuseError`
+  and `[MLS] LOST frame` were classified `notable`, and `notable` did not break `clean` - so MSG-6
+  recorded `PASS` with `receiverClean: true` twice, with all three lines inside its own record.
+  `report` now has a `severe` bucket that breaks `clean`. It is what turned a green phase into an
+  honest one, and it is the reason WP-FALSELOSS-2 exists at all.
+- **A deliberate cut may not be counted as dirt, and it was.** MSG-9 and MSG-10 filed the
+  `ERR_INTERNET_DISCONNECTED`, the closed socket and the app's own retry ladder - all of which they
+  caused - as defects, so both were permanently dirty. `ignoringOfflineCut` forgives exactly those,
+  and forgives nothing in `severe`: a lost frame is a lost frame whatever the link did.
 - **MSG-4 `dirty` on two counts, one of them fixed.** The composer handed a PDF to the browser's
   native plugin through an `<embed>`, which this site's own CSP forbids (`object-src 'none'`) - so it
   was blocked for every user on every browser and the preview was a blank tile. Fixed on `c97b735c`.
@@ -96,6 +96,11 @@ owed - a phase of `PASS-DIRTY` rows used to exit 0 and read as finished.
   decides nothing. The discriminating run is live traffic consumed by the NEW bundle, then a reload:
   0 false loss, 0 `SecretReuseError`, 0 asks, against 6/12/1 for the same shape on the old one. The
   phone is verified separately (its APK, not the deployed bundle): marks 2577 -> 2583.
+  **That verification stands and is NOT withdrawn - but its `0` was measured over one path, and a
+  second one is still open.** WP-FALSELOSS-2 below is the same symptom on frames at the HEAD of the
+  stream rather than behind the cursor, and it was found the moment MSG-1b started forcing a replay
+  on every run. A fix verified against the traffic that provoked the first shape says nothing about a
+  shape it never exercised - which is the general form of this campaign's most expensive mistake.
 
 ## Everything was `pending`, and that was deliberate
 
@@ -333,28 +338,101 @@ re-enrolment path and MULTI-3 are only testable from a clean device.
 Baseline first. An exotic failure is only meaningful once the plain path is proven on the same
 harness in the same session.
 
-**Run 2026-08-13 against `2c7b0c3c` (web) + the 13:08 debug APK (A1): 10 passed, 2 failed, 1 inconclusive.**
-Every row below therefore returns to `pending` for the NEXT commit, which changes when a connection
-reconciles at all - see the [Decisions](protocols/history-reconciliation.md#decisions-taken) row of
-2026-08-13. Verdicts are kept rather than erased: they name the build they hold for.
+**Run 2026-08-13 21:07Z against `58a55ff8` (web) + the 21:33 debug APK (A1): every delivery assertion
+held on all twelve scripts - 10 `passed`, 2 `dirty`, 1 `passed-with-noise`, no failure and no
+inconclusive.** One copy on every client in every check, nothing lost, nothing duplicated, nothing
+out of order. What is not clean is not a delivery defect: it is one recurring MLS ratchet complaint,
+written up as WP-FALSELOSS-2 below.
+
+Verdicts are kept rather than erased: they name the build they hold for.
+
+**Three of this run's answers came from the instrument being wrong, and each fix is shared.**
+MSG-1b, MSG-9 and MSG-10 had all three been reporting about themselves:
+
+- **MSG-1b could not tell "fixed" from "not exercised"** - it inferred its window from the pane
+  growing by 3 000 characters, which stopped happening once the load finished during the wait for the
+  composer. The window is now a FACT: the check fires the instant `GET /api/mls/history/<group>` is
+  observed in flight and asserts that request had not settled, which holds for a conversation of any
+  size. It was also non-deterministic until the primer was made to wait for the history route to go
+  QUIET - the list bootstrap was swallowing it. 3/3 identical runs since, with the replay provably
+  still open 556-607 ms after the send.
+- **MSG-9 had never once taken its receiver offline.** Measured, not assumed: W2 cut, `fetch` severed
+  in 13 ms, and the gateway's presence key refreshed WITHOUT A GAP FOR SIXTY SECONDS. CDP's offline
+  emulation fails new requests and leaves an established WebSocket completely alone, so a browser
+  "offline" is, to the thing doing the delivering, perfectly connected. `net.mjs` now carries two
+  different cuts - `cut()` for a SENDER, `cutHard()` for a RECEIVER - and the second closes the live
+  socket by capturing it at construction. MSG-9 passes with the gateway agreeing: offline after
+  1.0 s, back after 1.3 s, message 1.8 s later, one copy.
+- **MSG-10 recorded nothing at all.** It printed its verdict and called `process.exit`, so a twelve
+  script run showed eleven rows and the silent one read as a pass - the exact failure `finish` was
+  written for, in a script the last pass through this file had already been meant to convert.
+
+
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | **`passed`** on `2c7b0c3c` - 311 ms (cold: 1549 ms) |
-| MSG-1b | Delivery DURING a bulk-ingest window (the WP-ECHO-1 race) | `W1 W2` | **`inconclusive`** on `2c7b0c3c` - `windowOpened: false`. The check can only conclude when a window happens to open, and the 2026-08-13 work makes those rarer still. **The check needs reworking, not the app** |
-| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | **`failed`** on `e88cc76c` + the 13:08 APK - `copiesOnPhone: 0` after 25 s, then delivered on A1's next reconnect (`[OK] 1 message(s) caught up`, 28 s after the check gave up). **Run ALONE it passes**, 7 270 ms, 1 copy - so the fixture is the first suspect and the phone the second. Not attributable until the preflight gates on a CONNECTED gateway rather than an unlocked client |
-| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | **`passed`** on `2c7b0c3c` - 366 ms. Failed the first run and passed alone: the cause was harness isolation, fixed by `ensureConversation` |
-| MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `W1 W2` | **`dirty`** on `e88cc76c` - assertions HELD (1 copy each, image 1 258 ms, PDF 636 ms, both decoded) and the run was not clean, on two counts. **(a) FIXED on `c97b735c`**: `object-src 'none'` blocked the composer's `<embed>` PDF preview - our own CSP, correctly, and the last surface not using the pdf.js canvas path. **(b) `SecretReuseError` at epoch 6 on `642f389a`, under investigation as a FALSE positive** - see the run summary above. **The group HEALS**; the note that said it could not is withdrawn, with the bundle exchange and the matching state key as evidence |
-| MSG-5 | Channel message converges on all three; **no `masterSecret` in any payload** | `+A1` | **`passed`** on `2c7b0c3c` |
-| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`passed`** on `2c7b0c3c` |
-| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | **`passed`** on `2c7b0c3c` - 4255 ms |
+| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | **`passed`** on `58a55ff8` - 260 ms (cold: 298 ms) |
+| MSG-1b | Delivery DURING a history load | `W1 W2` | **`dirty`** on `58a55ff8` - 1 578 ms, one copy, window PROVEN open (the replay page was still in flight 607 ms after the send). Not clean: `SecretReuseError` at generation 438/439, which is WP-FALSELOSS-2. **The check itself was the 2026-08-13 rework** - see above |
+| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | **`passed`** on `58a55ff8` + the 21:33 APK - 3 679 ms, one copy. The earlier FAIL was the preflight not gating on a CONNECTED gateway: the phone was unlocked, rendering, and holding no socket. `presence.mjs` closed that, and the check has passed every run since |
+| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | **`passed`** on `58a55ff8` - 343 ms |
+| MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `W1 W2` | **`dirty`** on `e88cc76c` - assertions HELD (1 copy each, image 1 258 ms, PDF 636 ms, both decoded) and the run was not clean, on two counts. **(a) FIXED on `c97b735c`**: `object-src 'none'` blocked the composer's `<embed>` PDF preview - our own CSP, correctly, and the last surface not using the pdf.js canvas path. **(b) `SecretReuseError` at epoch 6 on `642f389a`** - now WP-FALSELOSS-2 below, and no longer under investigation as a possible false positive: it IS one, and the reconciliation it provokes says so itself. **The group HEALS**; the note that said it could not is withdrawn, with the bundle exchange and the matching state key as evidence. Clean again on `58a55ff8` (image 748 ms, PDF 703 ms, one copy each, both decoded) |
+| MSG-5 | Channel message converges on all three; **no `masterSecret` in any payload** | `+A1` | **`passed-with-noise`** on `58a55ff8` + the 21:33 APK - converged on all three. The noise is WP-FALSELOSS-2 at generation 183, on BOTH W1 and W2 at the same second. **Its earlier FAIL was `openChannel` navigating A1** - a navigation is a disconnection, and `readyState: complete` plus a rendered composer do not mean the socket is back. `goto` now waits for the app's own `[WS] Connected to Chat Gateway` line since an index taken BEFORE the navigation |
+| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`dirty`** on `58a55ff8` - preview rendered, zero third-party `<img src>`, one copy. Not clean: WP-FALSELOSS-2 at generation 183. **One run in four lost the link message itself** to the same mechanism (`arrived: false`), which is what makes it a WP rather than a note |
+| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | **`passed`** on `58a55ff8` - 4 362 ms, 30/30, ordered, no duplicate |
 | MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | **`passed`** on `2c7b0c3c` + the 13:08 APK. Took TWO harness fixes: the first run's FAIL was spurious (A1 had been left in the campaign channel by an earlier check and sent there, while W2 watched the DM) which produced `ensureConversation`; the second was blocked because `ensureChat` reaches the list by clicking "Discussions", which the mobile layout hides behind an open conversation |
 | MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | **`passed`** on `2c7b0c3c` + the 13:08 APK. UX note stands: the tab TITLE never changes, so a backgrounded tab signals nothing until looked at |
-| MSG-9 | Receiver offline (phone radios), then restored: lands once on reconnect | `+A1` | **`passed`** on the 13:08 APK - arrived 516 ms after reconnect, 1 copy. **Harness gap: it writes no row to `results.ndjson`**, so the dashboard is the only record |
-| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | **`failed`** on `2c7b0c3c` - `onReceiver: 0` after reconnect but `afterReload: 1`: the message IS delivered and the live view does not show it until a reload. Its observation gate also counts the `ERR_INTERNET_DISCONNECTED` it caused itself as dirt |
+| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | **`passed`** on `58a55ff8` - offline after 1 054 ms, back after 1 312 ms, message 1 824 ms later, `whileOffline: 0`, one copy each side, both clean. Needs `armCut` + `cutHard`: see above for why the old form could never be offline at all |
+| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | **`passed`** on `58a55ff8` - composer emptied, one copy on the sender while offline, zero on the receiver, drained 1 009 ms after reconnect, and still one copy after a reload. The `ERR_INTERNET_DISCONNECTED` it causes itself is now classified as the cut rather than as dirt |
 
-MSG-9 cannot be faked in a browser - an offline RECEIVER is a phone with its radios off
-([methodology](testing-methodology.md#environment-traps-that-read-as-application-bugs)).
+**An offline RECEIVER can be faked in a browser after all, and it took closing the socket by hand.**
+The note that said it needed a phone with its radios off was right about `cut()` and wrong about the
+conclusion: what a receiver needs is for the GATEWAY to hold no connection, and that is reachable
+from CDP once the page's WebSocket is captured at construction and closed. A real radio cut is still
+the more faithful scenario and is owed on device - but it must not be run on THIS rig, where adb
+itself rides the phone's wifi.
+
+### WP-FALSELOSS-2 - the false loss is not gone, it moved to the head of the stream
+
+**What is measured.** On the test DM `642f389a`, at epoch 6, a receiver refuses one frame and files
+it as a loss:
+
+```
+[RUST::DEBUG]   Ciphertext generation out of bounds 438
+        SecretReuseError
+[RUST::DEBUG] MLS decryption failed: group=642f389a… msg_epoch=6 group_epoch=6
+        err=ValidationError(UnableToDecrypt(SecretTreeError(SecretReuseError)))
+[MLS] LOST frame for 642f389a… from d82cd226…: generation consumed but this frame was never
+        processed - the sender's ratchet rewound (SecretReuseError)
+[MLS] Frames are being lost in 642f389a… - reconciling this conversation
+```
+
+**It is a FALSE loss, and the app proves it itself.** The reconciliation the loss triggers comes back
+`[HISTORY_REQ] 642f389a... same state as <peer> (16f34639…) - nothing to do`: both devices hold
+identical history. Nothing was lost. The cost is the wasted round trip and, once in four runs, a
+message that never renders at all - MSG-6 came back `arrived: false`, which is the reason this is a
+Work Package and not a note.
+
+**It is NOT the WP-FALSELOSS-1 shape, and that distinction is the whole lead.** That one was a frame
+delivered live whose generation was spent, re-walked by a replay; it was fixed by marking consumed
+frames by their CIPHERTEXT BYTES and advancing the cursor by walking. The generations complained
+about here TRACK THE HEAD OF THE STREAM rather than sitting at some historical offset - 296, 340,
+379, 438, 439 across successive runs, climbing with traffic at roughly the rate the phase sends. So
+the frame being refused is a RECENT one, not a pre-fix relic, and the mark set is not covering it.
+
+**Both directions are affected, so it is not one device's store.** Generation 183 was refused by W1
+and W2 in the same second in MSG-5, for a frame from the owner - which on that check means A1. The
+multi-tab explanation is refuted by measurement: one app target per profile, all three checked.
+
+**What made it visible, and what had been hiding it.** `watch.mjs` classified `SecretReuseError` and
+`LOST frame` as `notable`, and `notable` did not break `clean` - so MSG-6 recorded `PASS` with
+`receiverClean: true` twice with all three lines sitting inside its own record. A lost frame is the
+single most serious thing this campaign can see. `report` now has a `severe` bucket that breaks
+`clean`, with `CannotDecryptOwnMessage` excluded because that one is RFC 9420 working as designed.
+
+**Do not "fix" it by suppressing the trigger.** The reconciliation firing on an unreadable frame is
+correct behaviour and the trigger must stay; what needs finding is why a head-of-stream frame arrives
+with a generation the receiver has already spent. The mechanism and its three invariants are on
+[history-reconciliation](protocols/history-reconciliation.md).
 
 **What this phase already cost.** MSG-1 failed on the first check of a re-run and its record
 contradicted itself: `latencyMs: 987` beside `copiesOnReceiver: 0`, the receiver holding the marker
@@ -369,7 +447,9 @@ count - the pane gone, the message gone, or a sample taken against a transient.
 - **Carry the evidence that the window opened, or a green result cannot be told from an unexercised
   one.** The re-run of MSG-1 passed VACUOUSLY: the store was warm, the `limit=1` probe found nothing,
   the replay never ran, so the race window never opened. `msg1b.mjs` forces it open and refuses to
-  report PASS unless the pane grew. That is the pattern for any check whose bug needs a window.
+  report PASS unless it can PROVE it was open. That is the pattern for any check whose bug needs a
+  window - and the proof has to be an observed event, never a threshold on what got rendered: the
+  pane-growth version of this rule survived one build and then went permanently inconclusive.
 - The defect underneath was real: a page read at the end of a history load was ASSIGNED over the
   rendered list, discarding whatever arrived while the load ran - four sites, fixed by
   `mergeMessagePage`. It is invisible to any test that does not deliver mid-load, which is why 1 259
