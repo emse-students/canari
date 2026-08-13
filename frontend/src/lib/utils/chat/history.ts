@@ -213,6 +213,31 @@ export function markHistoryFrameConsumed(
   scheduleSeenFlush(userId, groupId);
 }
 
+/**
+ * Has this device already consumed this exact ciphertext, in ANY session?
+ *
+ * The mirror of {@link markHistoryFrameConsumed}, and it exists because the ledger was one-way.
+ * Live delivery told the replay what it had consumed; the replay told live delivery nothing, so a
+ * frame the replay had just decrypted arrived live moments later, found a spent generation, and was
+ * reported as a LOST frame for a message this device was already displaying (WP-FALSELOSS-2,
+ * measured on prod 2026-08-13: three MSG checks dirty, `copiesOnReceiver: 1` in the very record
+ * carrying the loss).
+ *
+ * The in-memory ring (`hasFrameBeenProcessed`) cannot answer this. It holds 200 frames per group and
+ * dies with the page, so it can only speak for what THIS session delivered live - and a consumption
+ * made by the replay, or by any earlier session, is invisible to it by construction. This set is the
+ * durable half, keyed on the frame's bytes for the reason spelt out above: the two paths share no
+ * identifier, only the ciphertext.
+ */
+export function hasHistoryFrameBeenConsumed(
+  userId: string,
+  groupId: string,
+  fingerprint: string
+): boolean {
+  if (!userId || !groupId) return false;
+  return loadSeenCipherHashes(userId, groupId).has(fingerprint);
+}
+
 /** @internal Drops the shared sets between Vitest cases, so one case cannot answer another's question. */
 export function resetSeenCipherCacheForTests(): void {
   seenCache.clear();
@@ -472,7 +497,7 @@ export async function replayConversationHistory(params: {
           : [];
 
       for (let workIdx = 0; workIdx < pageDecryptWork.length; workIdx++) {
-        const { msg, cipherFingerprint } = pageDecryptWork[workIdx];
+        const { msg, cipherFingerprint, bytes } = pageDecryptWork[workIdx];
         const batchResult = batchResults[workIdx];
 
         // False = epoch/ratchet gap - recoverable after resync, must not be permanently skipped.
@@ -482,6 +507,25 @@ export async function replayConversationHistory(params: {
           if (!batchResult.ok) {
             throw new Error(batchResult.error);
           }
+          /**
+           * THE GENERATION IS SPENT AS OF THIS LINE, AND LIVE DELIVERY HAS TO BE ABLE TO LEARN IT.
+           *
+           * The stream id written in the `finally` below says "the replay is past this ROW", which
+           * no live frame can ever look itself up by - the two namespaces never intersect. So the
+           * bytes are marked here as well, exactly as `markHistoryFrameConsumed` marks them coming
+           * the other way. Without it the ledger was one-directional: a frame the replay decrypted
+           * arrived live a moment later, `handleUnreadableFrame` found nothing in either place it
+           * could look, and a message already on screen was reported LOST and reconciled for
+           * (WP-FALSELOSS-2).
+           *
+           * Placed on the SUCCESS path only, and that is the whole safety argument. A frame that
+           * failed to decrypt did not consume anything, and claiming it here would tell live
+           * delivery "I have read this" about a frame nobody has read - which is the one mistake
+           * that turns a real loss silent. The give-up branches below therefore mark the row, never
+           * the bytes.
+           */
+          seenCipherHashes.add(frameFingerprint(bytes));
+          seenUpdated = true;
           const decryptedBytes = batchResult.plaintext;
           if (!decryptedBytes) continue;
 

@@ -46,6 +46,8 @@ vi.mock('$lib/utils/chat/historyReconcile', () => ({
 import { setupMessageHandler } from './setupMessageHandler';
 import { reconcileGroup } from '$lib/utils/chat/historyReconcile';
 import { requestReAdd } from '$lib/utils/chat/recovery';
+import { frameFingerprint } from '../inboundFrameLedger';
+import { markHistoryFrameConsumed, resetSeenCipherCacheForTests } from '$lib/utils/chat/history';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
 import {
   createTestConversations,
@@ -100,8 +102,56 @@ async function deliver(deps: ReturnType<typeof baseDeps>, body: number[]): Promi
   return onMsg('peer-user', new Uint8Array(body), groupId, false, undefined, false);
 }
 
+/**
+ * The other half of the same question, and the one that was missing (WP-FALSELOSS-2).
+ *
+ * A frame can have its generation consumed by the ARCHIVE REPLAY as well as by live delivery, and
+ * the two leave their marks in different places: the replay in the durable per-group set, live
+ * delivery in that same set AND in an in-memory ring. Consulting only the ring - which is what this
+ * handler did - means a frame the replay decrypted seconds earlier arrives on the wire, matches
+ * nothing, and is reported LOST for a message the user is looking at.
+ */
+describe('a frame this device has already read', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    resetSeenCipherCacheForTests();
+  });
+
+  it('is a silent duplicate, and asks for no repair, when the archive replay consumed it', async () => {
+    const body = [5, 6, 7];
+    // Exactly what the replay writes when a frame of its page decrypts: the frame's own bytes, in
+    // the durable set. It is keyed on the bytes because no identifier survives both paths.
+    markHistoryFrameConsumed('user-a', groupId, frameFingerprint(new Uint8Array(body)));
+    const deps = baseDeps();
+
+    expect(await deliver(deps, body)).toBe(true);
+
+    expect(vi.mocked(reconcileGroup)).not.toHaveBeenCalled();
+  });
+
+  it('still reconciles when the mark belongs to a DIFFERENT frame - the trigger is not being suppressed', async () => {
+    // The distinction the whole ledger exists to make, and the reason this is not a mute button: a
+    // consumed generation with bytes nobody has read is a real loss, and it must still ask.
+    markHistoryFrameConsumed('user-a', groupId, frameFingerprint(new Uint8Array([1, 1, 1])));
+    const deps = baseDeps();
+
+    expect(await deliver(deps, [5, 6, 7])).toBe(true);
+
+    expect(vi.mocked(reconcileGroup)).toHaveBeenCalledWith(
+      deps.mlsService,
+      groupId,
+      expect.any(Function)
+    );
+  });
+});
+
 describe('a frame lost to a rewound sender', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    resetSeenCipherCacheForTests();
+  });
 
   it('reconciles the conversation, with nothing durable able to suppress it', async () => {
     const deps = baseDeps();
@@ -142,7 +192,11 @@ describe('a frame from an epoch whose secrets are gone', () => {
       }),
     });
 
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    resetSeenCipherCacheForTests();
+  });
 
   it('reconciles and ACKs, exactly like a consumed generation', async () => {
     const deps = pastEpochDeps();

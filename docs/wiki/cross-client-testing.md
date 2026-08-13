@@ -423,16 +423,38 @@ the frame being refused is a RECENT one, not a pre-fix relic, and the mark set i
 and W2 in the same second in MSG-5, for a frame from the owner - which on that check means A1. The
 multi-tab explanation is refuted by measurement: one app target per profile, all three checked.
 
+#### ATTRIBUTED AND FIXED IN CODE (2026-08-13) - not yet verified on prod
+
+**The sender never rewound; the receiver consumed the frame twice, and the second consumer could not
+find out.** The proof was already inside the failing records and needed no new run: MSG-1b logs the
+loss at generation 438/439 while the SAME record carries `copiesOnReceiver: 1` and
+`primerOnReceiver: 1`. A genuine rewind produces a message no path can recover - every message was
+present, so the plaintext was obtained by another path on this device, and the only other consumer is
+the archive replay.
+
+Which the code confirms: the replay's `finally` recorded the row's STREAM ID, never the frame's
+bytes, and `handleUnreadableFrame` consulted only the in-memory ring, which live delivery alone
+writes and which dies with the page. **The ledger built for WP-FALSELOSS-1 was one-way.** It also
+explains the distribution exactly - MSG-1b, MSG-5 and MSG-6 are the three checks that run a replay
+concurrently with live traffic, and the generations track the head because the replay walks the head.
+
+The fix marks the bytes on the replay's success path and makes the live path read the durable set,
+with the safety property that a frame which did NOT decrypt is never claimed as read. 1417 frontend
+tests green, `svelte-check` 0. **A green gate is not a working system, and this one races two paths
+only real traffic exercises** - the verdicts above stand until MSG has been re-run on the deployed
+bundle, twice.
+
 **What made it visible, and what had been hiding it.** `watch.mjs` classified `SecretReuseError` and
 `LOST frame` as `notable`, and `notable` did not break `clean` - so MSG-6 recorded `PASS` with
 `receiverClean: true` twice with all three lines sitting inside its own record. A lost frame is the
 single most serious thing this campaign can see. `report` now has a `severe` bucket that breaks
 `clean`, with `CannotDecryptOwnMessage` excluded because that one is RFC 9420 working as designed.
 
-**Do not "fix" it by suppressing the trigger.** The reconciliation firing on an unreadable frame is
-correct behaviour and the trigger must stay; what needs finding is why a head-of-stream frame arrives
-with a generation the receiver has already spent. The mechanism and its three invariants are on
-[history-reconciliation](protocols/history-reconciliation.md).
+**The trigger was NOT suppressed, and that was the constraint.** The reconciliation firing on an
+unreadable frame is correct behaviour; what it lacked was the evidence to decide. A frame whose bytes
+are in neither ledger still logs the loss and still reconciles, and a test pins that. The mechanism
+and its invariants are on
+[history-reconciliation](protocols/history-reconciliation.md#the-ledger-was-one-way-and-the-false-loss-moved-to-the-head-of-the-stream).
 
 **What this phase already cost.** MSG-1 failed on the first check of a re-run and its record
 contradicted itself: `latencyMs: 987` beside `copiesOnReceiver: 0`, the receiver holding the marker

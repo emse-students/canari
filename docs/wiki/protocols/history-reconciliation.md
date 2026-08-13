@@ -834,6 +834,50 @@ consuming the non-application frames of the same exchange (typing, read watermar
 It cannot cause a false loss - marking more consumed frames can only prevent them - so it is recorded
 rather than chased.
 
+#### The ledger was ONE-WAY, and the false loss moved to the head of the stream
+
+Measured 2026-08-13 (WP-FALSELOSS-2), on the MSG phase of the campaign. The fix above is correct and
+stays; its `0` was measured over the direction it was written for and says nothing about the other
+one. **Two paths consume ratchet generations on this device, and only one of them was telling the
+other.**
+
+| | writes | reads | so it can recognise |
+| --- | --- | --- | --- |
+| live delivery / queue drain | `frameFingerprint(bytes)`, durable + an in-memory ring | the ring only | a re-delivery, within this session |
+| archive replay | the **stream id** of the row, durable | both keys | anything live delivery consumed |
+
+The replay's own consumption was therefore invisible to live delivery in both key spaces: a stream id
+is not something a live envelope can look itself up by - that is the whole reason the byte key exists
+- and the in-memory ring is written only by live delivery and dies with the page.
+
+So: a replay decrypts a row; the same frame arrives live a second later onto a spent generation;
+`handleUnreadableFrame` looks in the one place it knew about, finds nothing, and files
+`[MLS] LOST frame` plus a reconciliation - which answers `same state as <peer> - nothing to do`,
+because nothing was lost. **The app proves it in its own record:** the MSG-1b row carrying the loss
+also carries `copiesOnReceiver: 1` and `primerOnReceiver: 1`. A sender that had really rewound would
+have produced a message no route could recover; every message was present.
+
+That is also why it hit exactly three checks and no others - MSG-1b, MSG-5 and MSG-6 are the ones
+that run a replay CONCURRENTLY with live traffic, and MSG-1b does it deliberately. The generations
+complained about tracked the head of the stream (296, 340, 379, 438, 439) because the replay was
+walking the head.
+
+**The repair is the missing direction, and nothing else.** The replay marks the frame's BYTES the
+moment a decrypt succeeds, and `handleUnreadableFrame` consults the durable set as well as the ring.
+Two properties are load-bearing and each is pinned by a test:
+
+- **the mark is taken on the SUCCESS path only.** A frame that failed to decrypt consumed nothing,
+  and claiming it would tell live delivery "already read" about a frame nobody has read - which
+  silences the one signal that raises a repair. The give-up branches still mark the ROW, so the
+  replay does not walk it forever, and never the bytes;
+- **the trigger is untouched.** A frame whose bytes are in neither ledger still logs the loss and
+  still reconciles. This is not a suppression, it is the evidence the decision was missing - and the
+  rule it belongs to is in [durable-rules](../durable-rules.md).
+
+The residual, accepted: the byte key is a 32-bit FNV-1a plus the length, so a collision inside one
+group's 5 000-entry set could silence a real loss. The replay has leaned on that key since
+WP-FALSELOSS-1 and this changes the exposure by a constant, not by an order.
+
 ---
 
 ## Open questions

@@ -396,6 +396,21 @@ carry in the head:
   permanent one. And do NOT mark from the Android background decrypt: it loads a throwaway state and
   never writes `mls.bin` back, so the foreground really does read that frame again.
   [history-reconciliation](protocols/history-reconciliation.md).
+- **"EVERY OTHER PATH" MEANS BOTH DIRECTIONS - ENUMERATE THE CONSUMERS, THEN CHECK EACH PAIR.** The
+  rule above was implemented one way round and read as done: live delivery told the replay, the
+  replay told nobody. It recorded its position as a STREAM ID, which is precisely the identifier the
+  other path cannot look itself up by - the same disjoint-namespace fact the rule opens with, missed
+  in the second direction because only the first was ever written down. So a frame the replay had
+  just decrypted arrived live onto a spent generation and was filed as a LOST frame while the message
+  was on screen (WP-FALSELOSS-2, 2026-08-13). **The tell that it was false was in the check's own
+  record**: the row carrying the loss also carried `copiesOnReceiver: 1`. A shared ledger is a
+  RELATION over the paths that write it, not a feature one path has - and a per-session structure
+  cannot answer a durable question, so "which ledger" is settled by the QUESTION'S LIFETIME, never by
+  which one the hot path already had at hand. Corollary paid for in the same incident: **mark on the
+  SUCCESS path only.** A frame that failed to decrypt consumed nothing, and marking it would claim
+  "already read" about a frame nobody has read - which mutes the one alarm that raises a repair. Mark
+  the ROW on a give-up so the walk terminates; never the bytes.
+  [history-reconciliation](protocols/history-reconciliation.md#the-ledger-was-one-way-and-the-false-loss-moved-to-the-head-of-the-stream).
 - **A PROSPECTIVE FIX CANNOT BE VERIFIED BY THE FIRST MEASUREMENT AFTER ITS DEPLOY.** A fix that
   records something as it happens says nothing about what happened before it shipped, so the first
   run still shows the old damage - and that number fits "it works" and "it does nothing" equally

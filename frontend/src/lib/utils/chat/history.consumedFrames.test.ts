@@ -8,8 +8,14 @@
  * key, and a mark made during a replay is not erased by that replay's final write.
  */
 import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
+import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
-import { markHistoryFrameConsumed, resetSeenCipherCacheForTests } from './history';
+import {
+  hasHistoryFrameBeenConsumed,
+  markHistoryFrameConsumed,
+  replayConversationHistory,
+  resetSeenCipherCacheForTests,
+} from './history';
 
 const USER = 'user-1';
 const GROUP = 'group-1';
@@ -109,6 +115,105 @@ describe('markHistoryFrameConsumed', () => {
     expect(JSON.parse(localStorage.getItem(`history_seen_cipher:${USER}:group-2`) ?? '[]')).toEqual(
       ['fp-b']
     );
+  });
+});
+
+/**
+ * THE LEDGER IN THE OTHER DIRECTION - the replay telling live delivery what IT has consumed.
+ *
+ * WP-FALSELOSS-1 made live delivery visible to the replay and stopped there, so the seam stayed
+ * one-way: a frame the replay had just decrypted arrived live a moment later, `handleUnreadableFrame`
+ * had nowhere to look it up, and a message already on screen was reported LOST and reconciled for.
+ * Measured on prod 2026-08-13 (WP-FALSELOSS-2) - three MSG checks dirty, with `copiesOnReceiver: 1`
+ * recorded inside the very run reporting the loss, which is what proved nothing had been lost.
+ *
+ * The row id the replay writes cannot serve: a live envelope is addressed by a `queued_message`
+ * uuid and an archive row by a Redis stream id, and the server discards the stream id at write time.
+ * Only the bytes are shared.
+ */
+describe('a frame the archive replay consumed', () => {
+  const wire = new Uint8Array([0x11, 0x22, 0x33, 0x44, 0x55]);
+  const row = {
+    id: '1786655250946-0',
+    sender_id: 'peer',
+    content: toBase64(wire),
+    timestamp: String(1786655250946),
+  };
+
+  /** Drives one replay page whose single frame decrypts (or does not), and returns the commit thunk. */
+  const replayOnePage = async (result: { ok: boolean; plaintext?: null; error?: string }) => {
+    const mlsService = createMlsServiceStub({
+      getLocalGroups: vi.fn().mockReturnValue([GROUP]),
+      createDecryptSession: vi.fn().mockResolvedValue({
+        decryptPage: vi.fn().mockResolvedValue([result]),
+        finish: vi.fn().mockResolvedValue(undefined),
+      }),
+      // The page after the primed one is empty, which is what ends the walk.
+      fetchHistory: vi.fn().mockResolvedValue([]),
+    });
+    return replayConversationHistory({
+      mlsService,
+      id: GROUP,
+      contactName: 'peer',
+      userId: USER,
+      deviceKeyB64: 'device-key',
+      storage: null,
+      getConversation: () => undefined,
+      setConversation: () => undefined,
+      messageReactions: new Map(),
+      log: () => undefined,
+      primedFirstPage: [row],
+    });
+  };
+
+  it('is recognised by live delivery, so the same frame arriving on the wire is a duplicate and not a loss', async () => {
+    // `plaintext: null` is a frame with no application payload - a commit. It consumes its ratchet
+    // generation exactly like a message does, which is the whole reason the mark is taken before
+    // anything looks at the payload.
+    await replayOnePage({ ok: true, plaintext: null });
+
+    expect(hasHistoryFrameBeenConsumed(USER, GROUP, frameFingerprint(wire))).toBe(true);
+  });
+
+  it('survives the reload, because the durable set is what live delivery reads', async () => {
+    const commit = await replayOnePage({ ok: true, plaintext: null });
+    // The replay does not persist its own progress: the caller commits it once the encrypted MLS
+    // checkpoint has flushed, so durable progress can never run ahead of the durable ratchet.
+    commit?.();
+    await flush();
+
+    expect(persisted()).toContain(frameFingerprint(wire));
+  });
+
+  it('is NOT claimed when the frame failed to decrypt - nobody has read it, and saying otherwise silences a real loss', async () => {
+    // The safety property of the whole change. A frame that did not decrypt consumed nothing, so
+    // marking its bytes would tell live delivery "already read" about a frame no one has ever read -
+    // and the LOST-frame signal, which is the only thing that raises a repair, would go quiet on the
+    // one case it exists for. The row is still marked seen, so the replay does not walk it forever.
+    await replayOnePage({
+      ok: false,
+      error: 'ValidationError(UnableToDecrypt(SecretTreeError(SecretReuseError)))',
+    });
+
+    expect(hasHistoryFrameBeenConsumed(USER, GROUP, frameFingerprint(wire))).toBe(false);
+    expect(hasHistoryFrameBeenConsumed(USER, GROUP, row.id)).toBe(true);
+  });
+});
+
+describe('hasHistoryFrameBeenConsumed', () => {
+  it('answers no for a frame nothing has marked, so an unread frame still reconciles', () => {
+    expect(hasHistoryFrameBeenConsumed(USER, GROUP, 'never-seen')).toBe(false);
+  });
+
+  it('reads what an earlier SESSION wrote - the in-memory ring cannot, and that is why it exists', () => {
+    localStorage.setItem(KEY, JSON.stringify(['fp-from-a-previous-page-load']));
+
+    expect(hasHistoryFrameBeenConsumed(USER, GROUP, 'fp-from-a-previous-page-load')).toBe(true);
+  });
+
+  it('is a no-op without an identified user or group rather than reading a nameless key', () => {
+    expect(hasHistoryFrameBeenConsumed('', GROUP, 'fp-a')).toBe(false);
+    expect(hasHistoryFrameBeenConsumed(USER, '', 'fp-a')).toBe(false);
   });
 });
 

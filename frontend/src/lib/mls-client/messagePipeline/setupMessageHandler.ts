@@ -15,7 +15,7 @@ import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame } from './unackedFrames';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
 import { reconcileGroup } from '$lib/utils/chat/historyReconcile';
-import { markHistoryFrameConsumed } from '$lib/utils/chat/history';
+import { hasHistoryFrameBeenConsumed, markHistoryFrameConsumed } from '$lib/utils/chat/history';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { createMlsStatePersister } from '../mlsStatePersister';
@@ -579,10 +579,25 @@ async function handleKnownGroup({
    * generation already spent, so the sender's ratchet went backwards (WP-LOSS-1, WP-MULTITAB-1).
    * A past-epoch application frame is an epoch whose secrets are gone, which is what a re-joined
    * group has for everything sent before the join. The DIAGNOSIS differs, the policy does not.
+   *
+   * TWO LEDGERS ARE CONSULTED BECAUSE THIS DEVICE CONSUMES GENERATIONS FROM TWO PLACES, and asking
+   * only one of them is what WP-FALSELOSS-2 was. The in-memory ring answers for frames delivered
+   * live in THIS session; the durable set answers for everything else - the archive replay, which
+   * decrypts the same rows and used to leave no trace live delivery could read, and any earlier
+   * session. Neither subsumes the other: the ring holds 200 frames per group and dies with the page,
+   * the durable set is capped at 5 000 and survives it.
    */
   const handleUnreadableFrame = (reason: string, diagnosis: string): void => {
-    if (hasFrameBeenProcessed(groupId, fingerprint)) {
-      log(`[MLS] Duplicate delivery for ${convoKey.slice(0, 8)}… - silent ACK (${reason})`);
+    const seenLive = hasFrameBeenProcessed(groupId, fingerprint);
+    // Named separately from `seenLive` so the log says WHICH path had already read this frame. A
+    // duplicate is normal in both cases and a defect in neither, but "the replay got here first" and
+    // "the server delivered it twice" are different facts about the system, and a line that merges
+    // them sends the next reader to the wrong place.
+    const seenReplay = !seenLive && hasHistoryFrameBeenConsumed(userId, groupId, fingerprint);
+    if (seenLive || seenReplay) {
+      log(
+        `[MLS] Duplicate delivery for ${convoKey.slice(0, 8)}… - silent ACK (${reason}, already read by ${seenLive ? 'live delivery' : 'the archive replay'})`
+      );
       return;
     }
     // Deliberately NOT onOutOfSync: the plaintext is unrecoverable here whatever we do locally, and
