@@ -140,12 +140,15 @@ describe('a frame the archive replay consumed', () => {
     timestamp: String(1786655250946),
   };
 
-  /** Drives one replay page whose single frame decrypts (or does not), and returns the commit thunk. */
-  const replayOnePage = async (result: { ok: boolean; plaintext?: null; error?: string }) => {
+  /** Drives one replay page and returns the commit thunk. One result per row, in order. */
+  const replayPage = async (
+    rows: Array<{ id: string; sender_id: string; content: string; timestamp: string }>,
+    results: Array<{ ok: boolean; plaintext?: null; error?: string }>
+  ) => {
     const mlsService = createMlsServiceStub({
       getLocalGroups: vi.fn().mockReturnValue([GROUP]),
       createDecryptSession: vi.fn().mockResolvedValue({
-        decryptPage: vi.fn().mockResolvedValue([result]),
+        decryptPage: vi.fn().mockResolvedValue(results),
         finish: vi.fn().mockResolvedValue(undefined),
       }),
       // The page after the primed one is empty, which is what ends the walk.
@@ -162,9 +165,13 @@ describe('a frame the archive replay consumed', () => {
       setConversation: () => undefined,
       messageReactions: new Map(),
       log: () => undefined,
-      primedFirstPage: [row],
+      primedFirstPage: rows,
     });
   };
+
+  /** The single-frame case, which is what most of these assertions need. */
+  const replayOnePage = (result: { ok: boolean; plaintext?: null; error?: string }) =>
+    replayPage([row], [result]);
 
   it('is recognised by live delivery, so the same frame arriving on the wire is a duplicate and not a loss', async () => {
     // `plaintext: null` is a frame with no application payload - a commit. It consumes its ratchet
@@ -197,6 +204,55 @@ describe('a frame the archive replay consumed', () => {
 
     expect(hasHistoryFrameBeenConsumed(USER, GROUP, frameFingerprint(wire))).toBe(false);
     expect(hasHistoryFrameBeenConsumed(USER, GROUP, row.id)).toBe(true);
+  });
+
+  /**
+   * THE WHOLE PAGE IS MARKED WHEN THE PAGE IS DECRYPTED, NOT AS EACH FRAME IS PROCESSED.
+   *
+   * `decryptPage` spends the ratchet for every row it is given, in one call. The marks used to be
+   * written by the loop that processes those rows afterwards - decoding, adding to the chat,
+   * awaiting - so between the two there was a window in which a generation was gone and the ledger
+   * did not say so. A frame arriving live inside that window looked itself up, found nothing, and was
+   * reported LOST: measured on prod 2026-08-14 as an exactly reproducible pair, generation 520 called
+   * a loss and generation 521 of the SAME page recognised as a duplicate three seconds later.
+   */
+  describe('a page of several frames', () => {
+    const second = new Uint8Array([0x99, 0x88, 0x77]);
+    const secondRow = {
+      id: '1786655250946-1',
+      sender_id: 'peer',
+      content: toBase64(second),
+      timestamp: String(1786655250947),
+    };
+
+    it('marks every frame the batch decrypted, not only the ones already processed', async () => {
+      await replayPage(
+        [row, secondRow],
+        [
+          { ok: true, plaintext: null },
+          { ok: true, plaintext: null },
+        ]
+      );
+
+      expect(hasHistoryFrameBeenConsumed(USER, GROUP, frameFingerprint(wire))).toBe(true);
+      expect(hasHistoryFrameBeenConsumed(USER, GROUP, frameFingerprint(second))).toBe(true);
+    });
+
+    it('still claims only what decrypted, when one frame of the page failed', async () => {
+      await replayPage(
+        [row, secondRow],
+        [
+          { ok: true, plaintext: null },
+          {
+            ok: false,
+            error: 'ValidationError(UnableToDecrypt(SecretTreeError(SecretReuseError)))',
+          },
+        ]
+      );
+
+      expect(hasHistoryFrameBeenConsumed(USER, GROUP, frameFingerprint(wire))).toBe(true);
+      expect(hasHistoryFrameBeenConsumed(USER, GROUP, frameFingerprint(second))).toBe(false);
+    });
   });
 });
 

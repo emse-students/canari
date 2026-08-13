@@ -80,11 +80,28 @@ selector clicked nothing), which is why every step now asserts its own post-cond
 by diffing the markers W1 shows against the markers W2 shows for one thread. A green per-check
 verdict is not a substitute - reconciliation is what found WP-LOSS-1 and WP-ECHO-1.
 
-**Tools** - `launch.mjs` `reload-both.mjs` `cleanup.mjs` `results.mjs` `console.mjs` `shot.mjs`
-`state.mjs` for operating the rig; `net.mjs` `netwatch.mjs` for the radios; `purge-devices.mjs`
-drives the real device panel (not the database); `storm.mjs` `syncbanner.mjs` `outbox-probe.mjs`
-were written to diagnose the 2026-08-07 retransmission storm and generalise to any "who is
-generating this traffic" question.
+**Tools** - `launch.mjs` `reload-both.mjs` `cleanup.mjs` `results.mjs` `lastmsg.mjs` `console.mjs`
+`shot.mjs` `state.mjs` for operating the rig; `net.mjs` `netwatch.mjs` for the radios;
+`purge-devices.mjs` drives the real device panel (not the database); `storm.mjs` `syncbanner.mjs`
+`outbox-probe.mjs` were written to diagnose the 2026-08-07 retransmission storm and generalise to any
+"who is generating this traffic" question.
+
+Two of those exist because a run once measured something other than what it claimed to, and each
+closes that hole with an assertion rather than a habit:
+
+- **`bundle-id.mjs` - run it before believing any verdict about a fix.** "Reload the browsers onto
+  the new build" was a rule for days with nothing behind it, and a reload served from cache is
+  indistinguishable from one that was not. SvelteKit stamps a per-build `__sveltekit_<id>` as a
+  global, so the running page carries its build id and the origin serves the current one: comparing
+  them turns the rule into a check that exits non-zero.
+- **`ssh.mjs` - the single door to production.** `ssh` resolves to **Git's** binary under Bash, which
+  mangles the backslashes in the cloudflared `ProxyCommand`, so the same gateway probe answered
+  differently depending on which shell launched the run. It picks Windows OpenSSH explicitly.
+
+`net.mjs` carries the same kind of correction in `armCut`/`cutHard`: CDP offline emulation leaves an
+already-established WebSocket alone, so the plain `cut()` could never produce a receiver-side
+disconnection - MSG-9 had never once measured the thing it was named for. The hard cut captures the
+socket at construction, goes offline **first** so the reconnect fails, and only then closes it.
 
 ## Operating it
 

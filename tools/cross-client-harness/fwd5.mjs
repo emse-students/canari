@@ -22,7 +22,7 @@ import {
   awaitMessage,
   countMessage,
 } from './chat.mjs';
-import { watch, report } from './watch.mjs';
+import { watch, report, dirtOf } from './watch.mjs';
 import { mark } from './results.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
@@ -69,7 +69,7 @@ for (let i = 0; i < N; i++) {
   await sleep(800);
   await clickBubbleAction(w1, m, 'Transférer');
   await until(w1, `!!document.querySelector('[role=dialog]')`, 15000);
-  await realClick(w1, 'text=PEER DISPLAY NAME');
+  await realClick(w1, 'text=Claire VAN RUYMBEKE');
   await until(w1, `!document.querySelector('[role=dialog]')`, 15000);
 
   const at = Date.now();
@@ -95,6 +95,7 @@ for (let i = 0; i < N; i++) {
     sends,
     receiverNotable: row.obs.w2.notable,
     receiverClean: row.obs.w2.clean,
+    receiverDirt: dirtOf(row.obs.w2),
   });
   console.log(JSON.stringify(summary[summary.length - 1]));
 }

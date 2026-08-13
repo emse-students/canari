@@ -496,8 +496,30 @@ export async function replayConversationHistory(params: {
           ? await session.decryptPage(pageDecryptWork.map((w) => w.bytes))
           : [];
 
+      /**
+       * EVERY GENERATION THIS PAGE SPENDS IS SPENT AS OF THE LINE ABOVE - so the whole page is
+       * marked HERE, before a single frame is processed.
+       *
+       * `decryptPage` consumes the ratchet for the entire page in one call, while the loop below
+       * hands each frame to the chat, decodes it, and awaits. Marking inside that loop left a window
+       * between "the generation is gone" and "the ledger knows", and a frame arriving live inside it
+       * looked itself up, found nothing, and was reported LOST - the residue of WP-FALSELOSS-2, and
+       * measured on prod 2026-08-14 as an exactly reproducible pair: generation 520 refused and
+       * called a loss, generation 521 of the SAME page recognised as a duplicate three seconds later,
+       * once the loop had got that far. The mark now moves with the thing it records.
+       *
+       * Success only, which is the same safety argument as before: a frame that did not decrypt
+       * consumed nothing, and claiming it would tell live delivery "already read" about a frame no
+       * one has read - silencing the one signal that raises a repair.
+       */
       for (let workIdx = 0; workIdx < pageDecryptWork.length; workIdx++) {
-        const { msg, cipherFingerprint, bytes } = pageDecryptWork[workIdx];
+        if (!batchResults[workIdx]?.ok) continue;
+        seenCipherHashes.add(frameFingerprint(pageDecryptWork[workIdx].bytes));
+        seenUpdated = true;
+      }
+
+      for (let workIdx = 0; workIdx < pageDecryptWork.length; workIdx++) {
+        const { msg, cipherFingerprint } = pageDecryptWork[workIdx];
         const batchResult = batchResults[workIdx];
 
         // False = epoch/ratchet gap - recoverable after resync, must not be permanently skipped.
@@ -507,25 +529,9 @@ export async function replayConversationHistory(params: {
           if (!batchResult.ok) {
             throw new Error(batchResult.error);
           }
-          /**
-           * THE GENERATION IS SPENT AS OF THIS LINE, AND LIVE DELIVERY HAS TO BE ABLE TO LEARN IT.
-           *
-           * The stream id written in the `finally` below says "the replay is past this ROW", which
-           * no live frame can ever look itself up by - the two namespaces never intersect. So the
-           * bytes are marked here as well, exactly as `markHistoryFrameConsumed` marks them coming
-           * the other way. Without it the ledger was one-directional: a frame the replay decrypted
-           * arrived live a moment later, `handleUnreadableFrame` found nothing in either place it
-           * could look, and a message already on screen was reported LOST and reconciled for
-           * (WP-FALSELOSS-2).
-           *
-           * Placed on the SUCCESS path only, and that is the whole safety argument. A frame that
-           * failed to decrypt did not consume anything, and claiming it here would tell live
-           * delivery "I have read this" about a frame nobody has read - which is the one mistake
-           * that turns a real loss silent. The give-up branches below therefore mark the row, never
-           * the bytes.
-           */
-          seenCipherHashes.add(frameFingerprint(bytes));
-          seenUpdated = true;
+          // The bytes were marked as consumed the moment the page was decrypted, above. What the
+          // `finally` below adds is the stream id, which says "the replay is past this ROW" - a key
+          // no live frame can ever look itself up by, since the two namespaces never intersect.
           const decryptedBytes = batchResult.plaintext;
           if (!decryptedBytes) continue;
 

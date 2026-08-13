@@ -11,26 +11,23 @@
  * receiver raises when it thinks a generation was already consumed. Order is asserted on the
  * RECEIVER's rendered sequence, and every marker is counted so a duplicate cannot hide.
  */
-import {
-  client,
-  ensureChat,
-  openConversation,
-  evaluate,
-  send,
-  awaitMessage,
-  countMessage,
-} from './chat.mjs';
-import { watch, report } from './watch.mjs';
+import { client, ensureConversation, evaluate, send, awaitMessage } from './chat.mjs';
+import { watch, report, dirtOf } from './watch.mjs';
 import { record, mark } from './results.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS } from './names.mjs';
 
+// PORTS AND NAMES FROM `names.mjs`, NEVER AS LITERALS. This file carried both: the two ports as
+// numbers and the two accounts as their real display names, in a harness whose whole point is that
+// it can be mirrored into a PUBLIC repository. A1's port has already moved once, and a renamed
+// account makes `openConversation` open NOTHING while the check reports on whatever was on screen.
+// `ensureConversation` replaces `ensureChat` + `openConversation` for the reason it exists: a
+// composer proves a conversation is open, never WHICH one.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const w1 = await client(9224, 'canari-emse.fr');
-const w2 = await client(9223, 'canari-emse.fr');
+const w1 = await client(PORTS.W1, 'canari-emse.fr');
+const w2 = await client(PORTS.W2, 'canari-emse.fr');
 
-await ensureChat(w1);
-await openConversation(w1, 'PEER DISPLAY NAME');
-await ensureChat(w2);
-await openConversation(w2, 'OWNER DISPLAY NAME');
+await ensureConversation(w1, PEER_NAME);
+await ensureConversation(w2, OWNER_NAME);
 
 // ---------------------------------------------------------------- MSG-6
 const linkMark = mark('MSG6');
@@ -68,6 +65,8 @@ const msg6 = {
   ...preview,
   senderClean: obs6w1.clean,
   receiverClean: obs6w2.clean,
+  senderDirt: dirtOf(obs6w1),
+  receiverDirt: dirtOf(obs6w2),
   receiverNotable: obs6w2.notable,
 };
 const msg6Ok = linkArrived && preview.foreign.length === 0;
@@ -116,13 +115,20 @@ const msg7 = {
   dupes,
   ordered,
   elapsedMs: Date.now() - at,
+  receiverDirt: dirtOf(o7a),
   receiverNotable: o7a.notable,
-  receiverErrors: o7a.errors,
+  senderDirt: dirtOf(o7b),
   senderNotable: o7b.notable,
-  senderErrors: o7b.errors,
 };
 const msg7Ok = missing.length === 0 && dupes.length === 0 && ordered;
 record('MSG-7', msg7Ok ? (o7a.clean && o7b.clean ? 'PASS' : 'PASS-DIRTY') : 'FAIL', msg7);
 console.log(`[msg7] ${uniqueSeen.length}/${N} ordered=${ordered} missing=${missing.length} dupes=${dupes.length}`);
 console.log(JSON.stringify({ msg6, msg7 }, null, 1));
-process.exit(0);
+// EXIT ON THE VERDICTS, not on having reached the end. This exited 0 unconditionally, so a run in
+// which MSG-6 recorded FAIL still printed `msg67.mjs  done` beside it - the two halves of one run
+// contradicting each other in the same table, which is the fault `results.finish` was written for.
+// `finish` cannot be used here because this script carries TWO checks, so the rule is applied by
+// hand: anything but a clean pass on either is work still owed.
+const clean6 = msg6Ok && obs6w2.clean && obs6w1.clean;
+const clean7 = msg7Ok && o7a.clean && o7b.clean;
+process.exit(clean6 && clean7 ? 0 : 1);

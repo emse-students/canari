@@ -878,6 +878,40 @@ The residual, accepted: the byte key is a 32-bit FNV-1a plus the length, so a co
 group's 5 000-entry set could silence a real loss. The replay has leaned on that key since
 WP-FALSELOSS-1 and this changes the exposure by a constant, not by an order.
 
+##### The direction was right and the PLACE was wrong - a batch spends in one call and reported in another
+
+Measured 2026-08-14, on the deployed fix above. The false loss did not go away, and the run that
+found it is the reason the shape is now certain: `msg1 --cold` followed by `msg1b` reproduced it
+**every single time**, which turns an intermittent-looking fault into an experiment.
+
+`session.decryptPage(...)` consumes the ratchet for an ENTIRE page in one call. The marks, however,
+were written by the loop that runs afterwards - the one that decodes each frame, builds its envelope,
+pushes it to the chat and awaits. Between the two there is a window, seconds wide on a real page, in
+which every generation of that page is spent and the ledger says nothing about any of them. A frame
+arriving live inside that window looks itself up, finds nothing, and is filed as a loss.
+
+**The proof is a pair from one page**, and it is what makes the diagnosis certain rather than
+plausible:
+
+```
+00:37:58  Ciphertext generation out of bounds 520 -> [MLS] LOST frame -> reconciling
+00:38:01  Ciphertext generation out of bounds 521 -> [MLS] Duplicate delivery (already read by the archive replay)
+```
+
+Same group, same epoch, same page, three seconds apart: 521 was recognised because the loop had by
+then reached it, and 520 was not because it had not. Nothing about the two frames differs except when
+the loop got to them - which is precisely the definition of a window rather than a defect in the
+recognition itself.
+
+**The repair is a move, not a new mechanism.** Every successfully decrypted frame of a page is marked
+immediately after `decryptPage` returns, before any of them is processed; the per-frame loop keeps
+only the stream-id write, which answers the different question of where the walk has got to. The
+success-only property is unchanged and still pinned by a test, and two more cases pin the page
+behaviour: a two-frame page marks both, and a page where one entry failed marks only the other.
+
+The rule this taught - *a ledger is written where the effect lands, not where the results are
+convenient to iterate* - is in [durable-rules](../durable-rules.md).
+
 ---
 
 ## Open questions

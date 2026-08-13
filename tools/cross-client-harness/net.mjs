@@ -1,11 +1,19 @@
 /**
  * Cutting a client off the network, and proving it was really cut.
  *
- * `Network.emulateNetworkConditions` is the only lever that works here: killing the interface
- * would take the CDP connection with it. It severs fetch/XHR/WebSocket at the network stack, which
- * is what the app's reconnect logic reacts to - `navigator.onLine` is emulated alongside it.
+ * `Network.emulateNetworkConditions` is the only lever that can be pulled from here: killing the
+ * interface would take the CDP connection with it. What it actually does is fail every NEW request
+ * and flip `navigator.onLine`; it does NOT touch a WebSocket that is already open - measured, see
+ * `CUT_PATCH`. So there are two different cuts in this file and they are not interchangeable:
+ *
+ *   - `cut()`    - no new request leaves. Correct for a SENDER (a send is a new request), which is
+ *                  MSG-10, and it is all that check has ever needed.
+ *   - `cutHard()` - the above AND the live socket closed, so the gateway really has no connection.
+ *                  Required for a RECEIVER, because delivery goes down the socket: MSG-9's whole
+ *                  premise is a device the server cannot reach. Needs `armCut()` first.
  */
-import { evaluate } from './cdp.mjs';
+import { evaluate, until } from './cdp.mjs';
+import { awaitGatewayConnected } from './chat.mjs';
 
 const OFFLINE = {
   offline: true,
@@ -50,6 +58,88 @@ export async function cut(cx, timeoutMs = 15000) {
   return {
     severed,
     msToSever: Date.now() - t0,
+    restore: async () => {
+      await cx.send('Network.emulateNetworkConditions', ONLINE);
+    },
+  };
+}
+
+/**
+ * THE PATCH THAT MAKES A REAL DISCONNECTION POSSIBLE FROM A BROWSER.
+ *
+ * `emulateNetworkConditions` fails every NEW request and leaves an ESTABLISHED WebSocket completely
+ * alone. That is not a nuance, it is the whole difficulty, and it was measured rather than assumed
+ * on 2026-08-13: W2 cut, `fetch` severed in 13 ms, and the gateway's `user:online:` key refreshed
+ * without a gap for SIXTY SECONDS (TTL cycling 12-20 s, which is the app's 8 s heartbeat still
+ * landing). So a browser client that has been "taken offline" is, to the thing that does the
+ * delivering, perfectly connected - and MSG-9 sent its message to a receiver that was never offline
+ * at all, which is how it came back INVALID.
+ *
+ * There is no CDP command that closes a live socket, and no accessor for the app's. So the socket is
+ * captured at CONSTRUCTION - which means the patch has to be in the document BEFORE the app boots,
+ * hence `armCut` reloading. Nothing about the app's behaviour is changed by it: closing a socket is
+ * what a network drop does, and the app then sees exactly what it would see in the field.
+ */
+const CUT_PATCH = `(function () {
+  if (window.__wsCut) return;
+  var live = new Set();
+  var Native = window.WebSocket;
+  function Patched(url, protocols) {
+    var ws = protocols === undefined ? new Native(url) : new Native(url, protocols);
+    live.add(ws);
+    ws.addEventListener('close', function () { live.delete(ws); });
+    return ws;
+  }
+  Patched.prototype = Native.prototype;
+  ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach(function (k, i) { Patched[k] = i; });
+  window.WebSocket = Patched;
+  /** Closes every socket the page currently holds; returns how many. */
+  window.__wsCut = function () {
+    var n = 0;
+    live.forEach(function (ws) { try { ws.close(4000, 'harness cut'); n++; } catch (e) {} });
+    return n;
+  };
+  window.__wsLive = function () { return live.size; };
+})()`;
+
+/**
+ * Installs {@link CUT_PATCH} and reloads, so a later {@link cutHard} has sockets to close.
+ *
+ * Call at the START of a check, before anything is opened or measured: the reload it costs is a
+ * navigation, and a navigation is a disconnection - `goto`'s rule applies here too, which is why the
+ * gateway line is waited for rather than a delay.
+ */
+export async function armCut(cx) {
+  await cx.send('Page.enable');
+  await cx.send('Network.enable');
+  await cx.send('Page.addScriptToEvaluateOnNewDocument', { source: CUT_PATCH });
+  const before = cx.events.length;
+  await cx.send('Page.reload');
+  await until(cx, `document.readyState === 'complete'`, 20000);
+  const ms = await awaitGatewayConnected(cx, before);
+  const armed = await evaluate(cx, `typeof window.__wsCut === 'function'`);
+  if (!armed) throw new Error('the socket patch is not in the page after the reload - cutHard cannot work');
+  return { gatewayBackAfterMs: ms };
+}
+
+/**
+ * Takes a client REALLY offline: no new request, and no surviving socket either.
+ *
+ * The order is load-bearing. Offline goes on FIRST, so that the reconnect the app fires the instant
+ * its socket closes cannot succeed; closing first would leave a window in which the client quietly
+ * comes back and the check measures nothing. `restore` only lifts the emulation - the app reconnects
+ * by itself, which is the behaviour under test.
+ *
+ * The caller still has to prove the gateway agrees (`awaitOffline`). This closes the socket; only
+ * the far end can say the connection is gone.
+ */
+export async function cutHard(cx) {
+  await cx.send('Network.enable');
+  await cx.send('Network.emulateNetworkConditions', OFFLINE);
+  const closed = Number(await evaluate(cx, `window.__wsCut ? window.__wsCut() : -1`));
+  if (closed < 0) throw new Error('cutHard without armCut - no socket was captured, nothing was closed');
+  return {
+    socketsClosed: closed,
     restore: async () => {
       await cx.send('Network.emulateNetworkConditions', ONLINE);
     },

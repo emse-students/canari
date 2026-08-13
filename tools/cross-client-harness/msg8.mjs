@@ -6,27 +6,26 @@
  * badge) is REPORTED rather than asserted - the app's intent there is not written down anywhere,
  * so this run is what establishes it.
  */
-import { client, ensureChat, openConversation, send, countMessage, evaluate } from './chat.mjs';
-import { watch, report, logcatSince, logcatNotable } from './watch.mjs';
+import { client, ensureConversation, send, countMessage, evaluate } from './chat.mjs';
+import { watch, report, logcatSince, logcatNotable, dirtOf } from './watch.mjs';
 import { background } from './tabs.mjs';
-import { mark } from './results.mjs';
+import { finish, mark } from './results.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS } from './names.mjs';
 
 const SIDEBAR = `(function () {
   const nav = document.querySelector('[data-conversation-list], aside, nav');
   return nav ? nav.innerText.replace(/\\n+/g, ' | ').slice(0, 400) : null;
 })()`;
 
-const a1 = await client(9222);
+const a1 = await client(PORTS.A1);
 const w2 = await client(9223, 'canari-emse.fr');
 
-// A1 is already in the DM with the peer; on mobile the list hides once a conversation is open, so
-// only open it when the composer is absent.
-if (!(await evaluate(a1, `!!document.querySelector('.chat-composer-editor')`))) {
-  await ensureChat(a1);
-  await openConversation(a1, 'PEER DISPLAY NAME');
-}
-await ensureChat(w2);
-await openConversation(w2, 'OWNER DISPLAY NAME');
+// PROVEN, not assumed. This used to open the DM only when no composer was on screen - and a
+// composer says a conversation is open, never WHICH. A1 was left in the campaign CHANNEL by an
+// earlier check, the guard was satisfied, and three MSG-8 markers went there while W2 watched the
+// DM: a delivery loss reported that had never happened. See `ensureConversation`.
+await ensureConversation(a1, PEER_NAME);
+await ensureConversation(w2, OWNER_NAME);
 
 const before = {
   title: await evaluate(w2, 'document.title'),
@@ -70,21 +69,18 @@ const obs = { a1: await report(wA), w2: await report(wB) };
 const native = { logcat: await logcatNotable(await logcatSince(since)) };
 
 const pass = after.count === 1 && obs.a1.clean && obs.w2.clean;
-console.log(
-  JSON.stringify(
-    {
-      check: 'MSG-8',
-      marker: m,
-      verdict: pass ? 'PASS' : 'FAIL',
-      arrivedWhileHiddenMs: arrivedHidden,
-      before,
-      during,
-      after,
-      obs,
-      native,
-    },
-    null,
-    1
-  )
-);
-process.exit(pass ? 0 : 1);
+
+// The dump stays on stdout; the verdict goes to the record. This check exited on `pass` and never
+// recorded, so a run of twelve scripts showed nine verdicts and the three silent ones read as passes.
+console.log(JSON.stringify({ check: 'MSG-8', marker: m, before, during, obs, native }, null, 1));
+
+finish('MSG-8', pass ? 'PASS' : 'FAIL', {
+  marker: m,
+  arrivedWhileHiddenMs: arrivedHidden,
+  copies: after.count,
+  titleChanged: before.title !== during.title,
+  senderClean: obs.a1.clean,
+  receiverClean: obs.w2.clean,
+  senderDirt: dirtOf(obs.a1),
+  receiverDirt: dirtOf(obs.w2),
+});

@@ -27,7 +27,7 @@ import {
   awaitMessage,
   countMessage,
 } from './chat.mjs';
-import { watch, report } from './watch.mjs';
+import { watch, report, dirtOf } from './watch.mjs';
 import { record, mark } from './results.mjs';
 
 const N = Number(process.argv[2] || 1);
@@ -55,7 +55,7 @@ for (let i = 0; i < N; i++) {
 
   await clickBubbleAction(w1, marker, 'Transférer');
   await until(w1, `!!document.querySelector('[role=dialog]')`, 15000);
-  await realClick(w1, 'text=PEER DISPLAY NAME');
+  await realClick(w1, 'text=Claire VAN RUYMBEKE');
   await until(w1, `!document.querySelector('[role=dialog]')`, 15000);
 
   const at = Date.now();
@@ -91,12 +91,11 @@ for (let i = 0; i < N; i++) {
     senderClean: obs1.clean,
     // The sender's swallowed-outbox branches are the ONLY trace a loss leaves on that side, so
     // they are kept per iteration rather than reduced to a boolean.
-    senderErrors: obs1.errors,
+    senderDirt: dirtOf(obs1),
     senderNotable: obs1.notable,
-    senderBadHttp: obs1.badHttp,
     receiverClean: obs2.clean,
     receiverNotable: obs2.notable,
-    receiverErrors: obs2.errors,
+    receiverDirt: dirtOf(obs2),
   });
   console.log(`[fwd] ${i + 1}/${N} ${marker} -> ${arrived === null ? 'LOST' : arrived + 'ms'}`);
   await sleep(1200);

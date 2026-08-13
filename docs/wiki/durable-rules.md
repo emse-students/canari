@@ -411,6 +411,16 @@ carry in the head:
   "already read" about a frame nobody has read - which mutes the one alarm that raises a repair. Mark
   the ROW on a give-up so the walk terminates; never the bytes.
   [history-reconciliation](protocols/history-reconciliation.md#the-ledger-was-one-way-and-the-false-loss-moved-to-the-head-of-the-stream).
+- **A LEDGER MUST BE WRITTEN WHERE THE THING IT RECORDS ACTUALLY HAPPENS, NOT WHERE IT IS CONVENIENT
+  TO ITERATE.** The rule above was then implemented in the right direction and STILL left the defect,
+  because a batch spends in one place and reports in another: `decryptPage` consumes the ratchet for
+  a whole page in a single call, while the marks were written by the loop that afterwards decodes each
+  frame and awaits. Between the two there was a window in which the generation was gone and the ledger
+  did not say so, and a frame arriving live inside it was filed as LOST. **A window is not a rare
+  race - it is a reproducible one**: `msg1 --cold` then `msg1b` produced it every single time, and the
+  proof was a PAIR from the same page, generation 520 called a loss and generation 521 recognised as a
+  duplicate three seconds later, once the loop had reached it. When an operation is batched, ask where
+  its EFFECT lands, not where its results are read: the record belongs next to the effect.
 - **A PROSPECTIVE FIX CANNOT BE VERIFIED BY THE FIRST MEASUREMENT AFTER ITS DEPLOY.** A fix that
   records something as it happens says nothing about what happened before it shipped, so the first
   run still shows the old damage - and that number fits "it works" and "it does nothing" equally

@@ -4,31 +4,64 @@
  * The message must not be lost and must not arrive twice: exactly one copy once the link is back.
  * The interesting failure is the second one - a client that both replays from history and takes
  * the live frame has two writers for one message, and only a duplicate check catches it.
+ *
+ * OFFLINE HERE MEANS AT THE GATEWAY, AND ONLY `cutHard` GETS THERE. A receiver is unreachable when
+ * the server holds no socket for it; `cut()` fails new requests and leaves the established socket
+ * untouched, which was measured on 2026-08-13 as sixty seconds of "offline" with the presence key
+ * refreshed the whole way through. Under that cut this check sent to a receiver that took the
+ * message live and reported a delivery defect that was its own doing, then - once it started
+ * WAITING for the gateway to agree - reported INVALID for ever, because the agreement never came.
+ * `cutHard` closes the socket as a dropped connection would; the gateway's `Drop` guard removes the
+ * key, and the wait below is what turns that into a fact rather than an intention.
  */
-import { client, ensureChat, openConversation, send, countMessage, evaluate } from './chat.mjs';
-import { watch, report } from './watch.mjs';
-import { cut, link } from './net.mjs';
-import { mark } from './results.mjs';
+import { client, ensureConversation, send, countMessage, evaluate } from './chat.mjs';
+import { dirtOf, ignoringOfflineCut, report, watch } from './watch.mjs';
+import { armCut, cutHard, link } from './net.mjs';
+import { awaitOffline, awaitOnline, whoIs } from './presence.mjs';
+import { finish, mark } from './results.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS } from './names.mjs';
 
-const w1 = await client(9224, 'canari-emse.fr');
-const w2 = await client(9223, 'canari-emse.fr');
-await ensureChat(w1);
-await openConversation(w1, 'PEER DISPLAY NAME');
-await ensureChat(w2);
-await openConversation(w2, 'OWNER DISPLAY NAME');
+// PORTS AND NAMES FROM `names.mjs`, never as literals here. Both faults were repaired in `msg2.mjs`
+// and left standing in this file: A1's port had already moved once, and a renamed account makes
+// `openConversation` open NOTHING and the check then reports on whatever was left on screen.
+// `ensureConversation` is used rather than `ensureChat` + `openConversation` for the same reason it
+// exists - a composer proves a conversation is open, never WHICH one.
+const w1 = await client(PORTS.W1, 'canari-emse.fr');
+const w2 = await client(PORTS.W2, 'canari-emse.fr');
+// ARMED FIRST, because the patch has to be in the document before the app opens its socket - so it
+// costs a reload, and a reload has to happen before anything is opened or measured.
+const armed = await armCut(w2);
+await ensureConversation(w1, PEER_NAME);
+await ensureConversation(w2, OWNER_NAME);
 
 const wA = await watch(w1, 'sender');
 const wB = await watch(w2, 'receiver-offline');
 
-const cutInfo = await cut(w2);
-if (!cutInfo.severed) {
-  console.log(JSON.stringify({ check: 'MSG-9', verdict: 'ABORT', why: 'the link never went down' }));
-  await cutInfo.restore();
-  process.exit(2);
-}
+const cutInfo = await cutHard(w2);
 const restore = cutInfo.restore;
-await new Promise((r) => setTimeout(r, 2000));
-const cutState = { ...(await link(w2)), msToSever: cutInfo.msToSever };
+
+// OFFLINE IS A FACT AT THE GATEWAY, NOT A SETTING IN THE BROWSER. The gateway deletes
+// `user:online:{user}:{device}` when the connection task exits and lets it expire 20 s after the
+// last frame either way, so its absence is the only statement of "this device is unreachable" that
+// the thing doing the delivering agrees with.
+const who = await whoIs(w2);
+const offlineAfterMs = who ? await awaitOffline(who.user, who.device) : null;
+if (offlineAfterMs === null) {
+  await restore();
+  // RECORDED, not just printed: a check that abandons in silence is indistinguishable from one that
+  // passed, and this is the abandonment most likely to go unnoticed - the run looks orderly.
+  finish('MSG-9', 'INVALID (the receiver never went offline at the gateway)', {
+    marker: null,
+    socketsClosed: cutInfo.socketsClosed,
+  });
+}
+
+const cutState = {
+  ...(await link(w2)),
+  socketsClosed: cutInfo.socketsClosed,
+  gatewayBackAfterMs: armed.gatewayBackAfterMs,
+  offlineAfterMs,
+};
 
 const m = mark('MSG9');
 const t0 = Date.now();
@@ -40,6 +73,10 @@ const whileOffline = await countMessage(w2, m);
 
 await restore();
 const backAt = Date.now();
+// THE RETURN IS A FACT TOO. Lifting the emulation only permits a reconnect; the app has to make one,
+// and a client that never comes back would otherwise read as a delivery loss - the same substitution
+// this check has already made once in the other direction.
+const backOnlineAfterMs = await awaitOnline(who.user, who.device, 60000);
 let arrived = null;
 for (let i = 0; i < 80; i++) {
   await new Promise((r) => setTimeout(r, 500));
@@ -54,25 +91,29 @@ await new Promise((r) => setTimeout(r, 6000));
 const finalCount = await countMessage(w2, m);
 const senderCount = await countMessage(w1, m);
 
-const obs = { sender: await report(wA), receiver: await report(wB) };
-const pass = whileOffline === 0 && finalCount === 1 && senderCount === 1;
+// The RECEIVER is the client this check cut, so its disconnected fetches and its closed socket are
+// the instrument, not the app. The SENDER was never touched and is judged raw.
+const obs = { sender: await report(wA), receiver: ignoringOfflineCut(await report(wB)) };
+const delivered =
+  whileOffline === 0 && finalCount === 1 && senderCount === 1 && backOnlineAfterMs !== null;
+const pass = delivered && obs.sender.clean && obs.receiver.clean;
 
-console.log(
-  JSON.stringify(
-    {
-      check: 'MSG-9',
-      marker: m,
-      verdict: pass ? 'PASS' : 'FAIL',
-      cutState,
-      whileOffline,
-      msToArriveAfterReconnect: arrived,
-      finalCount,
-      senderCount,
-      totalMs: Date.now() - t0,
-      obs,
-    },
-    null,
-    1
-  )
-);
-process.exit(pass ? 0 : 1);
+// The full observation dump stays on stdout - it is what a reader needs when the verdict is bad -
+// while the verdict itself goes to the record `run.mjs` builds its table from.
+console.log(JSON.stringify({ check: 'MSG-9', marker: m, cutState, obs }, null, 1));
+
+finish('MSG-9', pass ? 'PASS' : delivered ? 'PASS-DIRTY' : 'FAIL', {
+  marker: m,
+  whileOffline,
+  socketsClosed: cutInfo.socketsClosed,
+  offlineAfterMs,
+  backOnlineAfterMs,
+  msToArriveAfterReconnect: arrived,
+  finalCount,
+  senderCount,
+  elapsedMs: Date.now() - t0,
+  senderClean: obs.sender.clean,
+  receiverClean: obs.receiver.clean,
+  senderDirt: dirtOf(obs.sender),
+  receiverDirt: dirtOf(obs.receiver),
+});
