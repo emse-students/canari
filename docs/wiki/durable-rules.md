@@ -395,6 +395,11 @@ page. The four that generalise:
   therefore STRICTER than `connect-src 'self' blob:` for the case that matters, and a directive
   spelt out in full next to it (`img-src * data: blob:`) keeps working, which makes the failure look
   arbitrary instead of systematic.
+- **THE ACCOUNT IS THE UNIT OF AUDIT, NOT THE ZONE - AND A SECOND HOSTNAME CAN NAME THE SAME
+  DESTINATION.** Two names on two different zones pointed at one origin, so gating one gated
+  nothing; the TUNNEL INGRESS table maps hostname to service and is the only listing that shows it,
+  where a DNS listing shows names alone. Before gating anything, check what already calls it by that
+  PUBLIC name - a consumer using the private address is unaffected, one using the hostname breaks.
 - **A CSP REFUSAL IS INDISTINGUISHABLE FROM AN ORDINARY FAILURE, BY DESIGN**: a blocked `fetch` and
   a dead network both throw `TypeError: Failed to fetch`, and a refused `<video>` reports the same
   `MEDIA_ERR_SRC_NOT_SUPPORTED` an unplayable codec does. Only `securitypolicyviolation` names the

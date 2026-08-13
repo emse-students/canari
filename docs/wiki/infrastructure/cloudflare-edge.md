@@ -69,6 +69,33 @@ around it.
 Counting the headers is the other half, and `curl -sI` is enough: **two `content-security-policy`
 lines mean the edge is injecting one.** There should be exactly one.
 
+## Administrative hostnames are gated by Cloudflare Access
+
+Every administrative interface published through a tunnel sits behind **Cloudflare Access**, in front
+of the application's own login. One reusable Access **group** holds the allowlist and every
+application references it, so adding or removing an administrator is one edit in one place rather
+than one per hostname.
+
+**Which hostname serves which product is deliberately not written here** - this repository is public,
+and a gated door still does not need a signpost. The inventory lives in the operator's local agent
+memory alongside the API credentials.
+
+Two things learned doing it, both general:
+
+- **THE ACCOUNT IS THE UNIT OF AUDIT, NOT THE ZONE.** This account carries three zones and three
+  tunnels. Auditing the one zone that prompted the question left an administrative interface fully
+  open on another, and the DNS listing of the first zone could not have revealed it.
+- **A SECOND HOSTNAME CAN NAME THE SAME DESTINATION, AND GATING ONE GATES NOTHING.** Two hostnames
+  on two different zones resolved to the identical `https://10.0.0.2:8006` origin. The **tunnel
+  ingress table is the authoritative list of what is published** - `GET
+  /accounts/{account}/cfd_tunnel/{id}/configurations` - because it maps hostname to *service*, which
+  is what makes the duplicate visible. A DNS listing shows names, not destinations, so it cannot.
+
+Before gating anything, check what already calls it **by that public name**: an internal consumer
+reaching a service by its private address is unaffected, one reaching it by its public hostname
+breaks the moment Access is applied. `docker inspect <container> --format '{{range .Config.Env}}...'`
+answers it, and the answer decides whether the change is safe rather than being assumed.
+
 ## Settings that are deliberate
 
 Read the live values with `GET /zones/{zone}/settings`; these are the ones with a reason attached.

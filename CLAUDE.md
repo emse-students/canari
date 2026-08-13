@@ -151,7 +151,12 @@ make.
 
 **The order the user set governs what comes next:** re-run the cross-client campaign from the START
 (post-setup) - the scripts exist, and it exercises everything. **Commit AND push are authorised so
-prod picks changes up: prod IS the test server** until a `dev.canari-emse.fr` exists.
+prod picks changes up: prod IS the test server.** `dev.canari-emse.fr` EXISTS as a hostname - a
+proxied CNAME to the same tunnel - but it is NOT a second environment: measured 2026-08-13 it serves
+the same title and the same `/api/version` payload as the apex, so pointing the campaign at it would
+measure production under another name. **The user will define what to do with it AFTER the campaign
+("on y revient après avoir fini la campagne de test, je vais t'expliquer ce qu'on va faire") - do not
+design a staging environment before that conversation.**
 
 **Standing architectural directives from the user, verbatim:** *"le probleme doit etre
 architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout soit
