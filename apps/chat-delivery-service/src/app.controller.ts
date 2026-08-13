@@ -13,6 +13,7 @@ import { initializeApp, getApps, cert, type ServiceAccount } from 'firebase-admi
 import {
   RETENTION_WINDOW_MS,
   STALE_PENDING_INVITATION_MS,
+  QUEUE_BYTES_WARN_PER_DEVICE,
   QUEUE_DEPTH_WARN_PER_DEVICE,
   QUEUE_DEPTH_REPORT_TOP_N,
 } from './retention.constants';
@@ -374,22 +375,34 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // Ordered by BYTES, not by row count. A queue is undeliverable when it is too big to cross the
+    // link, and rows are a poor proxy for that: on 2026-08-13 a phone sat at 976 frames - under the
+    // row threshold, so this report stayed at LOG level for weeks - carrying 36 MB, because a
+    // quarter of them held media at up to 89 kB each. Ranking by depth put a harmless 189-frame
+    // device above it. The predicate that named the retransmission storm could not name this.
     const deepest = await this.queuedMessageRepo
       .createQueryBuilder('q')
       .select('q.deviceId', 'deviceId')
       .addSelect('COUNT(*)', 'depth')
+      .addSelect('COALESCE(SUM(LENGTH(q.proto)), 0)', 'bytes')
       .addSelect('MIN(q.createdAt)', 'oldest')
       .groupBy('q.deviceId')
-      .orderBy('COUNT(*)', 'DESC')
+      .orderBy('COALESCE(SUM(LENGTH(q.proto)), 0)', 'DESC')
       .limit(QUEUE_DEPTH_REPORT_TOP_N)
-      .getRawMany<{ deviceId: string; depth: string; oldest: Date }>();
+      .getRawMany<{ deviceId: string; depth: string; bytes: string; oldest: Date }>();
 
-    const summary = deepest.map((r) => `${r.deviceId}=${r.depth}`).join(' ');
+    const mb = (bytes: string) => `${(Number(bytes) / 1024 / 1024).toFixed(1)}MB`;
+    const summary = deepest.map((r) => `${r.deviceId}=${r.depth}/${mb(r.bytes)}`).join(' ');
     this.logger.log(
-      `[CRON] reportQueueDepth: ${total} frame(s) queued, deepest ${QUEUE_DEPTH_REPORT_TOP_N}: ${summary}`
+      `[CRON] reportQueueDepth: ${total} frame(s) queued, heaviest ${QUEUE_DEPTH_REPORT_TOP_N}: ${summary}`
     );
 
-    const runaway = deepest.filter((r) => Number(r.depth) >= QUEUE_DEPTH_WARN_PER_DEVICE);
+    // Either axis alone misses a real offender, so the WARN fires on either.
+    const runaway = deepest.filter(
+      (r) =>
+        Number(r.depth) >= QUEUE_DEPTH_WARN_PER_DEVICE ||
+        Number(r.bytes) >= QUEUE_BYTES_WARN_PER_DEVICE
+    );
     if (runaway.length === 0) return;
 
     // One extra query rather than one per offender: the WARN list is capped at TOP_N, so this is
@@ -403,10 +416,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     for (const r of runaway) {
       const seen = lastSeen.get(r.deviceId);
       this.logger.warn(
-        `[CRON] reportQueueDepth: device=${r.deviceId} depth=${r.depth} ` +
+        `[CRON] reportQueueDepth: device=${r.deviceId} depth=${r.depth} size=${mb(r.bytes)} ` +
           `oldest=${new Date(r.oldest).toISOString()} ` +
           `lastKeyPackage=${seen ? seen.toISOString() : 'none'} ` +
-          `(>= ${QUEUE_DEPTH_WARN_PER_DEVICE}: a live device is falling behind, a stale one is debris)`
+          `(>= ${QUEUE_DEPTH_WARN_PER_DEVICE} frames or ${QUEUE_BYTES_WARN_PER_DEVICE / 1024 / 1024}MB: ` +
+          `a live device is falling behind, a stale one is debris)`
       );
     }
   }

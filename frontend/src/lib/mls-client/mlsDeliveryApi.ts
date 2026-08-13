@@ -105,7 +105,7 @@ export class MlsDeliveryApi {
 
     const pageTimeoutMs = opts?.pageTimeoutMs ?? 10_000;
     const all: unknown[] = [];
-    const pageLimit = 500;
+    let pageLimit = 500;
     let afterCreatedAt: string | undefined;
 
     while (true) {
@@ -123,6 +123,23 @@ export class MlsDeliveryApi {
         });
         if (!res.ok) break;
         batch = (await res.json()) as Array<{ createdAt?: string }>;
+      } catch (e) {
+        // A page that does not arrive is a page ASKED FOR TOO BIG, until proven otherwise. Measured
+        // on production: a device whose frames carried media needed 12 MB for 500 rows, timed out on
+        // the deadline above having received nothing, ACKed nothing, and met the same 12 MB on every
+        // later attempt - a closed loop, and the queue only grew. The server now bounds a page in
+        // bytes, but the client must not depend on the server being new: halving is what makes an
+        // OLD server survivable too, and what covers a link too slow for any fixed budget.
+        //
+        // Halving, never waiting: the retry changes the REQUEST, so it terminates on a proof - a
+        // page of one row is the smallest question that can be asked, and failing that is a genuine
+        // transport failure rather than an oversized answer. Nine steps at most, no clock anywhere.
+        if (pageLimit > 1) {
+          pageLimit = Math.max(1, Math.floor(pageLimit / 2));
+          console.warn(`[PENDING] page did not arrive - retrying with limit=${pageLimit}`);
+          continue;
+        }
+        throw e;
       } finally {
         clearTimeout(tid);
       }

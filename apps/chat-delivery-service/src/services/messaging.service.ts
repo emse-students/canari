@@ -35,7 +35,12 @@ import {
   sanitizeStringIdList,
   assertCallerOwnsUserId,
 } from '../utils/sanitize';
-import { HISTORY_STREAM_MAXLEN, RETENTION_WINDOW_MS } from '../retention.constants';
+import {
+  HISTORY_STREAM_MAXLEN,
+  PENDING_FETCH_CHUNK_ROWS,
+  PENDING_PAGE_MAX_BYTES,
+  RETENTION_WINDOW_MS,
+} from '../retention.constants';
 
 export interface SendMessageBody {
   proto?: string;
@@ -1945,18 +1950,57 @@ export class MessagingService {
       `[MSG_FETCH][${traceId}] START user=${safeUserId} device=${safeDeviceId} limit=${safeLimit} after=${after ?? 'none'}`
     );
 
-    const qb = this.queuedMessageRepo
-      .createQueryBuilder('q')
-      .where('q.recipientId = :userId', { userId: safeUserId })
-      .andWhere('q.deviceId = :deviceId', { deviceId: safeDeviceId })
-      .orderBy('q.createdAt', 'ASC')
-      .take(safeLimit);
+    // Fill the page up to a BYTE budget, reading the table in small chunks.
+    //
+    // The row limit alone cannot bound a transfer: for a device whose frames carry media, 500 rows
+    // meant 12 MB, and the client abandoned the request on its own per-page deadline having received
+    // nothing - so nothing was ACKed, the queue never shrank, and every later attempt met the same
+    // 12 MB. The chunked read is what keeps the SERVICE bounded too; see PENDING_PAGE_MAX_BYTES and
+    // PENDING_FETCH_CHUNK_ROWS for why each number is what it is.
+    const messages: QueuedMessage[] = [];
+    let pageBytes = 0;
+    let offset = 0;
+    let truncatedByBytes = false;
 
-    if (after?.trim()) {
-      qb.andWhere('q.createdAt > :after', { after: new Date(after) });
+    while (messages.length < safeLimit) {
+      const chunkRows = Math.min(PENDING_FETCH_CHUNK_ROWS, safeLimit - messages.length);
+      const qb = this.queuedMessageRepo
+        .createQueryBuilder('q')
+        .where('q.recipientId = :userId', { userId: safeUserId })
+        .andWhere('q.deviceId = :deviceId', { deviceId: safeDeviceId })
+        .orderBy('q.createdAt', 'ASC')
+        .skip(offset)
+        .take(chunkRows);
+
+      if (after?.trim()) {
+        qb.andWhere('q.createdAt > :after', { after: new Date(after) });
+      }
+
+      const chunk = await qb.getMany();
+      if (chunk.length === 0) break;
+      offset += chunk.length;
+
+      for (const row of chunk) {
+        const size = row.proto?.length ?? 0;
+        // ALWAYS at least one row. A frame bigger than the whole budget must still be deliverable,
+        // or it blocks its device's queue permanently - which is the failure being fixed, not a
+        // smaller version of it.
+        if (messages.length > 0 && pageBytes + size > PENDING_PAGE_MAX_BYTES) {
+          truncatedByBytes = true;
+          break;
+        }
+        messages.push(row);
+        pageBytes += size;
+      }
+
+      if (truncatedByBytes || chunk.length < chunkRows) break;
     }
 
-    const messages = await qb.getMany();
+    if (truncatedByBytes) {
+      this.logger.log(
+        `[MSG_FETCH][${traceId}] page capped by size at ${messages.length} row(s), ${pageBytes} byte(s) - the client pages again from the last createdAt`
+      );
+    }
 
     // Drop messages addressed to a group absent from dm_groups: orphans that can never
     // be decrypted or ACKed by the client would otherwise trigger an infinite recovery

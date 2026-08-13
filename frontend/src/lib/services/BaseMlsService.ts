@@ -594,7 +594,17 @@ export abstract class BaseMlsService implements IMlsService {
       // Partial progress is still progress, and saying so is the difference between "the pull
       // failed" and "the pull failed after draining 4 pages" - the second is what proves the
       // backlog is shrinking across attempts.
-      console.error(`[PENDING] Pending fetch failed after ${fetched} messages:`, e);
+      //
+      // NAME THE CONSEQUENCE, not just the failure. A transport failure is not an answer: reaching
+      // here means this device's offline backlog is still on the server and nothing here will go
+      // back for it - the next reconnect's pull is what covers it. Read as "fetch failed", the line
+      // sat in production logs beside a queue that had not shrunk in weeks and nobody connected the
+      // two. `pullPendingMessagesJson` has already halved its page size down to a single row before
+      // giving up, so this is a genuine transport failure rather than an answer too big to arrive.
+      console.error(
+        `[PENDING] Pending fetch failed after ${fetched} message(s) - the backlog for ${this.userId}:${this.deviceId} is UNDRAINED and stays queued until the next reconnect:`,
+        e
+      );
     }
     await this.waitForMessageQueueIdle();
     // Only now is the answer complete: the rows were enqueued, not handled, so what the handler

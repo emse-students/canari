@@ -53,6 +53,50 @@ export const QUEUE_DEPTH_WARN_PER_DEVICE = 2000;
 export const QUEUE_DEPTH_REPORT_TOP_N = 5;
 
 /**
+ * Per-device queue SIZE above which the hourly report warns, independently of the row count.
+ *
+ * The row threshold above could not have named the incident of 2026-08-13, and that is the whole
+ * reason this exists. A phone sat at 976 undelivered frames - comfortably under 2000, so the report
+ * stayed at LOG level for weeks - while those frames weighed 36 MB, because a quarter of them
+ * carried media at up to 89 kB each. The queue was permanently undeliverable and the report said
+ * nothing was wrong. A predicate calibrated on a retransmission storm counts rows; a backlog that
+ * cannot cross a mobile link is measured in bytes, and one axis cannot answer for the other.
+ *
+ * 32 MB is deliberately far above a healthy backlog (the same fleet's next-deepest device held
+ * 189 frames, well under a megabyte) and below the point where a device is beyond catching up.
+ */
+export const QUEUE_BYTES_WARN_PER_DEVICE = 32 * 1024 * 1024;
+
+/**
+ * Maximum bytes of `proto` one page of the pending queue may carry.
+ *
+ * A page is a UNIT OF TRANSFER, so it has to be bounded in the unit that decides how long the
+ * transfer takes. Bounding it in rows alone is what broke offline catch-up on 2026-08-13: the client
+ * asked for 500 rows, which for that device meant 12 MB, and it aborted the request on its own 10 s
+ * per-page deadline after receiving nothing. Nothing was ACKed, so the queue never shrank, so the
+ * next attempt faced the same 12 MB - a closed loop no amount of retrying escapes. WP-PENDING-1
+ * bounded the DEADLINE per page and left the page itself unbounded, which only moved the problem.
+ *
+ * 1 MB crosses even a poor mobile link well inside that deadline, and the cost of choosing it too
+ * small is only more round trips - each of which now makes durable progress, because every page
+ * that lands is ACKed and deleted.
+ *
+ * A page always carries AT LEAST ONE row, whatever its size: a single frame larger than the budget
+ * must still be deliverable, or it blocks its device's queue for ever.
+ */
+export const PENDING_PAGE_MAX_BYTES = 1024 * 1024;
+
+/**
+ * How many rows the service reads from the database at a time while filling one page.
+ *
+ * Bounds the SERVICE's memory, which the page budget alone does not: reading the client's full row
+ * limit and then trimming to 1 MB would have loaded up to 500 x 89 kB = 44 MB per request just to
+ * discard most of it. Reading in small chunks and stopping at the budget keeps the working set to
+ * this many frames, and in the common case (small frames) the first chunk already fills the page.
+ */
+export const PENDING_FETCH_CHUNK_ROWS = 50;
+
+/**
  * Entries kept per group in the shared history stream `history:{groupId}` (`XADD ... MAXLEN ~`).
  *
  * This is the only SHARED copy of a conversation: the per-device queue is deleted on ACK, and MLS

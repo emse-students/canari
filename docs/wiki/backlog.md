@@ -135,6 +135,46 @@ dead devices alive for ever, because every unrelated write refreshed it. Before 
 timestamp, establish which column is written *by the connection* - and if none is, the merge needs
 that column first. See [durable-rules](durable-rules.md).
 
+**Deleting a device must also DISCONNECT it** (asked 2026-08-13). Today the two panels let a device
+be removed from one while it is still listed as connected in the other, which is the merge's whole
+premise showing through: one object, one state. A delete that leaves a live socket open is a delete
+the user has to make twice, and the second half is invisible from the panel they used.
+
+**Establish what a delete is supposed to reclaim before designing the panel.** Measured 2026-08-13 on
+an abandoned device of a real account: 1383 undelivered rows in `queued_message`, still growing that
+day because the other members kept addressing it. So the questions the merge must answer are whether
+deleting purges that queue, and - separately, since nothing forces a user to delete anything - what
+bounds the backlog of a device that simply never returns.
+
+---
+
+## Protocol and delivery
+
+### P3 - the pending pull's per-page deadline is a total, and should be a progress deadline
+
+`BaseMlsService.fetchPendingMessages` gives each page a 10 s `AbortController` (`PAGE_TIMEOUT`), and
+10 s is a number nobody can justify: it measures the TOTAL time a page takes, so it cannot tell a
+transfer that is arriving slowly from one that has stopped arriving at all. That is the wrong
+question - what a caller actually wants to know is whether anything is still coming.
+
+**The right form is a progress deadline: abandon only when NOTHING has arrived for N seconds.** It
+is honest at any page size and any link speed, it needs no calibration, and it is the shape the
+standing directive asks for - deterministic and explicable rather than a tuned constant.
+
+Why it was not done on 2026-08-13, stated plainly as an accepted imperfection rather than a settled
+detail: it requires reading the response body as a STREAM (`res.body.getReader()`, resetting the
+timer on each chunk) instead of `await res.json()`, and the two fixes that shipped that day
+already removed the failure the deadline was masking - the server's byte-bounded page
+(`PENDING_PAGE_MAX_BYTES`), and the client halving its request when a page does not arrive. With pages
+bounded at a megabyte, the deadline is a hang-guard and nothing more.
+
+**So this is not urgent, and it is not closed either.** Whoever picks it up should also decide
+whether the halving ladder still earns its place once progress is measured directly: they answer the
+same question by different means, and keeping both may be one mechanism too many. The reasoning
+behind the fix that shipped is in
+[history-reconciliation](protocols/history-reconciliation.md) and the constants carry their own
+justification in `apps/chat-delivery-service/src/retention.constants.ts`.
+
 ---
 
 ## Storage and retention
