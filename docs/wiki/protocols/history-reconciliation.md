@@ -259,6 +259,28 @@ On connect, in this order - the order is load-bearing:
 4. **Then, silently, in the background:** send the elected online peer a compact **state key** for
    the requester's window and ask whether it matches.
 
+> **STEP 3 BINDS EVERY TRIGGER AND BOTH SIDES, which is not how it was first built** (corrected
+> 2026-08-13). The order above was honoured only by the connection path, because that is where the
+> ordering lived - `initializeConnection`, step 5, after its own `waitForMessageQueueIdle`. The three
+> reactive triggers fire from wherever they are raised, and two of them are raised *inside the drain*,
+> so they computed a state key over a store still being written. Measured on production the same day,
+> on a browser and on the phone: `[HISTORY_STATE] Sent` and `[HISTORY_RECONCILE] asked` both landed
+> between a `Drain start` and its `Drain complete`, while the connection path - which does wait - had
+> nothing to ask for at all.
+>
+> **And it binds the ANSWER as much as the ask.** A device describing its store mid-drain is not a
+> reliable source: it can answer *same state* while the frames that would change that answer are
+> still queued, or serve a bundle short of exactly what it was about to apply. Either outcome ends
+> the exchange with the two devices still apart, and the asker has spent its coalescing window on it.
+>
+> Two shapes hold it together, and both are load-bearing. The barrier sits in `reconcileGroup` - the
+> one door every trigger passes through - **after** the coalescing reservation, so a burst of forty
+> failing frames parks one waiter and not forty. On the answering side it is `answerAfterMailboxDrained`,
+> which **defers rather than awaits**: every responder leg runs inside the message pipeline, so
+> awaiting the queue from there is the drain waiting on itself. The frame is acknowledged once the
+> answer is scheduled - a real weakening, accepted because nothing in this exchange is durable by
+> design and the asker re-asks on its next edge.
+
 The state key covers **the id set and the mutation state** - not ids alone. Two devices agreeing on
 which messages exist can still disagree on which are deleted, and both would call themselves
 complete. Ids and mutation state only, never content: a deleted message keeps its id and changes its

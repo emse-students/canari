@@ -99,6 +99,19 @@ A kill, a reboot, a radio cycle and an `install -r` **all re-lock the PIN**. A p
 discovered by one check belongs to every check sharing the transition, so it goes in the shared
 setup, not in the check that found it.
 
+**And the rule applies to the SETUP ITSELF, where it is easiest to miss.** A repair is a transition,
+so one repair can produce exactly the state another repair exists to fix - which makes a fixed
+sequence of one-shot repairs wrong however well each one is written. `run.mjs`'s preflight repaired
+`unknown` (a client on a route where the PIN gate never mounts) and then `LOCKED`, once each in that
+order; unlocking leaves the client wherever it already was, so a freshly launched phone went
+`LOCKED -> unlock -> unknown on /posts` and the preflight refused a client that was one step from
+ready and healthy throughout. The repairs now **iterate** to a fixed point, bounded on PASSES.
+
+The bound is not the interesting half - the report is. An exhausted bound prints the TRAIL, because
+`LOCKED -> unknown -> LOCKED` (a client re-locking on every navigation) and `unknown -> unknown` (one
+that never moves) end in states whose last value cannot tell them apart, and they want opposite
+fixes.
+
 ### 8. When a check's BREAK is not invertible, the teardown restores a PROPERTY, never a snapshot
 
 Rewinding a sender cannot be undone by restoring any state: while the fork was live, the peer

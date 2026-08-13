@@ -8,6 +8,7 @@
  */
 import type { Mock } from 'vitest';
 import {
+  answerAfterMailboxDrained,
   reconcileGroup,
   reconcileAllGroups,
   retryDeferredReconciliations,
@@ -27,15 +28,25 @@ import {
 const GROUP = 'g1';
 const OTHER = 'g2';
 
-/** An MLS service whose election answers `outcome`, or throws when it is an Error. */
-function service(outcome: { noPeerOnline?: boolean } | Error = {}) {
+/**
+ * An MLS service whose election answers `outcome`, or throws when it is an Error.
+ *
+ * `waitForMessageQueueIdle` resolves immediately unless a test hands it a gate: no case below is
+ * about the mailbox, and one that is opens the gate itself.
+ */
+function service(
+  outcome: { noPeerOnline?: boolean } | Error = {},
+  waitForMessageQueueIdle = vi.fn().mockResolvedValue(undefined)
+) {
   return {
     sendHistoryRequest: vi.fn().mockImplementation(async () => {
       if (outcome instanceof Error) throw outcome;
       return outcome;
     }),
+    waitForMessageQueueIdle,
   } as unknown as Parameters<typeof reconcileGroup>[0] & {
     sendHistoryRequest: ReturnType<typeof vi.fn>;
+    waitForMessageQueueIdle: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -201,6 +212,82 @@ describe('reconcileGroup', () => {
       expect(log).toHaveBeenCalledWith(expect.stringContaining('probe failed'));
       expect(await reconcileGroup(mls, GROUP, log, now + 1)).toBe(true);
     });
+  });
+});
+
+describe('the mailbox barrier', () => {
+  /** A `waitForMessageQueueIdle` that stays pending until the test opens it. */
+  function gate() {
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => (open = resolve));
+    return { wait: vi.fn().mockReturnValue(opened), open };
+  }
+
+  /** Drains the microtask queue, which is all these cases ever wait on. */
+  const flush = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  it('elects nobody and probes nobody until the inbound queue is idle', async () => {
+    const gateway = gate();
+    const mls = service({}, gateway.wait);
+
+    const run = reconcileGroup(mls, GROUP, log);
+    await flush();
+    // The whole point: the election is a round trip that commits a peer to wait for our probe, and
+    // the probe states what we hold. Neither may leave over a store the drain is still writing.
+    expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+
+    gateway.open();
+    await expect(run).resolves.toBe(true);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
+
+  it('coalesces a burst raised DURING the drain into one ask - the reservation precedes the barrier', async () => {
+    const gateway = gate();
+    const mls = service({}, gateway.wait);
+
+    // Forty failing frames of one group raise forty edges. Reserving the window only after the
+    // barrier would park all of them, and then ask forty times when the queue went idle.
+    const runs = [
+      reconcileGroup(mls, GROUP, log),
+      reconcileGroup(mls, GROUP, log),
+      reconcileGroup(mls, GROUP, log),
+    ];
+    gateway.open();
+
+    expect(await Promise.all(runs)).toEqual([true, false, false]);
+    expect(mls.waitForMessageQueueIdle).toHaveBeenCalledTimes(1);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds an ANSWER until the queue is idle, and never blocks the drain it was raised from', async () => {
+    const gateway = gate();
+    const answer = vi.fn().mockResolvedValue(undefined);
+
+    // Returns void, synchronously: every responder leg runs inside the pipeline, so awaiting the
+    // queue from there would be the drain waiting on itself.
+    expect(
+      answerAfterMailboxDrained({ waitForMessageQueueIdle: gateway.wait } as never, answer)
+    ).toBeUndefined();
+    await flush();
+    expect(answer).not.toHaveBeenCalled();
+
+    gateway.open();
+    await flush();
+    expect(answer).toHaveBeenCalledTimes(1);
+  });
+
+  it('still answers when the barrier itself rejects - a broken queue must not silence a peer', async () => {
+    const answer = vi.fn().mockResolvedValue(undefined);
+    answerAfterMailboxDrained(
+      { waitForMessageQueueIdle: vi.fn().mockRejectedValue(new Error('scheduler gone')) } as never,
+      answer
+    );
+    await flush();
+    expect(answer).toHaveBeenCalledTimes(1);
   });
 });
 

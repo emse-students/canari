@@ -32,6 +32,9 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     getLocalGroups: vi.fn().mockReturnValue([]),
     sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
     sendHistoryRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }),
+    // A reconciliation waits for this device's own inbound queue before asking anybody anything;
+    // no case here is about the mailbox, so it is already idle.
+    waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     // Default = external join unavailable, so tests exercise the welcome_request fallback.
     externalJoin: vi.fn().mockResolvedValue(false),
     forgetGroup: vi.fn(),

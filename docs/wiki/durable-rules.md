@@ -344,6 +344,23 @@ carry in the head:
 - A cause is not a label: `pending-offline` meant both "the request never left" and "it left and
   nobody answered", and the string named the first, so a silent peer was reported as an empty room.
   Two causes under one label is a WRONG answer, not a vague one - it points the user at the wrong fix.
+- **READ YOUR OWN MAIL BEFORE ASKING ANYONE FOR NEWS - AND BEFORE ANSWERING ANYBODY.** A device may
+  neither ASK for history nor ANSWER a request for it while its own inbound queue is still draining.
+  Asking early compares against a store it is in the middle of completing, so it repairs a
+  difference it was about to close by itself; answering early makes it an unreliable source - it can
+  claim agreement it does not have yet, or send a bundle short of the frames it is about to apply,
+  and either ends the exchange with the two devices still apart and the asker's coalescing window
+  spent. **The barrier belongs at the ONE door every trigger comes through** (`reconcileGroup`), not
+  at the call sites: it sat at the connection edge alone and covered one of four triggers, while the
+  three reactive ones - an unreadable frame, a peer returning, a replay that gave up - fired from
+  inside the very drain they should have waited for (measured on prod 2026-08-13: `asked` logged
+  between a `Drain start` and its `Drain complete`, on a browser and on the phone). Two shapes it
+  must keep: **reserve the coalescing window BEFORE the barrier**, or a burst of forty edges parks
+  forty waiters and asks forty times when the queue empties; and **defer, never await, on the
+  answering side**, because every responder leg runs inside the pipeline and awaiting the queue from
+  there is the drain waiting on itself. It is a BARRIER (`waitUntilIdle` resolves on the drain loop
+  ending) and never a delay.
+  [history-reconciliation](protocols/history-reconciliation.md).
 - **FOUR INVARIANTS OF THE HISTORY EXCHANGE THAT LOOK LIKE COMPLICATIONS AND ARE NOT.** Each one was
   paid for; the recurring temptation is to "simplify" them back.
   [history-reconciliation](protocols/history-reconciliation.md) carries the reasoning.

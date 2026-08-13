@@ -15,6 +15,7 @@ import { digestIdentity, noteProbeReceived } from '$lib/utils/chat/historyDigest
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { mergeHistoryFloor, parseHistorySince } from '$lib/utils/chat/historyWindow';
 import { parseHistoryStateKey } from '$lib/utils/chat/historyStateKey';
+import { answerAfterMailboxDrained } from '$lib/utils/chat/historyReconcile';
 import {
   readHistoryEntries,
   sendHistoryBundleForIds,
@@ -195,8 +196,13 @@ export async function handleSystemEvent(
     log(
       `[HISTORY_STATE] ${senderNorm} holds something different for ${convoKey.slice(0, 8)}… - describing our store`
     );
-    await sendHistoryDigest(convoKey, me, { storage, deviceKeyB64, mlsService, log }).catch((e) =>
-      log(`[HISTORY_DIGEST] Could not answer ${senderNorm}: ${String(e).slice(0, 120)}`)
+    // OUR MAILBOX FIRST: a digest computed while this device is still applying its own queue
+    // describes a store it is in the middle of completing, so the asker diffs against a snapshot
+    // that was already wrong when it was taken.
+    answerAfterMailboxDrained(mlsService, () =>
+      sendHistoryDigest(convoKey, me, { storage, deviceKeyB64, mlsService, log }).catch((e) =>
+        log(`[HISTORY_DIGEST] Could not answer ${senderNorm}: ${String(e).slice(0, 120)}`)
+      )
     );
     return true;
   }
@@ -280,36 +286,42 @@ export async function handleSystemEvent(
           )
         : [];
 
-    let wanted = ids;
-    if (wanted.length === 0 && prefixes.length > 0) {
-      // A range diff resolves to a slice of the id space, never to a message, so the asker cannot
-      // name what it wants: it names the slice and we send everything we hold in it. The receiver
-      // dedupes by id, so over-sending costs bandwidth and nothing else.
-      const entries = await readHistoryEntries(convoKey, deps);
-      if (entries === null) {
-        log(
-          `[HISTORY_PULL] Store unreadable - cannot answer ${senderNorm} for ${convoKey.slice(0, 8)}…`
-        );
-        return true;
+    // EVERYTHING THAT READS THE STORE WAITS FOR OUR MAILBOX - the selection as much as the send. A
+    // prefix slice resolved mid-drain names the messages we hold SO FAR, so the bundle is short of
+    // exactly the frames we were about to apply, and the puller is told that is all there is.
+    // Parsing above is pure and stays inline; only what depends on the store is deferred.
+    answerAfterMailboxDrained(mlsService, async () => {
+      let wanted = ids;
+      if (wanted.length === 0 && prefixes.length > 0) {
+        // A range diff resolves to a slice of the id space, never to a message, so the asker cannot
+        // name what it wants: it names the slice and we send everything we hold in it. The receiver
+        // dedupes by id, so over-sending costs bandwidth and nothing else.
+        const entries = await readHistoryEntries(convoKey, deps);
+        if (entries === null) {
+          log(
+            `[HISTORY_PULL] Store unreadable - cannot answer ${senderNorm} for ${convoKey.slice(0, 8)}…`
+          );
+          return;
+        }
+        wanted = selectEntryIdsForPrefixes(entries, prefixes, depth);
       }
-      wanted = selectEntryIdsForPrefixes(entries, prefixes, depth);
-    }
-    if (wanted.length === 0) {
-      log(
-        `[HISTORY_PULL] ${senderNorm} asked for nothing usable in ${convoKey.slice(0, 8)}… - ignored`
-      );
-      return true;
-    }
+      if (wanted.length === 0) {
+        log(
+          `[HISTORY_PULL] ${senderNorm} asked for nothing usable in ${convoKey.slice(0, 8)}… - ignored`
+        );
+        return;
+      }
 
-    log(
-      `[HISTORY_PULL] ${senderNorm} wants ${wanted.length} message(s) from ${convoKey.slice(0, 8)}…`
-    );
-    // The puller's own window, which is NOT the one we would have used: it may retain five years
-    // where we keep ninety days, or the reverse. Only the asker may set the bound on its answer.
-    await sendHistoryBundleForIds(convoKey, wanted, deps, {
-      to: puller,
-      since: parseHistorySince(data?.since),
-    }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
+      log(
+        `[HISTORY_PULL] ${senderNorm} wants ${wanted.length} message(s) from ${convoKey.slice(0, 8)}…`
+      );
+      // The puller's own window, which is NOT the one we would have used: it may retain five years
+      // where we keep ninety days, or the reverse. Only the asker may set the bound on its answer.
+      await sendHistoryBundleForIds(convoKey, wanted, deps, {
+        to: puller,
+        since: parseHistorySince(data?.since),
+      }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
+    });
     return true;
   }
 

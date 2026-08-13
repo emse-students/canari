@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Send, Paperclip, X, FileText, UploadCloud, Loader2, ChartColumn } from '@lucide/svelte';
+  import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import { untrack, tick, onMount, onDestroy } from 'svelte';
   import { slide, fade, scale } from 'svelte/transition';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -374,6 +375,25 @@
   });
 </script>
 
+<!--
+  The icon-and-name tile shown for an attachment with no usable preview - a non-image, non-PDF file,
+  or a PDF whose first page has not rendered (yet, or at all). Declared once and rendered from both
+  branches: it is the PdfThumbnail fallback as well as the plain default, and the two drifting apart
+  is exactly how one of them ends up looking like a different product.
+-->
+{#snippet filePlaceholder(name: string)}
+  <div
+    class="w-full h-full flex flex-col items-center justify-center gap-1.5 px-2 text-text-muted bg-black/5 dark:bg-white/5"
+  >
+    <FileText size={20} strokeWidth={1.5} />
+    <span
+      class="text-[0.6rem] sm:text-[0.65rem] font-medium text-center leading-tight line-clamp-2 px-1 break-all"
+    >
+      {name}
+    </span>
+  </div>
+{/snippet}
+
 <!-- Footer Container -->
 <footer class="chat-composer-footer" bind:this={composerFooter}>
   <!--
@@ -476,24 +496,24 @@
                   <img src={previewUrls[key]} alt={file.name} class="w-full h-full object-cover" />
                 </button>
               {:else if isPdfFile(file) && previewUrls[key]}
-                <div class="w-full h-full bg-white/50 dark:bg-black/50">
-                  <embed
-                    src={previewUrls[key]}
-                    type="application/pdf"
-                    class="w-full h-full pointer-events-none"
-                  />
-                </div>
-              {:else}
-                <div
-                  class="w-full h-full flex flex-col items-center justify-center gap-1.5 px-2 text-text-muted bg-black/5 dark:bg-white/5"
+                <!--
+                  RASTERISED BY pdf.js, never embedded. This was an `<embed type="application/pdf">`
+                  handing the blob to the browser's native plugin, which the site's own CSP forbids
+                  (`object-src 'none'`) - so it was blocked for every user, on every browser, and the
+                  preview it was supposed to draw was an empty white box. It is the one place that
+                  was never migrated to the canvas path every other PDF surface uses.
+                -->
+                <PdfThumbnail
+                  url={previewUrls[key]}
+                  maxWidth={160}
+                  imgClass="w-full h-full object-cover object-top"
                 >
-                  <FileText size={20} strokeWidth={1.5} />
-                  <span
-                    class="text-[0.6rem] sm:text-[0.65rem] font-medium text-center leading-tight line-clamp-2 px-1 break-all"
-                  >
-                    {file.name}
-                  </span>
-                </div>
+                  {#snippet fallback()}
+                    {@render filePlaceholder(file.name)}
+                  {/snippet}
+                </PdfThumbnail>
+              {:else}
+                {@render filePlaceholder(file.name)}
               {/if}
 
               <!-- Gradient overlay and file name. -->

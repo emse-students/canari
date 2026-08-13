@@ -220,10 +220,15 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   //
   // WAIT FOR THE DRAIN, DO NOT SLEEP THROUGH IT. There used to be `await new Promise(r =>
   // setTimeout(r, 500))` here, described as "a small delay to let the first batch of messages
-  // arrive" - a guess that is too long on a fast network and far too short on a slow one, and one
-  // that decides how much of its own inbound queue the device has processed before it starts
-  // comparing itself against its peers. `waitForMessageQueueIdle` is the same intent stated as a
-  // fact: the queue is empty, whenever that happens to be.
+  // arrive" - a guess that is too long on a fast network and far too short on a slow one.
+  // `waitForMessageQueueIdle` is the same intent stated as a fact: the queue is empty, whenever
+  // that happens to be.
+  //
+  // IT NO LONGER CARRIES THE RECONCILIATION GUARANTEE, and that is the point. Ordering the mailbox
+  // ahead of the comparison here protected exactly ONE of the four triggers - the three reactive
+  // ones fire from wherever they are raised - so the barrier now lives inside `reconcileGroup`,
+  // where every trigger present and future must pass. What is left of this line is what it also
+  // always did: the device invitations below are read from a store the drain is still writing.
   await mlsService.waitForMessageQueueIdle().catch(() => {});
 
   processDeviceInvitationsLocally().catch(() => {});

@@ -25,6 +25,7 @@ import { m } from '$lib/paraglide/messages';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import {
+  answerAfterMailboxDrained,
   reconcileGroup,
   resetHistoryReconciliation,
   retryDeferredReconciliations,
@@ -933,23 +934,30 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         cb.log(
           `[SYNC] history_request received from ${requesterUserId}:${requesterDeviceId} for ${groupId}`
         );
-        try {
-          await handleHistoryRequest({
-            mlsService: ctx.ensureMls(),
-            storage: ctx.getStorage(),
-            deviceKeyB64: ctx.getDeviceKey(),
-            conversations: cb.conversations,
-            log: cb.log,
-            requesterUserId,
-            requesterDeviceId,
-            selfUserId: ctx.getUserId(),
-            groupId,
-          });
-        } catch (e) {
-          cb.log(
-            `[WARN] Echec handleHistoryRequest: ${e instanceof Error ? e.message : String(e)}`
-          );
-        }
+        // OUR MAILBOX FIRST, here too: this is the leg where we state what we hold, and a state key
+        // computed over a store still being filled makes this device an unreliable source - it can
+        // claim agreement it does not have yet, which ends the exchange with the two still apart.
+        // Deferred rather than awaited for the same reason as every other leg: whether this
+        // callback runs inside the drain is not something this call site should have to know.
+        answerAfterMailboxDrained(ctx.ensureMls(), async () => {
+          try {
+            await handleHistoryRequest({
+              mlsService: ctx.ensureMls(),
+              storage: ctx.getStorage(),
+              deviceKeyB64: ctx.getDeviceKey(),
+              conversations: cb.conversations,
+              log: cb.log,
+              requesterUserId,
+              requesterDeviceId,
+              selfUserId: ctx.getUserId(),
+              groupId,
+            });
+          } catch (e) {
+            cb.log(
+              `[WARN] Echec handleHistoryRequest: ${e instanceof Error ? e.message : String(e)}`
+            );
+          }
+        });
       }
     );
 

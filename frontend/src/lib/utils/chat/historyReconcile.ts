@@ -34,6 +34,10 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
  * - **the triggers**, which are all state EDGES - a connection, a fresh join, a frame that could not
  *   be decrypted, a peer coming back online. The next edge IS the retry, so there is no retry;
  * - **a coalescing window**, so a replay that fails on forty frames of one group asks once;
+ * - **the mailbox barrier**: no ask leaves while this device still has inbound frames to apply.
+ *   Reconciliation is meant to be EXCEPTIONAL, and a device that compares itself against a peer
+ *   while its own queue is still draining reports a difference it is in the middle of closing by
+ *   itself - then repairs it by asking for messages already on their way;
  * - **the set of groups whose ask could not even be attempted**, with what blocked it - nobody
  *   online, or no probe sender installed yet. In memory, and it answers exactly that question -
  *   never "is this conversation broken", the conflation that produced the old marker. It exists
@@ -326,6 +330,38 @@ function recentlyAsked(groupId: string, now: number): boolean {
 }
 
 /**
+ * Runs `answer` once this device's inbound mailbox is drained, WITHOUT blocking the drain.
+ *
+ * The mirror of the barrier inside {@link reconcileGroup}, for the other half of the rule: a device
+ * must neither ASK nor ANSWER while it is still applying its own queue. A responder that describes
+ * its store mid-drain describes an incomplete one - it can answer "same state" while frames that
+ * would change that answer are still queued, or send a bundle short of the very messages it is
+ * about to apply. Both end the exchange with the two devices still apart, and the asker has spent
+ * its coalescing window.
+ *
+ * WHY DEFERRED RATHER THAN AWAITED. Every responder leg runs INSIDE the message pipeline, which is
+ * the drain itself - so awaiting the queue to be idle from there is a deadlock: the drain waits for
+ * the handler, the handler waits for the drain. Scheduling past it is the same intent that does
+ * terminate, and it is the shape the trigger side already uses (`void reconcileGroup(...)`).
+ *
+ * The frame is acknowledged by the caller as soon as the answer is SCHEDULED, which is a real
+ * weakening and a deliberate one: nothing in this exchange is durable by design, the asker re-asks
+ * on its next edge, and the alternative is holding the drain open on a peer's request.
+ */
+export function answerAfterMailboxDrained(
+  mlsService: Pick<IMlsService, 'waitForMessageQueueIdle'>,
+  // `Promise<unknown>` rather than `Promise<void>`: every caller hands over a chain already ending
+  // in its own `.catch(log)`, whose value is whatever that leg happened to resolve to. Nothing here
+  // reads it, and demanding `void` only forces a wrapper at each call site that discards it.
+  answer: () => Promise<unknown>
+): void {
+  void (async () => {
+    await mlsService.waitForMessageQueueIdle().catch(() => {});
+    await answer();
+  })();
+}
+
+/**
  * Asks the elected peer whether it holds the same history as this device for `groupId`.
  *
  * EXACTLY ONE ask goes out per coalescing window, and the answer is silence when the two agree - the
@@ -335,7 +371,7 @@ function recentlyAsked(groupId: string, now: number): boolean {
  * @returns `true` when a probe left the device.
  */
 export async function reconcileGroup(
-  mlsService: Pick<IMlsService, 'sendHistoryRequest'>,
+  mlsService: Pick<IMlsService, 'sendHistoryRequest' | 'waitForMessageQueueIdle'>,
   groupId: string,
   log: (msg: string) => void,
   now: number = Date.now()
@@ -358,6 +394,24 @@ export async function reconcileGroup(
   // twice. Reserving here is what makes the coalescing window mean what it claims under concurrency;
   // the releases below keep "the next edge re-asks" exactly as true as it was.
   asked.set(groupId, now + PROBE_COALESCE_MS);
+
+  // DRAIN THE MAILBOX BEFORE COMPARING ANYTHING - the ordering guarantee, and it lives HERE because
+  // this is the one door every trigger comes through. It used to sit at the connection edge alone
+  // (`initializeConnection`, step 5), which left the other three - an unreadable frame, a peer
+  // coming back, a replay that gave up - computing a state key over a store still being filled by
+  // the drain they fired from. Measured on prod 2026-08-13: `HISTORY_STATE Sent` and `asked` landed
+  // BETWEEN a `Drain start` and its `Drain complete` on both a browser and the phone, while the
+  // connection path, which does wait, had nothing to ask for at all.
+  //
+  // What that cost is a round trip, not correctness: the state key is one hash, and the list of
+  // what is actually missing is computed later, from the range digest, against the store as it
+  // stands by then. But reconciliation is meant to be EXCEPTIONAL, and an ask raised against a
+  // difference this device was about to close by itself is the routine case it must not become.
+  //
+  // AFTER the coalescing reservation above, deliberately: a burst of forty failing frames must
+  // produce one waiter, not forty. And it is a BARRIER, never a delay - `waitUntilIdle` resolves on
+  // the drain loop ending, so it states a fact about the queue rather than guessing at a duration.
+  await mlsService.waitForMessageQueueIdle().catch(() => {});
 
   // ASK THE SERVER FIRST. It elects the responder and answers `no_peer_online` immediately when
   // there is none, so electing first is what keeps the probe conditional: a state key sent before
@@ -440,7 +494,7 @@ const ELECTION_CONCURRENCY = 6;
  * was right and nothing here changes it.
  */
 export async function reconcileAllGroups(
-  mlsService: Pick<IMlsService, 'sendHistoryRequest'>,
+  mlsService: Pick<IMlsService, 'sendHistoryRequest' | 'waitForMessageQueueIdle'>,
   groupIds: Iterable<string>,
   log: (msg: string) => void
 ): Promise<string[]> {
@@ -483,7 +537,7 @@ export async function reconcileAllGroups(
  * already compared. Only the ones that could not be asked at all have anything to gain.
  */
 export async function retryDeferredReconciliations(
-  mlsService: Pick<IMlsService, 'sendHistoryRequest'>,
+  mlsService: Pick<IMlsService, 'sendHistoryRequest' | 'waitForMessageQueueIdle'>,
   localGroupIds: Iterable<string>,
   log: (msg: string) => void
 ): Promise<void> {
