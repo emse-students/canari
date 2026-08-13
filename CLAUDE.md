@@ -89,7 +89,26 @@ Everything wanted but NOT scheduled is [backlog](docs/wiki/backlog.md) - file it
 
 ### CANARI - what is open
 
-**NO WORK PACKAGE IS OPEN.** Two things are owed and neither is one yet:
+**WP-FALSELOSS-1 IS WRITTEN AND DEPLOYED, NOT YET VERIFIED - that measurement is the FIRST thing to
+do on resume.** A frame delivered live consumed its ratchet generation without moving this device's
+position in the archive, so the replay walked the same row, failed on a spent generation, and took
+the branch asserting real loss: **every online device reconciled on its own ordinary traffic.** The
+fix marks a consumed frame by its CIPHERTEXT BYTES - the only thing the two paths share, the stream
+id and the `queued_message` uuid never intersecting - and advances the cursor by WALKING, never
+jumping. Shipped `2ff864f9`, CD green, prod containers recreated 2026-08-13 17:44. The mechanism and
+the three shapes the repair must keep are on
+[history-reconciliation](docs/wiki/protocols/history-reconciliation.md); the rule is in
+[durable-rules](docs/wiki/durable-rules.md).
+
+**What is owed is the only proof that counts: reload W1 on the deployed build and read its console.
+Zero `frame never read here and unreadable for good` on traffic the device holds, or the fix is not
+one.** Left open on purpose and to be re-examined on that same measurement: **four Rust-side
+`SecretReuseError` at an ADVANCING generation (263 -> 266)** seen on a second reload with no
+`unreadable for good` beside them. Unexplained by the false loss - plausibly a real double delivery
+the in-memory ring absorbs, but NOT proven. They must either vanish or stand alone and explain
+themselves.
+
+Two other things are owed and neither is a Work Package yet:
 
 - **The fourth reconciliation trigger** the user approved - *"sonder aussi quand la reponse recue est
   plus courte que la fenetre demandee"*. NOT implemented; the trace and the design input are in
@@ -105,7 +124,8 @@ record - **read it, do not re-derive it here, and do not re-open a decision in i
 (its Open questions section is empty). Its four load-bearing invariants now live in
 [durable-rules](docs/wiki/durable-rules.md); the fleet measurement, the audit, and the group that
 could not heal are all written up on that page. Residual noise on the fleet: two failing
-`/api/users/<id>/avatar` endpoints, nothing else.
+`/api/users/<id>/avatar` endpoints. **That page's `-> 0` measured a one-time silencing, NOT the end
+of the noise** - it regenerated from live traffic, which is WP-FALSELOSS-1 above.
 
 **A destructive cleanup for pre-existing damage was considered and REJECTED on evidence - do not
 revive it.** A terminal decrypt failure persists NOTHING, so it would have had nothing to target, and
