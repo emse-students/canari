@@ -98,11 +98,12 @@ half of it is compile-verified only** and joins the owed device list below.
 record: read it, do not re-derive the design here, do NOT re-open a decision in its Decisions table.
 Its Open questions section is empty.
 
-**IT IS DEPLOYED TO PROD AND HAS STILL NOT RUN ON A DEVICE OR IN A BROWSER.** The gates are green (0
-svelte-check errors, 1351/1351 frontend tests) and that is ALL they prove. **The next task is the
-cross-client campaign from MSG-1 on the reworked build.** Deploy verified 2026-08-12 22:23 and not
-merely green: CD success on `8b85ba91`, four images restarted, `prod-deployed` moved, `/api/version`
-→ 200, and the served chunks carry `HISTORY_RECONCILE` + the new scrollback string.
+**IT IS DEPLOYED TO PROD AND PHASE MSG HAS NOW RUN ON IT** - 10 passed, 2 failed, 1 inconclusive.
+Four of the first run's five "failures" were HARNESS faults, not app faults, and both fixes are in
+`../canari-harness`: the preflight sent A1 off its `tauri.localhost` origin (breaking the Tauri
+allowlist), and five checks inferred which conversation was open from a composer's mere presence
+(`ensureConversation` now asserts the header). **The state of every check is
+[cross-client-testing](docs/wiki/cross-client-testing.md) - read it, do not re-derive it here.**
 
 **THE SERVER SHIPPED BEFORE THE STORES, against the stated order** - forced by Leon's `6f87a3e7`
 having prod down. **Checked rather than assumed, and harmless:** no endpoint, DTO, proto field or
@@ -122,7 +123,8 @@ against a key up to 60 s stale from three online devices upward. Each with its e
 of its fix in [backlog](docs/wiki/backlog.md).
 
 **Two defects were found and FIXED on 2026-08-13 by measuring the "Synchronisation des messages…"
-banner the user reported twice** - gates green (svelte-check 0, 1358/1358), NOT yet seen running.
+banner the user reported twice** - shipped as `23e23b08`, and **the deploy is verified rather than
+merely green**: CD `success` on that sha, apex 200, and the served chunk carries both new markers.
 Both are written up in [history-reconciliation](protocols/history-reconciliation.md) ("What a
 connection pass costs, measured" + three new rows in Decisions), so do not re-derive them: (1) the
 connection pass awaited its groups one at a time - **9 groups, ~480 ms each, 4.35 s**, and the cost
@@ -157,12 +159,33 @@ Four things a future session must not undo, because the wiki explains them but t
   Each stream entry records its own `silent`, and `redeliverMissedDuringActivationWindow` filters on
   it or it rings the user for every reaction.
 
-**A1 IS UNREACHABLE: the phone dropped off USB mid-session** (`adb devices` empty, survives
-`kill-server`). It needs a replug and the USB-debugging prompt accepted. Two things are owed the
-moment it is back: the **PIN unlock** (a reinstall restarts the process and "Rester connecte" was
-off, so the app sits on the PIN screen with an EMPTY local store - which reads as a stuck sync and
-is not one), and the **A1-vs-W1 reconciliation**, the one MULTI measurement the browsers cannot
-make.
+**A1 IS BACK on USB** (`adb devices` lists it, 2026-08-13). Two things are owed before it measures
+anything: the **PIN unlock** (a reinstall restarts the process and "Rester connecte" was off, so the
+app sits on the PIN screen with an EMPTY local store - which reads as a stuck sync and is not one),
+and the **A1-vs-W1 reconciliation**, the one MULTI measurement the browsers cannot make.
+
+**MSG-4's defect is ROOT-CAUSED AND FIXED, and has not been seen running** (`233c2e0b`, gates green:
+svelte-check 0, 1368/1368). A group that could never heal, because `reconcileGroup` DROPPED the
+repair whenever no probe sender was installed yet - while the frame that raised it was acked in the
+same breath, deleting the only thing that could raise it again. **It was masked by the unconditional
+sweep, so `23e23b08` is what turned it from hidden to permanent.** The whole failure and the rule it
+teaches are in
+[history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-group-that-could-not-heal) -
+do not re-derive it. **The first thing to check on the reworked build is whether `642f389a` heals by
+itself; if it does not, that is a SECOND and distinct fault.**
+
+**The fourth reconciliation trigger the user approved is NOT implemented yet** - *"sonder aussi
+quand la reponse recue est plus courte que la fenetre demandee"*. The trace is done and is the whole
+design input: a `history_bundle` carries `to`, `messages`, `readWatermarks` and `floor` and **states
+nothing about the RESPONDER's own window**, so the asker cannot tell a complete answer from a
+clipped one - `actions.ts` even logs `(identical stores)` in that case. Attachment point is
+`bundleFrame` (`groupActions.ts:488`), which all three bundle senders funnel through and which
+already restates a per-conversation state bag on every chunk; the asker's side is the
+`history_bundle` branch of `systemMessageHandler.ts:697` (step 0, the only step that runs for an
+empty bundle) plus the replay twin in `historySystemEvents.ts:302`. **The hard part is termination,
+not detection:** a phone (5 y) asking a browser (90 d) gets a clipped answer BY CONSTRUCTION, every
+time, so a naive re-ask is an unbounded loop and restores exactly the noise just removed. Any design
+must terminate on a proof - every current member has answered - never on a clock.
 
 **The order the user set governs what comes next:** re-run the cross-client campaign from the START
 (post-setup) - the scripts exist, and it exercises everything. **Commit AND push are authorised so

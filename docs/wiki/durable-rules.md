@@ -293,6 +293,24 @@ carry in the head:
   the evidence, its ranks, its vouching and its give-up horizon all become unnecessary at once.
   **When durable state is hard to discharge, check whether the thing it is rationing still needs
   rationing.**
+- **A TRIGGER THAT ARRIVES BEFORE ITS MECHANISM MUST BE HELD, NOT LOGGED AND DROPPED - especially
+  when raising it CONSUMES the evidence.** `reconcileGroup` found no probe sender installed (the
+  session installs it after inbound frames start draining), said so, and returned. The caller was
+  `handleUnreadableFrame`, which ACKs the frame in the same breath - correctly, since no redelivery
+  makes a consumed generation decrypt - so the request and the only thing that could ever raise it
+  again were destroyed together, and a production DM stayed permanently short of its lost messages.
+  **Ask of every "cannot do this right now" branch what will raise it a second time; if the answer is
+  nothing, the branch is a silent data loss.** The fix is a deferral keyed by BLOCKER, discharged by
+  the edge that lifts it (a peer returning, a sender being installed) - never by a clock, and never
+  routed per reason: a group deferred under one blocker and discharged only by another's edge is
+  exactly how the gap stayed open. Two corollaries paid for in the same incident. **An accidental
+  repair hides the fault that needs it**: an unconditional sweep re-asked on the next connection, so
+  making the sweep conditional is what turned this from hidden to permanent - expect a class of
+  latent faults to surface whenever redundant work is removed, and go looking rather than waiting.
+  And **discharge a deferral only on the act itself, never on a step that precedes it** - it used to
+  clear on the election, an HTTP round trip that asks nobody anything, so a group whose probe then
+  failed to encrypt was recorded as attended to.
+  [history-reconciliation](protocols/history-reconciliation.md#a-group-that-could-not-heal).
 - **A RETRY MUST TERMINATE ON THE EVENT THAT CHANGES THE ANSWER, NOT ON A CLOCK - AND THE EVENT IS
   USUALLY ALREADY NAMED SOMEWHERE.** An unacknowledged inbound frame was re-fetched every 15 s. The
   handler leaves one behind for exactly two reasons and both were already enumerated as a TYPE
