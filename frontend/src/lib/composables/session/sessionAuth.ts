@@ -26,8 +26,8 @@ import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from 
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import {
   reconcileGroup,
-  reconcileGroupsAwaitingResponder,
   resetHistoryReconciliation,
+  retryDeferredReconciliations,
   setHistoryProbeSender,
 } from '$lib/utils/chat/historyReconcile';
 import { onPeersCameOnline } from '$lib/stores/presenceStore';
@@ -905,10 +905,18 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       });
     });
 
+    // INSTALLING THE SENDER IS ITSELF AN EDGE, and this is where it is discharged. Frames drain
+    // before this point in the setup, so a frame MLS could never decrypt has already asked for the
+    // one repair that exists and has already been acked off the server - the ask is the only trace
+    // of the gap left anywhere. Dropping it kept a production DM permanently short of the messages
+    // it had lost. Fired here, in the same tick as the registration, so nothing drained in between
+    // falls in the gap; it returns immediately when nothing is deferred.
+    void retryDeferredReconciliations(mlsService, mlsService.getLocalGroups(), cb.log);
+
     // A reconciliation the server could not elect anybody for has to wait for a member to return,
     // and presence tells us that within ten seconds. This is that seam, and it retries ONLY the
-    // groups that found nobody - every other group was already compared on this connection, and a
-    // presence edge says nothing new about them.
+    // groups that could not be asked at all - every other group was already compared on this
+    // connection, and a presence edge says nothing new about them.
     unregisterPeerReturn?.();
     unregisterPeerReturn = onPeersCameOnline(() => {
       // `ensureMls` CREATES the service when there is none, so it must never be reached from a
@@ -917,7 +925,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       if (!ctx.getStorage()) return;
       const mls = ctx.ensureMls();
       cb.log('[HISTORY_RECONCILE] a peer came back online - retrying what nobody could answer');
-      void reconcileGroupsAwaitingResponder(mls, mls.getLocalGroups(), cb.log);
+      void retryDeferredReconciliations(mls, mls.getLocalGroups(), cb.log);
     });
 
     mlsService.onHistoryRequest(

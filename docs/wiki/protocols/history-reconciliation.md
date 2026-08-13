@@ -641,6 +641,34 @@ With the product owner, 2026-08-12. Each replaced an alternative rejected for th
 | Announcing a drain (2026-08-13) | **Raised from the decrypted buffer, at 5 real messages** | `pendingCount` at drain start: it counts ciphertexts, and nothing can classify a frame before decrypting it - so a reconnect carrying nine probes and no messages announced a synchronisation for four seconds |
 | Holding the socket through a short background | **Rejected** | The app would ACK over the WebSocket while backgrounded, cancelling the deferred FCM fallback, and nothing establishes the web `Notification` is delivered from a backgrounded WebView |
 | **When a connection sweeps every group (2026-08-13, REVERSES "asking on every connection")** | **Only when the server could have dropped something**: no record of an earlier connection (new or restored store), or an absence at least as long as the server's 90-day retention. Otherwise no sweep at all - `connectionSweepDecision` | Unconditional, which is what shipped: cheap in frames and still wrong. Nine groups meant nine probes and their answers on a server carrying no other traffic, and the receiving side counts frames BEFORE decrypting them, so its own housekeeping read as an arriving backlog - a banner and a locked composer for two people talking. The three gaps were re-enumerated and only one needs a peer asked: a frame that could not be applied already triggers its own group (`handleUnreadableFrame`, `sawUnreadableFrame`) and is deliberately left unacked; a frame that never arrived is still in the server's queue and is redelivered; only a frame the server no longer holds needs a sweep, and nothing local witnesses that. **This is a heal, so it runs on evidence** |
+| **An ask that cannot be attempted (2026-08-13)** | **Deferred with its blocker, never dropped** - one map keyed by group, holding `no-peer-online` or `no-probe-sender`, discharged by whichever edge lifts it (a peer returning, or the session installing its sender). One retry pass covers both: `retryDeferredReconciliations` | Dropping it with a log line, which is what shipped for `no-probe-sender`. **This is the fault that kept a production DM permanently broken** - see [A group that could not heal](#a-group-that-could-not-heal). Routing each reason to its own edge was also rejected: a group deferred under one reason and discharged only by the other's edge is exactly how this gap stayed open |
+
+---
+
+## A group that could not heal
+
+Measured 2026-08-13 on a production DM (two members, epoch 6). It held frames MLS could never
+decrypt, and every connection re-reported them without ever repairing anything. The digest design was
+not at fault and was checked first: an undecryptable frame writes no row, so it correctly counts as
+NOT held, and the diff would have named it.
+
+The failure was upstream of the diff, in three steps that are individually correct:
+
+1. `handleUnreadableFrame` (`setupMessageHandler.ts`) asks for the one repair that exists,
+   `reconcileGroup`. Correct - the sender is the only party that can still produce the plaintext.
+2. The frame is ACKed anyway (`return true`). Also correct: no redelivery can ever make a consumed
+   generation decrypt, so leaving it queued would loop for ever.
+3. `reconcileGroup` found `sendProbe === null` - the session installs it in `sessionAuth`, and
+   inbound frames drain before that point - logged `no probe sender registered`, and **returned**.
+
+Step 3 discards the request; step 2 destroys the evidence that would raise it again. Together they
+lose the repair permanently, and the log line was the only trace. It was masked for as long as the
+connection sweep was unconditional, because the next connection re-asked by accident; making the
+sweep conditional (the row above) removed the accident and turned a hidden fault into a permanent
+one. **The lesson is not about ordering:** moving the registration earlier would narrow the window
+without closing it - a frame can arrive from a background push or a replay at any point - so the fix
+is that a repair which cannot be attempted is REMEMBERED until it can be, and discharged by the event
+that makes it possible.
 
 ---
 

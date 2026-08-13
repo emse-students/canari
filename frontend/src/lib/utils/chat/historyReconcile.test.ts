@@ -10,8 +10,8 @@ import type { Mock } from 'vitest';
 import {
   reconcileGroup,
   reconcileAllGroups,
-  reconcileGroupsAwaitingResponder,
-  groupsAwaitingResponder,
+  retryDeferredReconciliations,
+  deferredReconciliations,
   forgetGroupReconciliation,
   resetHistoryReconciliation,
   setHistoryProbeSender,
@@ -48,6 +48,9 @@ beforeEach(() => {
 
 afterEach(() => setHistoryProbeSender(null));
 
+/** The deferred groups alone - most cases care about which, a few care about why. */
+const deferredGroups = (): string[] => deferredReconciliations().map(([groupId]) => groupId);
+
 describe('reconcileGroup', () => {
   it('elects a responder FIRST, then sends the probe', async () => {
     // Order, not just presence: a state key sent before the election is an MLS frame every member
@@ -73,7 +76,7 @@ describe('reconcileGroup', () => {
 
     expect(await reconcileGroup(mls, GROUP, log)).toBe(false);
     expect(probe).not.toHaveBeenCalled();
-    expect(groupsAwaitingResponder()).toEqual([GROUP]);
+    expect(deferredGroups()).toEqual([GROUP]);
   });
 
   it('records NOTHING when the election never left the device', async () => {
@@ -83,28 +86,63 @@ describe('reconcileGroup', () => {
     const mls = service(new Error('Failed to fetch'));
 
     expect(await reconcileGroup(mls, GROUP, log)).toBe(false);
-    expect(groupsAwaitingResponder()).toEqual([]);
+    expect(deferredGroups()).toEqual([]);
     // And nothing is coalesced either: the next edge must be free to ask.
     expect(await reconcileGroup(service(), GROUP, log)).toBe(true);
   });
 
   it('clears the awaiting-responder note as soon as an ask actually goes out', async () => {
     await reconcileGroup(service({ noPeerOnline: true }), GROUP, log);
-    expect(groupsAwaitingResponder()).toEqual([GROUP]);
+    expect(deferredGroups()).toEqual([GROUP]);
 
     await reconcileGroup(service(), GROUP, log, Date.now() + 60_000);
-    expect(groupsAwaitingResponder()).toEqual([]);
+    expect(deferredGroups()).toEqual([]);
   });
 
-  it('does nothing at all when no probe sender is registered, and SAYS so', async () => {
-    // A session that forgot to register one reconciles nothing, silently, and looks exactly like a
-    // fleet with no peers online.
+  it('DEFERS rather than drops when no probe sender is registered yet, and SAYS so', async () => {
+    // THE ASK IS THE ONLY TRACE OF THE GAP. The caller that raises this trigger - an MLS frame that
+    // can never be decrypted - acks that frame in the same breath, so the server deletes it and no
+    // later edge can raise the trigger again. Dropping the ask here left a production DM
+    // permanently short of the messages it had lost.
     setHistoryProbeSender(null);
     const mls = service();
 
     expect(await reconcileGroup(mls, GROUP, log)).toBe(false);
     expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('no probe sender'));
+    expect(deferredReconciliations()).toEqual([[GROUP, 'no-probe-sender']]);
+  });
+
+  it('asks the moment a probe sender arrives, for the group deferred without one', async () => {
+    // The discharge the session owes: installing the sender is the edge, and this pass is what
+    // turns it into the ask that was deferred.
+    setHistoryProbeSender(null);
+    await reconcileGroup(service(), GROUP, log);
+    setHistoryProbeSender(probe);
+
+    await retryDeferredReconciliations(service(), [GROUP], log);
+
+    expect(probe).toHaveBeenCalledWith(GROUP);
+    expect(deferredGroups()).toEqual([]);
+  });
+
+  it('stays deferred while the sender is still missing, so a later edge still finds it', async () => {
+    setHistoryProbeSender(null);
+    await reconcileGroup(service(), GROUP, log);
+
+    await retryDeferredReconciliations(service(), [GROUP], log);
+
+    expect(deferredReconciliations()).toEqual([[GROUP, 'no-probe-sender']]);
+  });
+
+  it('keeps the group deferred when the election answered but the probe never left', async () => {
+    // The note used to be cleared on the election, which asks nobody anything: a group whose probe
+    // then failed to encrypt was recorded as attended to and never retried.
+    await reconcileGroup(service({ noPeerOnline: true }), GROUP, log);
+    probe.mockResolvedValueOnce(false);
+
+    expect(await reconcileGroup(service(), GROUP, log, Date.now() + 60_000)).toBe(false);
+    expect(deferredGroups()).toEqual([GROUP]);
   });
 
   describe('coalescing', () => {
@@ -236,7 +274,7 @@ describe('reconcileAllGroups', () => {
   });
 });
 
-describe('reconcileGroupsAwaitingResponder', () => {
+describe('retryDeferredReconciliations', () => {
   it('retries ONLY the groups that found nobody, never the ones already compared', async () => {
     // A presence edge is frequent. Re-asking every group on each one would put this mechanism back
     // where the sweep it replaces was: traffic on a trigger that means nothing about the groups.
@@ -245,14 +283,14 @@ describe('reconcileGroupsAwaitingResponder', () => {
     await reconcileGroup(service({ noPeerOnline: true }), GROUP, log); // nobody online
     probe.mockClear();
 
-    await reconcileGroupsAwaitingResponder(service(), [GROUP, OTHER], log);
+    await retryDeferredReconciliations(service(), [GROUP, OTHER], log);
 
     expect(probe.mock.calls.map(([g]) => g)).toEqual([GROUP]);
   });
 
   it('does nothing when no group is waiting', async () => {
     const mls = service();
-    await reconcileGroupsAwaitingResponder(mls, [GROUP, OTHER], log);
+    await retryDeferredReconciliations(mls, [GROUP, OTHER], log);
 
     expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
   });
@@ -263,10 +301,10 @@ describe('reconcileGroupsAwaitingResponder', () => {
     await reconcileGroup(service({ noPeerOnline: true }), GROUP, log);
     const mls = service();
 
-    await reconcileGroupsAwaitingResponder(mls, [OTHER], log);
+    await retryDeferredReconciliations(mls, [OTHER], log);
 
     expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
-    expect(groupsAwaitingResponder()).toEqual([]);
+    expect(deferredGroups()).toEqual([]);
   });
 });
 
@@ -279,7 +317,7 @@ describe('forgetting', () => {
 
     forgetGroupReconciliation(GROUP);
 
-    expect(groupsAwaitingResponder()).toEqual([OTHER]);
+    expect(deferredGroups()).toEqual([OTHER]);
     // The coalescing note is gone too, so a group re-created under the same id may ask at once.
     const now = Date.now();
     await reconcileGroup(service(), GROUP, log, now);
@@ -294,7 +332,7 @@ describe('forgetting', () => {
 
     resetHistoryReconciliation();
 
-    expect(groupsAwaitingResponder()).toEqual([]);
+    expect(deferredGroups()).toEqual([]);
     expect(await reconcileGroup(service(), OTHER, log, now + 1)).toBe(true);
   });
 });

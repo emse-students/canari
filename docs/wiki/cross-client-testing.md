@@ -46,12 +46,14 @@ meet.
 | Phase | Scripts | State |
 | --- | --- | --- |
 | SETUP | - | 5 of 9 `passed`; SETUP-2 deliberately skipped, SETUP-7/8 owed (8 before CORRUPT and PIN) |
-| MSG | 12 | ran 2026-08-13: **8 passed, 2 failed, 1 inconclusive, 2 blocked on the harness** |
+| MSG | 12 | ran 2026-08-13: **10 passed, 2 failed, 1 inconclusive** |
 | every other phase | 22 written, 6 with none | `pending` - not yet run on the reworked build |
 
-**Two application defects are open from MSG** and neither is a harness fault: group `642f389a`
-holds frames it can never read and does not heal (MSG-4), and a message delivered while the sender
-was offline appears only after a reload (MSG-10).
+**Two application defects came out of MSG** and neither was a harness fault. MSG-4's is **fixed and
+not yet seen running**: a group that could never heal, because the repair it asked for was dropped
+whenever no probe sender was installed yet - the failure is written up in
+[history-reconciliation](protocols/history-reconciliation.md#a-group-that-could-not-heal). MSG-10's
+is **open**: a message delivered while the sender was offline appears only after a reload.
 
 **Everything returns to `pending` on the next commit.** The 2026-08-13 work changes when a
 connection reconciles at all, which touches every phase that observes delivery.
@@ -292,7 +294,7 @@ re-enrolment path and MULTI-3 are only testable from a clean device.
 Baseline first. An exotic failure is only meaningful once the plain path is proven on the same
 harness in the same session.
 
-**Run 2026-08-13 against `2c7b0c3c` (web) + the 13:08 debug APK (A1): 8 passed, 1 failed, 1 inconclusive, 2 blocked on the harness.**
+**Run 2026-08-13 against `2c7b0c3c` (web) + the 13:08 debug APK (A1): 10 passed, 2 failed, 1 inconclusive.**
 Every row below therefore returns to `pending` for the NEXT commit, which changes when a connection
 reconciles at all - see the [Decisions](protocols/history-reconciliation.md#decisions-taken) row of
 2026-08-13. Verdicts are kept rather than erased: they name the build they hold for.
@@ -303,12 +305,12 @@ reconciles at all - see the [Decisions](protocols/history-reconciliation.md#deci
 | MSG-1b | Delivery DURING a bulk-ingest window (the WP-ECHO-1 race) | `W1 W2` | **`inconclusive`** on `2c7b0c3c` - `windowOpened: false`. The check can only conclude when a window happens to open, and the 2026-08-13 work makes those rarer still. **The check needs reworking, not the app** |
 | MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | **`passed`** on the 13:08 APK - 7928 ms |
 | MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | **`passed`** on `2c7b0c3c` - 366 ms. Failed the first run and passed alone: the cause was harness isolation, fixed by `ensureConversation` |
-| MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `W1 W2` | **`failed`** on `2c7b0c3c` - assertions HELD (1 copy, 722 ms, decoded) but the run was not clean: `SecretReuseError` / `CannotDecryptOwnMessage` at epoch 6 on group `642f389a`, which **holds frames it can never read and does not heal**. Under investigation |
+| MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `W1 W2` | **`failed`** on `2c7b0c3c` - assertions HELD (1 copy, 722 ms, decoded) but the run was not clean: `SecretReuseError` / `CannotDecryptOwnMessage` at epoch 6 on group `642f389a`, which **holds frames it can never read and does not heal**. **ROOT-CAUSED and fixed on `23e23b08`+1**: the repair WAS asked for and was dropped, because no probe sender was installed yet - while the frame was acked in the same breath, destroying the only thing that could raise it again. Deferred-and-discharged now; see [history-reconciliation](protocols/history-reconciliation.md#a-group-that-could-not-heal). **Re-run owed on a device, and the group is expected to heal by itself** - if it does not, that is a second, distinct fault |
 | MSG-5 | Channel message converges on all three; **no `masterSecret` in any payload** | `+A1` | **`passed`** on `2c7b0c3c` |
 | MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`passed`** on `2c7b0c3c` |
 | MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | **`passed`** on `2c7b0c3c` - 4255 ms |
-| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `blocked` - harness: `ensureChat` reaches the conversation list by clicking "Discussions", which A1's mobile layout hides once a conversation is open. The FIRST run's FAIL was spurious (A1 was left in the campaign channel and sent there) and is what produced `ensureConversation` |
-| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `blocked` - same harness cause. UX note stands: the tab TITLE never changes, so a backgrounded tab signals nothing until looked at |
+| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | **`passed`** on `2c7b0c3c` + the 13:08 APK. Took TWO harness fixes: the first run's FAIL was spurious (A1 had been left in the campaign channel by an earlier check and sent there, while W2 watched the DM) which produced `ensureConversation`; the second was blocked because `ensureChat` reaches the list by clicking "Discussions", which the mobile layout hides behind an open conversation |
+| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | **`passed`** on `2c7b0c3c` + the 13:08 APK. UX note stands: the tab TITLE never changes, so a backgrounded tab signals nothing until looked at |
 | MSG-9 | Receiver offline (phone radios), then restored: lands once on reconnect | `+A1` | **`passed`** on the 13:08 APK - arrived 516 ms after reconnect, 1 copy. **Harness gap: it writes no row to `results.ndjson`**, so the dashboard is the only record |
 | MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | **`failed`** on `2c7b0c3c` - `onReceiver: 0` after reconnect but `afterReload: 1`: the message IS delivered and the live view does not show it until a reload. Its observation gate also counts the `ERR_INTERNET_DISCONNECTED` it caused itself as dirt |
 

@@ -34,8 +34,11 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
  * - **the triggers**, which are all state EDGES - a connection, a fresh join, a frame that could not
  *   be decrypted, a peer coming back online. The next edge IS the retry, so there is no retry;
  * - **a coalescing window**, so a replay that fails on forty frames of one group asks once;
- * - **the set of groups nobody was online to answer**, which is in memory and answers exactly that
- *   question - never "is this conversation broken", the conflation that produced the old marker.
+ * - **the set of groups whose ask could not even be attempted**, with what blocked it - nobody
+ *   online, or no probe sender installed yet. In memory, and it answers exactly that question -
+ *   never "is this conversation broken", the conflation that produced the old marker. It exists
+ *   because those two triggers arrive with their evidence already spent: the frame that raised them
+ *   is acked and gone, so an ask dropped here is a repair nothing will ever ask for again.
  *
  * @see docs/wiki/protocols/history-reconciliation.md
  */
@@ -55,15 +58,35 @@ const PROBE_COALESCE_MS = 30_000;
 const asked = new Map<string, number>();
 
 /**
- * Groups whose last reconciliation could not run because the server elected nobody: every other
- * member was offline.
+ * Why a reconciliation could not even be ATTEMPTED - which is also the name of the edge that would
+ * let it be attempted.
  *
- * In memory, and that is the whole design. It records "the last attempt found no responder" - which
- * is a fact about a moment, not about the conversation - and it is cleared the instant an attempt
- * actually goes out. The durable marker it replaces recorded "this conversation is missing history",
- * a claim about the conversation that nothing on this device was ever in a position to withdraw.
+ * Both are facts about a MOMENT rather than about the conversation, and that distinction is the
+ * whole design: the durable marker these replace recorded "this conversation is missing history", a
+ * claim nothing on this device was ever in a position to withdraw.
  */
-const awaitingResponder = new Set<string>();
+type DeferredReason =
+  /** The server elected nobody - every other member was offline. Lifted when a peer comes back. */
+  | 'no-peer-online'
+  /**
+   * No probe sender was installed yet, so there was nothing to ask WITH.
+   *
+   * **This is the one that lost a conversation for good.** The session installs the sender in
+   * `sessionAuth` (it is the only place holding the store, the device key and the MLS client at
+   * once), and inbound frames are already draining by then. A frame MLS can never decrypt asks for
+   * the one repair that exists and is ACKed in the same breath - correctly, since no redelivery can
+   * ever make it decrypt - so dropping the ask here destroyed the request and the evidence together,
+   * and no later edge could raise it again. Measured on a production DM: permanently unreadable
+   * frames at epoch 6, `no probe sender registered` on every boot, and the group never healed.
+   *
+   * It used to be masked: the connection swept every group unconditionally, so the next connection
+   * re-asked by accident. Making the sweep conditional (see {@link connectionSweepDecision}) removed
+   * the accident and left the drop, which is what turned a hidden fault into a permanent one.
+   */
+  | 'no-probe-sender';
+
+/** Groups whose reconciliation could not be attempted, with what is blocking it. */
+const deferred = new Map<string, DeferredReason>();
 
 /**
  * Sends this device's state key for a group, resolving `true` when it went out.
@@ -81,6 +104,12 @@ let sendProbe: HistoryProbeSender | null = null;
  * Its absence is LOGGED at the point of use rather than passed over: a session that forgot to
  * register one would reconcile nothing at all, silently, and look exactly like a fleet with no peers
  * online.
+ *
+ * **Installing one is an EDGE, and the caller must discharge it**: every group deferred as
+ * `no-probe-sender` became askable at this instant, and nothing else will raise those triggers
+ * again - the frames that raised them are acked and gone. Call
+ * {@link retryDeferredReconciliations} straight after, in the same tick, so no frame drained in
+ * between falls in the gap.
  */
 export function setHistoryProbeSender(fn: HistoryProbeSender | null): void {
   sendProbe = fn;
@@ -216,7 +245,10 @@ export async function reconcileGroup(
   if (recentlyAsked(groupId, now)) return false;
 
   if (!sendProbe) {
-    log(`[HISTORY_RECONCILE] no probe sender registered - ${short}… not reconciled`);
+    // DEFERRED, NOT DROPPED. The caller that raised this trigger has usually just acked the frame
+    // that raised it, so this ask is the only remaining trace of the gap - see `no-probe-sender`.
+    deferred.set(groupId, 'no-probe-sender');
+    log(`[HISTORY_RECONCILE] no probe sender yet - ${short}… deferred until one is installed`);
     return false;
   }
 
@@ -248,12 +280,11 @@ export async function reconcileGroup(
     // The server elects the responder, so it already knows there was none. Remembered only so the
     // peer-online edge can pick it up - it is not evidence that anything is missing.
     asked.delete(groupId);
-    awaitingResponder.add(groupId);
+    deferred.set(groupId, 'no-peer-online');
     log(`[HISTORY_RECONCILE] no member online for ${short}… - will ask when one returns`);
     return false;
   }
 
-  awaitingResponder.delete(groupId);
   const sent = await sendProbe(groupId).catch((e) => {
     log(`[HISTORY_RECONCILE] probe failed for ${short}…: ${String(e).slice(0, 120)}`);
     return false;
@@ -264,6 +295,10 @@ export async function reconcileGroup(
     asked.delete(groupId);
     return false;
   }
+  // CLEARED ONLY ONCE AN ASK ACTUALLY LEFT THE DEVICE. Clearing it on the election - which is where
+  // it used to sit - discharged the deferral on the strength of a round trip that asks nobody
+  // anything, so a group whose probe then failed to encrypt was recorded as attended to.
+  deferred.delete(groupId);
   log(`[HISTORY_RECONCILE] asked ${short}… whether we hold the same history`);
   return true;
 }
@@ -332,35 +367,40 @@ export async function reconcileAllGroups(
 }
 
 /**
- * Retries the groups whose last attempt found nobody online, because somebody just came back.
+ * Retries every group whose reconciliation could not be attempted, because one of the two things
+ * blocking it just arrived: a peer came back online, or this session installed its probe sender.
  *
- * Deliberately NOT every group: a presence edge is frequent and says nothing about the groups that
- * were already reconciled on this connection. Only the ones that could not be asked at all have
- * anything to gain.
+ * ONE PASS FOR BOTH REASONS RATHER THAN ONE EACH. The reason is recorded to explain the group, not
+ * to route it: retrying a group whose blocker is still in place costs one election that answers
+ * `noPeerOnline` again, or one line saying there is still no sender - and re-deferring is exactly
+ * what should happen then. Splitting it would mean a group could be deferred under one reason and
+ * discharged only by the other's edge, which is how the `no-probe-sender` gap stayed open.
+ *
+ * Deliberately NOT every group: these edges are frequent and say nothing about the groups that were
+ * already compared. Only the ones that could not be asked at all have anything to gain.
  */
-export async function reconcileGroupsAwaitingResponder(
+export async function retryDeferredReconciliations(
   mlsService: Pick<IMlsService, 'sendHistoryRequest'>,
   localGroupIds: Iterable<string>,
   log: (msg: string) => void
 ): Promise<void> {
-  if (awaitingResponder.size === 0) return;
+  if (deferred.size === 0) return;
   const local = localGroupIds instanceof Set ? localGroupIds : new Set(localGroupIds);
-  // A SNAPSHOT, not the live set: `reconcileGroup` writes back into `awaitingResponder` whenever the
-  // election again finds nobody, and iterating the set itself would then re-visit what this pass has
-  // just re-added.
-  for (const groupId of Array.from(awaitingResponder)) {
+  // A SNAPSHOT, not the live map: `reconcileGroup` writes back into `deferred` whenever the blocker
+  // is still there, and iterating the map itself would then re-visit what this pass just re-added.
+  for (const groupId of Array.from(deferred.keys())) {
     if (!local.has(groupId)) {
       // The group is gone from this device - nothing to reconcile it against.
-      awaitingResponder.delete(groupId);
+      deferred.delete(groupId);
       continue;
     }
     await reconcileGroup(mlsService, groupId, log);
   }
 }
 
-/** Groups whose last reconciliation found no member online. Exposed for tests and diagnostics. */
-export function groupsAwaitingResponder(): string[] {
-  return [...awaitingResponder];
+/** Groups whose reconciliation could not be attempted, and why. Exposed for tests and diagnostics. */
+export function deferredReconciliations(): Array<[string, DeferredReason]> {
+  return [...deferred];
 }
 
 /**
@@ -373,11 +413,11 @@ export function groupsAwaitingResponder(): string[] {
  */
 export function forgetGroupReconciliation(groupId: string): void {
   asked.delete(groupId);
-  awaitingResponder.delete(groupId);
+  deferred.delete(groupId);
 }
 
 /** Drops everything (session teardown, logout, test cleanup). */
 export function resetHistoryReconciliation(): void {
   asked.clear();
-  awaitingResponder.clear();
+  deferred.clear();
 }
