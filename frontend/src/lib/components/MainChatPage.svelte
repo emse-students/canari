@@ -100,8 +100,21 @@
     !session.isLoggedIn || (isSyncing && !hasCachedConversations)
   );
 
-  /** Non-blocking "still syncing" indicator shown over already-displayed cached data. */
-  const isBackgroundSyncing = $derived(session.isLoggedIn && isSyncing && hasCachedConversations);
+  /**
+   * Non-blocking "still syncing" indicator shown over already-displayed cached data.
+   *
+   * Deliberately NOT `isSyncing`. That one answers "is a drain running", which is the right question
+   * for `isMessagingBlocked` above - a cold start with nothing cached must wait whatever arrives.
+   * Here there IS cached data on screen, so the only thing worth interrupting the user for is real
+   * messages actually landing, which is what `isCatchupOverlayVisible` counts. On the old flag this
+   * banner sat up for four seconds after every return to the foreground, announcing a synchronisation
+   * of nine history probes and zero messages.
+   */
+  const isBackgroundSyncing = $derived(
+    session.isLoggedIn &&
+      (session.isMessagingInitializing || messaging.isCatchupOverlayVisible) &&
+      hasCachedConversations
+  );
 
   const messagingOverlayMessage = $derived(
     !session.isLoggedIn ? m.chat_connecting_label() : m.chat_sync_overlay_message()

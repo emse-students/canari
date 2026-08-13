@@ -170,6 +170,21 @@ The queue, its barrier, the token rules and the native mirror are on those two p
 carry in the head:
 
 - The outbox is best-effort at every step, so every swallowed branch logs - that is all a loss leaves.
+- **"ONE SMALL FRAME" BOUNDS THE BYTES AND SAYS NOTHING ABOUT THE LATENCY OF ASKING PERMISSION TO
+  SEND IT.** A per-item loop is serialised for a reason; check that the reason still covers what the
+  loop actually spends its time on. The reconciliation pass awaited each group in turn, justified by
+  the MLS encryption mutex - true of the sends, false of the HTTP election in front of each one,
+  which takes no lock at all. Nine groups, ~480 ms each, 4.35 s per reconnect, and the inbound drain
+  that overlapped it inherited the whole duration and looked like the culprit. Concurrency here needs
+  a BOUND, never a bare `Promise.all`: the item count is the user's conversation count, and fifty
+  simultaneous requests on a phone radio at reconnect is a herd you inflicted on yourself.
+  See [history-reconciliation](protocols/history-reconciliation.md).
+- **A COUNT TAKEN BEFORE DECRYPTION CANNOT CLASSIFY WHAT IT COUNTS.** The sync banner was raised from
+  `pendingCount`, a number of ciphertexts, and `MlsQueuedMessage` carries no delivery class while the
+  server's envelope carries neither `silent` nor `durable` - so it announced nine history probes as a
+  synchronisation of messages. Announce from the DECRYPTED buffer, which knows what it holds. And the
+  same flag must not carry both "a drain is running" (what the concurrency guards need) and "there is
+  something to tell the user": two questions, two flags.
 - **A PAGE READ IS EVIDENCE ABOUT A WINDOW OF THE PAST, NEVER A STATEMENT THAT NOTHING ELSE EXISTS -
   so it is MERGED into what is on screen, never ASSIGNED over it.** Every history load has the shape
   fetch -> decrypt -> persist -> re-read a page to render, and the read is issued seconds after the

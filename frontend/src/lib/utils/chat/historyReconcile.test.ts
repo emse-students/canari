@@ -182,12 +182,54 @@ describe('reconcileAllGroups', () => {
     mls.sendHistoryRequest.mockResolvedValueOnce({ noPeerOnline: true });
 
     await reconcileAllGroups(mls, [GROUP, OTHER], log);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('1 group(s) asked'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('1/2 group(s) asked'));
+  });
+
+  it('runs the elections concurrently rather than one round trip after another', async () => {
+    // THE POINT OF THE PASS BEING CONCURRENT AT ALL. Nine sequential elections were measured at
+    // 4.35 s on a device - ~480 ms of HTTP round trip each, taking no lock and serialised for no
+    // reason - and the inbound drain that overlapped them inherited the whole duration. What is
+    // asserted is the property, not a duration: several elections are in flight at the same time.
+    const mls = service();
+    let inFlight = 0;
+    let peak = 0;
+    mls.sendHistoryRequest.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return {};
+    });
+
+    await reconcileAllGroups(mls, ['a', 'b', 'c', 'd'], log);
+    expect(peak).toBeGreaterThan(1);
+  });
+
+  it('never opens more elections at once than the bound allows', async () => {
+    // The bound is the half that keeps this safe on a phone: a device in fifty conversations must
+    // not open fifty requests on the radio the instant it reconnects.
+    const mls = service();
+    let inFlight = 0;
+    let peak = 0;
+    mls.sendHistoryRequest.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 2));
+      inFlight--;
+      return {};
+    });
+
+    await reconcileAllGroups(
+      mls,
+      Array.from({ length: 40 }, (_, i) => `g${i}`),
+      log
+    );
+    expect(peak).toBeLessThanOrEqual(6);
   });
 
   it('says so even when there is nothing to ask', async () => {
     await reconcileAllGroups(service(), [], log);
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('0 group(s) asked'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('0/0 group(s) asked'));
   });
 });
 

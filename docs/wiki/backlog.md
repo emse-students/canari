@@ -158,6 +158,21 @@ its end is unreachable. A layout constraint, not a behaviour change.
 
 ## Interface
 
+### P3 - the whole mobile page is selectable
+
+Reported 2026-08-13, seen while reading a CDP dump: a long press on the phone selects page chrome -
+navigation labels, section descriptions - not just message text. Only message content should be
+selectable, and arguably nothing else at all. One `user-select` rule at the layout level with an
+explicit opt-in on message bodies.
+
+### P3 - banners must not be transparent
+
+Reported 2026-08-13. A translucent banner sits over whatever it covers, and the text underneath
+shows through it - so the banner's own words are the hardest thing on screen to read, which is the
+opposite of what a banner is for. Give them an opaque background token. Cosmetic and explicitly not
+urgent, but it applies to every banner rather than to one, so fix it at the token rather than at a
+call site.
+
 ### P3 - the Canari admin page has too many tabs
 
 Many tabs behind a selector that has to be dragged sideways to reach the end. The same problem is

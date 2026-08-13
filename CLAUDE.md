@@ -121,6 +121,21 @@ data loss, none a reason to revert: the probe pushes to offline devices that can
 against a key up to 60 s stale from three online devices upward. Each with its evidence and the shape
 of its fix in [backlog](docs/wiki/backlog.md).
 
+**Two defects were found and FIXED on 2026-08-13 by measuring the "Synchronisation des messages…"
+banner the user reported twice** - gates green (svelte-check 0, 1358/1358), NOT yet seen running.
+Both are written up in [history-reconciliation](protocols/history-reconciliation.md) ("What a
+connection pass costs, measured" + three new rows in Decisions), so do not re-derive them: (1) the
+connection pass awaited its groups one at a time - **9 groups, ~480 ms each, 4.35 s**, and the cost
+is the HTTP election, which takes no MLS lock; elections now run 6-at-a-time and the sends still
+serialise. (2) The banner was raised from `pendingCount`, a count of CIPHERTEXTS, so it announced
+nine probes as a message sync; it is now raised from the decrypted buffer at 5 real messages, via a
+new `isCatchupOverlayVisible` - **`isMessageCatchupActive` keeps its old meaning and its three
+concurrency guards, deliberately.** A third option, holding the socket through a short background,
+was **REJECTED and must not be revived without device evidence**: the app would ACK over the
+WebSocket while backgrounded, cancelling the 10 s deferred FCM fallback, and nothing establishes the
+web `Notification` is delivered from a backgrounded Android WebView. **The 4.35 s figure is the first
+thing to re-measure on A1** - it should now be one round trip.
+
 Four things a future session must not undo, because the wiki explains them but the temptation is to
 "simplify" them back:
 

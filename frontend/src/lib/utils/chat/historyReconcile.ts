@@ -22,6 +22,13 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
  * because it only ever picks one that is online. A transport frame is now delivered to the online
  * members and to nobody else (`messaging.service.ts`, `postApplicationMessage`).
  *
+ * IT WAS ONLY EVER A CLAIM ABOUT FRAMES, and the second measurement is the one that matters here: a
+ * pass is cheap in traffic and was expensive in TIME. Nine groups took 4.35 s on a device, ~480 ms
+ * each, and that cost is the election round trip - HTTP, holding no MLS lock, and serialised for a
+ * reason that only ever applied to the sends it precedes. See {@link reconcileAllGroups}. The lesson
+ * generalises past this file: "one small frame" bounds the bytes and says nothing about the latency
+ * of asking permission to send it.
+ *
  * What is left here is small on purpose:
  *
  * - **the triggers**, which are all state EDGES - a connection, a fresh join, a frame that could not
@@ -111,6 +118,14 @@ export async function reconcileGroup(
     return false;
   }
 
+  // THE WINDOW IS RESERVED BEFORE THE FIRST AWAIT, and released again on every path that does not
+  // end in a probe. It used to be written after the election instead, which was safe only because
+  // the passes were strictly sequential - two of them can now overlap (a connection edge and a peer
+  // coming back), and both would then read `recentlyAsked` as false for the same group and probe it
+  // twice. Reserving here is what makes the coalescing window mean what it claims under concurrency;
+  // the releases below keep "the next edge re-asks" exactly as true as it was.
+  asked.set(groupId, now + PROBE_COALESCE_MS);
+
   // ASK THE SERVER FIRST. It elects the responder and answers `no_peer_online` immediately when
   // there is none, so electing first is what keeps the probe conditional: a state key sent before
   // the election is an MLS frame every member decrypts, for an exchange that was never started.
@@ -120,6 +135,7 @@ export async function reconcileGroup(
   } catch (e) {
     // A THROW MEANS IT NEVER LEFT THE DEVICE - offline, DNS, TLS, a 502 from the proxy, an abort.
     // None of them is an answer about anybody else, so nothing is recorded about the peers.
+    asked.delete(groupId);
     log(
       `[HISTORY_RECONCILE] could not reach the service for ${short}…: ${String(e).slice(0, 120)}`
     );
@@ -129,12 +145,12 @@ export async function reconcileGroup(
   if (outcome?.noPeerOnline) {
     // The server elects the responder, so it already knows there was none. Remembered only so the
     // peer-online edge can pick it up - it is not evidence that anything is missing.
+    asked.delete(groupId);
     awaitingResponder.add(groupId);
     log(`[HISTORY_RECONCILE] no member online for ${short}… - will ask when one returns`);
     return false;
   }
 
-  asked.set(groupId, now + PROBE_COALESCE_MS);
   awaitingResponder.delete(groupId);
   const sent = await sendProbe(groupId).catch((e) => {
     log(`[HISTORY_RECONCILE] probe failed for ${short}…: ${String(e).slice(0, 120)}`);
@@ -151,23 +167,66 @@ export async function reconcileGroup(
 }
 
 /**
+ * How many groups may have an election in flight at once.
+ *
+ * A LIMIT RATHER THAN `Promise.all`, because the number of groups is not bounded by anything the
+ * user controls: a device in fifty conversations would otherwise open fifty simultaneous requests on
+ * a phone radio at the exact moment it reconnects, which is the shape of a self-inflicted thundering
+ * herd. Six collapses the round-trip chain almost entirely - the pass is then bounded by the slowest
+ * election rather than by their sum - while keeping the burst the size of a normal page load.
+ */
+const ELECTION_CONCURRENCY = 6;
+
+/**
  * Reconciles every group this device holds locally. The connection path: run it once the mailbox
  * has drained, never before - a comparison made mid-drain reports a difference the device is in the
  * middle of closing by itself.
  *
- * Sequential rather than concurrent: each ask is one small frame, and firing seventeen MLS sends at
- * once puts them all through the same encryption mutex anyway.
+ * CONCURRENT, WITH A BOUND - and the reason it is no longer sequential is a measurement rather than
+ * a preference. This pass used to await each group in turn, justified by the encryption mutex: every
+ * probe is an MLS send, and firing them all at once puts them through the same lock anyway. True of
+ * the SENDS, and false of what the pass actually spends its time on. Measured on a device
+ * (2026-08-13, nine groups):
+ *
+ *     10:37:13.136  asked 66e1b07e…      ← consecutive asks ~480 ms apart
+ *     10:37:13.563  asked 4f87267a…
+ *        ...
+ *     10:37:17.482  reconciliation pass complete - 9 group(s) asked      = 4.35 s
+ *
+ * Each `[HISTORY_STATE] Sent` is logged in the same second as the `asked` that follows it, so the
+ * encryption and the send are not where the time goes: the ~480 ms sits in `sendHistoryRequest`, the
+ * HTTP election round trip - which takes no mutex at all and had no reason to be serialised. Nine of
+ * them end to end were 4 s of a reconnect during which the inbound drain, whatever its size,
+ * interleaved with them and inherited their duration. That is where the "Synchronisation des
+ * messages…" banner's fixed four seconds came from.
+ *
+ * The MLS sends still serialise, on the mutex, exactly as they did - that part of the old comment
+ * was right and nothing here changes it.
  */
 export async function reconcileAllGroups(
   mlsService: Pick<IMlsService, 'sendHistoryRequest'>,
   groupIds: Iterable<string>,
   log: (msg: string) => void
 ): Promise<void> {
+  // A SNAPSHOT the workers shift from, so each group is taken exactly once: `shift` runs to
+  // completion between awaits, which is what makes the hand-out safe without a lock.
+  const queue = [...groupIds];
+  const total = queue.length;
   let asks = 0;
-  for (const groupId of groupIds) {
-    if (await reconcileGroup(mlsService, groupId, log)) asks++;
-  }
-  log(`[HISTORY_RECONCILE] reconciliation pass complete - ${asks} group(s) asked`);
+
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const groupId = queue.shift();
+      if (groupId === undefined) return;
+      if (await reconcileGroup(mlsService, groupId, log)) asks++;
+    }
+  };
+
+  const started = Date.now();
+  await Promise.all(Array.from({ length: Math.min(ELECTION_CONCURRENCY, total) }, () => worker()));
+  log(
+    `[HISTORY_RECONCILE] reconciliation pass complete - ${asks}/${total} group(s) asked in ${Date.now() - started} ms`
+  );
 }
 
 /**

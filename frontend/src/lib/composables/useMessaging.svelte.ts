@@ -117,6 +117,32 @@ export function useMessaging() {
   /** Depth of nested MLS queue catch-up sessions (overlay stays until zero). */
   let messageCatchupDepth = 0;
   let isMessageCatchupActive = $state(false);
+
+  /**
+   * How many real messages a drain must actually produce before it is ANNOUNCED to the user.
+   *
+   * Below this the insertion is fast enough that a banner would say less than it costs: it would
+   * appear and vanish, and the user would have learnt nothing they could not see.
+   */
+  const OVERLAY_MIN_MESSAGES = 5;
+
+  /**
+   * Whether the "synchronisation" banner is up - a DIFFERENT question from
+   * {@link isMessageCatchupActive}, and separating the two is the whole point.
+   *
+   * `isMessageCatchupActive` answers "is a multi-frame drain running", which is what the three
+   * concurrency guards that read it actually need (the FCM cache flush, its poll, and the media
+   * send). This one answers "is there something worth telling the user about", and only that.
+   *
+   * They were one flag, decided at drain START from `pendingCount` - a count of CIPHERTEXTS. Nothing
+   * downstream can classify a frame before decrypting it: `MlsQueuedMessage` carries no delivery
+   * class and the server's envelope carries neither `silent` nor `durable`. So the banner was
+   * counting frames it could not read, and a reconnect whose nine frames were all history probes
+   * announced a synchronisation of exactly zero messages - for four seconds, every time the app came
+   * back to the foreground. It is raised from the BUFFER instead, which holds decrypted messages and
+   * therefore knows what it has.
+   */
+  let isCatchupOverlayVisible = $state(false);
   /** When true, incoming messages are buffered and flushed in one UI update (MLS queue catch-up). */
   let bulkIngestActive = false;
   /** Global MLS catch-up sequence (reset when bulk buffer starts). */
@@ -180,10 +206,29 @@ export function useMessaging() {
     );
   }
 
+  /**
+   * Raises the banner once the buffer holds enough real messages to be worth announcing.
+   *
+   * Called on every buffered message, and deliberately cheap: it stops scanning for good once the
+   * banner is up, and the scan itself is over CONVERSATIONS rather than messages.
+   */
+  function raiseOverlayIfWorthAnnouncing() {
+    if (isCatchupOverlayVisible || messageCatchupDepth === 0) return;
+    let buffered = 0;
+    for (const msgs of bulkIngestBuffer.values()) {
+      buffered += msgs.length;
+      if (buffered >= OVERLAY_MIN_MESSAGES) {
+        isCatchupOverlayVisible = true;
+        return;
+      }
+    }
+  }
+
   /** Clears catch-up UI state (safety net if begin/end ever desync). */
   function resetMessageCatchupState() {
     messageCatchupDepth = 0;
     isMessageCatchupActive = false;
+    isCatchupOverlayVisible = false;
     bulkIngestActive = false;
     warnIfDiscardingBuffered('resetMessageCatchupState');
     bulkIngestBuffer.clear();
@@ -232,6 +277,7 @@ export function useMessaging() {
         messageCatchupDepth = Math.max(0, messageCatchupDepth - 1);
         if (messageCatchupDepth === 0) {
           isMessageCatchupActive = false;
+          isCatchupOverlayVisible = false;
         }
       }
     }
@@ -287,6 +333,7 @@ export function useMessaging() {
         ingestSequence: options.ingestSequence ?? bulkIngestSeq++,
       });
       bulkIngestBuffer.set(normalized, existing);
+      raiseOverlayIfWorthAnnouncing();
       return;
     }
 
@@ -1122,6 +1169,9 @@ export function useMessaging() {
       return isUploadingMedia;
     },
     /** True while the MLS queue is draining after reconnect (catch-up in progress). */
+    get isCatchupOverlayVisible() {
+      return isCatchupOverlayVisible;
+    },
     get isMessageCatchupActive() {
       return isMessageCatchupActive;
     },

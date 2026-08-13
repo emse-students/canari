@@ -56,6 +56,50 @@ Four consequences drive everything else.
 
 ---
 
+## What a connection pass costs, measured
+
+Measured on an Android device against production, 2026-08-13, nine local groups. The pass is the
+connection trigger: `initializeConnection.ts` calls `reconcileAllGroups` over every local group once
+the mailbox has drained.
+
+| Fact | Value |
+| --- | --- |
+| Cost of one group | **~480 ms**, almost all of it the `sendHistoryRequest` election round trip |
+| Cost of the pass, sequential | **4.35 s** for 9 groups |
+| Cost of the MLS encrypt + send | not separable from zero - `[HISTORY_STATE] Sent` and the `asked` line that follows it land in the same second |
+| Reply when the two agree | **nothing at all** - silence is the answer |
+
+```
+10:37:13.136  [HISTORY_RECONCILE] asked 66e1b07e…
+10:37:13.563  [HISTORY_RECONCILE] asked 4f87267a…        ← ~480 ms apart, strictly serialised
+   ...
+10:37:16.603  [QUEUE] Drain start groups=1 messages=1    ← the drain starts mid-pass
+10:37:17.482  [HISTORY_RECONCILE] reconciliation pass complete - 9 group(s) asked
+```
+
+Three things follow, and each corrected a belief that was written down before it was measured.
+
+1. **The probe was never expensive in FRAMES, and always expensive in TIME.** A matching digest costs
+   zero reply frames, which is what makes asking on every connection affordable - that part of the
+   design holds. What did not hold is the *shape* of the ask: the elections are HTTP, take no MLS
+   mutex, and were serialised for a reason that only ever applied to the sends. They now run with a
+   bound of 6 in flight (`ELECTION_CONCURRENCY`); the sends still serialise on the mutex as before.
+   The bound is not decoration - a device in fifty conversations would otherwise open fifty requests
+   on a phone radio at the instant it reconnects.
+2. **The inbound drain does not cost what it appears to.** It overlaps the pass and inherits its
+   duration, so drain time was flat at ~4 s whether it carried 2 frames or 12. Anything measuring
+   "how long a drain takes" on a reconnect is measuring this pass.
+3. **Every foreground return paid it.** On Tauri, `visibilitychange: hidden` pauses the connection
+   immediately and deliberately (`ChatBackgroundService.svelte`), so an app switch costs a
+   reconnect, hence a full pass. Holding the socket open through a short background was considered
+   and **rejected**: a message arriving during the grace period would be ACKed over the WebSocket by
+   a live-but-backgrounded app, which cancels the deferred FCM fallback
+   (`messaging.service.ts`, `scheduleDeferredPush`, 10 s) - and nothing establishes that the web
+   `Notification` shown in its place is delivered from a backgrounded Android WebView. With the pass
+   itself down to one round trip, the trade stopped being worth its risk.
+
+---
+
 ## What was wrong
 
 Two separate flags each carried two questions. Both failures have the same shape, and it is the one
@@ -587,6 +631,9 @@ With the product owner, 2026-08-12. Each replaced an alternative rejected for th
 | Who chooses the window | **Fixed per platform** | A user-visible setting: it is a completeness contract between devices, not a preference, and a user lowering it silently reduces what their other devices can be told |
 | What may move the floor | **Nothing, for now** - it ships at zero and the merge rule (`max`) is all that is implemented | Moving it on any schedule: the floor may never sit below what a member can still supply, and with the most retentive platform at 5 years no member prunes for five years. There is nothing to move it *to* |
 | Redis durability | **Fixed immediately** - named volume + `appendonly yes` | Deferring it to the rework: the log would stay destructible until then, and the cap cannot be raised before it |
+| Shape of a connection pass (2026-08-13) | **Elections concurrent, bounded at 6; sends still serialised** | Sequential: measured at 4.35 s for 9 groups, ~95 % of it serialised HTTP that takes no lock. Unbounded `Promise.all`: a device in fifty conversations opens fifty requests on the radio at reconnect |
+| Announcing a drain (2026-08-13) | **Raised from the decrypted buffer, at 5 real messages** | `pendingCount` at drain start: it counts ciphertexts, and nothing can classify a frame before decrypting it - so a reconnect carrying nine probes and no messages announced a synchronisation for four seconds |
+| Holding the socket through a short background | **Rejected** | The app would ACK over the WebSocket while backgrounded, cancelling the deferred FCM fallback, and nothing establishes the web `Notification` is delivered from a backgrounded WebView |
 
 ---
 
