@@ -711,6 +711,28 @@ What the audit does NOT do: it is not a guarantee. A group whose every peer is o
 connection stays owed, and is asked once per connection - one probe, for the one group that genuinely
 needs it, which is the same honest limit the connection edge already has.
 
+#### Measured on the fleet, 2026-08-13
+
+Three real clients, on the shipped build. **The noise that had polluted every run stopped after the
+audit's single pass**, which is the outcome the campaign needed:
+
+| client | first connection | next connection | `SecretReuseError` before → after |
+| --- | --- | --- | --- |
+| A1 (phone) | `auditing 9 group(s)` → **8/9 asked** in 1140 ms | `auditing 1 group(s)` → 1/1 | 2 → 0 |
+| W1 (browser) | `auditing 9 group(s)` → 9/9 in 276 ms | `every group already audited` | 18 → 0 |
+| W2 (browser) | swept (new store) → 1/1 in 194 ms | `every group already audited` | 20 → 0 |
+
+**A1's `8/9` is the per-group discharge proving itself, not a defect.** The ninth group had been
+asked twelve seconds earlier by the deferral being discharged (`no probe sender yet - a577dba6…
+deferred until one is installed`, then `asked` one second later - the `233c2e0b` fix running on
+hardware for the first time). The coalescing window therefore skipped it, `reconcileGroup` returned
+false, and it was **not** recorded as audited - so the next connection asked it alone, and the one
+after that reported `every group already audited`. Recording the pass's input instead would have
+discharged it silently.
+
+The other measurement worth keeping: **9 groups in 276 ms on the browser and 1140 ms on the phone**,
+against the 4.35 s the serialised pass used to cost.
+
 ---
 
 ## Open questions

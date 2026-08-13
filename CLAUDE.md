@@ -181,6 +181,15 @@ server keeps`, and no unreadable frame arrived. The fix HOLDS a repair that is r
 manufacture a trigger for damage whose evidence was consumed before the fix existed - the frames
 that would have raised this one were acked and deleted at the time.
 
+**THE AUDIT IS VERIFIED RUNNING ON ALL THREE CLIENTS (2026-08-13) AND THE FLEET IS CLEAN.** Boot 1
+audits, boot 2 reports `every group already audited`, and `SecretReuseError` went 18→0 on W1, 20→0 on
+W2, 2→0 on A1 - the noise that polluted MSG-4 and MSG-9 is gone. A1 asked **8/9** on its first pass
+and the ninth alone on the second: the deferral fix had already asked it 12 s earlier, so coalescing
+skipped it and it was correctly NOT recorded as audited. The table is in
+[history-reconciliation](docs/wiki/protocols/history-reconciliation.md#measured-on-the-fleet-2026-08-13);
+**`233c2e0b` is also proven on hardware there** (`no probe sender yet … deferred`, then `asked` one
+second later). Residual noise is two failing avatar endpoints, nothing else.
+
 **THAT GAP IS NOW CLOSED BY THE ONE-SHOT AUDIT** - `groupsOwingAudit` / `noteGroupsAudited` in
 `historyReconcile.ts`, wired at the connection edge in `initializeConnection.ts`, written up in
 [history-reconciliation](docs/wiki/protocols/history-reconciliation.md#and-the-fix-does-not-reach-backwards---hence-the-audit).
