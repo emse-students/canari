@@ -169,12 +169,20 @@ export function useNotifications() {
     }
   }
 
-  /** Stops the incoming-call ring and cancels pending vibration. */
+  /**
+   * Stops the incoming-call ring and cancels pending vibration.
+   *
+   * A NO-OP when nothing is ringing, and the guard is the whole point. Its caller is an `$effect`
+   * that runs on every call-state evaluation, so it fires at startup with no call in sight - and
+   * `navigator.vibrate(0)` is still a vibrate call, which Chrome refuses without a prior user
+   * gesture and reports as a console ERROR. That put two unexplained error lines in every single
+   * cold start, on a campaign whose rule is that a run is only clean when every line is accounted
+   * for. Cancelling a vibration nobody started is not defensive, it is noise.
+   */
   function stopIncomingCallRingtone() {
-    if (incomingCallRingTimer !== null) {
-      clearInterval(incomingCallRingTimer);
-      incomingCallRingTimer = null;
-    }
+    if (incomingCallRingTimer === null) return;
+    clearInterval(incomingCallRingTimer);
+    incomingCallRingTimer = null;
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
         navigator.vibrate(0);

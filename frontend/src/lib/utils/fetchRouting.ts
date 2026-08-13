@@ -11,9 +11,35 @@
  * asynchronously at startup, which nothing else can reach.
  */
 
+/**
+ * A WebView custom protocol wearing an `http(s)` URL, which no network client can ever resolve.
+ *
+ * Tauri serves EVERY registered custom protocol as `http(s)://<scheme>.localhost/` on Windows and
+ * Android (`tauri.localhost` for the app's own assets, `ipc.localhost` for the IPC bridge,
+ * `asset.localhost` for converted file sources). Matching the SUFFIX rather than listing those three
+ * is the point: a plugin may register a scheme tomorrow, and `.localhost` is reserved by RFC 6761
+ * precisely so that it never resolves on a network.
+ *
+ * Getting this wrong broke Tauri's own IPC. Its bridge calls `fetch('http://ipc.localhost/...')`,
+ * which matched `^https?://`, was on no exception list, and so went to the HTTP plugin - a network
+ * client, asked to reach a host that does not exist. Tauri logged `IPC custom protocol failed,
+ * Tauri will now use the postMessage interface instead` and switched ALL IPC to `postMessage` for
+ * the rest of the session, on every Android cold start.
+ */
+function isWebViewCustomProtocol(url: string): boolean {
+  try {
+    return new URL(url).hostname.endsWith('.localhost');
+  } catch {
+    // Not parseable as an absolute URL, so it is not addressing a host at all; the caller's
+    // relative-URL branch already keeps those native.
+    return false;
+  }
+}
+
 /** Origins that must stay on the WebView's own fetch even though they are `http(s)`. */
 function isDevServerOrInternalUrl(url: string): boolean {
   return (
+    isWebViewCustomProtocol(url) ||
     url.startsWith('http://127.0.0.1:1420') ||
     url.startsWith('http://localhost:1420') ||
     url.includes('__data.json') ||

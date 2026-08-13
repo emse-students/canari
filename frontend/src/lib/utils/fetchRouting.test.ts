@@ -21,6 +21,23 @@ describe('shouldUseNativeFetch', () => {
     expect(shouldUseNativeFetch('https://canari-emse.fr/api/version')).toBe(false);
   });
 
+  it.each([
+    ["Tauri's IPC bridge", 'http://ipc.localhost/plugin%3A__TAURI_CHANNEL__%7Cfetch'],
+    ["the app's own assets", 'http://tauri.localhost/_app/immutable/chunk.js'],
+    ['a converted file source', 'http://asset.localhost/var/data/x.png'],
+    ['the https form Windows and Android can be configured to use', 'https://ipc.localhost/x'],
+    ['a scheme registered by some future plugin', 'http://whatever.localhost/x'],
+  ])('keeps %s native - it is a custom protocol, not a network host', (_label, url) => {
+    // Routing `ipc.localhost` to the network client is what made Tauri give up on its custom
+    // protocol and fall back to `postMessage` for the whole session, on every Android cold start.
+    expect(shouldUseNativeFetch(url)).toBe(true);
+  });
+
+  it('does not mistake a real host that merely ENDS in localhost for a custom protocol', () => {
+    expect(shouldUseNativeFetch('https://notlocalhost/api/x')).toBe(false);
+    expect(shouldUseNativeFetch('https://evil-localhost.example/api/x')).toBe(false);
+  });
+
   it('keeps a cookie-bearing request native, whose jar the plugin cannot write back', () => {
     expect(
       shouldUseNativeFetch('https://canari-emse.fr/api/auth/refresh', { credentials: 'include' })

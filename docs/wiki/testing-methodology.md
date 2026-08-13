@@ -251,6 +251,28 @@ A verdict is `PASS` only when the assertions hold **and** the run is clean; othe
 **A line that turns out to be routine is ADDED to the benign list, never ignored in place.** That is
 the whole mechanism: the `unexplained` bucket only keeps its value if it shrinks by decision.
 
+### The bar is "expected", not "no failure" - and it applies to the server too
+
+Set by the user on 2026-08-13, and it raises everything above: *"je veux que tout soit explique et que
+le comportement, y compris dans les logs web, mobile, et serveur, soit completement normaux et
+attendus. Limite tu devrais savoir exactement avant de le voir. Nous devons etre intransigeants."*
+
+So the discipline is **predict, then read**: say what the log should contain BEFORE the run, and
+afterwards account for every line that is not on that list. Each one is either understood and written
+down as benign *with its reason*, or it is a finding. There is no third bucket. "Pre-existing",
+"benign", "probably the IPC warming up" are not explanations - they are the places where an
+explanation is owed, and each one is a mechanism nobody has looked at yet. The server's logs are in
+scope exactly like the two clients': a check that reads only what the UI printed has observed one
+third of the system.
+
+Two rate rules follow. **A claim about frequency needs a denominator** - "it fires on every launch"
+is a measurement (N cold starts, N observations), never an impression from one occurrence. And **a
+measurement taken on a locked client measures nothing**: entering the PIN is part of starting a
+client, not a step before the interesting part, because MLS does no work at all until it is unlocked.
+The app's side of that contract is a property worth asserting rather than assuming: **it must not
+attempt MLS work before a PIN has been entered** (a stored PIN or biometrics count as entered), so
+MLS activity observed before the unlock is a defect, not a timing quirk.
+
 ---
 
 ## Reconciliation: the only way a silent loss can be seen
