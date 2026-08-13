@@ -3,10 +3,8 @@
 const COMMANDS: &[&str] = &["open_custom_tab"];
 
 fn main() {
-    // No `.ios_path(...)`: this plugin is Android-only (WP-OIDC-TAB-1 scope). iOS keeps the
-    // plain system-browser launch via tauri-plugin-opener; its equivalent fix would be
-    // ASWebAuthenticationSession, a separate native surface, not this plugin.
     tauri_plugin::Builder::new(COMMANDS)
         .android_path("android")
+        .ios_path("ios")
         .build();
 }

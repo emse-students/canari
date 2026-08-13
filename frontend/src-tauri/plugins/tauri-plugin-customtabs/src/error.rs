@@ -4,11 +4,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     #[error(transparent)]
     PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
-    #[cfg(not(target_os = "android"))]
-    #[error("Custom Tabs are only available on Android")]
+    #[cfg(not(mobile))]
+    #[error("Custom Tabs / ASWebAuthenticationSession are only available on mobile")]
     Unsupported,
 }
 

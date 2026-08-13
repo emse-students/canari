@@ -15,7 +15,7 @@ import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { isAndroidTauriRuntime, isMobileTauriRuntime } from '$lib/utils/appVersion';
+import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { customTabsCommand } from '$lib/services/customTabsCommands';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
@@ -218,21 +218,20 @@ export async function startOidcLogin(
     : `${baseUrl}${authorizePath}`;
   alog(`login returnTo=${returnTo} uri=${redirectUri} flow=${options?.flowSlug ?? 'default'}`);
 
-  // On Tauri mobile (Android + iOS), open in the system browser so the main WebView is never
-  // navigated away and the Tauri IPC bridge stays intact. The callback returns via the
-  // fr.emse.canari://callback deep link handled by plugin-deep-link.
+  // On Tauri mobile (Android + iOS), open in a dedicated in-app browser session so the main
+  // WebView is never navigated away and the Tauri IPC bridge stays intact. The callback returns
+  // via the fr.emse.canari://callback deep link handled by plugin-deep-link - shared by both
+  // platforms and unaffected by which browser surface presented the login page.
   //
-  // Android uses a Chrome Custom Tab (tauri-plugin-customtabs), which the OS closes
-  // automatically once this app returns to the foreground on that deep link. A plain
-  // system-browser launch (openUrl) is left open afterward with nothing able to dismiss it
-  // from either side, which reads as "the login failed" (WP-OIDC-TAB-1). iOS keeps openUrl for
-  // now - its equivalent would be ASWebAuthenticationSession, a separate native surface not
-  // built here.
-  if (isAndroidTauriRuntime()) {
+  // tauri-plugin-customtabs backs this with a Chrome Custom Tab on Android and an
+  // ASWebAuthenticationSession on iOS (WP-OIDC-TAB-1). Both are closed automatically once the
+  // flow completes - the OS does it for the Custom Tab when this app resumes to the foreground
+  // on that deep link, the plugin does it for the session by re-dispatching its callback
+  // through the same deep link. A plain system-browser launch (openUrl), used before this
+  // plugin existed, left the tab/window open afterward with nothing able to dismiss it from
+  // either side, which read as "the login failed".
+  if (isMobileTauriRuntime()) {
     await invoke(customTabsCommand('openCustomTab'), { url: authUrl });
-  } else if (isMobileTauriRuntime()) {
-    const { openUrl } = await import('@tauri-apps/plugin-opener');
-    await openUrl(authUrl);
   } else {
     window.location.href = authUrl;
   }
