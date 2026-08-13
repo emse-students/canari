@@ -596,14 +596,31 @@ async function handleKnownGroup({
     const seenReplay = !seenLive && hasHistoryFrameBeenConsumed(userId, groupId, fingerprint);
     if (seenLive || seenReplay) {
       log(
-        `[MLS] Duplicate delivery for ${convoKey.slice(0, 8)}… - silent ACK (${reason}, already read by ${seenLive ? 'live delivery' : 'the archive replay'})`
+        `[MLS] Duplicate delivery for ${convoKey.slice(0, 8)}… - silent ACK (${reason}, already read by ${seenLive ? 'live delivery' : 'the archive replay'}, frame ${fingerprint})`
       );
       return;
     }
     // Deliberately NOT onOutOfSync: the plaintext is unrecoverable here whatever we do locally, and
     // a re-add would destroy a valid membership to fix nothing. The sender is the only party that
     // can still produce this message at a generation we have not consumed.
-    log(`[MLS] LOST frame for ${convoKey.slice(0, 8)}… from ${sender}: ${diagnosis} (${reason})`);
+    /**
+     * THE FINGERPRINT IS PART OF THE REPORT, not a debugging extra.
+     *
+     * This line names a spent generation, and it cannot on its own distinguish the two things that
+     * produce one: a frame whose bytes some path here consumed without recording it (a ledger gap,
+     * ours to fix), or two DIFFERENT ciphertexts genuinely sent at the same generation (the sender's
+     * ratchet rewound, theirs). The generation number appears in the WASM line above and is the same
+     * in both, so the only discriminator is whether the bytes match a frame already seen - and until
+     * this fingerprint was printed, answering that needed a live console tail on the right browser at
+     * the right second. It cost exactly that on 2026-08-14, at generation 559, and the tail is not a
+     * thing a user or a later reader can go back and take.
+     *
+     * Paired with the same fingerprint on the duplicate line above, a plain log read now settles it:
+     * the same value on both means a ledger gap, two different values at one generation means reuse.
+     */
+    log(
+      `[MLS] LOST frame for ${convoKey.slice(0, 8)}… from ${sender}: ${diagnosis} (${reason}, frame ${fingerprint})`
+    );
     // ONE repair, and it is the id-addressed one. There used to be a narrow rung first - ask the
     // sender to re-send the last two minutes - and it was deleted rather than tuned: it could not
     // name what it wanted (the frame never decrypted, so its id was never seen), so it asked for a

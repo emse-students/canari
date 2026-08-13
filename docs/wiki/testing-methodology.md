@@ -122,6 +122,23 @@ The bound is not the interesting half - the report is. An exhausted bound prints
 that never moves) end in states whose last value cannot tell them apart, and they want opposite
 fixes.
 
+**AND THE SETUP IS A PRECONDITION OF EVERY SCRIPT, NOT AN OPENING CEREMONY.** The preflight ran once,
+before the first job, and the eleven scripts after it started from whatever the previous one left
+behind - so the result of a phase depended on the ORDER and on the leftovers, and a green run proved
+nothing about the next one. That is the exact opposite of what a phase is for: a phase exists to be
+**re-run after a change to show the system is still healthy**, and a phase that cannot be replayed
+from a defined state cannot show anything.
+
+It cost a real diagnosis on 2026-08-14. MSG-5 left the "Ajouter un canal" dialog open; MSG-1b,
+MSG-6/7, MSG-9 and MSG-10 then all died inside `ensureChat`, each pointing at an application that was
+working perfectly - four checks accusing the wrong component, which is worse than four checks not
+running. Note what the existing signals said about that client: reachable, unlocked, on `/chat`, full
+sidebar. **An overlay is invisible to every readiness probe and swallows the first click**, so it is
+now part of what "ready" means, repaired loudly like the others. And a job whose clients cannot be
+brought to a known state is reported BLOCKED rather than run: it never executed, so it has no verdict
+at all, and saying so is the difference between "the app misbehaved" and "the question was not
+askable".
+
 ### 8. When a check's BREAK is not invertible, the teardown restores a PROPERTY, never a snapshot
 
 Rewinding a sender cannot be undone by restoring any state: while the fork was live, the peer
@@ -250,6 +267,15 @@ A verdict is `PASS` only when the assertions hold **and** the run is clean; othe
 
 **A line that turns out to be routine is ADDED to the benign list, never ignored in place.** That is
 the whole mechanism: the `unexplained` bucket only keeps its value if it shrinks by decision.
+
+**AND A RECORD THAT SAYS `clean: false` MUST SAY WHY, IN THE SAME ROW.** MSG-10 reported a dirty
+sender on 2026-08-14 with `senderSevere: []` and `senderErrors: []` printed beside it, because the
+two buckets that check happened to keep were not the two that had broken its verdict. The only way to
+learn what it saw was to run it again - and it came back clean, so the cause is now unattributable
+and stays that way. **A result you cannot read is a result you cannot believe, and a re-run is not a
+recovery: it destroys the evidence it was meant to recover.** Each check listing buckets by hand is
+how they drift apart from the definition of `clean`, so they are listed once, next to it: `dirtOf()`
+returns every clean-breaking bucket that is non-empty, and checks record that.
 
 ### The bar is "expected", not "no failure" - and it applies to the server too
 

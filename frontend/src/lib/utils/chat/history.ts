@@ -610,8 +610,12 @@ export async function replayConversationHistory(params: {
             seenCipherHashes.add(cipherFingerprint);
             seenUpdated = true;
             sawUnreadableFrame = true;
+            // The fingerprint travels with the claim, for the same reason it does on the live path's
+            // LOST line: the two lines are about the SAME frame when the fault is a ledger gap, and
+            // about two different frames sharing a generation when the sender's ratchet rewound.
+            // Printing it on one side only would have made the pair uncomparable.
             console.warn(
-              `[History] frame never read here and unreadable for good (${kind}); will reconcile (group ${id})`
+              `[History] frame never read here and unreadable for good (${kind}); will reconcile (group ${id}, frame ${cipherFingerprint})`
             );
             continue;
           }

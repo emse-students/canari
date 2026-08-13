@@ -24,6 +24,8 @@ import {
 } from './chat.mjs';
 import { watch, report, dirtOf } from './watch.mjs';
 import { mark } from './results.mjs';
+// See fwd.mjs: a real display name belongs in names.mjs, which never reaches the public repo.
+import { peerNameFor } from './names.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
 const N = Number(process.argv[2] || 3);
@@ -49,7 +51,7 @@ function sendsOf(cx) {
 const w1 = await client(9224, 'canari-emse.fr');
 const w2 = await client(9223, 'canari-emse.fr');
 await ensureChat(w2);
-await openConversation(w2, 'OWNER DISPLAY NAME');
+await openConversation(w2, peerNameFor('W2'));
 
 const summary = [];
 for (let i = 0; i < N; i++) {
@@ -69,7 +71,7 @@ for (let i = 0; i < N; i++) {
   await sleep(800);
   await clickBubbleAction(w1, m, 'Transférer');
   await until(w1, `!!document.querySelector('[role=dialog]')`, 15000);
-  await realClick(w1, 'text=Claire VAN RUYMBEKE');
+  await realClick(w1, `text=${peerNameFor('W1')}`);
   await until(w1, `!document.querySelector('[role=dialog]')`, 15000);
 
   const at = Date.now();

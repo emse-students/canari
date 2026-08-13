@@ -144,6 +144,45 @@ describe('a frame this device has already read', () => {
       expect.any(Function)
     );
   });
+
+  /**
+   * BOTH LINES MUST NAME THE FRAME, or the pair cannot be compared after the fact.
+   *
+   * A spent generation has two possible causes and the log cannot tell them apart from the
+   * generation number alone, because that number is identical in both: a frame some path here
+   * consumed without recording it (ours), or two different ciphertexts genuinely sent at one
+   * generation (the sender's ratchet rewound, theirs). The fingerprint is the discriminator - same
+   * value on both lines means a ledger gap, two values at one generation means reuse.
+   *
+   * Pinned because it reads as decoration and would be trimmed as noise. On 2026-08-14 its absence
+   * cost a live console tail on the right browser at the right second, which is not something a
+   * later reader, or a user, can go back and take.
+   */
+  it('names the frame on both the duplicate line and the lost line', async () => {
+    const body = [5, 6, 7];
+    const fingerprint = frameFingerprint(new Uint8Array(body));
+
+    const dup = baseDeps();
+    markHistoryFrameConsumed('user-a', groupId, fingerprint);
+    await deliver(dup, body);
+
+    // The ledger is process-wide, so the mark just written would make the second delivery a
+    // duplicate too, and this test would pass while proving only half of what it claims.
+    localStorage.clear();
+    resetSeenCipherCacheForTests();
+
+    const lost = baseDeps();
+    await deliver(lost, body);
+
+    const said = (deps: ReturnType<typeof baseDeps>, needle: string) =>
+      vi
+        .mocked(deps.log)
+        .mock.calls.map(String)
+        .find((line) => line.includes(needle));
+
+    expect(said(dup, 'Duplicate delivery')).toContain(fingerprint);
+    expect(said(lost, 'LOST frame')).toContain(fingerprint);
+  });
 });
 
 describe('a frame lost to a rewound sender', () => {

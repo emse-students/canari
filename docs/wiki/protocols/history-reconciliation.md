@@ -912,6 +912,47 @@ behaviour: a two-frame page marks both, and a page where one entry failed marks 
 The rule this taught - *a ledger is written where the effect lands, not where the results are
 convenient to iterate* - is in [durable-rules](../durable-rules.md).
 
+##### That fix works, and it did NOT end the false loss - one frame per run still refuses on both paths
+
+Measured 2026-08-14 on the deployed batch fix, full MSG phase, three clients each proven to be on the
+built code first. **12 PASS, 1 PASS-DIRTY**, the single dirty row being MSG-1b - and the tail from
+W2 is worth reading in full, because it says two things at once:
+
+```
+23:44  Ciphertext generation out of bounds 555 -> [MLS] Duplicate delivery (already read by the archive replay)
+24:29  Ciphertext generation out of bounds 559 -> [MLS] LOST frame -> reconciling
+24:31  Ciphertext generation out of bounds 559 -> [History] frame never read here and unreadable for good
+24:33  Ciphertext generation out of bounds 560 -> [MLS] Duplicate delivery (already read by the archive replay)
+```
+
+**555 and 560 are the batch fix working**: both took the branch that used to say `LOST frame`, and
+both now resolve to a silent ACK. That is the mechanism above, confirmed on live traffic rather than
+argued from the diff.
+
+**559 is a different thing and must not be filed under the same cause.** It is refused by BOTH
+consumers - live delivery at 24:29, the archive replay at 24:31 - and NEITHER ledger holds it. Since
+those are the only two MLS consumers in the client (`noteFrameProcessed` has exactly one call site,
+`markHistoryFrameConsumed` two, and the channel path is AES, not MLS), a generation spent with no
+mark anywhere means the bytes that spent it are not the bytes being refused.
+
+Nothing is actually lost, and the app proves that itself: `copiesOnReceiver: 1`, `lostAgainMs: null`,
+and the reconciliation it triggers answers `same state as <peer> - nothing to do`. The cost is a
+wasted round trip and a `severe` line that makes a green run unclean.
+
+**What the log could not say, and now says.** Two causes produce this and the generation number is
+identical in both - a frame consumed here without being recorded (ours), or two different ciphertexts
+genuinely sent at one generation (the sender's ratchet rewound, theirs). Answering it required a live
+console tail on the right browser at the right second, which no later reader and no user can go back
+and take. The frame's fingerprint is now printed on all three lines - the duplicate, the `LOST frame`
+and the `[History]` one - so a plain log read settles it: **the same value on two lines is a ledger
+gap, two values at one generation is reuse.** Pinned by a test, because it reads as decoration.
+
+Two hypotheses were RAISED AND REFUTED here rather than carried forward, and both refutations were
+cheap: the ledger write is a `queueMicrotask`, not a timer, so a reload cannot outrun it; and
+`msg1 --cold` - the only reliable trigger - merely skips a warm-up send, so "the sender reloaded and
+its checkpoint was behind" cannot be the mechanism. What remains is the fingerprint comparison, and
+the next occurrence produces it without an instrument.
+
 ---
 
 ## Open questions

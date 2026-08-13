@@ -7,6 +7,7 @@
  *   node run.mjs MSG TYPE READ        several phases, in order
  *   node run.mjs --file msg3.mjs      one script, still with the preflight
  *   node run.mjs --all                every phase that has a script
+ *   node run.mjs --preflight [W1 A1]  the rig check ALONE, no script, no verdict (default: all three)
  *   node run.mjs MSG --no-preflight   only when you have just checked the clients yourself
  *
  * WHY THIS EXISTS. Three things were rediscovered by hand every session, and each of them produced
@@ -234,6 +235,32 @@ async function preflight(devices, { quiet = false } = {}) {
   }
 
   return problems;
+}
+
+// ---------------------------------------------------------------------------- rig check alone
+
+/**
+ * ASKING WHETHER THE RIG IS SANE MUST NOT COST A VERDICT.
+ *
+ * Until this flag existed, the only way to learn that a client was locked, backgrounded or sitting
+ * under a leftover modal was to START a run - which then wrote rows to `results.ndjson` about an
+ * instrument that was never in a fit state to measure. That is the wrong order: the answer to "can I
+ * measure now" belongs BEFORE the measurement, not inside its record.
+ *
+ * It repairs what it can, exactly as the in-run preflight does - same function, so the two can never
+ * drift into disagreeing about what "ready" means - and exits non-zero on what it cannot.
+ */
+if (flag('preflight')) {
+  const want = named.length ? named : ['W1', 'W2', 'A1'];
+  for (const d of want) if (!PORTS[d]) throw new Error(`unknown device ${d} - known: ${Object.keys(PORTS).join(' ')}`);
+  console.log(`\nPREFLIGHT (${want.join(' ')})\n`);
+  const problems = await preflight(want);
+  if (problems.length) {
+    console.log('\nNOT FIT TO MEASURE:\n');
+    for (const p of problems) console.log(`  ${p}`);
+  }
+  console.log(`\n  ${problems.length ? 'DO NOT RUN' : 'the rig is ready'}\n`);
+  process.exit(problems.length ? 2 : 0);
 }
 
 // ---------------------------------------------------------------------------- listing

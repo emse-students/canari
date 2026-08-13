@@ -29,6 +29,11 @@ import {
 } from './chat.mjs';
 import { watch, report, dirtOf } from './watch.mjs';
 import { record, mark } from './results.mjs';
+// NO DISPLAY NAME IS EVER SPELT IN A CHECK. `names.mjs` is the one file that holds real identities
+// and the one file that never reaches the repo, which is PUBLIC - so a check that imports cannot
+// leak, and a check that spells the name relies on someone noticing before the mirror. One did not:
+// the peer's full name reached the public archive in 95d76fdf that way.
+import { peerNameFor } from './names.mjs';
 
 const N = Number(process.argv[2] || 1);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -39,7 +44,7 @@ const w2 = await client(9223, 'canari-emse.fr');
 // The receiver sits in the DM for the whole run: the loss is about what ARRIVES there, and moving
 // it around would add navigation as a variable the original report did not have.
 await ensureChat(w2);
-await openConversation(w2, 'OWNER DISPLAY NAME');
+await openConversation(w2, peerNameFor('W2'));
 
 const rows = [];
 for (let i = 0; i < N; i++) {
@@ -55,7 +60,7 @@ for (let i = 0; i < N; i++) {
 
   await clickBubbleAction(w1, marker, 'Transférer');
   await until(w1, `!!document.querySelector('[role=dialog]')`, 15000);
-  await realClick(w1, 'text=Claire VAN RUYMBEKE');
+  await realClick(w1, `text=${peerNameFor('W1')}`);
   await until(w1, `!document.querySelector('[role=dialog]')`, 15000);
 
   const at = Date.now();
