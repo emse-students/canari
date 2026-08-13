@@ -347,6 +347,17 @@ by anyone who has not met them.
   against the local build output - and read them from `performance.getEntriesByType('resource')`, not
   from `script[src]`: SvelteKit boots from an inline module, so a selector-based version of that
   assertion finds nothing and silently asserts nothing.
+- **`Log.enable` and `Runtime.enable` REPLAY what the page buffered before you attached.** A probe
+  that connects, enables, reloads and counts attributes the PREVIOUS session's errors to the reload
+  it just performed. Measured 2026-08-13: 29 `SecretReuseError` reported for a fresh boot, every
+  sample timestamped 35 minutes earlier. Take a cutoff instant before the reload and discard every
+  event whose `timestamp` is at or below it.
+- **A reload DESTROYS the execution context the Runtime and Log agents were enabled against**, and
+  events stop being delivered for the new document - so the same probe then observes almost nothing
+  and reports a silent, healthy client. The tell is the volume: 3 classified events across a whole
+  app boot is not a quiet client, it is a detached agent. Re-send `Runtime.enable` / `Log.enable` on
+  a tick across the observation window; both are idempotent, and the cutoff above already filters
+  the duplicate replays that re-enabling produces.
 - **The phone's message store is NOT IndexedDB, and reading it there reports the phone as wiped.**
   Measured 2026-08-13: on A1 the `CanariDB_<hash>` database exists with exactly the expected
   `conversations` / `messages` / `outbox` stores, and all three count **0**, while `/chat` lists a

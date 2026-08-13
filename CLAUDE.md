@@ -89,147 +89,33 @@ Everything wanted but NOT scheduled is [backlog](docs/wiki/backlog.md) - file it
 
 ### CANARI - what is open
 
-**NO WORK PACKAGE IS OPEN.** WP-PUSHHERD-1 closed 2026-08-11, the last of them - fixed AND verified
-running on the device (0 lock timeouts, 1 MLS thread, 0 kills, against 97/20+/1 before). **The iOS
-half of it is compile-verified only** and joins the owed device list below.
+**NO WORK PACKAGE IS OPEN.** Two things are owed and neither is one yet:
 
-**THE HISTORY-RECONCILIATION REWORK IS CODE-COMPLETE**, all of it, and
-**[history-reconciliation](docs/wiki/protocols/history-reconciliation.md)** is both the spec and the
-record: read it, do not re-derive the design here, do NOT re-open a decision in its Decisions table.
-Its Open questions section is empty.
+- **The fourth reconciliation trigger** the user approved - *"sonder aussi quand la reponse recue est
+  plus courte que la fenetre demandee"*. NOT implemented; the trace and the design input are in
+  [history-reconciliation](docs/wiki/protocols/history-reconciliation.md). **The hard part is
+  TERMINATION, not detection**: a phone (5 y) asking a browser (90 d) gets a clipped answer by
+  construction every time, so a naive re-ask is an unbounded loop. Terminate on a proof - every
+  current member has answered - never on a clock.
+- **The device verification ladder**, below.
 
-**IT IS DEPLOYED TO PROD AND PHASE MSG HAS NOW RUN ON IT** - 10 passed, 2 failed, 1 inconclusive.
-Four of the first run's five "failures" were HARNESS faults, not app faults, and both fixes are in
-`../canari-harness`: the preflight sent A1 off its `tauri.localhost` origin (breaking the Tauri
-allowlist), and five checks inferred which conversation was open from a composer's mere presence
-(`ensureConversation` now asserts the header). **The state of every check is
-[cross-client-testing](docs/wiki/cross-client-testing.md) - read it, do not re-derive it here.**
+**THE HISTORY-RECONCILIATION REWORK IS DONE, DEPLOYED, AND VERIFIED RUNNING ON ALL THREE CLIENTS.**
+[history-reconciliation](docs/wiki/protocols/history-reconciliation.md) is both the spec and the
+record - **read it, do not re-derive it here, and do not re-open a decision in its Decisions table**
+(its Open questions section is empty). Its four load-bearing invariants now live in
+[durable-rules](docs/wiki/durable-rules.md); the fleet measurement, the audit, and the group that
+could not heal are all written up on that page. Residual noise on the fleet: two failing
+`/api/users/<id>/avatar` endpoints, nothing else.
 
-**THE SERVER SHIPPED BEFORE THE STORES, against the stated order** - forced by Leon's `6f87a3e7`
-having prod down. **Checked rather than assumed, and harmless:** no endpoint, DTO, proto field or
-retention constant changed, so a 0.13.0 client still talks to this server; the one removed wire field
-(`withDigest`) only makes an old responder send its whole store instead of a diff. **The real
-mixed-fleet hazard is client↔client, which the deploy order never governed** - a 0.14 responder that
-gets no probe answers NOTHING and a 0.13.0 requester sends no probe, so old requesters get silence
-from updated peers. That is the clean break working as decided; both halves are written up in
-[legacy-compatibility](docs/wiki/legacy-compatibility.md). What survives of the order: publish to the
-stores → VERIFY the store serves it → only THEN raise `minClientVersion` past 0.14. Raising it first
-traps users on an update screen whose button leads to the old version.
+**A destructive cleanup for pre-existing damage was considered and REJECTED on evidence - do not
+revive it.** A terminal decrypt failure persists NOTHING, so it would have had nothing to target, and
+delete-and-recreate is strictly worse than a comparison. The one-shot audit is the answer.
 
-**The three P2s measured in the shipped exchange are FIXED and in prod** - `6387ad57`, which precedes
-the deploy already verified on `23e23b08`. The probe no longer queues or pushes to offline members
-(the server filters recipients on `body.durable`), `historyRangeStartFor` reads ONE row by key in
-both backends, and `awaitProbe` prefers a probe that postdates the election. Their backlog entries
-were deleted on 2026-08-13 after the fix was re-verified in the code; **do not reinstate them from an
-older note.**
-
-**Two defects were found and FIXED on 2026-08-13 by measuring the "Synchronisation des messages…"
-banner the user reported twice** - shipped as `23e23b08`, and **the deploy is verified rather than
-merely green**: CD `success` on that sha, apex 200, and the served chunk carries both new markers.
-Both are written up in [history-reconciliation](protocols/history-reconciliation.md) ("What a
-connection pass costs, measured" + three new rows in Decisions), so do not re-derive them: (1) the
-connection pass awaited its groups one at a time - **9 groups, ~480 ms each, 4.35 s**, and the cost
-is the HTTP election, which takes no MLS lock; elections now run 6-at-a-time and the sends still
-serialise. (2) The banner was raised from `pendingCount`, a count of CIPHERTEXTS, so it announced
-nine probes as a message sync; it is now raised from the decrypted buffer at 5 real messages, via a
-new `isCatchupOverlayVisible` - **`isMessageCatchupActive` keeps its old meaning and its three
-concurrency guards, deliberately.** A third option, holding the socket through a short background,
-was **REJECTED and must not be revived without device evidence**: the app would ACK over the
-WebSocket while backgrounded, cancelling the 10 s deferred FCM fallback, and nothing establishes the
-web `Notification` is delivered from a backgrounded Android WebView. **The 4.35 s figure is the first
-thing to re-measure on A1** - it should now be one round trip.
-
-Four things a future session must not undo, because the wiki explains them but the temptation is to
-"simplify" them back:
-
-- **`historyWindow.ts` is the only place either boundary is decided.** The floor is SHARED, monotone,
-  merged as `max`, and **ships worth zero on purpose**. The window is LOCAL and fixed by platform
-  (`isTauriRuntime()` alone: web 90 d, mobile and desktop 5 y), and `deviceWindowStart` rounds DOWN
-  to the day - unrounded, two devices a second apart compare different ranges and the fast path can
-  never fire.
-- **`since` is STATED by the asker, never recomputed by the answerer; the digest is NOT clipped; the
-  clip is on the ANSWER, never the COMPARISON; each leg states its OWN window.** All four, or a
-  boundary message goes permanently missing on one side, or every device is capped at the shortest
-  window in the conversation.
-- **`toConversationMeta` and the in-memory seed in `loadExistingConversations` are MIRRORS and must
-  be edited together.** The D2 fix was silently defeated by exactly this: `readWatermarks` was
-  written and never read back, so read state was correct until the first restart. A field persisted
-  but never read back is worse than one never stored - the write succeeds and nothing reports it.
-- **`DELIVERY` in `frameDelivery.ts` is the ONLY classification** (`visible` / `mutation` /
-  `transport`) and every send site names one; the server gate reads `body.durable`, not `!silent`.
-  Each stream entry records its own `silent`, and `redeliverMissedDuringActivationWindow` filters on
-  it or it rings the user for every reaction.
-
-**A1 IS BACK on USB** (`adb devices` lists it, 2026-08-13). Two things are owed before it measures
-anything: the **PIN unlock** (a reinstall restarts the process and "Rester connecte" was off, so the
-app sits on the PIN screen with an EMPTY local store - which reads as a stuck sync and is not one),
-and the **A1-vs-W1 reconciliation**, the one MULTI measurement the browsers cannot make.
-
-**MSG-4's defect is ROOT-CAUSED AND FIXED, and has not been seen running** (`233c2e0b`, gates green:
-svelte-check 0, 1368/1368). A group that could never heal, because `reconcileGroup` DROPPED the
-repair whenever no probe sender was installed yet - while the frame that raised it was acked in the
-same breath, deleting the only thing that could raise it again. **It was masked by the unconditional
-sweep, so `23e23b08` is what turned it from hidden to permanent.** The whole failure and the rule it
-teaches are in
-[history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-group-that-could-not-heal) -
-do not re-derive it.
-
-**MEASURED ON THE DEVICE 2026-08-13, on the fixed build: `642f389a` DOES NOT heal by itself, and
-that is NOT a second fault - it is the boundary of the fix.** A clean boot (force-stop, relaunch,
-PIN, three devices online) raised exactly ONE reconcile line, `no sweep - away 0 d, inside what the
-server keeps`, and no unreadable frame arrived. The fix HOLDS a repair that is raised; it cannot
-manufacture a trigger for damage whose evidence was consumed before the fix existed - the frames
-that would have raised this one were acked and deleted at the time.
-
-**THE AUDIT IS VERIFIED RUNNING ON ALL THREE CLIENTS (2026-08-13) AND THE FLEET IS CLEAN.** Boot 1
-audits, boot 2 reports `every group already audited`, and `SecretReuseError` went 18→0 on W1, 20→0 on
-W2, 2→0 on A1 - the noise that polluted MSG-4 and MSG-9 is gone. A1 asked **8/9** on its first pass
-and the ninth alone on the second: the deferral fix had already asked it 12 s earlier, so coalescing
-skipped it and it was correctly NOT recorded as audited. The table is in
-[history-reconciliation](docs/wiki/protocols/history-reconciliation.md#measured-on-the-fleet-2026-08-13);
-**`233c2e0b` is also proven on hardware there** (`no probe sender yet … deferred`, then `asked` one
-second later). Residual noise is two failing avatar endpoints, nothing else.
-
-**THAT GAP IS NOW CLOSED BY THE ONE-SHOT AUDIT** - `groupsOwingAudit` / `noteGroupsAudited` in
-`historyReconcile.ts`, wired at the connection edge in `initializeConnection.ts`, written up in
-[history-reconciliation](docs/wiki/protocols/history-reconciliation.md#and-the-fix-does-not-reach-backwards---hence-the-audit).
-Every device compares each group ONCE against a peer, because pre-fix damage has no live witness of
-its own. **Do not "simplify" its two properties, both of which are the previous failure wearing a
-different hat:** it is discharged PER GROUP and only for groups an ask actually LEFT for
-(`reconcileAllGroups` returns the asked ids, not a count - recording the pass's INPUT would discharge
-groups that were merely deferred and lose them for good), and `HISTORY_AUDIT_GENERATION` is the only
-way to re-run it, deliberately and fleet-wide. It is not a guarantee: a group whose peers are always
-offline stays owed and is asked once per connection, alone.
-
-**A cleanup was considered and REJECTED on evidence - do not revive it.** The trace established the
-durable footprint of a terminal decrypt failure is ZERO (no tombstone, no placeholder, no field in
-`StoredMessage`/`ConversationMeta` able to hold a gap, nothing rendered), so a destructive control
-would have nothing to target. Delete-and-recreate is strictly worse than a comparison: it destroys
-the messages still held and ends where the comparison would have ended anyway. The one thing still
-owed: confirm `642f389a` was really short of messages, via `recon.mjs` against the NATIVE store (see
-the harness trap below), not a hand probe.
-
-**The fourth reconciliation trigger the user approved is NOT implemented yet** - *"sonder aussi
-quand la reponse recue est plus courte que la fenetre demandee"*. The trace is done and is the whole
-design input: a `history_bundle` carries `to`, `messages`, `readWatermarks` and `floor` and **states
-nothing about the RESPONDER's own window**, so the asker cannot tell a complete answer from a
-clipped one - `actions.ts` even logs `(identical stores)` in that case. Attachment point is
-`bundleFrame` (`groupActions.ts:488`), which all three bundle senders funnel through and which
-already restates a per-conversation state bag on every chunk; the asker's side is the
-`history_bundle` branch of `systemMessageHandler.ts:697` (step 0, the only step that runs for an
-empty bundle) plus the replay twin in `historySystemEvents.ts:302`. **The hard part is termination,
-not detection:** a phone (5 y) asking a browser (90 d) gets a clipped answer BY CONSTRUCTION, every
-time, so a naive re-ask is an unbounded loop and restores exactly the noise just removed. Any design
-must terminate on a proof - every current member has answered - never on a clock.
-
-**The order the user set governs what comes next:** re-run the cross-client campaign from the START
-(post-setup) - the scripts exist, and it exercises everything. **Commit AND push are authorised so
-prod picks changes up: prod IS the test server.** `dev.canari-emse.fr` EXISTS as a hostname - a
-proxied CNAME to the same tunnel - but it is NOT a second environment: measured 2026-08-13 it serves
-the same title and the same `/api/version` payload as the apex, so pointing the campaign at it would
-measure production under another name. **The user will define what to do with it AFTER the campaign
-("on y revient après avoir fini la campagne de test, je vais t'expliquer ce qu'on va faire") - do not
-design a staging environment before that conversation.**
+**Release status:** v0.13.1, prod answering `{"version":"0.13.1"}`. **`minClientVersion` stays at
+0.13.0 on purpose** - the store rollout has not reached devices, and raising it first locks everyone
+out behind a button leading to the old version. What survives of the shipping order: publish to the
+stores -> VERIFY the store serves it -> only THEN raise `minClientVersion`. The mixed-fleet reasoning
+is in [legacy-compatibility](docs/wiki/legacy-compatibility.md).
 
 **Standing architectural directives from the user, verbatim:** *"le probleme doit etre
 architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout soit
@@ -238,18 +124,18 @@ tailles"*; *"pense factorisation, proprete, simplicite"*.
 
 **LEON PUSHES TO CANARI's `main` TOO.** `git fetch` at the START of a session and again before any
 measurement - never assume the local `main` is the deployed truth. His commits are usually style/UI
-and land in files the campaign measures, so what is owed for each is a WEB and a MOBILE pass logged
-next to our own checks. He follows the conventions, so a rebase is normally clean; the thing to
-verify is his change RUNNING, which no test of his can establish.
+and land in files the campaign measures, so each owes a WEB and a MOBILE pass logged next to our own
+checks. The thing to verify is his change RUNNING, which no test of his can establish.
 
-**Release status:** v0.13.1, prod answering `{"version":"0.13.1"}`. **`minClientVersion` stays at
-0.13.0 on purpose**: the store rollout has not reached devices, and raising it first locks everyone
-out behind a button leading to the old version.
+**Prod IS the test server** and commit+push are authorised so it picks changes up. `dev.canari-emse.fr`
+is a proxied CNAME to the same tunnel, NOT a second environment - measured 2026-08-13, same title and
+same `/api/version` as the apex. **The user will define what to do with it AFTER the campaign - do
+not design a staging environment before that conversation.**
 
 #### Known, and deliberately NOT a Work Package - do not "fix" these by reflex
 
 - **Nothing tells the RECEIVER's user that a message was lost** (the residue of WP-LOSS-1). A deliberate gap, not a defect.
-- **A device only asks for history when something TELLS it to** - but since the rework the commonest trigger is EVERY connection, unconditionally, over every local group. What is left of the gap: a device that never connects is never repaired, and one whose peers are never online at the same moment waits for the first that is. **Do not "fix" that with a periodic solicitation**: that is a broadcast on a timer, the exact shape this area was just cleared of, and the connection edge already asks as often as it honestly can.
+- **A device only asks for history when something TELLS it to.** The triggers are an unreadable frame, a replay that gave up, a connection whose absence outran server retention, a peer returning, and the one-shot audit. What is left of the gap: a device that never connects is never repaired, and one whose peers are never online at the same moment waits for the first that is. **Do not "fix" that with a periodic solicitation** - that is a broadcast on a timer, the exact shape this area was cleared of, and the connection edge already asks as often as it honestly can.
 - **`history_request` is deliberately NOT made durable** the way `welcome_request` is (Redis + FCM): a stored request drained hours later has no probe (60 s rendezvous TTL), so it is answered with nothing at all - and the requester must reconnect to read anything anyway, which asks again by itself. The related half: a missing Welcome BLOCKS a group, missing history only degrades it.
 - **One MLS client in a SharedWorker**, shared by every tab (the successor to WP-MULTITAB-1). It would remove the class outright rather than gating each write path one at a time. Cost is why it is not the fix: the worker transport, startup, the PIN unlock and the Safari/mobile fallback where `SharedWorker` is absent all have to be redone. Evaluate relevance and cost before starting.
 - **The `mongo` service in `docker-compose.prod.yml` is dead** - production holds no application database there (only `admin`, `config`, `local`) and nothing in the codebase carries a MongoDB connection string. A candidate for removal, not a fault; removing it is a prod service change and needs the user.

@@ -344,6 +344,26 @@ carry in the head:
 - A cause is not a label: `pending-offline` meant both "the request never left" and "it left and
   nobody answered", and the string named the first, so a silent peer was reported as an empty room.
   Two causes under one label is a WRONG answer, not a vague one - it points the user at the wrong fix.
+- **FOUR INVARIANTS OF THE HISTORY EXCHANGE THAT LOOK LIKE COMPLICATIONS AND ARE NOT.** Each one was
+  paid for; the recurring temptation is to "simplify" them back.
+  [history-reconciliation](protocols/history-reconciliation.md) carries the reasoning.
+  - **`historyWindow.ts` is the only place either boundary is decided.** The floor is SHARED,
+    monotone, merged as `max`, and **ships worth zero on purpose**. The window is LOCAL and fixed by
+    platform (`isTauriRuntime()` alone: web 90 d, mobile and desktop 5 y), and `deviceWindowStart`
+    rounds DOWN to the day - unrounded, two devices a second apart compare different ranges and the
+    fast path can never fire.
+  - **`since` is STATED by the asker and never recomputed by the answerer; the digest is NOT clipped;
+    the clip is on the ANSWER, never the COMPARISON; each leg states its OWN window.** All four, or a
+    boundary message goes permanently missing on one side, or every device is capped at the shortest
+    window in the conversation.
+  - **`toConversationMeta` and the in-memory seed in `loadExistingConversations` are MIRRORS and must
+    be edited together.** A fix was silently defeated by exactly this: `readWatermarks` was written
+    and never read back, so read state was correct until the first restart. **A field persisted but
+    never read back is worse than one never stored** - the write succeeds and nothing reports it.
+  - **`DELIVERY` in `frameDelivery.ts` is the ONLY classification** (`visible` / `mutation` /
+    `transport`) and every send site names one; the server gate reads `body.durable`, not `!silent`.
+    Each stream entry records its own `silent`, and `redeliverMissedDuringActivationWindow` filters
+    on it or it rings the user for every reaction.
 
 ## UI and i18n -> [frontend/architecture](frontend/architecture.md), [auth](frontend/modules/auth.md) (native prompts)
 
