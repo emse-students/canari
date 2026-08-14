@@ -124,10 +124,9 @@ export interface SessionContext {
   setIsMessagingInitializing(v: boolean): void;
 
   // ── Reconnection ──────────────────────────────────────────────────────────
+  /** Index into RECONNECT_DELAYS, nothing more - the ladder no longer terminates on a count. */
   getReconnectAttempts(): number;
   setReconnectAttempts(v: number): void;
-  isReconnectCircuitOpen(): boolean;
-  setReconnectCircuitOpen(v: boolean): void;
 
   // ── Services (CallService access) ─────────────────────────────────────────
   /** Returns the current CallService instance (null before initServices). */
@@ -165,6 +164,6 @@ export interface SessionContext {
   setTabLeaderSessionCb(cb: ChatSessionCallbacks | null): void;
 
   // ── Reconnection constants ─────────────────────────────────────────────────
+  /** Backoff ladder; the last entry is the steady-state interval, which is climbed for ever. */
   readonly RECONNECT_DELAYS: number[];
-  readonly MAX_RECONNECT_ATTEMPTS: number;
 }

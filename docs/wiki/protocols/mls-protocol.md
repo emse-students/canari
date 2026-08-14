@@ -431,7 +431,11 @@ When no automatic recovery is possible (e.g. all devices diverged):
 
 ### Reconnect after network loss
 
-1. `scheduleReconnect()` -> exponential backoff (1s, 2s, 4s, 8s, 16s, 30s)
+1. `scheduleReconnect()` -> exponential backoff (1s, 2s, 4s, 8s, 16s, 30s), **saturating at 30s and
+   never giving up**: only being logged out or a `SessionExpiredError` (401/403) ends the loop, since
+   a transport failure is not an answer. See
+   [auth](../frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it)
+   for the 20-attempt latch this replaced and why it stranded desktop tabs for ever.
 2. `attemptReconnect()`:
    - `mlsService.connect(token)` -> new WebSocket
    - `fetchPendingMessages()` on WS open

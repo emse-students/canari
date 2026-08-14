@@ -349,7 +349,6 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     ctx.timers.reconnect = null;
   }
   ctx.setReconnectAttempts(0);
-  ctx.setReconnectCircuitOpen(false);
 
   ctx.setTabLeaderSessionCb(cb);
 
@@ -1073,10 +1072,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     if (!getIsTabLeader()) return;
 
     // Everything below talks to the server. On an offline session the watchdogs are the harmful
-    // part: the connection watchdog would schedule a reconnect every tick, burn the
-    // MAX_RECONNECT_ATTEMPTS budget against a network that is not there, and leave the circuit
-    // OPEN - so the moment the user regains signal they would face a "Retry" button instead of a
-    // working app. promoteOfflineSession starts all of this once a token exists.
+    // part: the connection watchdog would schedule a reconnect every tick against a network that is
+    // not there, and an offline session has no access token for the handshake to carry anyway - so
+    // every attempt is known-futile before it is made, which is the one case where NOT retrying is
+    // the right answer. promoteOfflineSession starts all of this once a token exists.
     if (offlineSession) return;
 
     runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls());
@@ -1436,7 +1435,6 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   ctx.connectionRecoveryTimers.clear();
   stopConnectionWatchdogImpl(ctx);
   ctx.setReconnectAttempts(0);
-  ctx.setReconnectCircuitOpen(false);
   ctx.setTabLeaderSessionCb(null);
   ctx.setIsLoggedIn(false);
   ctx.setIsWsConnected(false);

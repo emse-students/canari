@@ -792,6 +792,25 @@ page. The five to carry, plus one status line:
   turns off. Ask of every breaker WHO closes it, and check that party is not itself disabled by it.
   Corollary that made this invisible: an app can be fully alive on HTTP and dead on its socket, so
   "the network works" is never evidence the connection does.
+- **A RESUMPTION CONDITION MUST BE ONE EVERY CLIENT CAN EMIT, or the breaker is a permanent kill for
+  whoever cannot.** The reconnect circuit released on "foreground, or a network change"; a desktop
+  tab already in the foreground on an unchanged network produces NEITHER, ever - so it stayed dead
+  for ever after any outage longer than the ~8 minute budget, silently, until a manual reload.
+  Enumerate the client classes and ask, for each, WHICH event actually reaches the release. The fix
+  is almost never a third event: it is deleting the termination. **A REPEATED TRANSPORT FAILURE IS
+  NOT AN ANSWER AND MAY NEVER END A RETRY LOOP** - only a proof may (logged out; 401/403 on the
+  refresh cookie), and both already existed. Justify it by cost, not by nerve: capped at 30 s the
+  loop is two attempts a minute, below what the same client costs while connected. **Unbounded in
+  COUNT still has to be bounded in RATE**, and exactly one rung armed at a time - a leaked timer per
+  attempt turns "never gives up" into a storm. Lifecycle events then buy LATENCY, not recovery.
+  (WP-RECONNECT-1, [auth](frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it))
+- **A RESCHEDULE ISSUED INSIDE THE GUARD THAT FORBIDS IT IS A NO-OP THAT LOGS SUCCESS.**
+  `attemptReconnect` called `scheduleReconnect` from inside its `try`, where `isReconnecting` is
+  still true - which is exactly one of the two early returns of the thing it was calling. Both
+  failure paths did nothing, after logging `Retrying in Ns...`; the retry that appeared to work was
+  a 60 s watchdog elsewhere. When a function re-enters its own scheduler, check the scheduler's
+  preconditions against the state the caller is holding at that instant - and put the call after the
+  `finally` that clears it.
 - `getCurrent()` answers "the last deep link this PROCESS was handed", never "the app was just
   started by one" - the Rust plugin holds it for the life of the process, so every re-read must be
   deduplicated. **And STATE WHOSE JOB IS TO SURVIVE AN EVENT MUST NOT LIVE WHERE THAT EVENT DESTROYS

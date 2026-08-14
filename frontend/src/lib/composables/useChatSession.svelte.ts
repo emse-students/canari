@@ -77,12 +77,15 @@ export function useChatSession() {
   let callState = $state<any>('idle');
 
   // ── Reconnection bookkeeping ──────────────────────────────────────────────
+  /**
+   * Backoff ladder for the reconnect loop. THE LAST ENTRY IS A STEADY STATE, NOT A LAST ATTEMPT: the
+   * loop never gives up, because only a proof may end it (logged out, or a 401/403 on the refresh
+   * cookie) and a repeated transport failure is not one. See `scheduleReconnectImpl` for the
+   * measurement that removed the old 20-attempt circuit (WP-RECONNECT-1).
+   */
   const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
-  /** After MAX_RECONNECT_ATTEMPTS failures the circuit opens and the user must manually retry. */
-  const MAX_RECONNECT_ATTEMPTS = 20;
+  /** Index into RECONNECT_DELAYS; reset to 0 by a successful connect and by resumeConnection. */
   let reconnectAttempts = 0;
-  /** True once the circuit is open; cleared by an explicit manual retry. */
-  let reconnectCircuitOpen = false;
   /**
    * Per-group recovery bookkeeping timers used by the `requestReAdd` seam (cancelReAdd clears
    * them). Shared across the connection sync and the syncWatchdog. Cleared on logout.
@@ -217,10 +220,6 @@ export function useChatSession() {
     setReconnectAttempts: (v) => {
       reconnectAttempts = v;
     },
-    isReconnectCircuitOpen: () => reconnectCircuitOpen,
-    setReconnectCircuitOpen: (v) => {
-      reconnectCircuitOpen = v;
-    },
 
     // Services
     getCallService: () => callService,
@@ -258,9 +257,8 @@ export function useChatSession() {
       tabLeaderSessionCb = cb;
     },
 
-    // Constantes
+    // Constants
     RECONNECT_DELAYS,
-    MAX_RECONNECT_ATTEMPTS,
   };
 
   // ── Handler promotion tab leader ──────────────────────────────────────────

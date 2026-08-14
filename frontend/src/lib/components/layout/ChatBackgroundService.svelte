@@ -1104,15 +1104,14 @@
      * The network coming back is evidence conditions changed, exactly like a foreground
      * transition - and it must reach the same seam.
      *
-     * The reconnect circuit opens after MAX_RECONNECT_ATTEMPTS and its own message says retries
-     * are paused "until the app returns to the foreground OR THE NETWORK CHANGES". The first half
-     * is `handleVisibilityChange` above. The second half did not exist: `online` reached
-     * `scheduleReconnect` (through the MLS service's own listener), which returns early precisely
-     * while the circuit is open - so the flag cut the wire to its own reset, again, on the one
-     * event most likely to mean the outage is over. A phone whose wifi returned while the user was
-     * still looking at the app stayed disconnected until they left it and came back.
+     * WHAT THIS BUYS IS LATENCY, NOT RECOVERY, and the distinction is the lesson of
+     * WP-RECONNECT-1. The reconnect ladder used to stop after 20 attempts and wait for exactly
+     * these two events to release it - which stranded for ever every client that can emit neither
+     * (a desktop tab, foreground, unchanged network). The ladder no longer stops, so a client with
+     * no lifecycle events at all still recovers on its own. This handler resets the backoff to its
+     * first rung, turning "within 30 s" into "now" when there is real evidence the outage ended.
      *
-     * `resumeConnection` is idempotent here: it clears the circuit, re-arms the watchdogs, and
+     * `resumeConnection` is idempotent here: it resets the ladder, re-arms the watchdogs, and
      * returns immediately if the socket is already up.
      */
     const handleOnlineResume = () => {

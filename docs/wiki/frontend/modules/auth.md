@@ -351,9 +351,11 @@ two facts apart for everyone else (`navigator.onLine` is optimistic - a captive 
 
 An offline session sets `authToken = ''` and `isOfflineSession = true`, and login then skips the
 gateway connect, the push registration, group discovery and **both watchdogs**. The watchdogs are
-the harmful part: left running, the connection watchdog would schedule a reconnect every tick, burn
-`MAX_RECONNECT_ATTEMPTS` against a network that is not there and leave the circuit *open* - and
-until 2026-08-10 nothing could close it again (below).
+the harmful part: left running, the connection watchdog would schedule a reconnect every tick
+against a network that is not there, and an offline session holds `authToken = ''`, so the handshake
+has nothing to carry - **every attempt is known-futile before it is made**, which is the one case
+where not retrying is the right answer. `promoteOfflineSession` starts all of it once a token
+exists.
 
 ### The pause/resume pair, and why an asymmetric one goes quiet
 
@@ -365,15 +367,6 @@ reaching for `attemptReconnect` directly. The watchdogs are armed exactly once, 
 (`sessionAuth.ts`) or on `promoteOfflineSession` - so **after a single background/foreground cycle a
 phone had no timer left that could notice a dead socket.**
 
-Two things then compounded, and the second is the sharper one:
-
-- A successful connect resets the attempt COUNT (`setReconnectAttempts(0)` in
-  `openGatewayConnection`) but never `reconnectCircuitOpen`. Nothing outside the login paths did.
-- `startConnectionWatchdogImpl`'s tick reaches for `scheduleReconnectImpl`, which returns early
-  while the circuit is open. **So the one component whose job is to notice a dead socket was
-  disarmed by the same flag that made noticing matter** - a circuit breaker that also cuts the wire
-  to the thing that would have reset it.
-
 Measured on hardware 2026-08-10 (A1, prod): parked on `/chat` with the "En attente de connexion"
 banner up, **zero reconnect attempts in ~20 minutes of logcat** while HTTP kept working throughout
 (`[API] <- 200 GET /api/presence`), then `Reconnecting... -> [WS] Connected` **330 ms** after the
@@ -381,17 +374,75 @@ wifi was cut. The socket had been dead since some earlier outage on a guest netw
 through; nothing in the client was still asking. The user's own report - "pourquoi est-on en attente
 de connexion ?" - is what started the measurement.
 
-`resumeConnectionImpl` is now the single resume seam: it closes the circuit, resets the attempts,
-re-arms both watchdogs (both are idempotent) and only then reconnects if the socket is down - so it
-must run even when the socket survived the background, which is why the `isWsConnected` guard moved
-out of the caller. `sessionConnection.test.ts` pins all of it, validated as a negative control (3 of
-its 4 cases fail against the previous code).
+`resumeConnectionImpl` is the single resume seam: it resets the backoff, re-arms both watchdogs
+(both are idempotent) and only then reconnects if the socket is down - so it must run even when the
+socket survived the background, which is why the `isWsConnected` guard moved out of the caller.
+`ctx.timers.health` is cleared in two places and **started nowhere**: it is dead state, not a timer.
 
-Two notes for whoever touches this next. The circuit's log line used to read `Click "Retry" to
-reconnect` and **no such control has ever existed** - `reconnectCircuitOpen` is read by
-`scheduleReconnectImpl` alone - so the one message a stuck user could see named a button nobody
-built; it now names what actually recovers it. And `ctx.timers.health` is cleared in two places and
-**started nowhere**: it is dead state, not a timer.
+### WP-RECONNECT-1 - the ladder that stopped, and the two silences under it
+
+**Fixed 2026-08-14. The above left a `reconnectCircuitOpen` latch in place, and it was the same
+defect wearing a different hat.** After `MAX_RECONNECT_ATTEMPTS` (20) the ladder set the latch and
+`scheduleReconnectImpl` refused every later call. Its own message named the release conditions -
+retries pause *"until the app returns to the foreground or the network changes"* - and **a desktop
+tab already in the foreground on an unchanged network emits neither event, ever.** So the release
+condition was one an entire class of client cannot satisfy: termination from a clock, with a
+resumption that is not universally reachable.
+
+Captured on two production tabs, seven hours after a server outage, with `circuit.mjs`:
+
+```
+W1: {"online":true,"visibility":"visible","pill":"Hors-ligne","pageAgeMs":25772981}
+W2: {"online":true,"visibility":"visible","pill":"Hors-ligne","pageAgeMs":25801936}
+
+W1: CIRCUIT OPEN   watchdogTicks=2  retriesScheduled=0  socketsCreated=0
+W2: CIRCUIT OPEN   watchdogTicks=2  retriesScheduled=0  socketsCreated=0
+   [WS] Watchdog: socket inactive, reconnecting...     (x2, 60s apart, on each)
+```
+
+The watchdog was still firing and its request was discarded in silence - **the pair of lines is what
+makes this a measurement rather than an inference**, since a watchdog tick with no
+`Connection lost. Retrying in Ns...` after it can only be the early return at
+`sessionConnection.ts:62`. Then the decisive experiment: a synthetic `visibilitychange` dispatched
+into W1, *which was already visible*, reconnected it in under 20 s (`Reconnecting... -> [WS]
+Connected`, pill `Connecté`, one socket) while W2 - untouched as a control - stayed dead. Nothing
+about the network, the token or the server was wrong. Only the flag.
+
+**The fix deletes the latch outright.** `reconnectCircuitOpen`, its two accessors and
+`MAX_RECONNECT_ATTEMPTS` are gone; `reconnectAttempts` survives only as the index into
+`RECONNECT_DELAYS`. Termination now comes from the two proofs that already existed:
+
+| Terminator | Why it is a proof |
+|---|---|
+| `!ctx.isLoggedIn()` | There is no session to carry. |
+| `SessionExpiredError` (401/403 on the refresh cookie) | The server was reached **and refused us** - an answer. Logs out, redirects to `/login`. |
+
+A repeated transport failure is not an answer and may never end the loop. The cost that makes this
+safe rather than merely correct: the backoff caps at 30 s, so a stuck tab settles at **two connect
+attempts per minute** - the same order as the connection watchdog already ticking beside it, and far
+below what the tab costs while connected. The two lifecycle events still land on
+`resumeConnectionImpl`, but they now buy **latency, not recovery**: they reset the ladder to its 1 s
+rung, so a client emitting neither still recovers on its own.
+
+**Two further faults surfaced while fixing it, both silences:**
+
+- `attemptReconnectImpl` called `scheduleReconnectImpl` from inside its `try`, where
+  `isReconnecting` is still `true` - which is one of the two conditions on which
+  `scheduleReconnectImpl` returns doing nothing. **Both failure paths were no-ops**, after logging
+  `Retrying in Ns...`. The ladder never climbed itself; the 60 s watchdog was the real retry driver,
+  which is why 20 attempts took twenty minutes rather than eight. The reschedule moved into the
+  `finally`, after the flag is down.
+- The same function nulled `ctx.timers.reconnect` without clearing it. When
+  `resumeConnectionImpl` called it directly, the armed rung stayed armed, fired later, orphaned the
+  rung scheduled in the meantime, and the two ladders climbed in parallel. Bounded before by the
+  20-attempt latch; unbounded without it. It is now `clearTimeout`-ed.
+
+`sessionConnection.test.ts` pins the mirror invariants: 40 rounds of the real fake clock with **no**
+lifecycle event and no watchdog, asserting the ladder climbs past 20 by itself and that **exactly
+one rung is armed at any moment** - unbounded in count must still be bounded in rate. Its fixture
+was also completed (`getUserId`, `getDeviceKey`): without them `attemptReconnect` threw a
+`TypeError`, the catch classified it as a transport failure, and every case measured a ladder driven
+by the fixture's own incompleteness rather than by the connection outcome it was mocking.
 
 ### What happens on reconnect
 

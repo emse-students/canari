@@ -154,19 +154,20 @@ on an unreadable frame is correct. Full evidence in
 TWICE with those lines inside its own record. `watch.mjs` now has a `severe` bucket that breaks
 `clean` (excluding `CannotDecryptOwnMessage`, which is RFC 9420 working).
 
-**WP-RECONNECT-1 IS OPEN (2026-08-14, P1) - AN OUTAGE LONGER THAN ~8 MINUTES KILLS EVERY OPEN WEB TAB
-UNTIL IT IS RELOADED, SILENTLY.** Found from the user's own observation after the prod outage: W1 and
-W2 still showed `Hors-ligne`, and `presence.mjs` confirmed the GATEWAY agreed - so the badge was
-honest and the reconnection genuinely never resumed. The mechanism is
-[sessionConnection.ts:57-82](frontend/src/lib/composables/session/sessionConnection.ts#L57-L82): after
-`MAX_RECONNECT_ATTEMPTS` (20) over `RECONNECT_DELAYS` `[1,2,4,8,16,30]s` capped at 30 s - a **~8
-minute** budget - `reconnectCircuitOpen` is set and line 62 then refuses every later attempt. Its own
-message names what recovers it: *"until the app returns to the foreground or the network changes"*.
-**A DESKTOP TAB LEFT IN THE FOREGROUND ON AN UNCHANGED NETWORK PRODUCES NEITHER EVENT, EVER.** This is
-the standing rule exactly - termination from a proof, never a clock - with a resumption condition
-that a whole class of client cannot emit. NOT YET INVESTIGATED: the three sites that close the
-circuit (`sessionConnection.ts:209`, `sessionAuth.ts:352`, `sessionAuth.ts:1439`) and which events
-actually reach them on web vs Tauri. **The campaign masked it structurally** - every check reloads.
+**WP-RECONNECT-1 IS FIXED (2026-08-14) - not yet deployed, and the deploy is what verifies it.** The
+reconnect circuit is DELETED: only a proof ends the retry loop now (logged out, or a 401/403 on the
+refresh cookie), the ladder saturates at 30 s and climbs for ever. Two further silences fixed with
+it: `attemptReconnect` rescheduled from inside its own `isReconnecting` guard, so both failure paths
+were no-ops that logged `Retrying in Ns...` (the 60 s watchdog was the real retry driver), and it
+nulled the pending timer without clearing it, so a forced resume left two ladders climbing. Captured
+before the fix with `circuit.mjs` (kept in the harness): two prod tabs, 7 h old, `online:true`,
+`visibility:visible`, watchdog ticking every 60 s, **0 retries / 0 sockets in 135 s** - then a
+synthetic `visibilitychange` on the ALREADY-VISIBLE W1 reconnected it in <20 s while W2 stayed dead
+as a control. Gates green (`check` 0/0, 5/5 unit). Mechanism, evidence and the completed test fixture
+are on [auth](docs/wiki/frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it);
+three rules in [durable-rules](docs/wiki/durable-rules.md). **The campaign masked it structurally** -
+every check reloads. **Owed on the next deploy: re-run `circuit.mjs` on a tab that lived through an
+outage; the fix is PROSPECTIVE, so a tab running the old bundle proves nothing.**
 
 **The avatar 404s are attributed and are a SERVER fault, not a client one.** `[AvatarService] Error
 fetching avatar` in `core-service`, 17 outbound HTTPS timeouts to Cloudflare IPs over one 5-minute
