@@ -28,8 +28,11 @@ Each nightly run produces one timestamped archive (`canari-backup-YYYYMMDD-HHMMS
 | `mongo_chat_db.archive.gz` | MongoDB `chat_db` | `mongodump` - **empty, see below** |
 | `MANIFEST.txt` | - | Timestamp, git commit, content description, and where the media are |
 
-Plus, at 04:00, `backup-objects.sh` (`infrastructure_minio_data` + `infrastructure_media_meta` into
-restic, 14d/8w/6m, `restic check`, rsync mirror to `mitv`).
+Plus, at 04:00, `backup-objects.sh` (`infrastructure_garage_data` + `infrastructure_garage_meta` +
+`infrastructure_media_meta` into restic, 14d/8w/6m, `restic check`, rsync mirror to `mitv`).
+The object storage backend migrated from MinIO to Garage on 2026-08-14 (MinIO is no longer
+maintained upstream) - see [docker](docker.md). Snapshots taken before that date are in the old
+`infrastructure_minio_data` format; see the comment at the top of `restore.sh`.
 
 > **`mongo_chat_db.archive.gz` is 116 bytes and that is correct.** Production's MongoDB holds no
 > application database - only `admin`, `config` and `local` - and nothing in the codebase carries a

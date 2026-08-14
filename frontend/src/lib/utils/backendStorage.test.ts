@@ -16,8 +16,8 @@ describe('getBackendStorageUsage', () => {
       diskUsedBytes: 40,
       postgresBytes: 20,
       redisBytes: 5,
-      minioBytes: 15,
-      minioObjectCount: 3,
+      garageBytes: 15,
+      garageObjectCount: 3,
     };
     fetchMock.mockResolvedValue({ ok: true, json: async () => body });
 

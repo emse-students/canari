@@ -172,6 +172,23 @@ fetching avatar` in `core-service`, 17 outbound HTTPS timeouts to Cloudflare IPs
 run: the endpoint proxies a remote avatar, the fetch times out, it answers 404. The UI falls back to
 initials. Not a WP yet - a fix needs the user's call on whether that proxy should exist.
 
+**WP-GARAGE-1 IS HALF SHIPPED (2026-08-14) - MinIO -> Garage, dev cut over, prod is additive-only
+so far.** MinIO is unmaintained upstream. `storage.service.ts` is UNCHANGED - Garage implements
+every S3 op the `minio` npm client calls, so this is entirely an infra swap, every `MINIO_*` env
+var kept its name on purpose. Dev/local/CI compose files are fully cut over (MinIO service
+removed); `docker-compose.prod.yml` only ADDS a `garage` service alongside the still-untouched
+`minio`/`media-service` - prod media-service still reads from MinIO. **Owed, and it is the user's
+own action, not mine:** run the bootstrap + `rclone sync` commands (bucket/key self-provision via
+`--single-node --default-bucket`, same `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` values - no credential
+rotation needed) against prod, confirm object counts/bytes match, THEN the cutover commit (repoint
+`MINIO_ENDPOINT`/`MINIO_PORT` at `garage`) ships. `minio_data` stays stopped-not-deleted for 14
+days after that as a rollback net. Two new GitHub secrets already created: `GARAGE_RPC_SECRET`,
+`GARAGE_ADMIN_TOKEN`. Verified locally: idempotent restart (no duplicate-key error), full
+put/get/list/delete round trip against Garage via the real `minio` client. Mechanism and the exact
+MinIO/Garage differences (health check has no HTTP equivalent - the image ships no shell/curl, so
+it's `/garage status` over RPC instead; two volumes not one; no root user) are on
+[docker](docs/wiki/infrastructure/docker.md).
+
 **Two things are owed and neither is a Work Package yet:**
 
 - **The fourth reconciliation trigger** the user approved - *"sonder aussi quand la reponse recue est

@@ -178,21 +178,27 @@ services:
       start_period: 50s
 
   # ─────────────────────────────────────────────────────
-  # MinIO - S3-compatible object storage for encrypted media blobs
+  # Garage - S3-compatible object storage for encrypted media blobs (replaces MinIO)
   # ─────────────────────────────────────────────────────
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+  garage:
+    image: dxflrs/garage:v2.3.0
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # Web console (http://localhost:9001)
+      - "9000:3900"   # S3 API
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-00000000000000000000000000000000000000000000000000000000000000}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-dev-garage-admin-token-change-me}
+      # --default-bucket provisions this bucket and grants this exact key on first boot -
+      # same values media-service reads below, so the two never drift apart.
+      GARAGE_DEFAULT_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      GARAGE_DEFAULT_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin-dev-secret-key}
+      GARAGE_DEFAULT_BUCKET: ${MINIO_BUCKET:-canari-media}
     volumes:
-      - minio_data:/data
+      - ../garage/garage.toml:/etc/garage.toml:ro
+      - garage_meta:/var/lib/garage/meta
+      - garage_data:/var/lib/garage/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "/garage", "status"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -213,17 +219,18 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
-      MINIO_PORT: "${MINIO_PORT:-9000}"
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-garage}
+      MINIO_PORT: "${MINIO_PORT:-3900}"
       MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"
+      MINIO_REGION: ${MINIO_REGION:-garage}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin-dev-secret-key}
       MINIO_BUCKET: ${MINIO_BUCKET:-canari-media}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
     volumes:
       - media_meta:/app/media_meta
     depends_on:
-      minio:
+      garage:
         condition: service_healthy
 
   # ─────────────────────────────────────────────────────
@@ -307,5 +314,6 @@ services:
 volumes:
   mongo_data:
   postgres_data:
-  minio_data:
+  garage_meta:
+  garage_data:
   media_meta:

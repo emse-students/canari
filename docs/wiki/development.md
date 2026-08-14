@@ -241,8 +241,7 @@ All services + infrastructure run in Docker with host port mapping. Dev host por
 | PostgreSQL | 5432 | 5433 |
 | MongoDB | 27017 | 27018 |
 | Kafka | 9092 | 9093 |
-| MinIO API | 9000 | 19100 |
-| MinIO Console | 9001 | 19101 |
+| Garage S3 API | 3900 | 19100 |
 
 ### Dockerfiles
 

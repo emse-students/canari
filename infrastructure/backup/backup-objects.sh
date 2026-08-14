@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
 #
-# Deduplicated backup of the object volumes (MinIO blobs + media-service metadata) via restic.
+# Deduplicated backup of the object volumes (Garage blobs + media-service metadata) via restic.
 #
 # WHY THIS EXISTS
 # ---------------
 # backup.sh writes ONE full archive per night and keeps 14. For the logical dumps
 # (PostgreSQL, MongoDB) that is the right scheme: they are small and they compress. For
-# MinIO it is not. Those blobs are encrypted client-side, so they are incompressible AND
-# immutable - re-archiving the whole volume nightly makes every live byte cost 15 more on
+# the media blobs it is not. Those blobs are encrypted client-side, so they are incompressible
+# AND immutable - re-archiving the whole volume nightly makes every live byte cost 15 more on
 # a 125 GB disk. The measured model is in docs/wiki/infrastructure/storage-forecast.md.
 #
 # restic stores deduplicated chunks: a night where nothing changed costs almost nothing,
 # and a blob already stored is never written again. The same history then fits in the
 # space of a single copy plus what is new.
 #
-# THIS IS NOW THE ONLY BACKUP OF THE MEDIA BLOBS (cutover 2026-08-11). backup.sh no
-# longer archives the MinIO volume, so a restore of the objects can only come from here.
-# The cutover was taken after a control restore matched the live volume sha256-identically
-# over 172 media objects, and after a second nightly run cost 24 KB.
+# THIS IS THE ONLY BACKUP OF THE MEDIA BLOBS (cutover 2026-08-11, storage backend migrated
+# from MinIO to Garage 2026-08-14 - the volume names changed, restic's own history did not).
+# backup.sh does not archive the object volume, so a restore of the objects can only come
+# from here. The cutover was taken after a control restore matched the live volume
+# sha256-identically over 172 media objects, and after a second nightly run cost 24 KB.
 #
 # Consequence to keep in mind before touching anything here: a failure of this script is no
 # longer softened by the tar. It is loud on purpose (`set -euo pipefail`, and a missing
@@ -69,12 +70,13 @@ fi
 mkdir -p "$RESTIC_REPO_DIR" "$RESTIC_CACHE_DIR"
 
 # restic runs as the calling UID, so the repository belongs to canari and the offsite rsync
-# (which runs as canari) can read it. MinIO's own files are 0644, so they stay readable
+# (which runs as canari) can read it. Garage's own files are 0644, so they stay readable
 # without root.
 restic() {
   docker run --rm \
     --user "$(id -u):$(id -g)" \
-    -v infrastructure_minio_data:/data/minio:ro \
+    -v infrastructure_garage_data:/data/garage_data:ro \
+    -v infrastructure_garage_meta:/data/garage_meta:ro \
     -v infrastructure_media_meta:/data/media_meta:ro \
     -v "$RESTIC_REPO_DIR":/repo \
     -v "$RESTIC_CACHE_DIR":/cache \
@@ -95,7 +97,7 @@ fi
 
 # ── 2. Backup ─────────────────────────────────────────────────────────────────
 log "Backing up the object volumes…"
-restic backup /data/minio /data/media_meta \
+restic backup /data/garage_data /data/garage_meta /data/media_meta \
   --host canari \
   --tag objects \
   --exclude-caches

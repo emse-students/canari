@@ -21,7 +21,7 @@ type ServiceInternals = {
  * A service with its metadata planted directly and persistence stubbed.
  *
  * `touch` reads and writes only `this.meta` plus one `persistMetadata` call, so the constructor's
- * storage and sweep are irrelevant here - and going through them would make this a test of MinIO.
+ * storage and sweep are irrelevant here - and going through them would make this a test of Garage.
  */
 function serviceWith(items: ServiceInternals['meta']['items']): {
   service: MediaService;

@@ -17,8 +17,8 @@ export interface BackendStorageUsage {
   diskUsedBytes: number | null;
   postgresBytes: number | null;
   redisBytes: number | null;
-  minioBytes: number | null;
-  minioObjectCount: number | null;
+  garageBytes: number | null;
+  garageObjectCount: number | null;
 }
 
 @Controller('mls/admin')
@@ -47,11 +47,11 @@ export class AdminStorageController {
   ): Promise<BackendStorageUsage> {
     this.assertGlobalAdmin(headerGlobalAdmin);
 
-    const [disk, postgresBytes, redisBytes, minio] = await Promise.all([
+    const [disk, postgresBytes, redisBytes, garage] = await Promise.all([
       this.measureDisk(),
       this.measurePostgres(),
       this.measureRedis(),
-      this.measureMinio(),
+      this.measureGarage(),
     ]);
 
     return {
@@ -59,8 +59,8 @@ export class AdminStorageController {
       diskUsedBytes: disk?.usedBytes ?? null,
       postgresBytes,
       redisBytes,
-      minioBytes: minio?.totalBytes ?? null,
-      minioObjectCount: minio?.objectCount ?? null,
+      garageBytes: garage?.totalBytes ?? null,
+      garageObjectCount: garage?.objectCount ?? null,
     };
   }
 
@@ -107,12 +107,12 @@ export class AdminStorageController {
     }
   }
 
-  /** Server-to-server call to media-service, the only holder of the MinIO client. */
-  private async measureMinio(): Promise<{ totalBytes: number; objectCount: number } | null> {
+  /** Server-to-server call to media-service, the only holder of the Garage client. */
+  private async measureGarage(): Promise<{ totalBytes: number; objectCount: number } | null> {
     const mediaUrl = process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011';
     const internalSecret = process.env.INTERNAL_SECRET ?? '';
     if (!internalSecret) {
-      this.logger.warn('[STORAGE] minio measurement skipped - INTERNAL_SECRET unset');
+      this.logger.warn('[STORAGE] garage measurement skipped - INTERNAL_SECRET unset');
       return null;
     }
     try {
@@ -125,7 +125,7 @@ export class AdminStorageController {
       return body;
     } catch (err) {
       this.logger.warn(
-        `[STORAGE] minio measurement failed: ${err instanceof Error ? err.message : String(err)}`
+        `[STORAGE] garage measurement failed: ${err instanceof Error ? err.message : String(err)}`
       );
       return null;
     }

@@ -12,11 +12,18 @@ the requirement by ~16. It is *not optional at any scenario*, including the most
 Everything below is measured on production, not estimated, unless a line says otherwise.
 
 **A live admin panel now exists for four of these numbers** (`/admin/storage`, WP-DEVICESTORAGE-1's
-backend counterpart, added 2026-08-11): disk usage, the Postgres `auth_db` size, the MinIO bucket's
-total size and object count, and Redis memory - via `GET /api/mls/admin/storage` on
-chat-delivery-service (global-admin only). It replaces the manual `df`/`psql`/`redis-cli` steps
+backend counterpart, added 2026-08-11): disk usage, the Postgres `auth_db` size, the object
+storage bucket's total size and object count, and Redis memory - via `GET /api/mls/admin/storage`
+on chat-delivery-service (global-admin only). It replaces the manual `df`/`psql`/`redis-cli` steps
 below for a QUICK check; the detailed per-table breakdown, the backup-cost multiplier and the
 scenario math below still need this page, since the endpoint reports totals only.
+
+**The object storage backend migrated from MinIO to Garage on 2026-08-14** (MinIO is no longer
+maintained upstream) - see [docker](docker.md). Every measurement below predates that migration
+and describes MinIO; the byte counts, the retention model (§2.4) and the backup reasoning (§5.1)
+are unaffected by the backend swap and still apply to Garage as written. Left as MinIO in place,
+as a historical record of when each figure was measured - see [backup](backup.md) for the
+volume-name changes that came with the migration.
 
 ---
 

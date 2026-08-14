@@ -53,9 +53,9 @@ Canonical definitions for terms and acronyms used across Canari's documentation 
 | **call-service** | Rust/Axum WebRTC SFU. Forwards encrypted RTP between call participants. |
 | **chat-delivery-service** | NestJS MLS API. Device registration, group management, message persistence, push notifications. |
 | **core-service** | NestJS auth hub. OIDC callback, JWT issuance, user profiles, Stripe payments. |
-| **media-service** | NestJS encrypted blob store. Accepts and serves opaque ciphertext via MinIO. |
+| **media-service** | NestJS encrypted blob store. Accepts and serves opaque ciphertext via Garage. |
 | **social-service** | NestJS community features. Posts, channels, associations, forms, cotisations. |
-| **MinIO** | S3-compatible object storage used by media-service for encrypted blobs. |
+| **Garage** | S3-compatible object storage used by media-service for encrypted blobs (formerly MinIO, migrated 2026-08-14). |
 | **Authentik** | Open-source Identity Provider. Deployed as the `miconnect` Docker Compose stack. |
 
 ## Concepts

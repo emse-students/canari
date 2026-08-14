@@ -414,7 +414,7 @@ export class MediaService {
     await fs.writeJson(MEDIA_META_FILE, { items: { ...this.meta.items } }, { spaces: 2 });
   }
 
-  /** Reads a MinIO object stream into a single buffer. */
+  /** Reads an object storage stream into a single buffer. */
   private async readStreamToBuffer(stream: Readable): Promise<Buffer> {
     const chunks: Buffer[] = [];
     for await (const chunk of stream as AsyncIterable<Buffer | string>) {

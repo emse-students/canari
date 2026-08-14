@@ -6,15 +6,22 @@
 #   ./infrastructure/backup/restore.sh <archive.tar.gz> --yes
 #   ./infrastructure/backup/restore.sh --latest-from-mitv --yes
 #
-# OPERATION DESTRUCTIVE : ecrase les donnees actuelles (postgres, mongo, minio,
+# OPERATION DESTRUCTIVE : ecrase les donnees actuelles (postgres, mongo, garage,
 # media, Authentik) par celles de l archive. Exige --yes pour s executer.
 #
 # DEPUIS LE 2026-08-11 UNE RESTAURATION COMPLETE UTILISE DEUX SOURCES : l archive
 # (bases + metadonnees) et le depot restic (blobs medias). Ce script gere les deux et
-# refuse de se terminer si les medias sont introuvables - voir la section MinIO.
+# refuse de se terminer si les medias sont introuvables - voir la section Garage.
 # Le fichier de mot de passe restic ne se trouve PAS dans le depot git ni dans les
 # secrets GitHub : sans lui le depot est illisible pour toujours. Il doit exister sur
 # la machine cible AVANT toute migration (voir infrastructure/MIGRATION.md).
+#
+# DEPUIS LE 2026-08-14 LE BACKEND OBJET EST GARAGE (ex-MinIO). Les instantanes restic
+# pris AVANT cette date contiennent /data/minio (ancien format, incompatible avec la
+# stack actuelle qui ne lance plus MinIO) ; ceux pris APRES contiennent /data/garage_data
+# et /data/garage_meta. Restaurer un instantane d avant le 14 aout est une operation
+# manuelle (voir l historique git de ce fichier et de docker-compose.prod.yml a cette
+# date) - ce script ne gere que le format courant.
 #
 # Pour une migration vers un nouveau serveur :
 #   1. Cloner le repo, creer infrastructure/.env (ou laisser la CD le generer).
@@ -108,42 +115,29 @@ if [ -f "$STAGE/mongo_chat_db.archive.gz" ]; then
   "${DC[@]}" exec -T mongo mongorestore --gzip --archive --drop < "$STAGE/mongo_chat_db.archive.gz"
 fi
 
-# ── MinIO (volume objet) ──────────────────────────────────────────────────────
-# DEUX SOURCES POSSIBLES, ET L ABSENCE N EST JAMAIS SILENCIEUSE.
-#
-# Les archives d avant le 2026-08-11 contiennent minio_data.tar.gz ; celles d apres
-# ne le contiennent plus (les blobs sont dans le depot restic). Un `if [ -f ]` seul
-# aurait saute les medias sans un mot sur une archive recente : l operateur aurait lu
-# "Restauration terminee" pour une restauration amputee de 87 % des donnees. Si aucune
-# des deux sources n est disponible, ce script S ARRETE.
-if [ -f "$STAGE/minio_data.tar.gz" ]; then
-  log "Restauration du volume MinIO depuis l archive (format d avant le 2026-08-11)…"
-  "${DC[@]}" stop minio media-service
-  docker run --rm \
-    -v infrastructure_minio_data:/data \
-    -v "$STAGE":/in:ro \
-    alpine:latest \
-    sh -c 'rm -rf /data/* /data/..?* /data/.[!.]* 2>/dev/null; tar xzf /in/minio_data.tar.gz -C /data'
-  "${DC[@]}" start minio media-service
-elif [ -f "$RESTIC_PASSWORD_FILE" ] && [ -d "$RESTIC_REPO_DIR" ]; then
-  log "Restauration du volume MinIO depuis restic ($RESTIC_SNAPSHOT)…"
-  "${DC[@]}" stop minio media-service
-  # `restic restore --target /` ecrit /data/minio, qui est le chemin sous lequel
-  # backup-objects.sh a pris l instantane. Le volume est monte a cet endroit exact,
-  # donc les fichiers atterrissent directement dedans.
+# ── Garage (volumes objet) ──────────────────────────────────────────────────────
+# L ABSENCE N EST JAMAIS SILENCIEUSE : si le depot restic est illisible, ce script S ARRETE
+# plutot que d annoncer une restauration complete amputee des medias.
+if [ -f "$RESTIC_PASSWORD_FILE" ] && [ -d "$RESTIC_REPO_DIR" ]; then
+  log "Restauration des volumes Garage depuis restic ($RESTIC_SNAPSHOT)…"
+  "${DC[@]}" stop garage media-service
+  # `restic restore --target /` ecrit /data/garage_data et /data/garage_meta, les chemins
+  # sous lesquels backup-objects.sh a pris l instantane. Les volumes sont montes a ces
+  # emplacements exacts, donc les fichiers atterrissent directement dedans.
   docker run --rm \
     --user "$(id -u):$(id -g)" \
-    -v infrastructure_minio_data:/data/minio \
+    -v infrastructure_garage_data:/data/garage_data \
+    -v infrastructure_garage_meta:/data/garage_meta \
     -v "$RESTIC_REPO_DIR":/repo:ro \
     -v "$RESTIC_PASSWORD_FILE":/pw:ro \
     -e RESTIC_PASSWORD_FILE=/pw \
     -e RESTIC_REPOSITORY=/repo \
     "${RESTIC_IMAGE:-restic/restic:latest}" \
-    restore "$RESTIC_SNAPSHOT" --target / --include /data/minio
-  "${DC[@]}" start minio media-service
+    restore "$RESTIC_SNAPSHOT" --target / --include /data/garage_data --include /data/garage_meta
+  "${DC[@]}" start garage media-service
 else
-  fail "aucune source pour les blobs medias : ni minio_data.tar.gz dans l archive,
-  ni depot restic lisible ($RESTIC_REPO_DIR avec $RESTIC_PASSWORD_FILE).
+  fail "aucune source pour les blobs medias : depot restic illisible
+  ($RESTIC_REPO_DIR avec $RESTIC_PASSWORD_FILE).
   Les bases ont peut-etre deja ete restaurees - NE PAS considerer la restauration
   comme terminee. Voir docs/wiki/infrastructure/storage-forecast.md."
 fi

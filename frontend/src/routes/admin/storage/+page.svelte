@@ -119,15 +119,15 @@
           >
             <Server size={18} />
           </span>
-          <h2 class="font-bold text-text-main">{m.admin_storage_minio_label()}</h2>
+          <h2 class="font-bold text-text-main">{m.admin_storage_garage_label()}</h2>
         </div>
-        {#if usage.minioBytes !== null}
+        {#if usage.garageBytes !== null}
           <p class="text-2xl font-extrabold text-text-main">
-            {formatStorageBytes(usage.minioBytes)}
+            {formatStorageBytes(usage.garageBytes)}
           </p>
-          {#if usage.minioObjectCount !== null}
+          {#if usage.garageObjectCount !== null}
             <p class="text-sm text-text-muted">
-              {m.admin_storage_minio_object_count({ count: usage.minioObjectCount })}
+              {m.admin_storage_garage_object_count({ count: usage.garageObjectCount })}
             </p>
           {/if}
         {:else}

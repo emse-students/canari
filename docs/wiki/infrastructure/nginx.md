@@ -25,7 +25,7 @@ Every protected request goes through `auth_request /internal/auth/verify`, which
 | `/api/admin/presence` | `chat-gateway:3000` | yes | Admin view of connected devices |
 | `/api/mls/*` | `chat-delivery-service:3010` | yes | MLS API; Redis history at `/api/mls/history/*` |
 | `/api/chat-delivery-health` | `chat-delivery-service:3010` | no | Liveness probe -> `GET /api/health` |
-| `/api/media/*` | `media-service:3011` | yes | Encrypted blob storage (MinIO) |
+| `/api/media/*` | `media-service:3011` | yes | Encrypted blob storage (Garage) |
 | `/api/posts/*` | `social-service:3014` | yes | News feed |
 | `/api/forms/*` | `social-service:3014` | yes | Forms with payments |
 | `/api/associations/*` | `social-service:3014` | yes | Clubs (Stripe Connect) |

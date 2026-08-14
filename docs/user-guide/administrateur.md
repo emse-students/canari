@@ -146,7 +146,7 @@ Voir `docs/wiki/infrastructure/backup.md` pour la procedure complete.
 |---|---|
 | Logs Docker | `docker compose logs -f [service]` sur le serveur |
 | Healthcheck chat-delivery | `GET /api/chat-delivery-health` (pas d'auth requise) |
-| MinIO Console | http://[serveur]:9001 (en dev : http://localhost:9001) |
+| Stockage média (Garage) | Panneau admin `/admin/storage` (taille et nombre d'objets) ; pas de console web - `docker exec` + CLI `garage` sur le serveur pour l'administration bas niveau |
 
 ---
 

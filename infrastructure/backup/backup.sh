@@ -123,7 +123,7 @@ du manifeste annoncait auparavant "blobs MLS chiffres / historique", ce qui etai
 faux : cet historique est dans PostgreSQL. Un dump vide n est pas une panne ici,
 mais il ne doit pas passer pour une sauvegarde.
 
-ATTENTION - les blobs medias (volume MinIO) NE SONT PLUS DANS CETTE ARCHIVE.
+ATTENTION - les blobs medias (volumes Garage, ex-MinIO) NE SONT PLUS DANS CETTE ARCHIVE.
 Ils sont sauvegardes par backup-objects.sh dans le depot restic
 ${BACKUP_DIR}/restic-objects (14j / 8 sem / 6 mois, miroir offsite au meme endroit).
 Une restauration complete = cette archive + restore.sh pour les objets.

@@ -9,7 +9,7 @@ Sauvegarde complete de toutes les donnees persistantes, avec une copie locale
 | Source | Methode | Contenu |
 | --- | --- | --- |
 | PostgreSQL Canari (`auth_db`) | `pg_dump` (dump logique coherent) | users, channels, posts, forms, paiements, **et l historique MLS chiffre** (`queued_message`, `mls_*`) |
-| MinIO (`infrastructure_minio_data`) | **depot restic deduplique uniquement** (voir plus bas) | medias chiffres |
+| Garage (`infrastructure_garage_data`, `infrastructure_garage_meta`) | **depot restic deduplique uniquement** (voir plus bas) | medias chiffres |
 | media-service (`infrastructure_media_meta`) | tar du volume + depot restic | metadonnees media |
 | PostgreSQL Authentik (`miconnect`) | `pg_dump` | identites, config OIDC |
 | MongoDB (`chat_db`) | `mongodump` | **rien** - voir ci-dessous |
@@ -85,16 +85,22 @@ journalctl -u canari-backup.service -f
 
 ## Sauvegarde dedupliquee des volumes objets (`backup-objects.sh`)
 
-`backup.sh` re-archivait le volume MinIO **en entier chaque nuit** et en gardait 14 : chaque
-octet vivant coutait donc 15 octets de disque. Les blobs medias sont chiffres cote client,
-donc incompressibles et immuables - c est exactement le cas ou une sauvegarde dedupliquee
-change tout. Le modele chiffre est dans
+`backup.sh` re-archivait le volume objet (MinIO, a l epoque) **en entier chaque nuit** et en
+gardait 14 : chaque octet vivant coutait donc 15 octets de disque. Les blobs medias sont
+chiffres cote client, donc incompressibles et immuables - c est exactement le cas ou une
+sauvegarde dedupliquee change tout. Le modele chiffre est dans
 [storage-forecast](../../docs/wiki/infrastructure/storage-forecast.md).
 
-`backup-objects.sh` sauvegarde `infrastructure_minio_data` et `infrastructure_media_meta`
-dans un depot **restic** (image jetable, aucune dependance hote), applique une retention
-14 jours / 8 semaines / 6 mois, verifie l integrite du depot, puis miroite le depot sur
-`mitv`. Planifie a **04:00**, apres le tar.
+`backup-objects.sh` sauvegarde `infrastructure_garage_data`, `infrastructure_garage_meta` et
+`infrastructure_media_meta` dans un depot **restic** (image jetable, aucune dependance hote),
+applique une retention 14 jours / 8 semaines / 6 mois, verifie l integrite du depot, puis
+miroite le depot sur `mitv`. Planifie a **04:00**, apres le tar.
+
+**Le backend objet a migre de MinIO vers Garage le 2026-08-14** (MinIO n est plus maintenu en
+amont) - voir [docker](../../docs/wiki/infrastructure/docker.md). Le depot restic continue le
+meme historique de sauvegarde ; seuls les chemins montes ont change (`/data/minio` ->
+`/data/garage_data` + `/data/garage_meta`). Les instantanes pris avant cette date restent dans
+l ancien format - voir le commentaire en tete de `restore.sh`.
 
 Mesures du 2026-08-11 sur la production :
 
@@ -104,8 +110,9 @@ Mesures du 2026-08-11 sur la production :
 | Deuxieme execution (rien n a change) | **24 Ko** ajoutes au depot |
 | Restauration de controle | 172 objets medias + metadonnees, **sha256 identique octet pour octet** |
 
-> Les seules differences a la restauration sont dans `.minio.sys/` (bloom cycle, caches
-> d usage, corbeille), que MinIO reecrit en permanence. Ce ne sont pas des donnees.
+> Les seules differences a la restauration etaient dans `.minio.sys/` (bloom cycle, caches
+> d usage, corbeille), que MinIO reecrivait en permanence - mesure valable pour l epoque MinIO
+> de ce depot restic. Ce n etaient pas des donnees.
 
 **Bascule prise le 2026-08-11 : ce depot est desormais la SEULE sauvegarde des medias.**
 L etape 3 de `backup.sh` (le tar de MinIO) est supprimee, et le membre `minio_data.tar.gz`

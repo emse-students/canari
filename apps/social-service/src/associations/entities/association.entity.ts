@@ -30,7 +30,7 @@ export class Association {
   @Column({ type: 'varchar', nullable: true })
   logoUrl: string | null;
 
-  /** Media-service UUID for GET /api/media/public/:id (opaque blob in MinIO). */
+  /** Media-service UUID for GET /api/media/public/:id (opaque blob in Garage). */
   @Column({ type: 'uuid', nullable: true })
   logoMediaId: string | null;
 

@@ -12,14 +12,14 @@ In production, Cloudflare Tunnel exposes `http://localhost:8080`, which forwards
 | **chat-gateway** | Rust / Axum / Tokio | 3000 | Redis | Real-time WebSocket, MLS routing, presence |
 | **call-service** | Rust / Axum / webrtc-rs | 3004 | - | WebRTC SFU, Cloudflare TURN relay, keyframe recovery |
 | **chat-delivery-service** | NestJS | 3010 | PostgreSQL + Redis | MLS API, offline queue, Redis Stream history |
-| **media-service** | NestJS | 3011 | MinIO | E2EE encrypted blob storage |
+| **media-service** | NestJS | 3011 | Garage | E2EE encrypted blob storage |
 | **core-service** | NestJS | 3012 | PostgreSQL | OIDC auth (Authentik), users, Stripe payments |
 | **social-service** | NestJS | 3014 | PostgreSQL + MongoDB | Posts, forms, channels/communities, associations |
 | Redis | - | 6379 | - | Presence, pub/sub, history streams |
 | Kafka | Confluent 7.5 | 9092 / 29092 | - | Async event bus |
 | PostgreSQL | - | 5432 | `auth_db` | Relational data |
 | MongoDB | - | 27017 | `chat_db` | Posts and document data |
-| MinIO | - | 9000 / 9001 | - | Media blobs (S3-compatible) |
+| Garage | - | 3900 / 3903 | - | Media blobs (S3-compatible; formerly MinIO on 9000/9001) |
 | Coturn | - | 3478 / 5349 | - | STUN/TURN WebRTC (local dev only; production uses Cloudflare TURN) |
 
 ## Nginx routing
@@ -35,7 +35,7 @@ Nginx is the sole HTTP entry point. It authenticates every protected request via
 | `/api/admin/presence` | `chat-gateway:3000` | yes | Admin presence view |
 | `/api/mls/*` | `chat-delivery-service:3010` | yes | MLS API (messages, groups, sync, push); Redis history at `/api/mls/history/*` |
 | `/api/chat-delivery-health` | `chat-delivery-service:3010` | no | Liveness probe only |
-| `/api/media/*` | `media-service:3011` | yes | Encrypted blobs (MinIO) |
+| `/api/media/*` | `media-service:3011` | yes | Encrypted blobs (Garage) |
 | `/api/posts/*` | `social-service:3014` | yes | News feed |
 | `/api/forms/*` | `social-service:3014` | yes | Forms with payments |
 | `/api/associations/*` | `social-service:3014` | yes | Clubs (Stripe Connect) |
@@ -86,7 +86,7 @@ Access token lives in memory only (never localStorage). Refresh token is an Http
 |---|---|---|
 | chat-delivery-service | core-service | User verification |
 | social-service | core-service | Payment auth, membership checks |
-| media-service | - | Direct MinIO access via SDK |
+| media-service | - | Direct Garage (S3-compatible) access via SDK |
 
 ### Redis pub/sub (real-time)
 

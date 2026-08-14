@@ -1,5 +1,5 @@
 [Unit]
-Description=Sauvegarde complete Canari (postgres, mongo, minio, media, Authentik) + copie offsite mitv
+Description=Sauvegarde complete Canari (postgres, mongo, garage, media, Authentik) + copie offsite mitv
 After=docker.service
 Requires=docker.service
 

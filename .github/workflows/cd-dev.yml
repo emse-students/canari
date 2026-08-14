@@ -440,6 +440,8 @@ jobs:
           CLOUDFLARE_TURN_KEY_ID: ${{ secrets.CLOUDFLARE_TURN_KEY_ID }}
           MINIO_ROOT_USER: ${{ secrets.MINIO_ROOT_USER }}
           MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
+          GARAGE_RPC_SECRET: ${{ secrets.GARAGE_RPC_SECRET }}
+          GARAGE_ADMIN_TOKEN: ${{ secrets.GARAGE_ADMIN_TOKEN }}
           MIGALLERY_API_KEY: ${{ secrets.MIGALLERY_API_KEY }}
           CHANNELS_ENCRYPTION_SECRET: ${{ secrets.CHANNELS_ENCRYPTION_SECRET }}
           INTERNAL_SHARED_SECRET: ${{ secrets.INTERNAL_SHARED_SECRET }}
@@ -540,11 +542,26 @@ jobs:
             exit 1
           fi
 
-          # MINIO_ACCESS_KEY/SECRET_KEY are the S3 client credentials for media-service.
-          # They mirror MINIO_ROOT_USER/ROOT_PASSWORD; written explicitly so that
+          # MINIO_ACCESS_KEY/SECRET_KEY are the S3 client credentials for media-service (and,
+          # via GARAGE_DEFAULT_ACCESS_KEY/SECRET_KEY, the exact key Garage provisions on first
+          # boot). They mirror MINIO_ROOT_USER/ROOT_PASSWORD; written explicitly so that
           # Docker Compose does not need nested variable interpolation (not universally supported).
           upsert_env_var "MINIO_ACCESS_KEY" "$MINIO_ROOT_USER"
           upsert_env_var "MINIO_SECRET_KEY" "$MINIO_ROOT_PASSWORD"
+
+          if [ -n "$GARAGE_RPC_SECRET" ]; then
+            upsert_env_var "GARAGE_RPC_SECRET" "$GARAGE_RPC_SECRET"
+          else
+            echo "::error::GARAGE_RPC_SECRET is not set - media storage (Garage) will fail to start"
+            exit 1
+          fi
+
+          if [ -n "$GARAGE_ADMIN_TOKEN" ]; then
+            upsert_env_var "GARAGE_ADMIN_TOKEN" "$GARAGE_ADMIN_TOKEN"
+          else
+            echo "::error::GARAGE_ADMIN_TOKEN is not set - media storage (Garage) will fail to start"
+            exit 1
+          fi
 
           if [ -n "$MIGALLERY_API_KEY" ]; then
             upsert_env_var "MIGALLERY_API_KEY" "$MIGALLERY_API_KEY"

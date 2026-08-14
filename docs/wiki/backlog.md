@@ -221,7 +221,7 @@ is where any measurement belongs.
 ### Server - can occupancy be monitored, and will it hold?
 
 The forecast exists on paper; what is missing is a live measurement and an alert. **A forecast with
-no report is discovered by hand, a day late.** Scope: what is actually growing (Postgres, MinIO,
+no report is discovered by hand, a day late.** Scope: what is actually growing (Postgres, Garage,
 Redis streams), at what rate, and what the report should carry so that it distinguishes "media grew"
 from "the stream retention changed".
 

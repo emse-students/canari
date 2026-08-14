@@ -29,7 +29,7 @@
 - [call-service](services/call-service.md) — Rust/Axum WebRTC SFU, Cloudflare TURN
 - [chat-delivery-service](services/chat-delivery.md) — NestJS MLS API, message queue, sync engine, push
 - [core-service](services/core-service.md) — OIDC auth (Authentik), users, Stripe payments
-- [media-service](services/media-service.md) — Encrypted blob storage (MinIO)
+- [media-service](services/media-service.md) — Encrypted blob storage (Garage)
 - [social-service](services/social-service.md) — Posts, channels, associations, forms
 
 ### Frontend
@@ -52,7 +52,7 @@
 - [Docker & services](infrastructure/docker.md) — Docker Compose setup, service dependencies
 - [Nginx routing](infrastructure/nginx.md) — Route table (source of truth), auth_request
 - [Authentik (OIDC)](infrastructure/authentik.md) — Identity provider, OIDC flow, deployment
-- [Databases](infrastructure/databases.md) — PostgreSQL, MongoDB, Redis, MinIO
+- [Databases](infrastructure/databases.md) — PostgreSQL, MongoDB, Redis, Garage
 - [Kafka](infrastructure/kafka.md) — Topics, producers, consumers
 - [Backup system](infrastructure/backup.md) — Daily cron, offsite rsync
 - [Storage forecast](infrastructure/storage-forecast.md) — Measured unit costs, the model at 400 daily users, and why the backup scheme fails before the data does

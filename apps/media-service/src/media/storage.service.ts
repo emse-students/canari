@@ -1,16 +1,18 @@
 /**
- * StorageService - abstraction over MinIO (S3-compatible object storage).
+ * StorageService - abstraction over an S3-compatible object store (Garage; formerly MinIO).
  *
  * The service ONLY stores opaque bytes.  It has no knowledge of encryption
  * keys and cannot inspect the content of any uploaded file.
  *
- * Configuration via environment variables:
+ * Configuration via environment variables (names kept from the MinIO era on purpose - see
+ * docs/wiki/infrastructure/docker.md):
  *   MINIO_ENDPOINT  (default: localhost)
  *   MINIO_PORT      (default: 9000)
  *   MINIO_USE_SSL   (default: false)
  *   MINIO_ACCESS_KEY
  *   MINIO_SECRET_KEY
  *   MINIO_BUCKET    (default: canari-media)
+ *   MINIO_REGION    (optional; required for Garage, must match its `s3_region`)
  */
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import * as Minio from 'minio';
@@ -28,6 +30,9 @@ export class StorageService implements OnModuleInit {
       endPoint: process.env.MINIO_ENDPOINT ?? 'localhost',
       port: parseInt(process.env.MINIO_PORT ?? '9000', 10),
       useSSL: process.env.MINIO_USE_SSL === 'true',
+      // Unset (MinIO): auto-detected via GetBucketLocation, as before. Garage's S3 API needs
+      // this to match `s3_region` in infrastructure/garage/garage.toml (set MINIO_REGION=garage).
+      region: process.env.MINIO_REGION,
       accessKey: (() => {
         const v = process.env.MINIO_ACCESS_KEY;
         if (!v) throw new Error('MINIO_ACCESS_KEY is required');

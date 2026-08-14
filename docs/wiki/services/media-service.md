@@ -8,7 +8,8 @@
 
 The media-service is the encrypted blob store. It:
 
-- Accepts encrypted file uploads from clients; stores blobs in MinIO (S3-compatible).
+- Accepts encrypted file uploads from clients; stores blobs in Garage (S3-compatible, formerly
+  MinIO - see [docker](../infrastructure/docker.md)).
 - Exposes download endpoints (authenticated for private blobs, public for profile images).
 - Supports both single-shot uploads and chunked uploads for large files.
 - Auto-resizes public images (logos, avatars) to 512x512 WebP on upload.
@@ -24,7 +25,7 @@ Client:
   - Sends the CEK inside the MLS message ciphertext
 
 Server:
-  - Stores opaque bytes in MinIO
+  - Stores opaque bytes in Garage
   - Returns a mediaId
   - Never sees the plaintext or the key
 ```
@@ -99,9 +100,11 @@ object's 30-day clock.
 | Variable | Required | Description |
 |---|---|---|
 | `JWT_SECRET` | yes | HS256 secret (shared with all services) |
-| `MINIO_ENDPOINT` | yes | MinIO server URL |
-| `MINIO_ACCESS_KEY` | yes | MinIO access key |
-| `MINIO_SECRET_KEY` | yes | MinIO secret key |
+| `MINIO_ENDPOINT` | yes | Garage server URL (name kept from the MinIO era - see [docker](../infrastructure/docker.md)) |
+| `MINIO_PORT` | yes | Garage S3 API port (`3900`) |
+| `MINIO_REGION` | Garage only | Must match `s3_region` in `infrastructure/garage/garage.toml` (`garage`); unset for MinIO |
+| `MINIO_ACCESS_KEY` | yes | S3 access key |
+| `MINIO_SECRET_KEY` | yes | S3 secret key |
 | `MINIO_BUCKET` | yes | Bucket name for media blobs (default `canari-media`), **also used for public assets** |
 | `MEDIA_MAX_SIZE_MB` | no | Max upload size in MB (default 100, capped at 100) |
 | `MEDIA_RETENTION_SWEEP_MS` | no | Retention sweep interval (default 1 h) |

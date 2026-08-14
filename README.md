@@ -44,11 +44,11 @@ Browser / Tauri (Native App)
     |-> chat-gateway:3000      (Rust/Axum)  WebSocket, presence, Redis pub/sub
     |-> call-service:3004      (Rust/Axum)  WebRTC SFU relay
     |-> chat-delivery:3010     (NestJS)     MLS API, offline queue, push, sync
-    |-> media-service:3011     (NestJS)     Encrypted blob storage (MinIO)
+    |-> media-service:3011     (NestJS)     Encrypted blob storage (Garage)
     |-> core-service:3012      (NestJS)     OIDC auth (Authentik), users, Stripe
     `-> social-service:3014    (NestJS)     Posts, forms, channels, associations
 
-Infrastructure: PostgreSQL · MongoDB · Redis · Kafka · MinIO
+Infrastructure: PostgreSQL · MongoDB · Redis · Kafka · Garage
 ```
 
 > In production, Cloudflare Tunnel terminates TLS and forwards to `localhost:8080` → Nginx.
@@ -91,7 +91,7 @@ cd frontend && bun run dev
 | Media Service | http://localhost:3011 |
 | Core Service | http://localhost:3012 |
 | Social Service | http://localhost:3014 |
-| MinIO Console | http://localhost:9001 |
+| Garage S3 API | http://localhost:9000 |
 
 ## Commands
 
@@ -156,7 +156,7 @@ French-language user documentation is in [`docs/user-guide/`](docs/user-guide/in
 | **Gateway** | Rust · Axum · Tokio · Redis pub/sub |
 | **SFU** | Rust · webrtc-rs · Axum · Cloudflare TURN |
 | **Backend services** | NestJS 10 · TypeORM · Node.js 24 |
-| **Data stores** | PostgreSQL · MongoDB · Redis · MinIO |
+| **Data stores** | PostgreSQL · MongoDB · Redis · Garage |
 | **Auth** | Authentik (OIDC) · JWT HS256 · HttpOnly cookies |
 | **DevOps** | Docker · GitHub Actions · Nginx · Cloudflare Tunnel |
 

@@ -117,7 +117,7 @@ export class MediaController {
   @UseInterceptors(
     FileInterceptor('file', {
       limits: { fileSize: MAX_BYTES },
-      // Store entirely in memory - we pass raw bytes to MinIO
+      // Store entirely in memory - we pass raw bytes to Garage
       storage: undefined,
     })
   )
@@ -244,7 +244,7 @@ export class MediaController {
   // GET /media/internal/storage-stats - bucket size for the admin storage panel
   // ---------------------------------------------------------------------------
   /**
-   * Reports the MinIO bucket's total size and object count to an internal caller (the
+   * Reports the object storage bucket's total size and object count to an internal caller (the
    * chat-delivery-service admin storage aggregator, WP-DEVICESTORAGE-1's backend counterpart).
    * Declared before `internal/:id` so "storage-stats" is matched as a literal segment, not an id.
    */
