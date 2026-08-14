@@ -430,6 +430,23 @@ carry in the head:
   this device has never read"* - which is only true if the two moments are one. **An answer obtained
   before an await is about a world that has moved**; re-ask on the failure path, where it costs
   nothing because that path is already the exceptional one.
+- **A LEDGER THAT RECONCILES AN OVERLAP IS NOT AN ORDER, AND MUST NOT CARRY THE ORDINARY CASE.** The
+  two rules above make the shared ledger correct; they do not make the overlap rare. A barrier before
+  a walk orders the two paths at its START and says nothing about its middle, and the archive holds
+  every frame *including the queued ones* - so an unbounded walk reads exactly the rows live delivery
+  is about to hand over, for as long as the walk lasts. **Bound the walk at the boundary it observed
+  when it started**, and the two sets are disjoint by construction rather than deduplicated
+  afterwards: the rows above the bound are never fetched, so they cost no bytes, no decrypt and no
+  ledger entry. Stopping early is always safe for a cursor that advances by WALKING - it simply
+  resumes there. Two questions separate this from a patch: *what is the bound a fact about* (the
+  server's stream head, read once, not the client's clock), and *what width of seam is left* (here,
+  one round trip instead of one walk - the queue and the stream are written at different moments, so
+  no client-side ordering makes it zero, and the ledger keeps covering that remainder).
+- **A RESPONSE HEADER IS INVISIBLE CROSS-ORIGIN UNLESS IT IS EXPOSED.** Carrying new metadata in a
+  header keeps an array-shaped body compatible with every deployed client - the right trade - but the
+  app runs cross-origin under Tauri (`http://tauri.localhost`), so without
+  `Access-Control-Expose-Headers` the header reaches the browser and is hidden from the code. That
+  fails on MOBILE ONLY, compiles, and deploys green: the exact shape of a fault no gate catches.
 - **A NAME THAT LIES MAKES TWO KEY SPACES READ AS ONE.** `cipherFingerprint` held `msg.id`, a Redis
   stream id - not a fingerprint of anything. Every reader of that function, and the log line it fed,
   silently treated a row identifier and a ciphertext hash as the same currency, which is precisely the

@@ -5,10 +5,12 @@ import {
   Body,
   Param,
   Query,
+  Res,
   UseGuards,
   Headers,
   BadRequestException,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService, SendMessageBody, AckMessagesBody } from '../services/messaging.service';
@@ -144,7 +146,7 @@ export class MessagingController {
   @Post('mls/history/batch')
   async getHistoryBatch(
     @Body()
-    body: { groups?: { groupId: string; after?: string; limit?: number }[] },
+    body: { groups?: { groupId: string; after?: string; limit?: number; until?: string }[] },
     @Headers('x-user-id') headerUserId?: string,
     @Headers('x-global-admin') headerGlobalAdmin?: string
   ) {
@@ -155,23 +157,35 @@ export class MessagingController {
     );
   }
 
+  /**
+   * One history page. The body stays a bare array - the shape every deployed client already parses -
+   * and the stream head travels in `X-History-Head`, which an older client simply ignores.
+   *
+   * The head is the upper bound the caller passes back as `until` for the rest of its walk, so a
+   * replay never reads rows appended while it was running: those belong to the delivery queue.
+   */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/history/:groupId')
   async getHistory(
     @Param('groupId') groupId: string,
+    @Res({ passthrough: true }) res: Response,
     @Query('after') after?: string,
     @Query('limit') limitRaw?: string,
+    @Query('until') until?: string,
     @Headers('x-user-id') headerUserId?: string,
     @Headers('x-global-admin') headerGlobalAdmin?: string
   ): Promise<Record<string, unknown>[]> {
     const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
-    return this.messagingService.getHistory(
+    const { rows, head } = await this.messagingService.getHistory(
       groupId,
       after,
       headerUserId,
       headerGlobalAdmin,
-      Number.isFinite(limit) ? limit : undefined
+      Number.isFinite(limit) ? limit : undefined,
+      until
     );
+    if (head) res.setHeader('X-History-Head', head);
+    return rows;
   }
 
   @UseGuards(HeaderAuthGuard)

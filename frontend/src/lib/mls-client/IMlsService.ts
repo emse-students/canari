@@ -289,20 +289,26 @@ export interface IMlsService {
   acquireAddLock(groupId: string, ttlMs?: number): Promise<boolean>;
   /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
-  /** Fetches the Redis Stream history for a group, optionally starting after a given stream entry ID. */
+  /**
+   * Fetches one Redis Stream history page for a group, optionally starting after a given stream
+   * entry ID. Pass the first page's `head` back as `until` to keep the walk bounded to the rows
+   * that existed when it started - see {@link import('./historyTypes').HistoryPage}.
+   */
   fetchHistory(
     groupId: string,
     afterStreamId?: string,
     /** Optional page size override (server clamps). */
-    limit?: number
-  ): Promise<import('./historyTypes').HistoryStreamRow[]>;
+    limit?: number,
+    /** Inclusive upper bound: the `head` returned by the first page of this walk. */
+    until?: string
+  ): Promise<import('./historyTypes').HistoryPage>;
   /**
    * Fetches the first page of history for multiple groups in one HTTP round-trip.
-   * Groups the caller cannot read return an empty array.
+   * Groups the caller cannot read return an empty page.
    */
   fetchHistoryBatch?(
     groups: Array<{ groupId: string; afterStreamId?: string }>
-  ): Promise<Map<string, import('./historyTypes').HistoryStreamRow[]>>;
+  ): Promise<Map<string, import('./historyTypes').HistoryPage>>;
   /**
    * Rung-1 replay: fetches the ordered commits this device missed (`baseEpoch >= sinceEpoch`) so a
    * gap can be healed by re-applying them instead of dropping local state. `belowFloor` signals the

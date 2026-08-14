@@ -1,4 +1,4 @@
-import type { HistoryStreamRow } from '$lib/mls-client/historyTypes';
+import type { HistoryPage } from '$lib/mls-client/historyTypes';
 import { fromBase64 } from '$lib/utils/hex';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
@@ -313,7 +313,7 @@ export async function replayConversationHistory(params: {
   messageReactions: Map<string, MessageReaction[]>;
   log: (msg: string) => void;
   /** First page already fetched (e.g. login batch history) — skipped on the first loop iteration. */
-  primedFirstPage?: HistoryStreamRow[];
+  primedFirstPage?: HistoryPage;
 }): Promise<MlsReplayCommit | undefined> {
   const {
     mlsService,
@@ -458,30 +458,55 @@ export async function replayConversationHistory(params: {
     session = await mlsService.createDecryptSession(id);
 
     // Batch login may have prefetched with a cursor we just invalidated (DB wipe).
-    let pendingPrimedPage: HistoryStreamRow[] | undefined =
+    let pendingPrimedPage: HistoryPage | undefined =
       cursorBeforeDbCheck && !afterStreamId ? undefined : primedFirstPage;
-    let prefetchedNextPage: Promise<HistoryStreamRow[]> | null = null;
+    let prefetchedNextPage: Promise<HistoryPage> | null = null;
+
+    /**
+     * THE UPPER BOUND OF THIS WALK, PINNED AT ITS FIRST PAGE - so the archive and the delivery queue
+     * can never hand MLS the same frame.
+     *
+     * The mailbox barrier above orders the two paths at the START: nothing this device's queue held
+     * is still undelivered when the walk begins. It says nothing about what arrives DURING the walk,
+     * and the archive holds every frame including the queued ones - so a walk whose upper bound is
+     * "the tail whenever I reach it" necessarily covers rows written while it was running, which are
+     * precisely the ones live delivery is about to hand over. On a large conversation that window is
+     * the whole duration of the walk.
+     *
+     * Bounded here, the two sets are disjoint by construction: at or below the head is the replay's,
+     * above it is the queue's. The rows are not fetched, so they cost no bytes, no decrypt and no
+     * ledger entry - the shared-fingerprint ledger stops being the mechanism that makes ordinary
+     * traffic work and goes back to being what it was written for, the irreducible seam.
+     *
+     * Stopping early is always safe for this cursor: it only ever advances over rows actually
+     * walked, so the next replay resumes at the head and reads what was appended since.
+     */
+    let walkHead: string | undefined;
 
     while (true) {
-      let history: HistoryStreamRow[];
+      let page: HistoryPage;
       if (pendingPrimedPage !== undefined) {
-        history = pendingPrimedPage;
+        page = pendingPrimedPage;
         pendingPrimedPage = undefined;
       } else if (prefetchedNextPage) {
-        history = await prefetchedNextPage;
+        page = await prefetchedNextPage;
         prefetchedNextPage = null;
       } else {
-        history = await mlsService.fetchHistory(id, fetchCursor);
+        page = await mlsService.fetchHistory(id, fetchCursor, undefined, walkHead);
       }
+      // First page only: every later fetch already carried it, and the server echoes it back.
+      walkHead ??= page.head;
+      const history = page.rows;
       if (history.length === 0) {
         break;
       }
       fetchedAnyPage = true;
 
       const pageLastId = history[history.length - 1]?.id;
-      const hasMore = Boolean(pageLastId && pageLastId !== fetchCursor);
+      // Reaching the head IS the end of the walk - no request is spent discovering an empty page.
+      const hasMore = Boolean(pageLastId && pageLastId !== fetchCursor && pageLastId !== walkHead);
       if (hasMore && pageLastId) {
-        prefetchedNextPage = mlsService.fetchHistory(id, pageLastId);
+        prefetchedNextPage = mlsService.fetchHistory(id, pageLastId, undefined, walkHead);
       }
 
       const pageDecryptWork: Array<{

@@ -145,10 +145,25 @@ export interface HistoryBatchRequestItem {
   groupId: string;
   after?: string;
   limit?: number;
+  /** Inclusive upper bound - see {@link HistoryBatchResponse.heads}. */
+  until?: string;
 }
 
 export interface HistoryBatchResponse {
   histories: Record<string, Record<string, unknown>[]>;
+  /**
+   * Per group, the stream's last entry id AT THE MOMENT THIS PAGE WAS READ - the caller's upper
+   * bound for the rest of its walk, passed back as `until`.
+   *
+   * It exists so a replay and the live delivery queue can never both hand MLS the same frame. The
+   * archive holds every frame, including the ones still queued for delivery, so a walk whose upper
+   * bound is "the tail whenever I get there" necessarily covers rows written while it was walking -
+   * precisely the ones the queue is about to deliver. Pinning the bound at the start makes the two
+   * sets disjoint: everything above the head is the queue's, by construction.
+   *
+   * Absent for a group that holds no history at all (nothing to bound).
+   */
+  heads: Record<string, string>;
 }
 
 /** Redis stream MAXLEN (~1000) — upper bound for a full catch-up page. */
@@ -1813,21 +1828,42 @@ export class MessagingService {
   }
 
   /**
+   * Keeps only a well-formed Redis stream id (`<ms>-<seq>`). Anything else is dropped rather than
+   * rejected: a bad cursor is a client that has lost its place, and the honest answer is the
+   * unbounded read it would have got with no cursor at all - not a 500 it cannot act on.
+   */
+  private sanitizeStreamId(value: string | undefined): string | undefined {
+    const trimmed = value?.trim();
+    return trimmed && /^\d+-\d+$/.test(trimmed) ? trimmed : undefined;
+  }
+
+  /**
    * Reads one page from `history:{groupId}` (no auth — caller must gate access).
-   * `after` is an exclusive Redis stream ID (`(${after}` in XRANGE).
+   *
+   * `after` is an exclusive Redis stream ID (`(${after}` in XRANGE); `until` is an INCLUSIVE upper
+   * bound, so a caller that passes back the `head` it was given walks exactly the rows that existed
+   * when it started and never the ones appended since (see {@link HistoryBatchResponse.heads}).
+   *
+   * The head is read only when the caller has no bound yet - one `XREVRANGE ... COUNT 1` on the
+   * first page of a walk, and nothing at all on the pages after it.
    */
   private async readHistoryStreamPage(
     groupId: string,
     after: string | undefined,
-    limit: number
-  ): Promise<Record<string, unknown>[]> {
+    limit: number,
+    until?: string
+  ): Promise<{ rows: Record<string, unknown>[]; head?: string }> {
     const streamKey = `history:${groupId}`;
     const startId = after ? `(${after}` : '-';
-    const entries = await this.redis.xrange(streamKey, startId, '+', 'COUNT', limit);
+    const endId = until ?? '+';
+    const entries = await this.redis.xrange(streamKey, startId, endId, 'COUNT', limit);
+    const head = until
+      ? until
+      : ((await this.redis.xrevrange(streamKey, '+', '-', 'COUNT', 1))[0]?.[0] ?? undefined);
     this.logger.log(
-      `[HISTORY] group=${groupId} after=${after ?? 'start'} limit=${limit} entries=${entries.length}`
+      `[HISTORY] group=${groupId} after=${after ?? 'start'} until=${until ?? head ?? 'empty'} limit=${limit} entries=${entries.length}`
     );
-    return this.mapHistoryEntries(entries);
+    return { rows: this.mapHistoryEntries(entries), head };
   }
 
   /**
@@ -1887,12 +1923,15 @@ export class MessagingService {
    */
   async getHistory(
     groupIdRaw: string,
-    after: string | undefined,
+    afterRaw: string | undefined,
     headerUserId: string | undefined,
     headerGlobalAdmin: string | undefined,
-    limitRaw?: number
-  ): Promise<Record<string, unknown>[]> {
+    limitRaw?: number,
+    untilRaw?: string
+  ): Promise<{ rows: Record<string, unknown>[]; head?: string }> {
     const groupId = sanitizeQueryValue(groupIdRaw, 'groupId');
+    const after = this.sanitizeStreamId(afterRaw);
+    const until = this.sanitizeStreamId(untilRaw);
     const limit = this.resolveHistoryLimit(after, limitRaw);
 
     const authorized = await this.authorizeHistoryGroups(
@@ -1903,12 +1942,12 @@ export class MessagingService {
     );
     if (!authorized.has(groupId)) {
       this.logger.warn(`[HISTORY] group=${groupId} orphaned - purged, empty`);
-      return [];
+      return { rows: [] };
     }
 
     try {
-      const entries = await this.readHistoryStreamPage(groupId, after, limit);
-      return this.enrichHistoryWithDisplayNames(entries);
+      const { rows, head } = await this.readHistoryStreamPage(groupId, after, limit, until);
+      return { rows: await this.enrichHistoryWithDisplayNames(rows), head };
     } catch (e) {
       this.logger.error(`[HISTORY] group=${groupId} error=${String(e)}`);
       throw new ServiceUnavailableException('History stream unavailable');
@@ -1931,11 +1970,17 @@ export class MessagingService {
       throw new BadRequestException(`At most ${HISTORY_BATCH_MAX_GROUPS} groups per batch`);
     }
 
-    const normalized = items.map((item) => ({
-      groupId: sanitizeQueryValue(item.groupId, 'groupId'),
-      after: item.after?.trim() || undefined,
-      limit: this.resolveHistoryLimit(item.after, item.limit),
-    }));
+    const normalized = items.map((item) => {
+      // The limit is resolved from the SANITISED cursor: a dropped one means the read restarts from
+      // the beginning, which is a full catch-up page, not the smaller incremental one.
+      const after = this.sanitizeStreamId(item.after);
+      return {
+        groupId: sanitizeQueryValue(item.groupId, 'groupId'),
+        after,
+        until: this.sanitizeStreamId(item.until),
+        limit: this.resolveHistoryLimit(after, item.limit),
+      };
+    });
 
     const groupIds = [...new Set(normalized.map((i) => i.groupId))];
     const authorized = await this.authorizeHistoryGroups(
@@ -1946,14 +1991,17 @@ export class MessagingService {
     );
 
     const histories: Record<string, Record<string, unknown>[]> = {};
+    const heads: Record<string, string> = {};
     await Promise.all(
-      normalized.map(async ({ groupId, after, limit }) => {
+      normalized.map(async ({ groupId, after, until, limit }) => {
         if (!authorized.has(groupId)) {
           histories[groupId] = [];
           return;
         }
         try {
-          histories[groupId] = await this.readHistoryStreamPage(groupId, after, limit);
+          const page = await this.readHistoryStreamPage(groupId, after, limit, until);
+          histories[groupId] = page.rows;
+          if (page.head) heads[groupId] = page.head;
         } catch (e) {
           this.logger.error(`[HISTORY_BATCH] group=${groupId} error=${String(e)}`);
           histories[groupId] = [];
@@ -1966,7 +2014,7 @@ export class MessagingService {
     await this.enrichHistoryWithDisplayNames(allEntries);
 
     this.logger.log(`[HISTORY_BATCH] groups=${normalized.length} authorized=${authorized.size}`);
-    return { histories };
+    return { histories, heads };
   }
 
   /**

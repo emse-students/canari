@@ -737,7 +737,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     }
 
     const replayMetas = mergedConvMetas.filter((m) => !isChannelConversationId(m.id));
-    let batchFirstPages: Map<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]> =
+    let batchFirstPages: Map<string, import('$lib/mls-client/historyTypes').HistoryPage> =
       new Map();
     if (replayMetas.length > 0 && ctx.mlsService.fetchHistoryBatch) {
       try {

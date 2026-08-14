@@ -162,7 +162,7 @@ describe('a frame the archive replay consumed', () => {
         finish: vi.fn().mockResolvedValue(undefined),
       }),
       // The page after the primed one is empty, which is what ends the walk.
-      fetchHistory: vi.fn().mockResolvedValue([]),
+      fetchHistory: vi.fn().mockResolvedValue({ rows: [] }),
     });
     return replayConversationHistory({
       mlsService,
@@ -175,7 +175,7 @@ describe('a frame the archive replay consumed', () => {
       setConversation: () => undefined,
       messageReactions: new Map(),
       log: () => undefined,
-      primedFirstPage: rows,
+      primedFirstPage: { rows },
     });
   };
 
@@ -310,7 +310,7 @@ describe('the mailbox barrier', () => {
     const drained = new Promise<void>((resolve) => {
       openGate = resolve;
     });
-    const fetchHistory = vi.fn().mockResolvedValue([]);
+    const fetchHistory = vi.fn().mockResolvedValue({ rows: [] });
     const getLocalGroups = vi.fn().mockReturnValue([GROUP]);
     const mlsService = createMlsServiceStub({
       getLocalGroups,
@@ -345,6 +345,76 @@ describe('the mailbox barrier', () => {
     await replay;
 
     expect(fetchHistory).toHaveBeenCalled();
+  });
+});
+
+/**
+ * THE WALK STOPS AT THE HEAD IT SAW WHEN IT STARTED.
+ *
+ * The mailbox barrier above orders the archive and the delivery queue at the START of a replay. It
+ * says nothing about what arrives DURING one, and the archive holds every frame including the
+ * queued ones - so an unbounded walk reads rows live delivery is about to hand over, and the two
+ * paths meet on the same ciphertext again. On a large conversation that window is the entire walk.
+ *
+ * With the bound, the split is structural: at or below the head belongs to the replay, above it
+ * belongs to the queue. Nothing above is fetched, so it costs no bytes, no decrypt, and no ledger
+ * entry - the shared ledger stops carrying ordinary traffic and goes back to covering the seam.
+ */
+describe('the walk is bounded by the head observed at its start', () => {
+  /** One archive row; distinct bytes per id, so no case can answer another's question. */
+  const rowAt = (id: string, marker: number) => ({
+    id,
+    sender_id: 'peer',
+    content: toBase64(new Uint8Array([0xa0, marker, 0xa2, 0xa3])),
+    timestamp: String(1786655250946),
+  });
+
+  /** Runs one replay off a primed first page and reports the fetches it made afterwards. */
+  const walkFrom = async (primedFirstPage: { rows: ReturnType<typeof rowAt>[]; head?: string }) => {
+    const fetchHistory = vi.fn().mockResolvedValue({ rows: [] });
+    const mlsService = createMlsServiceStub({
+      getLocalGroups: vi.fn().mockReturnValue([GROUP]),
+      fetchHistory,
+      createDecryptSession: vi.fn().mockResolvedValue({
+        decryptPage: vi
+          .fn()
+          .mockResolvedValue(primedFirstPage.rows.map(() => ({ ok: true, plaintext: null }))),
+        finish: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+    await replayConversationHistory({
+      mlsService,
+      id: GROUP,
+      contactName: 'peer',
+      userId: USER,
+      deviceKeyB64: 'device-key',
+      storage: null,
+      getConversation: () => undefined,
+      setConversation: () => undefined,
+      messageReactions: new Map(),
+      log: () => undefined,
+      primedFirstPage,
+    });
+    return fetchHistory;
+  };
+
+  it('passes the head back as the upper bound of every later page', async () => {
+    const fetchHistory = await walkFrom({ rows: [rowAt('3-0', 0x01)], head: '9-0' });
+
+    // The bound travels with the request, so the rows above it are never read server-side either.
+    expect(fetchHistory).toHaveBeenCalledWith(GROUP, '3-0', undefined, '9-0');
+  });
+
+  it('ends the walk on reaching the head, without spending a request to find an empty page', async () => {
+    const fetchHistory = await walkFrom({ rows: [rowAt('9-0', 0x02)], head: '9-0' });
+
+    expect(fetchHistory).not.toHaveBeenCalled();
+  });
+
+  it('walks unbounded when the server sends no head, so an older deployment still replays', async () => {
+    const fetchHistory = await walkFrom({ rows: [rowAt('3-0', 0x03)] });
+
+    expect(fetchHistory).toHaveBeenCalledWith(GROUP, '3-0', undefined, undefined);
   });
 });
 

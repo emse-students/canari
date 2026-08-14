@@ -281,6 +281,36 @@ On connect, in this order - the order is load-bearing:
 > answer is scheduled - a real weakening, accepted because nothing in this exchange is durable by
 > design and the asker re-asks on its next edge.
 
+> **Step 3 orders the two paths at the START of a walk. It says nothing about the middle of one, and
+> that is a second overlap** (closed 2026-08-14). The archive holds every frame, *including the ones
+> still queued for live delivery*. So a replay whose upper bound is "the stream tail whenever I get
+> there" necessarily walks rows written while it was walking - precisely the rows the queue is about
+> to hand over - and both paths present the same ciphertext to MLS again. The barrier cannot reach
+> them: they did not exist when it was crossed. On a conversation large enough to page, that window
+> is the whole duration of the walk, which is exactly the size the standing directive rules out.
+>
+> **The bound is the stream head observed at the walk's first page.** `GET /api/mls/history/:groupId`
+> reports it in `X-History-Head` (`heads` on the batch route), the client passes it back as `until`,
+> and the server uses it as the `XRANGE` end instead of `+`. At or below the head belongs to the
+> replay; above it belongs to the queue; the split is structural rather than reconciled afterwards.
+> The rows above are never read at all - no bytes on the wire, no decrypt, and no ledger entry.
+>
+> **Why stopping early is safe:** the cursor only ever advances over rows actually walked, in stream
+> order, so a walk that stops at the head leaves the cursor at the head and the next one resumes
+> there. It is the same property that makes `advancePast` a walk and not a jump.
+>
+> **What this does NOT close, and the honest width of it.** The seam is now one round trip wide
+> instead of one walk: a frame written between the drain going idle and the head being read is below
+> the head and not yet in the ledger. Two structures are involved - the per-device queue and the
+> shared stream - written at different moments by the server, so no client-side ordering can make
+> that zero. The shared-fingerprint ledger still covers it, which is what it was written for; what
+> changed is that it is no longer the mechanism that makes ordinary traffic work.
+>
+> The head has a second use, not yet taken: it is a **stable, shared upper bound**, which is the
+> terminator the fourth trigger (probe when the answer is shorter than the window asked for) was
+> missing. A requester that says "I walked to H" states a fact both sides can compare against,
+> where "I think something is missing near the end" cannot terminate without a clock.
+
 The state key covers **the id set and the mutation state** - not ids alone. Two devices agreeing on
 which messages exist can still disagree on which are deleted, and both would call themselves
 complete. Ids and mutation state only, never content: a deleted message keeps its id and changes its

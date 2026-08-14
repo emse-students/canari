@@ -650,32 +650,40 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Fetches the Redis Stream history for a group, optionally paginated after `afterStreamId`. Returns `[]` on error. */
+  /**
+   * Fetches one Redis Stream history page for a group, optionally paginated after `afterStreamId`.
+   *
+   * `until` is the INCLUSIVE upper bound for the walk - pass back the `head` the first page
+   * returned, and the server never reads rows appended since (they belong to the delivery queue).
+   * Returns an empty page on error.
+   */
   async fetchHistory(
     groupId: string,
     afterStreamId?: string,
-    limit?: number
-  ): Promise<import('$lib/mls-client/historyTypes').HistoryStreamRow[]> {
+    limit?: number,
+    until?: string
+  ): Promise<import('$lib/mls-client/historyTypes').HistoryPage> {
     try {
       const url = new URL(`${this.historyUrl}/api/mls/history/${groupId}`);
       if (afterStreamId) url.searchParams.set('after', afterStreamId);
+      if (until) url.searchParams.set('until', until);
       const effectiveLimit = limit !== undefined ? String(limit) : afterStreamId ? '200' : '1000';
       url.searchParams.set('limit', effectiveLimit);
       const res = await this.f(url.toString(), {
         headers: await this.auth(),
       });
-      if (!res.ok) return [];
+      if (!res.ok) return { rows: [] };
       const contentType = res.headers.get('content-type') ?? '';
       if (!contentType.toLowerCase().includes('application/json')) {
         console.warn(
           `[History] Non-JSON response for group ${groupId}. Received content-type: ${contentType || 'unknown'}`
         );
-        return [];
+        return { rows: [] };
       }
-      return await res.json();
+      return { rows: await res.json(), head: res.headers.get('X-History-Head') ?? undefined };
     } catch (e) {
       console.error('Fetch History Error:', e);
-      return [];
+      return { rows: [] };
     }
   }
 
@@ -685,8 +693,8 @@ export class MlsDeliveryApi {
    */
   async fetchHistoryBatch(
     groups: Array<{ groupId: string; afterStreamId?: string }>
-  ): Promise<Map<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]>> {
-    const out = new Map<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]>();
+  ): Promise<Map<string, import('$lib/mls-client/historyTypes').HistoryPage>> {
+    const out = new Map<string, import('$lib/mls-client/historyTypes').HistoryPage>();
     if (groups.length === 0) return out;
 
     try {
@@ -705,9 +713,10 @@ export class MlsDeliveryApi {
         if (contentType.toLowerCase().includes('application/json')) {
           const data = (await res.json()) as {
             histories?: Record<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]>;
+            heads?: Record<string, string>;
           };
           for (const [groupId, rows] of Object.entries(data.histories ?? {})) {
-            out.set(groupId, rows ?? []);
+            out.set(groupId, { rows: rows ?? [], head: data.heads?.[groupId] });
           }
           return out;
         }

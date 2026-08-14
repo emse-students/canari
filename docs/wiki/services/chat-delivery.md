@@ -377,11 +377,20 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | POST | `/api/mls/welcome` | Deliver Welcome message to a device |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
 | DELETE | `/api/mls/welcome-request/group/:groupId` | Clear pending welcome_request queue |
-| POST | `/api/mls/history/batch` | Get message history batch |
-| GET | `/api/mls/history/:groupId` | Incremental Redis Stream history |
+| POST | `/api/mls/history/batch` | Get message history batch (response carries `heads`, one stream head per group) |
+| GET | `/api/mls/history/:groupId?after=&until=&limit=` | Incremental Redis Stream history; head in `X-History-Head` |
 | GET | `/api/mls/messages/:userId/:deviceId` | Fetch queued messages for device |
 | POST | `/api/mls/messages/ack` | Acknowledge received messages |
 | POST | `/api/mls/notify-reaction` | Fire-and-forget reaction push |
+
+**A history walk is bounded by the head it was given.** `until` is an INCLUSIVE upper bound used as
+the `XRANGE` end in place of `+`; the head is read (one `XREVRANGE ... COUNT 1`) only when the caller
+supplies none, so a walk pays for it once and never per page. It exists because the stream holds every
+frame *including the ones still queued for live delivery*, so an unbounded walk reads the rows the
+queue is about to hand over and both paths present the same ciphertext to MLS - see
+[history-reconciliation](../protocols/history-reconciliation.md#the-exchange). A malformed `after` or
+`until` is dropped rather than rejected: a client that has lost its place gets the unbounded read it
+would have had with no cursor, not a 500 it cannot act on.
 
 ### Invitations / device sync
 

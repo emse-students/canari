@@ -50,6 +50,13 @@ async function bootstrap() {
       callback(new Error(`CORS: origin not allowed: ${origin}`));
     },
     credentials: true,
+    /**
+     * Without this the browser hides the header from the very clients that need it most: the app
+     * runs cross-origin under Tauri (`http://tauri.localhost`), so a response header it cannot read
+     * would silently disable the history walk's upper bound on mobile ONLY - the shape of failure
+     * that compiles, deploys green, and is wrong.
+     */
+    exposedHeaders: ['X-History-Head'],
   });
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

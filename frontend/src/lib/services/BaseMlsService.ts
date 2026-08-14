@@ -1075,14 +1075,15 @@ export abstract class BaseMlsService implements IMlsService {
   async fetchHistory(
     groupId: string,
     afterStreamId?: string,
-    limit?: number
-  ): Promise<import('$lib/mls-client/historyTypes').HistoryStreamRow[]> {
-    return this.delivery.fetchHistory(groupId, afterStreamId, limit);
+    limit?: number,
+    until?: string
+  ): Promise<import('$lib/mls-client/historyTypes').HistoryPage> {
+    return this.delivery.fetchHistory(groupId, afterStreamId, limit, until);
   }
 
   async fetchHistoryBatch(
     groups: Array<{ groupId: string; afterStreamId?: string }>
-  ): Promise<Map<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]>> {
+  ): Promise<Map<string, import('$lib/mls-client/historyTypes').HistoryPage>> {
     return this.delivery.fetchHistoryBatch(groups);
   }
 

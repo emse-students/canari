@@ -70,6 +70,27 @@ it says what a device HAS, while `since` says what the asker WANTS.
 **Cost of keeping it:** an old client is served more than it asked for, which it will store or
 ignore. Bandwidth, never correctness.
 
+### `GET /api/mls/history/:groupId` answering with a bare array - since v0.14
+
+**Site:** `MessagingController.getHistory` (the body stays `Record<string, unknown>[]`, with the
+stream head in the `X-History-Head` response header) and `MlsDeliveryApi.fetchHistory` (a page whose
+`head` is `undefined` walks unbounded, exactly as before).
+**Shim:** the head travels in a HEADER rather than in the body, so that every deployed client - all
+of which `JSON.parse` the response straight into an array - keeps working unchanged. The batch route
+had no such constraint: its response was already an object, so `heads` is simply an added field.
+**Replacement:** the page IS `{ rows, head }`, one shape for both routes, and the head is not
+optional - a walk always knows its upper bound.
+**On removal:** return `{ rows, head }` from the GET, delete the `res.setHeader` and the
+`@Res({ passthrough: true })` it needs, drop `X-History-Head` from `exposedHeaders` in
+`main.ts`, and make `HistoryPage.head` required.
+**Why the header needs the CORS entry:** the app runs cross-origin under Tauri
+(`http://tauri.localhost`), and a response header that is not in `Access-Control-Expose-Headers` is
+invisible to the client that reads it. Without that line the bound would have been silently absent
+on mobile only - green build, green deploy, wrong behaviour.
+**Cost of keeping it:** two shapes for one concept, and a head that is typed optional at every use
+site even though the server always sends one. No correctness cost: a missing head means an unbounded
+walk, which is what every client did before the bound existed.
+
 ---
 
 ## Closed

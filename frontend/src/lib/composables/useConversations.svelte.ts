@@ -258,8 +258,8 @@ export function useConversations() {
           // If local DB is empty, let `replayConversationHistory` handle cursor reset safely.
           if (existingPage.length > 0) {
             try {
-              const probeRows = await ctx.ensureMls().fetchHistory(id, cursor, 1);
-              if (probeRows.length === 0) {
+              const probe = await ctx.ensureMls().fetchHistory(id, cursor, 1);
+              if (probe.rows.length === 0) {
                 const msgs = await retroactivelyResolveHexIds(
                   mapStoredMessagesToChatMessages(existingPage, ctx.userId),
                   ctx.storage,
