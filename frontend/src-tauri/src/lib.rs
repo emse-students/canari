@@ -36,7 +36,7 @@ use crate::commands::mls::{
     obtenir_epoch, oublier_groupe, recevoir_message, recevoir_message_bytes,
     recevoir_messages_batch, recuperer_cle_session_mls, rejoindre_par_commit_externe,
     retirer_membres, retirer_membres_par_appareil, sauvegarder_mls, sauvegarder_mls_et_persister,
-    supprimer_groupe, trailer_welcome,
+    skip_send_generations, supprimer_groupe, trailer_welcome,
 };
 use crate::commands::push::{
     check_push_secret_health, get_fcm_token, get_voip_token, load_push_context,
@@ -841,6 +841,7 @@ pub fn run() {
             trailer_welcome,
             envoyer_message,
             envoyer_message_bytes,
+            skip_send_generations,
             recevoir_message,
             recevoir_message_bytes,
             recevoir_messages_batch,

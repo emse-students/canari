@@ -479,6 +479,27 @@ pub(crate) fn envoyer_message_bytes(
         .map_err(|e| e.to_string())
 }
 
+/// Advances the send ratchet by `count` generations without emitting anything, repairing an
+/// `mls.bin` restored behind frames this device had already sent. ONE invoke for the whole burn:
+/// a per-generation crossing would marshal a discarded ciphertext back over IPC every time.
+/// See `MlsManager::skip_send_generations` for why it encrypts and why over-shooting is safe.
+#[tauri::command]
+pub(crate) fn skip_send_generations(
+    group_id: String,
+    count: u32,
+    state: tauri::State<AppState>,
+) -> Result<u32, String> {
+    let mut lock = state
+        .mls_manager
+        .lock()
+        .map_err(|_| "Failed to lock state")?;
+    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
+
+    manager
+        .skip_send_generations(&group_id, count)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub(crate) fn recevoir_message(
     group_id: String,

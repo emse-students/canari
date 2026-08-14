@@ -32,6 +32,7 @@ export const wasmmlsclient_remove_members_by_device: (a: number, b: number, c: n
 export const wasmmlsclient_save_state: (a: number, b: number, c: number) => [number, number, number, number];
 export const wasmmlsclient_send_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const wasmmlsclient_send_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const wasmmlsclient_skip_send_generations: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const decrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const decrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const encrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];

@@ -375,6 +375,16 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
+    /// Advances the send ratchet by `count` generations without emitting anything, repairing a
+    /// snapshot that was restored behind frames this device had already sent. See
+    /// `MlsManager::skip_send_generations` for why it encrypts and why over-shooting is safe.
+    #[wasm_bindgen]
+    pub fn skip_send_generations(&mut self, group_id: String, count: u32) -> Result<u32, JsValue> {
+        self.manager
+            .skip_send_generations(&group_id, count)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     #[wasm_bindgen]
     pub fn export_secret(
         &self,

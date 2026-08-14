@@ -89,62 +89,46 @@ Everything wanted but NOT scheduled is [backlog](docs/wiki/backlog.md) - file it
 
 ### CANARI - what is open
 
-**SHIPPED AND CLOSED - do not re-open, do not reconstruct here.** WP-FALSELOSS-1 (a live frame
-consumed its generation without moving the archive cursor;
-[history-reconciliation](docs/wiki/protocols/history-reconciliation.md)) and the two A1 startup
-defects (our routing rule hijacking Tauri's IPC bridge; a `vibrate(0)` cancelling nothing;
-[mobile](docs/wiki/frontend/mobile.md)). Both verified by measurement, both written up.
+**SHIPPED, VERIFIED AND CLOSED - do not re-open, do not reconstruct any of them here.**
+WP-FALSELOSS-1, the two A1 startup defects, WP-PENDING-2 (the undrained queue, measured to `0` rows
+on A1 and no runaway device left on the fleet), WP-PREFIX-1 (six of seven internal cross-service
+calls addressing a route that does not exist, every one of them `.catch(warn)`), WP-OUTBOX-1 and
+WP-RECONNECT-2. Each one's rule is in [durable-rules](docs/wiki/durable-rules.md), its story in
+`CHANGELOG.md`, its mechanism on the wiki page that entry points at.
 
-**WP-PENDING-2 (the undrained queue) IS SHIPPED AND VERIFIED TO ZERO (2026-08-14) - do not re-open.**
-A page bounded in ROWS is the wrong unit for a transfer - 500 rows of media was 12 MB, the client
-aborted on its 10 s deadline, ACKed nothing, and met the same 12 MB for weeks (976 rows / 36 MB on
-A1, rising hourly, never once falling). Byte-bounded pages + client halving + a byte WARN,
-`8ad1cdb5`/`b82b241e`/`58a55ff8`. On the old bundle it drained one page per reconnection
-(976 -> 923 -> 884 -> 864); **with the halving APK installed, A1's queue measured `0` rows.** No
-device on the fleet is in the runaway state any more - the deepest is now 234 rows / 263 kB, on
-clients that have not updated yet. Mechanism, follow-on faults and residual on
-[chat-delivery](docs/wiki/services/chat-delivery.md) and [backlog](docs/wiki/backlog.md).
-
-**THE FALSE LOSS IS FIXED AT ITS CAUSE (2026-08-14) - VERIFICATION ON PROD IS OWED.** A state
+**THE FALSE LOSS IS FIXED AT ITS CAUSE AND THE VERIFICATION IS NOW TAKEN (2026-08-14).** A state
 replacement may not rewind this device's own send ratchet, and an EPOCH cannot see that it did: a
-send moves a GENERATION inside one epoch. Web has guarded both halves since the same defect was
-measured there (`installUnlessOvertaken`); the NATIVE resume reload had only the epoch half, and A1
-is the native client. Second half: the outbound checkpoint sat at 2 of the 18 call sites that reach
-a send, so `mls.bin` was structurally behind the live client. `sendMessage` is now concrete in
-`BaseMlsService` and carries all three outbound invariants; platforms supply only `encryptForSend`.
-The `hidden` handoff now flushes BEFORE releasing the native foreground guard. Mechanism on
-[mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md) (section 8), two rules in
-[durable-rules](docs/wiki/durable-rules.md). **The outbox correlation was really a RESUME
-correlation** - the outbox flush runs inside the resume sequence, right after the reload. Gates
-green, 1450 unit tests, two new suites pinning both halves. **Owed: MSG x3 on the deployed bundle
-with A1 reinstalled.**
+send moves a GENERATION inside one epoch. Native had only the epoch half; the outbound checkpoint sat
+at 2 of the 18 call sites that reach a send. `sendMessage` is concrete in `BaseMlsService` and
+carries all three outbound invariants, platforms supply only `encryptForSend`, and the `hidden`
+handoff flushes BEFORE releasing the native foreground guard. **Verified: MSG x5 on `f391c199` with
+A1 freshly reinstalled - 13 of 13 `passed` on every pass, no `SecretReuseError` and no `LOST frame`
+anywhere in the run.** Mechanism on
+[mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md) (section 8).
 
-**Found only because the observation gate was closed.** `SecretReuseError` and `LOST frame` were
-`notable`, and `notable` did not break `clean`, so MSG-6 recorded `PASS` with `receiverClean: true`
-TWICE with those lines inside its own record. `watch.mjs` now has a `severe` bucket that breaks
-`clean` (excluding `CannotDecryptOwnMessage`, which is RFC 9420 working).
+**TWO DURABILITY DEFECTS SHIPPED 2026-08-14, ONE VERIFIED AND ONE OWED.**
+[mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md) section 8 is the record.
 
-**WP-PREFIX-1 IS SHIPPED AND VERIFIED ON PROD (2026-08-14, `fed86037`) - do not re-open it.** Every
-Nest service mounts `setGlobalPrefix('api')` and the internal base URLs are configured without it, so
-**six of seven internal cross-service calls addressed a route that does not exist**: channel push
-never delivered on any device ever, `userHasMlsDevices` reduced to a constant `true` (a guard, not a
-degraded one - none at all), and account deletion leaving MLS keys, devices, messages, posts, follows
-and memberships in place. All six are `.catch(warn)`, which is why it survived: a failure mode
-designed for a transient fault met a permanent one. Fixed at the seam (`internal/service-urls.ts` per
-service), not at the call sites. **Found by `srvlog.mjs`, invisible to every client**, and verified
-the same way - `[CHANNEL_PUSH] … recipients=1` with zero 404, plus the positive proof the path ran.
-Full enumeration on
-[api-surface](docs/wiki/protocols/api-surface.md#internal-cross-service-calls);
-three rules in [durable-rules](docs/wiki/durable-rules.md).
-
-**WP-RECONNECT-2 IS CLOSED - IT WAS NEVER A RECONNECT DEFECT.** The 98 s hole in MSG-10's capture
-belonged to the OUTBOX, not to the ladder: the same record carries `msToReconnect: 11`, so the socket
-was back in eleven milliseconds and the interval was the queue waiting for a retry nobody armed. That
-is WP-OUTBOX-1, fixed and now verified (`MSG-10 PASS 3/3`). Two lessons kept: **a claim was withdrawn
-once** because it rested on the ORDER of lines in a classifier bucket (`[WS] Disconnected` is a
-`console.warn` and carries no clock while everything around it does), which is why `watch.mjs` now
-dates every line and socket event from CDP's own clocks; and `ignoringOfflineCut` used to DELETE the
-one event that dates a close independently of the app.
+- **Durability was gating delivery** (`f391c199`, VERIFIED). `endBulkIngest` awaits every observer and
+  the persister awaited the whole encrypted checkpoint, so an already-received frame waited for the
+  disk before being decrypted: **8.0 s on a cold web client**, with a 50 ms API round trip inside the
+  gap proving nothing else was blocked. The flush is started and not awaited. MSG-1-cold went from
+  one `SLOW` at 8 045 ms to **259-297 ms, 5/5**.
+- **The phone wrote `mls.bin` twice** (`6bfd805d`, MEASUREMENT OWED). `saveState` means different
+  things per platform; the checkpoint path did `saveState` + `saveMlsStateEncrypted`, which on native
+  writes the same file with the same bytes again, marshalled through IPC as a `number[]`. **3.7 s per
+  checkpoint, 1.7 s of real save and 2.0 s of duplicate.** One seam now - `IMlsService.persistCheckpoint`.
+  **Owed: read the checkpoint cost on A1 with the new APK; a green build proves nothing here.**
+- **FIX B WAS REFUTED AS SPECIFIED AND THE HOLE IS NOW CLOSED BY A BURN INSTEAD.** Awaiting a
+  checkpoint on the send path costs 1.7 s per message, so `checkpointAfterSend` keeps its
+  non-awaiting default on both platforms. The invariant never required durability AT SEND TIME, only
+  that a state restored behind one be recognised: `sendRatchetLedger` counts emitted frames in
+  `localStorage`, `persistCheckpoint` pairs the count with the write (read before, commit after -
+  which over-counts on purpose), and `reconcileSendRatchets` burns the difference at load via
+  `MlsManager::skip_send_generations`. **The Rust half is proven**
+  (`mls-core/tests/burn_spent_generations.rs`, 4 tests: the fault, the repair, and that over-shooting
+  is free). **OWED: the 300 ms-reload recipe on web AND native** - the Rust tests cannot establish
+  that the count survives a teardown. iOS gets it from the same un-gated `generate_handler!`.
 
 **WP-RECONNECT-1 IS FIXED AND DEPLOYED (2026-08-14, `9fd67590`); ITS VERIFICATION IS STILL OWED.** The
 reconnect circuit is DELETED: only a proof ends the retry loop now (logged out, or a 401/403 on the
@@ -229,31 +213,23 @@ not design a staging environment before that conversation.**
 - **The `mongo` service in `docker-compose.prod.yml` is dead** - production holds no application database there (only `admin`, `config`, `local`) and nothing in the codebase carries a MongoDB connection string. A candidate for removal, not a fault; removing it is a prod service change and needs the user.
 - **A new device or a reinstall still sees no media older than 30 days.** That is what makes the storage forecast survivable, and it may not be what the user intends - a POLICY question, not a rendering one ([storage-forecast](docs/wiki/infrastructure/storage-forecast.md), section 6). The clock is now honest: it is refreshed on a client cache HIT, not only on a server download.
 
-**THE MSG PHASE IS RUN THREE TIMES ON `9b7482f1` (2026-08-14 12:58-13:10Z): 11 of 13 checks PASS on
-ALL THREE PASSES, AND THE SERVER WINDOW IS CLEAN ON ALL THREE** - 8 544 lines across seven services,
-zero unexplained. Only MSG-5 and MSG-6 are dirty, on passes 2 and 3, carrying WP-FALSELOSS-2 and
-nothing else. **WP-OUTBOX-1 is verified here**: MSG-10 went `F/D/D` -> `PASS 3/3`, measured on a
-bundle proven to be the one running (`reload-web.mjs` found both tabs still on the previous build,
-which a re-run without it would have measured a fourth time and called a verification).
+**THE MSG PHASE IS RUN FIVE TIMES ON `f391c199` (2026-08-14 17:17-17:38Z): 13 of 13 PASS on ALL FIVE
+PASSES.** Every per-pass detail is on the dashboard, including the two INSTRUMENT faults that were
+the run's only dirt - `badHttp` judging `r.failed` before the status, so a **200** broke MSG-7's
+fifth pass, and the hourly `[CRON] reportQueueDepth:` missed by a rule spelling it `queue depth`.
+Both fixed, both pinned by a self-test case. **Do not copy the table here.**
 
-**The server observer now meets the same bar as the two clients and is tested like them.** Its whole
+**The server observer meets the same bar as the two clients and is tested like them.** Its whole
 window is classified: `srvlog.mjs --shapes` collapses `unexplained` and `notable` to distinct
-sentences, `srvclassify-selftest.mjs` (31 assertions) pins every rule against a line whose bucket is
-known, and `expectedErrors` names errors that are real and not defects. Four instrument faults fixed
-on the way, each of which had been answering about itself: **`ssh` capped at Node's 1 MB default, so
-the BUSIEST service (`chat-delivery`, 11 824 lines/day) reported `unreachable`**; truncated buckets
-reported their cap as their count (`40` where the window held 1 154); `shapeOf` mis-ordered so 287
-copies of one sentence counted as 287 shapes; and a service STARTING inside a window is now `notable`
-- a frontend redeploy cuts every proxied WebSocket at once, which was masquerading as a client fault.
-Two things the classified window raised, both filed and neither a defect on this evidence:
-`FALLBACK_MEMBERS_CACHE` on **279 of 279 sends** ([backlog](docs/wiki/backlog.md), P2) and
-`call-service` writing **0 lines in 24 h**, so the CALL phase will have no server observer at all.
+sentences, `srvclassify-selftest.mjs` pins every rule against a line whose bucket is known, and
+`expectedErrors` names errors that are real and not defects. **A rule that named the last incident
+does not name the next one**: three of the last four additions were near-misses on an existing rule,
+not new categories. Every instrument fault behind the current design is written up in
+[testing-methodology](docs/wiki/testing-methodology.md) - do not re-derive them here.
 
-Three earlier answers on `58a55ff8` had also been the INSTRUMENT reporting about itself, and all
-three fixes are shared primitives now in the harness: `armCut`/`cutHard` (CDP offline leaves an
-established socket alone, so MSG-9 had never once been offline at the gateway), MSG-1b's window as an
-observed in-flight request rather than a sleep, and `ssh.mjs` picking Windows OpenSSH explicitly.
-Written up in [testing-methodology](docs/wiki/testing-methodology.md) - do not re-derive them here.
+Two things the classified window raised, both filed and neither a defect on this evidence:
+`FALLBACK_MEMBERS_CACHE` on **every send observed** ([backlog](docs/wiki/backlog.md), P2) and
+`call-service` writing **0 lines in 24 h**, so the CALL phase will have no server observer at all.
 
 ### CANARI - the test campaign
 

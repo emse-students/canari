@@ -36,7 +36,7 @@ meet.
 | Phase | Scripts | State |
 | --- | --- | --- |
 | SETUP | - | 5 of 9 `passed`; SETUP-2 deliberately skipped, SETUP-7/8 owed (8 before CORRUPT and PIN) |
-| MSG | 12 | 11 of 13 `passed` 3/3 on `9b7482f1`, server window `clean` 3/3. MSG-5/MSG-6 `dirty` 2/3; cause fixed, **re-run owed** |
+| MSG | 12 | 13 of 13 `passed` 5/5 on `f391c199`. Every assertion held on every pass; the only dirt in the whole run was the instrument, twice, and both are fixed |
 | every other phase | 22 written, 6 with none | `pending` - not yet run on this build |
 
 ## State vocabulary
@@ -211,24 +211,43 @@ belong to itself.
 
 ## 1 - MSG - the plain path
 
-State is the last run, `9b7482f1` x3 (2026-08-14). `3/3` = clean on all three passes.
+State is the last run, `f391c199` x5 (2026-08-14, 17:17-17:38Z). `5/5` = clean on all five passes.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `passed` 3/3 |
-| MSG-1-cold | Same, after a reload | `W1 W2` | `passed` 2/3, one `SLOW` (7.7 s) |
-| MSG-1b | Delivery DURING a history load | `W1 W2` | `passed` 3/3 |
-| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `passed` 3/3 |
-| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `passed` 3/3 |
-| MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `passed` 3/3 |
-| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | **`dirty` 2/3** - re-run owed |
-| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`dirty` 2/3** - re-run owed |
-| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `passed` 3/3 |
-| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `passed` 3/3 |
-| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `passed` 3/3 |
-| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `passed` 3/3 |
-| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `passed` 3/3 |
-| (server) | Every application container's log over each pass's own window | - | `clean` 3/3 - 8 544 lines, zero unexplained |
+| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `passed` 5/5 - 263-271 ms |
+| MSG-1-cold | Same, after a reload | `W1 W2` | `passed` 5/5 - 259-297 ms, **the 8 s stall is gone** |
+| MSG-1b | Delivery DURING a history load | `W1 W2` | `passed` 5/5 |
+| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `passed` 5/5 |
+| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `passed` 5/5 |
+| MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `passed` 5/5 |
+| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | `passed` 5/5 |
+| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `passed` 5/5 |
+| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `passed` 5/5 - 30/30 ordered every pass; pass 5 `dirty` on an INSTRUMENT fault (below) |
+| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `passed` 5/5 |
+| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `passed` 5/5 |
+| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `passed` 5/5 |
+| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `passed` 5/5 |
+| (server) | Every application container's log over each pass's own window | - | `clean` 3/5 - 9 100+ lines; the two dirty windows are classified below |
+
+**THE ONLY DIRT IN THE RUN WAS THE INSTRUMENT, TWICE, AND NEITHER WAS AN APPLICATION FAULT.**
+Recorded here rather than smoothed away, because a re-classification is a re-reading of lines
+already captured and must never be presented as a clean pass that was never run.
+
+- **A 200 called a failure** (MSG-7, pass 5). `badHttp` decided on CDP's `r.failed` BEFORE consulting
+  the status, so a response that arrived with a 200 and whose body load was then cancelled was filed
+  as a failure: `GET /api/users/<id>/avatar -> 200`, breaking `clean` and taking the run's exit code
+  with it. A status is an ANSWER; a request that got one is judged on it. `watch.mjs` now says so,
+  and `classify-selftest.mjs` has four HTTP cases pinning it - including that a 502 on the SAME
+  endpoint still breaks `clean`.
+- **The hourly backlog report, missed by a space** (server, pass 5). `[CRON] reportQueueDepth:` is
+  camelCase, and the `queue depth|QUEUE_DEPTH` rule matched neither spelling - so the report
+  WP-PENDING-2 exists to be read by landed in `unexplained` once an hour. Now `notable`, which is
+  where a line naming the fleet's deepest devices belongs. That window read 1 078 frames queued,
+  heaviest 189 rows / 0.2 MB: no device is in the runaway state.
+- **A crawler's `[404] GET /sitemap.xml.gz`** (server, pass 1), the same family as the
+  `/sitemap_index.xml` guess already classified. Spelt out per path, with an assertion that a 404 on
+  a route we DO serve stays unexplained.
 
 ## 2 - TYPE - typing indicators
 

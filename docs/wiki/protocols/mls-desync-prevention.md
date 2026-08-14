@@ -76,9 +76,9 @@ structurally behind the live client. A rule each caller has to remember is a rul
 will not.
 
 **DURABILITY MUST NOT GATE DELIVERY, AND THE GUARD DOES NOT SURVIVE A PAGE LOAD.** Two things were
-measured on 2026-08-14 that this section did not account for, one fixed and one open.
+measured on 2026-08-14 that this section did not account for, both now fixed.
 
-Fixed: `endBulkIngest` awaits every observer, and the persister's `onBulkIngestEnd` awaited the whole
+The first: `endBulkIngest` awaits every observer, and the persister's `onBulkIngestEnd` awaited the whole
 encrypted checkpoint - so a frame that arrived during the flush was not decrypted until the disk
 answered. Measured at **8.0 s on a cold web client** and **3.2 s on the phone**, with an ordinary
 50 ms API round trip inside the gap proving nothing else was blocked, against 279-327 ms on the four
@@ -87,13 +87,18 @@ already held by the monotonic snapshot version (section 7), and this checkpoint 
 which a reload recovers by replaying from the server. `saveState`'s own cost is now logged separately
 from the sealing, because they are different questions and neither had ever been printed.
 
-Open: `liveMutations` and every watermark compared against it are **per-page-session** state, while the
-OUTBOX is durable. A client that sends, is reloaded before the checkpoint lands, and then drains its
-queue encrypts those entries against an `mls.bin` that is behind its own previous sends - and the
-peers refuse them with `SecretReuseError`. Reproduced twice on a settled fleet. The invariant that
-would close it is *`mls.bin` is never behind a frame that has already left the device*, which only an
-awaited checkpoint on the send path can hold; `BaseMlsService.checkpointAfterSend` is the seam for it,
-defaulting to the current non-awaiting behaviour.
+The second: `liveMutations` and every watermark compared against it are **per-page-session** state,
+while the OUTBOX is durable. A client that sends, is reloaded before the checkpoint lands, and then
+drains its queue encrypts those entries against an `mls.bin` that is behind its own previous sends -
+and the peers refuse them with `SecretReuseError`. Reproduced twice on a settled fleet.
+
+The invariant is *`mls.bin` is never behind a frame that has already left the device*, and it was
+first read as "only an awaited checkpoint on the send path can hold it". **That reading was wrong,
+and the measurement below is what refuted it**: awaiting costs 1.7 s per message on a phone, which is
+not a trade worth making. The invariant does not in fact require the state to be durable at send
+time - only that a state restored behind it be RECOGNISED and repaired, which is a counter and a burn
+rather than a disk write. `BaseMlsService.checkpointAfterSend` therefore keeps its non-awaiting
+default on both platforms.
 
 **THE MEASUREMENT REFUTES THE OBVIOUS FIX, AND FOUND A DIFFERENT DEFECT INSTEAD.** The split log
 priced a native checkpoint at **3.7 s, of which `saveState` alone is 1.7 s** (1683 / 1690 / 1761 ms
@@ -110,9 +115,81 @@ the persister, the structural checkpoint - so no caller has to know which platfo
 
 What is still owed for the outbox hole is therefore NOT an awaited checkpoint. The shape that fits
 the cost is a durable record of what the ratchet has already spent, written per send at the price of
-a key/value write rather than a snapshot, and consulted at load. **Do not implement one before the
-design is agreed** - it changes what a reload is allowed to do with `mls.bin`, which is the same
-class of decision as the two guards above.
+a key/value write rather than a snapshot, and consulted at load.
+
+#### The burn - designed against the OpenMLS source and shipped 2026-08-14
+
+**THE REPAIR IS A BURN, AND THIS CLIENT'S OWN RATCHET CONFIGURATION IS WHAT MAKES IT SAFE.** Read in
+`openmls-0.8.1/src/tree/sender_ratchet.rs`, against the configuration `mls-core/src/group.rs`
+already sets for every group it creates or joins - `SenderRatchetConfiguration::new(2000, 2000)`:
+
+- **an encryption ratchet has no public way to move without producing a frame.**
+  `RatchetSecret::set_generation` is `#[cfg(test)]` and `ratchet_forward` is `pub(crate)`, so
+  advancing the send ratchet by N means encrypting N times and discarding the ciphertext. That is
+  the entire implementation, and there is no other one to look for.
+- **a receiver ratchets FORWARD on demand and keeps what it skips.** `secret_for_decryption` derives
+  every generation between its head and the one asked for, pushes each into `past_secrets` as
+  `Some`, and refuses only past `maximum_forward_distance`. So burning more than was really spent
+  costs a handful of unused 48-byte keys and nothing else - and a frame still in flight during the
+  burn decrypts afterwards out of that same window (`out_of_order_tolerance`, also 2000).
+- **reuse is the one thing it will not forgive.** A generation already consumed is `None` in
+  `past_secrets`, and `.take()` on it returns exactly `SecretReuseError` - the error the peers
+  reported, from the one branch that can produce it.
+
+**The failure mode is therefore asymmetric, and every rounding decision leans on that**: burning too
+FEW reproduces the defect, burning too MANY is free. This is what lets the deficit be estimated
+rather than measured, and it is why the design below needs no new atomicity anywhere.
+
+**THE DEFICIT IS COUNTED OUTSIDE `mls.bin`, BECAUSE `mls.bin` IS THE THING THAT IS WRONG.** Per
+group, two numbers:
+
+- **emitted** - frames this device has encrypted, bumped in `sendMessage` the instant
+  `encryptForSend` returns and BEFORE the POST. In `localStorage`, because it is the only store that
+  is both synchronous and survives the teardown that opens this window; an async store has the same
+  race as the checkpoint it exists to compensate for.
+- **persisted** - what `emitted` was when the last successful checkpoint was TAKEN: read before
+  `saveState` is called, written after it resolves. In that order and no other. A send landing during
+  the save is then counted as unpersisted and over-burns by one; the reverse order under-burns, which
+  is the defect itself.
+
+At load, `deficit = emitted - persisted`; for each group with a positive one, encrypt-and-discard
+that many times, reset the pair, checkpoint.
+
+**What it deliberately does NOT do is change the serialised state format.** Carrying the counter
+inside the snapshot would pair it with the ratchet atomically and remove the ordering discipline
+above - and it would make a migration of the one file whose corruption is unrecoverable. The
+asymmetry buys the same safety for nothing.
+
+**One seam, in Rust**: `skip_generations(group_id, n)` in `mls-core`, so a burn costs native one IPC
+rather than one per generation and both platforms burn through identical code.
+
+**What is already right and must not be broken.** The Android background sender ALREADY holds the
+invariant this closes: `send_messages_background_with_key` encrypts the whole batch, persists once,
+and returns no ciphertext until that write succeeded - *a frame handed to the caller is a frame the
+caller will POST*. It is the FOREGROUND that violates it, and only for the 1.7 s reason above. A
+background send therefore never contributes to the deficit: it leaves the saved state AHEAD of the
+JS counters, which yields zero or an over-burn. Safe in both directions.
+
+**Where each piece lives.** `MlsManager::skip_send_generations` (mls-core) is the burn;
+`WasmMlsClient::skip_send_generations` and the `skip_send_generations` Tauri command are the two
+crossings, and the command sits in the single un-gated `generate_handler!`, so **iOS and Android get
+it from the same code** - the only platform split in this area is the background sender's entry
+point, never its logic. `sendRatchetLedger.ts` holds the counters, `BaseMlsService.persistCheckpoint`
+the pairing, and `BaseMlsService.reconcileSendRatchets` the repair, run from inside the `init`
+promise every caller already awaits so nothing can send before it.
+
+**HOW IT IS PROVEN, AND WHY THE PROOF IS IN RUST.** `mls-core/tests/burn_spent_generations.rs` runs
+two real clients: alice sends two frames, bob consumes both generations, alice is restored from a
+snapshot taken before them. The first test asserts the FAULT - bob refuses the next frame with
+`SecretReuse` - so the day the defect is fixed somewhere else, that test fails and says the repair
+has become dead weight. The second asserts the repair, and the third asserts that burning five where
+two were spent still decrypts, which is the property the ledger's deliberate over-count depends on.
+Four tests, no device, no timing.
+
+What that CANNOT establish is the seam above it - that the count survives the teardown and the load
+path consults it. The recipe for that half exists and is deterministic: reload 300 ms after a send
+and the next message dies (prod, 2026-08-06, at generations 118 and 120), reload 20 s after and it
+arrives in 694 ms. **Owed on web and on native**, and a green build settles neither.
 
 The background handoff is ordered for the same reason: on `hidden` the checkpoint is flushed
 **before** `pause_mls_foreground` releases the native guard. Releasing it is what lets a background

@@ -469,6 +469,23 @@ export class WasmMlsClient {
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v3;
     }
+    /**
+     * Advances the send ratchet by `count` generations without emitting anything, repairing a
+     * snapshot that was restored behind frames this device had already sent. See
+     * `MlsManager::skip_send_generations` for why it encrypts and why over-shooting is safe.
+     * @param {string} group_id
+     * @param {number} count
+     * @returns {number}
+     */
+    skip_send_generations(group_id, count) {
+        const ptr0 = passStringToWasm0(group_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmlsclient_skip_send_generations(this.__wbg_ptr, ptr0, len0, count);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return ret[0] >>> 0;
+    }
 }
 if (Symbol.dispose) WasmMlsClient.prototype[Symbol.dispose] = WasmMlsClient.prototype.free;
 

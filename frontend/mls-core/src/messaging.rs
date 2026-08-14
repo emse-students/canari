@@ -25,6 +25,63 @@ impl MlsManager {
             .map_err(|e| MlsError::Serialization(e.to_string()))
     }
 
+    /// Advances this device's send ratchet by `count` generations WITHOUT emitting anything.
+    ///
+    /// # Why this exists
+    ///
+    /// A checkpoint is not awaited on the send path (it costs 1.7 s on a phone), so a reload can
+    /// restore a state that predates frames this device has already put on the wire. The peers have
+    /// consumed those generations; re-issuing one is `SecretReuseError` and the frame is refused.
+    /// The repair is to move the ratchet back to where the peers already believe it is - which is
+    /// what this does, from a count kept outside the snapshot (`sendRatchetLedger.ts`).
+    ///
+    /// # Why it encrypts instead of setting a number
+    ///
+    /// There is no other way. In `openmls` the encryption ratchet's `ratchet_forward` is
+    /// `pub(crate)` and `RatchetSecret::set_generation` is `#[cfg(test)]`, so the only public means
+    /// of advancing a generation is to produce a frame. The ciphertext is dropped on the floor here;
+    /// the cost is three key derivations and one AEAD per generation.
+    ///
+    /// # Why over-shooting is safe
+    ///
+    /// A receiver ratchets FORWARD on demand: `DecryptionRatchet::secret_for_decryption` derives
+    /// every generation between its head and the one asked for and keeps each in `past_secrets`, so
+    /// generations burnt here and never sent cost the peer a few unused 48-byte keys, and a frame
+    /// still in flight during the burn decrypts afterwards out of that same window. Both bounds are
+    /// 2000 for every group this client creates or joins (`group::sender_ratchet_config`), which is
+    /// why the caller may err on the high side and must never err on the low one.
+    ///
+    /// Returns the number of generations actually burnt.
+    pub fn skip_send_generations(&mut self, group_id: &str, count: u32) -> Result<u32, MlsError> {
+        if count == 0 {
+            return Ok(0);
+        }
+        let group = self
+            .groups
+            .get_mut(group_id)
+            .ok_or(MlsError::GroupNotFound(group_id.to_string()))?;
+
+        for burnt in 0..count {
+            // The frame is built and dropped; only the ratchet advance it caused is kept. A failure
+            // part-way is reported WITH what was already burnt, because those generations are spent
+            // whatever the caller decides next - reporting `count` or `0` would both be lies.
+            if let Err(e) = group.create_message(&self.provider, &self.keypair, &[]) {
+                self.mark_state_dirty();
+                return Err(MlsError::OpenMls(format!(
+                    "Burn error after {burnt}/{count} generation(s): {e:?}"
+                )));
+            }
+        }
+
+        self.mark_state_dirty();
+        log::info!(
+            "Burnt {} send generation(s) for group {} - the ratchet is back where the peers left it",
+            count,
+            group_id.chars().take(8).collect::<String>()
+        );
+        Ok(count)
+    }
+
     /// Process an incoming MLS message (Handshake or Application)
     /// Returns decoded data if it was an application message
     pub fn process_incoming_message(

@@ -14,6 +14,14 @@ import {
 import { DeviceRevokedError, type MlsDeliveryFetch } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
+import {
+  MAX_BURN_GENERATIONS,
+  commitPersisted,
+  noteFrameEmitted,
+  pendingSendGenerations,
+  resetSendRatchetLedger,
+  snapshotEmitted,
+} from '$lib/mls-client/sendRatchetLedger';
 import type { HistoryRequestOutcome, IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
@@ -160,7 +168,11 @@ export abstract class BaseMlsService implements IMlsService {
     opts?: MlsInitOptions
   ): Promise<void> {
     if (this.initPromise) return this.initPromise;
-    const p = this._initImpl(userId, deviceKeyB64, state, opts);
+    const p = this._initImpl(userId, deviceKeyB64, state, opts).then(() =>
+      // BEFORE ANYTHING CAN SEND, and inside the promise every caller already awaits: a send racing
+      // the repair would be encrypted at the very generation the repair exists to move past.
+      this.reconcileSendRatchets(deviceKeyB64)
+    );
     this.initPromise = p;
     try {
       await p;
@@ -940,6 +952,10 @@ export abstract class BaseMlsService implements IMlsService {
     this.deviceId = this.generateDeviceId(this.userId);
     localStorage.setItem(`mls_device_id_${this.userId}`, this.deviceId);
     this.delivery.deviceId = this.deviceId;
+    // The counters describe the ratchets of the device being abandoned, whose state is about to be
+    // discarded for a fresh one starting at generation zero. Carried over, they would burn against
+    // sends that, from the peers' side, this device has never made.
+    resetSendRatchetLedger(this.userId);
     await this.loadStateWithKey(deviceKeyB64, undefined);
     await this.persistCheckpoint(deviceKeyB64);
     // Deregister the abandoned device so other members stop generating Welcomes for a key package
@@ -1271,7 +1287,86 @@ export abstract class BaseMlsService implements IMlsService {
    * - {@link rotateDeviceIdentity}, the checkpoint persister, the structural checkpoint - may have
    * to know which. See `IMlsService.persistCheckpoint` for what the duplicate cost.
    */
-  abstract persistCheckpoint(deviceKeyB64: string): Promise<void>;
+  protected abstract writeCheckpoint(deviceKeyB64: string): Promise<void>;
+
+  /**
+   * Advances this device's send ratchet by `count` generations without emitting anything.
+   *
+   * Platform-specific and nothing else: WHEN to burn, and by how much, is decided once in
+   * {@link reconcileSendRatchets}. See `MlsManager::skip_send_generations` for why it encrypts and
+   * why burning too many is free while burning too few is the defect.
+   */
+  protected abstract skipSendGenerations(groupId: string, count: number): Promise<number>;
+
+  /**
+   * Checkpoints the live state AND records how much of this device's send ratchet it makes durable.
+   *
+   * CONCRETE, FOR THE REASON {@link sendMessage} IS. The count is read BEFORE the write is started
+   * and committed only AFTER it resolves, and that order is the entire guarantee: a send landing
+   * during the write is then counted as unpersisted and costs one burnt generation too many on the
+   * next load, where the opposite order costs one too few and reproduces exactly the fault this
+   * exists to close. Leaving the pairing to each call site would be the eighteen-call-sites lesson
+   * of `sendMessage`, re-learnt on the seam that guards the ratchet instead of the one that moves it.
+   */
+  async persistCheckpoint(deviceKeyB64: string): Promise<void> {
+    const emitted = snapshotEmitted(this.userId);
+    await this.writeCheckpoint(deviceKeyB64);
+    commitPersisted(this.userId, emitted);
+  }
+
+  /**
+   * Burns whatever this device sent but never checkpointed, so the restored ratchet is back where
+   * the peers already believe it is. Runs once per {@link init}, before anything can send.
+   *
+   * A fresh start has no history to repair and any surviving count describes a device that no longer
+   * exists, so the ledger is dropped rather than replayed.
+   *
+   * Per group, and isolated per group: the ledger can name a conversation this device has since left
+   * or forgotten, and `skipSendGenerations` answers `GroupNotFound` for it. One unrepairable group
+   * must not cost the repair of the others.
+   */
+  protected async reconcileSendRatchets(deviceKeyB64: string): Promise<void> {
+    if (this.freshStart) {
+      resetSendRatchetLedger(this.userId);
+      return;
+    }
+    const pending = pendingSendGenerations(this.userId);
+    if (pending.length === 0) return;
+
+    let repaired = 0;
+    for (const { groupId, deficit, clamped } of pending) {
+      if (clamped) {
+        // NAMED, NEVER SILENT: a deficit past the receivers' forward window is a corrupt counter,
+        // not a backlog, and burning the cap will not repair it. Saying so is what separates
+        // "repaired" from "gave up at the bound" in the log a later reader will have.
+        console.warn(
+          `[MLS] Send ledger for ${groupId.slice(0, 8)}… claims more than ${MAX_BURN_GENERATIONS} unpersisted frames - burning the cap only; the ratchet cannot be repaired past the receivers' forward window`
+        );
+      }
+      try {
+        await this.skipSendGenerations(groupId, deficit);
+        repaired++;
+        console.log(
+          `[MLS] Restored state for ${groupId.slice(0, 8)}… was ${deficit} generation(s) behind this device's own sends - burnt, no frame will re-use a spent generation`
+        );
+      } catch (e) {
+        console.warn(
+          `[MLS] Could not burn ${deficit} generation(s) for ${groupId.slice(0, 8)}…:`,
+          String(e).slice(0, 160)
+        );
+      }
+    }
+
+    // The burn moved the live ratchet and nothing durable knows it yet, so a second reload would
+    // burn the same generations again. Harmless (over-shooting is free) but pointless, and the
+    // checkpoint is what closes the ledger: it commits `persisted = emitted` through the pairing
+    // above. A failure leaves the deficit standing, which repairs itself on the next load.
+    if (repaired > 0) {
+      await this.persistCheckpoint(deviceKeyB64).catch((e) =>
+        console.warn('[MLS] Checkpoint after the ratchet burn failed:', String(e).slice(0, 160))
+      );
+    }
+  }
 
   abstract saveState(deviceKeyB64: string): Promise<Uint8Array>;
   abstract changeDeviceKey(newDeviceKeyB64: string): Promise<void>;
@@ -1549,6 +1644,12 @@ export abstract class BaseMlsService implements IMlsService {
     await this.waitForCatchUpIdle();
     const encryptedBytes = await this.encryptForSend(groupId, messageBytes);
     this.noteLiveMutation();
+    // DURABLE, AND BEFORE THE POST. The ratchet has moved by now and stays moved whether or not the
+    // POST below succeeds, so this is the only correct moment: counting a successful send instead
+    // would leave every failed POST as an under-count, which is the direction that re-issues a spent
+    // generation. It is what a reload recovers the advance from when the checkpoint below does not
+    // land in time - the whole reason that checkpoint is allowed not to be awaited.
+    noteFrameEmitted(this.userId, groupId);
     await this.checkpointAfterSend();
     const proto = toBase64(encryptedBytes);
     await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);

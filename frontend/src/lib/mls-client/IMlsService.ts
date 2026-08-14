@@ -121,6 +121,11 @@ export interface IMlsService {
    *
    * A caller that has to know which platform it is on in order to persist correctly is a caller
    * that will get it wrong; this is the seam that removes the question.
+   *
+   * CONCRETE IN `BaseMlsService`, and platforms supply only the write itself (`writeCheckpoint`),
+   * because a checkpoint is not just a write: it is also the moment this device may declare how much
+   * of its send ratchet is now durable. That count is read before the write and committed after it,
+   * and the ordering is what makes a restored snapshot repairable at all - see `sendRatchetLedger`.
    */
   persistCheckpoint(deviceKeyB64: string): Promise<void>;
   /**

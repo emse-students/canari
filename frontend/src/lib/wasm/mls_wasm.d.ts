@@ -123,6 +123,12 @@ export class WasmMlsClient {
      * Encrypts raw bytes (e.g. a proto-encoded AppMessage) as the MLS application payload.
      */
     send_message_bytes(group_id: string, message_bytes: Uint8Array): Uint8Array;
+    /**
+     * Advances the send ratchet by `count` generations without emitting anything, repairing a
+     * snapshot that was restored behind frames this device had already sent. See
+     * `MlsManager::skip_send_generations` for why it encrypts and why over-shooting is safe.
+     */
+    skip_send_generations(group_id: string, count: number): number;
 }
 
 /**
@@ -196,6 +202,7 @@ export interface InitOutput {
     readonly wasmmlsclient_save_state: (a: number, b: number, c: number) => [number, number, number, number];
     readonly wasmmlsclient_send_message: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly wasmmlsclient_send_message_bytes: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly wasmmlsclient_skip_send_generations: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly decrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly decrypt_with_pin: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly encrypt_with_key: (a: number, b: number, c: number, d: number) => [number, number, number, number];

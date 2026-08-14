@@ -693,8 +693,13 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over. */
-  async persistCheckpoint(deviceKeyB64: string): Promise<void> {
+  protected async writeCheckpoint(deviceKeyB64: string): Promise<void> {
     await saveMlsState(this.userId, await this.saveState(deviceKeyB64));
+  }
+
+  /** WASM client wrapper - burns `count` send generations, discarding every frame it produces. */
+  protected async skipSendGenerations(groupId: string, count: number): Promise<number> {
+    return this.client.skip_send_generations(groupId, count) as number;
   }
 
   /** Plain CBOR on main thread, then Argon2+ChaCha off-thread when the encrypt worker is enabled. */

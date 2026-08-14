@@ -48,6 +48,20 @@ The four traps worth seeing without opening one:
   checkpoint, nearly all of it re-marshalling the snapshot through IPC as a `number[]`. The fact was
   already in the codebase on one method; a second call site had its own copy of the answer. One seam
   (`IMlsService.persistCheckpoint`), every checkpoint through it.
+- **AN INVARIANT IS NOT ITS FIRST IMPLEMENTATION - RE-READ WHAT IT ACTUALLY DEMANDS BEFORE PAYING FOR
+  IT.** *`mls.bin` is never behind a frame that has already left the device* was read as "the send
+  must wait for the disk", priced at 1.7 s per message on a phone, and nearly abandoned as
+  unaffordable. It never demanded durability AT SEND TIME - only that a state restored behind one be
+  recognised and repaired, which is a counter outside the snapshot plus a burn at load, and costs a
+  `localStorage` write. The expensive reading survived two design rounds because nobody asked what
+  the sentence required as opposed to what the obvious mechanism provided.
+- **WHEN A REPAIR CAN ONLY BE WRONG IN ONE DIRECTION, FIND OUT WHICH AND LEAN ON IT.** The burn's
+  count is read before a checkpoint and committed after, so a send landing during the write is
+  counted twice - deliberately. Over-shooting costs a peer a few unused keys (it ratchets forward and
+  keeps what it skips, up to `maximum_forward_distance`); under-shooting re-issues a spent generation
+  and the frame is refused. Establishing the asymmetry FIRST, in the dependency's source, is what
+  removed the need for any atomicity between the counter and the snapshot - and a test pins it, so
+  the day it stops holding, the design's foundation fails out loud instead of silently.
 - **PRICE BOTH HALVES BEFORE CHOOSING BETWEEN THEM - AN UNPRINTED METRIC IS A GUESS.** The decision
   "may a send WAIT for durability" turned on the cost of the save alone; the metric existed
   (`recordMlsSaveStateMs`) and had never been logged, so the number was estimated at ~80 ms and was

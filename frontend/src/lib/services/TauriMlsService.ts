@@ -521,8 +521,19 @@ export class TauriMlsService extends BaseMlsService {
    * Handing its bytes back to `save_mls_state` would write the same file twice - 2.0 s of the
    * 3.7 s measured on the phone, nearly all of it marshalling the snapshot as a JS `number[]`.
    */
-  async persistCheckpoint(deviceKeyB64: string): Promise<void> {
+  protected async writeCheckpoint(deviceKeyB64: string): Promise<void> {
     await this.saveState(deviceKeyB64);
+  }
+
+  /**
+   * Native `invoke` wrapper - burns `count` send generations in one crossing.
+   *
+   * ONE invoke for the whole burn rather than one per generation: each crossing marshals a
+   * ciphertext that is thrown away, and the burn exists precisely because this platform's checkpoint
+   * is too expensive to await.
+   */
+  protected async skipSendGenerations(groupId: string, count: number): Promise<number> {
+    return invoke<number>('skip_send_generations', { groupId, count });
   }
 
   /** Tauri-native `invoke` wrapper - calls `sauvegarder_mls_et_persister` to encrypt and persist the MLS state to the native mls.bin file using the device key. */
