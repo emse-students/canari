@@ -3,8 +3,8 @@
 Canari implements end-to-end encryption using **MLS (Messaging Layer Security, RFC 9420)**. All encryption and decryption happens inside a **Rust/OpenMLS** WASM module (browser) or a Tauri native binary (desktop/mobile). The server stores and routes only ciphertext — it never sees plaintext.
 
 **Living docs** (do not archive, actively updated):
-- [`protocols/mls-desync-prevention.md`](protocols/mls-desync-prevention.md) — desync root causes and countermeasures
-- [`protocols/mls-recovery-ladder.md`](protocols/mls-recovery-ladder.md) — step-by-step recovery ladder (rung-1 commit replay → rung-2 external join → welcome_request fallback)
+- [`mls-desync-prevention.md`](mls-desync-prevention.md) — desync root causes and countermeasures
+- [`mls-recovery-ladder.md`](mls-recovery-ladder.md) — step-by-step recovery ladder (rung-1 commit replay → rung-2 external join → welcome_request fallback)
 
 ## Key properties
 
@@ -33,7 +33,7 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 |---|---|
 | `frontend/src/lib/services/WebMlsService.ts` | WASM MLS client (browser) |
 | `frontend/src/lib/services/TauriMlsService.ts` | Tauri native MLS client (desktop/mobile) |
-| `frontend/src/lib/services/IMlsService.ts` | Interface shared by both |
+| `frontend/src/lib/mls-client/IMlsService.ts` | Interface shared by both |
 | `frontend/src/lib/mlsService.ts` | Factory: picks Web or Tauri at runtime |
 | `frontend/src/lib/composables/useChatSession.svelte.ts` | Login, reconnect, device sync orchestration |
 | `frontend/src/lib/utils/chat/connection.ts` | WS message handler, epoch recovery, Welcome processing |
@@ -52,7 +52,8 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 
 | File | Role |
 |---|---|
-| `apps/chat-delivery-service/src/app.controller.ts` | All MLS HTTP endpoints (~40 routes) |
+| `apps/chat-delivery-service/src/controllers/` | The MLS HTTP surface, split by concern: `devices`, `groups`, `members`, `messaging`, `invitations`, `locks`, `security`, `push`, `calls`, `internal`, `admin-storage`, `health` |
+| `apps/chat-delivery-service/src/app.controller.ts` | What predates the split - still live, no longer the whole surface |
 | `apps/chat-delivery-service/src/entities/` | TypeORM entities |
 
 ### Gateway (Rust/Axum - chat-gateway, port 3000)

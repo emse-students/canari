@@ -25,20 +25,52 @@ frontend/src/lib/mls-client/   # TypeScript wrapper layer
 ├── ARCHITECTURE.md
 ├── IMlsService.ts          # Interface (Web + Tauri)
 ├── incomingDelivery.ts     # Incoming message dispatch
+├── IMlsService.ts          # The interface both platforms implement
+├── mlsPlatform.ts          # Which platform is live, resolved once
 ├── initializeConnection.ts # syncAfterConnect(), single-pass reconnect
 ├── keyPackages.ts          # replenishKeyPackages(), prekey rotation
 ├── messagePipeline/        # handleWelcome, handleKnownGroup, handleUnknownGroup
+│
+│   # Inbound - receiving, decrypting, and not losing a frame
+├── incomingDelivery.ts     # The inbound entry point
+├── frameDelivery.ts        # One frame's journey from the socket to the store
+├── inboundFrameLedger.ts   # What has been seen, so a replay is not a duplicate
+├── mlsBulkIngest.ts        # Ingest depth; disk writes deferred while it is open
+├── mlsBatchDecrypt.ts      # Decrypting a page of history in one crossing
+├── mlsDecryptSession.ts    # A decrypt session and its lifetime
+├── mlsDecryptError.ts      # Decrypt failures classified AT THE THROW, as types
+├── ackRetry.ts             # ACK retries
+├── mlsQueueAckPolicy.ts    # ACK exactly once, at-least-once delivery
+│
+│   # Outbound - and the ratchet it moves
+├── sendRatchetLedger.ts    # Generations emitted vs persisted; what the burn reads at load
+│
+│   # Workers - crypto off the main thread
+├── mlsCryptoWorkerSession.ts  # The crypto worker session
+├── mlsEncryptWorkerSession.ts # Encryption off-thread
+├── mlsWorkerProtocol.ts       # The message contract with the workers
+│
+│   # State at rest
+├── mlsStatePersister.ts         # Save/load MLS state (IndexedDB / filesystem)
+├── mlsStatePersisterLifecycle.ts# When a persist is armed and when it flushes
+├── mlsStatePersisterRegistry.ts # Who is persisting for whom
+│
+│   # Transport, scheduling, tabs
 ├── mlsDeliveryApi.ts       # High-level API calls (groups, messages, invitations)
 ├── mlsDeliveryHttp.ts      # Low-level fetch helpers (keepalive POST, URL utils)
-├── mlsQueueAckPolicy.ts    # ACK exactly once, at-least-once delivery
-├── mlsStatePersister.ts    # Save/load WASM state (IndexedDB / filesystem)
 ├── mlsPerGroupScheduler.ts # Round-robin MLS ops under per-group mutex
-├── mlsDesyncPrevention.ts  # Desync countermeasures (see MLS_DESYNC_PREVENTION.md)
-├── mlsRecoveryMetrics.ts   # Recovery attempt counters + alerting
 ├── tabLeader.ts            # BroadcastChannel-based single-tab leader election
+├── tabMessageSync.ts       # Keeping other tabs' stores in step
+│
+├── mlsRecoveryMetrics.ts   # Recovery attempt counters + alerting
+├── catchupBenchmark.ts     # Measuring catch-up rather than guessing at it
 ├── mlsWasmLoader.ts        # WASM init + lazy load
+├── historyTypes.ts         # History exchange types
 └── mlsTypes.ts             # Shared TypeScript types
 ```
+
+`ARCHITECTURE.md` sits in that directory, next to the code it describes, and is the boundary
+document for the package.
 
 ## Package boundaries (from ARCHITECTURE.md)
 

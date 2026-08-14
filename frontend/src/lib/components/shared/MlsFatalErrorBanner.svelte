@@ -1,13 +1,14 @@
 <script lang="ts">
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
+  import Banner from './Banner.svelte';
 
   const error = $derived(globalSession.mlsFatalError);
 
   const config = $derived(
     error === 'oom'
       ? {
-          bg: 'bg-red-600',
+          variant: 'danger' as const,
           text: m.mls_error_oom_text(),
           action: m.mls_error_reload_action(),
           onAction: () => window.location.reload(),
@@ -15,7 +16,7 @@
         }
       : error === 'private_mode'
         ? {
-            bg: 'bg-blue-600',
+            variant: 'info' as const,
             text: m.mls_error_private_mode_text(),
             action: m.mls_error_dismiss_action(),
             onAction: () => globalSession.clearMlsFatalError(),
@@ -23,7 +24,7 @@
           }
         : error === 'keystore_lost'
           ? {
-              bg: 'bg-amber-600',
+              variant: 'notice' as const,
               text: m.mls_error_keystore_lost_text(),
               action: m.mls_error_dismiss_action(),
               onAction: () => globalSession.clearMlsFatalError(),
@@ -34,17 +35,19 @@
 </script>
 
 {#if error && config}
-  <div
-    class="fixed top-[env(safe-area-inset-top)] left-0 right-0 z-50 flex items-center justify-between gap-3 px-4 py-2.5 text-sm text-white {config.bg}"
-    role="alert"
-  >
+  <!-- `alert`, not `status`: this one is allowed to interrupt what a screen reader is saying,
+       because the MLS stack is down and nothing the user types will be sent. -->
+  <Banner variant={config.variant} tone="alert">
     <span class="flex-1">{config.text}</span>
-    <button
-      type="button"
-      class="shrink-0 rounded-md bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30 transition-colors"
-      onclick={config.onAction}
-    >
-      {config.action}
-    </button>
-  </div>
+
+    {#snippet action()}
+      <button
+        type="button"
+        class="shrink-0 rounded-md bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30 transition-colors"
+        onclick={config.onAction}
+      >
+        {config.action}
+      </button>
+    {/snippet}
+  </Banner>
 {/if}

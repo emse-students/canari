@@ -40,6 +40,16 @@ Run the MLS service and call-site suites in `frontend` after changing **`runComm
 
 - **`discoverMissingGroups`** (**`actions.ts`**) — **`sendGroupReset`** must succeed **before** **`forceCreateGroup`** + commits; otherwise **`epoch_mismatch`** would return. **`acquireAddLock`** reduces duplicate bootstraps. **`epoch_mismatch`** after reset → **`forgetGroup`** + retry path.
 
+- **`create_group` vs `force_create_group`** — two entry points that differ in exactly one way, and
+  picking the wrong one desyncs the group. `create_group` (WASM `create_group`, Tauri `creer_groupe`)
+  REFUSES to create a group that already exists locally, signalling `GroupAlreadyExists` so the caller
+  can skip a re-bootstrap it does not need; it is the normal entry point.
+  `force_create_group` (WASM `force_create_group`, Tauri `forcer_creation_groupe`) overwrites without
+  consulting local state — any existing `MlsGroup` for that `group_id` is replaced silently. Overwriting
+  a LIVE group costs epoch divergence and a broken ratchet for every other member, so it belongs only
+  in a controlled re-bootstrap: after a server `group_reset` and a local `forgetGroup`, never on its own.
+  Implementation: [`frontend/mls-core/src/group.rs`](../../../frontend/mls-core/src/group.rs).
+
 ### 7. Client - persistence write-if-newer (Web/IndexedDB)
 
 - **Monotonic snapshot version** (**`utils/hex.ts`**) — the encrypted MLS checkpoint is written under a **write-if-newer** guard. Every serialized snapshot is tagged (`tagMlsSnapshot`) with an increasing version at the synchronous capture moment; the version rides with the bytes via a `WeakMap` (`propagateMlsSnapshotVersion` across the plain→encrypted step) so the off-thread Argon2 encryption cannot reorder it. **`saveMlsStateEncrypted`** does an IDB read-modify-write and refuses any blob whose version is not strictly newer than the stored **`MLS_STATE_VERSION_KEY`**. This stops a slow encrypted flush (`mlsStatePersister`, worker Argon2) from overwriting a fresher concurrent write (`generateKeyPackage`, main-thread Argon2) — which would silently regress the persisted epoch on the next reload. The in-memory counter is reseeded from the stored version at load (`seedMlsSnapshotSeq`) so a fresh session never emits a version below what is already on disk. Only a plain integer is stored — no groupId/epoch at rest, so privacy is unchanged. Web-only: Tauri persists to the filesystem under its own `mls_bin_write_lock`.
@@ -187,9 +197,26 @@ two were spent still decrypts, which is the property the ledger's deliberate ove
 Four tests, no device, no timing.
 
 What that CANNOT establish is the seam above it - that the count survives the teardown and the load
-path consults it. The recipe for that half exists and is deterministic: reload 300 ms after a send
-and the next message dies (prod, 2026-08-06, at generations 118 and 120), reload 20 s after and it
-arrives in 694 ms. **Owed on web and on native**, and a green build settles neither.
+path consults it. `burn.mjs` in the harness does, against production: send, reload inside the window,
+send again.
+
+**WEB: TAKEN, 2026-08-14.** Deficit 1 before the reload, 0 after it, next frame delivered in 415 ms,
+zero loss lines on the peer. Two findings came with it. The window has narrowed to **under 60 ms** -
+at the 300 ms the original defect was measured at, the checkpoint had already landed and the run was
+reported `INCONCLUSIVE`, which is what a check must do when it fails to reproduce its own premise.
+And the console capture MISSED the repair's log line on the passing run, because a reload that does
+not raise the PIN gate initialises before a session can re-attach: the verdict rests on the durable
+counters instead, read on either side of the reload. Both lessons are in
+[testing-methodology](../testing-methodology.md) under rule 10.
+
+**NATIVE: TAKEN, 2026-08-14.** The window there is 1.7 s rather than 60 ms, so it is far easier to
+enter: a 300 ms reload found **2** unpersisted frames, the repair reported burning 2, the next frame
+decrypted in 3 772 ms and the peer reported no loss. Two things that run taught, both now in the
+check: the residual deficit AFTER the load is not a post-condition - it is a live quantity, bumped by
+the read receipts the restored session sends on opening the conversation and cleared 1.7 s later by
+the phone's own checkpoint - and `burnedLine` legitimately exceeded the pre-reload snapshot, because a
+send landed between the two. The repair burns what the ledger holds AT LOAD, which is the only figure
+that can be right; a check comparing the two for equality would have called a correct run a fault.
 
 The background handoff is ordered for the same reason: on `hidden` the checkpoint is flushed
 **before** `pause_mls_foreground` releases the native guard. Releasing it is what lets a background

@@ -211,43 +211,25 @@ belong to itself.
 
 ## 1 - MSG - the plain path
 
-State is the last run, `f391c199` x5 (2026-08-14, 17:17-17:38Z). `5/5` = clean on all five passes.
+State is the last run, `8a3edbdd` x5 (2026-08-14, 20:03-20:21Z). `5/5` = clean on all five passes,
+web, mobile and server. Durations are the spread across those five passes.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `passed` 5/5 - 263-271 ms |
-| MSG-1-cold | Same, after a reload | `W1 W2` | `passed` 5/5 - 259-297 ms, **the 8 s stall is gone** |
-| MSG-1b | Delivery DURING a history load | `W1 W2` | `passed` 5/5 |
-| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `passed` 5/5 |
-| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `passed` 5/5 |
+| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `passed` 5/5 - 264-326 ms |
+| MSG-1-cold | Same, after a reload | `W1 W2` | `passed` 5/5 - 265-311 ms |
+| MSG-1b | Delivery DURING a history load | `W1 W2` | `passed` 5/5 - 6-21 ms |
+| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `passed` 5/5 - 281-618 ms |
+| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `passed` 5/5 - 331-387 ms |
 | MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `passed` 5/5 |
 | MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | `passed` 5/5 |
 | MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `passed` 5/5 |
-| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `passed` 5/5 - 30/30 ordered every pass; pass 5 `dirty` on an INSTRUMENT fault (below) |
+| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `passed` 5/5 - 30/30 ordered, 1 881-1 970 ms |
 | MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `passed` 5/5 |
 | MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `passed` 5/5 |
-| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `passed` 5/5 |
+| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `passed` 5/5 - 15.6 s, nearly all of it the deliberate outage |
 | MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `passed` 5/5 |
-| (server) | Every application container's log over each pass's own window | - | `clean` 3/5 - 9 100+ lines; the two dirty windows are classified below |
-
-**THE ONLY DIRT IN THE RUN WAS THE INSTRUMENT, TWICE, AND NEITHER WAS AN APPLICATION FAULT.**
-Recorded here rather than smoothed away, because a re-classification is a re-reading of lines
-already captured and must never be presented as a clean pass that was never run.
-
-- **A 200 called a failure** (MSG-7, pass 5). `badHttp` decided on CDP's `r.failed` BEFORE consulting
-  the status, so a response that arrived with a 200 and whose body load was then cancelled was filed
-  as a failure: `GET /api/users/<id>/avatar -> 200`, breaking `clean` and taking the run's exit code
-  with it. A status is an ANSWER; a request that got one is judged on it. `watch.mjs` now says so,
-  and `classify-selftest.mjs` has four HTTP cases pinning it - including that a 502 on the SAME
-  endpoint still breaks `clean`.
-- **The hourly backlog report, missed by a space** (server, pass 5). `[CRON] reportQueueDepth:` is
-  camelCase, and the `queue depth|QUEUE_DEPTH` rule matched neither spelling - so the report
-  WP-PENDING-2 exists to be read by landed in `unexplained` once an hour. Now `notable`, which is
-  where a line naming the fleet's deepest devices belongs. That window read 1 078 frames queued,
-  heaviest 189 rows / 0.2 MB: no device is in the runaway state.
-- **A crawler's `[404] GET /sitemap.xml.gz`** (server, pass 1), the same family as the
-  `/sitemap_index.xml` guess already classified. Spelt out per path, with an assertion that a 404 on
-  a route we DO serve stays unexplained.
+| (server) | Every application container's log over each pass's own window | - | `clean` 5/5 - ~2 800 lines a pass, nothing unexplained |
 
 ## 2 - TYPE - typing indicators
 
@@ -255,13 +237,17 @@ Ephemeral, online-peers-only, never queued: the phase is short because there is 
 persist, and that is itself the thing to assert. It runs here because it is the cheapest statement
 that both clients are really talking to each other, and it leaves nothing behind.
 
+State is the last run, `8a3edbdd` x5 (2026-08-14, 21:33-21:40Z). **5/5 = clean on all five passes**,
+web, mobile and server. Shown/cleared are the spreads across those passes.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `W1 W2` | `pending` |
-| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `pending` |
-| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `pending` |
-| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `pending` |
-| TYPE-5 | Channel typing, which is a different transport entirely (REST, not WS) | `W1 W2` | `pending` |
+| TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `W1 W2` | `5/5` - shown 70-90 ms, cleared 245-272 ms |
+| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `5/5` - shown 55-122 ms, expired 4 138-4 221 ms |
+| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `5/5` - shown 70-134 ms, cleared 6 138-6 181 ms |
+| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `5/5` - cut acted in 874-995 ms, back in 797-1 173 ms |
+| TYPE-5 | Channel typing, which is a different transport entirely (REST, not WS) | `W1 W2` | `5/5` - shown 53-72 ms, cleared 232-331 ms |
+| (server) | Every window classified, third-party traffic partitioned out | - | `clean 5/5` - ~330 lines a pass, nothing unexplained |
 
 ## 3 - READ - receipts and unread counts
 

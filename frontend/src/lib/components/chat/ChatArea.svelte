@@ -983,12 +983,12 @@
       <div class="absolute top-0 inset-x-0 z-40 flex flex-col pointer-events-none">
         {#if isCatchupAnnounced}
           <div
-            class="flex items-center justify-center gap-2 py-1.5 px-4 bg-amber-500/15 text-amber-600 dark:text-amber-400 text-xs font-medium border-b border-amber-500/20 pointer-events-none"
+            class="flex items-center justify-center gap-2 py-1.5 px-4 bg-banner-warn text-text-main text-xs font-medium border-b border-amber-warn/30 pointer-events-none"
             role="status"
             aria-live="polite"
             aria-busy="true"
           >
-            <Loader2 size={11} class="animate-spin shrink-0" strokeWidth={2.5} />
+            <Loader2 size={11} class="animate-spin shrink-0" strokeWidth={2.5} aria-hidden="true" />
             {m.chat_mls_sync_in_progress()}
           </div>
         {/if}

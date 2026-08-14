@@ -22,7 +22,7 @@ The chat-delivery-service is the MLS API layer. It:
 | Store | Purpose |
 |---|---|
 | PostgreSQL | Entities: KeyPackage, OneTimeKeyPackage, Group, GroupMember, DeviceGroupMembership, QueuedMessage, PinVerifier, PushToken, RevokedDevice |
-| Redis | `chat:messages` pub/sub, `history:{groupId}` Streams, `group:members:{groupId}` sets, `add-lock:{groupId}`, `pending_welcomes:{userId}` |
+| Redis | `chat:messages` pub/sub, `history:{groupId}` Streams, `group:members:{groupId}` sets, `mls:addlock:{groupId}` and `mls:commitlock:{groupId}` locks, `pending_welcome:{groupId}` sets and their per-member `pending_welcome_notify:{userId}` fan-out (drained by the gateway) |
 | Firebase | Push notifications (FCM) |
 
 ## Background jobs (cron)
@@ -376,7 +376,6 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | POST | `/api/mls/group-info/:groupId` | Refresh stored GroupInfo (membership-gated, monotonic) |
 | POST | `/api/mls/welcome` | Deliver Welcome message to a device |
 | POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
-| DELETE | `/api/mls/welcome-request/group/:groupId` | Clear pending welcome_request queue |
 | POST | `/api/mls/history/batch` | Get message history batch (response carries `heads`, one stream head per group) |
 | GET | `/api/mls/history/:groupId?after=&until=&limit=` | Incremental Redis Stream history; head in `X-History-Head` |
 | GET | `/api/mls/messages/:userId/:deviceId` | Fetch queued messages for device |

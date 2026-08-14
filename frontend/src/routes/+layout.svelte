@@ -282,10 +282,17 @@
 <a href="#main-content" class="skip-link">{m.layout_skip_to_content()}</a>
 
 <PlatformGateOverlay />
-{#if showMaintenanceAdminBanner}
-  <MaintenanceAdminBanner />
-{/if}
-<MlsFatalErrorBanner />
+<!-- ONE COLUMN FOR THE WINDOW-SCALE BANNERS. Both of these used to place themselves - `fixed top-0
+     z-[120]` and `fixed top-safe-area z-50` - so when both were up the maintenance notice simply
+     painted over the fatal MLS error, hiding the only message that says the messaging stack is
+     dead. Stacked in one flex column they queue instead, which is the lesson `ChatArea` had already
+     learnt for the conversation-scale pair. -->
+<div class="fixed top-[env(safe-area-inset-top)] inset-x-0 z-120 flex flex-col">
+  {#if showMaintenanceAdminBanner}
+    <MaintenanceAdminBanner />
+  {/if}
+  <MlsFatalErrorBanner />
+</div>
 
 <div
   role="presentation"

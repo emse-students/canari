@@ -1180,7 +1180,8 @@ export async function nativeStorageLoginImpl(
 /**
  * Biometric login: delegates to loginImpl() WITHOUT a PIN. The platform keystore
  * (Android KeyStore / iOS Keychain) holds the MLS decryption key directly (see
- * KEYSTORE_PLAN.md). `retrieve_device_key` triggers the single biometric prompt.
+ * docs/wiki/frontend/modules/auth.md, "Where the key lives"). `retrieve_device_key`
+ * triggers the single biometric prompt.
  *
  * When the keystore is empty (first launch, app reinstall), the biometric prompt
  * still appears (user-presence check) but loginImpl will surface a clean

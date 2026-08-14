@@ -1,5 +1,6 @@
 <script lang="ts">
   import { MonitorX, ArrowLeftRight } from '@lucide/svelte';
+  import Banner from '../shared/Banner.svelte';
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -43,29 +44,21 @@
 </script>
 
 {#if show}
-  <div
-    class="flex items-center justify-between gap-3 px-4 py-2.5
-           bg-amber-50 dark:bg-amber-950/40
-           border-b border-amber-200 dark:border-amber-800
-           text-amber-800 dark:text-amber-200
-           text-sm"
-    role="status"
-    aria-live="polite"
-  >
-    <div class="flex items-center gap-2 min-w-0">
-      <MonitorX size={15} class="flex-shrink-0 opacity-70" />
-      <span class="truncate"> {m.chat_tab_follower_message()} </span>
-    </div>
+  <Banner variant="warn">
+    <MonitorX size={15} class="shrink-0 opacity-70" aria-hidden="true" />
+    <span class="truncate"> {m.chat_tab_follower_message()} </span>
 
-    <button
-      type="button"
-      onclick={takeOver}
-      class="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded shrink-0
-             bg-amber-600 hover:bg-amber-700
-             text-white transition-colors"
-    >
-      <ArrowLeftRight size={12} />
-      {m.chat_take_over_button()}
-    </button>
-  </div>
+    {#snippet action()}
+      <button
+        type="button"
+        onclick={takeOver}
+        class="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded shrink-0
+               bg-amber-600 hover:bg-amber-700
+               text-white transition-colors"
+      >
+        <ArrowLeftRight size={12} aria-hidden="true" />
+        {m.chat_take_over_button()}
+      </button>
+    {/snippet}
+  </Banner>
 {/if}

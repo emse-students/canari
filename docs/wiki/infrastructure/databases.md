@@ -92,7 +92,7 @@ Redis is used for three distinct purposes:
 
 ### Presence keys
 
-`user:online:{userId}:{deviceId}` — TTL 90 seconds, refreshed on each WebSocket Pong. Deleted immediately on clean disconnect.
+`user:online:{userId}:{deviceId}` — TTL 20 seconds, refreshed on each WebSocket Pong. Deleted immediately on clean disconnect.
 
 ### History streams
 

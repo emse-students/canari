@@ -38,7 +38,7 @@ Routes that take a **user id** in the path or body are checked against the **`x-
 ## Observability
 
 - **Metrics** — `logMlsMetric()` in `mlsRecoveryMetrics.ts` records recovery-related events. Extra console detail appears **only** in dev builds **or** when `localStorage['canari_mls_debug'] === '1'`.
-- **Policy tests** — `mlsQueueAckPolicy.test.ts` and `recoveryLadder.contract.test.ts`; `mlsRecoveryMetrics.test.ts` for debug logging. Run `npm run test` in `frontend` (Vitest) after changing queue behavior.
+- **Policy tests** — `mlsQueueAckPolicy.test.ts`; `mlsRecoveryMetrics.test.ts` for debug logging. Run `npm run test` in `frontend` (Vitest) after changing queue behavior.
 
 ## Related sources
 

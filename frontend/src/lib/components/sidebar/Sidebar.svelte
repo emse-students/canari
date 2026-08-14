@@ -522,16 +522,18 @@
               </div>
             </div>
             {#if searchQuery.trim()}
-              <p class="text-sm font-medium">Aucune discussion correspondante.</p>
+              <p class="text-sm font-medium">{m.chat_no_discussion_found()}</p>
             {:else}
-              <p class="text-sm font-bold text-text-main mb-1">Aucune discussion</p>
+              <p class="text-sm font-bold text-text-main mb-1">
+                {m.sidebar_no_conversations_title()}
+              </p>
               <p class="text-xs mb-4">{m.sidebar_start_writing()}</p>
               <button
                 type="button"
                 onclick={() => (showNewChatModal = true)}
                 class="px-4 py-2 rounded-xl bg-amber-500 text-white text-xs font-semibold transition-all active:scale-95"
               >
-                Nouvelle discussion
+                {m.chat_new_discussion_label()}
               </button>
             {/if}
           </div>
@@ -543,15 +545,26 @@
         {#if currentWorkspace}
           <div class="px-2 py-2">
             {#each currentWorkspace.channels as channel (channel.id)}
+              <!-- THE WHOLE ROW IN ONE NAME. Sighted users read three signals here - a lock, a
+                   name, a badge - and only the middle one was ever exposed: the icon is decorative
+                   markup and the badge announced a bare number, so "general 3" was all a screen
+                   reader had. `aria-current` is what says WHICH channel is open; the yellow tint
+                   says it to everyone else. -->
               <button
                 type="button"
                 onclick={() => onSelectChannelConversation?.(channel.id)}
+                aria-current={selectedChannelId === channel.id ? 'true' : undefined}
+                aria-label="{channel.isPrivate
+                  ? `${m.chat_channel_private_label()} ${channel.name}`
+                  : channel.name}{channel.unreadCount
+                  ? `, ${m.chat_unread_messages_label({ count: channel.unreadCount })}`
+                  : ''}"
                 class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-colors {selectedChannelId ===
                 channel.id
                   ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)] text-text-main'
                   : 'hover:bg-white/40 dark:hover:bg-black/20 text-text-muted hover:text-text-main'}"
               >
-                <span class="opacity-70">
+                <span class="opacity-70" aria-hidden="true">
                   {#if channel.isPrivate}
                     <Lock size={16} />
                   {:else}
@@ -561,6 +574,7 @@
                 <span class="flex-1 truncate font-medium">{channel.name}</span>
                 {#if channel.unreadCount}
                   <span
+                    aria-hidden="true"
                     class="min-w-5 h-5 px-1 rounded-full bg-cn-dark text-cn-yellow text-[0.65rem] font-extrabold inline-flex items-center justify-center"
                   >
                     {channel.unreadCount}
@@ -575,8 +589,8 @@
                 onclick={() => openNewChatModal('channel')}
                 class="w-full mt-2 flex items-center gap-2 px-3 py-2 rounded-xl text-left border border-dashed border-text-muted/30 text-text-muted hover:text-text-main hover:bg-white/40 dark:hover:bg-black/20 transition-colors"
               >
-                <Plus size={16} />
-                <span class="font-medium text-sm">Ajouter un canal</span>
+                <Plus size={16} aria-hidden="true" />
+                <span class="font-medium text-sm">{m.chat_add_channel_label()}</span>
               </button>
             {/if}
           </div>

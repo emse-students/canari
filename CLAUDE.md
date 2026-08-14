@@ -101,9 +101,9 @@ replacement may not rewind this device's own send ratchet, and an EPOCH cannot s
 send moves a GENERATION inside one epoch. Native had only the epoch half; the outbound checkpoint sat
 at 2 of the 18 call sites that reach a send. `sendMessage` is concrete in `BaseMlsService` and
 carries all three outbound invariants, platforms supply only `encryptForSend`, and the `hidden`
-handoff flushes BEFORE releasing the native foreground guard. **Verified: MSG x5 on `f391c199` with
-A1 freshly reinstalled - 13 of 13 `passed` on every pass, no `SecretReuseError` and no `LOST frame`
-anywhere in the run.** Mechanism on
+handoff flushes BEFORE releasing the native foreground guard. **Verified: MSG x5 on `8a3edbdd` -
+13 of 13 `passed` on every pass, no `SecretReuseError` and no `LOST frame` anywhere in the run.**
+Mechanism on
 [mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md) (section 8).
 
 **TWO DURABILITY DEFECTS SHIPPED 2026-08-14, ONE VERIFIED AND ONE OWED.**

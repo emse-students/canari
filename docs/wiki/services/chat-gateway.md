@@ -54,7 +54,7 @@ If the JWT is invalid or absent, the connection is rejected with code `4401`.
 1. HTTP upgrade to WebSocket.
 2. JWT validation -> extract `userId`.
 3. Register in `connected_users["userId:deviceId"]` (mpsc sender).
-4. Set Redis `user:online:{userId}:{deviceId}` (TTL 90s).
+4. Set Redis `user:online:{userId}:{deviceId}` (TTL 20s).
 5. Drain `pending_welcomes:{userId}` (Redis list of WS frames queued while offline).
 6. Spawn `ws_read_loop` (client frames) and `ws_write_loop` (mpsc -> WS).
 
@@ -121,7 +121,7 @@ Subscribes to the `post.created` topic (group `chat-gateway-broadcast`). On each
 
 ## Presence
 
-Presence keys are stored in Redis as `user:online:{userId}:{deviceId}` with a 90-second TTL, refreshed on each WebSocket Pong. When a connection closes cleanly, the key is deleted. When delivery fails for a device and all senders are gone, the gateway proactively deletes the presence key so `chat-delivery-service` stops routing via pub/sub.
+Presence keys are stored in Redis as `user:online:{userId}:{deviceId}` with a 20-second TTL, refreshed on each WebSocket Pong. When a connection closes cleanly, the key is deleted. When delivery fails for a device and all senders are gone, the gateway proactively deletes the presence key so `chat-delivery-service` stops routing via pub/sub.
 
 ## CORS
 

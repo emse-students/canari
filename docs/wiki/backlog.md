@@ -98,14 +98,6 @@ navigation labels, section descriptions - not just message text. Only message co
 selectable, and arguably nothing else at all. One `user-select` rule at the layout level with an
 explicit opt-in on message bodies.
 
-### P3 - banners must not be transparent
-
-Reported 2026-08-13. A translucent banner sits over whatever it covers, and the text underneath
-shows through it - so the banner's own words are the hardest thing on screen to read, which is the
-opposite of what a banner is for. Give them an opaque background token. Cosmetic and explicitly not
-urgent, but it applies to every banner rather than to one, so fix it at the token rather than at a
-call site.
-
 ### P3 - merge "Connexions actives" into "Gestion des appareils"
 
 Two panels describe the same thing and neither is complete, so the user reads both to answer one

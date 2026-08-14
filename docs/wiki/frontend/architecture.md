@@ -183,6 +183,8 @@ redefined under `:root[data-theme='dark']` and exposed to Tailwind through `@the
 | `bg-cn-yellow` / `hover:bg-cn-yellow-hover` | `--cn-yellow` | Brand fill                    |
 | `text-cn-ink`                    | fixed `#151b2c`     | Ink **on** the brand yellow           |
 | `bg-cn-scrim` / `bg-cn-tooltip`  | fixed `#0a0d14` / `#1a2236` | Surfaces that are dark in BOTH themes (call chrome, tooltips) |
+| `bg-banner` / `bg-banner-warn`   | `--banner-bg` / `--banner-warn-bg` | Banner surfaces, OPAQUE by construction — see [Status banners](#status-banners) |
+| `bg-banner-notice` / `-danger` / `-info` | fixed `#f59e0b` / `#dc2626` / `#2563eb` | The strong banner variants, identical in both themes |
 | `text-cn-dark`                   | `--cn-dark`         | Emphasis text — **flips** with theme  |
 
 Rules:
@@ -218,6 +220,47 @@ and about `bg-white/N` at 20% or less (the glassmorphism highlight idiom). What 
 intentional and should stay: switch thumbs (`bg-white` on a coloured track), colour-picker handles,
 the always-dark call and lightbox chrome, and the white plate behind a QR code, which has to be
 white to scan.
+
+## Status banners
+
+Every strip that announces a transient app-wide fact goes through
+`lib/components/shared/Banner.svelte`. It owns three things and deliberately not a fourth.
+
+| It owns | Because |
+| --- | --- |
+| The surface (`bg-banner`, `bg-banner-warn`, `bg-banner-notice`, `bg-banner-danger`, `bg-banner-info`) | All five are opaque. A translucent banner puts the text underneath behind the words meant to be read - four of the six banners were tinted (`/10`, `/40`, `/60`) before this existed |
+| The live region (`role`, `aria-live`, `aria-busy`) | A strip that exists only visually announces nothing. Use `tone="alert"` only where the message genuinely cannot wait - a fatal MLS error, never a synchronisation |
+| The row layout, with an optional `action` snippet | So a dismiss or take-over control sits outside the label's flow |
+| **NOT placement** | It legitimately differs - `fixed` at the window, `absolute` over a conversation, in the flow above content - and only the caller knows which. Position comes in through `class` |
+
+**Three scales, and a banner belongs to exactly one.**
+
+| Scale | Where | Who |
+| --- | --- | --- |
+| Window | `+layout.svelte`, one fixed flex column | maintenance, fatal MLS error, tab follower, offline |
+| Conversation | `ChatArea.svelte`, `absolute` over the message list | synchronisation |
+| Application | `MainChatPage.svelte` | **nothing, on purpose** |
+
+Rules, each written after the thing it prevents:
+
+- **One fact, one banner, at one scale.** `MainChatPage` carried two that duplicated others:
+  "En attente de connexion" repeated `OfflineBanner` (going offline raised both, three seconds
+  apart), and its synchronisation strip repeated `ChatArea`'s from the very same
+  `isCatchupOverlayVisible`, so the two never appeared apart. Both are deleted.
+- **A banner above the content must not sit in the layout flow.** Those two did: raising one shoved
+  the application down 29 px and dropping it snapped everything back, up at ~480 ms into a load and
+  gone at ~2 286 ms. On 2026-08-14 a click aimed at a channel row was recorded landing on the
+  "Ajouter un canal" button below it, and the harness spent a run accusing a working application.
+  Window-scale banners are `fixed`, the conversation one is `absolute`.
+- **Same scale means one column, never two `fixed` layers.** The maintenance notice
+  (`z-[120]`) painted over the fatal MLS error (`z-50`), hiding the only message that says the
+  messaging stack is dead. Both now stack in one flex column, which is the lesson `ChatArea` had
+  already learnt for its own pair.
+- **A status must be true when it is shown.** The synchronisation banner fired on
+  `isMessagingInitializing`, true on every start with or without a message, so it announced
+  synchronising messages while nothing was. It is bound to `isCatchupOverlayVisible` alone: a real
+  MLS mailbox drain, past `OVERLAY_MIN_MESSAGES`. History recovery runs in `PERSIST_ONLY_PHASE` and
+  stays silent by design.
 
 ## Auth / token management
 

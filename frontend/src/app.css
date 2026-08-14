@@ -37,6 +37,21 @@
      banner stayed light while the text on it went near-white. Tint it with an opacity modifier
      (`bg-amber-warn/10`, `border-amber-warn/30`) rather than reaching for the amber scale. */
   --color-amber-warn: var(--amber-warn);
+  /* BANNER SURFACES, OPAQUE BY CONSTRUCTION. A banner covers the interface, so what it covers must
+     not read through it - a translucent strip puts body text behind its own words and makes the one
+     message meant to be read the hardest thing on screen. Four of the six banners were tinted
+     (`/10`, `/40`, `/60`); the two that were already opaque were the two nobody complained about.
+     Fixed at the token rather than at each call site, because it applies to every banner and to the
+     next one somebody writes. `banner` is the neutral strip (connectivity, synchronisation),
+     `banner-warn` the one carrying a caution. Both are `color-mix` of two OPAQUE colours, which is
+     what keeps them opaque - do not reintroduce an alpha modifier on top of them. */
+  --color-banner: var(--banner-bg);
+  --color-banner-warn: var(--banner-warn-bg);
+  /* The three STRONG variants, fixed in both themes for the same reason as `cn-scrim`: they carry
+     white or ink text and interrupt on purpose, so a theme flip must not soften them. */
+  --color-banner-notice: #f59e0b;
+  --color-banner-danger: #dc2626;
+  --color-banner-info: #2563eb;
 }
 
 :root {
@@ -57,6 +72,8 @@
     linear-gradient(180deg, #f9fbff 0%, #eef3fa 100%);
   --surface-elevated: color-mix(in srgb, var(--cn-surface) 84%, #ffffff 16%);
   --cn-surface-alt: #eef2f8;
+  --banner-bg: color-mix(in srgb, var(--cn-surface) 92%, var(--cn-dark) 8%);
+  --banner-warn-bg: color-mix(in srgb, var(--cn-surface) 84%, var(--amber-warn) 16%);
   --app-viewport-height: 100dvh;
 }
 
@@ -78,6 +95,10 @@
     linear-gradient(180deg, #060a11 0%, #04070d 100%);
   --surface-elevated: color-mix(in srgb, var(--cn-surface) 92%, #ffffff 8%);
   --cn-surface-alt: #1a2236;
+  /* Mixed towards WHITE here, not towards `cn-dark`: that token is inverted in this theme (it holds
+     a near-white), so reusing the light recipe would have produced a pale strip in dark mode. */
+  --banner-bg: color-mix(in srgb, var(--cn-surface) 88%, #ffffff 12%);
+  --banner-warn-bg: color-mix(in srgb, var(--cn-surface) 80%, var(--amber-warn) 20%);
 }
 
 /* Theme transitions - scoped to elements that actually change theme colors.

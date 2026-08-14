@@ -16,7 +16,7 @@ over a filtered copy of its own evidence.
 
 ---
 
-## The fourteen rules
+## The sixteen rules
 
 Ordered by how expensive it is to break them.
 
@@ -199,6 +199,24 @@ one key the fix relies on (`sessionStorage['canari:deeplink:handled']`) and relo
 the replay straight back, which is what turns "nothing happened" into "the guard held". A PASS whose
 failure you cannot produce on demand is the weakest kind there is.
 
+**AND WHEN THE RE-CREATION IS A RACE, THE CHECK MUST ASSERT THAT IT WON IT.** `burn.mjs` sends, waits,
+reloads, and asserts the next message arrives. Its premise is that the reload landed inside the
+checkpoint window - and a run that MISSES the window delivers that message too, identically, proving
+nothing. First run, 2026-08-14, at the 300 ms the original defect was measured at: the checkpoint had
+already landed, and a check that reported only "delivered" would have been a green light for a repair
+that never ran. The window had narrowed to under 60 ms since that measurement, because an unrelated
+fix had made the write faster. So the premise is read and reported separately from the result, and a
+run that failed to reproduce itself is `INCONCLUSIVE` - never `PASS`.
+
+**Pick the witness that does not depend on listening at the right millisecond.** The repair prints a
+line, and the obvious check greps for it. But a reload that does not raise the PIN gate starts
+initialising before a CDP session can re-attach, so on the run that PASSED the line was missed
+entirely (`burnedLine: null`) while the repair had demonstrably happened. A verdict resting on that
+capture would have read "no burn" and been believed. The counters the repair consults are DURABLE and
+can be read on either side of the reload at leisure: deficit before, deficit after. **Where a
+mechanism leaves both a log and a state, the state is the witness** - the log is how a human finds it,
+not how a check proves it.
+
 #### The sharpest instance: a run that printed PASS while the branch never ran
 
 WP-ECHO-1's device check sends its own message "during a drain" and asserts it survives a reload.
@@ -324,6 +342,62 @@ the fix under test deployed at 12:45:20, **after all of them**. `webstate.mjs` t
 still on `__sveltekit_1prkb1y` against a served `__sveltekit_1ywe1to`. Re-running without reloading
 would have measured the old bundle a fourth time and called it a verification.
 
+### 15. A CHECK MUST ESTABLISH ITS PRECONDITION, AND WHAT ESTABLISHES IT BELONGS IN THE SHARED LAYER
+
+TYPE-4 asks that an **offline** peer sees no typing indicator and gets none replayed when it returns.
+It set `Network.emulateNetworkConditions({offline: true})` on the peer, waited, and asserted the
+indicator was empty. It failed, and the failure was entirely its own: that setting fails NEW requests
+and leaves an ESTABLISHED WebSocket open, so the peer was never offline, took the frame live exactly
+as it should have, and the check reported a delivery defect it had manufactured.
+
+The precondition was never established, only intended - so **the one outcome the check could not
+produce was the true one**. An assertion of the form "while X, not Y" is worth nothing until X is a
+fact the system under test agrees with. Here that fact is the gateway's presence key: `cutHard`
+closes the socket as a dropped connection would, `awaitOffline` waits for the key to go, and a peer
+that never goes offline makes the verdict **INVALID**, never `FAIL` - the difference between "the app
+is wrong" and "I did not manage to ask".
+
+**The sharper half is that none of this was new.** `msg9.mjs` had measured the same trap on
+2026-08-13 - sixty seconds of "offline" with the presence key refreshed the whole way through - and
+written it up in its own header, where no other check could reach it. A fact that costs a diagnosis
+to learn belongs in the shared layer the moment it is learnt; left in the file that paid for it, the
+next check pays again. `cut()` vs `cutHard()` is now the seam that carries it.
+
+Two smaller instrument faults came out of the same phase, both worth naming because neither is
+caught by a green gate:
+
+- **`type.mjs` computed five verdicts and read no console at all.** The campaign's rule that
+  observation is part of a check was stated globally and simply not implemented in one phase file, so
+  every TYPE pass asserted that an indicator appeared and said nothing about what the two pages
+  logged while it did. A rule enforced by remembering to write it is not enforced.
+- **A syntax check is not a runtime check.** A comment inside an evaluated template literal quoted an
+  identifier in backticks; the backticks closed the literal, leaving `template / identifier`, which
+  is valid JavaScript. `node --check` passed and every run threw `ReferenceError` at the division.
+  Proving a harness edit means RUNNING it, exactly as proving a native build means running it.
+
+### 16. A CLICK IS PROVEN BY THE EVENT, NEVER BY THE GEOMETRY AROUND IT
+
+TYPE-5 failed roughly one run in ten with the create-channel modal on screen, at coordinates
+`stableCentreOf` had verified belonged to the `general` row moments earlier. Both readings were
+honest and both were useless: a hit test **before** the dispatch and a screen read **after** it
+describe moments the click did not happen, and neither can tell a click that landed on the wrong
+element from a right element that did nothing.
+
+The witness is the event. `realClick` now arms a capture-phase listener before dispatching and
+returns what actually received the click, which named the culprit on the first occurrence:
+`{"tag":"BUTTON","text":"Ajouter un canal"}` at the row's own centre. The cause was an application
+defect - a status banner in the layout flow appearing at ~480 ms and vanishing at ~2 286 ms, moving
+everything 29 px between the hit test and the dispatch - and no amount of re-proving the geometry
+would have found it, because the geometry was correct every time it was read.
+
+Two lessons, and the second is rule 15 again from the other side:
+
+- **Verify the effect you asked for, not the conditions you asked under.** A coordinate that
+  hit-tests correctly is a precondition, not a result.
+- **Then establish the precondition properly**: `awaitAppSettled` waits for a STATE - no status
+  strip up, `main` at the same offset for three consecutive reads - not for a duration. It lives in
+  `chat.mjs`, so every check that clicks inherits it rather than each learning the trap alone.
+
 ---
 
 ## Observation is part of the check, not a debugging step
@@ -399,6 +473,27 @@ client, not a step before the interesting part, because MLS does no work at all 
 The app's side of that contract is a property worth asserting rather than assuming: **it must not
 attempt MLS work before a PIN has been entered** (a stored PIN or biometrics count as entered), so
 MLS activity observed before the unlock is a defect, not a timing quirk.
+
+#### Three classifier faults, and why each was a near-miss on an existing rule
+
+Taken from the MSG run of 2026-08-14 17:17-17:38Z, where they were the only dirt. None was an
+application fault, and none was a *missing category* - each was a rule that already existed failing
+to recognise a member of the population it was written for. That is the shape to expect: **three of
+the last four classifier additions were near-misses on an existing rule, not new categories.**
+
+- **A 200 called a failure.** `badHttp` decided on CDP's `r.failed` BEFORE consulting the status, so
+  a response that arrived with a 200 and whose body load was then cancelled was filed as a failure -
+  breaking `clean` and taking the run's exit code with it. **A status code is an ANSWER**: a request
+  that got one is judged on it, and only a request that got none is a transport failure. `watch.mjs`
+  now says so, with four HTTP cases in `classify-selftest.mjs` pinning it, including that a 502 on
+  the same endpoint still breaks `clean`.
+- **A report missed by a space.** The hourly `[CRON] reportQueueDepth:` is camelCase, and the rule
+  spelt it `queue depth|QUEUE_DEPTH`, matching neither form - so the one line that reports the
+  fleet's delivery backlog landed in `unexplained` once an hour. A matcher tests one SPELLING
+  (rule 6); a rule naming a log line must be written against the line, not against its subject.
+- **A crawler's `[404] GET /sitemap.xml.gz`**, the same family as the `/sitemap_index.xml` guess
+  already classified. Spelt out per path deliberately, with an assertion that a 404 on a route we DO
+  serve stays unexplained - an allowlist of what may be forgiven, never a pattern for what to ignore.
 
 ---
 

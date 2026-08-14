@@ -10,6 +10,30 @@
 - Saved card management (setup, list, charge, detach).
 - Purchase history.
 
+## Which payment provider is live
+
+**Stripe is no longer addressed directly.** A `PaymentProvider` interface
+(`apps/core-service/src/payment/payment-provider.interface.ts`) sits between `PaymentService` and the
+processor, with two implementations behind it: `stripe-payment-provider.ts`, a pure extraction of
+what was already there, and `lydia-payment-provider.ts`.
+
+Which one is active is a **platform admin setting read from Postgres per call**, not an environment
+variable and not a startup decision - so flipping it in `/admin/platform` takes effect with no deploy
+and no restart. **The default is still Stripe**, and production has not moved. The frontend asks
+**`GET /api/payments/provider`** which is live and renders the matching onboarding flow, because the
+two differ: Stripe hosts its own onboarding page, while Lydia needs the club's legal profile
+collected by Canari and posted to `business/create`.
+
+Only the flows that map cleanly onto the interface exist on the Lydia side today (one-off checkout,
+session lookup). Everything else - live balance and status, saved payment methods - **throws a
+documented error rather than faking a result**: Lydia has no live status-poll endpoint, and saved
+payment methods are being retired outright rather than reimplemented, so every purchase becomes its
+own interactive request.
+
+The full provider mapping, the open questions and the credentials still owed are in
+[`plans/stripe-to-lydia-migration.md`](../../../../plans/stripe-to-lydia-migration.md) (WP-LYDIA-1).
+The sections below describe the **Stripe** path, which is what runs today.
+
 ## Product purchase flow
 
 ```

@@ -76,6 +76,16 @@ selector clicked nothing), which is why every step now asserts its own post-cond
 `check-feed-retry` reported FAIL against a page that was visibly rendering posts, because it counted
 `article`/`data-post-id`, neither of which the feed has - `PostCard`'s root carries `group/card`.
 
+`burn.mjs` is the newest of them and the one to copy the SHAPE of. It reproduces a RACE - send,
+reload inside the unawaited-checkpoint window, send again - and a run that loses that race delivers
+the second message exactly like a run that wins it. So it reads the premise separately from the
+result (the durable send-ledger's deficit, before and after the reload) and answers `INCONCLUSIVE`
+rather than `PASS` when the window was never entered, which is what the first run at 300 ms actually
+was. It also does NOT rest its verdict on the repair's log line: a reload that skips the PIN gate
+initialises before a session can attach, and on the passing run that line was missed entirely while
+the repair had plainly happened. `--delay` is the knob; the window is under 60 ms on web and about
+1.7 s on the phone.
+
 `recon.mjs` deserves singling out: **it is the only thing that can SEE this codebase's loss class**,
 by diffing the markers W1 shows against the markers W2 shows for one thread. A green per-check
 verdict is not a substitute - reconciliation is what found WP-LOSS-1 and WP-ECHO-1.

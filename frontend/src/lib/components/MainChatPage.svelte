@@ -49,7 +49,6 @@
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
   import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
   import type { BulkIngestPhase } from '$lib/mls-client';
-  import { WifiOff } from '@lucide/svelte';
 
   interface Props {
     /** Controls whether the sidebar shows private chat conversations or community channels. */
@@ -105,22 +104,6 @@
     !session.isLoggedIn || (isSyncing && !hasCachedConversations)
   );
 
-  /**
-   * Non-blocking "still syncing" indicator shown over already-displayed cached data.
-   *
-   * Deliberately NOT `isSyncing`. That one answers "is a drain running", which is the right question
-   * for `isMessagingBlocked` above - a cold start with nothing cached must wait whatever arrives.
-   * Here there IS cached data on screen, so the only thing worth interrupting the user for is real
-   * messages actually landing, which is what `isCatchupOverlayVisible` counts. On the old flag this
-   * banner sat up for four seconds after every return to the foreground, announcing a synchronisation
-   * of nine history probes and zero messages.
-   */
-  const isBackgroundSyncing = $derived(
-    session.isLoggedIn &&
-      (session.isMessagingInitializing || messaging.isCatchupOverlayVisible) &&
-      hasCachedConversations
-  );
-
   const messagingOverlayMessage = $derived(
     !session.isLoggedIn ? m.chat_connecting_label() : m.chat_sync_overlay_message()
   );
@@ -136,23 +119,6 @@
         ? convs.groupMembers
         : undefined
   );
-
-  /**
-   * Debounced WS-disconnect banner: only shown after the socket has been down for a
-   * few seconds, to avoid flicker on brief reconnects / startup.
-   */
-  let showWsBanner = $state(false);
-  $effect(() => {
-    // Suppress during the initial messaging bring-up: the WS is legitimately not connected yet
-    // while MLS/session initialise, so the disconnected banner would be a false positive.
-    // Only arm the delayed banner once init is done and we are genuinely disconnected.
-    if (session.isWsConnected || session.isMessagingInitializing) {
-      showWsBanner = false;
-      return;
-    }
-    const t = setTimeout(() => (showWsBanner = true), 3000);
-    return () => clearTimeout(t);
-  });
 
   // Deep-link landing (notification tap, invite card, invite link) is owned by
   // ChatBackgroundService: it reads the same globalConvs/globalChannels singletons, is mounted on
@@ -838,24 +804,13 @@
 
 <div class="app-layout" in:fade>
   {#if session.isLoggedIn}
-    {#if showWsBanner}
-      <div
-        class="flex items-center justify-center gap-1.5 py-1.5 px-4 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-medium border-b border-amber-500/20"
-      >
-        <WifiOff size={11} strokeWidth={2.5} class="shrink-0" />
-        {m.chat_ws_waiting_label()}
-      </div>
-    {:else if isBackgroundSyncing}
-      <div
-        class="flex items-center justify-center gap-2 py-1.5 px-4 bg-cn-yellow/10 text-text-muted text-xs font-medium border-b border-cn-border/60"
-      >
-        <span
-          class="h-3 w-3 animate-spin rounded-full border-2 border-cn-yellow border-t-transparent shrink-0"
-        ></span>
-        {m.chat_sync_overlay_message()}
-      </div>
-    {/if}
-
+    <!-- NO BANNERS HERE ANY MORE, and the two that were are why this comment exists. Both said what
+         another banner was already saying: "En attente de connexion" duplicated `OfflineBanner` at
+         the window scale (offline raised BOTH, three seconds apart), and the synchronisation strip
+         duplicated `ChatArea`'s, driven by the very same `isCatchupOverlayVisible` - so they never
+         appeared apart. Worse, both sat IN THE FLOW: raising one shoved the whole application down
+         29 px and dropping it snapped everything back, which on 2026-08-14 delivered a click aimed
+         at a channel row to the button below it. One fact, one banner, at one scale. -->
     <main class="main-content">
       <!-- Desktop sidebar (always mounted, hidden on mobile when chat is open) -->
       <Sidebar {...makeSidebarCommonProps()} isHidden={convs.mobileView === 'chat'} />

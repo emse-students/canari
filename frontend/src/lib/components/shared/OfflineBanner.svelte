@@ -1,5 +1,6 @@
 <script lang="ts">
   import { CloudOff, RefreshCw } from '@lucide/svelte';
+  import Banner from './Banner.svelte';
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import { connectivity } from '$lib/stores/connectivity.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -24,20 +25,12 @@
 </script>
 
 {#if show}
-  <div
-    class="flex items-center gap-2 px-4 py-2.5
-           bg-slate-100 dark:bg-slate-800/60
-           border-b border-slate-300 dark:border-slate-700
-           text-text-muted
-           text-sm"
-    role="status"
-    aria-live="polite"
-  >
+  <Banner busy={reconnecting}>
     {#if reconnecting}
-      <RefreshCw size={15} class="shrink-0 opacity-70 animate-spin" />
+      <RefreshCw size={15} class="shrink-0 opacity-70 animate-spin" aria-hidden="true" />
       <span class="truncate">{m.offline_banner_reconnecting()}</span>
     {:else}
-      <CloudOff size={15} class="shrink-0 opacity-70" />
+      <CloudOff size={15} class="shrink-0 opacity-70" aria-hidden="true" />
       <!-- Spacing via gap rather than markup whitespace: the gap survives any reformatting of
            the two message spans, a literal space between them does not. -->
       <span class="flex min-w-0 flex-wrap gap-x-1">
@@ -45,5 +38,5 @@
         <span class="opacity-80">{m.offline_banner_desc()}</span>
       </span>
     {/if}
-  </div>
+  </Banner>
 {/if}

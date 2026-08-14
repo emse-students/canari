@@ -155,6 +155,6 @@ Voir `docs/wiki/infrastructure/backup.md` pour la procedure complete.
 | Document | Contenu |
 |---|---|
 | [`docs/wiki/architecture.md`](../wiki/architecture.md) | Topologie complete, Nginx, auth |
-| [`docs/wiki/api-surface.md`](../wiki/api-surface.md) | Tous les endpoints |
-| [`docs/MLS_RECOVERY_LADDER.md`](../MLS_RECOVERY_LADDER.md) | Procedure de recovery MLS |
+| [`docs/wiki/protocols/api-surface.md`](../wiki/protocols/api-surface.md) | Tous les endpoints |
+| [`docs/wiki/protocols/mls-recovery-ladder.md`](../wiki/protocols/mls-recovery-ladder.md) | Procedure de recovery MLS |
 | [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) | Bootstrap serveur |

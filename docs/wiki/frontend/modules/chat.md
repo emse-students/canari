@@ -354,7 +354,7 @@ sends `channel.member.kicked` (a channel kick, a community kick, or someone leav
 `channel.member.removed` (the channel settings panel) to **everyone still in the community as
 well as the target**, which makes the payload - not the arrival of the event - the thing that
 decides what happens locally. `channelEventHandler` normalises both onto one callback, and
-[`removalOutcome`](../../../frontend/src/lib/utils/chat/memberRemoval.ts) turns it into one of
+[`removalOutcome`](../../../../frontend/src/lib/utils/chat/memberRemoval.ts) turns it into one of
 four answers:
 
 | Outcome | When | Local effect |
