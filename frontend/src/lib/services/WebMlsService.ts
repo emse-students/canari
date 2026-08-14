@@ -8,6 +8,7 @@ import {
   traceSend,
   traceSessionOpen,
   traceSessionFinish,
+  type SwapOutcome,
 } from '$lib/mls-client/ratchetRewindTrace';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
@@ -1028,7 +1029,7 @@ export class WebMlsService extends BaseMlsService {
           } finally {
             // The sequential path mutates the live client in place: no snapshot, so no swap and no
             // rewind. Traced all the same, so the log distinguishes "did not happen" from "not run".
-            traceSessionFinish(traceWindow, groupId, false);
+            traceSessionFinish(traceWindow, groupId, 'not-attempted');
             this.endCatchUp();
             release();
           }
@@ -1047,7 +1048,9 @@ export class WebMlsService extends BaseMlsService {
         return session.decryptPage(messageBytesList);
       },
       finish: async () => {
-        let swappedForTrace = false;
+        // Starts as "not attempted" and only moves once a swap is actually asked for: a session that
+        // decrypted no page never asks, and calling that a refusal names a guard that never ran.
+        let swapOutcome: SwapOutcome = 'not-attempted';
         try {
           if (usedWorker) {
             const finalState = await session.finalize();
@@ -1065,7 +1068,7 @@ export class WebMlsService extends BaseMlsService {
               mutationsAtSnapshot,
               () => this.reloadClientFromPlainState(finalState)
             );
-            swappedForTrace = swapped;
+            swapOutcome = swapped ? 'installed' : 'refused';
             if (swapped) this.lastKnownState = finalState.slice();
           }
         } catch (e) {
@@ -1073,7 +1076,7 @@ export class WebMlsService extends BaseMlsService {
           // (worker mode never mutates it). The conversation is retried on the next catch-up.
           console.warn('[MLS] decrypt session finalize failed, live client left at snapshot:', e);
         } finally {
-          traceSessionFinish(traceWindow, groupId, swappedForTrace);
+          traceSessionFinish(traceWindow, groupId, swapOutcome);
           this.endCatchUp();
           session.dispose();
           release();

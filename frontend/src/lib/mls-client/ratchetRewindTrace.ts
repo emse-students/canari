@@ -82,23 +82,36 @@ export function traceSessionOpen(groupId: string, mode: 'worker' | 'sequential')
 }
 
 /**
+ * How a catch-up window ended. THREE outcomes, not two.
+ *
+ * `not-attempted` is its own case and conflating it with `refused` is not a wording quibble: a
+ * session that decrypted nothing (`usedWorker === false`) never asks for a swap at all, and reporting
+ * that as a refusal sends the reader looking for a guard that never fired. Measured 2026-08-14 - a
+ * clean MSG-1b reported `swap refused` on a receiver where neither `swapClientMonotonic` nor
+ * `installUnlessOvertaken` had logged anything, because there was nothing to install.
+ */
+export type SwapOutcome = 'installed' | 'refused' | 'not-attempted';
+
+/**
  * Marks the end of a catch-up window.
  *
- * `swapped` is what `swapClientMonotonic` actually decided - not what was requested - because the
+ * `outcome` is what actually happened to the candidate state - not what was requested - because the
  * whole question is whether a state that predates those sends was installed over them.
  */
-export function traceSessionFinish(id: number, groupId: string, swapped: boolean): void {
+export function traceSessionFinish(id: number, groupId: string, outcome: SwapOutcome): void {
   openWindows = Math.max(0, openWindows - 1);
   const observed = sendsDuringWindow;
   if (openWindows === 0) sendsDuringWindow = [];
   const frames = observed.map((s) => `${s.fingerprint}(${s.bytes}B,silent=${s.silent})`).join(' ');
   const verdict =
-    swapped && observed.length > 0
-      ? 'RATCHET REWIND: state predating these sends was installed over them'
-      : swapped
-        ? 'clean swap, no send in the window'
-        : 'swap refused, live client kept';
+    outcome === 'installed'
+      ? observed.length > 0
+        ? 'RATCHET REWIND: state predating these sends was installed over them'
+        : 'clean swap, no send in the window'
+      : outcome === 'refused'
+        ? 'swap REFUSED by a guard, live client kept'
+        : 'nothing to install - the session decrypted no page';
   console.debug(
-    `[REWIND-TRACE] session finish #${id} group=${groupId.slice(0, 8)}… swapped=${swapped} sendsDuringWindow=${observed.length} - ${verdict}${frames ? ` [${frames}]` : ''}`
+    `[REWIND-TRACE] session finish #${id} group=${groupId.slice(0, 8)}… outcome=${outcome} sendsDuringWindow=${observed.length} - ${verdict}${frames ? ` [${frames}]` : ''}`
   );
 }
