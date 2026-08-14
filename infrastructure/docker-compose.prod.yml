@@ -238,31 +238,10 @@ services:
       start_period: 40s
 
   # ─────────────────────────────────────────────────────
-  # MinIO - S3-compatible object storage for encrypted media blobs
-  # ─────────────────────────────────────────────────────
-  minio:
-    image: minio/minio:latest
-    restart: always
-    command: server /data --console-address ":9001"
-    ports:
-      - "127.0.0.1:${MINIO_API_HOST_PORT:-19000}:9000"   # S3 API (host configurable)
-      - "127.0.0.1:${MINIO_CONSOLE_HOST_PORT:-19001}:9001"   # Web console (host configurable)
-    environment:
-      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER is required - see .env.example}"
-      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required - see .env.example}"
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-  # ─────────────────────────────────────────────────────
   # Garage - S3-compatible object storage, replacing MinIO (unmaintained upstream).
-  # ADDITIVE STEP: runs alongside MinIO, empty, not yet used by media-service. See
-  # docs/wiki/infrastructure/docker.md for the migration/cutover sequence.
+  # CUTOVER TAKEN 2026-08-14: every object copied from MinIO via rclone and verified
+  # (rclone check, 0 diff, 200 objects / 45.370 MiB both sides) before media-service
+  # was repointed here. See docs/wiki/infrastructure/docker.md.
   # ─────────────────────────────────────────────────────
   garage:
     image: dxflrs/garage:v2.3.0
@@ -275,9 +254,9 @@ services:
       GARAGE_RPC_SECRET: "${GARAGE_RPC_SECRET:?GARAGE_RPC_SECRET is required - see .env.example}"
       GARAGE_ADMIN_TOKEN: "${GARAGE_ADMIN_TOKEN:?GARAGE_ADMIN_TOKEN is required - see .env.example}"
       # Deliberately NOT MINIO_ACCESS_KEY/SECRET_KEY: Garage requires an access key ID >= 8
-      # characters and a secret >= 16, a constraint MinIO never had (this deployment's
-      # MINIO_ROOT_USER is shorter than that). At the cutover commit, media-service's
-      # MINIO_ACCESS_KEY/SECRET_KEY are repointed to these same values.
+      # characters and a secret >= 16, a constraint MinIO never had (this deployment's old
+      # MINIO_ROOT_USER was shorter than that). media-service's MINIO_ACCESS_KEY/SECRET_KEY
+      # below are the SAME values as these two, via the CD's env generation.
       GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_ACCESS_KEY_ID:?GARAGE_ACCESS_KEY_ID is required - see .env.example}
       GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_SECRET_ACCESS_KEY:?GARAGE_SECRET_ACCESS_KEY is required - see .env.example}
       GARAGE_DEFAULT_BUCKET: ${MINIO_BUCKET:-canari-media}
@@ -310,18 +289,18 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
-      MINIO_PORT: "${MINIO_PORT:-9000}"
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-garage}
+      MINIO_PORT: "${MINIO_PORT:-3900}"
       MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required - set via CD secrets or .env}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required - set via CD secrets or .env}
-      MINIO_BUCKET: ${MINIO_BUCKET:-canari-media}
       # REQUIRED BY GARAGE, AND ITS ABSENCE IS A CRASH LOOP, NOT A DEGRADATION. Garage signs with
       # the region in garage.toml (`garage`); the S3 client defaults to `us-east-1`, and the
       # mismatch fails at `bucketExists` during `onModuleInit` - so the service never finishes
-      # booting. dev and local carried this line from the cutover; prod did not, which took media
-      # down on production until it was added.
+      # booting. This took media-service down on production for over two hours (13:56-16:10Z,
+      # 2026-08-14) before the missing line was found.
       MINIO_REGION: ${MINIO_REGION:-garage}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required - set via CD secrets or .env}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required - set via CD secrets or .env}
+      MINIO_BUCKET: ${MINIO_BUCKET:-canari-media}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
     volumes:
       - media_meta:/app/media_meta
@@ -336,8 +315,6 @@ services:
       # MinIO gated the boot on a service media-service no longer talks to, while leaving the one
       # it does talk to ungated: `bucketExists` runs in `onModuleInit`, so reaching Garage before
       # it is ready is a crash loop, and the deploy's health gate reads that as a failed release.
-      # It also means stopping MinIO - the rollback net, kept stopped-not-deleted - would have
-      # taken media-service down with it.
       garage:
         condition: service_healthy
 
@@ -490,8 +467,8 @@ volumes:
   postgres_data:
   # The shared message log. See the redis service above for why this is not optional.
   redis_data:
-  # Kept for a 14-day rollback window after the Garage cutover, then removed - see
-  # docs/wiki/infrastructure/docker.md.
+  # Orphaned by the Garage cutover (2026-08-14): the `minio` service is gone, this volume
+  # is the rollback net. Remove after 2026-08-28 - see docs/wiki/infrastructure/docker.md.
   minio_data:
   garage_meta:
   garage_data:

@@ -168,30 +168,13 @@ fetching avatar` in `core-service`, 17 outbound HTTPS timeouts to Cloudflare IPs
 run: the endpoint proxies a remote avatar, the fetch times out, it answers 404. The UI falls back to
 initials. Not a WP yet - a fix needs the user's call on whether that proxy should exist.
 
-**WP-GARAGE-1 IS HALF SHIPPED (2026-08-14) - MinIO -> Garage, dev cut over, prod is additive-only
-so far.** MinIO is unmaintained upstream. `storage.service.ts` is UNCHANGED - Garage implements
-every S3 op the `minio` npm client calls, so this is entirely an infra swap, every `MINIO_*` env
-var kept its name on purpose. Dev/local/CI compose files are fully cut over (MinIO service
-removed); `docker-compose.prod.yml` only ADDS a `garage` service alongside the still-untouched
-`minio`/`media-service` - prod media-service still reads from MinIO. **Garage's key/secret is
-DELIBERATELY NOT `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`**: Garage requires an access key ID >= 8
-chars and a secret >= 16, MinIO enforces neither, and this deployment's `MINIO_ROOT_USER` is
-shorter than that - reusing it crashed the container on the very first prod boot
-(`Invalid default access key: Key identifiers should be at least 8 characters long`). Fixed with
-a dedicated `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY` pair; the cutover commit will
-repoint media-service's `MINIO_ACCESS_KEY`/`SECRET_KEY` to those same values (a one-time,
-deliberate credential change for media-service, not a rotation of MinIO's own root credentials).
-**Owed, and it is the user's own action, not mine:** run the `rclone sync` commands against prod
-(both endpoints now have valid, distinct credentials), confirm object counts/bytes match, THEN the
-cutover commit (repoint `MINIO_ENDPOINT`/`MINIO_PORT`/`MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` at
-`garage`) ships. `minio_data` stays stopped-not-deleted for 14 days after that as a rollback net.
-Four GitHub secrets already created: `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN`,
-`GARAGE_ACCESS_KEY_ID`, `GARAGE_SECRET_ACCESS_KEY`. Verified locally: idempotent restart (no
-duplicate-key error), full put/get/list/delete round trip against Garage via the real `minio`
-client. Mechanism and the exact MinIO/Garage differences (health check has no HTTP equivalent -
-the image ships no shell/curl, so it's `/garage status` over RPC instead; two volumes not one; no
-root user) are on
-[docker](docs/wiki/infrastructure/docker.md).
+**WP-GARAGE-1 IS SHIPPED (2026-08-14) - MinIO -> Garage, verified on prod.** Every object
+(200 / 45.370 MiB) copied via `rclone sync` and confirmed identical with `rclone check` (0 diffs)
+before `media-service` was repointed; the `minio` service is removed from
+`docker-compose.prod.yml`. Mechanism, the credential-length crash and its fix, and the exact
+MinIO/Garage differences are on [docker](docs/wiki/infrastructure/docker.md) - do not re-derive
+them here. **Owed: remove the orphaned `minio_data` volume after 2026-08-28** (14-day rollback
+window, see that page).
 
 **Two things are owed and neither is a Work Package yet:**
 

@@ -47,23 +47,30 @@ infra layer:
   `GARAGE_DEFAULT_ACCESS_KEY`/`GARAGE_DEFAULT_SECRET_KEY`/`GARAGE_DEFAULT_BUCKET` set from
   dedicated `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY`/`MINIO_BUCKET` secrets - Garage
   self-provisions the bucket and grants that exact key on first boot, and it is idempotent on
-  restart (verified locally: no duplicate-key error, same key still granted). On a **fresh**
-  install, `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` (what media-service actually reads) should just
-  be set to the same values as `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY` - no MinIO
-  legacy value to conflict with. On the prod host specifically, `MINIO_ACCESS_KEY`/`SECRET_KEY`
-  keep mirroring `MINIO_ROOT_USER`/`PASSWORD` (for MinIO, still live) until the cutover commit
-  repoints them at the Garage key instead - a one-time, deliberate credential change for
-  media-service, not a rotation of MinIO's own root credentials. `GARAGE_RPC_SECRET` and
+  restart (verified locally: no duplicate-key error, same key still granted). `MINIO_ACCESS_KEY`/
+  `MINIO_SECRET_KEY` (what media-service actually reads, name kept from the MinIO era) are set to
+  the same values as `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY` - on the prod host this
+  was a one-time, deliberate credential change for media-service at the cutover (2026-08-14), not
+  a rotation of MinIO's own root credentials (which the now-removed `minio` service used to read
+  from `MINIO_ROOT_USER`/`PASSWORD`, untouched throughout). `GARAGE_RPC_SECRET` and
   `GARAGE_ADMIN_TOKEN` are separate, unrelated secrets (cluster RPC and admin-API auth) with no
   MinIO equivalent.
 - **Two volumes, not one.** `garage_meta` (small, LMDB) and `garage_data` (object bytes) replace
-  the single `minio_data`. On the production host, `minio_data` was kept for a 14-day rollback
-  window after the cutover, then removed.
+  the single `minio_data`. On the production host, the `minio` service was removed at the cutover
+  and `minio_data` is kept, orphaned, as a 14-day rollback net (remove after 2026-08-28).
 - **Health check.** MinIO's `/minio/health/live` has no Garage equivalent, and the Garage image
   ships no shell/curl to poll an HTTP endpoint anyway (distroless, only the `/garage` binary) -
   the healthcheck runs `/garage status` instead, which talks to the node over its own RPC socket.
 - **Byte migration went through the S3 protocol** (`rclone sync` between the two endpoints), not
-  a volume copy - Garage's on-disk format is not MinIO's.
+  a volume copy - Garage's on-disk format is not MinIO's. Verified with `rclone check` (0 diffs,
+  200 objects / 45.370 MiB matching on both sides) before the cutover.
+- **`MINIO_REGION` is required, and its absence is a crash loop, not a degradation.** Garage signs
+  with the region configured in `garage.toml` (`garage`); the `minio` npm client defaults to
+  `us-east-1` when unset, and the mismatch fails inside `bucketExists` during `onModuleInit` - so
+  the service never finishes booting rather than starting in some reduced mode. This line was
+  present in the dev/local compose files from the start of the cutover but missed on the prod one,
+  which took media-service down in production for about two hours (13:56-16:10Z, 2026-08-14)
+  before the missing line was found and added.
 
 ## Dev host ports
 
