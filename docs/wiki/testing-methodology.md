@@ -16,7 +16,7 @@ over a filtered copy of its own evidence.
 
 ---
 
-## The ten rules
+## The eleven rules
 
 Ordered by how expensive it is to break them.
 
@@ -241,6 +241,30 @@ a line only that operation can emit. Here: 100 `PrivateMessage::try_from_authent
 for the whole process. That triple is the `O(|mls.bin| + N)` shape observed rather than assumed -
 and the keystore-load count is the one that would have caught a regression back to the per-message
 entry point, because that regression is fast per call and only the *number* of loads betrays it.
+
+### 11. FORGIVING AN EVENT MEANS TAKING IT OUT OF THE GATE, NEVER OUT OF THE RECORD
+
+A classifier exists to decide what breaks `clean`. It is not entitled to decide what is *kept*, and
+the two get conflated the moment a bucket is emptied rather than moved.
+
+`ignoringOfflineCut` did exactly that. A check that cuts the link on purpose must not be marked dirty
+by its own cut, so the function set `wsEvents: []` - correct as a gating decision, and it destroyed
+the only DATED record of the instant the socket died. When WP-RECONNECT-2 turned on precisely that
+instant, the answer had been thrown away by the instrument, for being expected. **Expected is not the
+same as uninformative**, and the events a check deliberately provokes are usually the best-timed
+things in its whole capture.
+
+The same mistake has a quieter form: **a line with no clock cannot be placed, and bucket order is not
+a clock.** `[WS] Disconnected` is a `console.warn`, so it carried no timestamp where every
+`appendLog` line around it did; it was placed at one end of a 98-second hole by the order it appeared
+in a bucket, and that inference reversed the diagnosis when it was questioned. CDP has carried the
+real clocks all along - epoch milliseconds on console events, monotonic seconds on network events,
+convertible through the one event that carries both - and none of it was being read.
+
+So: two fields, not one. `wsEventsDuringCut` beside a `wsEvents` that the gate may empty, and a
+`timeline` that dates and interleaves everything regardless of which bucket a line ended in. **The
+question a capture will be asked is rarely the question it was written for**, which is the whole
+argument for keeping the raw sequence next to the verdict.
 
 ---
 

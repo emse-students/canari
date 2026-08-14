@@ -441,26 +441,49 @@ can be in.
 
 **Fixed at the seam**: one `internal/service-urls.ts` per service inserts the prefix exactly once, so
 it is not the caller's to write. Putting `/api` in the compose files would have fixed the deployment
-and left the code's defaults wrong. **The verification is a server log, not a client assertion** - a
-message in a `Campagne de test` channel must produce no `notify HTTP 404` in `social-service`.
+and left the code's defaults wrong.
+
+**VERIFIED ON PRODUCTION 2026-08-14 12:00Z, and the verification is a SERVER log because nothing a
+client can see ever changed.** `prefix-verify.mjs` (kept in the harness) posts one marker into the
+campaign channel and reads what `social-service` said about it:
+
+```
+[ChannelService] [CHANNEL_PUSH] channel=2922bd2b… message=f4616d3c… recipients=1
+```
+
+and **nothing after it** - `prefix404: []`, `anyNotFound: []`. Before the fix that line was followed
+by `[CHANNEL_PUSH] notify HTTP 404` every single time.
+
+**An absent warning is only evidence if the path ran**, so the check does not rest on the silence: it
+requires the marker rendered in the channel (718 ms) AND the service's own trace of handling it in
+the same window. A message that never reached `channel.service.ts` would have produced an identical
+silence, and that is the reading the check is built to refuse.
 
 ### WP-RECONNECT-2 - the link came back, the app agreed, and nothing reconnected for 98 seconds
 
 **What is measured**, on `9fd67590` (the bundle that already carries the WP-RECONNECT-1 fix), from
-MSG-10's own capture on 2026-08-14. Sender clock, local time:
+MSG-10's own capture on 2026-08-14. Sender clock, local time - and **the lines without a clock are
+printed without one on purpose, because that is exactly what the capture holds**:
 
 ```
 13:22:08  [OUTBOX] Flush skipped - offline; the queue is kept intact for the next reconnect.
 13:22:11  [CONNECTIVITY] browser reports online
 13:22:11  [LIFECYCLE] Network back online - re-arming watchdogs and reconnecting...
 13:22:11  [LIFECYCLE] App in foreground - re-arming watchdogs and reconnecting...
-          [CONNECTIVITY] server reachable again
-          [WS] Disconnected. Code: 1006, Reason: no reason
+    ??    [CONNECTIVITY] server reachable again
+    ??    [WS] Disconnected. Code: 1006, Reason: no reason
              <- 98 seconds, no line of any kind
 13:23:49  Connection lost. Retrying in 1s... (attempt 1)
 13:23:50  Connecting to Gateway...
 13:23:50  [WS] Connected to Chat Gateway
 ```
+
+**THE TWO UNDATED LINES ARE THE WHOLE QUESTION, AND THE FIRST WRITE-UP OF THIS PAGE ANSWERED IT BY
+INFERENCE.** The app timestamps its `appendLog` lines and not its `console.warn` ones, so
+`[WS] Disconnected` carries no clock and was placed at the START of the hole purely by bucket order.
+Placed there it says the close arrived on time and the app then did nothing for 98 s; placed at the
+END it says the close arrived 98 s late and the retry followed it within a second - which is the
+opposite diagnosis, from the same record. Ordering within a classifier bucket is not a measurement.
 
 and, on the server, `[SEND][send-...] DONE queued=2 realtime=2` at 11:23:50Z. **Nothing was lost.**
 The outbox behaved perfectly - it refused to flush offline and kept the queue - and the message went
@@ -478,19 +501,39 @@ Two facts constrain any explanation:
 - **the resume produced no connection attempt.** There is no `Connecting to Gateway...` at 13:22:11,
   only at 13:23:50 - so `attemptReconnect` either was not called or returned without trying.
 
-**The hypothesis, not yet captured, and it must be captured before it is written as the cause.** The
-app still believed it was connected. CDP offline emulation does not tear down an established
-WebSocket - the fact that forced `net.mjs` to grow `armCut`/`cutHard` - so the browser delivered the
-`close` event very late; until it arrives `isWsConnected` stays true, the resume looks at a
-connection it thinks is healthy and does nothing, and the one mechanism designed to notice a socket
-that is dead without having said so is the watchdog, which is precisely what is missing from the log.
-On that reading `Retrying (attempt 1)` at 13:23:49 IS the `close` finally arriving.
+**THREE MECHANISMS CAN OWN THAT INTERVAL AND THE LOG CANNOT TELL THEM APART.** Reading the code
+(`sessionConnection.ts`, `WebMlsService.ts`) narrows it to exactly these, and no further:
 
-If that holds, the environment is what delayed the `close`, and **the defect is the watchdog not
-covering the interval it exists to cover** - which is a fault a real network would expose the same
-way. Do not fix it by shortening a timer: the rule this area already carries is that termination
-comes from a proof, and "the socket is dead" is provable from the absence of traffic, not from a
-clock being shorter.
+1. **the close arrived late.** CDP offline emulation does not tear down an established WebSocket -
+   the fact that forced `net.mjs` to grow `armCut`/`cutHard` - so `readyState` stays `OPEN` and
+   `isWsConnected` stays true. `resumeConnectionImpl` returns early on `if (ctx.isWsConnected())`,
+   looking at a connection it believes healthy, and does nothing. On this reading
+   `[WS] Disconnected` sits at the END of the hole and `Retrying (attempt 1)` is its consequence;
+2. **a rung was already armed.** `scheduleReconnectImpl` returns without a word when
+   `ctx.timers.reconnect !== null`, so a close delivered on time would be dropped in silence and the
+   recovery would wait out whatever delay the old rung still had;
+3. **an attempt was already in flight.** Same function, same silence, on `ctx.isReconnecting()` -
+   and that flag covers far more than connecting: `openGatewayConnection` holds it across
+   `fetchPendingMessages`, whose byte-halving retry ladder can legitimately run for ~90 s
+   (WP-PENDING-2). A minute and a half inside one `isReconnecting` is not a stall at all.
+
+**A fourth mechanism is REFUTED by the code, not by a guess:** `WebMlsService` runs an 8 s
+application heartbeat that closes a zombie socket after three unanswered pings, ~32 s, and logs
+`[WS] N pings without server response`. That line is absent from the window, so either the heartbeat
+was not running or it was being answered - and which of those is true is itself part of the capture.
+
+**What was done about it, and what was deliberately not.** Nothing was reconciled, shortened or
+guarded, because which mechanism owns the interval is a measurement and it had not been taken. What
+was fixed is the reason it could not be: the two silent branches now name which owner already has the
+next attempt, the resume logs BOTH `isWsConnected` and `isWsOpen()` when it declines (they answer
+different questions about the same socket, and whether they disagreed is the whole of case 1), and
+`watch.mjs` now dates every console line and every socket event from CDP's own clocks - including the
+`Network.webSocketClosed` that `ignoringOfflineCut` used to delete as "the cut", which is the one
+event that dates the close independently of anything the app believes. `msg10.mjs` records the
+timeline and `longestSilence`, so the hole is a value rather than something a human has to notice.
+
+Whatever the capture says, **do not fix this by shortening a timer**: termination comes from a proof,
+and "the socket is dead" is provable from the absence of traffic, not from a clock being shorter.
 
 ### WP-FALSELOSS-2 - the false loss is not gone, it moved to the head of the stream
 

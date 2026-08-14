@@ -609,6 +609,25 @@ The three that generalise beyond it:
   flagged match, never for "clean") still needs an explicit, own TTL - inventing a number rather
   than caching it forever or not at all.
 
+## Service-to-service calls -> [cross-client-testing](cross-client-testing.md#wp-prefix-1---six-of-seven-internal-calls-addressed-a-route-that-does-not-exist-fixed-fed86037)
+
+- **An internal call carries the callee's global prefix, or it is a 404 nobody reads.** Every Nest
+  service here mounts `setGlobalPrefix('api')` while the internal base URLs are configured without
+  it, and six of seven callers omitted it - channel push never delivered, an MLS-device guard reduced
+  to a constant `true`, account deletion never purging chat or social data. **Fix it at the seam:** a
+  `internal/service-urls.ts` per service that inserts the prefix exactly once, so it is not the
+  caller's to write. Putting `/api` in the compose file fixes the deployment and leaves the code's
+  defaults wrong.
+- **A best-effort `.catch(warn)` is designed for a TRANSIENT fault and will hide a PERMANENT one for
+  ever.** A route that has never once worked is indistinguishable, from the caller's side, from a
+  service that is briefly down. If a call is allowed to fail silently, nothing about its own logs
+  will ever tell you it is not merely unlucky - the only instrument that finds this class is the
+  CALLEE's log read over a window in which the path is known to have run.
+- **A convention applied in two places out of three is the worst state a convention can be in**, and
+  the two correct ones are what make the third invisible: `payment/social-internal-client.ts` and the
+  media call both spelt the prefix, so every reading of "how do we call another service here"
+  returned a correct example.
+
 ## Contracts the compiler does not check -> [development](development.md)
 
 Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `mlsWorkerProtocol.ts`,
