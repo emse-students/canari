@@ -36,7 +36,7 @@ meet.
 | Phase | Scripts | State |
 | --- | --- | --- |
 | SETUP | - | 5 of 9 `passed`; SETUP-2 deliberately skipped, SETUP-7/8 owed (8 before CORRUPT and PIN) |
-| MSG | 12 | **3x on `9b7482f1` (2026-08-14)**: 11 of 13 `passed` 3/3, server window `clean` 3/3. Only MSG-5 and MSG-6 dirty (2 of 3 passes), carrying WP-FALSELOSS-2 |
+| MSG | 12 | 11 of 13 `passed` 3/3 on `9b7482f1`, server window `clean` 3/3. MSG-5/MSG-6 `dirty` 2/3; cause fixed, **re-run owed** |
 | every other phase | 22 written, 6 with none | `pending` - not yet run on this build |
 
 ## State vocabulary
@@ -221,86 +221,14 @@ State is the last run, `9b7482f1` x3 (2026-08-14). `3/3` = clean on all three pa
 | MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `passed` 3/3 |
 | MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `passed` 3/3 |
 | MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `passed` 3/3 |
-| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | **`dirty` 2/3** - WP-FALSELOSS-2 |
-| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`dirty` 2/3** - `[OUTBOX] 1 entry still queued` on A1 |
+| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | **`dirty` 2/3** - re-run owed |
+| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`dirty` 2/3** - re-run owed |
 | MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `passed` 3/3 |
 | MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `passed` 3/3 |
 | MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `passed` 3/3 |
 | MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `passed` 3/3 |
 | MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `passed` 3/3 |
 | (server) | Every application container's log over each pass's own window | - | `clean` 3/3 - 8 544 lines, zero unexplained |
-
-### WP-PREFIX-1 - six of seven internal calls addressed a route that does not exist (FIXED `fed86037`)
-
-**SHIPPED `fed86037`, verified on production 2026-08-14 12:00Z.** Six of seven internal
-cross-service calls omitted the callee's `/api` prefix: channel push never delivered on any device,
-`userHasMlsDevices` reduced to a constant `true`, and account deletion left MLS keys, devices,
-messages, posts, follows and memberships in place. All six were `.catch(warn)`. Fixed at the seam -
-one `internal/service-urls.ts` per service. Rules in [durable-rules](durable-rules.md), user-facing
-entry in `CHANGELOG.md`.
-
-### WP-RECONNECT-2 - the link came back, the app agreed, and nothing reconnected for 98 seconds
-
-**CLOSED 2026-08-14 - it was never a reconnect defect.** The 98 s hole between the socket close and
-the drain belonged to the OUTBOX: the same record carries `msToReconnect: 11`. That is WP-OUTBOX-1,
-fixed and verified (`MSG-10 passed 3/3`). What it left behind is in
-[testing-methodology](testing-methodology.md): a claim withdrawn for resting on bucket ORDER rather
-than a clock, and `watch.mjs` now dating every line and socket event from CDP.
-
-### WP-FALSELOSS-2 - the false loss is not gone, it moved to the head of the stream
-
-**What is measured.** On the test DM `642f389a`, at epoch 6, a receiver refuses one frame and files
-it as a loss:
-
-```
-[RUST::DEBUG]   Ciphertext generation out of bounds 438
-        SecretReuseError
-[RUST::DEBUG] MLS decryption failed: group=642f389a… msg_epoch=6 group_epoch=6
-        err=ValidationError(UnableToDecrypt(SecretTreeError(SecretReuseError)))
-[MLS] LOST frame for 642f389a… from d82cd226…: generation consumed but this frame was never
-        processed - the sender's ratchet rewound (SecretReuseError)
-[MLS] Frames are being lost in 642f389a… - reconciling this conversation
-```
-
-**It is a FALSE loss, and the app proves it itself.** The reconciliation the loss triggers comes back
-`[HISTORY_REQ] 642f389a... same state as <peer> (16f34639…) - nothing to do`: both devices hold
-identical history. Nothing was lost. The cost is the wasted round trip and, once in four runs, a
-message that never renders at all - MSG-6 came back `arrived: false`, which is the reason this is a
-Work Package and not a note.
-
-**Not the WP-FALSELOSS-1 shape.** The generations track the HEAD of the stream (296, 340, 379, 438,
-439, then 369, 386), climbing with traffic - a recent frame, not a pre-fix relic behind the cursor.
-Multi-tab is refuted: one app target per profile, all three checked.
-
-**State (2026-08-14).** The 2026-08-13 attribution - receiver consumed the frame twice via the
-archive replay - was fixed in code (`67db4462`, `3070e6ef`, `b5ae5dfe`, `169a9ec2`) and is **REFUTED
-by the re-run**: MSG x3 on `9b7482f1`, symptom survived. The refutation is sound because every fix
-was proven RUNNING - all four are ancestors of `9b7482f1`, W1/W2 were confirmed on the deployed build
-id before the run (they were still on the old one), and A1's APK postdates the last of them.
-
-**Current lead: A1's outbox** - an association across three passes, not a mechanism.
-
-| pass | A1 outbox during MSG-5 | verdict |
-| --- | --- | --- |
-| 1 | no flush | `PASS`, clean |
-| 2 | flushed 4 queued, 2 sent in the DM | `PASS-DIRTY`, refused generation 369 |
-| 3 | flushed 3 queued, 1 sent in the DM | `PASS-DIRTY`, refused generation 386 |
-
-The sender is A1 **by elimination**: the frame is `from d82cd226…`, W1 is itself a `d82cd226` device
-and received it, and no device receives its own frames. The flush is attributed to A1 by its CDP
-timeline and its logcat independently.
-
-**NOT established:** the refusal precedes the observed flush, so the offending send is outside the
-window - the correlation names the path, not the instant. No `[RESUME] … reloaded from mls.bin`
-appears in any capture, so the epoch-only native reload stays a hypothesis with no direct evidence
-([backlog](backlog.md), P2). Owed: a capture opening on A1 BEFORE a flush and held across one. Also
-unexplained, possibly the same thread - A1 carries a persistently non-empty outbox.
-
-Two other facts the re-run pinned down. The generations still track the head (369, 386, climbing with
-traffic), so this is not a pre-fix relic. And A1 carries a **persistently non-empty outbox** - four
-entries, then three, with `[OUTBOX] 1 entry still queued` surviving into MSG-6/7 on both dirty
-passes - which is itself worth explaining and may be the same thread: A1 is the one client without
-the WP-OUTBOX-1 fix, which landed at 14:37, twenty minutes after its APK was built.
 
 ## 2 - TYPE - typing indicators
 
@@ -394,7 +322,7 @@ messages rung 4 produced.
 ## 7 - FWD - forwarding
 
 One message crossing from the channel world into the MLS world - the first composite in the ladder,
-and the phase that found the campaign's central defect (WP-LOSS-1: a reload rewinds the sender's
+and the phase that found the campaign's central defect (a reload rewinds the sender's
 ratchet and the receiver silently drops the next message).
 
 | Id | What it asks | Needs | State |
@@ -467,13 +395,13 @@ something mid-flight, which is why it sits above tiers A-C rather than inside th
 | DEL-3 | Both peers delete the same conversation within a second of each other | `W1 W2` | `pending` - no error either side, neither resurrects it |
 | DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `pending` - no orphan blob left addressable |
 | DEL-5 | Delete, then the peer sends into it anyway | `W1 W2` | `pending` - dropped without a decrypt-failure marker; a deleted group must not look like a loss |
-| DEL-6 | Delete while a drain is in flight for that group | `W1 W2` | `pending` - `Drain start` still gets its `Drain complete` (WP-DRAIN-1's shape) |
+| DEL-6 | Delete while a drain is in flight for that group | `W1 W2` | `pending` - `Drain start` must still get its `Drain complete` |
 | DEL-7 | Delete on W1 while A1 is killed, then wake A1 | `+push` | `pending` - A1 converges to deleted, and must not re-create the row from a queued frame |
 | DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | `+snapshot` | `pending` - the absurd one: the group returns to WASM while the server has none, and must be purged as an orphan rather than left soliciting for ever |
 | DEL-9 | Delete the conversation currently OPEN on screen | `W1 W2` | `pending` - the view leaves cleanly, the composer cannot send into a removed row |
 | DEL-10 | Delete while offline, then reconnect | `W1 W2` | `pending` - reaches the server once, and does not re-broadcast on every later reconnect |
 
-Every row is also a place to re-read the three states WP-HISTGHOST-1 was about - the durable marker,
+Every row is also a place to re-read the three states of a deleted conversation - the durable marker,
 the reactive phase, the scheduled burst - because they are exactly the kind of thing cleared on one
 path and forgotten on the other nine.
 
@@ -485,7 +413,7 @@ path and forgotten on the other nine.
 | TAB-2 | Tab closed, message arrives, tab reopened: present exactly once | `W1 W2` | `pending` |
 | TAB-3 | Whole browser killed and relaunched: all arrive, no re-login | `W1 W2` | `pending` |
 | TAB-3b | Cold-start timing, five runs | `W1 W2` | `pending` - **one unexplained run stands on the record**: 77.7 s to render with everything ready at 6.9 s, not reproduced in four further runs. If it recurs, capture everything between `Drain start` and the decrypt |
-| TAB-4 | Two tabs of the SAME account: no double-send, no epoch fight | `W1 W2` | `pending` - produced both WP-HIDDEN-1 and WP-MULTITAB-1 |
+| TAB-4 | Two tabs of the SAME account: no double-send, no epoch fight | `W1 W2` | `pending` |
 | TAB-5 | Reload fired under 100 ms after submit: sent once or clearly queued, never lost | `W1 W2` | `pending` |
 | TAB-6 | Delete the refresh cookie, then act: clean re-login, not a silent empty list | `+user` | `pending` - the re-login costs the 2FA, so it batches to the end |
 | TAB-7 | Offline -> act -> online, tab never reloaded | `W1 W2` | `pending` |
@@ -511,8 +439,8 @@ This rung opens by sweeping every `+A1` row left behind in tiers B and C.
 | LIFE-2 | Background (`HOME`): notification carries the real decrypted text | `+push` | `pending` |
 | LIFE-3 | Killed - **swipe from recents, not `am force-stop`** | `+push` | `pending`. Force-stop is worth running but answers a different question: Android's STOPPED state cancels every FCM broadcast until a manual launch |
 | LIFE-4 | Doze (`dumpsys deviceidle force-idle`) | `+push` | `pending` |
-| LIFE-5 | After a reboot, app never opened - exercises `CanariBootReceiver` | `+push` `+user` | `pending` - needs the unlock pattern, which `wm dismiss-keyguard` cannot answer. Its observation half once found WP-DIRECTBOOT-1 |
-| LIFE-6 | Offline (both radios) | `+A1` | `pending` - produced WP-PENDING-1 and WP-PENDING-2 |
+| LIFE-5 | After a reboot, app never opened - exercises `CanariBootReceiver` | `+push` `+user` | `pending` - needs the unlock pattern, which `wm dismiss-keyguard` cannot answer |
+| LIFE-6 | Offline (both radios) | `+A1` | `pending` |
 | LIFE-7 | Notification permission revoked mid-life | `+push` | `pending` |
 | LIFE-8 | Process death (`am kill`), keeping WorkManager state | `+push` | `pending` |
 
@@ -528,11 +456,11 @@ This rung sweeps every `+push` row left behind above it.
 | NOTIF-1 | App killed, DM arrives: decrypted notification with real content | `+push` | `pending` - LIFE-8's assertion, recorded here too |
 | NOTIF-2 | App killed, a **commit** pushed, then a message | `+push` | `pending` - the epoch gap. Background decrypt applies no commit, so a generic fallback is CORRECT; what must hold is that opening the app recovers |
 | NOTIF-3 | The same, message several epochs later | `+push` | `pending` |
-| NOTIF-4 | Read on W1 while A1 is killed: notification dismissed on A1 | `+push` | `pending` - failed three times before WP-NOTIF-1 |
+| NOTIF-4 | Read on W1 while A1 is killed: notification dismissed on A1 | `+push` | `pending` |
 | NOTIF-5 | Per-channel level muted on W1: A1 does not notify, message still arrives | `+push` | `pending` |
 | NOTIF-6 | Quick reply from the shade (= device check K) | `+push` | `pending` |
 | NOTIF-7 | Tap -> deep link into the conversation, **backgrounded** | `+push` | `pending` |
-| NOTIF-7b | The same with the app **KILLED** | `+push` | `pending` - produced WP-DEEPLINK-1, and its passing re-run's log produced WP-RELOAD-DL-1 |
+| NOTIF-7b | The same with the app **KILLED** | `+push` | `pending` |
 | NOTIF-8 | Doze + message: delivered, or on wake - record which | `+push` | `pending` - LIFE-4's assertion |
 | NOTIF-9 | Two devices of one user: exactly one notification surface behaves | `+push` | `pending` |
 | NOTIF-10 | Airplane mode 10 min, 5 messages, then reconnect | `+push` | `pending` - all five must survive; the SHADE collapsing them is an OS behaviour, not a loss |
@@ -575,7 +503,7 @@ of every call check, not a separate one.
 
 ## 16 - HEAL - does a broken group repair itself?
 
-Everything WP-PENDING-2 and WP-DRAIN-1 proved was proved **on the phone**. The fixes are shared
+Everything the queue and drain work proved was proved **on the phone**. The fixes are shared
 TypeScript, but "the same code" is an argument, not a measurement, and the two clients do not break
 the same way: the web MLS state is IndexedDB rather than `mls.bin`, the recovery runs against a live
 WebSocket instead of a cold reconnect, and only the browser has a second tab that can hold the leader
@@ -587,10 +515,10 @@ holds, which is why no rung may follow it without a teardown.
 
 | Id | How the group is broken | Needs | State |
 | --- | --- | --- | --- |
-| HEAL-W1 | Restore a snapshot from BEFORE a membership commit, then have the peer send | `+snapshot` | `pending` - epoch gap. A `healed` verdict after applying ZERO commits is WP-PENDING-2 reappearing |
+| HEAL-W1 | Restore a snapshot from BEFORE a membership commit, then have the peer send | `+snapshot` | `pending` - epoch gap. A `healed` verdict after applying ZERO commits is a regression |
 | HEAL-W2 | Restore from BEFORE the group was joined at all | `+snapshot` | `pending` - see below; its verdict was rewritten and the old form could not pass |
 | HEAL-W3 | Freeze one client while the peer advances its ratchet past 2 000 frames in one epoch | `+snapshot` | `pending` - generation gap. `TooDistantInTheFuture` must beat `GAP_QUEUED`, as it does on Android. The expensive one: a scripted volume run |
-| HEAL-W4 | HEAL-W2 with a SECOND tab holding the leader role | `+snapshot` | `pending` - **no prior art on either client**. The WP-MULTITAB-1 seam meeting the recovery seam |
+| HEAL-W4 | HEAL-W2 with a SECOND tab holding the leader role | `+snapshot` | `pending` - **no prior art on either client**: the multi-tab seam meeting the recovery seam |
 | HEAL-repair | Does the history diff repair a rewound sender end to end? | `+snapshot` | `pending` - and the assertion is now quantitative: how much traffic did the repair cost? The deleted mechanism ran at ~450 frames/min for ten minutes while repairing nothing, so a run whose frame rate does not fall back to the ordinary send rate has found something |
 
 Every run of a HEAL check needs, without exception: `reload.mjs` **first** (both browsers on the
@@ -774,33 +702,6 @@ outright. Worth recording what is NOT there: **no access token in any web storag
 
 ---
 
-## What the campaign has produced
-
-Fourteen defects, every one found by a check or by the log of a check. The narrative of each is in
-`CHANGELOG.md`; the rule each taught is in `CLAUDE.md`; open ones are Work Packages there.
-
-| Defect | Found by | State |
-| --- | --- | --- |
-| **WP-LOSS-1** - a reload rewinds the sender's ratchet, and the receiver silently drops the next message | FWD-3 / FWD-5, then reconciliation | shipped, both halves verified on Android: 6/6 delivered with zero `LOST frame`, and the repair heals 14/14 on a forced rewind |
-| **WP-HIDDEN-1** - a backgrounded tab stops receiving, silently | TAB-4 | shipped, verified |
-| **WP-MULTITAB-1** - two tabs of one account diverge their ratchet | TAB-4 | shipped, verified (9/9 where it lost 4 of 9) |
-| **WP-ECHO-1** - the sender loses its OWN message across a reload | reconciliation | shipped, verified on both clients (11/11 after a reload) |
-| **WP-SQLTXN-1** - a pooled connection made `BEGIN` and `COMMIT` two conversations, so writes failed for good | the noise of a VOID run | shipped, verified on the phone (25 drains, zero of the three error strings) |
-| **WP-PENDING-1** - a catch-up pull that can never make partial progress | LIFE-6 | shipped, verified against a built backlog (1 100 sends into a parked A1, depth to 0). The ORIGINAL 10 s timeout is **not** reproduced by that run and is not claimed - see [chat-delivery](services/chat-delivery.md) |
-| **WP-PENDING-2** - a frame too far ahead was ACKed off the server as delivered | LIFE-6 | shipped, seen firing end to end |
-| **WP-DRAIN-1** - a recovery awaited inside the drain, deadlocking it | verifying WP-HIDDEN-1 | shipped |
-| **WP-GHOST-1** - a revoked device wrote its own routing membership back | the queue's size | shipped, verified on prod (98 210 rows -> 0) |
-| **WP-NOTIF-1** - an Android notification not dismissed when read elsewhere | NOTIF-4 | shipped, verified on the device |
-| **WP-DEEPLINK-1** - the deep-link plugin was never granted its permission | NOTIF-7b | shipped, verified on the device |
-| **WP-RELOAD-DL-1** - a WebView reload replays the launch deep link | the log of a **passing** re-run | shipped, verified with a negative control that re-creates it on demand |
-| **WP-RETRANSMIT-1** - a decrypt-failure repair that fed itself | a user noticing a sync banner | shipped, then the whole mechanism deleted |
-| **WP-HISTBANNER-1** - two peers both awaiting history waited on each other for ever | the user seeing the banner on a healed conversation | shipped, verified live on prod |
-| **WP-ANR-1** - the MLS state decoded one byte at a time, freezing the app after every store update | the user seeing "Canari ne repond pas" | shipped, verified on the phone (110 queued, drained in **2 331 ms** of a 60 000 ms deadline where it took 58 600, 100 encrypts on **one** keystore load, zero ANR - on a DEBUG build, so release clears it a fortiori) |
-| **WP-HISTGHOST-1** - a marker, its reactive phase and its scheduled burst all outlived the conversation | DEL-1's pre-flight audit | shipped |
-
-Still open and needing a decision rather than a patch: **WP-KBD-1** (the composer behind the soft
-keyboard) and **WP-DRAIN-2** (the inbound drain has no watchdog).
-
 ## A commit from another contributor owes a WEB pass and a MOBILE pass
 
 Their tests establish that their code compiles and that their units behave. They cannot establish
@@ -814,7 +715,7 @@ panel reading four independent backend measurements, one of them across a servic
 exact shape that fails only on a deployment, silently, when a variable is missing from a compose
 `environment:` block; the MOBILE pass is the only one that can see a NEW Rust command
 (`get_local_storage_usage`) that the web build never calls, and a Tauri v2 command not granted in
-`capabilities/` builds, ships, installs and then rejects on a real device (WP-DEEPLINK-1).
+`capabilities/` builds, ships, installs and then rejects on a real device.
 
 Three things that pass taught, and they generalise to every future one:
 

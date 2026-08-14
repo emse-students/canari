@@ -28,6 +28,19 @@ the one-liner here.
 Everything that touches the device key, the PIN, `mls.bin` or an unlock path is on those two pages.
 The four traps worth seeing without opening one:
 
+- **NO STATE REPLACEMENT MAY REWIND THIS DEVICE'S OWN SEND RATCHET, AND AN EPOCH CANNOT SEE THAT
+  IT DID.** Every seam that swaps the live MLS client (off-thread catch-up, native resume reload)
+  needs TWO guards: epoch-monotonic, and not-overtaken-by-a-local-send. A send moves a GENERATION
+  INSIDE one epoch, so the epoch guard reports no regression while the ratchet goes back, and the
+  next frame re-issues a spent generation the peer refuses as `SecretReuseError`. Web had the second
+  guard for a month while the native resume had only the first - and the comment saying "keep the
+  two in sync" was itself only about the first. See
+  [mls-desync-prevention](protocols/mls-desync-prevention.md).
+- **A RULE THAT EACH CALL SITE MUST REMEMBER IS A RULE THE NEXT CALL SITE WILL NOT.** The outbound
+  checkpoint lived at 2 of the 18 call sites that reach a send; the other 16 advanced the ratchet and
+  persisted nothing. It is now in `BaseMlsService.sendMessage`, which is concrete for exactly this
+  reason - a platform supplies only `encryptForSend`, and cannot opt out of the invariants.
+
 - An at-rest envelope change needs a reader for the previous format in the SAME commit - and that
   reader only buys the FORWARD direction. Backwards is a separate promise nobody makes by default:
   once a device has saved in the new format, every build older than that commit is a total loss of
@@ -617,7 +630,7 @@ The three that generalise beyond it:
   flagged match, never for "clean") still needs an explicit, own TTL - inventing a number rather
   than caching it forever or not at all.
 
-## Service-to-service calls -> [cross-client-testing](cross-client-testing.md#wp-prefix-1---six-of-seven-internal-calls-addressed-a-route-that-does-not-exist-fixed-fed86037)
+## Service-to-service calls -> [api-surface](protocols/api-surface.md#internal-cross-service-calls)
 
 - **An internal call carries the callee's global prefix, or it is a 404 nobody reads.** Every Nest
   service here mounts `setGlobalPrefix('api')` while the internal base URLs are configured without

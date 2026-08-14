@@ -105,28 +105,19 @@ device on the fleet is in the runaway state any more - the deepest is now 234 ro
 clients that have not updated yet. Mechanism, follow-on faults and residual on
 [chat-delivery](docs/wiki/services/chat-delivery.md) and [backlog](docs/wiki/backlog.md).
 
-**WP-FALSELOSS-2 IS OPEN, AND ITS 2026-08-13 ATTRIBUTION IS REFUTED (2026-08-14).** A receiver
-refuses a RECENT frame on the test DM (`642f389a`, epoch 6) with `SecretReuseError` -> `[MLS] LOST
-frame` -> a reconciliation that answers `same state as <peer> - nothing to do`: **nothing is actually
-lost, the app proves that itself.** The receiver-side fix (the replay telling live delivery what it
-consumed) was to be believed only after MSG re-ran on the deployed bundle; **it has, three times on
-`9b7482f1`, and the symptom survived** - so that diagnosis is incomplete. The refutation is sound
-because every fix was proven RUNNING: all four commits are ancestors of `9b7482f1`, W1/W2 were
-confirmed on the deployed build id BEFORE the run (they were still on the old one), and A1's APK
-postdates the last of them.
-
-**The lead is now A1's OUTBOX, on an association across three passes, not a mechanism.** The two
-dirty MSG-5 passes are exactly the two in which A1's outbox flushed queued entries into the DM
-(generations 369, 386); the clean pass had no flush. The sender is A1 **by elimination** - the frame
-is `from d82cd226…`, W1 is itself a `d82cd226` device and received it, and no device receives its own
-frames. **Not established:** the refusal PRECEDES the observed flush, so the offending send is
-outside the window; and no `[RESUME] … reloaded from mls.bin` line appears in any capture, so the
-epoch-only native reload stays a hypothesis with no direct evidence ([backlog](docs/wiki/backlog.md),
-P2). Next capture must open on A1 BEFORE a flush and hold across it. Also unexplained and possibly
-the same thread: A1 carries a **persistently non-empty outbox** (4 -> 3 entries, `1 entry still
-queued` surviving into MSG-6/7). **Do not fix it by suppressing the trigger** - firing on an
-unreadable frame is correct. Full evidence in
-[cross-client-testing](docs/wiki/cross-client-testing.md#wp-falseloss-2---the-false-loss-is-not-gone-it-moved-to-the-head-of-the-stream).
+**THE FALSE LOSS IS FIXED AT ITS CAUSE (2026-08-14) - VERIFICATION ON PROD IS OWED.** A state
+replacement may not rewind this device's own send ratchet, and an EPOCH cannot see that it did: a
+send moves a GENERATION inside one epoch. Web has guarded both halves since the same defect was
+measured there (`installUnlessOvertaken`); the NATIVE resume reload had only the epoch half, and A1
+is the native client. Second half: the outbound checkpoint sat at 2 of the 18 call sites that reach
+a send, so `mls.bin` was structurally behind the live client. `sendMessage` is now concrete in
+`BaseMlsService` and carries all three outbound invariants; platforms supply only `encryptForSend`.
+The `hidden` handoff now flushes BEFORE releasing the native foreground guard. Mechanism on
+[mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md) (section 8), two rules in
+[durable-rules](docs/wiki/durable-rules.md). **The outbox correlation was really a RESUME
+correlation** - the outbox flush runs inside the resume sequence, right after the reload. Gates
+green, 1450 unit tests, two new suites pinning both halves. **Owed: MSG x3 on the deployed bundle
+with A1 reinstalled.**
 
 **Found only because the observation gate was closed.** `SecretReuseError` and `LOST frame` were
 `notable`, and `notable` did not break `clean`, so MSG-6 recorded `PASS` with `receiverClean: true`
@@ -143,7 +134,7 @@ designed for a transient fault met a permanent one. Fixed at the seam (`internal
 service), not at the call sites. **Found by `srvlog.mjs`, invisible to every client**, and verified
 the same way - `[CHANNEL_PUSH] … recipients=1` with zero 404, plus the positive proof the path ran.
 Full enumeration on
-[cross-client-testing](docs/wiki/cross-client-testing.md#wp-prefix-1---six-of-seven-internal-calls-addressed-a-route-that-does-not-exist-fixed-fed86037);
+[api-surface](docs/wiki/protocols/api-surface.md#internal-cross-service-calls);
 three rules in [durable-rules](docs/wiki/durable-rules.md).
 
 **WP-RECONNECT-2 IS CLOSED - IT WAS NEVER A RECONNECT DEFECT.** The 98 s hole in MSG-10's capture

@@ -9,7 +9,6 @@
 import { tick } from 'svelte';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
-import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { getToken } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
 import {
@@ -1136,7 +1135,6 @@ export function useMessaging() {
           sentAt: Date.now(),
         });
         await mlsService.sendMessage(convo.id, protoBytes, messageId);
-        scheduleOutboundMlsPersist();
         const payload = serializeEnvelope(mkMediaEnvelope({ ...m }, env.caption));
         await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
         return { success: true };

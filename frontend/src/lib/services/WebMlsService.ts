@@ -2,14 +2,6 @@ import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSes
 import { encryptMlsStateOffThread } from '$lib/mls-client/mlsEncryptWorkerSession';
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
-import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
-// TEMPORARY (WP-FALSELOSS-2) - remove with `ratchetRewindTrace.ts`.
-import {
-  traceSend,
-  traceSessionOpen,
-  traceSessionFinish,
-  type SwapOutcome,
-} from '$lib/mls-client/ratchetRewindTrace';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
   loadAndInitWasm,
@@ -90,8 +82,14 @@ export class WebMlsService extends BaseMlsService {
    * live client holds would either disappear or move to a lower epoch in `candidate`.
    * Returns true when the swap happened, false when the live client was kept.
    *
+   * THIS IS HALF THE GUARD, AND ON ITS OWN IT IS THE ONE THAT MISSES. An epoch answers "is this
+   * snapshot from an older epoch"; a send moves a GENERATION INSIDE one epoch and is invisible here.
+   * The other half is {@link installUnlessOvertaken}, which every replacement seam must also pass.
+   *
    * Native mirror: `MlsManager::reload_is_monotonic` (mls-core), applied by
-   * `recharger_mls_au_resume` in `src-tauri` on foreground resume. Keep the two in sync. [[C2]]
+   * `recharger_mls_au_resume` in `src-tauri` on foreground resume - paired there with the
+   * unpersisted-send watermark in `TauriMlsService.reloadStateFromDisk`, which is the native half of
+   * `installUnlessOvertaken`. Keep BOTH halves in sync, on BOTH platforms. [[C2]]
    */
   private swapClientMonotonic(candidate: any): boolean {
     const current = this.client;
@@ -941,25 +939,9 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** WASM client wrapper - encrypts plaintext via `this.client.send_message_bytes`, then POSTs the ciphertext to the delivery service. */
-  async sendMessage(
-    groupId: string,
-    messageBytes: Uint8Array,
-    _messageId?: string,
-    frameDelivery: FrameDelivery = DELIVERY.visible
-  ): Promise<Uint8Array> {
-    // NOTHING LEAVES THIS DEVICE WHILE IT IS STILL CATCHING UP. Encrypting here advances the send
-    // ratchet of the LIVE client, which a catch-up is about to replace with a copy taken before it -
-    // so the frame is emitted at a generation the swap then hands back out. Ordered rather than
-    // detected: the guard in `createDecryptSession` exists for the paths that forget.
-    await this.waitForCatchUpIdle();
-    const encryptedBytes: Uint8Array = this.client.send_message_bytes(groupId, messageBytes);
-    this.noteLiveMutation();
-    // TEMPORARY (WP-FALSELOSS-2): this send is NOT under the MLS lock, so it can land inside an
-    // open catch-up window. See `ratchetRewindTrace`. Delete with that module.
-    traceSend(groupId, encryptedBytes, frameDelivery);
-    const proto = toBase64(encryptedBytes);
-    await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
-    return encryptedBytes;
+  /** WASM client wrapper - advances the live send ratchet. Ordering and persistence: `sendMessage`. */
+  protected async encryptForSend(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array> {
+    return this.client.send_message_bytes(groupId, messageBytes) as Uint8Array;
   }
 
   /** WASM client wrapper - decrypts a raw MLS ciphertext via `this.client.process_incoming_message_bytes`; returns null for commit or proposal frames. */
@@ -994,10 +976,6 @@ export class WebMlsService extends BaseMlsService {
 
     const release = await this.messageScheduler.acquireMlsLock();
 
-    // TEMPORARY (WP-FALSELOSS-2): the window that matters runs from the SNAPSHOT to the SWAP, not
-    // from the lock, because `sendMessage` never takes the lock. See `ratchetRewindTrace`.
-    const traceWindow = traceSessionOpen(groupId, 'worker');
-
     // Closes the gate every send waits on, and remembers where the live client stood. The gate is
     // the fix; the count below is the proof it held - if it ever differs at the swap, a send got
     // through and the state about to be installed would undo it.
@@ -1028,8 +1006,7 @@ export class WebMlsService extends BaseMlsService {
             await seq.finish();
           } finally {
             // The sequential path mutates the live client in place: no snapshot, so no swap and no
-            // rewind. Traced all the same, so the log distinguishes "did not happen" from "not run".
-            traceSessionFinish(traceWindow, groupId, 'not-attempted');
+            // rewind - nothing here can rewind a ratchet.
             this.endCatchUp();
             release();
           }
@@ -1048,9 +1025,6 @@ export class WebMlsService extends BaseMlsService {
         return session.decryptPage(messageBytesList);
       },
       finish: async () => {
-        // Starts as "not attempted" and only moves once a swap is actually asked for: a session that
-        // decrypted no page never asks, and calling that a refusal names a guard that never ran.
-        let swapOutcome: SwapOutcome = 'not-attempted';
         try {
           if (usedWorker) {
             const finalState = await session.finalize();
@@ -1068,7 +1042,6 @@ export class WebMlsService extends BaseMlsService {
               mutationsAtSnapshot,
               () => this.reloadClientFromPlainState(finalState)
             );
-            swapOutcome = swapped ? 'installed' : 'refused';
             if (swapped) this.lastKnownState = finalState.slice();
           }
         } catch (e) {
@@ -1076,7 +1049,6 @@ export class WebMlsService extends BaseMlsService {
           // (worker mode never mutates it). The conversation is retried on the next catch-up.
           console.warn('[MLS] decrypt session finalize failed, live client left at snapshot:', e);
         } finally {
-          traceSessionFinish(traceWindow, groupId, swapOutcome);
           this.endCatchUp();
           session.dispose();
           release();

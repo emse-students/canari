@@ -8,7 +8,6 @@ import { encodeAppMessage, mkText, mkReply, mkMedia, mediaKindToType } from '$li
 import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
-import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -368,7 +367,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       }
 
       await mlsService.sendMessage(terminalId, proto, entry.id, deliveryForOutboxEntry(entry));
-      scheduleOutboundMlsPersist();
       // Swap the placeholder for the uploaded media before persisting the sent copy.
       if (mediaContent) updateMessageContent(entry.id, mediaContent);
       await persistSent(terminalId, entry.id);

@@ -4,6 +4,19 @@ Full endpoint inventory across all services. The Nginx routing table in `docs/wi
 
 Auth on all protected routes is injected by Nginx (`auth_request`): services receive `X-User-Id`, `X-Logged-In`, `X-Global-Admin` headers.
 
+## Internal cross-service calls
+
+**AN INTERNAL CALL CARRIES THE CALLEE'S GLOBAL PREFIX, OR IT IS A 404 NOBODY READS.** Every Nest
+service mounts `setGlobalPrefix('api')`, while the internal base URLs are configured without it.
+Six of seven internal callers omitted it, and because all six were `.catch(warn)` the platform ran
+that way indefinitely: channel push never delivered on any device, `userHasMlsDevices` reduced to a
+constant `true` (not a degraded guard - none at all), and account deletion left MLS keys, devices,
+messages, posts, follows and memberships in place.
+
+Fixed at the seam rather than at the call sites: one `internal/service-urls.ts` per service. The
+failure mode is the lesson - a `.catch(warn)` written for a transient fault met a permanent one and
+turned it into silence. Found by reading the server logs (`srvlog.mjs`), invisible to every client.
+
 ---
 
 ## chat-gateway (port 3000)

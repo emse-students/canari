@@ -84,6 +84,7 @@
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
+  import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
 
   /** Remote users to show on the call overlay (avatars / labels), excluding the local user. */
@@ -1065,11 +1066,19 @@
         if (isTauriRuntime()) {
           globalSession.pauseConnection();
         }
-        // Release the native foreground guard so the background JNI engines may write mls.bin
-        // again (they abstain while the foreground is active). It would expire on its own after
-        // ~30s; this makes the clean background transition immediate so background delivery is not
-        // delayed. (C1/FCM3)
-        invokeNative('pause_mls_foreground');
+        // CHECKPOINT FIRST, THEN RELEASE THE GUARD - the order is the whole point, not a nicety.
+        // Releasing it is what lets a background JNI engine load `mls.bin` and advance the ratchet
+        // from it; if the foreground's own advances have not landed yet, that engine starts from a
+        // state already behind and re-issues generations this device has spent, which the peer
+        // refuses as `SecretReuseError`. The guard would expire on its own after ~30s, so nothing
+        // here is load-bearing on a clock: it only makes the handoff immediate AND ordered.
+        void flushActiveMlsStateEncrypted()
+          .catch((e) => {
+            // Loud, and the release still happens: holding the guard on a failed flush would
+            // strand background delivery entirely, which is a worse failure than the one above.
+            console.error('[MLS] Checkpoint before backgrounding failed:', e);
+          })
+          .finally(() => invokeNative('pause_mls_foreground'));
         return;
       }
       if (document.visibilityState === 'visible' && globalSession.isLoggedIn) {

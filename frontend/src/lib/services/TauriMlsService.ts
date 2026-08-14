@@ -9,7 +9,6 @@ import {
   type MlsInitOptions,
 } from '$lib/mls-client';
 import { mapNativeBatchDecryptResults } from '$lib/mls-client/mlsBatchDecrypt';
-import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
@@ -46,6 +45,14 @@ export class TauriMlsService extends BaseMlsService {
   // Device key kept in memory after init() to re-encrypt the MLS state after each
   // message without asking the user for the PIN again.
   private _deviceKeyB64 = '';
+  /**
+   * Value of {@link liveMutations} at the last write to `mls.bin`.
+   *
+   * The difference with the live counter is the number of send-ratchet advances the file does NOT
+   * contain - the one thing that makes a resume reload destructive. A watermark rather than a flag
+   * because the question is "how far behind is the file", asked between two instants.
+   */
+  private _mutationsAtLastPersist = 0;
 
   constructor() {
     super('tauri', fetch);
@@ -517,10 +524,15 @@ export class TauriMlsService extends BaseMlsService {
   /** Tauri-native `invoke` wrapper - calls `sauvegarder_mls_et_persister` to encrypt and persist the MLS state to the native mls.bin file using the device key. */
   async saveState(deviceKeyB64: string): Promise<Uint8Array> {
     await this.awaitRustMutations();
+    // Read the counter BEFORE the invoke, so a send that lands DURING it stays counted as
+    // unpersisted. Erring that way costs a refused reload; erring the other way costs a rewound
+    // ratchet, which is the whole defect this watermark exists to prevent.
+    const mutationsAtSnapshot = this.liveMutations;
     // Native command handles save_encrypted_with_key + mls.bin write in one invoke
     // to avoid JS Array.from(…) conversion on large state blobs (notably Android).
     const raw = await invoke<number[]>('sauvegarder_mls_et_persister', { deviceKeyB64 });
     const bytes = Uint8Array.from(raw);
+    this._mutationsAtLastPersist = mutationsAtSnapshot;
     return bytes;
   }
 
@@ -534,10 +546,33 @@ export class TauriMlsService extends BaseMlsService {
    *
    * A missing device key means there is nothing to decrypt with -- skip rather than throw, since
    * this runs on every resume and a failure here must not break the resume sequence.
+   *
+   * THE EPOCH GUARD IN RUST IS NOT ENOUGH, AND THIS IS THE NATIVE HALF OF `installUnlessOvertaken`.
+   * `reload_is_monotonic` refuses a candidate that would move a live group to a LOWER epoch, which
+   * is evidence for "is this snapshot from an older epoch" and for nothing else. What a send moves
+   * is a GENERATION INSIDE one epoch, which is invisible to it: the reload is accepted, the live
+   * ratchet goes back to where `mls.bin` left it, the next frame re-issues a spent generation and
+   * the peer refuses it as `SecretReuseError` - reported, correctly, as "the sender's ratchet
+   * rewound". Web has had this guard at every off-thread swap since the same defect was measured
+   * there; the doc on `swapClientMonotonic` says to keep the two in sync, and until now only the
+   * epoch half was.
    */
   override async reloadStateFromDisk(): Promise<void> {
     if (!this._deviceKeyB64) {
       console.warn('[MLS][Tauri] reloadStateFromDisk skipped - no device key in session.');
+      return;
+    }
+    const unpersisted = this.liveMutations - this._mutationsAtLastPersist;
+    if (unpersisted > 0) {
+      // Do not reload, and do not leave the divergence on disk either: persisting the live state
+      // is what makes the NEXT resume safe, and it is the only ordering under which a background
+      // engine starting later reads a state that is not already behind.
+      console.warn(
+        `[MLS][Tauri] Resume reload SKIPPED: ${unpersisted} send(s) have not reached mls.bin - reloading would rewind this device's own send ratchet. Persisting the live state instead.`
+      );
+      await this.saveState(this._deviceKeyB64).catch((e) => {
+        console.error('[MLS][Tauri] Persist of the live state after a skipped reload failed:', e);
+      });
       return;
     }
     try {
@@ -797,26 +832,13 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Tauri-native `invoke` wrapper - encrypts plaintext via `envoyer_message_bytes`, then POSTs the ciphertext to the delivery service. */
-  async sendMessage(
-    groupId: string,
-    messageBytes: Uint8Array,
-    _messageId?: string,
-    frameDelivery: FrameDelivery = DELIVERY.visible
-  ): Promise<Uint8Array> {
-    // Same ordering as the web path. Native decrypts in place, so nothing here can be UNDONE by a
-    // swap - but "a send never races a catch-up" is a property of the protocol, not of whichever
-    // platform happens to survive breaking it, and keeping the two seams identical is what stops
-    // one of them drifting into being the exception nobody remembers.
-    await this.waitForCatchUpIdle();
+  /** Native `invoke` wrapper - advances the live send ratchet. Ordering and persistence: `sendMessage`. */
+  protected async encryptForSend(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array> {
     const res = await invoke<number[]>('envoyer_message_bytes', {
       groupId,
       messageBytes: Array.from(messageBytes),
     });
-    const encryptedBytes = Uint8Array.from(res);
-    this.noteLiveMutation();
-    const proto = toBase64(encryptedBytes);
-    await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
-    return encryptedBytes;
+    return Uint8Array.from(res);
   }
 
   /** Tauri-native `invoke` wrapper - decrypts a raw MLS ciphertext via `recevoir_message_bytes`; returns null for commit or proposal frames. */

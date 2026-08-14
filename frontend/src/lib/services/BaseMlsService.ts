@@ -12,7 +12,8 @@ import {
   createSequentialDecryptSession,
 } from '$lib/mls-client/mlsDecryptSession';
 import { DeviceRevokedError, type MlsDeliveryFetch } from '$lib/mls-client/mlsDeliveryApi';
-import type { FrameDelivery } from '$lib/mls-client/frameDelivery';
+import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
+import { scheduleOutboundMlsPersist } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { HistoryRequestOutcome, IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
@@ -1512,12 +1513,49 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   abstract processWelcome(welcomeBytes: Uint8Array, ratchetTreeBytes?: Uint8Array): Promise<string>;
-  abstract sendMessage(
+  /**
+   * Encrypts one application message against the LIVE client, advancing this device's send ratchet.
+   * Platform-specific and nothing else: every rule that has to hold around a send lives in
+   * {@link sendMessage}, which is the only caller.
+   */
+  protected abstract encryptForSend(groupId: string, messageBytes: Uint8Array): Promise<Uint8Array>;
+
+  /**
+   * Encrypts an application message and puts it on the wire.
+   *
+   * CONCRETE, AND SHARED BY BOTH PLATFORMS ON PURPOSE. Three things must happen around every send,
+   * and each of them was previously the responsibility of the caller:
+   *
+   * - nothing leaves this device while a catch-up is open ({@link waitForCatchUpIdle}), because a
+   *   send advances the ratchet of a client the catch-up is about to replace with a copy taken
+   *   before it;
+   * - the advance is COUNTED ({@link noteLiveMutation}), which is what lets every state-replacement
+   *   seam refuse a candidate that predates it;
+   * - the advance is CHECKPOINTED, because the moment the frame is on the wire the peer has consumed
+   *   that generation, and a ratchet that only moved in RAM is a ratchet the next load puts back.
+   *
+   * It was a template method the day the third rule was found at TWO of the EIGHTEEN call sites
+   * that reach a send - the sixteen others (read receipts, reactions, edits, deletes, pins, group
+   * control, calls) advanced the ratchet and checkpointed nothing. A rule that each caller has to
+   * remember is a rule the next caller will not, so it is enforced here or not at all.
+   */
+  async sendMessage(
     groupId: string,
     messageBytes: Uint8Array,
-    messageId?: string,
-    delivery?: FrameDelivery
-  ): Promise<Uint8Array>;
+    _messageId?: string,
+    frameDelivery: FrameDelivery = DELIVERY.visible
+  ): Promise<Uint8Array> {
+    await this.waitForCatchUpIdle();
+    const encryptedBytes = await this.encryptForSend(groupId, messageBytes);
+    this.noteLiveMutation();
+    // Coalesced, never deferred, and deliberately NOT awaited: `saveState` is an Argon2 round trip
+    // on web, so awaiting it here would put it on the latency of every message. What protects the
+    // window it leaves open is the overtaken guard at each replacement seam, not this call.
+    scheduleOutboundMlsPersist();
+    const proto = toBase64(encryptedBytes);
+    await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
+    return encryptedBytes;
+  }
   abstract processIncomingMessage(
     groupId: string,
     messageBytes: Uint8Array

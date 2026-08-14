@@ -145,46 +145,16 @@ bounds the backlog of a device that simply never returns.
 
 ## Protocol and delivery
 
-### P2 - the NATIVE resume reload has the same epoch-only guard, and nothing else guards it
+### P3 - the composer sits behind the soft keyboard on Android
 
-**Not measured. Filed as a candidate defect found by looking for a SHAPE, which is how the second
-instance of it was found.** Do not treat the reasoning below as a result.
+Known, reproduced by hand, never turned into a Work Package because it needs a layout decision rather
+than a patch: the message composer is overlapped by the soft keyboard on some Android keyboards.
 
-The shape is: *snapshot the state, work or wait elsewhere, install the snapshot over the live
-client.* Every occurrence is a window in which the live client can be mutated by something that does
-not take the same lock, and installing then puts that mutation BACK. Three sites have it:
+### P2 - the inbound drain has no watchdog
 
-| site | guard | status |
-| --- | --- | --- |
-| `WebMlsService` catch-up session | `installUnlessOvertaken` + epoch | closed (`b5ae5dfe`) |
-| `WebMlsService` key-package worker | `installUnlessOvertaken` + epoch | closed (`ee7a0137`) |
-| **native foreground resume** (`src-tauri/src/commands/storage.rs:65`) | **epoch only** | **open** |
-
-The native one calls `MlsManager::reload_is_monotonic` (`mls-core/src/welcome.rs:114`), which compares
-EPOCHS and nothing else - the exact blind spot `swapClientMonotonic` had, and for the exact same
-reason: an epoch answers "is this snapshot from an older generation of the group", and a send
-generation that moved INSIDE one epoch is invisible to it.
-
-**The window, and why it is plausible rather than theoretical.** `mls.bin` is written by
-`flushEncrypted`, wired to `visibilitychange`/`pagehide` in `mlsStatePersisterLifecycle.ts` - and
-fired as `void persister.flushEncrypted()`, fire-and-forget, while the OS is free to freeze the
-WebView. A send immediately before backgrounding starts its own flush on a microtask
-(`persistNow`), so the race is only as wide as `saveState` plus the file write - but that is not
-zero, and it grows with the size of the MLS state. If the write loses, `mls.bin` holds a state that
-predates the send: same epoch, older send generation, guard satisfied, ratchet rewound. The peer then
-refuses the next frame with `SecretReuseError`, which is WP-FALSELOSS-2 on the native path.
-
-**The fix is not another guard, it is making the existing one measure the axis that moves.**
-`reload_is_monotonic` should compare per-group SEND GENERATION as well as epoch, so a candidate that
-is behind on either is refused. That keeps one invariant at one boundary instead of adding a second
-mechanism beside it, and it is the same lesson the other two sites taught: *a guard is evidence only
-for the question it was written to answer.*
-
-**What is owed before anyone writes code:** a measurement. Send on A1, background the app inside the
-flush window, resume, and read whether the reloaded state regressed - `[RESUME] foreground manager
-reloaded from mls.bin` next to a `[REWIND-TRACE]` send that preceded it. It could not be taken on
-2026-08-14 because the phone was disconnected. Verifying it also costs an APK rebuild, so it should
-be batched with the next one.
+The outbound side gained one; the inbound drain can still stall with nothing to notice it. Filed
+rather than fixed because the termination proof matters more than the detection - a timer here would
+be the pattern this area was deliberately cleared of.
 
 ### P3 - the pending pull's per-page deadline is a total, and should be a progress deadline
 
