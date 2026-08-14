@@ -421,6 +421,21 @@ carry in the head:
   proof was a PAIR from the same page, generation 520 called a loss and generation 521 recognised as a
   duplicate three seconds later, once the loop had reached it. When an operation is batched, ask where
   its EFFECT lands, not where its results are read: the record belongs next to the effect.
+- **AND IT MUST BE READ WHERE THE VERDICT IS FORMED, NOT WHERE THE WORK WAS QUEUED.** The same rule
+  has two directions and fixing the write exposed the read. The replay checked each row against the
+  seen set while ASSEMBLING a page, then handed the page to `decryptPage`; live delivery can read one
+  of those frames in between, so a frame that failed the batch may well have been read by the time
+  that failure is judged. The comment on the failure branch even stated the assumption out loud - *"a
+  frame already read is skipped before ever reaching the decrypt, so anything arriving HERE is a frame
+  this device has never read"* - which is only true if the two moments are one. **An answer obtained
+  before an await is about a world that has moved**; re-ask on the failure path, where it costs
+  nothing because that path is already the exceptional one.
+- **A NAME THAT LIES MAKES TWO KEY SPACES READ AS ONE.** `cipherFingerprint` held `msg.id`, a Redis
+  stream id - not a fingerprint of anything. Every reader of that function, and the log line it fed,
+  silently treated a row identifier and a ciphertext hash as the same currency, which is precisely the
+  confusion the shared-key design existed to prevent. It surfaced only when both were printed side by
+  side and one of them was obviously the wrong shape. Rename on sight: a variable whose name asserts a
+  type it does not hold is a defect that has not been triggered yet.
 - **A PROSPECTIVE FIX CANNOT BE VERIFIED BY THE FIRST MEASUREMENT AFTER ITS DEPLOY.** A fix that
   records something as it happens says nothing about what happened before it shipped, so the first
   run still shows the old damage - and that number fits "it works" and "it does nothing" equally

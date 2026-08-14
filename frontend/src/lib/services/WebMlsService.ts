@@ -3,6 +3,12 @@ import { encryptMlsStateOffThread } from '$lib/mls-client/mlsEncryptWorkerSessio
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
 import { type MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
+// TEMPORARY (WP-FALSELOSS-2) - remove with `ratchetRewindTrace.ts`.
+import {
+  traceSend,
+  traceSessionOpen,
+  traceSessionFinish,
+} from '$lib/mls-client/ratchetRewindTrace';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import {
   loadAndInitWasm,
@@ -895,6 +901,9 @@ export class WebMlsService extends BaseMlsService {
     frameDelivery: FrameDelivery = DELIVERY.visible
   ): Promise<Uint8Array> {
     const encryptedBytes: Uint8Array = this.client.send_message_bytes(groupId, messageBytes);
+    // TEMPORARY (WP-FALSELOSS-2): this send is NOT under the MLS lock, so it can land inside an
+    // open catch-up window. See `ratchetRewindTrace`. Delete with that module.
+    traceSend(groupId, encryptedBytes, frameDelivery);
     const proto = toBase64(encryptedBytes);
     await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
     return encryptedBytes;
@@ -932,6 +941,10 @@ export class WebMlsService extends BaseMlsService {
 
     const release = await this.messageScheduler.acquireMlsLock();
 
+    // TEMPORARY (WP-FALSELOSS-2): the window that matters runs from the SNAPSHOT to the SWAP, not
+    // from the lock, because `sendMessage` never takes the lock. See `ratchetRewindTrace`.
+    const traceWindow = traceSessionOpen(groupId, 'worker');
+
     let workerSession: Awaited<ReturnType<typeof createMlsCryptoWorkerSession>> | null;
     try {
       const snapshot = (this.client.save_state(undefined) as Uint8Array).slice();
@@ -955,6 +968,9 @@ export class WebMlsService extends BaseMlsService {
           try {
             await seq.finish();
           } finally {
+            // The sequential path mutates the live client in place: no snapshot, so no swap and no
+            // rewind. Traced all the same, so the log distinguishes "did not happen" from "not run".
+            traceSessionFinish(traceWindow, groupId, false);
             release();
           }
         },
@@ -972,10 +988,12 @@ export class WebMlsService extends BaseMlsService {
         return session.decryptPage(messageBytesList);
       },
       finish: async () => {
+        let swappedForTrace = false;
         try {
           if (usedWorker) {
             const finalState = await session.finalize();
             const swapped = await this.reloadClientFromPlainState(finalState);
+            swappedForTrace = swapped;
             // Only adopt the catch-up state if it did not regress the live client: decrypted
             // plaintexts were already handed to the caller, so refusing the swap loses nothing.
             if (swapped) this.lastKnownState = finalState.slice();
@@ -985,6 +1003,7 @@ export class WebMlsService extends BaseMlsService {
           // (worker mode never mutates it). The conversation is retried on the next catch-up.
           console.warn('[MLS] decrypt session finalize failed, live client left at snapshot:', e);
         } finally {
+          traceSessionFinish(traceWindow, groupId, swappedForTrace);
           session.dispose();
           release();
         }

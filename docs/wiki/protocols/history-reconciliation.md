@@ -950,8 +950,40 @@ gap, two values at one generation is reuse.** Pinned by a test, because it reads
 Two hypotheses were RAISED AND REFUTED here rather than carried forward, and both refutations were
 cheap: the ledger write is a `queueMicrotask`, not a timer, so a reload cannot outrun it; and
 `msg1 --cold` - the only reliable trigger - merely skips a warm-up send, so "the sender reloaded and
-its checkpoint was behind" cannot be the mechanism. What remains is the fingerprint comparison, and
-the next occurrence produces it without an instrument.
+its checkpoint was behind" cannot be the mechanism.
+
+##### What the fingerprints exposed on their first run - the same defect, in the READ direction
+
+The instrumentation paid for itself immediately, and not by answering the question it was written
+for. Three consecutive `msg1 --cold` + `msg1b` pairs, and every one printed this shape:
+
+```
+[MLS]     LOST frame ... (SecretReuseError, frame 5p:9redaw)
+[History] frame never read here and unreadable for good (secret-reuse); ... frame 1786665504640-0
+```
+
+Those are not the same kind of thing. `5p:9redaw` is a fingerprint of the ciphertext;
+`1786665504640-0` is a **Redis stream id**. The replay was printing - and keying on - a variable named
+`cipherFingerprint` that held `msg.id`. **A name that lied is what let two key spaces read as one**,
+in the log and in the reader's head. It is `rowKey` now, and the loss line carries both.
+
+That made the real defect visible, and it is the mirror of the one directly above. The replay
+assembles a page by checking each row against `seenCipherHashes`, and only THEN calls `decryptPage`.
+Live delivery can read one of those frames in between. The comment that used to sit on the failure
+branch reasoned from the earlier answer - *"a frame already read is skipped before ever reaching the
+decrypt, so anything arriving HERE is a frame this device has never read"* - which quietly assumed
+the two moments were one. The check now re-asks at the moment the verdict is formed, which costs one
+hash of bytes already in hand and only on a frame that has just failed.
+
+**The batch fix wrote the ledger where iterating was convenient instead of where the spending
+happened; this one READ it where the work was queued instead of where the verdict is formed.** One
+rule, two directions, and the second was invisible until the first was fixed.
+
+This addresses the REPLAY side only. The live path already consults both ledgers inside its own catch
+- its timing was never wrong - so whether `[MLS] LOST frame` also stops is an open measurement, not a
+claim. If it persists, a consumer this client does not account for is spending the generation, and
+the two lines are now comparable for the first time: same fingerprint on both is a ledger gap, two
+fingerprints at one generation is genuine sender-side reuse.
 
 ---
 
