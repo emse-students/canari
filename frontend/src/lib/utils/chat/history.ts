@@ -330,6 +330,26 @@ export async function replayConversationHistory(params: {
     primedFirstPage,
   } = params;
 
+  /**
+   * EMPTY THE MAILBOX BEFORE READING THE ARCHIVE. The other half of the rule `reconcileGroup`
+   * already states for the ASK, and it belongs here for the same reason: this device must not go
+   * looking in the shared log for frames its own queue is about to hand it.
+   *
+   * The archive holds every frame, including the ones still queued for live delivery, so a replay
+   * started mid-drain walks rows the drain is seconds away from delivering - and both paths then
+   * present the same ciphertext to MLS. Measured on 2026-08-14: generations 618 and 629 refused
+   * TWICE each, once per path, while 619, 625 and 630 were read by the replay first and refused as
+   * duplicates when their live copies arrived. Five refusals, one race, and no message ever lost -
+   * the reconciliations they triggered all answered "same state, nothing to do".
+   *
+   * It is a BARRIER, not a delay: `waitUntilIdle` resolves on the drain loop ending, so it states a
+   * fact about the queue instead of guessing at a duration, and it costs nothing when no drain is
+   * running. Safe to await here because neither caller runs inside the pipeline - a conversation
+   * being opened and the bootstrap restore - which is exactly why the responder legs in
+   * `historyReconcile` schedule past the drain instead of awaiting it.
+   */
+  await mlsService.waitForMessageQueueIdle().catch(() => {});
+
   // Stale-behind detection: a group present in local WASM whose replay hits an epoch gap
   // (missing commit) is forked behind the server. We capture the epoch on entry to tell a real
   // gap from a transient one that a catch-up commit resolves during this same replay.

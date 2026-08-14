@@ -293,6 +293,61 @@ describe('a frame the archive replay consumed', () => {
   });
 });
 
+/**
+ * THE MAILBOX IS EMPTIED BEFORE THE ARCHIVE IS READ.
+ *
+ * The archive holds every frame, INCLUDING the ones still queued for live delivery, so a replay
+ * started mid-drain walks rows the drain is seconds away from handing over - and both paths then
+ * present the same ciphertext to MLS. `reconcileGroup` has stated this rule for the ASK since
+ * 2026-08-13; this is the same rule for the READ, at the one seam both callers come through.
+ *
+ * The assertion is an ORDERING, which is why the gate stays shut: asserting that the barrier was
+ * called proves only that it was called, not that anything waited for it.
+ */
+describe('the mailbox barrier', () => {
+  it('touches neither the archive nor MLS state until the inbound queue is drained', async () => {
+    let openGate!: () => void;
+    const drained = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const fetchHistory = vi.fn().mockResolvedValue([]);
+    const getLocalGroups = vi.fn().mockReturnValue([GROUP]);
+    const mlsService = createMlsServiceStub({
+      getLocalGroups,
+      fetchHistory,
+      createDecryptSession: vi.fn().mockResolvedValue({
+        decryptPage: vi.fn().mockResolvedValue([]),
+        finish: vi.fn().mockResolvedValue(undefined),
+      }),
+      waitForMessageQueueIdle: vi.fn().mockReturnValue(drained),
+    });
+
+    const replay = replayConversationHistory({
+      mlsService,
+      id: GROUP,
+      contactName: 'peer',
+      userId: USER,
+      deviceKeyB64: 'device-key',
+      storage: null,
+      getConversation: () => undefined,
+      setConversation: () => undefined,
+      messageReactions: new Map(),
+      log: () => undefined,
+    });
+
+    // Several turns, so a barrier placed one await too late would still be caught.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(fetchHistory).not.toHaveBeenCalled();
+    expect(getLocalGroups).not.toHaveBeenCalled();
+
+    openGate();
+    await replay;
+
+    expect(fetchHistory).toHaveBeenCalled();
+  });
+});
+
 describe('hasHistoryFrameBeenConsumed', () => {
   it('answers no for a frame nothing has marked, so an unread frame still reconciles', () => {
     expect(hasHistoryFrameBeenConsumed(USER, GROUP, 'never-seen')).toBe(false);

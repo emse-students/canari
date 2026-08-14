@@ -364,8 +364,33 @@ export abstract class BaseMlsService implements IMlsService {
 
   // ── Message queue ─────────────────────────────────────────────────────────
 
-  /** Resolves when all per-group MLS queues are drained. */
+  /**
+   * Settles when the offline backlog is being pulled from the server, or immediately when it is not.
+   *
+   * Covers the FETCH only, never the drain that follows it: {@link fetchPendingMessages} ends by
+   * awaiting the barrier below, so a flag held across that tail would make the pull wait on itself.
+   */
+  private pendingPullInFlight: Promise<void> | null = null;
+
+  /**
+   * Resolves when this device's mailbox is EMPTY - nothing left to fetch, and nothing left to apply.
+   *
+   * BOTH HALVES, because either one alone answers a different question. `waitUntilIdle` says "I have
+   * applied everything I received"; it says nothing about what is still sitting on the server, and
+   * the backlog is pulled ONE PAGE AT A TIME (`fetchPendingMessages`). Between a drained page and the
+   * next one landing, the scheduler is genuinely idle while the mailbox is genuinely full - measured
+   * on A1 at 976 rows / 36 MB, which is many pages with real network gaps between them.
+   *
+   * Every caller of this barrier - the ask, the answer, the archive replay, the outbox flusher -
+   * wants the second, stronger fact: a device that has not emptied its mailbox is not a reliable
+   * source about its own history, and must neither ask for one nor describe what it holds.
+   *
+   * Sequential rather than a loop, and that is what makes it terminate: the pull is edge-driven (a
+   * connection), so nothing starts a new one while the queue it filled is draining. A pull that DOES
+   * begin later is a new edge, which re-triggers the reconciliation by itself.
+   */
   async waitForMessageQueueIdle(): Promise<void> {
+    await this.pendingPullInFlight?.catch(() => {});
     return this.messageScheduler.waitUntilIdle();
   }
 
@@ -598,34 +623,49 @@ export abstract class BaseMlsService implements IMlsService {
     const PAGE_TIMEOUT = 10_000;
     let fetched = 0;
 
-    try {
-      await this.delivery.pullPendingMessagesJson({
-        pageTimeoutMs: PAGE_TIMEOUT,
-        onPage: (rows) => {
-          fetched += rows.length;
-          recordPendingMessagesFetched(rows.length);
-          console.log(`[PENDING] Fetched ${rows.length} pending messages (${fetched} so far)`);
-          this.enqueuePendingRows(rows as Record<string, unknown>[]);
-        },
-      });
-      if (fetched === 0) {
-        console.log(`[PENDING] No pending MLS messages for ${this.userId}:${this.deviceId}`);
+    /**
+     * ANNOUNCED WHILE IT RUNS, so the barrier can state a fact about the whole mailbox rather than
+     * about whichever pages happen to have landed. Never rejects - every failure is handled below -
+     * so nothing waiting on it can be left hanging by a transport error.
+     */
+    const pull = (async () => {
+      try {
+        await this.delivery.pullPendingMessagesJson({
+          pageTimeoutMs: PAGE_TIMEOUT,
+          onPage: (rows) => {
+            fetched += rows.length;
+            recordPendingMessagesFetched(rows.length);
+            console.log(`[PENDING] Fetched ${rows.length} pending messages (${fetched} so far)`);
+            this.enqueuePendingRows(rows as Record<string, unknown>[]);
+          },
+        });
+        if (fetched === 0) {
+          console.log(`[PENDING] No pending MLS messages for ${this.userId}:${this.deviceId}`);
+        }
+      } catch (e) {
+        // Partial progress is still progress, and saying so is the difference between "the pull
+        // failed" and "the pull failed after draining 4 pages" - the second is what proves the
+        // backlog is shrinking across attempts.
+        //
+        // NAME THE CONSEQUENCE, not just the failure. A transport failure is not an answer: reaching
+        // here means this device's offline backlog is still on the server and nothing here will go
+        // back for it - the next reconnect's pull is what covers it. Read as "fetch failed", the line
+        // sat in production logs beside a queue that had not shrunk in weeks and nobody connected the
+        // two. `pullPendingMessagesJson` has already halved its page size down to a single row before
+        // giving up, so this is a genuine transport failure rather than an answer too big to arrive.
+        console.error(
+          `[PENDING] Pending fetch failed after ${fetched} message(s) - the backlog for ${this.userId}:${this.deviceId} is UNDRAINED and stays queued until the next reconnect:`,
+          e
+        );
       }
-    } catch (e) {
-      // Partial progress is still progress, and saying so is the difference between "the pull
-      // failed" and "the pull failed after draining 4 pages" - the second is what proves the
-      // backlog is shrinking across attempts.
-      //
-      // NAME THE CONSEQUENCE, not just the failure. A transport failure is not an answer: reaching
-      // here means this device's offline backlog is still on the server and nothing here will go
-      // back for it - the next reconnect's pull is what covers it. Read as "fetch failed", the line
-      // sat in production logs beside a queue that had not shrunk in weeks and nobody connected the
-      // two. `pullPendingMessagesJson` has already halved its page size down to a single row before
-      // giving up, so this is a genuine transport failure rather than an answer too big to arrive.
-      console.error(
-        `[PENDING] Pending fetch failed after ${fetched} message(s) - the backlog for ${this.userId}:${this.deviceId} is UNDRAINED and stays queued until the next reconnect:`,
-        e
-      );
+    })();
+    this.pendingPullInFlight = pull;
+    try {
+      await pull;
+    } finally {
+      // CLEARED BEFORE THE BARRIER, deliberately: the line below is that barrier, and a pull still
+      // announcing itself here would be waiting on its own completion.
+      this.pendingPullInFlight = null;
     }
     await this.waitForMessageQueueIdle();
     // Only now is the answer complete: the rows were enqueued, not handled, so what the handler
