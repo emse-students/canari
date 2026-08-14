@@ -316,6 +316,12 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required - set via CD secrets or .env}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required - set via CD secrets or .env}
       MINIO_BUCKET: ${MINIO_BUCKET:-canari-media}
+      # REQUIRED BY GARAGE, AND ITS ABSENCE IS A CRASH LOOP, NOT A DEGRADATION. Garage signs with
+      # the region in garage.toml (`garage`); the S3 client defaults to `us-east-1`, and the
+      # mismatch fails at `bucketExists` during `onModuleInit` - so the service never finishes
+      # booting. dev and local carried this line from the cutover; prod did not, which took media
+      # down on production until it was added.
+      MINIO_REGION: ${MINIO_REGION:-garage}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
     volumes:
       - media_meta:/app/media_meta
