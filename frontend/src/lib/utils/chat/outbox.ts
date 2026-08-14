@@ -143,15 +143,38 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     await syncOutboxMirror(await readQueue('mirror refresh'));
   }
 
-  // Flush opportunistically when connectivity or foreground is regained.
-  const onOnline = (): void => {
-    runFlush();
-  };
+  /**
+   * THE RETRY IS BOUND TO THE CONDITION THAT BLOCKED IT, not to an event that merely precedes it.
+   *
+   * `runFlush` refuses on `connectivity.isOffline`, which is `!isOnline || !serverReachable` - two
+   * facts, restored by two different events at two different times. This used to retry on the raw
+   * `window.online` event, which restores only the FIRST of them: `serverReachable` is deliberately
+   * left alone there, because a browser regaining a link says nothing about the backend, and only
+   * the next successful call can say. So the retry fired while the guard was still shut, was
+   * refused, and the event that actually opened the guard - `notifyServerReachable` - reached
+   * nobody here.
+   *
+   * Measured on production 2026-08-14 (MSG-10, WP-OUTBOX-1). A message queued offline at 14:25:38;
+   * the browser reported online at 14:25:41.295 and this listener ran and was refused, because
+   * `serverReachable` did not come back until 14:25:51.233 - ten seconds later, on a different
+   * event. Nothing retried after that. The message left at **14:28:49**, three minutes and eleven
+   * seconds after the link returned, and only because an unrelated socket close forced a reconnect
+   * that happened to flush. The socket had been alive and delivering the whole time, which is what
+   * makes this the outbox's fault and nobody else's.
+   *
+   * `connectivity.onReconnect` is the seam that means exactly "the condition that blocked you has
+   * cleared". It fires on BOTH transitions - the store emits it from the `online` handler and from
+   * `notifyServerReachable` - so it strictly supersedes the listener it replaces rather than adding
+   * a second one. Listeners here must stay idempotent and cheap: a flapping link fires it often,
+   * and `runFlush` already collapses re-entry through `flushing`/`rerun`.
+   */
   const onVisible = (): void => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') runFlush();
   };
+  const unsubscribeReconnect = connectivity.onReconnect(() => {
+    runFlush();
+  });
   if (typeof window !== 'undefined') {
-    window.addEventListener('online', onOnline);
     document.addEventListener('visibilitychange', onVisible);
   }
 
@@ -524,8 +547,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       if (backoffTimer) clearTimeout(backoffTimer);
       backoffTimer = null;
       unsubscribeTabOutbox();
+      unsubscribeReconnect();
       if (typeof window !== 'undefined') {
-        window.removeEventListener('online', onOnline);
         document.removeEventListener('visibilitychange', onVisible);
       }
     },

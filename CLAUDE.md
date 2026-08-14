@@ -89,52 +89,21 @@ Everything wanted but NOT scheduled is [backlog](docs/wiki/backlog.md) - file it
 
 ### CANARI - what is open
 
-**WP-FALSELOSS-1 IS SHIPPED AND VERIFIED ON PROD (2026-08-13) - do not re-open it.** A frame
-delivered live consumed its ratchet generation without moving this device's
-position in the archive, so the replay walked the same row, failed on a spent generation, and took
-the branch asserting real loss: **every online device reconciled on its own ordinary traffic.** The
-fix marks a consumed frame by its CIPHERTEXT BYTES - the only thing the two paths share, the stream
-id and the `queued_message` uuid never intersecting - and advances the cursor by WALKING, never
-jumping. Shipped `2ff864f9`, CD green, prod containers recreated 2026-08-13 17:44. The mechanism and
-the three shapes the repair must keep are on
-[history-reconciliation](docs/wiki/protocols/history-reconciliation.md); the rule is in
-[durable-rules](docs/wiki/durable-rules.md).
+**SHIPPED AND CLOSED - do not re-open, do not reconstruct here.** WP-FALSELOSS-1 (a live frame
+consumed its generation without moving the archive cursor;
+[history-reconciliation](docs/wiki/protocols/history-reconciliation.md)) and the two A1 startup
+defects (our routing rule hijacking Tauri's IPC bridge; a `vibrate(0)` cancelling nothing;
+[mobile](docs/wiki/frontend/mobile.md)). Both verified by measurement, both written up.
 
-**The verification is on the wiki page and its shape is the lesson: the fix is PROSPECTIVE, so the
-first reload after the deploy still reported 6 and decided nothing.** Only live traffic consumed by
-the NEW bundle discriminates - 0 false loss / 0 `SecretReuseError` / 0 asks, against 6/12/1 for the
-same shape on the old one, with the mark set observed growing. The phone is verified separately
-because it runs its APK's assets, and on BOTH halves - the mark being written, and a reload whose
-replay reports nothing. Probes kept in the harness: `falseloss.mjs`, `falseloss-live.mjs`,
-`falseloss-a1.mjs`, `late.mjs`. The `SecretReuseError` left unexplained last session vanished with
-the rest and is closed.
-
-**THE A1 STARTUP NOISE WAS TWO REAL DEFECTS AND BOTH ARE FIXED (2026-08-13).** Refusing to file it as
-residual is what found them - the observation bar working exactly as intended. `IPC custom protocol
-failed` was OUR routing rule hijacking Tauri's own IPC bridge (`ipc.localhost` matched `^https?://`
-and went to the HTTP plugin), which permanently downgraded all IPC to `postMessage` on every cold
-start; the rule now matches the `.localhost` SUFFIX, reserved by RFC 6761 for exactly this. `Blocked
-call to navigator.vibrate` was an unconditional `vibrate(0)` cancelling a vibration nobody started.
-Both confirmed gone by measurement (`ipcFailed=0`, 4/4 cold starts).
-
-**The `[PENDING] Pending fetch failed` line was NOT the same cause, and saying so is the point:** the
-hypothesis was refuted by measurement (it persisted with `ipcFailed=0`). It was **the undrained
-queue**, now fixed and deployed - see below.
-
-**WP-PENDING-2 (the undrained queue) IS SHIPPED. THE DRAIN IS UNDER MEASUREMENT, NOT YET FINISHED.**
-A page was bounded in ROWS, which is the wrong unit for a transfer: 500 rows of media frames was
-12 MB, the client aborted on its 10 s per-page deadline having received nothing, ACKed nothing, and
-met the same 12 MB every time. Measured: **976 rows / 36 MB on A1, rising every hour for weeks and
-never once falling.** Nobody was warned because `QUEUE_DEPTH_WARN_PER_DEVICE` counts ROWS (2000,
-calibrated on the 2026-08-10 storm). Three commits: `8ad1cdb5` (byte-bounded page + client halving +
-byte WARN), `b82b241e` (termination on an EMPTY page, and never splitting a `createdAt` group),
-`58a55ff8` (revocation: 10-year ban, immediate signal, full device wipe). **Deployed and verified
-firing on prod** - `page capped by bytes at 53 row(s), 1 039 524 byte(s)` - with A1 falling
-**976 -> 923 -> 884 -> 864**, its first ever decrease. It drains one page per reconnection because it
-runs the OLD bundle; the APK rebuild is what finishes it. The mechanism, its two follow-on faults and
-the verification are on [chat-delivery](docs/wiki/services/chat-delivery.md); the three rules are in
-[durable-rules](docs/wiki/durable-rules.md); the one accepted residual (a progress deadline instead
-of a total one) is in [backlog](docs/wiki/backlog.md) at the user's explicit request.
+**WP-PENDING-2 (the undrained queue) IS SHIPPED; ONE MEASUREMENT IS OWED.** A page bounded in ROWS is
+the wrong unit for a transfer - 500 rows of media was 12 MB, the client aborted on its 10 s deadline,
+ACKed nothing, and met the same 12 MB for weeks (976 rows / 36 MB on A1, rising hourly, never once
+falling). Byte-bounded pages + client halving + a byte WARN, `8ad1cdb5`/`b82b241e`/`58a55ff8`,
+verified firing on prod with A1 falling **976 -> 923 -> 884 -> 864**. It drained one page per
+reconnection only because A1 ran the OLD bundle. **The APK carrying the halving client was installed
+2026-08-14 - so the owed check is A1's queue depth now: it should fall to zero rather than by one
+page.** Mechanism, follow-on faults and residual on
+[chat-delivery](docs/wiki/services/chat-delivery.md) and [backlog](docs/wiki/backlog.md).
 
 **WP-FALSELOSS-2 IS OPEN (2026-08-13) - the false loss is not gone, it moved to the HEAD of the
 stream.** WP-FALSELOSS-1 above stays fixed and verified; its `0` was measured over the path it was
@@ -154,7 +123,34 @@ on an unreadable frame is correct. Full evidence in
 TWICE with those lines inside its own record. `watch.mjs` now has a `severe` bucket that breaks
 `clean` (excluding `CannotDecryptOwnMessage`, which is RFC 9420 working).
 
-**WP-RECONNECT-1 IS FIXED (2026-08-14) - not yet deployed, and the deploy is what verifies it.** The
+**WP-PREFIX-1 IS SHIPPED AND VERIFIED ON PROD (2026-08-14, `fed86037`) - do not re-open it.** Every
+Nest service mounts `setGlobalPrefix('api')` and the internal base URLs are configured without it, so
+**six of seven internal cross-service calls addressed a route that does not exist**: channel push
+never delivered on any device ever, `userHasMlsDevices` reduced to a constant `true` (a guard, not a
+degraded one - none at all), and account deletion leaving MLS keys, devices, messages, posts, follows
+and memberships in place. All six are `.catch(warn)`, which is why it survived: a failure mode
+designed for a transient fault met a permanent one. Fixed at the seam (`internal/service-urls.ts` per
+service), not at the call sites. **Found by `srvlog.mjs`, invisible to every client**, and verified
+the same way - `[CHANNEL_PUSH] … recipients=1` with zero 404, plus the positive proof the path ran.
+Full enumeration on
+[cross-client-testing](docs/wiki/cross-client-testing.md#wp-prefix-1---six-of-seven-internal-calls-addressed-a-route-that-does-not-exist-fixed-fed86037);
+three rules in [durable-rules](docs/wiki/durable-rules.md).
+
+**WP-RECONNECT-2 IS OPEN AND DELIBERATELY UNDIAGNOSED.** A 98 s hole between a socket close and the
+first retry, from MSG-10's capture. **The first write-up claimed the close arrived late; that claim
+was withdrawn** - it rested on the ORDER of lines in a classifier bucket, because `[WS] Disconnected`
+is a `console.warn` and carries no clock while everything around it does, and the same record
+supports the opposite diagnosis depending on where that line is placed. Three mechanisms can own the
+interval (late close / a rung already armed / an attempt already running, the last spanning
+`fetchPendingMessages` and its ~90 s halving ladder); a fourth, the 8 s heartbeat, is refuted from
+the code. **Nothing was reconciled or guarded** - what was fixed is why it could not be read: the two
+silent branches now name the owner, the resume logs BOTH `isWsConnected` and `isWsOpen()` when it
+declines, and `watch.mjs` dates every line and every socket event from CDP's own clocks (the
+`Network.webSocketClosed` that `ignoringOfflineCut` used to DELETE as "the cut" is the one event that
+dates the close independently of the app). `recon2.mjs` is the capture, soft cut on purpose -
+`cutHard` supplies the very close whose timing is the question. **Do not fix by shortening a timer.**
+
+**WP-RECONNECT-1 IS FIXED AND DEPLOYED (2026-08-14, `9fd67590`); ITS VERIFICATION IS STILL OWED.** The
 reconnect circuit is DELETED: only a proof ends the retry loop now (logged out, or a 401/403 on the
 refresh cookie), the ladder saturates at 30 s and climbs for ever. Two further silences fixed with
 it: `attemptReconnect` rescheduled from inside its own `isReconnecting` guard, so both failure paths
@@ -166,8 +162,10 @@ synthetic `visibilitychange` on the ALREADY-VISIBLE W1 reconnected it in <20 s w
 as a control. Gates green (`check` 0/0, 5/5 unit). Mechanism, evidence and the completed test fixture
 are on [auth](docs/wiki/frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it);
 three rules in [durable-rules](docs/wiki/durable-rules.md). **The campaign masked it structurally** -
-every check reloads. **Owed on the next deploy: re-run `circuit.mjs` on a tab that lived through an
-outage; the fix is PROSPECTIVE, so a tab running the old bundle proves nothing.**
+every check reloads. **Still owed: `circuit.mjs` on a tab that lived through an outage ON THE NEW
+BUNDLE.** The fix is PROSPECTIVE, so a tab running the old one proves nothing - and a tab that was
+reloaded to GET the new one has not lived through an outage, which is why this cannot be a standalone
+run and is folded into MSG-9/10's cut instead.
 
 **The avatar 404s are attributed and are a SERVER fault, not a client one.** `[AvatarService] Error
 fetching avatar` in `core-service`, 17 outbound HTTPS timeouts to Cloudflare IPs over one 5-minute

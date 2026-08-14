@@ -109,6 +109,18 @@ function makeDeps(over: Partial<OutboxDeps> & { mlsService: any; storage: any })
   } as OutboxDeps;
 }
 
+/**
+ * Lets a flush that nothing awaited run to completion.
+ *
+ * A connectivity listener is fire-and-forget by design - the store must not be blocked by whoever
+ * subscribes to it - so a test that asserts right after the event asserts against a flush that has
+ * not started. Draining the microtask queue a few times is enough: everything in `runFlush` up to
+ * `sendMessage` is promises, no timers.
+ */
+async function outboxIdle(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
 describe('outboxCodec', () => {
   it('round-trips a text entry through clear columns + encrypted payload', () => {
     const e = textEntry('m1', 'g1', 123);
@@ -248,6 +260,29 @@ describe('outbox flusher - offline guards', () => {
 
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
     expect(storage._map.get('m1')!.attempts).toBe(0);
+  });
+
+  // WP-OUTBOX-1. The two facts behind `isOffline` are restored by two different events at two
+  // different times, and the retry used to be bound to the earlier one. Measured on production
+  // 2026-08-14: queued at 14:25:38, the browser reported online at 14:25:41 and the retry was
+  // refused because the server was not known reachable until 14:25:51 - ten seconds later, on an
+  // event nothing here listened to. The message left at 14:28:49, on an unrelated reconnect.
+  it('drains when the condition that blocked it clears, with no other event', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    createOutbox(makeDeps({ mlsService, storage, isGroupHealthy: () => true }));
+
+    connectivity.notifyServerUnreachable();
+    await outboxIdle();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+
+    // The ONLY thing that happens: the server becomes reachable again. No `online` event, no
+    // visibility change, no socket reconnect - none of which the queue should have to wait for.
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(storage._map.size).toBe(0);
   });
 
   it('drains normally once the session can send again', async () => {
