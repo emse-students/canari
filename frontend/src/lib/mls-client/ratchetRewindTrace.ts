@@ -64,9 +64,16 @@ export function traceSend(
     durable: delivery.durable,
   };
   if (openWindows > 0) sendsDuringWindow.push(entry);
-  console.debug(
-    `[REWIND-TRACE] send group=${groupId.slice(0, 8)}… frame=${fingerprint} bytes=${ciphertext.length} silent=${delivery.silent} durable=${delivery.durable} duringCatchUp=${openWindows > 0}`
-  );
+  // LOGGED ONLY INSIDE A WINDOW, because only a send inside one can be rewound. Outside, this line
+  // said `duringCatchUp=false` about the entirely ordinary case and fired on EVERY send: seventy-five
+  // of the eighty-nine unexplained lines in the MSG run of 2026-08-14, drowning the fourteen that
+  // meant something. A trace that fires on the normal path is a trace nobody reads, and this one is
+  // here to be read exactly once - when a send really does race a catch-up.
+  if (openWindows > 0) {
+    console.debug(
+      `[REWIND-TRACE] send group=${groupId.slice(0, 8)}… frame=${fingerprint} bytes=${ciphertext.length} silent=${delivery.silent} durable=${delivery.durable} duringCatchUp=true`
+    );
+  }
   return fingerprint;
 }
 
