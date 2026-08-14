@@ -213,11 +213,25 @@ not design a staging environment before that conversation.**
 - **The `mongo` service in `docker-compose.prod.yml` is dead** - production holds no application database there (only `admin`, `config`, `local`) and nothing in the codebase carries a MongoDB connection string. A candidate for removal, not a fault; removing it is a prod service change and needs the user.
 - **A new device or a reinstall still sees no media older than 30 days.** That is what makes the storage forecast survivable, and it may not be what the user intends - a POLICY question, not a rendering one ([storage-forecast](docs/wiki/infrastructure/storage-forecast.md), section 6). The clock is now honest: it is refreshed on a client cache HIT, not only on a server download.
 
-**THE MSG PHASE IS RUN FIVE TIMES ON `f391c199` (2026-08-14 17:17-17:38Z): 13 of 13 PASS on ALL FIVE
-PASSES.** Every per-pass detail is on the dashboard, including the two INSTRUMENT faults that were
-the run's only dirt - `badHttp` judging `r.failed` before the status, so a **200** broke MSG-7's
-fifth pass, and the hourly `[CRON] reportQueueDepth:` missed by a rule spelling it `queue depth`.
-Both fixed, both pinned by a self-test case. **Do not copy the table here.**
+**MSG AND TYPE ARE BOTH RUN FIVE TIMES ON `8a3edbdd` AND BOTH ARE CLEAN 5/5** - MSG 13 of 13 on
+every pass (2026-08-14 20:03-20:21Z), TYPE 5 of 5 on every pass (21:33-21:40Z), every server window
+clean in both. Durations and per-pass detail are on the dashboard; **do not copy the tables here.**
+The instrument faults behind them are rules 15 and 16 of
+[testing-methodology](docs/wiki/testing-methodology.md) and must not be re-derived: a check that
+never established its precondition (TYPE-4 cut the peer with a setting already measured inert), a
+phase file that computed five verdicts while reading no console, and a click that could not say what
+had RECEIVED it. `srvlog.mjs` now partitions its window by SUBJECT - prod is shared, and 27
+"unexplained" lines were one real third-party user's phone climbing its recovery ladder.
+
+**WP-BANNER-1 IS SHIPPED AND IS NOT YET VERIFIED RUNNING (`e62c21f1`, 2026-08-15).** Six banners
+agreed on nothing; the whole contract is on
+[frontend/architecture](docs/wiki/frontend/architecture.md#status-banners) - read it, do not
+reconstruct it here. What matters for the campaign is that it changed `MainChatPage`, `Sidebar`,
+`ChatArea` and `+layout`, **the exact surface MSG and TYPE measure**, and both phases were measured
+on the bundle BEFORE it. **Owed: one MSG pass and one TYPE pass on the new bundle, plus the positive
+check that the synchronisation banner no longer rises at startup.** `synwatch.mjs` (idle) and
+`synopen.mjs` (during an open) read it directly - before the fix, ON at 480 ms, OFF at 2 286 ms,
+29 px of shift, which is what delivered a click aimed at a channel row to the button below it.
 
 **The server observer meets the same bar as the two clients and is tested like them.** Its whole
 window is classified: `srvlog.mjs --shapes` collapses `unexplained` and `notable` to distinct
