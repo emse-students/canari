@@ -133,6 +133,38 @@ export class WebMlsService extends BaseMlsService {
     return this.swapClientMonotonic(candidate);
   }
 
+  /**
+   * Installs a worker-derived state over the live client, UNLESS the live client moved meanwhile.
+   *
+   * EVERY off-thread path has the same shape - snapshot the client, work on the copy, install the
+   * result - and every one of them is a window in which the live client can be mutated by something
+   * that does not take the MLS lock. `sendMessage` is exactly that: it advances this device's own
+   * send ratchet, and installing a state taken before it puts that ratchet BACK. The next frame then
+   * re-issues a spent generation and the peer refuses it as `SecretReuseError`.
+   *
+   * `swapClientMonotonic` cannot answer this. It refuses a regression and measures one with the
+   * EPOCH, which is evidence for "is this snapshot from an older epoch" and for nothing else - a
+   * generation that moved inside one epoch is just as stale and completely invisible to it.
+   *
+   * Shared by the two callers rather than written twice, because the second one was found only by
+   * looking for the first one's shape - and a rule that lives at one call site is a rule the next
+   * off-thread worker will not inherit.
+   */
+  private async installUnlessOvertaken(
+    what: string,
+    mutationsAtSnapshot: number,
+    install: () => Promise<boolean>
+  ): Promise<boolean> {
+    const mutated = this.liveMutations - mutationsAtSnapshot;
+    if (mutated > 0) {
+      console.warn(
+        `[MLS] ${what} state DISCARDED: the live client was mutated ${mutated} time(s) since the snapshot - installing it would rewind this device's own send ratchet`
+      );
+      return false;
+    }
+    return install();
+  }
+
   /** Plain-CBOR (no PIN) variant of {@link reloadClientFromState} for worker catch-up. */
   private async reloadClientFromPlainState(state: Uint8Array): Promise<boolean> {
     const candidate = await loadAndInitWasm(this.userId, this.deviceId, state, undefined);
@@ -711,18 +743,32 @@ export class WebMlsService extends BaseMlsService {
     if (this.useKeyPackageWorker && typeof Worker !== 'undefined') {
       // The worker generates KeyPackages off-thread, but its result contains private keys
       // from a snapshot that may be stale if WebSocket messages were processed in parallel.
-      // We hold the MLS lock for the entire duration of the worker to prevent any
-      // concurrent processing - reloadClientFromState is thus always safe.
+      // The MLS lock is held for the worker's whole life, which serialises this against the drain
+      // and against a catch-up - and NOT against a send, which never takes that lock. So the swap
+      // is guarded by `installUnlessOvertaken` as well: this window is the longest in the codebase
+      // (a 30 s worker timeout), and the claim that the lock alone made it safe was the same claim
+      // the catch-up path made, for the same reason, wrongly.
+      //
+      // Guarded rather than ORDERED, unlike the catch-up: making every send wait for key-package
+      // generation would stall sending for up to 30 s on each connection, which is a worse defect
+      // than the one being fixed. Refusing the swap costs nothing here - the `!swapped` branch
+      // below already regenerates on the live client, because a refused snapshot's key packages
+      // hold private keys the live client does not have.
       const workerGenResult = await this.messageScheduler.runUnderMlsLock(async () => {
         try {
           console.log('[MLS] generateKeyPackage via worker (under mlsLock)');
+          const mutationsAtSnapshot = this.liveMutations;
           const snapshot = (this.client.save_state(deviceKeyB64) as Uint8Array).slice();
           const workerResult = await this.runWorkerKeyPackageGeneration(
             deviceKeyB64,
             needed,
             snapshot
           );
-          const swapped = await this.reloadClientFromState(workerResult.state, deviceKeyB64);
+          const swapped = await this.installUnlessOvertaken(
+            'key package worker',
+            mutationsAtSnapshot,
+            () => this.reloadClientFromState(workerResult.state, deviceKeyB64)
+          );
           if (!swapped) {
             // The worker snapshot became stale (a mutation advanced the live client while it
             // ran): its key packages belong to a state we refused, so their private keys are
@@ -1006,32 +1052,21 @@ export class WebMlsService extends BaseMlsService {
           if (usedWorker) {
             const finalState = await session.finalize();
             /**
-             * NEVER INSTALL A STATE THAT PREDATES A MUTATION THE LIVE CLIENT ALREADY MADE.
+             * The gate in `sendMessage` should make this unreachable, and it is kept anyway: the
+             * gate is an ORDERING and this is an INVARIANT. A future send path that forgets to wait
+             * must be caught here rather than corrupt a ratchet silently - which is precisely how
+             * WP-FALSELOSS-2 survived three sessions of looking straight at it.
              *
-             * `swapClientMonotonic` refuses a REGRESSION, and answers that question with the epoch -
-             * which is evidence for "is this snapshot from an older epoch" and for nothing else. A
-             * generation that moved inside one epoch is just as stale and is invisible to it, so a
-             * send that landed between the snapshot and here would be silently undone: this device's
-             * own send ratchet goes backwards, its next frame re-uses a spent generation, and the
-             * peer refuses it as `SecretReuseError`. That is WP-FALSELOSS-2, reproduced 2/2 with a
-             * send in the window and 0/1 without.
-             *
-             * The gate should make this unreachable. It is kept because the gate is an ordering and
-             * this is an invariant: a future send path that forgets to wait is caught here rather
-             * than corrupting the ratchet, and the line says so loudly enough to be found.
+             * Refusing costs nothing: the decrypted plaintexts were already handed to the caller,
+             * so only the catch-up's ratchet advance is thrown away, and the next replay redoes it.
              */
-            const mutated = this.liveMutations - mutationsAtSnapshot;
-            if (mutated > 0) {
-              console.warn(
-                `[MLS] catch-up state DISCARDED for ${groupId.slice(0, 8)}…: the live client was mutated ${mutated} time(s) since the snapshot - installing it would rewind this device's own send ratchet`
-              );
-            } else {
-              const swapped = await this.reloadClientFromPlainState(finalState);
-              swappedForTrace = swapped;
-              // Only adopt the catch-up state if it did not regress the live client: decrypted
-              // plaintexts were already handed to the caller, so refusing the swap loses nothing.
-              if (swapped) this.lastKnownState = finalState.slice();
-            }
+            const swapped = await this.installUnlessOvertaken(
+              `catch-up (${groupId.slice(0, 8)}…)`,
+              mutationsAtSnapshot,
+              () => this.reloadClientFromPlainState(finalState)
+            );
+            swappedForTrace = swapped;
+            if (swapped) this.lastKnownState = finalState.slice();
           }
         } catch (e) {
           // A page or finalize failed: leave the live client at the untouched snapshot
