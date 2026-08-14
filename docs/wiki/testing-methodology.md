@@ -557,6 +557,41 @@ authoritative-looking diff made of noise:
 for reconciliation: it is what found WP-LOSS-1 and WP-ECHO-1, and both were invisible to every check
 that was passing at the time.
 
+Both corrections above became moot on 2026-08-11, when the collector moved from the rendered pane to
+the STORE - a window onto the history is not the history, and on the test DM the pane read 60 rows
+of 1 804 and called the empty difference a success. The store answers the same question in one read,
+for a conversation of any length.
+
+### The phone was outside it until 2026-08-15, and the fix was choosing the right route
+
+`recon.mjs` reconciled WEB clients only, and said so - a native client keeps its messages in SQLite
+behind Tauri, while the `CanariDB_*` IndexedDB it also carries is a permanently empty vestige. **That
+left the device most likely to lose a message as the one device the loss instrument could not see**:
+the phone is the one that backgrounds, takes pushes, and pays 1.5 s per checkpoint.
+
+Two obvious routes were rejected for stated reasons, and the reason is the transferable part:
+
+- **`adb pull` the database.** It works. `canari_<uid>.db` is 2.4 MB of a REAL account's
+  conversations, including people who never agreed to be in a test harness, so copying it to the
+  host is the credential leak `mlsdb.mjs` refuses in its own header - a debugging motive does not
+  change what the bytes are.
+- **Query it in place with `sqlite3`.** There is no `sqlite3` binary reachable under
+  `run-as fr.emse.canari`.
+
+**So ask the application, which already holds the file open.** `@tauri-apps/plugin-sql` exposes
+`plugin:sql|select` over IPC, and IPC is callable from CDP - so the query runs on the device and
+**only ids and counts come back**. `cipher_text` is never named in it. The database is keyed
+`sqlite:canari_<userId>.db` and the id is taken from the page's own `mls_send_ledger_<userId>` key,
+so no account identifier is typed on a command line or committed. The RUNTIME picks the reader, not
+the port or the label, so a client moved to another port cannot silently take the wrong one.
+
+First run: **RECONCILED across all nine shared conversations, id by id, `onlyW1: 0` and `onlyA1: 0`
+everywhere**, including the 4 282-message DM, and no one-sided conversation at all.
+
+The general lesson is not about SQLite. **When the data cannot be moved and cannot be read in place,
+the process that already has it open is the third option**, and it is usually the one that also
+happens to be the only privacy-preserving one.
+
 ---
 
 ## Reading a repair on the wire
