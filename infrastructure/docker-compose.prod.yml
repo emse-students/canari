@@ -332,7 +332,13 @@ services:
       retries: 3
       start_period: 40s
     depends_on:
-      minio:
+      # GARAGE, NOT MINIO - this waits on the store `MINIO_ENDPOINT` actually names. Waiting on
+      # MinIO gated the boot on a service media-service no longer talks to, while leaving the one
+      # it does talk to ungated: `bucketExists` runs in `onModuleInit`, so reaching Garage before
+      # it is ready is a crash loop, and the deploy's health gate reads that as a failed release.
+      # It also means stopping MinIO - the rollback net, kept stopped-not-deleted - would have
+      # taken media-service down with it.
+      garage:
         condition: service_healthy
 
   # ─────────────────────────────────────────────────────
