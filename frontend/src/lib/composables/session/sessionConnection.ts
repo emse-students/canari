@@ -82,7 +82,19 @@ export function runGroupDiscoveryImpl(
 export function scheduleReconnectImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   if (!ctx.isLoggedIn()) return;
   ctx.setIsWsConnected(false);
-  if (ctx.timers.reconnect !== null || ctx.isReconnecting()) return;
+  // EVERY SWALLOWED BRANCH LOGS, and these two are why WP-RECONNECT-2 could not be read. A socket
+  // close reaches here through `onDisconnect`, and when either guard holds, the request to reconnect
+  // is dropped with no record at all - so the log shows a disconnection followed by nothing, and the
+  // reader cannot tell "the ladder was already armed" from "an attempt was in flight" from "the
+  // close never arrived". Those are three different faults with three different fixes. Dropping the
+  // request is CORRECT in both cases - something else already owns the next attempt - so this says
+  // WHICH owns it rather than changing what happens.
+  if (ctx.timers.reconnect !== null || ctx.isReconnecting()) {
+    cb.log(
+      `[WS] Reconnect request dropped - ${ctx.isReconnecting() ? 'an attempt is already running' : 'a retry is already armed'}.`
+    );
+    return;
+  }
 
   const attempt = ctx.getReconnectAttempts() + 1;
   const delay =
@@ -237,7 +249,23 @@ export async function resumeConnectionImpl(
   ctx.setReconnectAttempts(0);
   startConnectionWatchdogImpl(ctx, cb);
   startSyncWatchdogImpl(ctx, cb);
-  if (ctx.isWsConnected()) return;
+  // THE EARLY RETURN NAMES BOTH ANSWERS, because they are answers to different questions and the
+  // whole of WP-RECONNECT-2 turns on whether they agreed. `isWsConnected` is OUR flag, set by our
+  // own code and corrected only when a `close` event is delivered; `isWsOpen()` is the socket's own
+  // `readyState`, which is what the connection watchdog beside this asks. Two functions a few lines
+  // apart asking different questions about the same socket is how a resume can decline to reconnect
+  // over a link that is already dead. Logged rather than changed: which of the two was stale is a
+  // measurement, and it has not been taken yet.
+  if (ctx.isWsConnected()) {
+    let socketOpen: boolean | null = null;
+    try {
+      socketOpen = ctx.ensureMls()?.isWsOpen() ?? null;
+    } catch {
+      // Service not initialised - `null` says exactly that, and is not the same as `false`.
+    }
+    cb.log(`[LIFECYCLE] Resume: already connected (flag=true, socket=${String(socketOpen)}).`);
+    return;
+  }
   await attemptReconnectImpl(ctx, cb);
 }
 

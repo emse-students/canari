@@ -171,6 +171,41 @@ describe('the pause/resume pair', () => {
     expect(timers.reconnect).toBeNull();
   });
 
+  // THE SILENCES, PINNED AS OUTPUT (WP-RECONNECT-2). A capture on 2026-08-14 held 98 seconds between
+  // a socket close and the first retry with not one line inside it, and the record could not say
+  // which of three mechanisms owned that interval. Each of these two branches is CORRECT to drop the
+  // work it drops - something else already owns the next attempt - so what is asserted here is that
+  // it says so. A branch that returns in silence is a branch that cannot be diagnosed from a log.
+  it('says which owner already has the next attempt when it drops a reconnect request', () => {
+    const { ctx, state, timers } = makeCtx();
+    const cb = makeCb();
+
+    // Owner one: a rung is armed. The close event arriving now must not silently vanish.
+    scheduleReconnectImpl(ctx, cb);
+    expect(timers.reconnect).not.toBeNull();
+    scheduleReconnectImpl(ctx, cb);
+    expect(cb.log).toHaveBeenCalledWith(expect.stringContaining('a retry is already armed'));
+
+    // Owner two: an attempt is in flight, which is a different fault with a different fix.
+    vi.mocked(cb.log).mockClear();
+    state.reconnecting = true;
+    scheduleReconnectImpl(ctx, cb);
+    expect(cb.log).toHaveBeenCalledWith(expect.stringContaining('an attempt is already running'));
+  });
+
+  it('names both the flag and the socket when a resume declines to reconnect', async () => {
+    const { ctx } = makeCtx({ connected: true });
+    const cb = makeCb();
+
+    // The fixture's socket reports CLOSED while the flag says connected - the exact disagreement
+    // that lets a resume decline to reconnect over a link that is already dead. Whether it happens
+    // in production is a measurement; that the log would show it is what this pins.
+    await resumeConnectionImpl(ctx, cb);
+    expect(cb.log).toHaveBeenCalledWith(
+      expect.stringContaining('already connected (flag=true, socket=false)')
+    );
+  });
+
   it('stays out of the way when logged out', async () => {
     const { ctx, state, timers } = makeCtx();
     state.loggedIn = false;
