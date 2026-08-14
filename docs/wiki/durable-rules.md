@@ -41,6 +41,18 @@ The four traps worth seeing without opening one:
   persisted nothing. It is now in `BaseMlsService.sendMessage`, which is concrete for exactly this
   reason - a platform supplies only `encryptForSend`, and cannot opt out of the invariants.
 
+- **A CALL SITE THAT HAS TO KNOW WHICH PLATFORM IT IS ON IN ORDER TO PERSIST IS A CALL SITE THAT WILL
+  GET IT WRONG.** `saveState` does not mean the same thing on both: on web it returns bytes that
+  still have to be stored, on native it has already written `mls.bin` when it answers. The checkpoint
+  path did both and so wrote the phone's state file TWICE with the same bytes - 2.0 s of a 3.7 s
+  checkpoint, nearly all of it re-marshalling the snapshot through IPC as a `number[]`. The fact was
+  already in the codebase on one method; a second call site had its own copy of the answer. One seam
+  (`IMlsService.persistCheckpoint`), every checkpoint through it.
+- **PRICE BOTH HALVES BEFORE CHOOSING BETWEEN THEM - AN UNPRINTED METRIC IS A GUESS.** The decision
+  "may a send WAIT for durability" turned on the cost of the save alone; the metric existed
+  (`recordMlsSaveStateMs`) and had never been logged, so the number was estimated at ~80 ms and was
+  really 1.7 s. Splitting the log did not just correct the estimate, it exposed the duplicate write
+  above - which no amount of reasoning about the code had found.
 - An at-rest envelope change needs a reader for the previous format in the SAME commit - and that
   reader only buys the FORWARD direction. Backwards is a separate promise nobody makes by default:
   once a device has saved in the new format, every build older than that commit is a total loss of

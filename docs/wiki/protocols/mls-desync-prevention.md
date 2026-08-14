@@ -93,10 +93,26 @@ queue encrypts those entries against an `mls.bin` that is behind its own previou
 peers refuse them with `SecretReuseError`. Reproduced twice on a settled fleet. The invariant that
 would close it is *`mls.bin` is never behind a frame that has already left the device*, which only an
 awaited checkpoint on the send path can hold; `BaseMlsService.checkpointAfterSend` is the seam for it,
-defaulting to the current non-awaiting behaviour. **Whether native may await depends on the cost of
-`saveState` ALONE** - the full checkpoint is 3.2 s on the phone and awaiting that on every send is not
-a trade worth making. That is the number the new log line exists to supply; do not implement the
-override before reading it.
+defaulting to the current non-awaiting behaviour.
+
+**THE MEASUREMENT REFUTES THE OBVIOUS FIX, AND FOUND A DIFFERENT DEFECT INSTEAD.** The split log
+priced a native checkpoint at **3.7 s, of which `saveState` alone is 1.7 s** (1683 / 1690 / 1761 ms
+on three consecutive sends, A1, 2026-08-14). So awaiting on native costs 1.7 s **per send**, which
+is not a trade worth making, and the earlier "~80 ms" estimate this decision was first taken on was
+wrong by a factor of twenty. The remaining 2.0 s was the real find: the persister called `saveState`
+and then `saveMlsStateEncrypted`, which is one durable write on web and **two on native** - native's
+`sauvegarder_mls_et_persister` has already written `mls.bin` when it returns, so the second call
+wrote the same file with the same bytes, marshalled through IPC as a `number[]`, the exact cost the
+single-invoke design existed to avoid. The codebase already knew this, on `persistFreshState`; the
+checkpoint path carried its own copy of the answer and the copy was wrong. Fixed by making
+`IMlsService.persistCheckpoint` the one seam every checkpoint goes through - `rotateDeviceIdentity`,
+the persister, the structural checkpoint - so no caller has to know which platform it is on.
+
+What is still owed for the outbox hole is therefore NOT an awaited checkpoint. The shape that fits
+the cost is a durable record of what the ratchet has already spent, written per send at the price of
+a key/value write rather than a snapshot, and consulted at load. **Do not implement one before the
+design is agreed** - it changes what a reload is allowed to do with `mls.bin`, which is the same
+class of decision as the two guards above.
 
 The background handoff is ordered for the same reason: on `hidden` the checkpoint is flushed
 **before** `pause_mls_foreground` releases the native guard. Releasing it is what lets a background

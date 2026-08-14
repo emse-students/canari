@@ -36,8 +36,13 @@ export class RedisService implements OnModuleDestroy {
   /** Publishes a JSON message to a Redis Pub/Sub channel. Logs errors but does not throw. */
   async publish(channel: string, message: Record<string, unknown>): Promise<void> {
     try {
-      await this.client.publish(channel, JSON.stringify(message));
-      this.logger.debug(`Published to ${channel}: ${JSON.stringify(message)}`);
+      const payload = JSON.stringify(message);
+      await this.client.publish(channel, payload);
+      // THE SHAPE, NEVER THE BODY. This reprinted the whole event on every publish - the channel
+      // ciphertext and the entire recipient list - which is a debugging aid that outlived its
+      // session: it says nothing a size does not, and it puts payloads in a log read by people
+      // who are not entitled to them.
+      this.logger.debug(`Published to ${channel}: ${payload.length} bytes`);
     } catch (err) {
       const trace =
         err instanceof Error ? (err.stack ?? err.message) : inspect(err, { depth: null });

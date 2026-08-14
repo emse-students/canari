@@ -108,6 +108,22 @@ export interface IMlsService {
   /** Serialises and encrypts the current MLS state to a byte array using the device key. */
   saveState(deviceKeyB64: string): Promise<Uint8Array>;
   /**
+   * Writes the current MLS state to THIS platform's durable store - the whole checkpoint, and the
+   * only call a checkpoint needs.
+   *
+   * It exists because {@link saveState} does not mean the same thing on the two platforms. On web it
+   * RETURNS bytes that still have to be handed to IndexedDB; on native it has already written
+   * `mls.bin` before it returns, so handing those bytes back through `save_mls_state` writes the
+   * same file, with the same bytes, a second time - and pays a `number[]` IPC marshalling of the
+   * whole snapshot to do it, which is the very cost `sauvegarder_mls_et_persister` was written to
+   * avoid. Measured on the phone 2026-08-14: 3.7 s per checkpoint, of which 1.7 s was the real save
+   * and 2.0 s the duplicate.
+   *
+   * A caller that has to know which platform it is on in order to persist correctly is a caller
+   * that will get it wrong; this is the seam that removes the question.
+   */
+  persistCheckpoint(deviceKeyB64: string): Promise<void>;
+  /**
    * Reloads the persisted MLS state from disk into the in-memory engine (C2). Android-only:
    * while the app is backgrounded, a native JNI engine (Welcome/send/worker) may advance
    * `mls.bin`; without reloading on resume the warm in-memory state is stale and its next save

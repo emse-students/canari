@@ -941,7 +941,7 @@ export abstract class BaseMlsService implements IMlsService {
     localStorage.setItem(`mls_device_id_${this.userId}`, this.deviceId);
     this.delivery.deviceId = this.deviceId;
     await this.loadStateWithKey(deviceKeyB64, undefined);
-    await this.persistFreshState(deviceKeyB64);
+    await this.persistCheckpoint(deviceKeyB64);
     // Deregister the abandoned device so other members stop generating Welcomes for a key package
     // our fresh state no longer holds (NoMatchingKeyPackage). Best-effort: a revoked id is already
     // gone server-side, and a mismatch must not block on the network.
@@ -1266,11 +1266,12 @@ export abstract class BaseMlsService implements IMlsService {
   // ── Platform-specific (abstract) ──────────────────────────────────────────
 
   /**
-   * Writes the freshly loaded state to this platform's durable store. Split from {@link saveState}
-   * because Tauri's already lands on disk while Web still has to hand the bytes to IndexedDB, and
-   * {@link rotateDeviceIdentity} must not know which.
+   * Writes the current state to this platform's durable store. Split from {@link saveState} because
+   * Tauri's already lands on disk while Web still has to hand the bytes to IndexedDB, and no caller
+   * - {@link rotateDeviceIdentity}, the checkpoint persister, the structural checkpoint - may have
+   * to know which. See `IMlsService.persistCheckpoint` for what the duplicate cost.
    */
-  protected abstract persistFreshState(deviceKeyB64: string): Promise<void>;
+  abstract persistCheckpoint(deviceKeyB64: string): Promise<void>;
 
   abstract saveState(deviceKeyB64: string): Promise<Uint8Array>;
   abstract changeDeviceKey(newDeviceKeyB64: string): Promise<void>;

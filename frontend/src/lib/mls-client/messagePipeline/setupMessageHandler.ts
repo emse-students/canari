@@ -77,7 +77,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Same rationale for the recovery cooldowns: a re-login must not inherit a stale throttle.
   resetReAddCooldowns();
 
-  const statePersister = createMlsStatePersister({ mlsService, deviceKeyB64, userId, log });
+  const statePersister = createMlsStatePersister({ mlsService, deviceKeyB64, log });
   registerMlsStatePersister(statePersister);
   installMlsStatePersisterLifecycle(statePersister);
 

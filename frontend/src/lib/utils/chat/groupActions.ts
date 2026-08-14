@@ -297,15 +297,19 @@ export async function leaveGroupAndBroadcast(params: {
 /**
  * Persists the WASM MLS blob to encrypted storage after forgetGroup / commits.
  * Without this, IndexedDB still holds a stale OpenMLS tree on next reload.
+ *
+ * `_userId` is no longer needed - the platform owns where its checkpoint goes
+ * (`IMlsService.persistCheckpoint`) - and is kept only because nineteen call sites pass it
+ * positionally. Drop it, and them, in a commit that changes nothing else.
  */
 export async function persistMlsStateAfterMutation(
   mlsService: IMlsService,
-  userId: string,
+  _userId: string,
   deviceKeyB64: string,
   log?: (msg: string) => void
 ): Promise<void> {
   try {
-    await persistMlsStructuralCheckpoint({ mlsService, deviceKeyB64, userId });
+    await persistMlsStructuralCheckpoint({ mlsService, deviceKeyB64 });
   } catch (e) {
     log?.(`[MLS] saveState failed after mutation: ${e instanceof Error ? e.message : String(e)}`);
   }

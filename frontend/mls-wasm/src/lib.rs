@@ -104,11 +104,13 @@ impl WasmMlsClient {
         // Redirect Rust panics to the browser console.
         console_error_panic_hook::set_once();
 
-        // We assume init_logger() was called, but we can log here too.
+        // Identifiers are truncated to eight characters, as they are everywhere else in this
+        // client's logs. A full 64-character user id next to a full device id is what a debugging
+        // session prints, and this line runs on EVERY construction - several times per page load.
         log::info!(
             "WasmMlsClient::new called for user: {} device: {}",
-            user_id,
-            device_id
+            user_id.chars().take(8).collect::<String>(),
+            device_id.chars().take(8).collect::<String>()
         );
 
         let manager = if let (Some(blob), Some(key_b64)) =
@@ -122,7 +124,7 @@ impl WasmMlsClient {
         } else {
             if state_bytes.is_none() && device_key_b64.is_some() {
                 log::warn!(
-                    "device_key_b64 provided but no encrypted state — key ignored, creating fresh state"
+                    "device_key_b64 provided but no encrypted state - key ignored, creating fresh state"
                 );
             }
             log::info!("Loading/Creating clean state");

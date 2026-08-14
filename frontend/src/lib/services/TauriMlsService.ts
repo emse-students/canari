@@ -516,8 +516,12 @@ export class TauriMlsService extends BaseMlsService {
     this._knownGroups.add(groupId);
   }
 
-  /** Native save already writes mls.bin, so persisting the fresh state is just that one call. */
-  protected async persistFreshState(deviceKeyB64: string): Promise<void> {
+  /**
+   * Native `saveState` writes `mls.bin` before it returns, so the checkpoint is that one call.
+   * Handing its bytes back to `save_mls_state` would write the same file twice - 2.0 s of the
+   * 3.7 s measured on the phone, nearly all of it marshalling the snapshot as a JS `number[]`.
+   */
+  async persistCheckpoint(deviceKeyB64: string): Promise<void> {
     await this.saveState(deviceKeyB64);
   }
 

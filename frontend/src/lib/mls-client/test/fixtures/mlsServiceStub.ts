@@ -11,6 +11,9 @@ export function createMlsServiceStub(
     forceCreateGroup: vi.fn().mockResolvedValue(undefined),
     createRemoteGroup: vi.fn().mockResolvedValue('group-uuid'),
     saveState: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
+    // The whole checkpoint, which is what the pipeline calls: `saveState` alone is not durable on
+    // web and is durable twice over on native, which is why nothing outside a platform calls it.
+    persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     generateKeyPackage: vi.fn().mockResolvedValue(new Uint8Array([9])),
     addMember: vi.fn().mockResolvedValue({ welcome: new Uint8Array([1]) }),
     addMembersBulk: vi.fn().mockResolvedValue({

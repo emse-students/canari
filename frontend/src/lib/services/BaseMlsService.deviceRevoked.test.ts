@@ -21,7 +21,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     delivery: { userId: 'u', deviceId: 'd-revoked' },
     generateDeviceId: vi.fn().mockReturnValue('d-fresh'),
     loadStateWithKey: vi.fn().mockResolvedValue(undefined),
-    persistFreshState: vi.fn().mockResolvedValue(undefined),
+    persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     deleteDevice: vi.fn().mockResolvedValue(undefined),
     // Real rotation: the assertions below are about what it does.
     rotateDeviceIdentity: BaseMlsService.prototype['rotateDeviceIdentity'],
@@ -54,7 +54,7 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
     // Persisted before anything else may fail: a new id in localStorage next to the old state is
     // what made the identity churn self-sustaining.
     expect(localStorage.getItem('mls_device_id_u')).toBe('d-fresh');
-    expect(ctx.persistFreshState).toHaveBeenCalledWith('key-b64');
+    expect(ctx.persistCheckpoint).toHaveBeenCalledWith('key-b64');
     expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'd-revoked');
     expect(impl).toHaveBeenCalledTimes(2);
   });

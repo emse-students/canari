@@ -1,13 +1,11 @@
 import type { IMlsService } from './IMlsService';
 import { recordMlsSaveStateMs } from './catchupBenchmark';
-import { saveMlsStateEncrypted } from '$lib/utils/hex';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 
 /** Configuration for coalesced MLS state persistence. */
 export interface MlsStatePersisterConfig {
   mlsService: IMlsService;
   deviceKeyB64: string;
-  userId: string;
   log?: (msg: string) => void;
 }
 
@@ -36,7 +34,7 @@ export interface MlsStatePersister {
  * flush() write a checkpoint to IndexedDB, sealed with the device key.
  */
 export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsStatePersister {
-  const { mlsService, deviceKeyB64, userId, log } = config;
+  const { mlsService, deviceKeyB64, log } = config;
 
   let dirtyEncrypted = false;
   let immediateFlushQueued = false;
@@ -47,24 +45,17 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
   async function runSaveEncrypted(): Promise<void> {
     await yieldToMainThread();
     const saveStarted = typeof performance !== 'undefined' ? performance.now() : null;
-    const bytes = await mlsService.saveState(deviceKeyB64);
-    // THE TWO HALVES ARE PRICED SEPARATELY, because they are not the same thing and only one of them
-    // is what a reload reads back. `saveState` serialises the client and, on native, writes
-    // `mls.bin`; `saveMlsStateEncrypted` seals a copy into IndexedDB behind Argon2. The whole
-    // checkpoint was measured at 3.2 s on the phone on 2026-08-14 - which decides nothing on its
-    // own, because the question "may a send WAIT for the state to be durable" is a question about
-    // the first half alone. The metric existed (`recordMlsSaveStateMs`) and was never printed, so
-    // the number had to be guessed; it was guessed wrong by a factor of forty.
+    // ONE CALL, BECAUSE THE PLATFORM OWNS WHAT DURABLE MEANS. This used to be `saveState` followed
+    // by `saveMlsStateEncrypted`, which is right on web and writes `mls.bin` TWICE on native - the
+    // second time marshalling the whole snapshot through IPC as a `number[]`. Split-timing the two
+    // halves on the phone is what showed it: 3.7 s per checkpoint, 1.7 s of real save and 2.0 s of
+    // duplicate. The fact was already in the codebase, on `persistCheckpoint`; this call site had
+    // its own copy of the answer and the copy was wrong.
+    await mlsService.persistCheckpoint(deviceKeyB64);
     const saveMs = saveStarted === null ? null : performance.now() - saveStarted;
     if (saveMs !== null) recordMlsSaveStateMs(saveMs);
-    await saveMlsStateEncrypted(userId, bytes);
-    const totalMs = saveStarted === null ? null : performance.now() - saveStarted;
     log?.(
-      `[MLS] Encrypted state checkpoint persisted.${
-        saveMs === null || totalMs === null
-          ? ''
-          : ` (saveState ${Math.round(saveMs)} ms of ${Math.round(totalMs)} ms total)`
-      }`
+      `[MLS] Encrypted state checkpoint persisted.${saveMs === null ? '' : ` (${Math.round(saveMs)} ms)`}`
     );
   }
 

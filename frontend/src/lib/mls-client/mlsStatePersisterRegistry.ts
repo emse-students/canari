@@ -1,6 +1,5 @@
 import type { MlsStatePersister } from './mlsStatePersister';
 import type { IMlsService } from './IMlsService';
-import { saveMlsStateEncrypted } from '$lib/utils/hex';
 
 /**
  * Process-wide handle to the session's MLS state persister.
@@ -54,9 +53,8 @@ export async function flushActiveMlsStateEncrypted(): Promise<void> {
 
 /** Fallback when the registry persister is not registered (tests / pre-pipeline). */
 export interface MlsStructuralCheckpointFallback {
-  mlsService: Pick<IMlsService, 'saveState'>;
+  mlsService: Pick<IMlsService, 'persistCheckpoint'>;
   deviceKeyB64: string;
-  userId: string;
 }
 
 /**
@@ -72,6 +70,5 @@ export async function persistMlsStructuralCheckpoint(
     return;
   }
   if (!fallback) return;
-  const bytes = await fallback.mlsService.saveState(fallback.deviceKeyB64);
-  await saveMlsStateEncrypted(fallback.userId, bytes);
+  await fallback.mlsService.persistCheckpoint(fallback.deviceKeyB64);
 }

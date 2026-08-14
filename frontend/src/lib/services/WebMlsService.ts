@@ -693,7 +693,7 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** Web keeps its snapshot in IndexedDB, so the encrypted bytes still have to be handed over. */
-  protected async persistFreshState(deviceKeyB64: string): Promise<void> {
+  async persistCheckpoint(deviceKeyB64: string): Promise<void> {
     await saveMlsState(this.userId, await this.saveState(deviceKeyB64));
   }
 

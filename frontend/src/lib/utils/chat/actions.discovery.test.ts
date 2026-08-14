@@ -17,6 +17,7 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     getLocalGroups: vi.fn().mockReturnValue([]),
     forgetGroup: vi.fn(),
     saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+    persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     getDismissedGroups: vi.fn().mockResolvedValue([]),
     getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
@@ -95,7 +96,9 @@ describe('purgeOrphanGroup', () => {
     });
 
     expect(mlsService.forgetGroup).toHaveBeenCalledWith('g1', 0);
-    expect(mlsService.saveState).toHaveBeenCalledWith('1234');
+    // The forget has to reach disk, whatever "disk" means on this platform - which is exactly why
+    // the assertion is on the checkpoint and not on `saveState`, whose result web still has to store.
+    expect(mlsService.persistCheckpoint).toHaveBeenCalledWith('1234');
     expect(conversations.has('g1')).toBe(false);
   });
 });
@@ -354,7 +357,9 @@ describe('discoverMissingGroups orphan cleanup', () => {
     });
 
     expect(mlsService.forgetGroup).toHaveBeenCalledWith('phantom-mls', 0);
-    expect(mlsService.saveState).toHaveBeenCalledWith('1234');
+    // The forget has to reach disk, whatever "disk" means on this platform - which is exactly why
+    // the assertion is on the checkpoint and not on `saveState`, whose result web still has to store.
+    expect(mlsService.persistCheckpoint).toHaveBeenCalledWith('1234');
   });
 
   it('does not purge when server fetch failed', async () => {
