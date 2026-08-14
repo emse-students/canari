@@ -1,14 +1,4 @@
-# Cross-client test campaign
-
-The campaign that exercises Canari across **three simultaneous clients** - two desktop browsers (W1,
-W2) and an Android device (A1) - against production.
-
-**This page is a dashboard.** It says which checks exist, in which order they run, what each one
-asks, and where each one stands. It carries no diagnoses: a defect's story belongs in `CHANGELOG.md`,
-the rule it taught belongs on the wiki page of the module it lives in, and how a result earns belief
-belongs in [testing-methodology](testing-methodology.md).
-
-| Where | What it holds |
+ `passed` 2026-08-13 | Where | What it holds |
 | --- | --- |
 | this page | every check, its rung, its state |
 | [testing-methodology](testing-methodology.md) | how a result earns the right to be believed - 31 harness faults distilled into ten rules |
@@ -49,84 +39,6 @@ meet.
 | MSG | 12 | **3x on `9b7482f1` (2026-08-14)**: 11 of 13 `passed` 3/3, server window `clean` 3/3. Only MSG-5 and MSG-6 dirty (2 of 3 passes), carrying WP-FALSELOSS-2 |
 | every other phase | 22 written, 6 with none | `pending` - not yet run on this build |
 
-**Every verdict is now recorded AND exited on.** `msg8`, `msg8b`, `msg9` and `msg10` used to exit on
-their verdict and never record it; `msg2` recorded and never exited, so the table printed `done`
-beside a recorded `FAIL`; `msg67` exited 0 unconditionally. A script that records nothing is
-indistinguishable from one that passed, which is the worse direction, and the dashboard had four
-scripts as `passed` on that basis. Both halves are one call (`finish` in `results.mjs`), and
-`run.mjs` treats anything that is not a clean `PASS` as work still owed.
-
-**What came out of this run:**
-
-- **The observation gate had a hole big enough to pass a lost frame through.** `SecretReuseError`
-  and `[MLS] LOST frame` were classified `notable`, and `notable` did not break `clean` - so MSG-6
-  recorded `PASS` with `receiverClean: true` twice, with all three lines inside its own record.
-  `report` now has a `severe` bucket that breaks `clean`. It is what turned a green phase into an
-  honest one, and it is the reason WP-FALSELOSS-2 exists at all.
-- **A deliberate cut may not be counted as dirt, and it was.** MSG-9 and MSG-10 filed the
-  `ERR_INTERNET_DISCONNECTED`, the closed socket and the app's own retry ladder - all of which they
-  caused - as defects, so both were permanently dirty. `ignoringOfflineCut` forgives exactly those,
-  and forgives nothing in `severe`: a lost frame is a lost frame whatever the link did.
-- **MSG-4 `dirty` on two counts, one of them fixed.** The composer handed a PDF to the browser's
-  native plugin through an `<embed>`, which this site's own CSP forbids (`object-src 'none'`) - so it
-  was blocked for every user on every browser and the preview was a blank tile. Fixed on `c97b735c`.
-  The other is below.
-- **`642f389a` HEALS. The note that said it could not is withdrawn on evidence.** Within one run it
-  raised the ask, both peers answered (`Diff sent … 19 of 19`, `11 of 11`, 17 messages ingested from
-  the inviting peer) and twelve seconds later the two devices reported the SAME state key
-  (`same state as … - nothing to do`). The audit shipped in `24ba3da1` supplied the reason to compare
-  that it lacked. **Deleting and recreating it was never necessary and must not be revived.**
-- **`SecretReuseError` was a FALSE loss signal, on every device, from its own ordinary traffic -
-  CONFIRMED and fixed.** Measured over two consecutive reloads: the first reported two frames
-  `unreadable for good`, the second none, and the seen-fingerprint ledger grew by four - so each
-  frame is reported once and then silenced, and new ones appear only where live traffic has been.
-  The cause was then established in the code rather than inferred: `seenCipherHashes` is written by
-  the REPLAY alone, so a frame delivered live or drained from the queue consumed its ratchet
-  generation and left no mark, and the replay later walked the same archive row, could not decrypt
-  what the device was displaying, and reported real loss. `history.ts` asserted the opposite in so
-  many words - *"anything arriving HERE is a frame this device has never read"* - and that assertion
-  was false. The two paths share no identifier (Redis stream id vs `queued_message` uuid, and the
-  server discards the stream id at write time), so the mark is keyed on the ciphertext. Written up
-  with its evidence in
-  [history-reconciliation](protocols/history-reconciliation.md#that--0-was-true-and-did-not-last---the-noise-regenerates).
-  **What this cost the campaign is the reason it was fixed before climbing another rung: a genuine
-  loss was indistinguishable from this noise, so no run's observation could be believed.**
-  **VERIFIED ON PROD 2026-08-13**, and note what the verification had to be: the fix is prospective,
-  so the first reload after the deploy still reported 6 - a number that fits both hypotheses and
-  decides nothing. The discriminating run is live traffic consumed by the NEW bundle, then a reload:
-  0 false loss, 0 `SecretReuseError`, 0 asks, against 6/12/1 for the same shape on the old one. The
-  phone is verified separately (its APK, not the deployed bundle): marks 2577 -> 2583.
-  **That verification stands and is NOT withdrawn - but its `0` was measured over one path, and a
-  second one is still open.** WP-FALSELOSS-2 below is the same symptom on frames at the HEAD of the
-  stream rather than behind the cursor, and it was found the moment MSG-1b started forcing a replay
-  on every run. A fix verified against the traffic that provoked the first shape says nothing about a
-  shape it never exercised - which is the general form of this campaign's most expensive mistake.
-
-## Everything was `pending`, and that was deliberate
-
-The campaign was reset on 2026-08-12. Not because the earlier verdicts were wrong, but because they
-were made against code that is being replaced:
-
-- **The repair mechanism every phase observes was deleted and rebuilt** (2026-08-10). The narrow
-  `decrypt_failed` retransmission - and the ring and nine durations behind it - is gone; the history
-  diff is now the only repair. Any repair observed from here on IS the diff.
-- **The diff itself is being reworked**, specified in
-  [history-reconciliation](protocols/history-reconciliation.md), as a **clean break with no
-  compatibility layer**. Everything about how a device learns it is missing messages changes.
-- **So the campaign restarts on the reworked build**, after the store rollout and after
-  `minClientVersion` is raised - which is also what finally makes the fleet uniform, ending the
-  split where the browsers speak the new wire protocol and the phone speaks whatever its APK
-  bundled.
-
-The reset paid for a second thing the page needed: the phases used to come in two groups - those
-grown from INCIDENTS (a forward that lost a message, a tab that duplicated one) and those added
-later from a **matrix of the feature surface**. That split was an accident of history and made the
-order meaningless. There is now one ladder.
-
-**A `pending` row is not an empty row.** Where a check has already cost something to make honest,
-its phase carries a short *what this phase already cost* note. Read it before running the check: it
-is the difference between re-running it and re-learning it.
-
 ## State vocabulary
 
 | State | Meaning |
@@ -136,18 +48,7 @@ is the difference between re-running it and re-learning it.
 | `failed` | ran and did not hold - always paired with a Work Package carrying the captured log, or with a fixed commit |
 | `blocked` | cannot run until something outside the campaign happens (a decision, the user, a rung above) |
 
-There is no `to-revalidate`. A commit that touches a check's area returns it to `pending`, which is
-the same statement with one word less. There is no `deferred` either: a check that is deliberately
-held back is held back by its **rung**, which the ladder already says.
-
-**A verdict is `passed` only if the assertions hold AND the run is clean.** Observation is part of
-every check, not a debugging step - several shipped defects came out of a green check's log rather
-than out of its assertions.
-
 ## The three transports - read this before reading any phase
-
-This app has three completely different delivery mechanisms, and a check that does not know which
-one it is exercising will draw the wrong conclusion from its result.
 
 | World | What travels | Who can read it |
 | --- | --- | --- |
@@ -155,25 +56,9 @@ one it is exercising will draw the wrong conclusion from its result.
 | Community channel | REST on social-service + a Redis broadcast relayed by the gateway. Server-held `masterSecret` per epoch, NOT MLS | the server, in cleartext, for everything except message bodies |
 | Ephemeral | WebSocket JSON: `ping`, `disconnect`, `welcome_request`, `typing`. Nothing else | online peers, now, or never |
 
-The consequence that catches people: **a mutation sent `silent=true` is excluded from the Redis
-history stream and delivered only per-device from the queue.** So "did the edit arrive" and "did the
-message arrive" are not the same question and do not share a failure mode.
-
 ---
 
 ## The ladder
-
-**182 checks in 18 phases, plus 9 setup steps.** The order is the point of this page.
-
-> **The rule the order encodes:** a rung may only fail for reasons the rungs below it have already
-> cleared. A defect found in a small check is one mechanism away from its cause; the same defect
-> found first inside a call, a push or a corrupted store costs a day of discrimination, because
-> every mechanism it crossed on the way is a candidate.
-
-**The `Needs` column decides where a row actually runs.** Every phase table carries it, and it means
-what the check requires beyond the two browsers. A row whose `Needs` exceeds its rung runs at the
-**first rung that supplies it** - which is why the device rungs open by sweeping the `+A1` and
-`+push` rows left behind above them. Nothing is duplicated: the column IS the schedule.
 
 | Token | Meaning |
 | --- | --- |
@@ -314,231 +199,53 @@ belong to itself.
 
 | Id | Step | Needs | State |
 | --- | --- | --- | --- |
-| SETUP-1 | Build the debug APK, plus the jniLibs `.so` rescue (`test_adb.py` `_ensure_native_lib_present` - a Windows symlink failure builds an APK with no native lib) | `+A1` | **`passed` 2026-08-14** - rebuilt at `9fd67590` (`__sveltekit_1crvh4u`) and installed; the `.so` rescue was not needed. **The rebuild is now part of the pre-flight, not an optional step**: the previous APK was ten commits stale and the phase had been measuring code the phone did not carry. `bundle-a1.mjs` states it as a measurement |
-| SETUP-2 | Clean uninstall + install. **Wipes `mls.bin`** - the device loses its MLS identity and local history, by design | `+A1` | `pending` - **deliberately not run**: `install -r` was used instead, to keep the store and avoid re-paying SETUP-4's 2FA |
-| SETUP-3 | Start logcat with the 19-tag whitelist from `test_adb.py`. A tag missing there is a verdict that never arrives | `+A1` | re-run each session - done 2026-08-13 |
-| SETUP-4 | W1: log in as **owner**, enrol the device, set the PIN | `+user` | **`passed`** - re-proven 2026-08-14 by the preflight: unlocked, 10 sidebar rows, **and ONLINE at the gateway** (`user=d82cd226 device=web-d82c`, TTL 19 s) |
-| SETUP-5 | W2: log in as **peer** (no 2FA on that account), set the PIN | `W1 W2` | **`passed`** - preflight 2026-08-14, unlocked, 2 sidebar rows, ONLINE at the gateway. It had first to be REPAIRED: it was still the dead tab of the WP-RECONNECT-1 capture, `OFFLINE` at the gateway on a stale bundle, and the preflight refused to run over it - which is the gate working |
-| SETUP-6 | A1: log in as **owner**. **Decline biometrics** so the PIN is always the unlock path | `+A1` `+user` | **`passed`** - 2026-08-14 after the reinstall: the preflight unlocked it and sent it to `/chat`, 10 sidebar rows, ONLINE at the gateway (`device=tauri-d8`) |
-| SETUP-7 | **Discovery pass.** Enumerate the real at-rest artefacts rather than guessing them - see [the artefact table](#the-at-rest-artefacts) | `+A1` | `pending` |
-| SETUP-8 | Baseline snapshot of the intact Android app data, so every corruption test can roll back without a re-enrolment | `+A1` | `pending` - **owed before CORRUPT and PIN** |
-| SETUP-9 | The dedicated venue for channel traffic | `W1 W2` | **`passed`** - confirmed against production 2026-08-13: channel `general` in workspace `Campagne de test`, and it is a **community**, not a channel |
-
-**SETUP-9 is a community, not a private channel**, and the reason is a finding: a private channel in
-an existing association is readable by every admin of that association, so it is not a private venue
-at all. The `Campagne de test` community holds only the two accounts. It also means the channel
-transport exists from rung 0, which is what lets the channel rows of tiers B and C run before COMM.
-
-**Decided, not to be re-litigated:** all channel traffic goes to that one venue; the peer account has
-no 2FA (only the owner does, once, at SETUP-4); wiping the phone is authorised, because the
-re-enrolment path and MULTI-3 are only testable from a clean device.
+| SETUP-1 | Build the debug APK, plus the jniLibs `.so` rescue (`test_adb.py` `_ensure_native_lib_present` - a Windows symlink failure builds an APK with no native lib) | `+A1` | `passed` 2026-08-14 - APK rebuilt and installed; the rebuild is part of the pre-flight |
+| SETUP-2 | Clean uninstall + install. **Wipes `mls.bin`** - the device loses its MLS identity and local history, by design | `+A1` | `skipped` - deliberate: `install -r` keeps the store and avoids re-paying SETUP-4's 2FA |
+| SETUP-3 | Start logcat with the 19-tag whitelist from `test_adb.py`. A tag missing there is a verdict that never arrives | `+A1` | re-run each session - done 2026-08-14 |
+| SETUP-4 | W1: log in as **owner**, enrol the device, set the PIN | `+user` | `passed` 2026-08-14 - preflight: unlocked, online at the gateway |
+| SETUP-5 | W2: log in as **peer** (no 2FA on that account), set the PIN | `W1 W2` | `passed` 2026-08-14 - preflight: unlocked, online at the gateway |
+| SETUP-6 | A1: log in as **owner**. **Decline biometrics** so the PIN is always the unlock path | `+A1` `+user` | `passed` 2026-08-14 - preflight: unlocked, online at the gateway |
+| SETUP-7 | **Discovery pass.** Enumerate the real at-rest artefacts rather than guessing them - see [the artefact table](#the-at-rest-artefacts) | `+A1` | `pending` - owed before CORRUPT and PIN |
+| SETUP-8 | Baseline snapshot of the intact Android app data, so every corruption test can roll back without a re-enrolment | `+A1` | `pending` - owed before CORRUPT and PIN |
+| SETUP-9 | The dedicated venue for channel traffic | `W1 W2` | `passed` 2026-08-13 |
 
 ## 1 - MSG - the plain path
 
-Baseline first. An exotic failure is only meaningful once the plain path is proven on the same
-harness in the same session.
-
-**TWO RUNS ON 2026-08-14 AGAINST `9fd67590`, ALL THREE CLIENTS PROVEN AT HEAD FIRST - 25 delivery
-verdicts out of 26 hold, and the one exception is not a delivery defect either.** W1 and W2 were
-reloaded onto the deployed bundle and A1's APK was rebuilt (it was **ten commits stale**, missing
-`09fc615b`, `d7c83a3d`, `b5ae5dfe` and `ee7a0137` - the very history/MLS fixes this phase measures,
-so the previous run had been attributing results to code the phone did not carry). `bundle-a1.mjs`
-now states that as a measurement; it compares the phone to the LOCAL build, never to the deployed
-one, because a build id is a hash of the build and the same commit compiled twice never matches.
-
-**NO RUN IS `clean` YET, AND THE REASON IS ONE LINE.** The bar was raised this session so that
-`unexplained` breaks `clean` - which is the campaign's actual rule, previously computed, printed and
-counted for nothing. The first run produced **89 distinct unexplained lines; 75 of them were
-`[REWIND-TRACE]`**, the WP-FALSELOSS-2 instrumentation, which logged EVERY send including the
-ordinary ones (`duringCatchUp=false`). It now logs only inside a catch-up window - the only place a
-send can be rewound - but that change is not deployed, so both runs still carry it. The remaining 14
-were read and classified: the app's boot sequence (MSG-10 reloads its sender by design), the media
-cache clock, the pending-mailbox drain, and the cut's own reactions. **Run 2 was predicted to show
-`[REWIND-TRACE]` and nothing else before it was run, and did**, which is what makes the triage
-believable.
-
-**MSG-10 reported a loss that had not happened, and the instrument was at fault, not the app.** It
-waited 90 s, saw nothing on the receiver and recorded `copiesOnReceiver: 0` - the most serious claim
-this campaign can make. The message was delivered at 98 s and the server's own
-`[SEND] ... DONE queued=2 realtime=2` proves it. The check now separates the two: `FAIL` is reserved
-for a message that never arrived or arrived wrong, a delivery past the budget earns `SLOW`, and the
-record carries `msToReconnect` beside `msToDrainAfterReconnect` so a reader can tell an outbox that
-sat on a message from a link that was not back yet. **Underneath it is a real defect - 98 seconds
-between a restored link and the first reconnect attempt, with the 60 s watchdog silent - which is
-WP-RECONNECT-2 below.**
-
-Verdicts are kept rather than erased: they name the build they hold for.
-
-**Three of this run's answers came from the instrument being wrong, and each fix is shared.**
-MSG-1b, MSG-9 and MSG-10 had all three been reporting about themselves:
-
-- **MSG-1b could not tell "fixed" from "not exercised"** - it inferred its window from the pane
-  growing by 3 000 characters, which stopped happening once the load finished during the wait for the
-  composer. The window is now a FACT: the check fires the instant `GET /api/mls/history/<group>` is
-  observed in flight and asserts that request had not settled, which holds for a conversation of any
-  size. It was also non-deterministic until the primer was made to wait for the history route to go
-  QUIET - the list bootstrap was swallowing it. 3/3 identical runs since, with the replay provably
-  still open 556-607 ms after the send.
-- **MSG-9 had never once taken its receiver offline.** Measured, not assumed: W2 cut, `fetch` severed
-  in 13 ms, and the gateway's presence key refreshed WITHOUT A GAP FOR SIXTY SECONDS. CDP's offline
-  emulation fails new requests and leaves an established WebSocket completely alone, so a browser
-  "offline" is, to the thing doing the delivering, perfectly connected. `net.mjs` now carries two
-  different cuts - `cut()` for a SENDER, `cutHard()` for a RECEIVER - and the second closes the live
-  socket by capturing it at construction. MSG-9 passes with the gateway agreeing: offline after
-  1.0 s, back after 1.3 s, message 1.8 s later, one copy.
-- **MSG-10 recorded nothing at all.** It printed its verdict and called `process.exit`, so a twelve
-  script run showed eleven rows and the silent one read as a pass - the exact failure `finish` was
-  written for, in a script the last pass through this file had already been meant to convert.
-
-
-
-State is the LAST run, on `9b7482f1` x3 (2026-08-14) unless a row says otherwise. `3/3` = clean on
-all three passes.
+State is the last run, `9b7482f1` x3 (2026-08-14). `3/3` = clean on all three passes.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `passed` 3/3 - 263 ms |
-| MSG-1-cold | Same, after a reload | `W1 W2` | `passed` 2/3, one `SLOW` (7.7 s) on pass 1, a leftover outbox entry draining |
-| MSG-1b | Delivery DURING a history load | `W1 W2` | `passed` 3/3 - 18-30 ms |
+| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `passed` 3/3 |
+| MSG-1-cold | Same, after a reload | `W1 W2` | `passed` 2/3, one `SLOW` (7.7 s) |
+| MSG-1b | Delivery DURING a history load | `W1 W2` | `passed` 3/3 |
 | MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `passed` 3/3 |
-| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `passed` 3/3 - 365 ms |
-| MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `W1 W2` | `passed` 3/3 |
-| MSG-5 | Channel message converges on all three; **no `masterSecret` in any payload** | `+A1` | **`dirty` 2/3** - converged every pass; the two dirty passes carry WP-FALSELOSS-2 (generations 369, 386) |
-| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`dirty` 2/3** - preview assertions held every pass; dirt is `[OUTBOX] 1 entry still queued` on A1. No `arrived: false` in three passes |
-| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `passed` 3/3 - 1 894 ms |
+| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `passed` 3/3 |
+| MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `passed` 3/3 |
+| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | **`dirty` 2/3** - WP-FALSELOSS-2 |
+| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`dirty` 2/3** - `[OUTBOX] 1 entry still queued` on A1 |
+| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `passed` 3/3 |
 | MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `passed` 3/3 |
-| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `passed` 3/3. UX note stands: the tab TITLE never changes |
-| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `passed` 3/3 - 15.6 s |
-| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `passed` 3/3 - **WP-OUTBOX-1 verified here**, against `F/D/D` on the bundle before |
-| (server) | Every application container's log over each pass's own window | - | `clean` 3/3 - 8 544 lines, seven services, zero unexplained |
-
-**An offline RECEIVER can be faked in a browser after all, and it took closing the socket by hand.**
-The note that said it needed a phone with its radios off was right about `cut()` and wrong about the
-conclusion: what a receiver needs is for the GATEWAY to hold no connection, and that is reachable
-from CDP once the page's WebSocket is captured at construction and closed. A real radio cut is still
-the more faithful scenario and is owed on device - but it must not be run on THIS rig, where adb
-itself rides the phone's wifi.
+| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `passed` 3/3 |
+| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `passed` 3/3 |
+| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `passed` 3/3 |
+| (server) | Every application container's log over each pass's own window | - | `clean` 3/3 - 8 544 lines, zero unexplained |
 
 ### WP-PREFIX-1 - six of seven internal calls addressed a route that does not exist (FIXED `fed86037`)
 
-**Found by the third observer, not by a client assertion.** `srvlog.mjs` was written this session to
-pull the containers' own logs over the run window; the first thing it surfaced was
-`[CHANNEL_PUSH] notify HTTP 404`, which no browser and no phone can see. Every Nest service in this
-repo mounts `app.setGlobalPrefix('api')`, and the internal base URLs are configured WITHOUT it
-(`DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010`), so each caller had to add it. The full
-enumeration - not the ones that happened to log:
-
-| Caller | Path as written | Prefix | What the 404 cost |
-| --- | --- | --- | --- |
-| social `push.service.ts:31` | `/internal/push/notify` | missing | push never sent |
-| social `channel.service.ts:2007` | `/internal/push/notify` | missing | **channel push never delivered, ever** |
-| social `channel.service.ts:1197` | `/mls/devices/<user>` | missing | `userHasMlsDevices` returns `true` on `!res.ok` - **the guard was a constant `true`** |
-| core `users.service.ts:336` | `/internal/associations/<id>/member-user-ids` | missing | 404 |
-| core `users.service.ts:380` | DELETE `/internal/users/<u>` -> delivery | missing | account deletion left MLS keys, devices, messages |
-| core `users.service.ts:387` | DELETE `/internal/users/<u>` -> social | missing | account deletion left posts, follows, memberships |
-| core `users.service.ts:396` | `/api/media/internal/users/<u>` | present | worked |
-
-**Why it survived.** All six are `.catch(warn)` best-effort - the failure mode was designed for a
-transient fault and met a permanent one, so a route that had NEVER worked is indistinguishable from a
-service that is briefly down. `payment/social-internal-client.ts` gets every path right, so the
-convention was known and applied in two places out of three, which is the worst state a convention
-can be in.
-
-**Fixed at the seam**: one `internal/service-urls.ts` per service inserts the prefix exactly once, so
-it is not the caller's to write. Putting `/api` in the compose files would have fixed the deployment
-and left the code's defaults wrong.
-
-**VERIFIED ON PRODUCTION 2026-08-14 12:00Z, and the verification is a SERVER log because nothing a
-client can see ever changed.** `prefix-verify.mjs` (kept in the harness) posts one marker into the
-campaign channel and reads what `social-service` said about it:
-
-```
-[ChannelService] [CHANNEL_PUSH] channel=2922bd2b… message=f4616d3c… recipients=1
-```
-
-and **nothing after it** - `prefix404: []`, `anyNotFound: []`. Before the fix that line was followed
-by `[CHANNEL_PUSH] notify HTTP 404` every single time.
-
-**An absent warning is only evidence if the path ran**, so the check does not rest on the silence: it
-requires the marker rendered in the channel (718 ms) AND the service's own trace of handling it in
-the same window. A message that never reached `channel.service.ts` would have produced an identical
-silence, and that is the reading the check is built to refuse.
+**SHIPPED `fed86037`, verified on production 2026-08-14 12:00Z.** Six of seven internal
+cross-service calls omitted the callee's `/api` prefix: channel push never delivered on any device,
+`userHasMlsDevices` reduced to a constant `true`, and account deletion left MLS keys, devices,
+messages, posts, follows and memberships in place. All six were `.catch(warn)`. Fixed at the seam -
+one `internal/service-urls.ts` per service. Rules in [durable-rules](durable-rules.md), user-facing
+entry in `CHANGELOG.md`.
 
 ### WP-RECONNECT-2 - the link came back, the app agreed, and nothing reconnected for 98 seconds
 
-**What is measured**, on `9fd67590` (the bundle that already carries the WP-RECONNECT-1 fix), from
-MSG-10's own capture on 2026-08-14. Sender clock, local time - and **the lines without a clock are
-printed without one on purpose, because that is exactly what the capture holds**:
-
-```
-13:22:08  [OUTBOX] Flush skipped - offline; the queue is kept intact for the next reconnect.
-13:22:11  [CONNECTIVITY] browser reports online
-13:22:11  [LIFECYCLE] Network back online - re-arming watchdogs and reconnecting...
-13:22:11  [LIFECYCLE] App in foreground - re-arming watchdogs and reconnecting...
-    ??    [CONNECTIVITY] server reachable again
-    ??    [WS] Disconnected. Code: 1006, Reason: no reason
-             <- 98 seconds, no line of any kind
-13:23:49  Connection lost. Retrying in 1s... (attempt 1)
-13:23:50  Connecting to Gateway...
-13:23:50  [WS] Connected to Chat Gateway
-```
-
-**THE TWO UNDATED LINES ARE THE WHOLE QUESTION, AND THE FIRST WRITE-UP OF THIS PAGE ANSWERED IT BY
-INFERENCE.** The app timestamps its `appendLog` lines and not its `console.warn` ones, so
-`[WS] Disconnected` carries no clock and was placed at the START of the hole purely by bucket order.
-Placed there it says the close arrived on time and the app then did nothing for 98 s; placed at the
-END it says the close arrived 98 s late and the retry followed it within a second - which is the
-opposite diagnosis, from the same record. Ordering within a classifier bucket is not a measurement.
-
-and, on the server, `[SEND][send-...] DONE queued=2 realtime=2` at 11:23:50Z. **Nothing was lost.**
-The outbox behaved perfectly - it refused to flush offline and kept the queue - and the message went
-out the instant a socket existed.
-
-**What this establishes, and what it does not.** WP-RECONNECT-1 is NOT regressed: the ladder does
-restart and does connect, on the first rung, which is exactly what that fix bought. What is new is a
-path where the first rung is never armed for a minute and a half.
-
-Two facts constrain any explanation:
-
-- **the watchdog did not fire.** No `[WS] Watchdog: socket inactive, reconnecting...` appears in the
-  window, though `re-arming watchdogs` at 13:22:11 says it was armed and its period is 60 s. It was
-  due at 13:23:11;
-- **the resume produced no connection attempt.** There is no `Connecting to Gateway...` at 13:22:11,
-  only at 13:23:50 - so `attemptReconnect` either was not called or returned without trying.
-
-**THREE MECHANISMS CAN OWN THAT INTERVAL AND THE LOG CANNOT TELL THEM APART.** Reading the code
-(`sessionConnection.ts`, `WebMlsService.ts`) narrows it to exactly these, and no further:
-
-1. **the close arrived late.** CDP offline emulation does not tear down an established WebSocket -
-   the fact that forced `net.mjs` to grow `armCut`/`cutHard` - so `readyState` stays `OPEN` and
-   `isWsConnected` stays true. `resumeConnectionImpl` returns early on `if (ctx.isWsConnected())`,
-   looking at a connection it believes healthy, and does nothing. On this reading
-   `[WS] Disconnected` sits at the END of the hole and `Retrying (attempt 1)` is its consequence;
-2. **a rung was already armed.** `scheduleReconnectImpl` returns without a word when
-   `ctx.timers.reconnect !== null`, so a close delivered on time would be dropped in silence and the
-   recovery would wait out whatever delay the old rung still had;
-3. **an attempt was already in flight.** Same function, same silence, on `ctx.isReconnecting()` -
-   and that flag covers far more than connecting: `openGatewayConnection` holds it across
-   `fetchPendingMessages`, whose byte-halving retry ladder can legitimately run for ~90 s
-   (WP-PENDING-2). A minute and a half inside one `isReconnecting` is not a stall at all.
-
-**A fourth mechanism is REFUTED by the code, not by a guess:** `WebMlsService` runs an 8 s
-application heartbeat that closes a zombie socket after three unanswered pings, ~32 s, and logs
-`[WS] N pings without server response`. That line is absent from the window, so either the heartbeat
-was not running or it was being answered - and which of those is true is itself part of the capture.
-
-**What was done about it, and what was deliberately not.** Nothing was reconciled, shortened or
-guarded, because which mechanism owns the interval is a measurement and it had not been taken. What
-was fixed is the reason it could not be: the two silent branches now name which owner already has the
-next attempt, the resume logs BOTH `isWsConnected` and `isWsOpen()` when it declines (they answer
-different questions about the same socket, and whether they disagreed is the whole of case 1), and
-`watch.mjs` now dates every console line and every socket event from CDP's own clocks - including the
-`Network.webSocketClosed` that `ignoringOfflineCut` used to delete as "the cut", which is the one
-event that dates the close independently of anything the app believes. `msg10.mjs` records the
-timeline and `longestSilence`, so the hole is a value rather than something a human has to notice.
-
-Whatever the capture says, **do not fix this by shortening a timer**: termination comes from a proof,
-and "the socket is dead" is provable from the absence of traffic, not from a clock being shorter.
+**CLOSED 2026-08-14 - it was never a reconnect defect.** The 98 s hole between the socket close and
+the drain belonged to the OUTBOX: the same record carries `msToReconnect: 11`. That is WP-OUTBOX-1,
+fixed and verified (`MSG-10 passed 3/3`). What it left behind is in
+[testing-methodology](testing-methodology.md): a claim withdrawn for resting on bucket ORDER rather
+than a clock, and `watch.mjs` now dating every line and socket event from CDP.
 
 ### WP-FALSELOSS-2 - the false loss is not gone, it moved to the head of the stream
 
@@ -595,40 +302,6 @@ entries, then three, with `[OUTBOX] 1 entry still queued` surviving into MSG-6/7
 passes - which is itself worth explaining and may be the same thread: A1 is the one client without
 the WP-OUTBOX-1 fix, which landed at 14:37, twenty minutes after its APK was built.
 
-**What made it visible, and what had been hiding it.** `watch.mjs` classified `SecretReuseError` and
-`LOST frame` as `notable`, and `notable` did not break `clean` - so MSG-6 recorded `PASS` with
-`receiverClean: true` twice with all three lines sitting inside its own record. A lost frame is the
-single most serious thing this campaign can see. `report` now has a `severe` bucket that breaks
-`clean`, with `CannotDecryptOwnMessage` excluded because that one is RFC 9420 working as designed.
-
-**The trigger was NOT suppressed, and that was the constraint.** The reconciliation firing on an
-unreadable frame is correct behaviour; what it lacked was the evidence to decide. A frame whose bytes
-are in neither ledger still logs the loss and still reconciles, and a test pins that. The mechanism
-and its invariants are on
-[history-reconciliation](protocols/history-reconciliation.md#the-ledger-was-one-way-and-the-false-loss-moved-to-the-head-of-the-stream).
-
-**What this phase already cost.** MSG-1 failed on the first check of a re-run and its record
-contradicted itself: `latencyMs: 987` beside `copiesOnReceiver: 0`, the receiver holding the marker
-at one second and not at three. Two samples cannot distinguish the three things that produce an empty
-count - the pane gone, the message gone, or a sample taken against a transient.
-
-- **A check that reads a state TWICE cannot classify what it finds.** `trace-arrival.mjs` samples
-  every 250 ms and carries, beside the count, whether the composer is present, how long the pane is,
-  how many times the marker occurs in the whole BODY, and which conversation the header names. That
-  last field is not decoration: a marker in the body but not in the pane is the sidebar preview of a
-  conversation the harness failed to open - a harness fault in the exact costume of a delivery loss.
-- **Carry the evidence that the window opened, or a green result cannot be told from an unexercised
-  one.** The re-run of MSG-1 passed VACUOUSLY: the store was warm, the `limit=1` probe found nothing,
-  the replay never ran, so the race window never opened. `msg1b.mjs` forces it open and refuses to
-  report PASS unless it can PROVE it was open. That is the pattern for any check whose bug needs a
-  window - and the proof has to be an observed event, never a threshold on what got rendered: the
-  pane-growth version of this rule survived one build and then went permanently inconclusive.
-- The defect underneath was real: a page read at the end of a history load was ASSIGNED over the
-  rendered list, discarding whatever arrived while the load ran - four sites, fixed by
-  `mergeMessagePage`. It is invisible to any test that does not deliver mid-load, which is why 1 259
-  unit tests were green over it. See
-  [chat](frontend/modules/chat.md#a-page-read-is-merged-into-the-list-never-assigned-over-it).
-
 ## 2 - TYPE - typing indicators
 
 Ephemeral, online-peers-only, never queued: the phase is short because there is almost nothing to
@@ -661,25 +334,6 @@ number is a number that can be recomputed differently.
 | READ-8 | Unread count on a conversation whose messages arrived while logged out | `W1 W2` | `pending` |
 | READ-9 | Read on A1 while W1 is open: the count on W1 goes without a reload | `+A1` | `pending` |
 | READ-10 | Reading a conversation whose peer has deleted it | `W1 W2` | `pending` - crosses DEL |
-
-**Every READ check must FORCE THE FOCUS, or it measures the harness.** The receipt is deliberately
-gated on the window being focused and the tab visible - that gate is READ-3, the thing this phase
-exists to assert - and every launcher in the rig drives its client with `focus: false`. A check that
-does not lift that watches messages arrive, render, and never be marked read, then reports that the
-receipt is not firing. It takes BOTH `Page.bringToFront` and `Emulation.setFocusEmulationEnabled` -
-the first makes it so, the second makes the page believe it, and the app reads the second.
-`read-badge.mjs` is the worked example.
-
-**The badge cannot be audited from the store, and a probe that tries will answer plausibly and
-wrongly.** The count is never persisted (`ConversationMeta` carries none), so a badge that returns
-after a reload never means the badge is broken - it means the receipt never landed on those rows. But
-the rows at rest are CIPHERTEXT: only `id` and `conversationId` are plaintext, while `senderId`,
-`readBy` and `timestamp` live inside the blob, so an IndexedDB audit reads an empty `readBy` on every
-row of every client and concludes the whole store is unread. `unread-audit.mjs` did exactly that -
-1 987 rows, none authored by this account - and now refuses to report when an account appears to have
-authored nothing. **Ask the running app, in the sequence that separates the causes:** read the badge,
-focus and open, read again (if it does not clear here, the receipt is not firing), reload, read a
-third time (cleared then returned = it fired but never persisted, a different defect).
 
 ## 4 - MUT - editing, deleting, reacting, pinning
 
@@ -768,25 +422,6 @@ control nobody had ever asserted on.
 | GRP-8 | Add and remove the same member twice in a row, fast | `W1 W2` | `pending` |
 | GRP-9 | A member row rendering a raw user id instead of a display name | `W1 W2` | `pending` - observed once, same class as the `Utilisateur inconnu` fixes |
 
-**What this phase already cost.** GRP-2 was found by a harness script that took the first option in
-the picker, invited the account it was already running as, and then waited sixty seconds for a peer
-that had never been invited. On a rig whose directory holds real colleagues, the same blindness could
-have added one of them to a test group. Two name-parsing heuristics were tried to tell self from peer
-and both read the wrong substring off `innerText`; the fix was to stop parsing and believe only the
-roster going from one member to two.
-
-The fixture that came out of it - create a group, invite the peer, prove the roster moved - is
-`testgroup.mjs`, shared by `del1.mjs` and `grp2.mjs`. It keeps its roster-based peer identification
-even though GRP-2 is fixed in the product: **a fixture must not depend on the fix it is used to
-verify.**
-
-**What the accessibility work bought the harness.** `grp2.mjs` asserts that a list is EMPTY. Before
-the picker carried `role="listbox"` / `role="option"`, the only way to reach it was to look for a
-portalled `<ul>` whose class matched `fixed` - and "no element matched my class selector" is not the
-same statement as "the list offered nothing". One is a verdict, the other is a selector that may
-simply have gone stale. The check now reads `aria-expanded` and counts `[role=option]`, which are
-contracts rather than styling.
-
 ## 9 - COMM - communities, channels, roles
 
 A community is a `Workspace`, and **its membership is not MLS membership**. A kick rotates a
@@ -841,23 +476,6 @@ something mid-flight, which is why it sits above tiers A-C rather than inside th
 Every row is also a place to re-read the three states WP-HISTGHOST-1 was about - the durable marker,
 the reactive phase, the scheduled burst - because they are exactly the kind of thing cleared on one
 path and forgotten on the other nine.
-
-**What this phase already cost.** DEL-1 took four runs to produce one honest verdict, and three of
-the four failures were the rig rather than the product:
-
-- **It passed while measuring nothing.** The messages were sent AFTER the invite, so the peer
-  received them live, lacked nothing, and recorded no marker - there was nothing for the deletion to
-  clear, and the assertions would have held on a build with the fix reverted. The history now
-  predates the join, and a run that finds no marker reports `VACUOUS`, never `PASS`.
-- **It scoped a lookup by an id it never had.** The group id was read with a UUID matcher over
-  `location.pathname`, copied from another script. This app routes every conversation to a bare
-  `/chat` and keeps the selection in a store, so that matcher returns null for every conversation,
-  always. The id comes from the `conversations` store in IndexedDB.
-- **A check on a state that several paths can write must report WHICH path wrote it.** The armed run
-  failed with `lifecycle: 'removed'` and the marker surviving at its ORIGINAL `since` - which says
-  the delete arrived and the marker was never removed, a different and much smaller defect than "the
-  delete never arrived". Five places wrote that state inline; they are now one writer,
-  `retireConversation`, guarded by a source grep in `conversations.retire.test.ts`.
 
 ## 11 - TAB - tabs and windows
 
@@ -978,29 +596,6 @@ holds, which is why no rung may follow it without a teardown.
 Every run of a HEAL check needs, without exception: `reload.mjs` **first** (both browsers on the
 current bundle); a record of **which device answered**, since the responder is elected; and a
 teardown that restores the **invariant**, never a snapshot.
-
-**What HEAL-W2 already cost.** Four runs, and the construction is the check:
-
-- The web MLS state is one opaque blob (`mls_autosave`, ~1.9 MB) holding every group, so no edit
-  makes a single group unknown - a restore rewinds everything or nothing. So the group is created
-  AFTER the snapshot (`newgroup.mjs` + `invite.mjs`, the only cheap deterministic epoch generator),
-  proved to deliver, and only then is the blob restored. `mlsdb.mjs` keeps the snapshot in its own
-  IndexedDB database rather than on `window`, which is what lets the device under test navigate and
-  reload between the two.
-- **The branch it names was never reached, and the reason is the app being right.** Boot catch-up
-  re-joins the group from a Welcome still available server-side before any frame can arrive, so
-  `handleUnknownGroup` is unreachable by this construction. Sending DURING the boot does not settle
-  it either: that is a race, and a check whose verdict depends on winning one measures the race.
-- **What the fourth run found instead was a real defect** (fixed, `1e8208d6`): the re-joined group
-  held no past-epoch secrets, so the peer's message - encrypted one epoch earlier - hit the
-  `msg_epoch < group_epoch` branch of `process_incoming_on_group`, which answered `Ok(None)`, i.e.
-  "no application payload". A commit echo answers the same thing, so the message was ACKed off the
-  server and dropped with no `LOST frame`, no marker and no solicitation. See
-  [mls-protocol > a frame from a PAST epoch is two events](protocols/mls-protocol.md).
-- **So the re-run has a new expected outcome**, and it is a better check: the same construction must
-  end with the message RECOVERED through `LOST frame` -> the history diff, and `unknownGroupFired=0`
-  is then a fact about catch-up rather than a failure. `heal-w2.mjs` reads `unknown.length` as a PASS
-  condition, which no run can satisfy - **rewrite its verdict before the re-run**.
 
 ## 17 - PIN
 
@@ -1205,60 +800,6 @@ Fourteen defects, every one found by a check or by the log of a check. The narra
 
 Still open and needing a decision rather than a patch: **WP-KBD-1** (the composer behind the soft
 keyboard) and **WP-DRAIN-2** (the inbound drain has no watchdog).
-
-## WP-PUSHHERD-1: the push-decrypt herd that got the app killed
-
-**P1, found in the logcat of a green check** - the assertions passed and `recon.mjs` reconciled, and
-the run was still not clean. Which is the whole reason observation is part of a verdict here.
-
-Android gave every push its own thread (`runWithWakeLock` per `onMessageReceived`). That is fine for
-one push and pathological for a backlog: each thread reaches for the single `MlsStateLock`, waits its
-5 s, and each that wins reads the whole 1.6 MB `mls.bin`. Counted over one storm behind a backlog:
-
-| | |
-| --- | --- |
-| lock timeouts | **97** (~485 thread-seconds spent purely waiting) |
-| full 1.6 MB MLS state loads | 11 |
-| "group-join race" retries | 60 |
-| `local=false` verdicts | 20 |
-| epoch queries that actually ran | **10** |
-
-Two defects, and the second is why the first compounded.
-
-**The herd.** Twenty-plus concurrent handlers, from a handful of messages. Android ended the argument
-itself:
-
-```
-ActivityManager: Killing 22636:fr.emse.canari/u0a469 (adj 905):
-  excessive cpu 10090 during 300076 dur=1263194 limit=2
-```
-
-A killed process delivers no notifications and drains no outbox. The cost of the herd is not the CPU,
-it is the app going silent.
-
-**A lock timeout answering a question about group membership.** `isGroupLocal` returned a plain
-`Boolean`, and *every* way of failing to reach the state - lock not acquired, `mls.bin` unreadable,
-device key missing, JNI absent - came back `false`, which its one caller reads as "the group is not
-joined on this device". Hence twenty verdicts from ten answers: half were given by a timeout, about
-the **main DM**, a conversation the device had been in for months. Each false verdict routed the
-message into the Welcome-race retry loop - three more attempts, each re-entering the same contended
-lock, for a group that was never racing a Welcome. Contention produced retries, which produced
-contention. The docblock even asserted *"A join race can only happen when this returns false"*, which
-is exactly backwards under load: it returns false precisely when it could not tell.
-
-**The fix is one lane and one more enum value**, and the mechanism is in
-[mobile](frontend/mobile.md#one-lane-for-everything-that-touches-mlsbin). Everything that touches
-`mls.bin` runs on a single process-wide executor - serialising adds no delay, because the lock had
-already made the work serial; it only removes the contention around it. And `GroupLocality` has three
-values, so `UNKNOWN` reaches neither recovery. The serialisation *dissolves* the second defect rather
-than patching it; the tri-state stays because `MlsBackgroundWorker` is still a second contender, and
-because the conflation was wrong independently of the herd.
-
-iOS carried the same conflation in `NotificationService.swift` and got the same tri-state. **It has
-never run a check on hardware**, so that half is compile-verified only - which proves nothing about
-running, and is recorded here as owed rather than done.
-
----
 
 ## A commit from another contributor owes a WEB pass and a MOBILE pass
 
