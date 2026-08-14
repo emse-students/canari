@@ -18,6 +18,7 @@ import {
   DirectoryUserRow,
 } from './dto/user.dto';
 import { applyFuzzyNameSearch } from './userSearch';
+import { chatDeliveryUrl, mediaUrl, socialUrl } from '../internal/service-urls';
 
 /** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
@@ -25,10 +26,6 @@ export class UsersService implements OnModuleInit {
   private readonly logger = new Logger(UsersService.name);
 
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
-  private readonly chatDeliveryUrl =
-    process.env.CHAT_DELIVERY_URL ?? 'http://chat-delivery-service:3010';
-  private readonly socialUrl = process.env.SOCIAL_URL ?? 'http://social-service:3014';
-  private readonly mediaUrl = process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011';
   /**
    * Verification service account used by Google/Apple app reviewers. It is hidden from
    * non-admin users (search + directory) and can itself only discover global admins.
@@ -333,7 +330,7 @@ export class UsersService implements OnModuleInit {
   private async fetchAssociationMemberUserIds(associationId: string): Promise<string[]> {
     try {
       const resp = await axios.get<{ userIds: string[] }>(
-        `${this.socialUrl}/internal/associations/${encodeURIComponent(associationId)}/member-user-ids`,
+        socialUrl(`internal/associations/${encodeURIComponent(associationId)}/member-user-ids`),
         {
           headers: { 'X-Internal-Secret': this.internalSecret },
           timeout: 10_000,
@@ -377,14 +374,14 @@ export class UsersService implements OnModuleInit {
 
     // Best-effort: delete chat-delivery data (MLS keys, devices, messages)
     await axios
-      .delete(`${this.chatDeliveryUrl}/internal/users/${encodeURIComponent(userId)}`, { headers })
+      .delete(chatDeliveryUrl(`internal/users/${encodeURIComponent(userId)}`), { headers })
       .catch((err) =>
         this.logger.warn(`[deleteUser] chat-delivery failed userId=${userId}: ${String(err)}`)
       );
 
     // Best-effort: delete/anonymise social data (posts, follows, memberships)
     await axios
-      .delete(`${this.socialUrl}/internal/users/${encodeURIComponent(userId)}`, { headers })
+      .delete(socialUrl(`internal/users/${encodeURIComponent(userId)}`), { headers })
       .catch((err) =>
         this.logger.warn(`[deleteUser] social failed userId=${userId}: ${String(err)}`)
       );
@@ -393,7 +390,7 @@ export class UsersService implements OnModuleInit {
     // recorded uploader is the ONLY thing that can attribute a blob - anything stored before that
     // was recorded stays reachable by the retention sweep alone.
     await axios
-      .delete(`${this.mediaUrl}/api/media/internal/users/${encodeURIComponent(userId)}`, {
+      .delete(mediaUrl(`media/internal/users/${encodeURIComponent(userId)}`), {
         headers,
       })
       .then((r) =>

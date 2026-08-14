@@ -19,6 +19,7 @@ import {
 } from './entities/channel-key-distribution.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
+import { deliveryUrl } from '../internal/service-urls';
 
 import {
   CHANNEL_PERMISSIONS,
@@ -62,8 +63,6 @@ const MAX_REACTION_EMOJI_LENGTH = 64;
 @Injectable()
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
-  private readonly deliveryUrl =
-    process.env.DELIVERY_INTERNAL_URL ?? 'http://chat-delivery-service:3010';
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
 
   /** Normalises a French or English role label to one of three canonical values: admin, moderator, or member. */
@@ -1194,7 +1193,7 @@ export class ChannelService {
   private async userHasMlsDevices(userId: string): Promise<boolean> {
     if (!this.internalSecret) return true;
     try {
-      const res = await fetch(`${this.deliveryUrl}/mls/devices/${encodeURIComponent(userId)}`, {
+      const res = await fetch(deliveryUrl(`mls/devices/${encodeURIComponent(userId)}`), {
         headers: { 'X-Internal-Secret': this.internalSecret },
         signal: AbortSignal.timeout(4_000),
       });
@@ -2004,7 +2003,7 @@ export class ChannelService {
     data: Record<string, string>
   ): Promise<void> {
     try {
-      const res = await fetch(`${this.deliveryUrl}/internal/push/notify`, {
+      const res = await fetch(deliveryUrl('internal/push/notify'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

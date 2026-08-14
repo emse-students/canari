@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { deliveryUrl } from '../internal/service-urls';
 
 /**
  * Fire-and-forget FCM dispatcher.
@@ -8,8 +9,6 @@ import { Injectable, Logger } from '@nestjs/common';
 @Injectable()
 export class PushService {
   private readonly logger = new Logger(PushService.name);
-  private readonly deliveryUrl =
-    process.env.DELIVERY_INTERNAL_URL ?? 'http://chat-delivery-service:3010';
   private readonly secret = process.env.INTERNAL_SECRET ?? '';
 
   constructor() {
@@ -28,7 +27,7 @@ export class PushService {
   ): Promise<void> {
     if (!this.secret) return;
     try {
-      const res = await fetch(`${this.deliveryUrl}/internal/push/notify`, {
+      const res = await fetch(deliveryUrl('internal/push/notify'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
