@@ -372,6 +372,78 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private pendingPullInFlight: Promise<void> | null = null;
 
+  /** Open catch-up sessions. A depth rather than a flag: nothing guarantees only one at a time. */
+  private catchUpDepth = 0;
+
+  /** Pending while a catch-up is open; `null` when none is. */
+  private catchUpGate: Promise<void> | null = null;
+
+  /** Opens {@link catchUpGate}. Held only while `catchUpDepth > 0`. */
+  private releaseCatchUpGate: (() => void) | null = null;
+
+  /**
+   * How many times the LIVE MLS client has been mutated by something other than a catch-up.
+   *
+   * Read at the snapshot and again at the swap: if it moved, the state about to be installed
+   * predates a mutation the live client already made, and installing it would undo that mutation.
+   * A COUNT rather than a flag because the swap has to compare two instants, not ask "recently?".
+   */
+  protected liveMutations = 0;
+
+  /**
+   * Records a mutation of the live MLS client made outside a catch-up.
+   *
+   * Called by the send path today, which is the only mutation that runs unserialised against a
+   * catch-up: everything else goes through the drain, and the drain and the catch-up take the same
+   * mutex, so they cannot overlap by construction.
+   */
+  protected noteLiveMutation(): void {
+    this.liveMutations++;
+  }
+
+  /**
+   * Marks a catch-up session as open, closing the gate every send waits on.
+   *
+   * THE THIRD ACTOR. Sequencing "drain, then history exchange" orders the two paths that READ this
+   * device's store, and leaves the one that WRITES to it - a send - free to land anywhere. On web a
+   * send during the window is then overwritten by the swap: measured 2026-08-14 across three runs of
+   * MSG-1b, `sendsDuringWindow=1` produced a `LOST frame` twice and `sendsDuringWindow=0` produced
+   * none, with the frame named on the LOST line being, byte for byte, the send that followed the
+   * rewind. The victim is always the next send after the swap - usually the focused tab's read
+   * watermark, which is why the loss looked for days like a property of silent frames.
+   */
+  protected beginCatchUp(): void {
+    this.catchUpDepth++;
+    if (this.catchUpDepth === 1) {
+      this.catchUpGate = new Promise<void>((resolve) => {
+        this.releaseCatchUpGate = resolve;
+      });
+    }
+  }
+
+  /** Marks a catch-up session as closed, releasing every send waiting behind it. */
+  protected endCatchUp(): void {
+    this.catchUpDepth = Math.max(0, this.catchUpDepth - 1);
+    if (this.catchUpDepth === 0) {
+      this.releaseCatchUpGate?.();
+      this.releaseCatchUpGate = null;
+      this.catchUpGate = null;
+    }
+  }
+
+  /**
+   * Resolves when no catch-up session is open.
+   *
+   * Awaited by the send path, and safe to await from anywhere a send happens today. The drain holds
+   * the MLS mutex for each message and a catch-up holds it for its whole life, so no catch-up can be
+   * open while a handler runs - a send raised from inside the pipeline therefore never waits here.
+   * The one send raised from inside a replay (`reconcileGroup`, on an unreadable frame) is
+   * fire-and-forget, so it settles after `finish` rather than blocking it.
+   */
+  async waitForCatchUpIdle(): Promise<void> {
+    await this.catchUpGate;
+  }
+
   /**
    * Resolves when this device's mailbox is EMPTY - nothing left to fetch, and nothing left to apply.
    *
@@ -1151,7 +1223,27 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** Sequential, in-place session used by Tauri and when the crypto worker is disabled. */
   async createDecryptSession(groupId: string): Promise<MlsDecryptSession> {
-    return createSequentialDecryptSession(this, groupId);
+    // The sequential path decrypts in place, so it cannot be UNDONE by a swap the way the worker
+    // path can - but a send during it is still a send racing a catch-up, and the ordering rule is
+    // about the sequence, not about which platform happens to survive breaking it.
+    this.beginCatchUp();
+    let session: MlsDecryptSession;
+    try {
+      session = await createSequentialDecryptSession(this, groupId);
+    } catch (e) {
+      this.endCatchUp();
+      throw e;
+    }
+    return {
+      decryptPage: (msgs) => session.decryptPage(msgs),
+      finish: async () => {
+        try {
+          await session.finish();
+        } finally {
+          this.endCatchUp();
+        }
+      },
+    };
   }
 
   /**

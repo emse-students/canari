@@ -900,7 +900,13 @@ export class WebMlsService extends BaseMlsService {
     _messageId?: string,
     frameDelivery: FrameDelivery = DELIVERY.visible
   ): Promise<Uint8Array> {
+    // NOTHING LEAVES THIS DEVICE WHILE IT IS STILL CATCHING UP. Encrypting here advances the send
+    // ratchet of the LIVE client, which a catch-up is about to replace with a copy taken before it -
+    // so the frame is emitted at a generation the swap then hands back out. Ordered rather than
+    // detected: the guard in `createDecryptSession` exists for the paths that forget.
+    await this.waitForCatchUpIdle();
     const encryptedBytes: Uint8Array = this.client.send_message_bytes(groupId, messageBytes);
+    this.noteLiveMutation();
     // TEMPORARY (WP-FALSELOSS-2): this send is NOT under the MLS lock, so it can land inside an
     // open catch-up window. See `ratchetRewindTrace`. Delete with that module.
     traceSend(groupId, encryptedBytes, frameDelivery);
@@ -945,6 +951,12 @@ export class WebMlsService extends BaseMlsService {
     // from the lock, because `sendMessage` never takes the lock. See `ratchetRewindTrace`.
     const traceWindow = traceSessionOpen(groupId, 'worker');
 
+    // Closes the gate every send waits on, and remembers where the live client stood. The gate is
+    // the fix; the count below is the proof it held - if it ever differs at the swap, a send got
+    // through and the state about to be installed would undo it.
+    this.beginCatchUp();
+    const mutationsAtSnapshot = this.liveMutations;
+
     let workerSession: Awaited<ReturnType<typeof createMlsCryptoWorkerSession>> | null;
     try {
       const snapshot = (this.client.save_state(undefined) as Uint8Array).slice();
@@ -971,6 +983,7 @@ export class WebMlsService extends BaseMlsService {
             // The sequential path mutates the live client in place: no snapshot, so no swap and no
             // rewind. Traced all the same, so the log distinguishes "did not happen" from "not run".
             traceSessionFinish(traceWindow, groupId, false);
+            this.endCatchUp();
             release();
           }
         },
@@ -992,11 +1005,33 @@ export class WebMlsService extends BaseMlsService {
         try {
           if (usedWorker) {
             const finalState = await session.finalize();
-            const swapped = await this.reloadClientFromPlainState(finalState);
-            swappedForTrace = swapped;
-            // Only adopt the catch-up state if it did not regress the live client: decrypted
-            // plaintexts were already handed to the caller, so refusing the swap loses nothing.
-            if (swapped) this.lastKnownState = finalState.slice();
+            /**
+             * NEVER INSTALL A STATE THAT PREDATES A MUTATION THE LIVE CLIENT ALREADY MADE.
+             *
+             * `swapClientMonotonic` refuses a REGRESSION, and answers that question with the epoch -
+             * which is evidence for "is this snapshot from an older epoch" and for nothing else. A
+             * generation that moved inside one epoch is just as stale and is invisible to it, so a
+             * send that landed between the snapshot and here would be silently undone: this device's
+             * own send ratchet goes backwards, its next frame re-uses a spent generation, and the
+             * peer refuses it as `SecretReuseError`. That is WP-FALSELOSS-2, reproduced 2/2 with a
+             * send in the window and 0/1 without.
+             *
+             * The gate should make this unreachable. It is kept because the gate is an ordering and
+             * this is an invariant: a future send path that forgets to wait is caught here rather
+             * than corrupting the ratchet, and the line says so loudly enough to be found.
+             */
+            const mutated = this.liveMutations - mutationsAtSnapshot;
+            if (mutated > 0) {
+              console.warn(
+                `[MLS] catch-up state DISCARDED for ${groupId.slice(0, 8)}…: the live client was mutated ${mutated} time(s) since the snapshot - installing it would rewind this device's own send ratchet`
+              );
+            } else {
+              const swapped = await this.reloadClientFromPlainState(finalState);
+              swappedForTrace = swapped;
+              // Only adopt the catch-up state if it did not regress the live client: decrypted
+              // plaintexts were already handed to the caller, so refusing the swap loses nothing.
+              if (swapped) this.lastKnownState = finalState.slice();
+            }
           }
         } catch (e) {
           // A page or finalize failed: leave the live client at the untouched snapshot
@@ -1004,6 +1039,7 @@ export class WebMlsService extends BaseMlsService {
           console.warn('[MLS] decrypt session finalize failed, live client left at snapshot:', e);
         } finally {
           traceSessionFinish(traceWindow, groupId, swappedForTrace);
+          this.endCatchUp();
           session.dispose();
           release();
         }

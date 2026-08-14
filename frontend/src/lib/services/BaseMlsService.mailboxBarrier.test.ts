@@ -45,6 +45,64 @@ const gate = (): { promise: Promise<void>; open: () => void } => {
   return { promise, open };
 };
 
+/**
+ * THE SEND GATE - the third actor.
+ *
+ * Sequencing "drain, then history exchange" orders the two paths that READ this device's store and
+ * leaves the one that WRITES to it free to land anywhere. On web a send during a catch-up is then
+ * undone by the swap, and the NEXT frame re-uses a spent generation: measured 2026-08-14 across
+ * three MSG-1b runs, `sendsDuringWindow=1` produced a `LOST frame` twice, `0` produced none, and the
+ * frame named on the LOST line was byte for byte the send that followed the rewind.
+ */
+describe('waitForCatchUpIdle', () => {
+  /** `beginCatchUp`/`endCatchUp` are protected: they are the class's own seam, not a public API. */
+  const sessions = (svc: BaseMlsService) =>
+    svc as unknown as { beginCatchUp(): void; endCatchUp(): void };
+
+  it('lets a send through when no catch-up is open', async () => {
+    await expect(makeService().waitForCatchUpIdle()).resolves.toBeUndefined();
+  });
+
+  it('holds a send for as long as a catch-up is open', async () => {
+    const svc = makeService();
+    sessions(svc).beginCatchUp();
+
+    let through = false;
+    const send = svc.waitForCatchUpIdle().then(() => {
+      through = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(through).toBe(false);
+
+    sessions(svc).endCatchUp();
+    await send;
+    expect(through).toBe(true);
+  });
+
+  it('needs EVERY open catch-up to close - a depth, not a flag', async () => {
+    const svc = makeService();
+    sessions(svc).beginCatchUp();
+    sessions(svc).beginCatchUp();
+
+    let through = false;
+    const send = svc.waitForCatchUpIdle().then(() => {
+      through = true;
+    });
+
+    // Nothing guarantees a single session at a time, and a flag would open the gate here - with a
+    // second catch-up still running and its swap still to come.
+    sessions(svc).endCatchUp();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(through).toBe(false);
+
+    sessions(svc).endCatchUp();
+    await send;
+    expect(through).toBe(true);
+  });
+});
+
 describe('waitForMessageQueueIdle', () => {
   let svc: BaseMlsService;
   let waitUntilIdle: ReturnType<typeof vi.fn>;

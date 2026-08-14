@@ -803,11 +803,17 @@ export class TauriMlsService extends BaseMlsService {
     _messageId?: string,
     frameDelivery: FrameDelivery = DELIVERY.visible
   ): Promise<Uint8Array> {
+    // Same ordering as the web path. Native decrypts in place, so nothing here can be UNDONE by a
+    // swap - but "a send never races a catch-up" is a property of the protocol, not of whichever
+    // platform happens to survive breaking it, and keeping the two seams identical is what stops
+    // one of them drifting into being the exception nobody remembers.
+    await this.waitForCatchUpIdle();
     const res = await invoke<number[]>('envoyer_message_bytes', {
       groupId,
       messageBytes: Array.from(messageBytes),
     });
     const encryptedBytes = Uint8Array.from(res);
+    this.noteLiveMutation();
     const proto = toBase64(encryptedBytes);
     await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
     return encryptedBytes;
