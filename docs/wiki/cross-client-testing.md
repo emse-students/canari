@@ -314,12 +314,12 @@ belong to itself.
 
 | Id | Step | Needs | State |
 | --- | --- | --- | --- |
-| SETUP-1 | Build the debug APK, plus the jniLibs `.so` rescue (`test_adb.py` `_ensure_native_lib_present` - a Windows symlink failure builds an APK with no native lib) | `+A1` | **`passed` 2026-08-13** - built 13:08 from the 13:06 bundle; the `.so` rescue was not needed on this build |
+| SETUP-1 | Build the debug APK, plus the jniLibs `.so` rescue (`test_adb.py` `_ensure_native_lib_present` - a Windows symlink failure builds an APK with no native lib) | `+A1` | **`passed` 2026-08-14** - rebuilt at `9fd67590` (`__sveltekit_1crvh4u`) and installed; the `.so` rescue was not needed. **The rebuild is now part of the pre-flight, not an optional step**: the previous APK was ten commits stale and the phase had been measuring code the phone did not carry. `bundle-a1.mjs` states it as a measurement |
 | SETUP-2 | Clean uninstall + install. **Wipes `mls.bin`** - the device loses its MLS identity and local history, by design | `+A1` | `pending` - **deliberately not run**: `install -r` was used instead, to keep the store and avoid re-paying SETUP-4's 2FA |
 | SETUP-3 | Start logcat with the 19-tag whitelist from `test_adb.py`. A tag missing there is a verdict that never arrives | `+A1` | re-run each session - done 2026-08-13 |
-| SETUP-4 | W1: log in as **owner**, enrol the device, set the PIN | `+user` | **`passed`** - established earlier, re-proven 2026-08-13 by the preflight (unlocked, 10 sidebar rows) |
-| SETUP-5 | W2: log in as **peer** (no 2FA on that account), set the PIN | `W1 W2` | **`passed`** - preflight 2026-08-13, unlocked, 2 sidebar rows |
-| SETUP-6 | A1: log in as **owner**. **Decline biometrics** so the PIN is always the unlock path | `+A1` `+user` | **`passed`** - unlocked 2026-08-13 in 4960 ms via the keypad -> manual-input path |
+| SETUP-4 | W1: log in as **owner**, enrol the device, set the PIN | `+user` | **`passed`** - re-proven 2026-08-14 by the preflight: unlocked, 10 sidebar rows, **and ONLINE at the gateway** (`user=d82cd226 device=web-d82c`, TTL 19 s) |
+| SETUP-5 | W2: log in as **peer** (no 2FA on that account), set the PIN | `W1 W2` | **`passed`** - preflight 2026-08-14, unlocked, 2 sidebar rows, ONLINE at the gateway. It had first to be REPAIRED: it was still the dead tab of the WP-RECONNECT-1 capture, `OFFLINE` at the gateway on a stale bundle, and the preflight refused to run over it - which is the gate working |
+| SETUP-6 | A1: log in as **owner**. **Decline biometrics** so the PIN is always the unlock path | `+A1` `+user` | **`passed`** - 2026-08-14 after the reinstall: the preflight unlocked it and sent it to `/chat`, 10 sidebar rows, ONLINE at the gateway (`device=tauri-d8`) |
 | SETUP-7 | **Discovery pass.** Enumerate the real at-rest artefacts rather than guessing them - see [the artefact table](#the-at-rest-artefacts) | `+A1` | `pending` |
 | SETUP-8 | Baseline snapshot of the intact Android app data, so every corruption test can roll back without a re-enrolment | `+A1` | `pending` - **owed before CORRUPT and PIN** |
 | SETUP-9 | The dedicated venue for channel traffic | `W1 W2` | **`passed`** - confirmed against production 2026-08-13: channel `general` in workspace `Campagne de test`, and it is a **community**, not a channel |
@@ -338,11 +338,34 @@ re-enrolment path and MULTI-3 are only testable from a clean device.
 Baseline first. An exotic failure is only meaningful once the plain path is proven on the same
 harness in the same session.
 
-**Run 2026-08-13 21:07Z against `58a55ff8` (web) + the 21:33 debug APK (A1): every delivery assertion
-held on all twelve scripts - 10 `passed`, 2 `dirty`, 1 `passed-with-noise`, no failure and no
-inconclusive.** One copy on every client in every check, nothing lost, nothing duplicated, nothing
-out of order. What is not clean is not a delivery defect: it is one recurring MLS ratchet complaint,
-written up as WP-FALSELOSS-2 below.
+**TWO RUNS ON 2026-08-14 AGAINST `9fd67590`, ALL THREE CLIENTS PROVEN AT HEAD FIRST - 25 delivery
+verdicts out of 26 hold, and the one exception is not a delivery defect either.** W1 and W2 were
+reloaded onto the deployed bundle and A1's APK was rebuilt (it was **ten commits stale**, missing
+`09fc615b`, `d7c83a3d`, `b5ae5dfe` and `ee7a0137` - the very history/MLS fixes this phase measures,
+so the previous run had been attributing results to code the phone did not carry). `bundle-a1.mjs`
+now states that as a measurement; it compares the phone to the LOCAL build, never to the deployed
+one, because a build id is a hash of the build and the same commit compiled twice never matches.
+
+**NO RUN IS `clean` YET, AND THE REASON IS ONE LINE.** The bar was raised this session so that
+`unexplained` breaks `clean` - which is the campaign's actual rule, previously computed, printed and
+counted for nothing. The first run produced **89 distinct unexplained lines; 75 of them were
+`[REWIND-TRACE]`**, the WP-FALSELOSS-2 instrumentation, which logged EVERY send including the
+ordinary ones (`duringCatchUp=false`). It now logs only inside a catch-up window - the only place a
+send can be rewound - but that change is not deployed, so both runs still carry it. The remaining 14
+were read and classified: the app's boot sequence (MSG-10 reloads its sender by design), the media
+cache clock, the pending-mailbox drain, and the cut's own reactions. **Run 2 was predicted to show
+`[REWIND-TRACE]` and nothing else before it was run, and did**, which is what makes the triage
+believable.
+
+**MSG-10 reported a loss that had not happened, and the instrument was at fault, not the app.** It
+waited 90 s, saw nothing on the receiver and recorded `copiesOnReceiver: 0` - the most serious claim
+this campaign can make. The message was delivered at 98 s and the server's own
+`[SEND] ... DONE queued=2 realtime=2` proves it. The check now separates the two: `FAIL` is reserved
+for a message that never arrived or arrived wrong, a delivery past the budget earns `SLOW`, and the
+record carries `msToReconnect` beside `msToDrainAfterReconnect` so a reader can tell an outbox that
+sat on a message from a link that was not back yet. **Underneath it is a real defect - 98 seconds
+between a restored link and the first reconnect attempt, with the 60 s watchdog silent - which is
+WP-RECONNECT-2 below.**
 
 Verdicts are kept rather than erased: they name the build they hold for.
 
@@ -382,7 +405,7 @@ MSG-1b, MSG-9 and MSG-10 had all three been reporting about themselves:
 | MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | **`passed`** on `2c7b0c3c` + the 13:08 APK. Took TWO harness fixes: the first run's FAIL was spurious (A1 had been left in the campaign channel by an earlier check and sent there, while W2 watched the DM) which produced `ensureConversation`; the second was blocked because `ensureChat` reaches the list by clicking "Discussions", which the mobile layout hides behind an open conversation |
 | MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | **`passed`** on `2c7b0c3c` + the 13:08 APK. UX note stands: the tab TITLE never changes, so a backgrounded tab signals nothing until looked at |
 | MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | **`passed`** on `58a55ff8` - offline after 1 054 ms, back after 1 312 ms, message 1 824 ms later, `whileOffline: 0`, one copy each side, both clean. Needs `armCut` + `cutHard`: see above for why the old form could never be offline at all |
-| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | **`passed`** on `58a55ff8` - composer emptied, one copy on the sender while offline, zero on the receiver, drained 1 009 ms after reconnect, and still one copy after a reload. The `ERR_INTERNET_DISCONNECTED` it causes itself is now classified as the cut rather than as dirt |
+| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | **`passed`** on `9fd67590` run 1 - drained 1 007 ms. **Run 2 the same hour: the drain took 98 s and the check called it a LOSS.** It was not one - see WP-RECONNECT-2. Every correctness assertion held in both runs (composer emptied, one copy on the sender offline, zero on the receiver, one copy each side after, one after a reload). The check now distinguishes `SLOW` from `FAIL` and records `msToReconnect`. The `ERR_INTERNET_DISCONNECTED` it causes itself is classified as the cut rather than as dirt |
 
 **An offline RECEIVER can be faked in a browser after all, and it took closing the socket by hand.**
 The note that said it needed a phone with its radios off was right about `cut()` and wrong about the
@@ -390,6 +413,84 @@ conclusion: what a receiver needs is for the GATEWAY to hold no connection, and 
 from CDP once the page's WebSocket is captured at construction and closed. A real radio cut is still
 the more faithful scenario and is owed on device - but it must not be run on THIS rig, where adb
 itself rides the phone's wifi.
+
+### WP-PREFIX-1 - six of seven internal calls addressed a route that does not exist (FIXED `fed86037`)
+
+**Found by the third observer, not by a client assertion.** `srvlog.mjs` was written this session to
+pull the containers' own logs over the run window; the first thing it surfaced was
+`[CHANNEL_PUSH] notify HTTP 404`, which no browser and no phone can see. Every Nest service in this
+repo mounts `app.setGlobalPrefix('api')`, and the internal base URLs are configured WITHOUT it
+(`DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010`), so each caller had to add it. The full
+enumeration - not the ones that happened to log:
+
+| Caller | Path as written | Prefix | What the 404 cost |
+| --- | --- | --- | --- |
+| social `push.service.ts:31` | `/internal/push/notify` | missing | push never sent |
+| social `channel.service.ts:2007` | `/internal/push/notify` | missing | **channel push never delivered, ever** |
+| social `channel.service.ts:1197` | `/mls/devices/<user>` | missing | `userHasMlsDevices` returns `true` on `!res.ok` - **the guard was a constant `true`** |
+| core `users.service.ts:336` | `/internal/associations/<id>/member-user-ids` | missing | 404 |
+| core `users.service.ts:380` | DELETE `/internal/users/<u>` -> delivery | missing | account deletion left MLS keys, devices, messages |
+| core `users.service.ts:387` | DELETE `/internal/users/<u>` -> social | missing | account deletion left posts, follows, memberships |
+| core `users.service.ts:396` | `/api/media/internal/users/<u>` | present | worked |
+
+**Why it survived.** All six are `.catch(warn)` best-effort - the failure mode was designed for a
+transient fault and met a permanent one, so a route that had NEVER worked is indistinguishable from a
+service that is briefly down. `payment/social-internal-client.ts` gets every path right, so the
+convention was known and applied in two places out of three, which is the worst state a convention
+can be in.
+
+**Fixed at the seam**: one `internal/service-urls.ts` per service inserts the prefix exactly once, so
+it is not the caller's to write. Putting `/api` in the compose files would have fixed the deployment
+and left the code's defaults wrong. **The verification is a server log, not a client assertion** - a
+message in a `Campagne de test` channel must produce no `notify HTTP 404` in `social-service`.
+
+### WP-RECONNECT-2 - the link came back, the app agreed, and nothing reconnected for 98 seconds
+
+**What is measured**, on `9fd67590` (the bundle that already carries the WP-RECONNECT-1 fix), from
+MSG-10's own capture on 2026-08-14. Sender clock, local time:
+
+```
+13:22:08  [OUTBOX] Flush skipped - offline; the queue is kept intact for the next reconnect.
+13:22:11  [CONNECTIVITY] browser reports online
+13:22:11  [LIFECYCLE] Network back online - re-arming watchdogs and reconnecting...
+13:22:11  [LIFECYCLE] App in foreground - re-arming watchdogs and reconnecting...
+          [CONNECTIVITY] server reachable again
+          [WS] Disconnected. Code: 1006, Reason: no reason
+             <- 98 seconds, no line of any kind
+13:23:49  Connection lost. Retrying in 1s... (attempt 1)
+13:23:50  Connecting to Gateway...
+13:23:50  [WS] Connected to Chat Gateway
+```
+
+and, on the server, `[SEND][send-...] DONE queued=2 realtime=2` at 11:23:50Z. **Nothing was lost.**
+The outbox behaved perfectly - it refused to flush offline and kept the queue - and the message went
+out the instant a socket existed.
+
+**What this establishes, and what it does not.** WP-RECONNECT-1 is NOT regressed: the ladder does
+restart and does connect, on the first rung, which is exactly what that fix bought. What is new is a
+path where the first rung is never armed for a minute and a half.
+
+Two facts constrain any explanation:
+
+- **the watchdog did not fire.** No `[WS] Watchdog: socket inactive, reconnecting...` appears in the
+  window, though `re-arming watchdogs` at 13:22:11 says it was armed and its period is 60 s. It was
+  due at 13:23:11;
+- **the resume produced no connection attempt.** There is no `Connecting to Gateway...` at 13:22:11,
+  only at 13:23:50 - so `attemptReconnect` either was not called or returned without trying.
+
+**The hypothesis, not yet captured, and it must be captured before it is written as the cause.** The
+app still believed it was connected. CDP offline emulation does not tear down an established
+WebSocket - the fact that forced `net.mjs` to grow `armCut`/`cutHard` - so the browser delivered the
+`close` event very late; until it arrives `isWsConnected` stays true, the resume looks at a
+connection it thinks is healthy and does nothing, and the one mechanism designed to notice a socket
+that is dead without having said so is the watchdog, which is precisely what is missing from the log.
+On that reading `Retrying (attempt 1)` at 13:23:49 IS the `close` finally arriving.
+
+If that holds, the environment is what delayed the `close`, and **the defect is the watchdog not
+covering the interval it exists to cover** - which is a fault a real network would expose the same
+way. Do not fix it by shortening a timer: the rule this area already carries is that termination
+comes from a proof, and "the socket is dead" is provable from the absence of traffic, not from a
+clock being shorter.
 
 ### WP-FALSELOSS-2 - the false loss is not gone, it moved to the head of the stream
 
