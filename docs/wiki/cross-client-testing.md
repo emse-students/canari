@@ -212,7 +212,8 @@ belong to itself.
 ## 1 - MSG - the plain path
 
 State is the last run, `8a3edbdd` x5 (2026-08-14, 20:03-20:21Z). `5/5` = clean on all five passes,
-web, mobile and server. Durations are the spread across those five passes.
+web, mobile and server. Durations are the spread across those five passes. Re-run once on
+`e62c21f1` (2026-08-15, 22:28Z) after the banner change touched this surface: **13/13, server clean**.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
@@ -238,7 +239,8 @@ persist, and that is itself the thing to assert. It runs here because it is the 
 that both clients are really talking to each other, and it leaves nothing behind.
 
 State is the last run, `8a3edbdd` x5 (2026-08-14, 21:33-21:40Z). **5/5 = clean on all five passes**,
-web, mobile and server. Shown/cleared are the spreads across those passes.
+web, mobile and server. Shown/cleared are the spreads across those passes. Re-run once on
+`e62c21f1` (2026-08-15, 22:32Z) after the banner change touched this surface: **5/5, server clean**.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |

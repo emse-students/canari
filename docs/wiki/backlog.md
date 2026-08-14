@@ -253,6 +253,29 @@ client does when it finds its store gone, not whether it can prevent it.
 
 ---
 
+## Payments
+
+### Flipping `payment_provider` from Stripe to Lydia (WP-LYDIA-1)
+
+**The code is not the blocker - it is already written and tested.** `PaymentProvider` is an interface
+(`apps/core-service/src/payment/payment-provider.interface.ts`), `LydiaPaymentProvider` implements the
+two flows that map cleanly onto it (one-off checkout, session lookup) with its own signature module
+and specs, and the choice is a platform config column (`payment_provider`) that **defaults to
+`stripe`**. Stripe is what runs today and nothing about that is broken.
+
+What is missing is not code, which is why this is a question and not a P-anything: the **credentials**
+and the **answers Lydia owes**. Everything that does not map - live balance and status, saved payment
+methods - throws a documented error rather than faking a result, and that is deliberate: Lydia has no
+live status-poll endpoint, and the saved-card flow was **explicitly dropped by the user** rather than
+reimplemented, so every purchase becomes its own interactive request. Do not re-litigate that.
+
+The full provider mapping, the remaining open questions and the credentials still owed are in
+[`plans/stripe-to-lydia-migration.md`](../../plans/stripe-to-lydia-migration.md), which the wiki page
+[payments](frontend/modules/payments.md) already points at. Registered here so the WORK is visible in
+the tracked state, not only the document describing it.
+
+---
+
 ## Cross-repo
 
 ### P3 - SEO for Sky, MiGallery and Portail-etu

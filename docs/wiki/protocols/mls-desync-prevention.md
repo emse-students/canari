@@ -123,6 +123,18 @@ checkpoint path carried its own copy of the answer and the copy was wrong. Fixed
 `IMlsService.persistCheckpoint` the one seam every checkpoint goes through - `rotateDeviceIdentity`,
 the persister, the structural checkpoint - so no caller has to know which platform it is on.
 
+**THE FIX IS NOW MEASURED ON HARDWARE, AND THE DUPLICATE IS GONE** (A1, new APK, 2026-08-15). A
+green build proves nothing about a write, so the number was read off the phone actually running:
+**1 454 / 1 510 / 1 512 / 1 560 / 1 597 ms, median 1 512 ms** over one MSG pass - against 3.7 s
+before, and slightly under the 1.7 s the split log predicted would remain. Web on the same run, for
+scale: median 58 ms over 37 checkpoints.
+
+Nothing needed instrumenting - the persister already logs `[MLS] Encrypted state checkpoint
+persisted. (N ms)`. What needed care was ATTRIBUTION, because one capture holds several consoles and
+a native checkpoint costs twenty-five times a web one: averaged together they produce a number
+belonging to no device. `ckpt.mjs` calls a stream native only when its OWN lines say `mode=tauri`,
+and the check is self-proving here - the only streams that matched were the two named `a1`.
+
 What is still owed for the outbox hole is therefore NOT an awaited checkpoint. The shape that fits
 the cost is a durable record of what the ratchet has already spent, written per send at the price of
 a key/value write rather than a snapshot, and consulted at load.

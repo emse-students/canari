@@ -30,6 +30,14 @@ A capture filter is presentation. The verdict reads **everything** the run produ
 report is abridged. If the two must share a regex, the verdict's is the superset - never the
 other way round.
 
+**A CHANGE LOG IS A PROJECTION TOO, and it is the one that reads like raw evidence.** `synboot.mjs`
+records a mark only when the banner or the layout offset CHANGES - which is right, because a
+histogram of samples cannot tell one 0.7 s appearance from a flicker. Its first verdict then counted
+marks in the post-startup window as if they were samples and required at least one, so an offset that
+never moved emitted nothing and scored as `FAIL` on the run that proved the fix. The evidence was
+perfect and the verdict inverted it. **When the record is transitions, the verdict must be stated in
+transitions** - "zero changes after ready", never "one distinct value after ready".
+
 ### 2. Every action asserts its own post-condition
 
 An action that cannot prove it took effect still yields a verdict, and **that verdict is fiction**.
@@ -374,6 +382,13 @@ caught by a green gate:
   identifier in backticks; the backticks closed the literal, leaving `template / identifier`, which
   is valid JavaScript. `node --check` passed and every run threw `ReferenceError` at the division.
   Proving a harness edit means RUNNING it, exactly as proving a native build means running it.
+- **A precondition with TWO legitimate landings may not be written as one of them.** `synboot.mjs`
+  waited for the PIN modal after a reload, because that is what a reload usually lands on. With
+  "Rester connecte" ticked the vault device key path restores the client with no modal at all, so the
+  wait burned its whole 30 s deadline and the next line then reported the app **ready in 2 ms** - a
+  boot that had in fact finished 29 s earlier. Nothing failed; the check simply measured its own
+  wait and printed it as the application's number. Race the landings and let the answer say which
+  one happened.
 
 ### 16. A CLICK IS PROVEN BY THE EVENT, NEVER BY THE GEOMETRY AROUND IT
 

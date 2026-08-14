@@ -114,11 +114,13 @@ Mechanism on
   disk before being decrypted: **8.0 s on a cold web client**, with a 50 ms API round trip inside the
   gap proving nothing else was blocked. The flush is started and not awaited. MSG-1-cold went from
   one `SLOW` at 8 045 ms to **259-297 ms, 5/5**.
-- **The phone wrote `mls.bin` twice** (`6bfd805d`, MEASUREMENT OWED). `saveState` means different
-  things per platform; the checkpoint path did `saveState` + `saveMlsStateEncrypted`, which on native
-  writes the same file with the same bytes again, marshalled through IPC as a `number[]`. **3.7 s per
-  checkpoint, 1.7 s of real save and 2.0 s of duplicate.** One seam now - `IMlsService.persistCheckpoint`.
-  **Owed: read the checkpoint cost on A1 with the new APK; a green build proves nothing here.**
+- **The phone wrote `mls.bin` twice** (`6bfd805d`, VERIFIED ON HARDWARE 2026-08-15). `saveState` means
+  different things per platform; the checkpoint path did `saveState` + `saveMlsStateEncrypted`, which
+  on native writes the same file with the same bytes again, marshalled through IPC as a `number[]`.
+  3.7 s per checkpoint, 1.7 s of real save and 2.0 s of duplicate. One seam now -
+  `IMlsService.persistCheckpoint`. **Measured on A1 with the new APK: median 1 512 ms (1 454-1 597,
+  n=5), web 58 ms** - the duplicate is gone and the remainder is under the 1.7 s predicted. `ckpt.mjs`
+  reads it from the app's own log line; the whole difficulty was ATTRIBUTION, not timing.
 - **FIX B WAS REFUTED AS SPECIFIED AND THE HOLE IS NOW CLOSED BY A BURN INSTEAD.** Awaiting a
   checkpoint on the send path costs 1.7 s per message, so `checkpointAfterSend` keeps its
   non-awaiting default on both platforms. The invariant never required durability AT SEND TIME, only
@@ -223,15 +225,22 @@ phase file that computed five verdicts while reading no console, and a click tha
 had RECEIVED it. `srvlog.mjs` now partitions its window by SUBJECT - prod is shared, and 27
 "unexplained" lines were one real third-party user's phone climbing its recovery ladder.
 
-**WP-BANNER-1 IS SHIPPED AND IS NOT YET VERIFIED RUNNING (`e62c21f1`, 2026-08-15).** Six banners
-agreed on nothing; the whole contract is on
+**WP-BANNER-1 IS SHIPPED AND VERIFIED RUNNING (`e62c21f1`, 2026-08-15).** Six banners agreed on
+nothing; the whole contract is on
 [frontend/architecture](docs/wiki/frontend/architecture.md#status-banners) - read it, do not
-reconstruct it here. What matters for the campaign is that it changed `MainChatPage`, `Sidebar`,
-`ChatArea` and `+layout`, **the exact surface MSG and TYPE measure**, and both phases were measured
-on the bundle BEFORE it. **Owed: one MSG pass and one TYPE pass on the new bundle, plus the positive
-check that the synchronisation banner no longer rises at startup.** `synwatch.mjs` (idle) and
-`synopen.mjs` (during an open) read it directly - before the fix, ON at 480 ms, OFF at 2 286 ms,
-29 px of shift, which is what delivered a click aimed at a channel row to the button below it.
+reconstruct it here. It changed `MainChatPage`, `Sidebar`, `ChatArea` and `+layout`, **the exact
+surface MSG and TYPE measure**, so both were re-run on the new bundle: **MSG 13/13, TYPE 5/5, server
+clean on both.** The positive check is taken in all three windows - `synboot.mjs` at STARTUP (W1 and
+W2), `synopen.mjs` during a channel open, `synwatch.mjs` at idle: **zero appearances, `mainTop`
+constant at 57 px**, against ON at 480 ms / OFF at 2 286 ms and 29 px of shift before the fix, which
+is what delivered a click aimed at a channel row to the button below it.
+
+**A1 IS NOT ON THIS FIX AND CANNOT BE WITHOUT A REBUILD** - `frontendDist` is `../build`, so the
+phone serves the bundle inside its APK and a deploy never reaches it. Its APK (built 21:20, installed
+21:30 on 2026-08-14) carries `6bfd805d` and `8a3edbdd` but predates `e62c21f1`. MSG's A1 half above
+therefore ran on the older UI; that is a real mixed-fleet state, not an oversight, and the banner
+change cannot regress delivery. **Owed only if the UI surface is to be verified on the phone: one
+APK build, then the A1-touching MSG checks again.**
 
 **The server observer meets the same bar as the two clients and is tested like them.** Its whole
 window is classified: `srvlog.mjs --shapes` collapses `unexplained` and `notable` to distinct
