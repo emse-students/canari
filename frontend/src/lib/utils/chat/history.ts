@@ -466,13 +466,13 @@ export async function replayConversationHistory(params: {
 
       const pageDecryptWork: Array<{
         msg: (typeof history)[number];
-        cipherFingerprint: string;
+        rowKey: string;
         bytes: Uint8Array;
       }> = [];
 
       for (const msg of history) {
-        const cipherFingerprint = msg.id || `${msg.timestamp}:${msg.content.slice(0, 64)}`;
-        if (seenCipherHashes.has(cipherFingerprint)) {
+        const rowKey = msg.id || `${msg.timestamp}:${msg.content.slice(0, 64)}`;
+        if (seenCipherHashes.has(rowKey)) {
           advancePast(msg.id);
           continue;
         }
@@ -483,12 +483,12 @@ export async function replayConversationHistory(params: {
         // sight, so every later replay answers from the cheap check above and the position keeps
         // moving past it without decoding anything.
         if (seenCipherHashes.has(frameFingerprint(bytes))) {
-          seenCipherHashes.add(cipherFingerprint);
+          seenCipherHashes.add(rowKey);
           seenUpdated = true;
           advancePast(msg.id);
           continue;
         }
-        pageDecryptWork.push({ msg, cipherFingerprint, bytes });
+        pageDecryptWork.push({ msg, rowKey, bytes });
       }
 
       const batchResults =
@@ -519,7 +519,7 @@ export async function replayConversationHistory(params: {
       }
 
       for (let workIdx = 0; workIdx < pageDecryptWork.length; workIdx++) {
-        const { msg, cipherFingerprint } = pageDecryptWork[workIdx];
+        const { msg, rowKey, bytes } = pageDecryptWork[workIdx];
         const batchResult = batchResults[workIdx];
 
         // False = epoch/ratchet gap - recoverable after resync, must not be permanently skipped.
@@ -591,7 +591,7 @@ export async function replayConversationHistory(params: {
           const kind = classifyIncomingDecryptError(err);
           if (kind === 'own-message') {
             // MLS gives no echo of our own message; there is nothing to read and nothing is lost.
-            seenCipherHashes.add(cipherFingerprint);
+            seenCipherHashes.add(rowKey);
             seenUpdated = true;
             continue;
           }
@@ -599,23 +599,48 @@ export async function replayConversationHistory(params: {
             // Unreadable for good, at one end of the ratchet or the other: the generation is spent
             // (`secret-reuse`), or the epoch's secrets are gone (`past-epoch-application`, what a
             // re-joined group holds for everything sent before the join). Either way the frame will
-            // never decrypt - mark it seen or the replay reprocesses it forever.
-            //
-            // But WHICH message it was is the whole question, and this is the one place that holds
-            // the evidence to answer it: a frame already read carries a fingerprint in
-            // `seenCipherHashes` and is skipped before ever reaching the decrypt, so anything
-            // arriving HERE is a frame this device has never read. That is real loss, and a
+            // never decrypt - mark the ROW seen or the replay reprocesses it forever.
+            const frameKey = frameFingerprint(bytes);
+
+            /**
+             * ASK AGAIN NOW. The answer from before the batch is about a world that has moved.
+             *
+             * The page was assembled by checking `seenCipherHashes` per row, and only THEN handed to
+             * `decryptPage`. Between those two moments live delivery can read this very frame and
+             * record it - seconds, on a real page - and the reasoning that used to sit here ("a frame
+             * already read is skipped before ever reaching the decrypt, so anything arriving HERE is
+             * a frame this device has never read") quietly assumed the two moments were one.
+             *
+             * This is the SAME defect as the one directly above, in the other direction: that one
+             * wrote the ledger where iterating was convenient instead of where the spending happened,
+             * this one READ it where the work was queued instead of where the verdict is formed.
+             * Measured on prod 2026-08-14 - three consecutive runs of `msg1 --cold` then `msg1b`, each
+             * with one frame refused by both paths while `copiesOnReceiver` stayed 1 and the
+             * reconciliation it triggered answered `same state - nothing to do`.
+             *
+             * Re-asking costs one hash of bytes already in hand, and only on a frame that has just
+             * failed to decrypt - never on the hot path.
+             */
+            if (seenCipherHashes.has(frameKey)) {
+              seenCipherHashes.add(rowKey);
+              seenUpdated = true;
+              console.debug(
+                `[History] frame already read live while this page was decrypting - not a loss (group ${id}, frame ${frameKey})`
+              );
+              continue;
+            }
+
+            // Nothing here has read these bytes, at either moment asked. That is real loss, and a
             // reconciliation is the only thing that can recover it. A false positive costs exactly
             // one comparison, which is what makes reconciling on suspicion safe.
-            seenCipherHashes.add(cipherFingerprint);
+            seenCipherHashes.add(rowKey);
             seenUpdated = true;
             sawUnreadableFrame = true;
-            // The fingerprint travels with the claim, for the same reason it does on the live path's
-            // LOST line: the two lines are about the SAME frame when the fault is a ledger gap, and
-            // about two different frames sharing a generation when the sender's ratchet rewound.
-            // Printing it on one side only would have made the pair uncomparable.
+            // The FRAME key, not the row key: the live path's `LOST frame` line names the ciphertext,
+            // and a line naming the Redis stream id instead cannot be compared with it. That is not a
+            // hypothetical - it was the first thing the fingerprints revealed once both were printed.
             console.warn(
-              `[History] frame never read here and unreadable for good (${kind}); will reconcile (group ${id}, frame ${cipherFingerprint})`
+              `[History] frame never read here and unreadable for good (${kind}); will reconcile (group ${id}, frame ${frameKey}, row ${rowKey})`
             );
             continue;
           }
@@ -623,16 +648,14 @@ export async function replayConversationHistory(params: {
             // epoch-gap = we are BEHIND (missing a commit). Remember it so we can flag the group
             // for recovery at the end if no catch-up commit advances our epoch in this replay.
             if (kind === 'epoch-gap') sawEpochGap = true;
-            const { attempts, retry } = nextHistoryRetryDecision(
-              retryCounts.get(cipherFingerprint) ?? 0
-            );
+            const { attempts, retry } = nextHistoryRetryDecision(retryCounts.get(rowKey) ?? 0);
             if (retry) {
               // Recoverable: epoch/ratchet gap (epoch-gap), or a frame from an epoch this replay
               // has not reached yet (wrong-epoch - the commit may apply on a later load). Do NOT
               // mark it "seen" so the entry is retried at the next history load after epoch
               // resynchronization. Bounded so it cannot refetch-storm forever. [[M2]]
               skipSeenHash = true;
-              retryCounts.set(cipherFingerprint, attempts);
+              retryCounts.set(rowKey, attempts);
               retryUpdated = true;
               console.warn(
                 `[History] retryable ${attempts}/${MAX_HISTORY_DECRYPT_RETRIES} (${kind}): ${String(err).slice(0, 200)}`
@@ -643,7 +666,7 @@ export async function replayConversationHistory(params: {
               // through with skipSeenHash=false so the finally consumes it (marks seen + advances
               // the cursor), stopping the per-sync refetch storm. The `sawEpochGap` flag above
               // still lets shouldFlagStaleEpochGap escalate a genuinely stuck-behind group.
-              retryCounts.delete(cipherFingerprint);
+              retryCounts.delete(rowKey);
               retryUpdated = true;
               // This is the ONLY moment the app learns that history is genuinely missing rather
               // than merely late: a frame we saw, will never read, and can only obtain re-encrypted
@@ -660,12 +683,12 @@ export async function replayConversationHistory(params: {
           }
         } finally {
           if (!skipSeenHash) {
-            seenCipherHashes.add(cipherFingerprint);
+            seenCipherHashes.add(rowKey);
             seenUpdated = true;
             advanceStreamCursor = true;
             // Frame resolved (decrypted) or given up on: drop any retry counter so it can never
             // linger and re-trigger a give-up on a later, unrelated cursor position.
-            if (retryCounts.delete(cipherFingerprint)) retryUpdated = true;
+            if (retryCounts.delete(rowKey)) retryUpdated = true;
           }
         }
 

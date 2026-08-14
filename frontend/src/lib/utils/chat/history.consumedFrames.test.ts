@@ -7,6 +7,13 @@
  * displaying. These cases pin the two halves that make the repair work: the two paths agree on a
  * key, and a mark made during a replay is not erased by that replay's final write.
  */
+// Mocked so a case can ASSERT on whether a repair was asked for. Without it the replay's loss path
+// reaches the real one, which is a network call these cases have no business making.
+vi.mock('$lib/utils/chat/historyReconcile', () => ({
+  reconcileGroup: vi.fn().mockResolvedValue(true),
+}));
+
+import { reconcileGroup } from '$lib/utils/chat/historyReconcile';
 import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
@@ -30,6 +37,9 @@ const flush = () => Promise.resolve().then(() => undefined);
 beforeEach(() => {
   localStorage.clear();
   resetSeenCipherCacheForTests();
+  // Call counts are per-case evidence: without this, a case asserting "no repair was asked for"
+  // reads the reconciliations of every case before it and fails for someone else's reason.
+  vi.clearAllMocks();
 });
 
 describe('the key the two delivery paths share', () => {
@@ -253,6 +263,33 @@ describe('a frame the archive replay consumed', () => {
       expect(hasHistoryFrameBeenConsumed(USER, GROUP, frameFingerprint(wire))).toBe(true);
       expect(hasHistoryFrameBeenConsumed(USER, GROUP, frameFingerprint(second))).toBe(false);
     });
+  });
+
+  /**
+   * THE LEDGER IS CONSULTED WHERE THE VERDICT IS FORMED, NOT WHERE THE WORK WAS QUEUED.
+   *
+   * The mirror of the defect just above, and the half that survived it. The page is assembled by
+   * checking each row against `seenCipherHashes`, and only THEN handed to `decryptPage`. Live
+   * delivery can read one of those frames in between - seconds, on a real page - so a frame that
+   * failed the batch may well have been read by the time the failure is being judged. The code used
+   * to reason from the earlier answer ("a frame already read is skipped before ever reaching the
+   * decrypt, so anything arriving here has never been read") and declared a loss on a message the
+   * device was displaying.
+   */
+  it('is not a loss when live delivery read the frame while the page was decrypting', async () => {
+    // Exactly what live delivery writes, arriving AFTER the page was assembled and BEFORE the
+    // failure is judged - the window this covers.
+    markHistoryFrameConsumed(USER, GROUP, frameFingerprint(wire));
+
+    await replayOnePage({
+      ok: false,
+      error: 'ValidationError(UnableToDecrypt(SecretTreeError(SecretReuseError)))',
+    });
+
+    // No reconciliation was asked for: nothing was lost, so nothing needs repairing.
+    expect(vi.mocked(reconcileGroup)).not.toHaveBeenCalled();
+    // And the row is still consumed, or the replay walks it again on every load.
+    expect(hasHistoryFrameBeenConsumed(USER, GROUP, row.id)).toBe(true);
   });
 });
 
