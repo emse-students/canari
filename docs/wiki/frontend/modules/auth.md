@@ -444,6 +444,31 @@ was also completed (`getUserId`, `getDeviceKey`): without them `attemptReconnect
 `TypeError`, the catch classified it as a transport failure, and every case measured a ladder driven
 by the fixture's own incompleteness rather than by the connection outcome it was mocking.
 
+**PROVEN ON A REAL CLIENT, 2026-08-15 (`ladder.mjs`, W2 against prod).** The fix is prospective, so
+the original capture could not verify it - it measured a circuit that no longer exists, and a tab
+reloaded to GET the fix has not lived through an outage. The proof therefore had to be MADE, and it
+turns on one number: the old latch opened at 20, so **`attempt 21` is impossible under the old code
+and inevitable under the new**. Held a real outage for 486 s (`armCut` + `cutHard` - offline first,
+then the socket closed, since `emulateNetworkConditions` leaves an established WebSocket alone):
+
+```
+highest attempt    : 21          (old circuit opened at 20)
+distinct delays    : 1, 2, 4, 8, 16, 30 s      attempts monotonic: true
+watchdog lines     : 0
+reconnected after  : 98 ms       (emulation lifted; NO synthetic online/visibilitychange)
+```
+
+**The zero is the second finding, and it was not predicted.** `startConnectionWatchdogImpl` returns
+*before logging* when `ctx.timers.reconnect !== null`, so a silent watchdog means it found a rung
+already armed on every one of its eight ticks. That is the outside view of the mirror invariant
+`sessionConnection.test.ts` pins - exactly one rung armed at any moment - and it is direct evidence
+that the ladder now climbs ITSELF: before the fix the watchdog was the only retry driver and left one
+line per minute. The arithmetic agrees independently: 21 attempts on the `1,2,4,8,16,30…` ladder
+predicts 511 s and 486 s were held, where a watchdog-driven client would have reached about 8.
+
+Finally, `restore` only lifted the emulation - nothing dispatched the events the old circuit needed -
+so the 98 ms recovery is the client's own.
+
 ### What happens on reconnect
 
 `promoteOfflineSession.ts`, single-flight, subscribed to `connectivity.onReconnect`:

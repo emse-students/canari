@@ -201,6 +201,21 @@ right; and to force the path, remove what makes it skippable - here
 `adb shell run-as fr.emse.canari rm files/avatar_*.jpg`, which works because the build is
 DEBUGGABLE, one of the few things a debug build is BETTER for (rule 9).
 
+**THE CHEAPEST POSITIVE CONTROL IS A CLIENT STILL RUNNING THE OLD BUILD, AND THE MIXED FLEET HANDS
+IT OVER FREE.** `synboot.mjs` reported zero banner appearances on both web clients after WP-BANNER-1,
+which is the verdict wanted and therefore the one to distrust: a probe whose selector had rotted
+would say exactly the same. A1 settled it without any extra work. The phone serves the bundle inside
+its APK (`frontendDist` is `../build`), so a deploy never reaches it, and its build predates the fix -
+so the SAME probe run against it caught the banner rising at 4 601 ms, 26 px high, held for 4 s.
+The instrument discriminates, so the zeros mean something.
+
+Two things came out of that control which the intended measurement could not have produced. The
+banner did NOT move `mainTop` on A1 (107 px throughout), so the 29 px displacement that delivered a
+click to the wrong button is a DESKTOP-layout consequence, not a universal one. And the verdict was
+counting marks rather than comparing offsets - two marks reading the same 107 scored as two
+movements - which is rule 1 again in a third dress: the mark fires on a change in the WHOLE probe,
+so only the field being judged may be compared.
+
 **Where the defect can be re-created, the check should re-create it.** WP-RELOAD-DL-1 asserts that a
 reload does NOT navigate - and a build with deep links entirely broken passes that too. Deleting the
 one key the fix relies on (`sessionStorage['canari:deeplink:handled']`) and reloading again brought

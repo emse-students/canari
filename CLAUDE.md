@@ -129,25 +129,28 @@ Mechanism on
   which over-counts on purpose), and `reconcileSendRatchets` burns the difference at load via
   `MlsManager::skip_send_generations`. **The Rust half is proven**
   (`mls-core/tests/burn_spent_generations.rs`, 4 tests: the fault, the repair, and that over-shooting
-  is free). **OWED: the 300 ms-reload recipe on web AND native** - the Rust tests cannot establish
-  that the count survives a teardown. iOS gets it from the same un-gated `generate_handler!`.
+  is free). **The client half was taken on both platforms 2026-08-14** and is written up on
+  [mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md) - this file said OWED after
+  the fact, which was stale, not open. **Re-taken on the new bundle 2026-08-15**: W1 burnt 1, next
+  frame in 447 ms; A1 burnt 1, next frame in 3 589 ms; both peers clean. **`burn.mjs` no longer
+  races** - a fixed delay cannot enter a window that is now ~58 ms wide on web, so the reload is
+  gated on the ledger actually showing `emitted > persisted`. iOS gets it from the same un-gated
+  `generate_handler!`.
 
-**WP-RECONNECT-1 IS FIXED AND DEPLOYED (2026-08-14, `9fd67590`); ITS VERIFICATION IS STILL OWED.** The
-reconnect circuit is DELETED: only a proof ends the retry loop now (logged out, or a 401/403 on the
-refresh cookie), the ladder saturates at 30 s and climbs for ever. Two further silences fixed with
-it: `attemptReconnect` rescheduled from inside its own `isReconnecting` guard, so both failure paths
-were no-ops that logged `Retrying in Ns...` (the 60 s watchdog was the real retry driver), and it
-nulled the pending timer without clearing it, so a forced resume left two ladders climbing. Captured
-before the fix with `circuit.mjs` (kept in the harness): two prod tabs, 7 h old, `online:true`,
-`visibility:visible`, watchdog ticking every 60 s, **0 retries / 0 sockets in 135 s** - then a
-synthetic `visibilitychange` on the ALREADY-VISIBLE W1 reconnected it in <20 s while W2 stayed dead
-as a control. Gates green (`check` 0/0, 5/5 unit). Mechanism, evidence and the completed test fixture
-are on [auth](docs/wiki/frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it);
+**WP-RECONNECT-1 IS FIXED, DEPLOYED AND NOW VERIFIED ON A REAL CLIENT (2026-08-14 `9fd67590`,
+verified 2026-08-15).** The reconnect circuit is DELETED: only a proof ends the retry loop now
+(logged out, or a 401/403 on the refresh cookie), the ladder saturates at 30 s and climbs for ever.
+Two further silences fixed with it: `attemptReconnect` rescheduled from inside its own
+`isReconnecting` guard, so both failure paths were no-ops that logged `Retrying in Ns...` (the 60 s
+watchdog was the real retry driver), and it nulled the pending timer without clearing it, so a forced
+resume left two ladders climbing. **`ladder.mjs` held a 486 s outage on W2 and read `attempt 21`,
+delays `1,2,4,8,16,30`, monotonic, back in 98 ms with no synthetic event** - 21 is impossible under
+the old 20-latch, so the proof needs no interpretation. **The unpredicted half: 0 watchdog lines**,
+because the watchdog returns before logging when a rung is already armed - the outside view of "the
+ladder climbs itself". Mechanism, both captures and the completed test fixture are on
+[auth](docs/wiki/frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it);
 three rules in [durable-rules](docs/wiki/durable-rules.md). **The campaign masked it structurally** -
-every check reloads. **Still owed: `circuit.mjs` on a tab that lived through an outage ON THE NEW
-BUNDLE.** The fix is PROSPECTIVE, so a tab running the old one proves nothing - and a tab that was
-reloaded to GET the new one has not lived through an outage, which is why this cannot be a standalone
-run and is folded into MSG-9/10's cut instead.
+every check reloads, which is why the proof had to be MADE rather than found.
 
 **The avatar 404s are attributed and are a SERVER fault, not a client one.** `[AvatarService] Error
 fetching avatar` in `core-service`, 17 outbound HTTPS timeouts to Cloudflare IPs over one 5-minute
@@ -239,8 +242,12 @@ is what delivered a click aimed at a channel row to the button below it.
 phone serves the bundle inside its APK and a deploy never reaches it. Its APK (built 21:20, installed
 21:30 on 2026-08-14) carries `6bfd805d` and `8a3edbdd` but predates `e62c21f1`. MSG's A1 half above
 therefore ran on the older UI; that is a real mixed-fleet state, not an oversight, and the banner
-change cannot regress delivery. **Owed only if the UI surface is to be verified on the phone: one
-APK build, then the A1-touching MSG checks again.**
+change cannot regress delivery. **That staleness then paid for itself: A1 is the POSITIVE CONTROL
+for `synboot.mjs`** - the same probe caught the banner there (4 601 ms, 26 px, held 4 s), so the
+zeros on web are a real absence rather than a rotted selector. It also showed `mainTop` unmoved at
+107 px on mobile, which places the 29 px displacement in the DESKTOP layout only. **Owed only if the
+UI surface is to be verified on the phone: one APK build, then the A1-touching MSG checks again -
+and doing so SPENDS the control.**
 
 **The server observer meets the same bar as the two clients and is tested like them.** Its whole
 window is classified: `srvlog.mjs --shapes` collapses `unexplained` and `notable` to distinct

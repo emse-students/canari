@@ -254,15 +254,22 @@ web, mobile and server. Shown/cleared are the spreads across those passes. Re-ru
 ## 3 - READ - receipts and unread counts
 
 Read state is per-USER, never per-device, and the unread count is **never persisted** - it is
-recomputed from `readBy` on every batch. That is what makes this phase worth running: a recomputed
-number is a number that can be recomputed differently.
+recomputed on every batch. That is what makes this phase worth running: a recomputed number is a
+number that can be recomputed differently.
+
+**The carrier is a WATERMARK, not a per-message `readBy` list** - one timestamp per (conversation,
+user), compared rather than accumulated, which is what stops a history catch-up marking a read
+message unread. The change came with the history-reconciliation rework; anything here still phrased
+in terms of per-message ids predates it. What did NOT change is the gate (`isWindowFocused &&
+isTabVisible`, no receipt on a channel, none on a conversation the peer deleted), the 2 s debounce,
+or the `.msg-status-sent` / `.msg-status-read` selectors the checks locate the anchor by.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | READ-1 | Reading on W1 clears the unread badge on W1 and marks it read for the sender | `W1 W2` | `pending` |
 | READ-2 | The SAME user's other device also clears - a receipt from yourself resets your own count | `+A1` | `pending` |
 | READ-3 | The receipt only fires with the window FOCUSED and the tab visible: a background tab must not mark read | `W1 W2` | `pending` |
-| READ-4 | The 2 s debounce batches: reading twenty messages sends one receipt with twenty ids | `W1 W2` | `pending` |
+| READ-4 | The 2 s debounce batches: reading twenty messages sends ONE watermark, not twenty receipts | `W1 W2` | `pending` |
 | READ-5 | "Seen by" resolves to display names, and to `+N` past three | `W1 W2` | `pending` |
 | READ-6 | Channels send no receipts at all, by design - and their read state comes from the server tally | `W1 W2` | `pending` |
 | READ-7 | Unread count after a reload, with the receipt still in flight | `W1 W2` | `pending` |

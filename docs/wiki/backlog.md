@@ -137,6 +137,21 @@ bounds the backlog of a device that simply never returns.
 
 ## Protocol and delivery
 
+### Observed once - the phone skipped an outbox flush as a "follower tab"
+
+`[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.` on **A1**,
+right after a reload (`burn.mjs`, 2026-08-15). A standalone app has no sibling tab, so the reading
+that fits is a startup ordering artifact: `runFlush` consults `getIsTabLeader()` before the reloaded
+page has re-acquired the Web Lock, skips, and asks the leader - which is itself a moment later. It
+self-corrected and the message went (3 589 ms), and it did NOT recur on a second reload of the same
+device.
+
+**Deliberately NOT given a classifier rule.** A rule matching this line would also forgive a genuine
+leadership failure, where the queue would never drain at all - and one occurrence is not a
+predicate. Left in `unexplained`, where a second sighting will surface it again with a pattern to
+read. If it does recur, the question to answer first is whether the flush is merely early or the
+lock is genuinely lost.
+
 ### P3 - the composer sits behind the soft keyboard on Android
 
 Known, reproduced by hand, never turned into a Work Package because it needs a layout decision rather

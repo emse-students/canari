@@ -230,6 +230,17 @@ the phone's own checkpoint - and `burnedLine` legitimately exceeded the pre-relo
 send landed between the two. The repair burns what the ledger holds AT LOAD, which is the only figure
 that can be right; a check comparing the two for equality would have called a correct run a fault.
 
+**RE-TAKEN ON THE DEPLOYED BUNDLE, 2026-08-15, AND THE RECIPE STOPPED BEING A RACE.** W1 burnt 1
+with the next frame decrypted in 447 ms; A1 burnt 1, next frame 3 589 ms; both peers clean, no loss
+line on either side. Getting there needed one change to the check. **A fixed delay cannot enter a
+window narrower than itself**, and the window on web is now ~58 ms, so `--delay 300` reloaded at
+136 ms with the ledger already at 0 and reported `INCONCLUSIVE` - correct, but it would have done so
+for ever, and an INCONCLUSIVE that never resolves is indistinguishable from a repair with nothing to
+do. The reload is now GATED on the premise instead: send without awaiting the composer's own 100 ms
+post-condition, poll `emitted - persisted`, and reload the instant it is positive. The window opened
+on the FIRST send on both platforms. This is rule 15 - a precondition the client agrees with beats
+one the check hopes for.
+
 The background handoff is ordered for the same reason: on `hidden` the checkpoint is flushed
 **before** `pause_mls_foreground` releases the native guard. Releasing it is what lets a background
 JNI engine load `mls.bin` and advance from it, so releasing it first hands that engine a state that
