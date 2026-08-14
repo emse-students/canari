@@ -56,7 +56,7 @@ for **server deployment**:
 |---|---|
 | Core | `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CHANNELS_ENCRYPTION_SECRET`, `CALL_ROOM_SECRET` |
 | Database | `POSTGRES_USER`, `POSTGRES_PASSWORD` |
-| Media storage (Garage, formerly MinIO) | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` (become the Garage S3 key - see below), `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN` |
+| Media storage (Garage, formerly MinIO) | `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN`, `GARAGE_ACCESS_KEY_ID` (>= 8 chars), `GARAGE_SECRET_ACCESS_KEY` (>= 16 chars) - Garage's own minimums, which is why this is a dedicated key rather than reusing `MINIO_ROOT_USER`/`PASSWORD` |
 | Auth (Authentik) | `AUTHENTIK_URL`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET`, `MICONNECT_PG_PASS`, `MICONNECT_AUTHENTIK_SECRET_KEY` |
 | App / frontend | `BASE_URL`, `STRIPE_PUB_KEY`, `KLIPY_API_KEY`, `ANDROID_APP_LINK_SHA256`, `APPLE_TEAM_ID` |
 | Payments | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `LYDIA_PROVIDER_TOKEN`, `LYDIA_PROVIDER_PRIVATE_TOKEN` (WP-LYDIA-1; core-service only, unlike Stripe's secrets which also reach social-service unused - which provider is actually live is `platform_config.paymentProvider`, an admin setting at `/admin/platform`, not an env var) |
@@ -138,7 +138,7 @@ cd /home/canari/canari
 Restores PostgreSQL (`auth_db`), Garage (media, in `garage_data`/`garage_meta`), media_meta,
 and the Authentik database. No separate bucket/key bootstrap is needed afterwards: Garage's
 `--default-bucket` startup flag (see `infrastructure/docker-compose.prod.yml`) re-provisions
-the bucket/key from `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` on every boot, and is a no-op when
+the bucket/key from `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY` on every boot, and is a no-op when
 the restored volumes already contain them. See [backup/README.md](backup/README.md).
 
 ## 7. Enable recurring backups

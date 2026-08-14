@@ -274,10 +274,12 @@ services:
     environment:
       GARAGE_RPC_SECRET: "${GARAGE_RPC_SECRET:?GARAGE_RPC_SECRET is required - see .env.example}"
       GARAGE_ADMIN_TOKEN: "${GARAGE_ADMIN_TOKEN:?GARAGE_ADMIN_TOKEN is required - see .env.example}"
-      # Same key/bucket media-service already uses against MinIO - once media-service is
-      # repointed here (cutover commit), no credential rotation is needed.
-      GARAGE_DEFAULT_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required - set via CD secrets or .env}
-      GARAGE_DEFAULT_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required - set via CD secrets or .env}
+      # Deliberately NOT MINIO_ACCESS_KEY/SECRET_KEY: Garage requires an access key ID >= 8
+      # characters and a secret >= 16, a constraint MinIO never had (this deployment's
+      # MINIO_ROOT_USER is shorter than that). At the cutover commit, media-service's
+      # MINIO_ACCESS_KEY/SECRET_KEY are repointed to these same values.
+      GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_ACCESS_KEY_ID:?GARAGE_ACCESS_KEY_ID is required - see .env.example}
+      GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_SECRET_ACCESS_KEY:?GARAGE_SECRET_ACCESS_KEY is required - see .env.example}
       GARAGE_DEFAULT_BUCKET: ${MINIO_BUCKET:-canari-media}
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro

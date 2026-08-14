@@ -442,6 +442,8 @@ jobs:
           MINIO_ROOT_PASSWORD: ${{ secrets.MINIO_ROOT_PASSWORD }}
           GARAGE_RPC_SECRET: ${{ secrets.GARAGE_RPC_SECRET }}
           GARAGE_ADMIN_TOKEN: ${{ secrets.GARAGE_ADMIN_TOKEN }}
+          GARAGE_ACCESS_KEY_ID: ${{ secrets.GARAGE_ACCESS_KEY_ID }}
+          GARAGE_SECRET_ACCESS_KEY: ${{ secrets.GARAGE_SECRET_ACCESS_KEY }}
           MIGALLERY_API_KEY: ${{ secrets.MIGALLERY_API_KEY }}
           CHANNELS_ENCRYPTION_SECRET: ${{ secrets.CHANNELS_ENCRYPTION_SECRET }}
           INTERNAL_SHARED_SECRET: ${{ secrets.INTERNAL_SHARED_SECRET }}
@@ -542,12 +544,25 @@ jobs:
             exit 1
           fi
 
-          # MINIO_ACCESS_KEY/SECRET_KEY are the S3 client credentials for media-service (and,
-          # via GARAGE_DEFAULT_ACCESS_KEY/SECRET_KEY, the exact key Garage provisions on first
-          # boot). They mirror MINIO_ROOT_USER/ROOT_PASSWORD; written explicitly so that
-          # Docker Compose does not need nested variable interpolation (not universally supported).
-          upsert_env_var "MINIO_ACCESS_KEY" "$MINIO_ROOT_USER"
-          upsert_env_var "MINIO_SECRET_KEY" "$MINIO_ROOT_PASSWORD"
+          # This environment's media-service already talks to Garage (docker-compose.dev.yml has
+          # no MinIO service), so MINIO_ACCESS_KEY/SECRET_KEY mirror the dedicated Garage key
+          # below, NOT MINIO_ROOT_USER/PASSWORD - Garage requires an access key ID >= 8 characters
+          # and a secret >= 16, a constraint MinIO never had and this deployment's
+          # MINIO_ROOT_USER does not meet. MINIO_ROOT_USER/PASSWORD are written above only because
+          # nothing has removed the requirement for them yet.
+          if [ -n "$GARAGE_ACCESS_KEY_ID" ]; then
+            upsert_env_var "MINIO_ACCESS_KEY" "$GARAGE_ACCESS_KEY_ID"
+          else
+            echo "::error::GARAGE_ACCESS_KEY_ID is not set - media storage (Garage) will fail to start"
+            exit 1
+          fi
+
+          if [ -n "$GARAGE_SECRET_ACCESS_KEY" ]; then
+            upsert_env_var "MINIO_SECRET_KEY" "$GARAGE_SECRET_ACCESS_KEY"
+          else
+            echo "::error::GARAGE_SECRET_ACCESS_KEY is not set - media storage (Garage) will fail to start"
+            exit 1
+          fi
 
           if [ -n "$GARAGE_RPC_SECRET" ]; then
             upsert_env_var "GARAGE_RPC_SECRET" "$GARAGE_RPC_SECRET"

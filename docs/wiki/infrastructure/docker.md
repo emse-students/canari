@@ -39,13 +39,23 @@ required by Garage's SigV4 signing - unset for MinIO, `garage` for Garage, must 
 `s3_region` in `infrastructure/garage/garage.toml`). What's structurally different, all at the
 infra layer:
 
-- **No root user.** Garage has no MinIO-style admin credential that doubles as an S3 key. The
-  container is started with `--single-node --default-bucket` and
-  `GARAGE_DEFAULT_ACCESS_KEY`/`GARAGE_DEFAULT_SECRET_KEY`/`GARAGE_DEFAULT_BUCKET` set to the
-  *same* values as `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`/`MINIO_BUCKET` - Garage self-provisions
-  the bucket and grants that exact key on first boot, so the app's credentials never need to be
-  rotated. `GARAGE_RPC_SECRET` and `GARAGE_ADMIN_TOKEN` are new, unrelated secrets (cluster RPC
-  and admin-API auth) with no MinIO equivalent.
+- **No root user, and a minimum-length constraint MinIO never had.** Garage requires an access
+  key ID >= 8 characters and a secret >= 16; MinIO enforces neither, and this deployment's
+  `MINIO_ROOT_USER` is shorter than that, so it cannot be reused as Garage's key (this crashed
+  the container on first prod deploy: `Invalid default access key: Key identifiers should be at
+  least 8 characters long`). The container is started with `--single-node --default-bucket` and
+  `GARAGE_DEFAULT_ACCESS_KEY`/`GARAGE_DEFAULT_SECRET_KEY`/`GARAGE_DEFAULT_BUCKET` set from
+  dedicated `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY`/`MINIO_BUCKET` secrets - Garage
+  self-provisions the bucket and grants that exact key on first boot, and it is idempotent on
+  restart (verified locally: no duplicate-key error, same key still granted). On a **fresh**
+  install, `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` (what media-service actually reads) should just
+  be set to the same values as `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY` - no MinIO
+  legacy value to conflict with. On the prod host specifically, `MINIO_ACCESS_KEY`/`SECRET_KEY`
+  keep mirroring `MINIO_ROOT_USER`/`PASSWORD` (for MinIO, still live) until the cutover commit
+  repoints them at the Garage key instead - a one-time, deliberate credential change for
+  media-service, not a rotation of MinIO's own root credentials. `GARAGE_RPC_SECRET` and
+  `GARAGE_ADMIN_TOKEN` are separate, unrelated secrets (cluster RPC and admin-API auth) with no
+  MinIO equivalent.
 - **Two volumes, not one.** `garage_meta` (small, LMDB) and `garage_data` (object bytes) replace
   the single `minio_data`. On the production host, `minio_data` was kept for a 14-day rollback
   window after the cutover, then removed.
