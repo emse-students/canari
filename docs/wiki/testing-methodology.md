@@ -16,7 +16,7 @@ over a filtered copy of its own evidence.
 
 ---
 
-## The eleven rules
+## The fourteen rules
 
 Ordered by how expensive it is to break them.
 
@@ -266,6 +266,64 @@ So: two fields, not one. `wsEventsDuringCut` beside a `wsEvents` that the gate m
 question a capture will be asked is rarely the question it was written for**, which is the whole
 argument for keeping the raw sequence next to the verdict.
 
+### 12. A CAP IS NOT A COUNT, AND A SUMMARY AS LONG AS ITS SOURCE IS UNREAD
+
+Two ways a triage list lies about its own size, both met on 2026-08-14 within an hour of each other.
+
+**A truncated bucket reported its truncation as its measurement.** `srvlog.mjs` kept
+`errors.slice(0, 40)` and then printed `errors.length` - which is 40 whether the window held forty
+errors or nine hundred. The summary line a reader uses to decide *whether to look at all* was
+therefore incapable of ever saying "this is worse than you think". The window that finally got read
+held **1 154** unexplained gateway lines behind a `40`. Every truncated bucket now carries its own
+`…Count` taken before the slice.
+
+**And a list of 1 154 lines is not read by anybody**, so it may as well be empty. Collapsing each
+line to its *shape* - text with every identifier replaced by its kind - turned those 1 154 into 33
+sentences, and the whole seven-service window into 72. That is a list a person finishes.
+
+The catch is that **the normaliser then decides how big the work looks, so it is load-bearing and it
+must be tested.** Its first draft matched ids at sixteen hex characters, so eight-character
+correlation ids survived and 287 copies of one sentence counted as 287 distinct shapes - a summary
+exactly as long as the thing it summarised. Its second bug was ordering: the device rule ran after
+the id rule, so `web-<id>-suffix` had already stopped looking like a device by the time anything
+looked for one. Neither has a symptom on a live window; both are pinned in `srvclassify-selftest.mjs`
+now, next to the assertion that genuinely different sentences must still *not* collapse.
+
+### 13. AN INSTRUMENT'S OWN LIMIT ARRIVES WEARING THE SYSTEM'S FAULT - and it bites the busiest subject first
+
+`chat-delivery-service` reported `unreachable: spawnSync … ENOBUFS`, which reads as a broken tunnel
+or a dead container. It was neither: Node's default `maxBuffer` is 1 MB, and that service writes
+11 824 lines a day, so any window wide enough to be interesting exceeded it. **The busiest service on
+the platform was the one whose logs could never be read, and the reason looked like infrastructure.**
+
+The general shape is worse than the instance. A limit that scales with the subject's activity fails
+*precisely* on the subject that has the most to say - the quiet services all read fine, so the
+instrument looks healthy in aggregate. Anything that reads a variable-sized answer needs its ceiling
+chosen against the loudest case, not the median one.
+
+What saved this from being silent is that `srvReport` files an unreadable service as `unreachable`
+and breaks `clean`, rather than returning `[]`. **An unreachable service is not a quiet one**, and
+the substitution of one for the other is the single failure this harness exists to refuse.
+
+### 14. AN OBSERVATION WINDOW MUST KNOW WHETHER ITS SUBJECT WAS REPLACED DURING IT
+
+The gateway logged five `Connection reset without closing handshake` errors inside three
+milliseconds, across four different users. Nothing a client does explains that. The container
+timestamps did: `frontend-ssr` and `frontend` were recreated at 12:45:20.5, and the five resets are
+at 12:45:19.892-.895 - the tear-down of the old container, 0.7 s earlier.
+
+Two consequences, and the second is the general one. First, an operational fact worth knowing:
+**nginx is the single public entry point, so a frontend redeploy severs every proxied WebSocket on
+the platform at once.** Second, and the reason this is a rule: a run whose window straddles a deploy
+will attribute the deploy's fallout to whatever it happened to be measuring. So a service *starting*
+inside the window is classified `notable` and never benign - `Listening on http`, `Nest application
+successfully started`. The window must be able to say "I was rebuilt under myself".
+
+The same instant answered a question the passes could not: the three MSG passes ran 12:22-12:45 and
+the fix under test deployed at 12:45:20, **after all of them**. `webstate.mjs` then showed both tabs
+still on `__sveltekit_1prkb1y` against a served `__sveltekit_1ywe1to`. Re-running without reloading
+would have measured the old bundle a fourth time and called it a verification.
+
 ---
 
 ## Observation is part of the check, not a debugging step
@@ -314,6 +372,25 @@ down as benign *with its reason*, or it is a finding. There is no third bucket. 
 explanation is owed, and each one is a mechanism nobody has looked at yet. The server's logs are in
 scope exactly like the two clients': a check that reads only what the UI printed has observed one
 third of the system.
+
+**The server observer now meets that bar and is tested like the other two.** `srvlog.mjs` classifies
+every application container's `docker logs` over a run's own window into the same buckets, `run.mjs`
+calls it at the end of every pass so the bar is not enforced by somebody remembering to type a
+command, and `node srvlog.mjs --since <t> --shapes` collapses `unexplained` and `notable` to distinct
+sentences for triage. Its buckets have one addition the client's classifier does not need:
+`expectedErrors`, for errors that are real, named and not defects - `WebSocket protocol error:
+Connection reset without closing handshake` is the gateway describing a *client* that vanished
+without a close frame, which every reload this campaign performs produces. Forgiven from the gate,
+kept in the record, per rule 11.
+
+The first fully classified window, 2026-08-14 12:22-12:45Z: **8 534 lines across seven services, zero
+unexplained**, five notable shapes. Two of those five are open questions rather than noise -
+`FALLBACK_MEMBERS_CACHE` fired on **279 of 279 sends**, meaning the client supplies no recipient list
+at all and a server-side cache decides the membership of every message; and five `NO_PEER_ONLINE`
+history asks were requests for repair that nobody could answer. Neither is a defect on this evidence;
+both are things somebody has to decide are intended. `call-service` deserves its own note: **0 lines
+in 24 hours**, its last entry the startup line from two days earlier - so the CALL phase, when it is
+written, will have no server-side observer at all until that service logs something.
 
 Two rate rules follow. **A claim about frequency needs a denominator** - "it fires on every launch"
 is a measurement (N cold starts, N observations), never an impression from one occurrence. And **a

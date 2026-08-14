@@ -589,6 +589,14 @@ page. The four that generalise:
   a dead network both throw `TypeError: Failed to fetch`, and a refused `<video>` reports the same
   `MEDIA_ERR_SRC_NOT_SUPPORTED` an unplayable codec does. Only `securitypolicyviolation` names the
   directive - build the probe on that event, or the probe reports the theory it was written with.
+- **THE SINGLE PUBLIC ENTRY POINT IS ALSO A SINGLE POINT OF DISCONNECTION: A FRONTEND REDEPLOY CUTS
+  EVERY PROXIED WEBSOCKET ON THE PLATFORM AT ONCE.** Measured 2026-08-14 - recreating the `frontend`
+  and `frontend-ssr` containers at 12:45:20.5 produced five `Connection reset without closing
+  handshake` at the gateway within three milliseconds, across four unrelated users. Two things
+  follow. **The reconnect ladder is exercised on the whole fleet by every deploy**, so a defect in it
+  is not an edge case - it is a fleet-wide outage on the next release ([WP-RECONNECT-1](frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it)).
+  And **any measurement window that straddles a deploy explains its own fallout**, so a run that does
+  not know it was rebuilt under itself will attribute the disconnections to whatever it was testing.
 
 ## Server-side fetches -> [chat-delivery](services/chat-delivery.md), [nginx](infrastructure/nginx.md)
 

@@ -46,7 +46,7 @@ meet.
 | Phase | Scripts | State |
 | --- | --- | --- |
 | SETUP | - | 5 of 9 `passed`; SETUP-2 deliberately skipped, SETUP-7/8 owed (8 before CORRUPT and PIN) |
-| MSG | 12 | re-ran 2026-08-13 21:07Z on `58a55ff8`: **every delivery assertion held - 10 passed, 2 dirty, 1 passed-with-noise, no failure**. The three that are not clean carry one defect between them, WP-FALSELOSS-2 |
+| MSG | 12 | **3x on `9b7482f1` (2026-08-14)**: 11 of 13 `passed` 3/3, server window `clean` 3/3. Only MSG-5 and MSG-6 dirty (2 of 3 passes), carrying WP-FALSELOSS-2 |
 | every other phase | 22 written, 6 with none | `pending` - not yet run on this build |
 
 **Every verdict is now recorded AND exited on.** `msg8`, `msg8b`, `msg9` and `msg10` used to exit on
@@ -392,20 +392,25 @@ MSG-1b, MSG-9 and MSG-10 had all three been reporting about themselves:
 
 
 
+State is the LAST run, on `9b7482f1` x3 (2026-08-14) unless a row says otherwise. `3/3` = clean on
+all three passes.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | **`passed`** on `58a55ff8` - 260 ms (cold: 298 ms) |
-| MSG-1b | Delivery DURING a history load | `W1 W2` | **`dirty`** on `58a55ff8` - 1 578 ms, one copy, window PROVEN open (the replay page was still in flight 607 ms after the send). Not clean: `SecretReuseError` at generation 438/439, which is WP-FALSELOSS-2. **The check itself was the 2026-08-13 rework** - see above |
-| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | **`passed`** on `58a55ff8` + the 21:33 APK - 3 679 ms, one copy. The earlier FAIL was the preflight not gating on a CONNECTED gateway: the phone was unlocked, rendering, and holding no socket. `presence.mjs` closed that, and the check has passed every run since |
-| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | **`passed`** on `58a55ff8` - 343 ms |
-| MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `W1 W2` | **`dirty`** on `e88cc76c` - assertions HELD (1 copy each, image 1 258 ms, PDF 636 ms, both decoded) and the run was not clean, on two counts. **(a) FIXED on `c97b735c`**: `object-src 'none'` blocked the composer's `<embed>` PDF preview - our own CSP, correctly, and the last surface not using the pdf.js canvas path. **(b) `SecretReuseError` at epoch 6 on `642f389a`** - now WP-FALSELOSS-2 below, and no longer under investigation as a possible false positive: it IS one, and the reconciliation it provokes says so itself. **The group HEALS**; the note that said it could not is withdrawn, with the bundle exchange and the matching state key as evidence. Clean again on `58a55ff8` (image 748 ms, PDF 703 ms, one copy each, both decoded) |
-| MSG-5 | Channel message converges on all three; **no `masterSecret` in any payload** | `+A1` | **`passed-with-noise`** on `58a55ff8` + the 21:33 APK - converged on all three. The noise is WP-FALSELOSS-2 at generation 183, on BOTH W1 and W2 at the same second. **Its earlier FAIL was `openChannel` navigating A1** - a navigation is a disconnection, and `readyState: complete` plus a rendered composer do not mean the socket is back. `goto` now waits for the app's own `[WS] Connected to Chat Gateway` line since an index taken BEFORE the navigation |
-| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`dirty`** on `58a55ff8` - preview rendered, zero third-party `<img src>`, one copy. Not clean: WP-FALSELOSS-2 at generation 183. **One run in four lost the link message itself** to the same mechanism (`arrived: false`), which is what makes it a WP rather than a note |
-| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | **`passed`** on `58a55ff8` - 4 362 ms, 30/30, ordered, no duplicate |
-| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | **`passed`** on `2c7b0c3c` + the 13:08 APK. Took TWO harness fixes: the first run's FAIL was spurious (A1 had been left in the campaign channel by an earlier check and sent there, while W2 watched the DM) which produced `ensureConversation`; the second was blocked because `ensureChat` reaches the list by clicking "Discussions", which the mobile layout hides behind an open conversation |
-| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | **`passed`** on `2c7b0c3c` + the 13:08 APK. UX note stands: the tab TITLE never changes, so a backgrounded tab signals nothing until looked at |
-| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | **`passed`** on `58a55ff8` - offline after 1 054 ms, back after 1 312 ms, message 1 824 ms later, `whileOffline: 0`, one copy each side, both clean. Needs `armCut` + `cutHard`: see above for why the old form could never be offline at all |
-| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | **`passed`** on `9fd67590` run 1 - drained 1 007 ms. **Run 2 the same hour: the drain took 98 s and the check called it a LOSS.** It was not one - see WP-RECONNECT-2. Every correctness assertion held in both runs (composer emptied, one copy on the sender offline, zero on the receiver, one copy each side after, one after a reload). The check now distinguishes `SLOW` from `FAIL` and records `msToReconnect`. The `ERR_INTERNET_DISCONNECTED` it causes itself is classified as the cut rather than as dirt |
+| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `passed` 3/3 - 263 ms |
+| MSG-1-cold | Same, after a reload | `W1 W2` | `passed` 2/3, one `SLOW` (7.7 s) on pass 1, a leftover outbox entry draining |
+| MSG-1b | Delivery DURING a history load | `W1 W2` | `passed` 3/3 - 18-30 ms |
+| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `passed` 3/3 |
+| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `passed` 3/3 - 365 ms |
+| MSG-4 | Image then PDF: ciphertext upload, both render, receiver actually decodes | `W1 W2` | `passed` 3/3 |
+| MSG-5 | Channel message converges on all three; **no `masterSecret` in any payload** | `+A1` | **`dirty` 2/3** - converged every pass; the two dirty passes carry WP-FALSELOSS-2 (generations 369, 386) |
+| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | **`dirty` 2/3** - preview assertions held every pass; dirt is `[OUTBOX] 1 entry still queued` on A1. No `arrived: false` in three passes |
+| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `passed` 3/3 - 1 894 ms |
+| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `passed` 3/3 |
+| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `passed` 3/3. UX note stands: the tab TITLE never changes |
+| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `passed` 3/3 - 15.6 s |
+| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `passed` 3/3 - **WP-OUTBOX-1 verified here**, against `F/D/D` on the bundle before |
+| (server) | Every application container's log over each pass's own window | - | `clean` 3/3 - 8 544 lines, seven services, zero unexplained |
 
 **An offline RECEIVER can be faked in a browser after all, and it took closing the socket by hand.**
 The note that said it needed a phone with its radios off was right about `cut()` and wrong about the
@@ -556,37 +561,39 @@ identical history. Nothing was lost. The cost is the wasted round trip and, once
 message that never renders at all - MSG-6 came back `arrived: false`, which is the reason this is a
 Work Package and not a note.
 
-**It is NOT the WP-FALSELOSS-1 shape, and that distinction is the whole lead.** That one was a frame
-delivered live whose generation was spent, re-walked by a replay; it was fixed by marking consumed
-frames by their CIPHERTEXT BYTES and advancing the cursor by walking. The generations complained
-about here TRACK THE HEAD OF THE STREAM rather than sitting at some historical offset - 296, 340,
-379, 438, 439 across successive runs, climbing with traffic at roughly the rate the phase sends. So
-the frame being refused is a RECENT one, not a pre-fix relic, and the mark set is not covering it.
+**Not the WP-FALSELOSS-1 shape.** The generations track the HEAD of the stream (296, 340, 379, 438,
+439, then 369, 386), climbing with traffic - a recent frame, not a pre-fix relic behind the cursor.
+Multi-tab is refuted: one app target per profile, all three checked.
 
-**Both directions are affected, so it is not one device's store.** Generation 183 was refused by W1
-and W2 in the same second in MSG-5, for a frame from the owner - which on that check means A1. The
-multi-tab explanation is refuted by measurement: one app target per profile, all three checked.
+**State (2026-08-14).** The 2026-08-13 attribution - receiver consumed the frame twice via the
+archive replay - was fixed in code (`67db4462`, `3070e6ef`, `b5ae5dfe`, `169a9ec2`) and is **REFUTED
+by the re-run**: MSG x3 on `9b7482f1`, symptom survived. The refutation is sound because every fix
+was proven RUNNING - all four are ancestors of `9b7482f1`, W1/W2 were confirmed on the deployed build
+id before the run (they were still on the old one), and A1's APK postdates the last of them.
 
-#### ATTRIBUTED AND FIXED IN CODE (2026-08-13) - not yet verified on prod
+**Current lead: A1's outbox** - an association across three passes, not a mechanism.
 
-**The sender never rewound; the receiver consumed the frame twice, and the second consumer could not
-find out.** The proof was already inside the failing records and needed no new run: MSG-1b logs the
-loss at generation 438/439 while the SAME record carries `copiesOnReceiver: 1` and
-`primerOnReceiver: 1`. A genuine rewind produces a message no path can recover - every message was
-present, so the plaintext was obtained by another path on this device, and the only other consumer is
-the archive replay.
+| pass | A1 outbox during MSG-5 | verdict |
+| --- | --- | --- |
+| 1 | no flush | `PASS`, clean |
+| 2 | flushed 4 queued, 2 sent in the DM | `PASS-DIRTY`, refused generation 369 |
+| 3 | flushed 3 queued, 1 sent in the DM | `PASS-DIRTY`, refused generation 386 |
 
-Which the code confirms: the replay's `finally` recorded the row's STREAM ID, never the frame's
-bytes, and `handleUnreadableFrame` consulted only the in-memory ring, which live delivery alone
-writes and which dies with the page. **The ledger built for WP-FALSELOSS-1 was one-way.** It also
-explains the distribution exactly - MSG-1b, MSG-5 and MSG-6 are the three checks that run a replay
-concurrently with live traffic, and the generations track the head because the replay walks the head.
+The sender is A1 **by elimination**: the frame is `from d82cd226…`, W1 is itself a `d82cd226` device
+and received it, and no device receives its own frames. The flush is attributed to A1 by its CDP
+timeline and its logcat independently.
 
-The fix marks the bytes on the replay's success path and makes the live path read the durable set,
-with the safety property that a frame which did NOT decrypt is never claimed as read. 1417 frontend
-tests green, `svelte-check` 0. **A green gate is not a working system, and this one races two paths
-only real traffic exercises** - the verdicts above stand until MSG has been re-run on the deployed
-bundle, twice.
+**NOT established:** the refusal precedes the observed flush, so the offending send is outside the
+window - the correlation names the path, not the instant. No `[RESUME] … reloaded from mls.bin`
+appears in any capture, so the epoch-only native reload stays a hypothesis with no direct evidence
+([backlog](backlog.md), P2). Owed: a capture opening on A1 BEFORE a flush and held across one. Also
+unexplained, possibly the same thread - A1 carries a persistently non-empty outbox.
+
+Two other facts the re-run pinned down. The generations still track the head (369, 386, climbing with
+traffic), so this is not a pre-fix relic. And A1 carries a **persistently non-empty outbox** - four
+entries, then three, with `[OUTBOX] 1 entry still queued` surviving into MSG-6/7 on both dirty
+passes - which is itself worth explaining and may be the same thread: A1 is the one client without
+the WP-OUTBOX-1 fix, which landed at 14:37, twenty minutes after its APK was built.
 
 **What made it visible, and what had been hiding it.** `watch.mjs` classified `SecretReuseError` and
 `LOST frame` as `notable`, and `notable` did not break `clean` - so MSG-6 recorded `PASS` with

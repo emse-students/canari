@@ -95,27 +95,37 @@ consumed its generation without moving the archive cursor;
 defects (our routing rule hijacking Tauri's IPC bridge; a `vibrate(0)` cancelling nothing;
 [mobile](docs/wiki/frontend/mobile.md)). Both verified by measurement, both written up.
 
-**WP-PENDING-2 (the undrained queue) IS SHIPPED; ONE MEASUREMENT IS OWED.** A page bounded in ROWS is
-the wrong unit for a transfer - 500 rows of media was 12 MB, the client aborted on its 10 s deadline,
-ACKed nothing, and met the same 12 MB for weeks (976 rows / 36 MB on A1, rising hourly, never once
-falling). Byte-bounded pages + client halving + a byte WARN, `8ad1cdb5`/`b82b241e`/`58a55ff8`,
-verified firing on prod with A1 falling **976 -> 923 -> 884 -> 864**. It drained one page per
-reconnection only because A1 ran the OLD bundle. **The APK carrying the halving client was installed
-2026-08-14 - so the owed check is A1's queue depth now: it should fall to zero rather than by one
-page.** Mechanism, follow-on faults and residual on
+**WP-PENDING-2 (the undrained queue) IS SHIPPED AND VERIFIED TO ZERO (2026-08-14) - do not re-open.**
+A page bounded in ROWS is the wrong unit for a transfer - 500 rows of media was 12 MB, the client
+aborted on its 10 s deadline, ACKed nothing, and met the same 12 MB for weeks (976 rows / 36 MB on
+A1, rising hourly, never once falling). Byte-bounded pages + client halving + a byte WARN,
+`8ad1cdb5`/`b82b241e`/`58a55ff8`. On the old bundle it drained one page per reconnection
+(976 -> 923 -> 884 -> 864); **with the halving APK installed, A1's queue measured `0` rows.** No
+device on the fleet is in the runaway state any more - the deepest is now 234 rows / 263 kB, on
+clients that have not updated yet. Mechanism, follow-on faults and residual on
 [chat-delivery](docs/wiki/services/chat-delivery.md) and [backlog](docs/wiki/backlog.md).
 
-**WP-FALSELOSS-2 IS OPEN (2026-08-13) - the false loss is not gone, it moved to the HEAD of the
-stream.** WP-FALSELOSS-1 above stays fixed and verified; its `0` was measured over the path it was
-written for and says nothing about this one. A receiver refuses a RECENT frame on the test DM
-(`642f389a`, epoch 6) with `SecretReuseError` -> `[MLS] LOST frame` -> a reconciliation, which then
-answers `same state as <peer> - nothing to do`: **nothing was actually lost, the app proves that
-itself.** The generations complained about TRACK THE HEAD (296, 340, 379, 438, 439 across successive
-runs, climbing with traffic), so it is not a pre-fix relic behind the cursor. Both directions are hit
-(W1 and W2 refused generation 183 in the same second, for a frame from A1), and multi-tab is REFUTED
-by measurement - one app target per profile. Cost: a wasted round trip, and **one run in four lost
-the MSG-6 message outright** (`arrived: false`). **Do not fix it by suppressing the trigger** - firing
-on an unreadable frame is correct. Full evidence in
+**WP-FALSELOSS-2 IS OPEN, AND ITS 2026-08-13 ATTRIBUTION IS REFUTED (2026-08-14).** A receiver
+refuses a RECENT frame on the test DM (`642f389a`, epoch 6) with `SecretReuseError` -> `[MLS] LOST
+frame` -> a reconciliation that answers `same state as <peer> - nothing to do`: **nothing is actually
+lost, the app proves that itself.** The receiver-side fix (the replay telling live delivery what it
+consumed) was to be believed only after MSG re-ran on the deployed bundle; **it has, three times on
+`9b7482f1`, and the symptom survived** - so that diagnosis is incomplete. The refutation is sound
+because every fix was proven RUNNING: all four commits are ancestors of `9b7482f1`, W1/W2 were
+confirmed on the deployed build id BEFORE the run (they were still on the old one), and A1's APK
+postdates the last of them.
+
+**The lead is now A1's OUTBOX, on an association across three passes, not a mechanism.** The two
+dirty MSG-5 passes are exactly the two in which A1's outbox flushed queued entries into the DM
+(generations 369, 386); the clean pass had no flush. The sender is A1 **by elimination** - the frame
+is `from d82cd226…`, W1 is itself a `d82cd226` device and received it, and no device receives its own
+frames. **Not established:** the refusal PRECEDES the observed flush, so the offending send is
+outside the window; and no `[RESUME] … reloaded from mls.bin` line appears in any capture, so the
+epoch-only native reload stays a hypothesis with no direct evidence ([backlog](docs/wiki/backlog.md),
+P2). Next capture must open on A1 BEFORE a flush and hold across it. Also unexplained and possibly
+the same thread: A1 carries a **persistently non-empty outbox** (4 -> 3 entries, `1 entry still
+queued` surviving into MSG-6/7). **Do not fix it by suppressing the trigger** - firing on an
+unreadable frame is correct. Full evidence in
 [cross-client-testing](docs/wiki/cross-client-testing.md#wp-falseloss-2---the-false-loss-is-not-gone-it-moved-to-the-head-of-the-stream).
 
 **Found only because the observation gate was closed.** `SecretReuseError` and `LOST frame` were
@@ -136,19 +146,14 @@ Full enumeration on
 [cross-client-testing](docs/wiki/cross-client-testing.md#wp-prefix-1---six-of-seven-internal-calls-addressed-a-route-that-does-not-exist-fixed-fed86037);
 three rules in [durable-rules](docs/wiki/durable-rules.md).
 
-**WP-RECONNECT-2 IS OPEN AND DELIBERATELY UNDIAGNOSED.** A 98 s hole between a socket close and the
-first retry, from MSG-10's capture. **The first write-up claimed the close arrived late; that claim
-was withdrawn** - it rested on the ORDER of lines in a classifier bucket, because `[WS] Disconnected`
-is a `console.warn` and carries no clock while everything around it does, and the same record
-supports the opposite diagnosis depending on where that line is placed. Three mechanisms can own the
-interval (late close / a rung already armed / an attempt already running, the last spanning
-`fetchPendingMessages` and its ~90 s halving ladder); a fourth, the 8 s heartbeat, is refuted from
-the code. **Nothing was reconciled or guarded** - what was fixed is why it could not be read: the two
-silent branches now name the owner, the resume logs BOTH `isWsConnected` and `isWsOpen()` when it
-declines, and `watch.mjs` dates every line and every socket event from CDP's own clocks (the
-`Network.webSocketClosed` that `ignoringOfflineCut` used to DELETE as "the cut" is the one event that
-dates the close independently of the app). `recon2.mjs` is the capture, soft cut on purpose -
-`cutHard` supplies the very close whose timing is the question. **Do not fix by shortening a timer.**
+**WP-RECONNECT-2 IS CLOSED - IT WAS NEVER A RECONNECT DEFECT.** The 98 s hole in MSG-10's capture
+belonged to the OUTBOX, not to the ladder: the same record carries `msToReconnect: 11`, so the socket
+was back in eleven milliseconds and the interval was the queue waiting for a retry nobody armed. That
+is WP-OUTBOX-1, fixed and now verified (`MSG-10 PASS 3/3`). Two lessons kept: **a claim was withdrawn
+once** because it rested on the ORDER of lines in a classifier bucket (`[WS] Disconnected` is a
+`console.warn` and carries no clock while everything around it does), which is why `watch.mjs` now
+dates every line and socket event from CDP's own clocks; and `ignoringOfflineCut` used to DELETE the
+one event that dates a close independently of the app.
 
 **WP-RECONNECT-1 IS FIXED AND DEPLOYED (2026-08-14, `9fd67590`); ITS VERIFICATION IS STILL OWED.** The
 reconnect circuit is DELETED: only a proof ends the retry loop now (logged out, or a 401/403 on the
@@ -242,23 +247,31 @@ not design a staging environment before that conversation.**
 - **The `mongo` service in `docker-compose.prod.yml` is dead** - production holds no application database there (only `admin`, `config`, `local`) and nothing in the codebase carries a MongoDB connection string. A candidate for removal, not a fault; removing it is a prod service change and needs the user.
 - **A new device or a reinstall still sees no media older than 30 days.** That is what makes the storage forecast survivable, and it may not be what the user intends - a POLICY question, not a rendering one ([storage-forecast](docs/wiki/infrastructure/storage-forecast.md), section 6). The clock is now honest: it is refreshed on a client cache HIT, not only on a server download.
 
-**THE MSG PHASE IS RUN AND EVERY DELIVERY ASSERTION HOLDS (2026-08-13 21:07Z, `58a55ff8` + the 21:33
-APK): 10 PASS, 2 dirty, 1 with noise, no failure, no inconclusive.** One copy everywhere, nothing
-lost, duplicated or out of order. The three unclean rows carry WP-FALSELOSS-2 between them and
-nothing else. Three of the run's answers had been the INSTRUMENT reporting about itself, and all
-three fixes are shared primitives:
+**THE MSG PHASE IS RUN THREE TIMES ON `9b7482f1` (2026-08-14 12:58-13:10Z): 11 of 13 checks PASS on
+ALL THREE PASSES, AND THE SERVER WINDOW IS CLEAN ON ALL THREE** - 8 544 lines across seven services,
+zero unexplained. Only MSG-5 and MSG-6 are dirty, on passes 2 and 3, carrying WP-FALSELOSS-2 and
+nothing else. **WP-OUTBOX-1 is verified here**: MSG-10 went `F/D/D` -> `PASS 3/3`, measured on a
+bundle proven to be the one running (`reload-web.mjs` found both tabs still on the previous build,
+which a re-run without it would have measured a fourth time and called a verification).
 
-- **A browser CAN be offline at the gateway, and MSG-9 had never once managed it.** Measured: W2 cut,
-  `fetch` severed in 13 ms, presence key refreshed WITHOUT A GAP FOR 60 s. CDP offline emulation
-  leaves an established WebSocket alone, so `cut()` cannot ever produce a receiver-side
-  disconnection. `net.mjs` now has `armCut` + `cutHard` (capture the socket at construction, offline
-  FIRST so the reconnect fails, then close it).
-- **MSG-1b's window is now a FACT** - fire on the observed in-flight `GET /api/mls/history/<group>`,
-  assert it had not settled - and deterministic, because the primer waits for the history route to go
-  QUIET (the list bootstrap was swallowing it). 3/3 identical runs.
-- **`ssh` resolved to Git's binary under Bash**, which mangles the cloudflared `ProxyCommand`, so the
-  gateway probe answered differently depending on which shell launched the run. All prod access now
-  goes through `ssh.mjs`, which picks Windows OpenSSH explicitly.
+**The server observer now meets the same bar as the two clients and is tested like them.** Its whole
+window is classified: `srvlog.mjs --shapes` collapses `unexplained` and `notable` to distinct
+sentences, `srvclassify-selftest.mjs` (31 assertions) pins every rule against a line whose bucket is
+known, and `expectedErrors` names errors that are real and not defects. Four instrument faults fixed
+on the way, each of which had been answering about itself: **`ssh` capped at Node's 1 MB default, so
+the BUSIEST service (`chat-delivery`, 11 824 lines/day) reported `unreachable`**; truncated buckets
+reported their cap as their count (`40` where the window held 1 154); `shapeOf` mis-ordered so 287
+copies of one sentence counted as 287 shapes; and a service STARTING inside a window is now `notable`
+- a frontend redeploy cuts every proxied WebSocket at once, which was masquerading as a client fault.
+Two things the classified window raised, both filed and neither a defect on this evidence:
+`FALLBACK_MEMBERS_CACHE` on **279 of 279 sends** ([backlog](docs/wiki/backlog.md), P2) and
+`call-service` writing **0 lines in 24 h**, so the CALL phase will have no server observer at all.
+
+Three earlier answers on `58a55ff8` had also been the INSTRUMENT reporting about itself, and all
+three fixes are shared primitives now in the harness: `armCut`/`cutHard` (CDP offline leaves an
+established socket alone, so MSG-9 had never once been offline at the gateway), MSG-1b's window as an
+observed in-flight request rather than a sleep, and `ssh.mjs` picking Windows OpenSSH explicitly.
+Written up in [testing-methodology](docs/wiki/testing-methodology.md) - do not re-derive them here.
 
 ### CANARI - the test campaign
 
