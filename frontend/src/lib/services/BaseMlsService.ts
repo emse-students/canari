@@ -1548,14 +1548,34 @@ export abstract class BaseMlsService implements IMlsService {
     await this.waitForCatchUpIdle();
     const encryptedBytes = await this.encryptForSend(groupId, messageBytes);
     this.noteLiveMutation();
-    // Coalesced, never deferred, and deliberately NOT awaited: `saveState` is an Argon2 round trip
-    // on web, so awaiting it here would put it on the latency of every message. What protects the
-    // window it leaves open is the overtaken guard at each replacement seam, not this call.
-    scheduleOutboundMlsPersist();
+    await this.checkpointAfterSend();
     const proto = toBase64(encryptedBytes);
     await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
     return encryptedBytes;
   }
+  /**
+   * Checkpoints the ratchet advance the send just made, and decides whether the send WAITS for it.
+   *
+   * THE COUNTER THAT GUARDS THIS WINDOW DOES NOT SURVIVE A PAGE LOAD. `liveMutations` and every
+   * watermark compared against it are per-page-session state, initialised to 0 when the app starts;
+   * the OUTBOX is durable and outlives it. So a client that sends, is reloaded before the checkpoint
+   * lands, and then drains its queue encrypts those entries against a state read back from disk that
+   * is behind the sends the previous session already made - and the peers refuse the frames with
+   * `SecretReuseError`, reporting, correctly, that the sender's ratchet rewound. Measured on the
+   * phone on 2026-08-14, twice, on a fleet with nothing else happening to it.
+   *
+   * The invariant is therefore: `mls.bin` is never behind a frame that has already left the device.
+   * Only awaiting the checkpoint before the frame goes on the wire can hold it, because no in-memory
+   * guard is present after the load that has to be defended against.
+   *
+   * The DEFAULT does not await, and that is web's answer on purpose: its checkpoint is an Argon2
+   * round trip, and putting one on the latency of every message is not a trade worth making for a
+   * fault that reconciles itself. Native overrides this - see `TauriMlsService`.
+   */
+  protected async checkpointAfterSend(): Promise<void> {
+    scheduleOutboundMlsPersist();
+  }
+
   abstract processIncomingMessage(
     groupId: string,
     messageBytes: Uint8Array

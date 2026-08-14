@@ -65,6 +65,53 @@ describe('createMlsStatePersister', () => {
     expect(saveState).toHaveBeenCalledTimes(1);
   });
 
+  it('closes the ingest window WITHOUT waiting for the checkpoint - durability must not gate delivery', async () => {
+    // The pipeline awaits every bulk-ingest observer, so a checkpoint awaited here is a checkpoint
+    // charged to the next message's latency: measured at 8.0 s on a cold web client and 3.2 s on the
+    // phone, with the frame already received and sitting undecrypted behind it.
+    let release: () => void = () => {};
+    const saveState = vi
+      .fn()
+      .mockImplementation(() => new Promise((r) => (release = () => r(new Uint8Array([1, 2, 3])))));
+    const persister = createMlsStatePersister({
+      mlsService: { saveState } as any,
+      deviceKeyB64: '1234',
+      userId: 'user-1',
+    });
+
+    persister.onBulkIngestStart();
+    persister.persistNow();
+
+    let ended = false;
+    void persister.onBulkIngestEnd().then(() => (ended = true));
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The window is closed while the disk write is still in flight - that is the whole point.
+    expect(ended).toBe(true);
+    expect(saveState).toHaveBeenCalledTimes(1);
+    expect(saveMlsStateEncrypted).not.toHaveBeenCalled();
+
+    release();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(saveMlsStateEncrypted).toHaveBeenCalledTimes(1);
+  });
+
+  it('a checkpoint that FAILS after the window closed does not reject into the pipeline', async () => {
+    // Unawaited work still has to be caught: an unhandled rejection reaching the window would take
+    // down the very pipeline this change decoupled.
+    const saveState = vi.fn().mockRejectedValue(new Error('disk gone'));
+    const persister = createMlsStatePersister({
+      mlsService: { saveState } as any,
+      deviceKeyB64: '1234',
+      userId: 'user-1',
+    });
+
+    persister.onBulkIngestStart();
+    persister.persistNow();
+    await expect(persister.onBulkIngestEnd()).resolves.toBeUndefined();
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
   it('scheduleOutboundMlsPersist checkpoints to disk - a rewound ratchet loses the next message', async () => {
     const { saveState, persister } = makePersister();
     registerMlsStatePersister(persister);

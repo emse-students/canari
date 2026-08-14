@@ -75,6 +75,29 @@ deletes, pins, group control, calls) advanced the ratchet and persisted nothing,
 structurally behind the live client. A rule each caller has to remember is a rule the next caller
 will not.
 
+**DURABILITY MUST NOT GATE DELIVERY, AND THE GUARD DOES NOT SURVIVE A PAGE LOAD.** Two things were
+measured on 2026-08-14 that this section did not account for, one fixed and one open.
+
+Fixed: `endBulkIngest` awaits every observer, and the persister's `onBulkIngestEnd` awaited the whole
+encrypted checkpoint - so a frame that arrived during the flush was not decrypted until the disk
+answered. Measured at **8.0 s on a cold web client** and **3.2 s on the phone**, with an ordinary
+50 ms API round trip inside the gap proving nothing else was blocked, against 279-327 ms on the four
+passes that did not hit it. The flush is now started and not awaited. Nothing is risked: ordering is
+already held by the monotonic snapshot version (section 7), and this checkpoint carries INBOUND state,
+which a reload recovers by replaying from the server. `saveState`'s own cost is now logged separately
+from the sealing, because they are different questions and neither had ever been printed.
+
+Open: `liveMutations` and every watermark compared against it are **per-page-session** state, while the
+OUTBOX is durable. A client that sends, is reloaded before the checkpoint lands, and then drains its
+queue encrypts those entries against an `mls.bin` that is behind its own previous sends - and the
+peers refuse them with `SecretReuseError`. Reproduced twice on a settled fleet. The invariant that
+would close it is *`mls.bin` is never behind a frame that has already left the device*, which only an
+awaited checkpoint on the send path can hold; `BaseMlsService.checkpointAfterSend` is the seam for it,
+defaulting to the current non-awaiting behaviour. **Whether native may await depends on the cost of
+`saveState` ALONE** - the full checkpoint is 3.2 s on the phone and awaiting that on every send is not
+a trade worth making. That is the number the new log line exists to supply; do not implement the
+override before reading it.
+
 The background handoff is ordered for the same reason: on `hidden` the checkpoint is flushed
 **before** `pause_mls_foreground` releases the native guard. Releasing it is what lets a background
 JNI engine load `mls.bin` and advance from it, so releasing it first hands that engine a state that
