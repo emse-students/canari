@@ -20,22 +20,23 @@ import {
   attachFiles,
   awaitMessage,
   countMessage,
+  pollFact,
   realClick,
   until,
 } from './chat.mjs';
-import { watch, report } from './watch.mjs';
+import { gate, report, watch } from './watch.mjs';
 import { record, mark } from './results.mjs';
+import { peerNameFor } from './names.mjs';
 
 const abs = (rel) => fileURLToPath(new URL(rel, import.meta.url));
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const w1 = await client(9224, 'canari-emse.fr');
 const w2 = await client(9223, 'canari-emse.fr');
 
 await ensureChat(w1);
-await openConversation(w1, 'PEER DISPLAY NAME');
+await openConversation(w1, peerNameFor('W1'));
 await ensureChat(w2);
-await openConversation(w2, 'OWNER DISPLAY NAME');
+await openConversation(w2, peerNameFor('W2'));
 
 /** Sends one staged file with a marker caption, and returns what the receiver ended up showing. */
 async function sendFile(path, caption, kind) {
@@ -59,12 +60,12 @@ async function sendFile(path, caption, kind) {
     () => Date.now() - at,
     () => null
   );
-  await sleep(2500);
-
-  const rendered = JSON.parse(
-    await evaluate(
-      w2,
-      `JSON.stringify((function () {
+  /** What the RECEIVER has actually rendered for this transfer, read fresh on every poll. */
+  const readRendered = async () =>
+    JSON.parse(
+      await evaluate(
+        w2,
+        `JSON.stringify((function () {
         var pane = document.querySelector('.chat-composer-editor').closest('section');
         var txt = pane.innerText || '';
         return {
@@ -85,13 +86,28 @@ async function sendFile(path, caption, kind) {
           }),
         };
       })())`
-    )
-  );
+      )
+    );
+
+  // POLLED TO THE THING THIS TRANSFER ASSERTS, per kind - which `sleep(2500)` could only approximate
+  // in one direction at a time. An image is proven by DECODED PIXELS (a broken picture has the same
+  // blob: src, and the first version of this check passed on a fixture whose PNG chunks had invalid
+  // CRCs); a document is proven by its filename being rendered. Neither is a duration.
+  //
+  // A miss is the CHECK's answer, not the instrument's: `rendered` is read once more afterwards, so
+  // the record carries what the receiver actually had at the deadline rather than nothing at all.
+  const decoded = (r) => (kind === 'image' ? r.decodedImgs.length > 0 : r.fileNamed);
+  const renderSettled = await pollFact(async () => decoded(await readRendered()), {
+    timeoutMs: 20000,
+    everyMs: 500,
+  });
+  const rendered = await readRendered();
 
   return {
     kind,
     caption,
     arrivedMs: arrived,
+    renderedMs: renderSettled.ok ? renderSettled.elapsedMs : null,
     copies: await countMessage(w2, caption),
     rendered,
     obsSender: await report(ow1),
@@ -102,16 +118,25 @@ async function sendFile(path, caption, kind) {
 const imgCap = mark('MSG4IMG');
 const pdfCap = mark('MSG4PDF');
 
+// NO WAIT BETWEEN THE TWO TRANSFERS. `sendFile` does not return until the staging tray has cleared
+// on the sender, the message has arrived on the receiver AND the receiver has rendered it - three
+// facts, each stronger than the two seconds this used to sleep. A separation that is already proven
+// does not need to be waited for as well.
 const image = await sendFile('./fixtures/msg4-image.png', imgCap, 'image');
-await sleep(2000);
 const pdf = await sendFile('./fixtures/msg4-doc.pdf', pdfCap, 'pdf');
 
 const imageOk =
   image.arrivedMs !== null && image.copies === 1 && image.rendered.decodedImgs.length > 0;
 const pdfOk = pdf.arrivedMs !== null && pdf.copies === 1 && pdf.rendered.fileNamed;
-const clean = [image, pdf].every((r) => r.obsSender.clean && r.obsReceiver.clean);
-
-const verdict = imageOk && pdfOk ? (clean ? 'PASS' : 'PASS-DIRTY') : 'FAIL';
-record('MSG-4', verdict, { image, pdf });
-console.log(JSON.stringify({ verdict, imageOk, pdfOk, clean, image, pdf }, null, 1));
+// FOUR REPORTS, ONE GATE - the two transfers are two sends of the same check, so a dirty client in
+// either of them qualifies the single MSG-4 verdict. Labelled by transfer AND by client, or the
+// record would say "dirty" without saying which half of the check was.
+const gated = gate(imageOk && pdfOk ? 'PASS' : 'FAIL', {
+  'image-W1': image.obsSender,
+  'image-W2': image.obsReceiver,
+  'pdf-W1': pdf.obsSender,
+  'pdf-W2': pdf.obsReceiver,
+});
+record('MSG-4', gated.verdict, { ...gated.detail, image, pdf });
+console.log(JSON.stringify({ verdict: gated.verdict, imageOk, pdfOk, ...gated.detail, image, pdf }, null, 1));
 process.exit(0);

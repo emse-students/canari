@@ -7,10 +7,10 @@
  * nothing else can require it. Node 24 exposes a global WebSocket, so this is the whole client.
  *
  * ONE driver, ALL THREE clients:
- *   W1  - desktop Chrome, owner.login:   --port 9224
- *   W2  - desktop Chrome, peer.login: --port 9223
- *   A1  - the Tauri WebView on the phone, reached through
- *         `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`:  --port 9222
+ *   W1  - desktop Chrome, the OWNER account:  --port 9224
+ *   W2  - desktop Chrome, the PEER account:   --port 9223
+ *   A1  - the Tauri WebView on the phone, the owner's second device, reached through
+ *         `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>`:  --port 9333
  * W1 was planned on the chrome-devtools MCP; its own Chrome + this driver is strictly better,
  * because a password then never has to appear as a tool-call argument in the transcript.
  *
@@ -240,19 +240,27 @@ export async function stableCentreOf(cx, selector, timeoutMs = 4000) {
 }
 
 /**
- * Clicks an element with the input modality the target actually listens to.
+ * Dispatches ONE recorded click at a point, with the input modality the target actually listens to.
  *
  * THE TRAP, paid for on A1: mobile Chrome does NOT activate a button from
  * Input.dispatchMouseEvent - it wants touch. The failure is silent and looks like a rejected
  * form: the page never submits, and a hidden Material validation string ("Vous devez entrer
  * votre identifiant") is already in innerText, so a text dump reads exactly like a real error.
  * Desktop Chrome has maxTouchPoints === 0, the phone's WebView and Chrome do not.
+ *
+ * THIS IS A POINT-TAKING PRIMITIVE BECAUSE THE POINT IS THE ONLY PART THAT VARIES. A selector is
+ * one way to find a point; a hovered action row inside a message bubble is another, and it cannot
+ * be expressed as a selector at all. When `clickBubbleAction` computed its own coordinates it also
+ * grew its own dispatch - and inherited NONE of what the lines below cost to learn: no recorder, no
+ * pointer move, no parking. It clicked blind for as long as it existed. Everything that clicks goes
+ * through here, and a new caller supplies a point and nothing else.
+ *
+ * @returns {{modality: 'touch'|'mouse', received: object|null}} `received` NAMES what took the
+ *   click - the caller asserts on it, and `null` is not by itself a failure (see `lastClick`).
  */
-export async function realClick(cx, selector, { park = true } = {}) {
-  const p = await stableCentreOf(cx, selector);
-  if (!p) throw new Error(`no stable element for selector: ${selector}`);
-  const { x, y } = p;
+export async function clickAtPoint(cx, x, y, { park = true } = {}) {
   const touch = await evaluate(cx, 'navigator.maxTouchPoints > 0');
+  await armClickRecorder(cx);
 
   if (touch) {
     const point = [{ x, y, radiusX: 12, radiusY: 12, force: 1 }];
@@ -285,7 +293,71 @@ export async function realClick(cx, selector, { park = true } = {}) {
       await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rx, y: ry, buttons: 0 });
     }
   }
-  return { ...p, modality: touch ? 'touch' : 'mouse' };
+  return { modality: touch ? 'touch' : 'mouse', received: await lastClick(cx) };
+}
+
+/**
+ * Clicks the element a selector names, at a centre that is still true when the click lands.
+ */
+export async function realClick(cx, selector, { park = true } = {}) {
+  const p = await stableCentreOf(cx, selector);
+  if (!p) throw new Error(`no stable element for selector: ${selector}`);
+  return { ...p, ...(await clickAtPoint(cx, p.x, p.y, { park })) };
+}
+
+/**
+ * Arms a page-side recorder for the NEXT click, naming whatever actually receives it.
+ *
+ * A HIT TEST BEFORE THE DISPATCH AND A SCREEN READ AFTER IT BOTH DESCRIBE A MOMENT THE CLICK DID
+ * NOT HAPPEN. `stableCentreOf` proves the point belonged to the element 120 ms earlier; the screen
+ * afterwards shows what the page became. Neither can tell a click that landed on the wrong element
+ * apart from a right element that did nothing - and on 2026-08-14 that gap cost two diagnoses:
+ * openChannel reported the create-channel modal covering coordinates its own hit test had just
+ * cleared, and nothing in the run could say whether the click opened that modal or merely found it.
+ * The event is the only witness, so listen for it - in the CAPTURE phase, which no page handler can
+ * pre-empt or stop.
+ */
+export async function armClickRecorder(cx) {
+  await evaluate(
+    cx,
+    `(function () {
+      window.__lastClick = null;
+      if (window.__clickRec) document.removeEventListener('click', window.__clickRec, true);
+      window.__clickRec = function (e) {
+        var t = e.target;
+        // THE TARGET IS USUALLY NOT THE CONTROL. A click on a button lands on the span or the
+        // svg inside it, so tag/label/text describe a decoration and answer nothing about WHICH
+        // control took the event - the only question this recorder exists to answer. The enclosing
+        // button's accessible name is that answer, and a caller can assert on it.
+        var b = t.closest ? t.closest('button') : null;
+        window.__lastClick = {
+          x: e.clientX,
+          y: e.clientY,
+          tag: t.tagName,
+          label: t.getAttribute('aria-label') || '',
+          text: (t.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40),
+          btn: b ? (b.getAttribute('aria-label') || b.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40) : ''
+        };
+      };
+      document.addEventListener('click', window.__clickRec, true);
+      return true;
+    })()`
+  );
+}
+
+/**
+ * Reads the armed recorder. `null` means no click was observed, which is NOT a failure by itself:
+ * a touch dispatch synthesises its click asynchronously, and a click that navigates can tear the
+ * context down before the read. Callers assert on a NAMED target, never on the absence of one.
+ */
+export async function lastClick(cx, timeoutMs = 500) {
+  const t0 = Date.now();
+  for (;;) {
+    const seen = await evaluate(cx, `JSON.stringify(window.__lastClick || null)`).catch(() => null);
+    const parsed = seen ? JSON.parse(seen) : null;
+    if (parsed || Date.now() - t0 >= timeoutMs) return parsed;
+    await new Promise((r) => setTimeout(r, 40));
+  }
 }
 
 

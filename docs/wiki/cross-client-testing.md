@@ -14,13 +14,17 @@ meet.
 > **Target is PRODUCTION** (`https://canari-emse.fr`). Real accounts, real messages, real FCM. There
 > is no staging that carries push.
 >
-> **The working rig is `../canari-harness`**, a sibling of this repository and deliberately not a
-> scratchpad (which is scoped to one session). `chrome-w1` and `chrome-w2` inside it ARE the W1 and
-> W2 devices - their MLS identity, their history, their login.
+> **The rig is [`tools/cross-client-harness/`](../../tools/cross-client-harness/README.md) in this
+> repository** - the scripts that run, not a copy of them. Its README is the operating manual.
 >
-> **Credentials live in `../canari-harness/test-accounts.json` and never in this repository**, which
-> is public. The two accounts appear here only as **owner** (W1, A1) and **peer** (W2). No PIN,
-> login, display name, device id or group id belongs on this page.
+> **Its STATE is deliberately outside**, in a sibling directory `../canari-harness`: the account
+> file, the two Chrome profiles (which ARE W1 and W2 - their MLS identity, their history, their
+> login), the verdict record, the APK and the phone baseline. One constant, `STATE_DIR` in
+> `names.mjs`, bridges the two. Credentials outside the work tree **cannot** be committed, which is a
+> structure; a `.gitignore` rule would only be a policy, and this repository is public.
+>
+> The two accounts appear here only as **owner** (W1, A1) and **peer** (W2). No PIN, login, display
+> name, device id or group id belongs on this page.
 >
 > **Every test message goes in the owner-peer DM, and nowhere else.** A one-off probe once fired a
 > "dangerous link" warning into a real colleague's thread. Anything needing a CHANNEL uses the
@@ -205,7 +209,7 @@ Decided with the user, not to be re-litigated:
 | A1 present and DEBUGGABLE | `run-as` is how every at-rest assertion reads the phone; a release build refuses outright |
 | The two profiles hold their identity | `chrome-w1` / `chrome-w2` ARE the devices - fingerprint them (device id, MLS blob size, conversation and message counts) |
 | `recon.mjs` W1 vs W2 | the campaign starts from a reconciled fleet or it cannot attribute what it finds |
-| `awaiting.mjs` | pre-existing history markers are state the run will otherwise blame itself for |
+| `[HISTORY_RECONCILE]` quiet on all three | a client still asking for history is state the run will otherwise blame itself for. The old `awaiting.mjs` read a durable registry that the rework removed; the observable is now the LOG line, not a stored key |
 
 ---
 
@@ -650,14 +654,23 @@ Four properties worth keeping:
 
 ### The other instruments, and what each was wrong about first
 
+> **One-shot probes are not kept.** A diagnosis usually needs a throwaway script written next to the
+> rig, and 285 of them had accumulated beside the real checks until nobody could tell an instrument
+> from a leftover; they were deleted on 2026-08-15 and `scratch/` is where their successors go. So a
+> `.mjs` named in a historical write-up on this wiki - `webstate.mjs`, `unloadframe.mjs`,
+> `falseloss*.mjs`, `check-loss-a1.mjs`, `trace-arrival.mjs`, `probe-csp-blob.mjs` - is a probe that
+> answered its question and was removed. **The measurement stands; the file is gone**, and every
+> write-up states the technique in full for exactly that reason. What survives as an instrument is
+> what the manifest reaches, plus the tools the README lists.
+
 - **`reload.mjs`** is the other half of `bundle-id.mjs`: it detects staleness AND repairs it, then
   re-asserts the build id rather than assuming the reload took.
 - **`unlock.mjs`** resolves which account owns which port from the `clients` field in
   `test-accounts.json`, navigates to a route where the gate actually MOUNTS, and spawns `pin.mjs` -
   so the recurring "you forgot the PIN" costs one idempotent command, and no real first name has to
   be typed into a shell line.
-- **`awaiting.mjs`** is **OBSOLETE as an instrument** - the durable awaiting-history registry it
-  reads no longer exists (see
+- **`awaiting.mjs`** was **OBSOLETE as an instrument** and has been deleted with the residue - the
+  durable awaiting-history registry it read no longer exists (see
   [history-reconciliation](protocols/history-reconciliation.md#what-disappears)); a re-run would find
   an empty store on every client and report health it cannot observe. Kept here only for the two
   faults it taught, both of which apply to any probe: it looked for the evidence in a `_reason`
@@ -668,9 +681,15 @@ Four properties worth keeping:
   instrument that exists to enforce it. **What replaces it** for the reworked build is a probe of the
   reconciliation's in-memory notes, which no longer survive a reload - so the observable is now the
   LOG line (`[HISTORY_RECONCILE] … group(s) asked`), not a stored key.
-- **`testgroup.mjs`** is the group fixture (create, invite, prove the roster moved), shared by the
-  DEL and GRP rigs.
-- **`trace-arrival.mjs`** is the continuous sampler that replaces any two-sample arrival check.
+- **The group fixture is now `newgroup.mjs` + `invite.mjs`** (create, then add a member and prove the
+  roster moved), shared by the DEL, GRP and HEAL rigs. They replace the single `testgroup.mjs`
+  because the two halves are needed apart: creating a group is what HEAL-W2 needs, while the ADD is
+  separately the campaign's only cheap, deterministic epoch generator.
+- **Continuous sampling replaces any two-sample arrival check**, and it is now a property of the
+  checks themselves rather than of a standalone probe: `watch.mjs` observes throughout, and a check
+  that measures an arrival samples the receiver rather than looking twice. The probe that first
+  established this (`trace-arrival.mjs`) was a one-shot and is gone; its measurements stand where
+  they are written up.
 
 ## The negative rows - what does NOT exist
 

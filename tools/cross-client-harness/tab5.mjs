@@ -10,23 +10,35 @@
  * the window being cut. The submit here is fire-and-forget - click, then reload as fast as the
  * driver allows - and the elapsed time between the two is REPORTED, because a check that claims to
  * reload "within 100 ms" and actually took 400 is testing something else.
+ *
+ * REWRITTEN 2026-08-14 for the same reason as `tab4.mjs`: it printed its rounds and exited, so TAB-5
+ * had never appeared in `results.ndjson`. It also held the peer's real display name inline, which is
+ * the shape that put that name into the public repository once already.
  */
-import { client, ensureChat, openConversation, countMessage, awaitMessage, evaluate, COMPOSER, SEND_ENABLED } from './chat.mjs';
-import { realClick, activate, until } from './cdp.mjs';
-import { watch, report } from './watch.mjs';
-import { mark } from './results.mjs';
+import {
+  COMPOSER,
+  SEND_ENABLED,
+  awaitAppReady,
+  awaitMessage,
+  client,
+  ensureConversation,
+  evaluate,
+  settledCount,
+} from './chat.mjs';
+import { activate, realClick, until } from './cdp.mjs';
+import { dirtOf, report, watch } from './watch.mjs';
+import { mark, record } from './results.mjs';
+import { PORTS, peerNameFor } from './names.mjs';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ROUNDS = Number(process.argv[2] || 3);
 
-const w1 = await client(9224, 'canari-emse.fr');
-const w2 = await client(9223, 'canari-emse.fr');
+const w1 = await client(PORTS.W1, 'canari-emse.fr');
+const w2 = await client(PORTS.W2, 'canari-emse.fr');
 
+/** Back into the conversation after the reload, waiting on the app rather than on a number. */
 async function reopenW1() {
-  await sleep(7000);
-  await ensureChat(w1);
-  await openConversation(w1, 'PEER DISPLAY NAME');
-  await sleep(1500);
+  await awaitAppReady(w1);
+  await ensureConversation(w1, peerNameFor('W1'));
 }
 
 const rows = [];
@@ -47,28 +59,51 @@ for (let i = 0; i < ROUNDS; i++) {
   const gap = Date.now() - at;
 
   await reopenW1();
-  // Give the receiver room beyond the ~700 ms a healthy round takes.
   await awaitMessage(w2, m, 20000).catch(() => null);
-  await sleep(2000);
 
-  const onReceiver = await countMessage(w2, m);
-  const onSender = await countMessage(w1, m);
+  // Both sides settle before either is read. A single sample taken a fixed delay after arrival
+  // cannot tell "exactly one copy" from "the second copy had not landed yet", and that difference
+  // is the entire assertion this check makes.
+  const receiver = await settledCount(w2, m);
+  const sender = await settledCount(w1, m);
   const [r1, r2] = [await report(o1), await report(o2)];
 
-  const row = {
+  rows.push({
     round: i,
     marker: m,
     msFromSubmitToReload: gap,
-    onReceiver,
-    onSender,
-    verdict: onReceiver === 1 && onSender === 1 ? 'PASS' : 'FAIL',
-    senderNotable: r1.notable,
-    receiverNotable: r2.notable,
-  };
-  rows.push(row);
-  console.log(JSON.stringify(row));
+    onReceiver: receiver.count,
+    onSender: sender.count,
+    countsSettled: receiver.settled && sender.settled,
+    delivered: receiver.count === 1 && sender.count === 1,
+    senderClean: r1.clean,
+    receiverClean: r2.clean,
+    senderDirt: dirtOf(r1),
+    receiverDirt: dirtOf(r2),
+  });
+  console.log(`[tab5] round ${i + 1}/${ROUNDS} gap=${gap}ms receiver=${receiver.count} sender=${sender.count}`);
 }
 
-const bad = rows.filter((r) => r.verdict !== 'PASS');
-console.log(`\n${rows.length - bad.length}/${rows.length} rounds clean (exactly one copy on each side)`);
-process.exit(bad.length ? 1 : 0);
+/**
+ * ONE verdict for the check, with every round in its detail.
+ *
+ * Recording one row per round would put N rows called TAB-5 in the record and leave the dashboard to
+ * decide what the check did, which is exactly the reduction the check itself should be making.
+ */
+const failed = rows.filter((r) => !r.delivered);
+const unsettled = rows.filter((r) => !r.countsSettled);
+const dirty = rows.filter((r) => !r.senderClean || !r.receiverClean);
+record(
+  'TAB-5',
+  failed.length ? 'FAIL' : unsettled.length ? 'INCONCLUSIVE' : dirty.length ? 'PASS-DIRTY' : 'PASS',
+  {
+    rounds: ROUNDS,
+    // The gap is the check's own claim about itself and belongs in the record: a round that reloaded
+    // 400 ms after submit did not test the window TAB-5 is named for.
+    gapsMs: rows.map((r) => r.msFromSubmitToReload),
+    failedRounds: failed.map((r) => ({ round: r.round, onReceiver: r.onReceiver, onSender: r.onSender })),
+    unsettledRounds: unsettled.map((r) => r.round),
+    dirt: dirty.map((r) => ({ round: r.round, sender: r.senderDirt, receiver: r.receiverDirt })),
+    rows,
+  },
+);

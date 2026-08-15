@@ -19,6 +19,10 @@ const BENIGN = [
   /^\[QUEUE\] (Drain (start|complete)|Processing message|messageCallback)/,
   /^\[OUTBOX\] (Queued|Flushing|[0-9a-f]{8}… sent)/,
   /^\[MLS\] (Disk writes deferred|Bulk ingest done|Encrypted state checkpoint persisted)/,
+  // A resume finding a socket that BOTH answers agree is alive - a tab hidden and shown again, which
+  // every check that touches visibility produces. The disagreeing spelling is in `NOTABLE`, and the
+  // separation is the point of the line: see the note there.
+  /^\[LIFECYCLE\] Resume: already connected \(flag=true, socket=true\)\.$/,
   /\[Channel Event\] typing/,
   /^\[RUST::INFO\]/,
   /^\[INIT\]/,
@@ -46,6 +50,30 @@ const BENIGN = [
   // pdf.js says this for any PDF without a cross-reference table. It is a property of the fixture,
   // not of the application, and it fires on every MSG-4 run.
   /Indexing all PDF objects/,
+  // THE APP STARTING UP. Any check that reloads a client - MSG-10 reloads its sender by design, to
+  // prove the message survived on disk and not merely in memory - replays this whole sequence, and
+  // every line of it landed in `unexplained` on the run of 2026-08-14. They are the boot narrating
+  // itself in order: auth, WASM, the vault key path, IndexedDB, push, the catch-up, the tab lock.
+  // None is a decision, none can fail silently (each failure path logs at `error` and is caught
+  // above), and a check that deliberately reloads must not be permanently dirty for doing so.
+  /^\[A\] (token→refresh|refresh→|ws\+|refresh✓)/,
+  /^Initialised in (WEB|TAURI) mode/,
+  /^(Verifying PIN\.\.\.|Local database initialised\.)/,
+  /^(MLS state loaded from IndexedDB|Initialising MLS \(vault device key path\)|MLS identity initialised)/,
+  /^\[DB\] Using IndexedDB storage/,
+  /^\[Push\] startPushService noop|^\[PUSH\] Push token registration complete/,
+  /^\[CATCHUP\] batch history:/,
+  /^\[WORKSPACE-LOAD\] communities\/channels loaded/,
+  /^\[TAB\] Leadership acquired/,
+  /^\[WS\] Opening connection →/,
+  // The pending mailbox being drained on connect. `[PENDING] No pending MLS messages` was already
+  // here for the empty case; the non-empty one is the same event with something in it, and a check
+  // that reconnects a client (MSG-9, MSG-10) provokes it by construction.
+  /^\[PENDING\] Fetched \d+ pending messages/,
+  // The media cache clock being refreshed on a HIT rather than only on a server download - the
+  // deliberate behaviour recorded in the storage forecast. Fires whenever a rendered conversation
+  // holds cached media, which after MSG-4 is every subsequent check.
+  /^\[MEDIA_TOUCH\] \d+ cached media reported as used/,
   // Cloudflare Page Shield "Script Monitor" injects its OWN report-only policy
   // (`script-src 'unsafe-inline' 'unsafe-eval'; connect-src 'none'; report-uri
   // .../cdn-cgi/script_monitor/report`) on top of ours, so EVERY fetch and the pdf.js worker log a
@@ -54,6 +82,36 @@ const BENIGN = [
   // path Cloudflare does not already see: it is the TLS terminator for this site.
   // The ENFORCED policy is the one in the `content-security-policy` header, and it is sane.
   /violates the following Content Security Policy directive/,
+  // A COLD START, WHICH THE CAMPAIGN'S OTHER CHECKS NEVER OBSERVE. They attach to a session that has
+  // been up for a while; `burn.mjs` reloads on purpose and so watches the app come up from nothing.
+  // These three are what that looks like on native, and each is a step announcing that it completed:
+  // the deep-link handler is installed, the WebView cookie jar is flushed after the token refresh
+  // (WP-COOKIE-1's own line), and the device key is restored from the PIN vault so the session
+  // resumes without asking again. Named individually rather than by a `startup` catch-all - a step
+  // that FAILS to complete has to stay visible, and only its success is being forgiven here.
+  /^\[hooks\] Deep-link listener registered$/,
+  /^\[Cookies\] flushed after refresh$/,
+  /^\[PIN\] Device key restored from PinVault - auto-login/,
+  // The rest of the same cold start, on the native side. `MLS state loaded from mls.bin` is the one
+  // worth reading twice: it is the SUCCESS of the load this whole area is about, and its absence -
+  // not its presence - is what would matter. Kept as three narrow rules for the reason above: a
+  // storage backend that failed to open, or a push service that did not start, must not be forgiven
+  // by a rule written for the ones that did.
+  /^MLS state loaded from mls\.bin \(native\)\.$/,
+  /^\[DB\] Using SQLite storage \(Tauri\)$/,
+  /^\[Push\] startPushService device=\S+ \(platform will be confirmed by FCM token\)$/,
+  // The rest of the native push registration narrating itself, found by `burn.mjs` on 2026-08-15:
+  // a reload on A1 left these three in `unexplained` and nothing else, so a PASS reported dirt.
+  //
+  // ANCHORED ONE BY ONE RATHER THAN AS `^\[Push\]`, for the reason two entries up: every failure in
+  // `PushNotificationService.ts` is a `console.warn` or `console.error` ("No FCM token available",
+  // "FCM token registration failed", "exhausted retries without successful registration"), and a
+  // prefix rule would forgive whichever of them arrives next. These three are `console.info` and
+  // are the only `info` lines that file emits, so naming them exactly cannot silence a failure -
+  // the level buckets would catch one even if it did.
+  /^\[Push\] registerPushToken start$/,
+  /^\[Push\] Token unchanged, skip backend registration$/,
+  /^\[Push\] startPushService re-check \(possible token rotation\)$/,
 ];
 
 /**
@@ -88,6 +146,13 @@ const STATE_CHANGE = [
   // The app's own connectivity verdict and its retry ladder. Not errors, and not routine either:
   // either one appearing in a check that cut NOTHING means the link moved under the measurement.
   /^\[CONNECTIVITY\]|Connection lost\. Retrying/,
+  // THE RECONCILIATION EXCHANGE ITSELF, once something has already triggered it. The trigger is in
+  // `NOTABLE` (`[HISTORY_RECONCILE]`, `history_request`) and stays there - that is where the finding
+  // is. These two are the devices then comparing what they hold, one line per peer plus one for the
+  // answer sent back, and reporting the conversation as a finding on top of its own trigger buries
+  // the trigger under its consequences. A `[HISTORY_STATE]` with NO trigger above it would be the
+  // interesting case, and `stateChanges` is exactly where a reader looks for that.
+  /^\[HISTORY_STATE\] (From|Sent) /,
 ];
 
 /**
@@ -162,10 +227,18 @@ const DECRYPT_CLASSIFIED = [
  *    ERROR per own frame - and, because `decrypt_kind` had no arm for it either, queued that frame
  *    in `pending_mls_messages` for three retries it could never pass.
  *
- * It is now classified at the throw and logged at DEBUG on every platform, which is invisible on
- * web. So this rule is a MIXED-FLEET rule, not a permanent one: A1 serves the bundle inside its APK
- * and cannot pick a deploy up. DELETE IT once no device under test predates the fix - after that,
- * this text reappearing is a new emitter and must be allowed to break `clean`.
+ * It is now classified at the throw and logged at DEBUG on every platform, so nothing emits the raw
+ * line on a current bundle. THE RULE STAYS ANYWAY, and not for the mixed fleet: `setupMessageHandler`
+ * logs `[WELCOME] CannotDecryptOwnMessage … - ACK silencieux` from the TS side, on every platform, for
+ * a Welcome addressed to another device - a live, permanent, deliberate emitter that has nothing to
+ * do with the fix above. That line does not match `SEVERE` or `RAW_DECRYPT_FAILURE` and so would not
+ * break `clean` on its own; what this rule does is keep it out of `classified` too, so it can never
+ * stand in as proof that the classifier ran over a decrypt failure it never saw.
+ *
+ * The retiring condition is therefore NOT "the fleet is up to date" - it is that emitter being gone.
+ * Check it before deleting this, and do not restate the fleet argument: it was written here once, on
+ * the assumption that A1's older APK still produced the raw line, and A1's Rust log goes to logcat
+ * rather than to the console it is observed through. One grep refuted it.
  */
 const SEVERE_BUT_EXPECTED = /CannotDecryptOwnMessage/i;
 
@@ -194,13 +267,85 @@ const NOTABLE = [
   /message\(s\) caught up/i,
   /forget|revoke|reset|corrupt/i,
   /decrypt(ion)? (error|failed)/i,
+  // AN OUTBOX THAT DID NOT EMPTY. `[OUTBOX] Queued` and `Flushing` are routine and sit in `BENIGN`;
+  // this line is the flush REPORTING LEFTOVERS, and the two are not the same claim. It fired once in
+  // thirteen checks on 2026-08-14, inside MSG-7's thirty-message burst, where a transient backlog is
+  // expected - so it is reported and does not break `clean`. It must never be filed as routine: an
+  // outbox that stays non-empty is exactly how a message is lost without anything else complaining.
+  /^\[OUTBOX\] \d+ entr(y|ies) still queued/,
+  // THE APP DECLARING A LOSS, which is a different claim from the frame that failed to open. The
+  // `[MLS] LOST frame` line is `SEVERE` and breaks `clean` on its own; this one is the decision that
+  // followed it, and it is kept visible because a reconciliation with no lost frame above it would
+  // mean something else entirely triggered a repair.
+  /^\[MLS\] Frames are being lost in /,
+  // THE SEND RATCHET BEING REPAIRED AT LOAD - the burn. It says this device came back on a snapshot
+  // that predated frames it had already put on the wire, and that the generations were made up
+  // before anything could send. NOTABLE and not benign, for two reasons that pull the same way: it
+  // proves the reload landed inside the checkpoint window, which is the premise `burn.mjs` needs and
+  // cannot otherwise observe; and OUTSIDE a deliberate reload, a device repairing its own ratchet is
+  // a device that was killed mid-checkpoint, which is worth seeing. `clean` is untouched - the repair
+  // succeeding is not a fault, and the fault it prevents (`[MLS] LOST frame`) is SEVERE on its own.
+  /^\[MLS\] Restored state for \S+ was \d+ generation\(s\) behind/,
+  // The same repair reporting that it could NOT run for a group, or that the count it was given is
+  // impossible. Separated from the line above because they call for opposite readings: one is the
+  // mechanism working, these are it declining to, and a run should never mistake the second for the
+  // first. Neither breaks `clean` - a group this device has left is an ordinary entry to find in the
+  // ledger - but both must be read.
+  /^\[MLS\] Could not burn \d+ generation\(s\) for /,
+  /^\[MLS\] Send ledger for \S+ claims more than \d+ unpersisted frames/,
+  // The reconciliation ANSWERING. `same state ... nothing to do` is the good outcome and it is still
+  // notable, because in a delivery check the exchange should not have been needed at all - a run
+  // full of these is a run where something keeps deciding it is out of sync (WP-FALSELOSS-2).
+  /^\[HISTORY_REQ\] .* (same state as|nothing to do)/,
+  // A DESTRUCTIVE ACTION CORRECTLY REFUSED - the durable rule working, not a fault. The purge is
+  // gated on knowing the server list is trustworthy, and `fetchOk=false` says it is not, so nothing
+  // is deleted. Reported rather than silenced: outside a deliberate cut, a client that cannot fetch
+  // its own group list is a finding, and `ignoringOfflineCut` is what forgives it inside one.
+  /^\[SYNC\] WASM purge skipped - server list unreliable/,
+  // THE FALSE-LOSS RACE HAPPENING AND BEING HANDLED. A history page is assembled by checking each
+  // row against `seenCipherHashes` and only THEN decrypted; live delivery can read one of those very
+  // frames in between. This line is the re-ask at the verdict catching exactly that, and saying so:
+  // "not a loss". It is the SUCCESS path of the fix that closed WP-FALSELOSS-1 (`2ff864f9`), so it
+  // must never break `clean` - but it is not routine either, because it needs a real race to fire,
+  // and seeing it is how we know the fix is live on the device that logged it.
+  //
+  // NOT widened to `^\[History\]`: the sibling verdict of the SAME branch - "frame never read here
+  // and unreadable for good" - is SEVERE, and a prefix rule would forgive the loss along with the
+  // non-loss. The two are one `if` apart in `history.ts` and opposite in meaning.
+  /^\[History\] frame already read live while this page was decrypting/,
+  // AN OUTBOX FLUSH SKIPPED BECAUSE LEADERSHIP WAS NOT DECIDED YET - see backlog, P2. `isTabLeader`
+  // is `false` until the Web Lock resolves, and `runFlush` reads that as "another tab is the
+  // leader", so a flush in the boot gap is delegated to a leader that may not exist and nothing is
+  // rescheduled. Observed on A1 (2026-08-15, after a reload) and on W1 (READ pass 4, at its `goto`).
+  //
+  // FORGIVING THIS DOES NOT FORGIVE A GENUINE LEADERSHIP FAILURE, which was the stated reason for
+  // leaving it unclassified after the first sighting. A tab that really lost the election also emits
+  // `[TAB] Another tab is active`, `[TAB] Race election` or `[TAB] Promoted to leader` - none of them
+  // classified anywhere here, so all three still land in `unexplained` and break `clean`. The
+  // absence of those lines beside this one is precisely what identified the boot gap.
+  /^\[OUTBOX\] Flush skipped - follower tab/,
+  // THE RESUME DECLINING ON A SOCKET THAT DISAGREES WITH OUR FLAG - and ONLY then. Both answering
+  // `true` is the ordinary case (a tab hidden and shown again over a live socket) and sits in
+  // `BENIGN`; `socket=false` or `socket=null` beside `flag=true` means our own state lagged the
+  // socket's, and a resume that declines to reconnect on stale state is how a client sits offline
+  // while believing otherwise. The two spellings are one line apart in the log and a world apart in
+  // meaning, which is the whole reason it prints both answers (WP-RECONNECT-2).
+  /^\[LIFECYCLE\] Resume: already connected \(flag=true, socket=(false|null)\)/,
 ];
 
-/** Attaches every observation domain. Call before the action, not after. */
+/**
+ * Attaches every observation domain. Call before the action, not after.
+ *
+ * `Page` is enabled for one reason: `Page.frameNavigated` on the main frame is the only DOCUMENT
+ * REPLACEMENT event that arrives exactly once per navigation, and {@link ignoringNavigation} needs
+ * to count them. `Runtime.executionContextsCleared` looks like the same thing and is not - measured
+ * on 2026-08-15, three navigations produced three `frameNavigated` and SIX `executionContextsCleared`.
+ */
 export async function watch(cx, label) {
   await cx.send('Runtime.enable');
   await cx.send('Log.enable');
   await cx.send('Network.enable');
+  await cx.send('Page.enable');
   cx.events.length = 0;
   return { cx, label, since: Date.now() };
 }
@@ -236,12 +381,22 @@ export async function report(w) {
   const console_ = [];
   const ws = [];
   const exceptions = [];
+  /** epoch_ms - monotonic_ms, read off the one event carrying both clocks. Null until one is seen. */
+  let monoToWallOffset = null;
+  /** Top-level documents replaced during the window - i.e. navigations. See {@link ignoringNavigation}. */
+  let documentsReplaced = 0;
 
   for (const e of cx.events) {
     const p = e.params;
     switch (e.method) {
+      case 'Page.frameNavigated':
+        // Main frame only: an iframe navigating replaces no document this check's socket belongs to.
+        if (!p.frame.parentId) documentsReplaced++;
+        break;
       case 'Network.requestWillBeSent':
         reqs.set(p.requestId, { url: p.request.url, method: p.request.method });
+        if (monoToWallOffset === null && p.wallTime && p.timestamp)
+          monoToWallOffset = p.wallTime * 1000 - p.timestamp * 1000;
         break;
       case 'Network.responseReceived': {
         const r = reqs.get(p.requestId);
@@ -255,22 +410,31 @@ export async function report(w) {
       }
       case 'Network.webSocketFrameError':
       case 'Network.webSocketClosed':
-        ws.push(`${e.method} ${JSON.stringify(p).slice(0, 140)}`);
+        ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}` });
         break;
       case 'Runtime.exceptionThrown':
         exceptions.push(String(p.exceptionDetails?.exception?.description || p.exceptionDetails?.text).slice(0, 300));
         break;
       case 'Runtime.consoleAPICalled':
-        console_.push({ level: p.type, text: p.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300) });
+        console_.push({ at: p.timestamp, level: p.type, text: p.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300) });
         break;
       case 'Log.entryAdded':
         // Keep `url`: a browser "Failed to load resource" line names the status but not the
         // resource, so without it a benign avatar 404 is indistinguishable from a real one.
-        console_.push({ level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url });
+        console_.push({ at: p.entry.timestamp, level: p.entry.level, text: p.entry.text.slice(0, 300), url: p.entry.url });
         break;
     }
   }
   cx.events.length = 0;
+
+  // MONOTONIC -> WALL, so a socket event can be dated at all. Network events carry CDP's
+  // `MonotonicTime` (seconds from an arbitrary origin) while console events carry epoch
+  // milliseconds, and `requestWillBeSent` is the only event that carries BOTH - so it is the only
+  // place the offset can be read. Without this, `Network.webSocketClosed` has no wall time and the
+  // instant a socket died cannot be compared to anything the app said about it.
+  const monoRef = monoToWallOffset;
+  const wall = (mono) => (monoRef === null || mono === undefined ? null : mono * 1000 + monoRef);
+  for (const w of ws) w.at = wall(w.mono);
 
   // De-duplicate: Log.entryAdded and consoleAPICalled surface the same line twice.
   const seen = new Set();
@@ -308,23 +472,35 @@ export async function report(w) {
   const errors = lines.filter(
     (l) => (l.level === 'error' || l.level === 'assert') && !isBenignUrl(l.url, l.text)
   );
+  /**
+   * EVERY LIST IS TESTED AGAINST THE SAME TEXT, and it used not to be.
+   *
+   * `BENIGN` was matched on `strip(l.text)` while `NOTABLE`, `SEVERE`, `DECRYPT_CLASSIFIED` and
+   * `STATE_CHANGE` were matched on the raw line - so every `^`-anchored pattern in those four lists
+   * silently never matched a line the app had timestamped, which is most of them.
+   * `/^\[OUTBOX\] \d+ entr(y|ies) still queued/` had been in `NOTABLE` since it was written and
+   * landed in `unexplained` on all three passes of 2026-08-14 for exactly this reason. The same
+   * silence in `SEVERE` would be a lost frame nobody classified, which is the one thing this file
+   * exists to prevent.
+   */
+  const t = (l) => strip(l.text);
   const warnings = lines.filter((l) => l.level === 'warning' || l.level === 'warn');
-  const notable = lines.filter((l) => NOTABLE.some((r) => r.test(l.text)));
+  const notable = lines.filter((l) => NOTABLE.some((r) => r.test(t(l))));
   const classified = lines.filter(
-    (l) => DECRYPT_CLASSIFIED.some((r) => r.test(l.text)) && !SEVERE_BUT_EXPECTED.test(l.text)
+    (l) => DECRYPT_CLASSIFIED.some((r) => r.test(t(l))) && !SEVERE_BUT_EXPECTED.test(t(l))
   );
   const severe = lines.filter(
     (l) =>
-      !SEVERE_BUT_EXPECTED.test(l.text) &&
-      (SEVERE.some((r) => r.test(l.text)) ||
+      !SEVERE_BUT_EXPECTED.test(t(l)) &&
+      (SEVERE.some((r) => r.test(t(l))) ||
         // A raw failure nothing judged. See DECRYPT_CLASSIFIED: the demotion holds only while the
         // classifier is shown to be running, or the gate would go quiet on the one case it is for.
-        (classified.length === 0 && RAW_DECRYPT_FAILURE.test(l.text)))
+        (classified.length === 0 && RAW_DECRYPT_FAILURE.test(t(l))))
   );
-  const stateChanges = lines.filter((l) => STATE_CHANGE.some((r) => r.test(l.text)) && !notable.includes(l));
+  const stateChanges = lines.filter((l) => STATE_CHANGE.some((r) => r.test(t(l))) && !notable.includes(l));
   const unexplained = lines.filter(
     (l) =>
-      !BENIGN.some((r) => r.test(strip(l.text))) &&
+      !BENIGN.some((r) => r.test(t(l))) &&
       !isBenignUrl(l.url, l.text) &&
       !errors.includes(l) &&
       !warnings.includes(l) &&
@@ -333,7 +509,13 @@ export async function report(w) {
   );
 
   const http = [...reqs.values()].filter((r) => !/\.(js|css|woff2?|png|svg|jpg|jpeg|ico|webp)(\?|$)/.test(r.url) && !r.url.startsWith('data:') && !r.url.startsWith('blob:'));
-  const failing = http.filter((r) => r.failed || (r.status && r.status >= 400));
+  // A STATUS IS AN ANSWER, AND A REQUEST THAT GOT ONE IS JUDGED ON IT - which is what the comment
+  // below has always claimed and what this line did not do: `r.failed ||` short-circuited before the
+  // status was ever consulted, so a response that ARRIVED and whose body load was then cancelled was
+  // filed as a failure. It reported `GET /api/users/<id>/avatar -> 200` in `badHttp` and broke
+  // MSG-7's fifth pass on 2026-08-14 - a 200 called bad by the instrument, the whole run non-zero
+  // behind it. `r.failed` still counts for a request that never got a status at all.
+  const failing = http.filter((r) => (r.status ? r.status >= 400 : r.failed));
   // A transport failure (`r.failed`, no status) on a benign path is Chrome's ORB refusing the 404
   // body it was handed; anything carrying a status is judged on that status, so a 502 from the same
   // endpoint goes to `badHttp` where a path-only rule used to swallow it.
@@ -342,27 +524,139 @@ export async function report(w) {
   );
   const knownBadHttp = failing.filter((r) => !badHttp.includes(r));
 
-  return {
+  // A NAVIGATION'S OWN SOCKET TEARDOWN IS FORGIVEN HERE, NOT AT THE CALL SITE. See
+  // {@link ignoringNavigation} for the mechanism and the proof of its bound; what belongs in THIS
+  // comment is why it is the default rather than an opt-in like `ignoringOfflineCut`.
+  //
+  // The two are not the same kind of correction. An offline cut is something only the CHECK knows it
+  // did - `report` sees a dead socket and cannot tell a deliberate cut from a real one, so it must be
+  // told. A navigation is different: `Page.frameNavigated` is IN THIS WINDOW's own event stream, so
+  // `report` counts it itself and needs nothing from the caller. A correction derivable from the
+  // evidence should not depend on the caller remembering to ask for it.
+  //
+  // Measured 2026-08-15: of 39 scripts that navigate inside a watch window, exactly ONE (read.mjs)
+  // asked. MSG and TYPE came out clean only because their windows happen to OPEN AFTER the
+  // navigation - a property of how they were written, not a rule anyone stated - while `fwd.mjs`
+  // watches first and collected one `webSocketClosed` per run for doing what the check told it to.
+  // Leaving this opt-in means every future check re-learns that by being wrong once.
+  //
+  // The bound is unchanged, so nothing is weakened: closes beyond `documentsReplaced` still break
+  // `clean`, which is WP-RECONNECT-2's shape.
+  return applyNavigationForgiveness({
     label,
+    // `unexplained` BREAKS CLEAN, and that is the campaign's actual bar rather than a stricter one:
+    // "tout doit etre explique, limite tu devrais savoir exactement avant de le voir". A line nobody
+    // has classified is by definition a line whose meaning nobody knows, so a verdict formed over it
+    // is a verdict formed over an unknown - and the two defects this gate exists to catch (WP-LOSS-1,
+    // WP-FALSELOSS-2) both sat in a bucket that was printed and counted for nothing.
+    //
+    // It is not a trap for new app logs either: the fix for a line landing here is to READ it once
+    // and put it in `BENIGN` with the reason, which is the triage this campaign is for. What it
+    // forbids is doing that implicitly, by never looking.
     clean:
       errors.length === 0 &&
       badHttp.length === 0 &&
       exceptions.length === 0 &&
       ws.length === 0 &&
-      severe.length === 0,
+      severe.length === 0 &&
+      unexplained.length === 0,
     severe: severe.map((l) => l.text),
     errors: errors.map((l) => l.text),
     exceptions,
     badHttp: badHttp.map((r) => `${r.method} ${r.url.replace('https://canari-emse.fr', '')} -> ${r.status ?? r.failed}`),
     knownBadHttp: knownBadHttp.map((r) => `${r.method} ${r.url.replace('https://canari-emse.fr', '')} -> ${r.status ?? r.failed}`),
-    wsEvents: ws,
+    wsEvents: ws.map((w) => `${hhmmss(w.at)} ${w.text}`),
+    documentsReplaced,
     warnings: warnings.map((l) => l.text),
     notable: notable.map((l) => l.text),
     stateChanges: stateChanges.map((l) => l.text),
     unexplained: unexplained.map((l) => `${l.level}: ${l.text}`),
     httpCount: http.length,
     consoleCount: lines.length,
-  };
+    // EVERY line and every socket event, in one sequence, each DATED. See {@link timelineOf}.
+    //
+    // BUILT FROM `console_`, NOT FROM `lines` - the de-duplicated copy. The dedup exists so a line
+    // surfaced twice by `Log.entryAdded` and `consoleAPICalled` is classified once, and it strips
+    // the `[HH:MM:SS]` prefix before comparing, so it also collapses the SAME line emitted at two
+    // DIFFERENT times. That is fatal here: WP-OUTBOX-1 turns on whether `[OUTBOX] Flush skipped -
+    // offline` fired a second time ten seconds after the first, and the classifier had thrown the
+    // second one away as a duplicate of the first. A repeat is not noise - it is often the entire
+    // finding.
+    timeline: timelineOf(console_, ws),
+  });
+}
+
+/** `HH:MM:SS.mmm` of an epoch instant, or `--:--:--.---` when the event carried no usable clock. */
+export function hhmmss(at) {
+  if (!at) return '--:--:--.---';
+  const d = new Date(at);
+  const p = (n, w = 2) => String(n).padStart(w, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
+}
+
+/**
+ * THE ONE SEQUENCE, DATED - console lines and socket events interleaved in the order they happened.
+ *
+ * Written after WP-RECONNECT-2 could not be read from its own capture on 2026-08-14. The record held
+ * a 98-second hole between `[WS] Disconnected. Code: 1006` and `Connection lost. Retrying in 1s...`,
+ * and NEITHER end of it could be dated:
+ *
+ *   - the app timestamps its `appendLog` lines and NOT its `console.warn` ones, so `[WS] Disconnected`
+ *     carried no clock and had to be placed by bucket order - which is an inference, not a
+ *     measurement, and it flipped the diagnosis when questioned. Whether the close arrived at the
+ *     START of the hole or at its END is the whole question, and the log could not say;
+ *   - `Network.webSocketClosed` DOES date it, authoritatively and independently of anything the app
+ *     believes - and `ignoringOfflineCut` deleted the entire `wsEvents` bucket as "the cut". The one
+ *     event that answered the question was discarded by the classifier for being expected.
+ *
+ * CDP has carried both clocks all along. Console events are epoch milliseconds; network events are
+ * monotonic seconds, converted through the offset read off `requestWillBeSent`. Nothing here is new
+ * evidence - it is evidence that was already arriving and was being thrown away.
+ */
+export function timelineOf(lines, ws) {
+  const merged = [
+    ...lines.map((l) => ({ at: l.at ?? null, kind: l.level, text: l.text })),
+    ...ws.map((w) => ({ at: w.at ?? null, kind: 'ws', text: w.text })),
+  ].sort((a, b) => (a.at ?? Infinity) - (b.at ?? Infinity));
+
+  /**
+   * COLLAPSE THE DOUBLE-SURFACING, KEEP THE GENUINE REPEAT - and the difference between them is
+   * TIME, not text. `Log.entryAdded` and `Runtime.consoleAPICalled` report one `console.log` twice,
+   * within a millisecond of each other; the same line emitted again ten seconds later is a second
+   * event and is frequently the whole finding (WP-OUTBOX-1). The classifier's own dedup cannot tell
+   * them apart because it compares text with the clock stripped off, which is why the timeline does
+   * its own.
+   */
+  const SAME_EVENT_MS = 250;
+  const lastSeen = new Map();
+  const out = [];
+  for (const e of merged) {
+    const key = `${e.kind}|${String(e.text).replace(/^\[\d\d:\d\d:\d\d\]\s*/, '')}`;
+    const prev = lastSeen.get(key);
+    if (prev !== undefined && e.at !== null && e.at - prev < SAME_EVENT_MS) continue;
+    if (e.at !== null) lastSeen.set(key, e.at);
+    out.push(`${hhmmss(e.at)} [${e.kind}] ${e.text}`);
+  }
+  return out;
+}
+
+/**
+ * The longest interval in a timeline during which the client said NOTHING, and what bracketed it.
+ *
+ * A hole is the shape a stalled recovery makes: the app is not failing, not retrying and not
+ * logging, and no bucket of a classifier can show that because a hole is made of absent lines. This
+ * turns it into a value a check can assert on.
+ */
+export function longestSilence(timeline) {
+  const dated = timeline
+    .map((t) => ({ at: Date.parse(`1970-01-01T${t.slice(0, 12)}Z`), text: t }))
+    .filter((t) => Number.isFinite(t.at));
+  let worst = { ms: 0, after: null, before: null };
+  for (let i = 1; i < dated.length; i++) {
+    const ms = dated[i].at - dated[i - 1].at;
+    if (ms > worst.ms) worst = { ms, after: dated[i - 1].text, before: dated[i].text };
+  }
+  return worst;
 }
 
 /**
@@ -452,7 +746,7 @@ const OFFLINE_NOISE =
 // `report` truncates at 300 characters - so the verb never survives to be matched. Matching the
 // SUBJECT instead is both shorter and immune to the truncation.
 const CUT_REACTION =
-  /WebSocket connection to '?wss?:|\[WS\] WebSocket error|\[WS\] Gateway connection failed|Connection lost\. Retrying|\[OUTBOX\] \S+ transient failure/i;
+  /WebSocket connection to '?wss?:|\[WS\] WebSocket error|\[WS\] Gateway connection failed|Connection lost\. Retrying|\[OUTBOX\] \S+ transient failure|Gateway inaccessible: WebSocket connection failed/i;
 
 /**
  * WHY a report is not clean, as one object - and `{}` when it is clean.
@@ -468,9 +762,44 @@ const CUT_REACTION =
  */
 export function dirtOf(rep) {
   const out = {};
-  for (const bucket of ['severe', 'errors', 'exceptions', 'badHttp', 'wsEvents'])
+  for (const bucket of ['severe', 'errors', 'exceptions', 'badHttp', 'wsEvents', 'unexplained'])
     if (rep?.[bucket]?.length) out[bucket] = rep[bucket];
   return out;
+}
+
+/**
+ * THE VERDICT, GATED ON CLEANLINESS - one definition, for every check.
+ *
+ * The campaign's rule is that a verdict is PASS only if the assertions hold AND the run is clean, and
+ * every script was applying it by hand or not at all. Both halves of that cost something measurable:
+ *
+ *   - MSG-2 and FWD-3/4/5 attached watchers, printed their lines, and formed the verdict without
+ *     ever consulting them. The observation ran and decided nothing, which is the same as not
+ *     observing while looking like the opposite;
+ *   - the ones that DID gate spelt the outcome differently - `PASS-WITH-NOISE` in MSG-5,
+ *     `PASS-DIRTY` in MSG-10 - so the dashboard could not count "how many runs were dirty" without
+ *     knowing which script wrote the row. Two names for one state is one name too many.
+ *
+ * A FAILING ASSERTION IS NEVER DEMOTED TO DIRT. Dirt only ever turns a PASS into `PASS-DIRTY`; a
+ * FAIL, a SLOW or an INVALID stands as it is, and carries its dirt in the record either way, because
+ * the noise beside a failure is usually what explains it.
+ *
+ * THE LINES, NOT A BOOLEAN. `senderClean: false` sends its reader back to a stdout dump that a
+ * twelve-script run has long scrolled past; the campaign's rule is that a check which is not a clean
+ * PASS earns a Work Package WITH ITS CAPTURED LOG, and the record is the only thing that survives
+ * the session. So the dirt goes in as `dirtOf`, per client, named.
+ *
+ * @param {string} verdict the assertion outcome, as the check computed it
+ * @param {Record<string, object>} reports label -> the `report()` of that client
+ * @returns {{verdict: string, detail: object}} the gated verdict, and the per-client dirt to record
+ */
+export function gate(verdict, reports) {
+  const entries = Object.entries(reports).filter(([, r]) => r);
+  const dirty = entries.filter(([, r]) => !r.clean);
+  const detail = { clean: dirty.length === 0 };
+  // `{}` for a clean client, so the record shows WHO was dirty without five empty objects around it.
+  for (const [label, r] of dirty) detail[`dirt_${label}`] = dirtOf(r);
+  return { verdict: verdict === 'PASS' && dirty.length ? 'PASS-DIRTY' : verdict, detail };
 }
 
 /**
@@ -483,15 +812,20 @@ export function dirtOf(rep) {
  * which is how the observation half of the campaign's rule stops discriminating.
  *
  * `exceptions` are NOT forgiven: a network cut is a condition the app is required to handle, and an
- * unhandled rejection during one is a real defect. Nor is anything in `notable` or `unexplained`.
+ * unhandled rejection during one is a real defect. Nor is anything in `notable`.
+ *
+ * `unexplained` IS narrowed by the cut - and only by it. The lines removed are the ones this check
+ * itself caused; whatever remains still breaks `clean`, because a line nobody classified is no more
+ * explained during an outage than outside one.
  */
 export function ignoringOfflineCut(rep) {
   const expected = (t) => OFFLINE_NOISE.test(t) || CUT_REACTION.test(t);
   const errors = rep.errors.filter((t) => !expected(t));
   const badHttp = rep.badHttp.filter((t) => !expected(t));
-  // `warnings` and `unexplained` are filtered too, though neither breaks `clean`: a reader is
-  // supposed to be able to say what every line is BEFORE seeing it, and thirty lines of "Failed to
-  // fetch" from a cut this check performed is the fastest way to make that impossible.
+  // `warnings` never broke `clean` and still does not; `unexplained` now does, so this filter is the
+  // difference between a check that cuts the link on purpose and one that cannot pass at all. A
+  // reader is supposed to be able to say what every line is BEFORE seeing it, and thirty lines of
+  // "Failed to fetch" from a cut this check performed is the fastest way to make that impossible.
   const warnings = rep.warnings.filter((t) => !expected(t));
   const unexplained = rep.unexplained.filter((t) => !expected(t));
   return {
@@ -501,12 +835,17 @@ export function ignoringOfflineCut(rep) {
     warnings,
     unexplained,
     wsEvents: [],
+    // FORGIVEN, NOT DELETED. A cut closes a socket, so `wsEvents` may not break `clean` here - but
+    // the close is also the only DATED record of the instant the link actually died, and wiping the
+    // bucket is what left WP-RECONNECT-2 unreadable. Kept under its own name, out of the gate.
+    wsEventsDuringCut: rep.wsEvents,
     // `severe` is NOT forgiven by a cut either: a lost frame is a lost frame whatever the link did.
     clean:
       errors.length === 0 &&
       badHttp.length === 0 &&
       rep.exceptions.length === 0 &&
-      rep.severe.length === 0,
+      rep.severe.length === 0 &&
+      unexplained.length === 0,
     ignoredAsTheCut: {
       errors: rep.errors.length - errors.length,
       badHttp: rep.badHttp.length - badHttp.length,
@@ -515,6 +854,80 @@ export function ignoringOfflineCut(rep) {
       wsEvents: rep.wsEvents.length,
     },
   };
+}
+
+/**
+ * The same report with the NAVIGATION's own socket teardown removed, and `clean` recomputed.
+ *
+ * A NAVIGATION IS A DISCONNECTION. `Page.navigate` destroys the top-level document, and a socket
+ * cannot outlive the document that opened it - so every `goto`, and therefore every `openDM` and
+ * `openChannel`, closes the gateway socket and opens a new one. From inside the tab that looks like
+ * `[WS] Disconnected. Code: 1006, Reason: no reason`: nobody sent a close frame, because a page
+ * being torn down cannot.
+ *
+ * THIS COST THREE RUNS. READ-1, READ-2 and READ-4 opened their window and then called `openDM` on
+ * the observed client, so each collected exactly one `Network.webSocketClosed` and read `PASS-DIRTY`
+ * for doing what the check told it to do. The first attempt at a fix - `gotoWatched`, which delayed
+ * the window until the new page's handshake - was aimed at the wrong navigation and changed nothing;
+ * it is deleted in favour of this, because a window that OPENS LATE is a window that cannot see the
+ * boot it skipped.
+ *
+ * WHY THE COUNT IS A PROOF AND NOT A GUESS. Measured on 2026-08-15 (`navclose.mjs`, W1): three
+ * navigations produced three main-frame `Page.frameNavigated`, three `webSocketCreated`, three
+ * `webSocketClosed` and three 1006 lines. One document replacement, one close. So closes UP TO
+ * `documentsReplaced` are accounted for, and the (N+1)th is not - it is a live socket dying, which
+ * is exactly WP-RECONNECT-2's shape and stays dirt. The alternative rule, "forgive a close whose
+ * open I never saw", would have silenced that class outright.
+ *
+ * `webSocketFrameError` is NEVER forgiven: a protocol error on a frame is not a teardown, and a page
+ * being replaced does not produce one.
+ *
+ * Nothing else needs a special case - `[WS] Disconnected` is a warning and a state change (neither
+ * breaks `clean`), and the new page's `[TAB] Leadership acquired` / `[WS] Opening connection` are
+ * already BENIGN as the boot narrating itself.
+ */
+export function applyNavigationForgiveness(rep) {
+  // ALREADY APPLIED - RETURN IT UNTOUCHED. This is not defensive tidiness, it is the one way this
+  // can go wrong: the forgiveness is NOT idempotent. A second pass would see `documentsReplaced`
+  // navigations of budget again, against a `wsEvents` the first pass had already stripped, and spend
+  // that budget on the closes the first pass deliberately KEPT - the (N+1)th and beyond, which are
+  // live sockets dying and the entire signal this bound exists to protect. `report` now applies it
+  // once, and the call sites that still ask are answered with what they already have.
+  if (rep.wsEventsAtNavigation !== undefined) return rep;
+
+  const budget = rep.documentsReplaced ?? 0;
+  const kept = [];
+  const forgiven = [];
+  for (const e of rep.wsEvents) {
+    if (/Network\.webSocketClosed/.test(e) && forgiven.length < budget) forgiven.push(e);
+    else kept.push(e);
+  }
+  return {
+    ...rep,
+    wsEvents: kept,
+    // FORGIVEN, NOT DELETED - for `ignoringOfflineCut`'s reason: the close is the only DATED record
+    // of when the link went, and wiping the bucket is what left WP-RECONNECT-2 unreadable.
+    wsEventsAtNavigation: forgiven,
+    clean:
+      rep.errors.length === 0 &&
+      rep.badHttp.length === 0 &&
+      rep.exceptions.length === 0 &&
+      rep.severe.length === 0 &&
+      rep.unexplained.length === 0 &&
+      kept.length === 0,
+  };
+}
+
+/**
+ * Kept as the name the checks already call, now that `report` applies it for them.
+ *
+ * It is a no-op on any report `report` produced, and it stays exported rather than being deleted
+ * from the six call sites in `read.mjs`: those calls state, at the point of reading, that the check
+ * KNOWS it navigates inside its window, and that is worth keeping visible even once the instrument
+ * handles it. A future report built by hand still gets the correction.
+ */
+export function ignoringNavigation(rep) {
+  return applyNavigationForgiveness(rep);
 }
 
 /** True when the page is in a state where a check's result would be meaningless. */

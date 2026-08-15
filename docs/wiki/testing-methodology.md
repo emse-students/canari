@@ -506,7 +506,7 @@ Two corollaries, both paid for on the same day:
 - **A NAVIGATION DOES NOT PICK UP A DEPLOY; ONLY A CACHE-BUSTING RELOAD DOES.** W2 served the old
   entry chunk across three `Page.navigate` calls made after a successful deploy. Any check re-run
   "on the new build" without `Page.reload {ignoreCache:true}` is measuring the old one - rule 9 with
-  a sharper edge. `bundleid.mjs` reads the loaded chunk hashes off the resource timeline and answers
+  a sharper edge. `bundle-id.mjs` reads the loaded chunk hashes off the resource timeline and answers
   it directly; a fingerprint that comes back EMPTY compares equal to itself and will happily report
   "unchanged" for ever, which is how the first attempt at this reported `INCONCLUSIVE` for a reason
   that was not the true one.

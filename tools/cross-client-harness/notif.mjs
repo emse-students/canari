@@ -16,6 +16,7 @@ import { watch, report } from './watch.mjs';
 import { mark } from './results.mjs';
 import * as phone from './phone.mjs';
 import { execFileSync } from 'node:child_process';
+import { ACCOUNT_OF, PORTS, peerNameFor } from './names.mjs';
 
 const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
 
@@ -72,11 +73,11 @@ async function awaitDismissal(needle, timeoutMs = 60_000) {
  * so `openConversation` cannot find anything and the check refused a verdict. Every phase that
  * relaunches the app must unlock before it navigates.
  */
-function unlock(port = 9222) {
+function unlock(port = PORTS.A1) {
   try {
     return execFileSync(
       process.execPath,
-      ['pin.mjs', '--port', String(port), '--account', 'owner', '--match', 'tauri.localhost'],
+      ['pin.mjs', '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
       { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
     )
       .trim()
@@ -93,26 +94,26 @@ stage('waking and launching the phone');
 phone.wake();
 phone.launch();
 await sleep(4_000);
-phone.forwardDevtools(9222);
-const a1Setup = await withDeadline(client(9222, 'tauri.localhost'), 60_000, 'A1 attach');
+phone.forwardDevtools(PORTS.A1);
+const a1Setup = await withDeadline(client(PORTS.A1, 'tauri.localhost'), 60_000, 'A1 attach');
 stage(`A1 attached; unlock -> ${unlock()}`);
 stage('A1 attached; opening the DM');
 await withDeadline(ensureChat(a1Setup), 60_000, 'A1 ensureChat').catch(() => null);
-await withDeadline(openConversation(a1Setup, 'PEER DISPLAY NAME'), 90_000, 'A1 openConversation').catch(() => null);
+await withDeadline(openConversation(a1Setup, peerNameFor('A1')), 90_000, 'A1 openConversation').catch(() => null);
 
 stage('attaching W2');
 const w2 = await withDeadline(client(9223, 'canari-emse.fr'), 60_000, 'W2 attach');
 await withDeadline(ensureChat(w2), 60_000, 'W2 ensureChat');
-await withDeadline(openConversation(w2, 'OWNER DISPLAY NAME'), 90_000, 'W2 openConversation');
+await withDeadline(openConversation(w2, peerNameFor('W2')), 90_000, 'W2 openConversation');
 
-// W1 is owner's OTHER device. It must sit on the chat list, NOT inside the DM: a browser already
+// W1 is the OWNER's other device. It must sit on the chat list, NOT inside the DM: a browser already
 // looking at the conversation reads it as it lands, which would dismiss the phone's notification
 // before the check ever asserted it was there. NOTIF-4 then needs it to open that DM on cue, so
 // the conversation is opened ONCE here to prove the row is reachable, then left.
 stage('attaching W1');
 const w1 = await withDeadline(client(9224, 'canari-emse.fr'), 60_000, 'W1 attach');
 await withDeadline(ensureChat(w1), 60_000, 'W1 ensureChat');
-await withDeadline(openConversation(w1, 'PEER DISPLAY NAME'), 90_000, 'W1 openConversation (pre-flight)');
+await withDeadline(openConversation(w1, peerNameFor('W1')), 90_000, 'W1 openConversation (pre-flight)');
 stage('W1 can reach the DM; parking it on the chat list');
 await evaluate(w1, `history.pushState({}, '', '/chat'); dispatchEvent(new PopStateEvent('popstate'))`).catch(() => null);
 await sleep(2_500);
@@ -140,7 +141,7 @@ if (which === '4') {
   // reports focused and visible (MainChatPage.svelte:435). That gate is what made this check fail
   // twice before focus emulation existed, so it is asserted rather than assumed: a run where W1 is
   // not focused measures nothing about the product.
-  await withDeadline(openConversation(w1, 'PEER DISPLAY NAME'), 90_000, 'W1 openConversation');
+  await withDeadline(openConversation(w1, peerNameFor('W1')), 90_000, 'W1 openConversation');
   out.w1Focus = await evaluate(w1, `JSON.stringify({ hasFocus: document.hasFocus(), vis: document.visibilityState })`);
   stage(`W1 focus gate: ${out.w1Focus}`);
   if (!JSON.parse(out.w1Focus).hasFocus) throw new Error('W1 is not focused - it can never emit a read receipt');
@@ -177,7 +178,7 @@ if (which === '4') {
   out.shade = phone.notifications().map((n) => `${n.title} | ${n.body}`.slice(0, 120));
 
   stage(`shade holds ${out.shadeCount}; opening the DM on W1`);
-  await withDeadline(openConversation(w1, 'PEER DISPLAY NAME'), 60_000, 'openConversation(W1)');
+  await withDeadline(openConversation(w1, peerNameFor('W1')), 60_000, 'openConversation(W1)');
   stage('W1 in the DM; waiting for the message');
   await awaitMessage(w1, m, 30_000).catch(() => null);
   await sleep(2_000);
@@ -226,15 +227,15 @@ if (which === '4') {
   stage('relaunching the app and re-pointing devtools at the NEW pid');
   phone.launch();
   await sleep(6_000);
-  phone.forwardDevtools(9222);
+  phone.forwardDevtools(PORTS.A1);
   await sleep(2_000);
-  const a1 = await client(9222, 'tauri.localhost', { focus: false });
+  const a1 = await client(PORTS.A1, 'tauri.localhost', { focus: false });
   // A ten-minute blackout restarts the app when the radios come back, and a restarted app re-locks
   // the encryption PIN - so the chat is behind the modal and nothing below it can be navigated to.
   out.unlock = unlock();
   stage(`unlock -> ${out.unlock}`);
   await ensureChat(a1).catch(() => null);
-  await openConversation(a1, 'PEER DISPLAY NAME').catch((e) => stage(`openConversation: ${e.message}`));
+  await openConversation(a1, peerNameFor('A1')).catch((e) => stage(`openConversation: ${e.message}`));
 
   // POST-CONDITION, and the reason the first run of this check was worthless: both navigation calls
   // swallowed their failure, so when the app came back on `/posts` (a restarted process opens on its

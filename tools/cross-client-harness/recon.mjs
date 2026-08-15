@@ -1,132 +1,223 @@
 /**
- * Reconciles the SAME DM as seen by both clients, marker by marker.
+ * Reconciles what two clients hold for the conversations they SHARE, message id by message id.
  *
- * This is the direct test for WP-LOSS-1: the loss it describes is silent by construction - the
- * sender keeps its optimistic echo, the server returned 201, and only the receiver's store is
- * short. Nothing in either UI says so. So the evidence has to be a set difference between what W1
- * shows and what W2 shows for one conversation, taken after both have loaded the same history.
+ * This is the campaign's only direct instrument for WP-LOSS-1, whose loss is silent by
+ * construction: the sender keeps its optimistic echo, the server returned 201, and only the
+ * receiver's store is short. Nothing in either UI says so, so the evidence has to be a set
+ * difference between the two stores.
  *
- * Every campaign message carries a marker of the form PREFIX-<base36>, which is exactly what makes
- * this possible: rows have no id in the DOM, but the text is unique per send.
+ * WHY THE STORE AND NOT THE SCREEN. This read markers out of the rendered pane until 2026-08-11,
+ * and every one of that design's problems came from the pane being a WINDOW onto the history rather
+ * than the history: it had to scroll, scrolling paged 50 rows at a time, so it needed a time window
+ * to stay honest, a coverage proof that the window had been reached, and a minute per side - and on
+ * the test DM, 1804 messages long, it read 60 of them and called the empty difference a success.
+ * The store answers the same question exactly, in one read, for a conversation of any length.
+ *
+ * The rows are CIPHERTEXT at rest (`iv` + `cipherText`); `id` and `conversationId` are plaintext.
+ * So this cannot say a message decrypted - it says both clients hold the same set, which is
+ * precisely the claim WP-LOSS-1 is about. Rendering and decryption are asserted per check, by the
+ * marker each one sends.
+ *
+ * Ids stay on this machine: only counts and, when they differ, how many differ, are printed.
+ *
+ *   node recon.mjs [--left 9224] [--right 9223] [--leftName W1] [--rightName W2]
  */
-import { client, ensureChat, openConversation, evaluate } from './chat.mjs';
+import { client, evaluate } from './chat.mjs';
 import { logcatSince, logcatNotable } from './watch.mjs';
 
-const MARKER = /[A-Z][A-Z0-9]{2,11}-[0-9a-z]{8,}/g;
+/**
+ * Everything one client knows: which conversations it lists, and which message ids it holds.
+ *
+ * Membership comes from the `conversations` store rather than from the message rows, and that is
+ * load-bearing. Keyed off the messages alone, a conversation the client is in but has received
+ * NOTHING for has no rows at all, so it looks like a conversation the client is not in - and a
+ * total loss, the worst case, would be the one case that reconciles silently.
+ */
+/**
+ * THE SAME QUESTION, ASKED OF THE PHONE'S REAL STORE - the SQLite reader this file used to say it
+ * did not have.
+ *
+ * Getting here needed the route to be chosen for a reason rather than for convenience. `adb pull`
+ * works and is wrong: `canari_<uid>.db` is a REAL account's conversations, including people who
+ * never agreed to be in a test harness, and copying it to this machine would be the credential leak
+ * `mlsdb.mjs` refuses in its own header. There is no `sqlite3` on the device to query it in place
+ * either. So the app is asked instead: `@tauri-apps/plugin-sql` already holds the file open, and its
+ * IPC surface answers a SELECT from CDP - **nothing leaves the device but ids and counts**, and
+ * `cipher_text` is never named in the query (it would be ciphertext if it were).
+ *
+ * The database is keyed `sqlite:canari_<userId>.db`. The id comes from the page's OWN
+ * `mls_send_ledger_<userId>` key, never from an argument, so no account identifier is typed on a
+ * command line or committed.
+ *
+ * Shape-compatible with the web snapshot on purpose: the comparison below must not know which side
+ * it is reading, or the two paths drift and only one of them stays correct.
+ */
+const nativeSnapshot = async (cx) =>
+  JSON.parse(
+    await evaluate(
+      cx,
+      `(async function () {
+        const invoke = (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) || (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
+        if (!invoke) return JSON.stringify({ err: 'Tauri runtime without an invoke bridge' });
+        var uid = null;
+        for (var k = 0; k < localStorage.length; k++) {
+          var key = localStorage.key(k);
+          if (key && key.indexOf('mls_send_ledger_') === 0) { uid = key.slice('mls_send_ledger_'.length); break; }
+        }
+        if (!uid) return JSON.stringify({ err: 'no send ledger key, so no user id to build the db path from' });
+        try {
+          const db = 'sqlite:canari_' + uid + '.db';
+          const cs = await invoke('plugin:sql|select', { db: db, query: 'SELECT id, name, lifecycle FROM conversations', values: [] });
+          const ms = await invoke('plugin:sql|select', { db: db, query: 'SELECT id, conversation_id FROM messages', values: [] });
+          const convos = {};
+          for (const c of cs) { const id = String(c.id || ''); if (id) convos[id] = { lifecycle: c.lifecycle || 'active', name: String(c.name || '').slice(0, 24) }; }
+          const ids = {};
+          for (const m of ms) { const q = String(m.conversation_id || ''); if (q) (ids[q] = ids[q] || []).push(String(m.id)); }
+          return JSON.stringify({ convos: convos, ids: ids, runtime: 'tauri', onScreen: document.querySelectorAll('aside button, nav button').length });
+        } catch (e) {
+          return JSON.stringify({ err: 'sql plugin refused: ' + String(e).slice(0, 200) });
+        }
+      })()`
+    )
+  );
+
+const webSnapshot = async (cx) =>
+  JSON.parse(
+    await evaluate(
+      cx,
+      `(async function () {
+        const open = (n) => new Promise((res) => { const r = indexedDB.open(n); r.onsuccess = () => res(r.result); r.onerror = () => res(null); setTimeout(() => res(null), 4000); });
+        const d = (await indexedDB.databases()).filter((x) => x.name.indexOf('CanariDB_') === 0 && x.name.indexOf('Mls') === -1)[0];
+        if (!d) return JSON.stringify({ err: 'no store' });
+        const db = await open(d.name);
+        if (!db) return JSON.stringify({ err: 'store did not open' });
+        const getAll = (store) => new Promise((res) => {
+          if (!db.objectStoreNames.contains(store)) return res([]);
+          const rq = db.transaction(store, 'readonly').objectStore(store).getAll();
+          rq.onsuccess = () => res(rq.result || []);
+          rq.onerror = () => res([]);
+        });
+        const convos = {};
+        for (const c of await getAll('conversations')) {
+          const id = String(c.groupId || c.id || '');
+          if (id) convos[id] = { lifecycle: c.lifecycle || 'active', name: String(c.name || '').slice(0, 24) };
+        }
+        const ids = {};
+        for (const m of await getAll('messages')) {
+          const k = String(m.conversationId || '');
+          if (k) (ids[k] = ids[k] || []).push(String(m.id));
+        }
+        db.close();
+        return JSON.stringify({
+          convos: convos,
+          ids: ids,
+          // THE TAURI CLIENTS DO NOT KEEP THEIR MESSAGES HERE. A1 carries a CanariDB_* database that
+          // is present, openable, correctly shaped and PERMANENTLY EMPTY - a vestige of the shared
+          // web code path - while the real store is SQLite behind Tauri. Read through this snapshot
+          // alone, a perfectly healthy phone showing nine conversations reports zero of everything.
+          // That does not fabricate a LOSS (nothing is shared, so the verdict is VACUOUS), but
+          // VACUOUS alone sends the reader to look for a missing conversation instead of at the
+          // wrong store. So the discriminator travels with the data.
+          runtime: (typeof window.__TAURI__ !== 'undefined' || typeof window.__TAURI_INTERNALS__ !== 'undefined' || location.hostname.indexOf('tauri') !== -1) ? 'tauri' : 'web',
+          onScreen: document.querySelectorAll('aside button, nav button').length
+        });
+      })()`
+    )
+  );
+
+const flag = (name, fallback) => {
+  const i = process.argv.indexOf(`--${name}`);
+  return i === -1 ? fallback : process.argv[i + 1];
+};
+// The URL filter differs per client and is NOT cosmetic: a browser tab is picked by
+// `canari-emse.fr`, while the phone's WebView serves the app from `tauri.localhost`, so the browser
+// filter matches nothing there and `client()` would attach to whatever it found first.
+const sides = [
+  { label: flag('leftName', 'W1'), port: Number(flag('left', 9224)), url: flag('leftUrl', 'canari-emse.fr') },
+  { label: flag('rightName', 'W2'), port: Number(flag('right', 9223)), url: flag('rightUrl', 'canari-emse.fr') },
+];
 
 /**
- * Walks the thread from the bottom to the top, ACCUMULATING markers at every step.
+ * Reads whichever store this client actually keeps its messages in.
  *
- * The list is virtualised: `innerText` holds only the rows currently rendered, so scrolling to the
- * top and reading once returns the OLDEST screenful and silently drops everything between. A run
- * done that way reported a dozen messages as "missing" from one client that it had simply scrolled
- * past, and hid two real losses that had scrolled out of view - the diff looked authoritative and
- * was noise. Reading at each position is the only way the set means what it claims.
+ * The RUNTIME decides, not the port or the label: a device is native because the page says so, so a
+ * client moved to another port, or a web tab pointed at `tauri.localhost`, cannot silently take the
+ * wrong reader. The web snapshot is taken first because it also carries the discriminator, and it is
+ * cheap on a device that has nothing in IndexedDB - which every native client does.
  */
-async function collect(cx, maxSteps = 60) {
-  const marks = new Set();
-  let lastTop = -1;
-  let stable = 0;
-  for (let i = 0; i < maxSteps; i++) {
-    const step = await evaluate(
-      cx,
-      `(function () {
-        var pane = document.querySelector('.chat-composer-editor').closest('section');
-        var sc = [].filter.call(pane.querySelectorAll('*'), function (e) {
-          return e.scrollHeight > e.clientHeight + 40 && e.clientHeight > 200;
-        })[0];
-        if (!sc) return JSON.stringify({ err: 'no-scroller' });
-        var text = pane.innerText || '';
-        var top = sc.scrollTop;
-        sc.scrollTop = Math.max(0, top - Math.round(sc.clientHeight * 0.8));
-        return JSON.stringify({ text: text, top: top, atTop: top <= 1 });
-      })()`
-    );
-    const s = JSON.parse(step);
-    if (s.err) return { marks: [], how: s.err };
-    for (const m of String(s.text).match(MARKER) || []) marks.add(m);
-    // "At the top" is not the end: reaching it triggers a fetch of the previous page, so the
-    // scroller grows and there is more above. Only a top that stays put across polls is the end.
-    if (s.atTop && s.top === lastTop) {
-      if (++stable >= 3) return { marks: [...marks], how: `top after ${i + 1} steps` };
-    } else {
-      stable = 0;
-    }
-    lastTop = s.top;
-    await new Promise((r) => setTimeout(r, 700));
-  }
-  return { marks: [...marks], how: `capped at ${maxSteps} steps` };
-}
-
-async function seen(cx, who, peer) {
-  await ensureChat(cx);
-  await openConversation(cx, peer);
-  await new Promise((r) => setTimeout(r, 1800));
-  const { marks, how } = await collect(cx);
-  return { who, how, count: marks.length, marks };
-}
+const snapshot = async (cx) => {
+  const web = await webSnapshot(cx);
+  if (web.runtime !== 'tauri') return web;
+  return { ...(await nativeSnapshot(cx)), viaIndexedDb: Object.keys(web.ids).length };
+};
 
 const t0 = Date.now();
-const w1 = await seen(await client(9224, 'canari-emse.fr'), 'W1', 'PEER DISPLAY NAME');
-const w2 = await seen(await client(9223, 'canari-emse.fr'), 'W2', 'OWNER DISPLAY NAME');
+const [L, R] = [
+  await snapshot(await client(sides[0].port, sides[0].url, { focus: false })),
+  await snapshot(await client(sides[1].port, sides[1].url, { focus: false })),
+];
+for (const [i, s] of [L, R].entries()) {
+  if (s.err) {
+    console.log(JSON.stringify({ verdict: 'VACUOUS', why: `${sides[i].label}: ${s.err}` }));
+    process.exit(1);
+  }
+  // A native client that reports nothing after the SQL reader has run is a different claim from the
+  // empty IndexedDB vestige this used to refuse on: the store it lives in was asked and answered
+  // nothing. That IS a device with no history, and it must not be reported as a reconciliation.
+  if (
+    s.runtime === 'tauri' &&
+    Object.keys(s.convos).length === 0 &&
+    Object.keys(s.ids).length === 0
+  ) {
+    console.log(
+      JSON.stringify({
+        verdict: 'EMPTY NATIVE STORE',
+        why: `${sides[i].label} is a Tauri client and its SQLite store returned no conversations and no messages, while the app is showing ${s.onScreen} sidebar entries. That is not the IndexedDB vestige (which held ${s.viaIndexedDb ?? 0} conversations either way) - it is the real store answering empty.`,
+      })
+    );
+    process.exit(2);
+  }
+}
 
-/**
- * A raw set difference LIES once the history is long enough.
- *
- * Each side loads whatever a fixed number of scroll rounds happens to reach, so the two windows do
- * not coincide: a marker missing from one list may simply be older than that side scrolled. Seen
- * for real - a run reported two markers "only on W2" that were merely outside W1's window, while
- * two genuinely lost ones had scrolled out of view and vanished from the report entirely.
- *
- * Markers carry their own send time (`mark()` = PREFIX + base36 of Date.now() + 3 random chars), so
- * the honest comparison is bounded: only markers at or after the LATEST of the two windows' start
- * points, which is the range both sides provably cover.
- */
-const stampOf = (m) => {
-  const suffix = m.slice(m.indexOf('-') + 1);
-  const t = parseInt(suffix.slice(0, suffix.length - 3), 36);
-  return Number.isFinite(t) && t > 1_700_000_000_000 && t < Date.now() + 60_000 ? t : null;
-};
-/**
- * The window is FIXED, and the run PROVES it reached it.
- *
- * Deriving the bound from the oldest marker each side happened to collect makes the answer depend
- * on how far the scrolling got, which varies run to run - two consecutive runs disagreed, one
- * calling a dozen messages lost that the other reconciled. So: choose a window up front, then
- * require each side to hold at least one marker OLDER than it. That is the only evidence that a
- * side actually covered the range, and without it the diff is not reported at all.
- */
-const WINDOW_MS = Number(process.env.RECON_WINDOW_MIN || 90) * 60_000;
-const floor = Date.now() - WINDOW_MS;
-const reached = (marks) => marks.map(stampOf).some((t) => t !== null && t < floor);
-const covered = { w1: reached(w1.marks), w2: reached(w2.marks) };
-const inWindow = (m) => {
-  const t = stampOf(m);
-  return t !== null && t >= floor;
-};
+const shared = [];
+const oneSided = [];
+for (const id of new Set([...Object.keys(L.convos), ...Object.keys(R.convos)])) {
+  const l = L.convos[id];
+  const r = R.convos[id];
+  // A conversation one side has RETIRED is expected to diverge - that is what deleting it means.
+  if (!l || !r || l.lifecycle === 'removed' || r.lifecycle === 'removed') {
+    oneSided.push(`${id.slice(0, 8)} ${l ? `${sides[0].label}:${l.lifecycle}` : '-'} ${r ? `${sides[1].label}:${r.lifecycle}` : '-'}`);
+    continue;
+  }
+  const A = new Set(L.ids[id] || []);
+  const B = new Set(R.ids[id] || []);
+  shared.push({
+    convo: id.slice(0, 8),
+    [sides[0].label]: A.size,
+    [sides[1].label]: B.size,
+    [`only${sides[0].label}`]: [...A].filter((x) => !B.has(x)).length,
+    [`only${sides[1].label}`]: [...B].filter((x) => !A.has(x)).length,
+  });
+}
 
-const onlyW1 = w1.marks.filter((m) => inWindow(m) && !w2.marks.includes(m));
-const onlyW2 = w2.marks.filter((m) => inWindow(m) && !w1.marks.includes(m));
-
-const logcat = logcatNotable(await logcatSince(t0));
+const differing = shared.filter(
+  (s) => s[`only${sides[0].label}`] > 0 || s[`only${sides[1].label}`] > 0
+);
+const verdict = shared.length === 0 ? 'VACUOUS' : differing.length ? 'LOSS' : 'RECONCILED';
 
 console.log(
   JSON.stringify(
     {
-      w1: { how: w1.how, count: w1.count },
-      w2: { how: w2.how, count: w2.count },
-      windowFrom: new Date(floor).toLocaleTimeString('fr-FR'),
-      // If either side did not scroll past the window's start, the diff below is meaningless.
-      covered,
-      trustworthy: covered.w1 && covered.w2,
-      comparable: { w1: w1.marks.filter(inWindow).length, w2: w2.marks.filter(inWindow).length },
-      onlyW1,
-      onlyW2,
-      reconciled: onlyW1.length === 0 && onlyW2.length === 0,
-      logcatNotable: logcat.slice(0, 10),
+      verdict,
+      // VACUOUS means nothing was compared - no conversation appeared on both sides. It is not a
+      // pass and it exits non-zero, because an empty difference over an empty set says nothing.
+      shared,
+      differing,
+      oneSided,
+      logcatNotable: logcatNotable(await logcatSince(t0)).slice(0, 10),
     },
     null,
     1
   )
 );
-process.exit(0);
+process.exit(verdict === 'RECONCILED' ? 0 : 1);

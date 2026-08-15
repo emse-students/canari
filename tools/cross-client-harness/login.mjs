@@ -2,25 +2,34 @@
 /**
  * Drives the MiConnect (CAS) login for one of the campaign accounts, over CDP.
  *
- * This exists so that a password is NEVER an argv value: it is read from
- * scratchpad/test-accounts.json (outside the repo) and handed straight to Input.insertText.
- * Nothing it prints contains the secret.
+ * This exists so that a password is NEVER an argv value: it is read from `test-accounts.json`
+ * (outside the repository, see `STATE_DIR`) and handed straight to Input.insertText. Nothing it
+ * prints contains the secret.
  *
- * Usage: node login.mjs --port 9223 --account peer
+ * Usage: node login.mjs --device W2          (preferred - fixes the port and the account together)
+ *        node login.mjs --port 9223 --account <key as spelt in test-accounts.json>
  */
-import { readFileSync } from 'node:fs';
+import { accountFor } from './accounts.mjs';
 import { connect, evaluate, listTargets, realClick } from './cdp.mjs';
+import { ACCOUNT_OF, PORTS } from './names.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
   const i = argv.indexOf(`--${name}`);
   return i === -1 ? fallback : argv[i + 1];
 };
-const port = Number(opt('port', 9223));
-const account = opt('account', 'peer');
 
-const creds = JSON.parse(readFileSync(new URL('./test-accounts.json', import.meta.url))).accounts[account];
-if (!creds) throw new Error(`unknown account ${account}`);
+// THE ACCOUNT IS DERIVED FROM THE DEVICE, never defaulted to a spelt key. A spelt key is an identity
+// in a public repository, and it is also the wrong answer the moment this is pointed at the other
+// browser: the login then fails on credentials that are perfectly correct for someone else.
+const device = opt('device', null);
+if (device && !PORTS[device]) throw new Error(`unknown device ${device} - known: ${Object.keys(PORTS).join(' ')}`);
+const port = Number(opt('port', device ? PORTS[device] : 9223));
+const forPort = Object.keys(PORTS).find((d) => PORTS[d] === port);
+const account = opt('account', device ? ACCOUNT_OF[device] : ACCOUNT_OF[forPort]);
+if (!account) throw new Error(`no account known for port ${port} - pass --device or --account`);
+
+const creds = accountFor(account);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

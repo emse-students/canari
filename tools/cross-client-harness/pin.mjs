@@ -5,12 +5,13 @@
  * Kept out of the cdp.mjs CLI for the same reason as login.mjs: the value comes from
  * scratchpad/test-accounts.json, never from argv, so it never lands in a captured shell.
  *
- * Usage: node pin.mjs --port 9223 --account peer [--stay] [--value 9999]
+ * Usage: node pin.mjs --device W2 [--stay] [--value 9999]
  *   --stay   tick "Rester connecte" (the vault path - PIN-9 depends on this being explicit)
  *   --value  override the PIN, for the wrong-PIN and short-PIN checks (PIN-2, PIN-3)
  */
-import { readFileSync } from 'node:fs';
+import { accounts as readAccounts } from './accounts.mjs';
 import { activate, connect, evaluate, listTargets, realClick, until } from './cdp.mjs';
+import { ACCOUNT_OF, PORTS } from './names.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -19,9 +20,16 @@ const opt = (name, fallback) => {
 };
 const has = (name) => argv.includes(`--${name}`);
 
-const port = Number(opt('port', 9223));
-const account = opt('account', 'peer');
-const accounts = JSON.parse(readFileSync(new URL('./test-accounts.json', import.meta.url))).accounts;
+// `--device W1` is the form to prefer: it fixes the port AND the account together, from the one
+// place that knows which is which. `--port`/`--account` still work for a one-off, but nothing stops
+// them disagreeing - and a mismatched pair types the other account's PIN and blames the PIN.
+const device = opt('device', null);
+if (device && !PORTS[device]) throw new Error(`unknown device ${device} - known: ${Object.keys(PORTS).join(' ')}`);
+const port = Number(opt('port', device ? PORTS[device] : 9223));
+const forPort = Object.keys(PORTS).find((d) => PORTS[d] === port);
+const account = opt('account', device ? ACCOUNT_OF[device] : ACCOUNT_OF[forPort]);
+if (!account) throw new Error(`no account known for port ${port} - pass --device or --account`);
+const accounts = readAccounts();
 const pin = opt('value', accounts[account]?.pin);
 if (!pin) throw new Error(`no PIN for account ${account}`);
 

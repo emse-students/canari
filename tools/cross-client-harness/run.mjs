@@ -31,14 +31,60 @@
  * Exit code is 1 if anything FAILed or was INVALID, so it can gate something later.
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { PHASES } from './checks.mjs';
-import { client, evaluate } from './chat.mjs';
+import { srvReport, srvSummary } from './srvlog.mjs';
+import { OVERLAYS, clearOverlays, client, evaluate } from './chat.mjs';
 import { ORIGIN, PORTS } from './names.mjs';
 import { all } from './results.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(`--${n}`);
-const named = argv.filter((a) => !a.startsWith('--'));
+
+/**
+ * Flags that CONSUME the argument after them, which a bare "not a `--`" filter cannot know about.
+ *
+ * `node run.mjs MSG --repeat 3` read `3` as a phase name and refused the whole run - the parser
+ * treating a flag's value as a positional. Anything added here must be listed, or it repeats.
+ */
+const VALUED = ['repeat', 'file'];
+const named = argv.filter(
+  (a, i) => !a.startsWith('--') && !VALUED.includes(String(argv[i - 1]).replace(/^--/, ''))
+);
+
+/**
+ * Where this run's full per-check output goes. ONE DIRECTORY PER RUN, stamped - so re-running a
+ * phase to reproduce something never overwrites the capture of the run that raised it, which is the
+ * exact loss the whole-output write below exists to prevent.
+ *
+ * Not the scratchpad: that is scoped to one session, so the next session would find it gone. This
+ * lives beside the harness, which is also why it must never be committed - the captures carry real
+ * display names.
+ */
+const HERE = new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+const LOG_DIR = `${HERE}logs/${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
+mkdirSync(LOG_DIR, { recursive: true });
+
+/**
+ * THE SERVER WINDOW IS A CURSOR OVER THE WHOLE RUN, NOT A WINDOW PER PASS.
+ *
+ * Each pass used to ask the server about its OWN interval, which leaves the time BETWEEN two passes
+ * observed by nobody - and the classifier's one rule for "the fleet was redeployed under this run"
+ * (`Listening on http` / `Nest application successfully started`) can only fire on a line that falls
+ * inside a window it is given.
+ *
+ * That gap cost a whole verification on 2026-08-14. A push landed at 16:21, its CD restarted the
+ * frontend, the SSR, social, media and chat-delivery at ~16:44 - between pass 2 and pass 3 - and pass
+ * 3 opened at 16:45:12 and reported `server clean`. The phone was still recovering from the socket
+ * cut, flushed the four sends the outage had queued, and MSG-5/MSG-6 came back dirty against a fleet
+ * that had just been replaced under them. Every part of that was visible in the logs; none of it was
+ * in any window.
+ *
+ * So the cursor starts at process start - before the first preflight, which is also work whose noise
+ * belongs to somebody - and each pass advances it to where its own report ended. The windows are
+ * contiguous by construction, and nothing that happens during the run can fall between two of them.
+ */
+let serverWindowFrom = new Date().toISOString();
 
 // ---------------------------------------------------------------------------- preflight
 
@@ -58,7 +104,16 @@ const READY = `(function () {
       var gate = !!document.querySelector('#encryption-pin') ||
         document.body.innerText.indexOf('PIN de chiffrement') !== -1;
       if (gate) return 'LOCKED';
-      if (!/^\\/(chat|communities)/.test(location.pathname)) return 'unknown';
+      // THE PROOF BELOW ONLY DESCRIBES /chat, SO ONLY /chat MAY BE JUDGED BY IT. This test used to
+      // admit /communities as well, on the reasoning that the PIN gate mounts there too - which is
+      // true and is already settled one line above, before this ever runs. What it actually did was
+      // hand a /communities client to a rendered-proof that page cannot satisfy: its sidebar is
+      // links, not buttons, so a fully booted client counts ZERO and was declared 'booting' for
+      // ever. Measured 2026-08-15: W1 rendering 7098 characters on the deployed bundle, waiting out
+      // four repair passes that had nothing to repair, and taking the whole phase down with it.
+      // Answering 'unknown' instead routes it to the repair that already exists and works - send it
+      // to /chat - which is where every check puts it anyway.
+      if (!/^\\/chat/.test(location.pathname)) return 'unknown';
       // NOT SEEING THE GATE IS NOT BEING PAST IT. A booting client shows no gate either -
       // 'readyState' reaches 'complete' while the app is still deciding whether the encryption key
       // is available - so the absence alone reported "unlocked" about a client one second away from
@@ -73,15 +128,13 @@ const READY = `(function () {
     // MSG-5 left the "Ajouter un canal" dialog up and the four scripts after it died inside
     // ensureChat, each reporting a navigation the app was perfectly able to perform. (No backticks
     // in this comment: it lives inside a template literal, and one would end the string here.)
-    overlay: (function () {
-      var n = 0;
-      var all = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
-      for (var i = 0; i < all.length; i++) {
-        var r = all[i].getBoundingClientRect();
-        if (r.width > 0 && r.height > 0) n++;
-      }
-      return n;
-    })()
+    //
+    // ONE DEFINITION, shared with the preconditions in chat.mjs. The private copy this replaces
+    // asked only for [role=dialog] / [aria-modal], which is the half of the problem the DESKTOP has:
+    // the mobile action sheet carries neither attribute, so a phone left holding one passed this
+    // preflight as ready and then ate the next click - the exact failure the field exists to catch,
+    // surviving on the one client whose layout renders it.
+    overlay: JSON.parse(${OVERLAYS}).length
   });
 })()`;
 
@@ -139,28 +192,65 @@ const MAX_REPAIR_PASSES = 4;
 const isReady = (s) => s.locked === 'unlocked' && !s.overlay;
 
 /**
- * Dismisses a modal the way a user would, and returns without asserting anything.
+ * Dismisses whatever covers the screen, and NAMES it - the postcondition of the previous check, run
+ * where a postcondition can actually run.
  *
- * Escape first, because every dialog in this app closes on it and it needs no selector - a close
- * control has to be FOUND, and the find is exactly what an overlay makes unreliable. The labelled
- * button is the second attempt, not a fallback for a failure: the two are one repair, and the caller
- * re-reads the state afterwards and reports if the overlay is still there.
+ * IT CANNOT LIVE IN THE SCRIPTS. A check that ends normally could tidy up after itself, but the ones
+ * that need tidying are the ones that DIED, and a script that throws never reaches its own last line
+ * - `finish` compounds it by exiting the process on the verdict, so anything written after it is
+ * unreachable by construction. So the only place a cleanup runs on the path that needs it is here,
+ * between two scripts, in a process neither of them can crash.
+ *
+ * The repair itself is `clearOverlays`, imported rather than reimplemented. The private version this
+ * replaces pressed Escape, slept 600 ms, clicked `[aria-label="Fermer"]` and slept again: three
+ * separate faults in nine lines - the French caption is a Paraglide string that reads "Close" on an
+ * `en` client, the sleeps are wall clocks in an instrument whose whole purpose is determinism, and
+ * the predicate disagreed with the one the checks themselves use, which is how two definitions of
+ * "the screen is clear" end up answering differently about the same screen.
+ *
+ * What it cleared is PRINTED. A check that leaves a modal behind is a fault in that check even when
+ * its own verdict was PASS, and this line is the only place that is ever visible.
  */
 async function dismissOverlay(d) {
   const cx = await client(PORTS[d], null, { focus: false });
-  for (const type of ['rawKeyDown', 'keyUp'])
-    await cx.send('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
-  await sleep(600);
-  await evaluate(
-    cx,
-    `(function () {
-      var b = document.querySelector('[role="dialog"] [aria-label="Fermer"], [aria-modal="true"] [aria-label="Fermer"]');
-      if (b) b.click();
-    })()`
-  );
-  cx.close();
-  await sleep(600);
+  try {
+    const cleared = await clearOverlays(cx);
+    for (const o of cleared)
+      console.log(`       ${d} ${o.stuck ? 'STUCK' : 'cleared'} ${o.kind}${o.label ? ` (${o.label})` : ''}`);
+  } finally {
+    cx.close();
+  }
 }
+
+/**
+ * Re-reads a client until it is ready, or until the deadline - whichever comes first.
+ *
+ * Returns the LAST state it managed to read, including an unready one, because the caller's repair
+ * loop needs to know what it is still looking at in order to choose the next repair. `null` only
+ * when the client never answered at all inside the window.
+ */
+async function settle(d, deadlineMs) {
+  const t0 = Date.now();
+  let last = null;
+  for (;;) {
+    const s = await readiness(d).catch(() => null);
+    if (s) {
+      last = s;
+      if (isReady(s)) return s;
+    }
+    if (Date.now() - t0 >= deadlineMs) return last;
+    await sleep(300);
+  }
+}
+
+/**
+ * The campaign's own user ids, filled by the preflight and read by the server observer.
+ *
+ * Empty until a preflight has run, and `srvReport` treats an empty set as "do not partition" - so a
+ * run started with `--no-preflight` judges every line exactly as it did before, rather than
+ * forgiving a stranger's traffic on the strength of a list nobody filled.
+ */
+const SUBJECTS = new Set();
 
 async function preflight(devices, { quiet = false } = {}) {
   const problems = [];
@@ -182,9 +272,15 @@ async function preflight(devices, { quiet = false } = {}) {
     const state = (x) => (x.overlay ? `${x.locked}+overlay` : x.locked);
     const trail = [state(s)];
     for (let pass = 0; pass < MAX_REPAIR_PASSES && !isReady(s); pass++) {
+      // How long this pass will keep asking. It is a DEADLINE, not a delay: `settle` returns the
+      // moment the client is ready, so a repair that works instantly costs nothing. The numbers
+      // below used to be `sleep`s, which charged their full value to every repair including the
+      // ones that had already succeeded - and this loop runs before EVERY job in a phase.
+      let deadlineMs = 8000;
       if (s.locked === 'unlocked' && s.overlay) {
-        console.log(`  fix  ${d.padEnd(3)} ${s.overlay} dialog(s) still open on ${s.path} - dismissing`);
+        console.log(`  fix  ${d.padEnd(3)} ${s.overlay} overlay(s) still up on ${s.path} - dismissing`);
         await dismissOverlay(d);
+        deadlineMs = 3000;
       } else if (s.locked === 'unknown') {
         console.log(`  fix  ${d.padEnd(3)} on ${s.path}, where the PIN gate does not mount - sending it to /chat`);
         const cx = await client(PORTS[d], null, { focus: false });
@@ -194,18 +290,18 @@ async function preflight(devices, { quiet = false } = {}) {
         // reads as stuck. This preflight would have done it on EVERY run touching A1.
         await evaluate(cx, `location.href = ${JSON.stringify(`${ORIGIN[d]}/chat`)}`);
         cx.close();
-        await sleep(5000);
+        deadlineMs = 20000;
       } else if (s.locked === 'booting') {
         // Nothing to repair - the app is coming up. Acting here would type a PIN into a page that
         // has not raised the prompt yet, and then read the failure as the client's.
         console.log(`  wait ${d.padEnd(3)} on ${s.path}, no gate and nothing rendered yet - still booting`);
-        await sleep(3000);
+        deadlineMs = 20000;
       } else {
         console.log(`  fix  ${d.padEnd(3)} PIN gate is up - unlocking`);
         await runScript(['pin.mjs', '--device', d]);
-        await sleep(1500);
+        deadlineMs = 10000;
       }
-      s = await readiness(d).catch(() => s);
+      s = (await settle(d, deadlineMs)) ?? s;
       trail.push(state(s));
     }
 
@@ -230,6 +326,13 @@ async function preflight(devices, { quiet = false } = {}) {
     for (const line of String(r.stdout || '').trim().split('\n').filter(Boolean)) {
       const online = /ONLINE/.test(line);
       if (!online || !quiet) console.log(`  ${online ? 'ok  ' : 'STOP'} ${line}`);
+      // WHO THIS RUN IS ABOUT, taken from the one place that already knows. The gateway answers with
+      // the real user id behind each client, and the server observer needs it to tell our traffic
+      // from a stranger's on a SHARED PRODUCTION server. Derived here rather than configured
+      // anywhere: a subject list that can go stale is worse than no list, because a stale one
+      // forgives the wrong lines.
+      const who = /user=([0-9a-f]{6,})/.exec(line);
+      if (who) SUBJECTS.add(who[1]);
     }
     if (r.status !== 0) problems.push('at least one client is not connected to the gateway - see the lines above');
   }
@@ -326,6 +429,103 @@ if (!flag('no-preflight')) {
   }
 }
 
+/**
+ * REPRODUCIBILITY IS A PROPERTY OF A SEQUENCE OF RUNS, AND NOTHING HERE COULD EXPRESS ONE.
+ *
+ * One green run says the phase passed once. It cannot distinguish "this is stable" from "this check
+ * is dirty one time in four", and that difference is the entire question when a fix is being
+ * accepted - MSG-1b was clean on its own and dirty after `msg1 --cold`, which no single run of
+ * either could have shown.
+ *
+ * `--repeat N` runs the whole selection N times and prints one row per CHECK with its outcome per
+ * pass, so an intermittent one is a row that changes rather than a difference between two scrollbacks
+ * nobody diffs. Each pass re-runs the preflight for every script exactly as a lone run does; nothing
+ * is skipped to make the repeat cheaper, because a cheaper repeat would measure a different thing.
+ */
+const repeat = Math.max(1, Number(argv[argv.indexOf('--repeat') + 1]) || 1);
+const passes = [];
+
+/** One character per verdict, and the legend below the table is generated from this same map. */
+const CELL = {
+  PASS: '.',
+  'PASS-DIRTY': 'D',
+  SLOW: 'W',
+  FAIL: 'F',
+  INCONCLUSIVE: 'I',
+  CAPTURED: 'C',
+};
+
+for (let pass = 1; pass <= repeat; pass++) {
+  if (repeat > 1) console.log(`\n${'='.repeat(60)}\nPASS ${pass}/${repeat}\n${'='.repeat(60)}`);
+  try {
+    passes.push(await runOnce(jobs.map((j) => ({ ...j }))));
+  } catch (e) {
+    // A PASS THAT CANNOT BE SET UP IS A RESULT OF THAT PASS, NOT THE END OF THE RUN. Everything
+    // inside `runOnce` is already isolated - a script that exits non-zero is recorded and the next
+    // one starts - but the SETUP around it was not, so anything thrown by the preflight escaped to
+    // the top level and killed the process. Measured 2026-08-15: one `timeout on Runtime.enable`
+    // between two scripts took passes 3, 4 and 5 of FWD with it, and with them the cross-pass table
+    // that is the only thing able to answer "is it reproducible" - the question the repeat exists
+    // for. Two clean passes were thrown away to report a fault that belonged to one.
+    //
+    // Recorded as BLOCKED, which is the word this file already uses for it and means precisely
+    // this: the instrument could not be brought to a state where the question is askable. It is not
+    // a failure of the application and must never be counted as one.
+    const reason = `pass setup threw: ${e?.message || e}`;
+    console.log(`\n  PASS ${pass} BLOCKED - ${reason}`);
+    passes.push({
+      rows: [],
+      bad: 1,
+      crashed: 0,
+      blocked: jobs.map((j) => ({ ...j, blocked: reason })),
+      server: null,
+      aborted: true,
+    });
+  }
+}
+
+if (repeat > 1) {
+  // The per-check view, which is the only one that answers "is it reproducible".
+  const ids = [...new Set(passes.flatMap((p) => p.rows.map((r) => r.id)))];
+  console.log(`\n${'='.repeat(60)}\nACROSS ${repeat} PASSES\n`);
+  let allClean = true;
+  for (const id of ids) {
+    const cells = passes.map((p) => {
+      const row = p.rows.find((r) => r.id === id);
+      // MAPPED EXPLICITLY, because `verdict[0]` printed `P` for PASS-DIRTY against a legend that
+      // announced `D` - a character in the table that appeared nowhere in the key under it. A
+      // reader who trusts the legend reads a dirty pass as an unknown state, and one who trusts the
+      // first letter reads it as a pass. Anything unrecognised prints `?` rather than a letter that
+      // happens to be first.
+      return row ? (CELL[row.verdict] ?? '?') : '-';
+    });
+    const clean = cells.every((c) => c === '.');
+    allClean &&= clean;
+    console.log(`  ${id.padEnd(20)} ${cells.join(' ')}${clean ? '' : '   <-- not reproducible'}`);
+  }
+  // THE SERVER GETS ITS OWN ROW, because it is the one observer no per-check verdict can carry: the
+  // containers serve every client at once, so its window belongs to the pass rather than to a check.
+  // `-` where the pass never ran: it has no server window at all, and printing `S` there would
+  // report a dirty platform on the strength of a measurement nobody took.
+  const srvCells = passes.map((p) => (p.aborted ? '-' : p.server?.clean ? '.' : 'S'));
+  const srvClean = srvCells.every((c) => c === '.');
+  allClean &&= srvClean;
+  console.log(`  ${'(server window)'.padEnd(20)} ${srvCells.join(' ')}${srvClean ? '' : '   <-- not clean'}`);
+  // `-` is a check that recorded NOTHING on that pass, which is not a pass and must not read as one.
+  // Generated from CELL, so the key can never drift from what the cells actually print.
+  console.log(
+    `\n  ${Object.entries(CELL)
+      .map(([v, c]) => `${c} = ${v}`)
+      .join('   ')}   S = server not clean   ? = unknown verdict   - = no verdict recorded`
+  );
+  console.log(`\n  ${allClean ? `CLEAN ${repeat}/${repeat}` : 'NOT REPRODUCIBLE - see the rows above'}\n`);
+  process.exit(allClean ? 0 : 1);
+}
+
+const last = passes[0];
+process.exit(last.bad || last.crashed || last.blocked.length ? 1 : 0);
+
+async function runOnce(jobs) {
 const startedAt = new Date().toISOString();
 console.log(`\nRUNNING ${jobs.length} script(s)\n`);
 
@@ -358,7 +558,7 @@ for (const job of jobs) {
   process.stdout.write(`  ${job.phase.padEnd(8)} ${job.script.padEnd(22)} `);
   const code = await new Promise((resolve) => {
     const child = spawn(process.execPath, [file, ...args], {
-      cwd: new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
+      cwd: HERE,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let tail = '';
@@ -367,6 +567,26 @@ for (const job of jobs) {
     child.stdout.on('data', (b) => (tail += b));
     child.stderr.on('data', (b) => (tail += b));
     child.on('close', (c) => {
+      /**
+       * THE WHOLE OUTPUT IS KEPT ON DISK, and only the console summary is four lines.
+       *
+       * It used to be `slice(-4)` and nothing else, so everything a check printed above its last
+       * four lines was destroyed at the moment it was read. That is not a small loss: every script
+       * dumps its full observation - `stateChanges`, `unexplained`, the console of both clients -
+       * AFTER its verdict line, and those buckets are where a temporary trace lands. Measured
+       * 2026-08-14: a `LOST frame` reproduced inside a phase run and the instrumentation that
+       * existed to explain it had been thrown away by the runner, so the phase had to be re-run
+       * one script at a time to read what it had already captured once.
+       *
+       * `results.ndjson` does not cover this - it records the VERDICT and its condensed dirt, which
+       * is a different question from what the clients actually said.
+       */
+      job.log = `${LOG_DIR}/${String(job.phase)}-${file.replace(/\.mjs$/, '')}.log`;
+      try {
+        writeFileSync(job.log, tail);
+      } catch (e) {
+        console.log(`\n      (could not write ${job.log}: ${e.message})`);
+      }
       job.tail = tail.split('\n').filter((l) => l.trim()).slice(-4).join('\n      ');
       resolve(c);
     });
@@ -407,5 +627,38 @@ if (blocked.length) {
   console.log(`\n  ${blocked.length} script(s) never ran - the clients were not in a known state:`);
   for (const j of blocked) console.log(`      ${j.script} - ${j.blocked}`);
 }
+/**
+ * THE THIRD OBSERVER, INSIDE THE LOOP - over THIS pass's window, not a window somebody chose.
+ *
+ * The bar is that every line is expected "y compris dans les logs web, mobile, et serveur", and two
+ * of those three were enforced by the checks themselves while the server was enforced by remembering
+ * to run `srvlog.mjs` afterwards with the right `--since`. A bar enforced by memory is not enforced,
+ * and it showed: WP-PREFIX-1 had been 404ing on every channel message for as long as the code
+ * existed, and no browser or phone could ever have seen it.
+ *
+ * Each pass gets its OWN answer rather than one widening window in which pass 1's noise never leaves
+ * - but the windows are CONTIGUOUS, not one-per-pass: `serverWindowFrom` ends where the previous
+ * pass's report ended, so a redeploy landing between two passes is inside one of them. See the
+ * comment on `serverWindowFrom` for the run that was lost to that gap.
+ */
+let server = null;
+const windowFrom = serverWindowFrom;
+serverWindowFrom = new Date().toISOString();
+try {
+  server = srvReport(windowFrom, { subjects: [...SUBJECTS] });
+  console.log(`SERVER (since ${windowFrom})\n`);
+  for (const line of srvSummary(server)) console.log(line);
+  console.log(`\n  ${server.clean ? 'server clean' : 'SERVER NOT CLEAN - run srvlog.mjs --since ' + windowFrom + ' for the lines'}`);
+} catch (e) {
+  // UNREACHABLE IS NOT QUIET. A pass whose server half could not be read has not met the bar, and
+  // saying so is the difference between an unmeasured window and a clean one.
+  server = { clean: false, unreachable: String(e.message || e).slice(0, 200) };
+  console.log(`SERVER UNREADABLE - ${server.unreachable}`);
+}
+
 console.log('');
-process.exit(bad || crashed || blocked.length ? 1 : 0);
+// A dirty SERVER window is a dirty run. It cannot be attributed to one check - the containers serve
+// every client at once - so it counts once, against the pass, which is exactly what it is evidence
+// about.
+return { rows, bad: bad + (server.clean ? 0 : 1), crashed, blocked, server };
+}

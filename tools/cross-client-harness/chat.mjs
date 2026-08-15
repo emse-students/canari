@@ -7,7 +7,7 @@
  *
  * See docs/wiki/cross-client-testing.md section 9 (evidence rule).
  */
-import { RESOLVE, activate, connect, evaluate, listTargets, realClick, until } from './cdp.mjs';
+import { RESOLVE, activate, clickAtPoint, connect, evaluate, listTargets, pressKey, realClick, until } from './cdp.mjs';
 
 // SCOPED TO THE CHAT, and that scoping is the whole point.
 //
@@ -107,11 +107,404 @@ export async function client(port, match = null, { focus = true } = {}) {
  * `ensureChat` there - which is also the more faithful path, since a real user clicks.
  */
 export async function goto(cx, path) {
+  const before = cx.events.length;
   await cx.send('Page.navigate', { url: `${await origin(cx)}${path}` });
   await until(cx, `document.readyState === 'complete'`, 20000);
+  const ms = await awaitGatewayConnected(cx, before);
+  if (ms === null) console.log(`  [goto] ${path}: no gateway connection line within 30 s - the client may still be coming up`);
+  return ms;
+}
+
+/**
+ * Waits for the socket the navigation just tore down to come back, and RETURNS HOW LONG IT TOOK.
+ *
+ * A NAVIGATION IS A DISCONNECTION, and `readyState === 'complete'` says nothing about it. Every
+ * `goto` reloads the SPA, which drops the gateway socket and opens a new one; the composer renders
+ * from cached data long before that finishes. A check that sends in that window measures its own
+ * navigation - MSG-5 failed exactly there on 2026-08-13 (`copies.A1: 0`, `latency.A1: null`) and
+ * passed alone four minutes later with A1 at 547 ms, the difference being nothing but how much of
+ * the phone's boot had gone by. The phone shows it worst because `openChannel` navigated it at all,
+ * against `goto`'s own written rule, but the window exists on every client.
+ *
+ * The proof is the app's own line, `[WS] Connected to Chat Gateway`, and it is only asked for after
+ * an event index taken BEFORE the navigation - so it can never be satisfied by the connection that
+ * was already there, which is the trap in every "is it connected yet" probe. A client that is not
+ * navigating cannot use this: it has nothing to wait for. That question is `presence.mjs`, which
+ * asks the gateway instead of the client.
+ *
+ * @returns milliseconds waited, or `null` if the line never came - never an exception, because a
+ *   check that dies here reports a harness failure where there may be a real one.
+ */
+export async function awaitGatewayConnected(cx, sinceIndex, timeoutMs = 30000) {
+  const started = Date.now();
+  const CONNECTED = /\[WS\] Connected to Chat Gateway/;
+  for (;;) {
+    for (let i = sinceIndex; i < cx.events.length; i++) {
+      const ev = cx.events[i];
+      if (ev.method !== 'Runtime.consoleAPICalled') continue;
+      const text = (ev.params?.args || []).map((a) => String(a.value ?? '')).join(' ');
+      if (CONNECTED.test(text)) return Date.now() - started;
+    }
+    if (Date.now() - started > timeoutMs) return null;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+/**
+ * Waits for a request matching `pattern` to be SENT, and returns its `requestId`.
+ *
+ * Needed by any check that must act while something is in flight: an event that has already been
+ * observed is the only honest way to know a window is open, and `Network.enable` must be on before
+ * the window can be entered - a listener attached afterwards can only ever see the end of it.
+ *
+ * `pattern` is a RegExp OR a predicate over the url. The predicate form exists because the
+ * interesting request is often a SIBLING of an uninteresting one on the same path - the history
+ * route serves a `limit=1` existence probe and a `limit=1000` replay page from the same URL - and
+ * a regex that encodes "this one but not that one" is unreadable at the call site, which is where
+ * the distinction has to be obvious.
+ *
+ * @returns the requestId, or `null` if nothing matched before the deadline.
+ */
+export async function awaitRequest(cx, pattern, sinceIndex, timeoutMs = 25000) {
+  const started = Date.now();
+  const matches = typeof pattern === 'function' ? pattern : (url) => pattern.test(url);
+  for (;;) {
+    for (let i = sinceIndex; i < cx.events.length; i++) {
+      const ev = cx.events[i];
+      if (ev.method === 'Network.requestWillBeSent' && matches(ev.params?.request?.url || '')) {
+        return ev.params.requestId;
+      }
+    }
+    if (Date.now() - started > timeoutMs) return null;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+/**
+ * Waits until nothing matching `pattern` has been SENT for `quietMs`, and nothing is still in flight.
+ *
+ * The precondition of any check that wants to observe ONE load: a page that has just been navigated
+ * to is still running its own bootstrap, and a check that acts during it is racing something it does
+ * not control. MSG-1b was non-deterministic for exactly that reason - its primer sometimes reached
+ * the receiver while the conversation-list bootstrap was still replaying, which consumed it and left
+ * the deliberate cold open with nothing new to fetch. Quiescence is the fact that ends the bootstrap;
+ * a sleep is a guess about it.
+ *
+ * @returns milliseconds waited, or `null` if it never went quiet before the deadline.
+ */
+export async function awaitRequestsQuiet(cx, pattern, { quietMs = 3000, timeoutMs = 30000 } = {}) {
+  const matches = typeof pattern === 'function' ? pattern : (url) => pattern.test(url);
+  const started = Date.now();
+  let inFlight = new Set();
+  let lastActivity = Date.now();
+  let cursor = 0;
+  for (;;) {
+    for (; cursor < cx.events.length; cursor++) {
+      const ev = cx.events[cursor];
+      if (ev.method === 'Network.requestWillBeSent' && matches(ev.params?.request?.url || '')) {
+        inFlight.add(ev.params.requestId);
+        lastActivity = Date.now();
+      } else if (
+        (ev.method === 'Network.loadingFinished' || ev.method === 'Network.loadingFailed') &&
+        inFlight.delete(ev.params?.requestId)
+      ) {
+        lastActivity = Date.now();
+      }
+    }
+    if (inFlight.size === 0 && Date.now() - lastActivity >= quietMs) return Date.now() - started;
+    if (Date.now() - started > timeoutMs) return null;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+/**
+ * Every matching request URL sent since `sinceIndex`, in order.
+ *
+ * The companion of `awaitRequest` for the case where it returns `null`: "the request I wanted never
+ * came" has several causes and they need different fixes, and the ones that DID come name which.
+ * A check that reports only the absence sends its reader looking in the wrong place.
+ */
+export function requestsSince(cx, pattern, sinceIndex = 0) {
+  const matches = typeof pattern === 'function' ? pattern : (url) => pattern.test(url);
+  return cx.events
+    .slice(sinceIndex)
+    .filter((ev) => ev.method === 'Network.requestWillBeSent' && matches(ev.params?.request?.url || ''))
+    .map((ev) => ev.params.request.url);
+}
+
+/** Has that request finished (or failed) yet? The question "is the window still open" asked exactly. */
+export function requestSettled(cx, requestId) {
+  return cx.events.some(
+    (ev) =>
+      (ev.method === 'Network.loadingFinished' || ev.method === 'Network.loadingFailed') &&
+      ev.params?.requestId === requestId
+  );
 }
 
 export const origin = (cx) => evaluate(cx, 'location.origin');
+
+/**
+ * A CLIENT THAT CAN BE DRIVEN: past the PIN gate, with something actually rendered.
+ *
+ * The sibling of `run.mjs`'s `READY`, deliberately narrower. That one has to TELL APART `LOCKED`,
+ * `booting` and `unknown` because it repairs each differently; a check only ever needs the single
+ * boolean, and giving it the richer probe would tempt it into repairing things mid-measurement.
+ *
+ * `readyState === 'complete'` is NOT this condition and never was: it goes complete while the app is
+ * still deciding whether the encryption key is available, so it certifies a client one second away
+ * from raising a PIN prompt. Something RENDERED is the proof.
+ */
+export const APP_READY = `(function () {
+  if (document.querySelector('#encryption-pin')) return false;
+  return document.querySelectorAll('aside button, nav button').length > 0;
+})()`;
+
+/**
+ * Waits for a reloaded or relaunched client to be usable, and FAILS on the deadline.
+ *
+ * Every caller of this used to be `await sleep(6000)` - or 10 000, or 12 000, each number a guess
+ * about the slowest machine anyone had tried. That costs both ways at once: on a fast run it burns
+ * the whole budget after the app has been ready for five seconds, and on a slow one it hands the
+ * next line a client that is not up yet, which then fails as though the application were broken.
+ * Polling a fact does neither. The number stops being a duration and becomes what it should always
+ * have been - the point past which we no longer believe the client is coming back.
+ */
+export async function awaitAppReady(cx, timeoutMs = 30000) {
+  return until(cx, APP_READY, timeoutMs);
+}
+
+/**
+ * POLLS A HOST-SIDE FACT TO A DEADLINE - the shape `sleep(n)` is standing in for almost everywhere.
+ *
+ * `until` polls a PAGE-SIDE expression, which covers the cases where the whole question fits in one
+ * `Runtime.evaluate`. It does not cover the ones where the fact is assembled here - two clients
+ * compared, a count plus a DOM read, adb output beside a browser state - and those are exactly the
+ * call sites that had settled on a fixed sleep.
+ *
+ * The user's standing rule on this: "il faudrait utiliser un minimum de sleep. A la limite au bout
+ * d'un moment on considere que le temps alloue etait trop long et on passe en fail, mais sinon ca se
+ * traduit par des attentes interminables alors que le process est deja fini depuis longtemps". Both
+ * halves are here - it returns the instant the fact holds, and the deadline expiring is a RESULT
+ * (`ok: false`) the caller must judge, never a thrown error that reads as an instrument failure.
+ *
+ * The predicate's own return value comes back too, so a caller does not have to compute it twice.
+ *
+ * @param {() => Promise<any>} fn truthy when the fact holds
+ * @returns {Promise<{ok: boolean, elapsedMs: number, value: any}>}
+ */
+export async function pollFact(fn, { timeoutMs = 15000, everyMs = 400 } = {}) {
+  const t0 = Date.now();
+  for (;;) {
+    const value = await fn();
+    if (value) return { ok: true, elapsedMs: Date.now() - t0, value };
+    if (Date.now() - t0 >= timeoutMs) return { ok: false, elapsedMs: Date.now() - t0, value };
+    await new Promise((r) => setTimeout(r, everyMs));
+  }
+}
+
+/**
+ * A COUNT THAT HAS STOPPED CHANGING - the honest form of "wait, then count".
+ *
+ * Counting a marker is the campaign's central measurement, and the question is almost never "has it
+ * arrived" (`awaitMessage` answers that) but "has a SECOND copy arrived" - a duplicate, the class
+ * this whole campaign exists to see. That is the absence of an event, and no fact can be waited on
+ * for it, which is why every call site had settled on `sleep(2500)` and a single read.
+ *
+ * A fixed sleep answers a different question than the one asked, in both directions: it reports a
+ * duplicate that lands at 2 600 ms as absent, and it charges 2.5 s to the ninety-nine reads where
+ * nothing was ever going to change. Stability is the observable that was wanted: poll, and return as
+ * soon as the value has held still for `quietMs`. The common case returns almost at once.
+ *
+ * `settled: false` IS A RESULT, not an error. A count still moving at the deadline means the system
+ * had not finished doing whatever it was doing, so the number is not evidence of anything - the
+ * caller must record that rather than quietly treat a snapshot of a moving value as a measurement.
+ */
+export async function settledCount(cx, marker, { quietMs = 700, timeoutMs = 8000 } = {}) {
+  const t0 = Date.now();
+  let value = await countMessage(cx, marker);
+  let since = Date.now();
+
+  while (Date.now() - t0 < timeoutMs) {
+    if (Date.now() - since >= quietMs) return { count: value, settled: true, elapsedMs: Date.now() - t0 };
+    await new Promise((r) => setTimeout(r, 120));
+    const now = await countMessage(cx, marker);
+    if (now !== value) {
+      value = now;
+      since = Date.now();
+    }
+  }
+  return { count: value, settled: false, elapsedMs: Date.now() - t0 };
+}
+
+/**
+ * WHAT IS COVERING THE SCREEN RIGHT NOW - the two shapes, found STRUCTURALLY.
+ *
+ * Both are read from geometry and ARIA rather than from a class or a caption, because both of those
+ * drift: the classes are Tailwind utilities rewritten whenever the design is touched, and the
+ * captions are Paraglide strings that differ between `fr` and `en`. A selector built on either would
+ * pass here and silently match nothing on the day it mattered.
+ *
+ *   - A DIALOG is `[role=dialog][aria-modal=true]` - what `Modal.svelte`, `ConfirmDialog.svelte` and
+ *     `FullScreenViewer.svelte` all render, and all three close on Escape.
+ *   - A BACKDROP is a visible `button` covering nearly the whole viewport. That is the universal
+ *     shape of a dismiss-on-outside-click sheet, and it is the ONLY handle on the one that matters
+ *     most here: `MessageMobileActions.svelte` has no role, no `aria-modal` and NO Escape handler,
+ *     so a dialog-only sweep would report the screen clear while a mobile action sheet still owns
+ *     every click. It is `md:hidden`, which means A1 and a narrow browser, and it is exactly what a
+ *     long-press check leaves behind when it dies.
+ */
+export const OVERLAYS = `(function () {
+  var out = [];
+  var vis = function (e) {
+    var r = e.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return null;
+    var s = getComputedStyle(e);
+    if (s.visibility === 'hidden' || s.display === 'none' || s.opacity === '0') return null;
+    return r;
+  };
+  [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true]')).forEach(function (d) {
+    if (vis(d)) out.push({ kind: 'dialog', label: (d.getAttribute('aria-label') || '').slice(0, 60) });
+  });
+  var area = window.innerWidth * window.innerHeight;
+  [].slice.call(document.querySelectorAll('button')).forEach(function (b) {
+    var r = vis(b);
+    if (r && r.width * r.height >= 0.8 * area) {
+      out.push({ kind: 'backdrop', label: (b.getAttribute('aria-label') || '').slice(0, 60) });
+    }
+  });
+  return JSON.stringify(out);
+})()`;
+
+/**
+ * Leaves the screen with nothing covering it, and REPORTS what it had to remove.
+ *
+ * This is the half of check isolation that no assertion can replace. Every other precondition in
+ * this file answers "am I in the right place"; none of them answers "can I click", and a client can
+ * satisfy all of them with a modal on top - `ensureConversation` reads the header, which is still
+ * there BEHIND the dialog, so it returns `already` and the next `realClick` dies with `no stable
+ * element`. That is not a hypothetical: it is the aftermath that killed four MSG scripts in a row
+ * once one of them crashed with a sheet open.
+ *
+ * The return value is EVIDENCE, not bookkeeping. An empty array means the previous check left the
+ * rig clean; anything else names debris, and the runner prints it precisely because a check that
+ * leaves a modal behind is a fault in that check even when its own verdict was PASS.
+ *
+ * Idempotent and cheap: the common case is one round trip and no key press. Escape first because it
+ * is what dismisses a dialog, the backdrop click second because the sheets that ignore Escape only
+ * close on an outside click. Bounded at four rounds - a modal that survives all four is reported and
+ * left alone rather than beaten on, since `Modal.svelte` can be constructed non-dismissible and
+ * clicking blindly at that point would be pressing whatever button happens to be under the cursor.
+ *
+ * A DIALOG THAT IGNORES ESCAPE STILL HAS A CLOSE CONTROL, and giving up before using it is what made
+ * this function poison a whole run. On 2026-08-14 the create-channel modal came up on W1 with focus
+ * in its text input; Escape did nothing, this reported `STUCK ... left alone`, and every one of the
+ * eleven checks after MSG-5 was BLOCKED against a client that one click would have freed.
+ *
+ * So Escape escalates to the dialog's OWN close control - found structurally, never by caption:
+ * a visible, enabled, icon-only button (no innerText) whose centre sits in the dialog's top-right
+ * corner. `[aria-label="Fermer"]` is not usable here and the previous attempt at this proved it -
+ * that caption is a Paraglide string that reads "Close" on an `en` client. The icon-only rule is
+ * also what keeps this safe: every confirming control in this app carries a word ("Creer le canal",
+ * "Supprimer"), so a button with no text cannot be one, and nothing here can confirm a destructive
+ * action by accident.
+ */
+export async function clearOverlays(cx) {
+  const read = async () => JSON.parse(await evaluate(cx, OVERLAYS));
+  const cleared = [];
+  const TAG = 'data-harness-backdrop';
+  const CLOSE = 'data-harness-close';
+  let escaped = false;
+  let closeClicked = false;
+
+  /** Tags the dialog's icon-only top-right control, and says whether there was one. */
+  const tagCloseControl = async () =>
+    (await evaluate(
+      cx,
+      `(function () {
+        var d = document.querySelector('[role=dialog][aria-modal=true]');
+        if (!d) return 'no-dialog';
+        var dr = d.getBoundingClientRect();
+        var hit = [].slice.call(d.querySelectorAll('button')).filter(function (b) {
+          if (b.disabled) return false;
+          if ((b.innerText || '').trim()) return false;
+          var r = b.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) return false;
+          var cx0 = r.left + r.width / 2;
+          var cy0 = r.top + r.height / 2;
+          return cx0 > dr.left + dr.width / 2 && cy0 < dr.top + dr.height / 2;
+        })[0];
+        if (!hit) return 'none';
+        hit.setAttribute('${CLOSE}', '1');
+        return 'tagged';
+      })()`
+    )) === 'tagged';
+
+  for (let round = 0; round < 4; round += 1) {
+    const found = await read();
+    if (found.length === 0) return cleared;
+
+    const dialog = found.find((o) => o.kind === 'dialog');
+    let escalationLeft = false;
+    if (dialog) {
+      if (!escaped) {
+        await pressKey(cx, 'Escape');
+        escaped = true;
+        escalationLeft = true;
+      } else if (!closeClicked && (await tagCloseControl())) {
+        closeClicked = true;
+        try {
+          await realClick(cx, `[${CLOSE}]`);
+        } finally {
+          await evaluate(
+            cx,
+            `(function () { var e = document.querySelector('[${CLOSE}]'); if (e) e.removeAttribute('${CLOSE}'); return 'cleared'; })()`
+          );
+        }
+      }
+    } else {
+      // Tag then click the tagged element, so the click addresses exactly what the predicate chose -
+      // the same rule `openConversation` learnt the hard way. The tag is always removed: a stray one
+      // would be picked up by the next call, which is how a harness fix becomes a harness fault.
+      await evaluate(
+        cx,
+        `(function () {
+          var area = window.innerWidth * window.innerHeight;
+          var b = [].slice.call(document.querySelectorAll('button')).filter(function (e) {
+            var r = e.getBoundingClientRect();
+            return r.width * r.height >= 0.8 * area;
+          })[0];
+          if (b) b.setAttribute('${TAG}', '1');
+          return b ? 'tagged' : 'gone';
+        })()`,
+      );
+      try {
+        await realClick(cx, `[${TAG}]`);
+      } finally {
+        await evaluate(
+          cx,
+          `(function () { var e = document.querySelector('[${TAG}]'); if (e) e.removeAttribute('${TAG}'); return 'cleared'; })()`,
+        );
+      }
+    }
+
+    // Wait on the FACT that the count dropped, never on a duration: these panels animate out over
+    // 180-220 ms and a fixed sleep would be either flaky or slower than every check that calls this.
+    const before = found.length;
+    await until(cx, `JSON.parse(${OVERLAYS}).length < ${before}`, 3000).catch(() => null);
+
+    const after = await read();
+    // NOT STUCK WHILE AN ESCALATION IS STILL OWED. Declaring it on the first failed Escape is what
+    // let one unclosed modal block eleven checks: the verdict was reached before the repair that
+    // would have worked had been tried.
+    if (after.length >= before && !escalationLeft) {
+      const stuck = found.map((o) => `${o.kind}${o.label ? `(${o.label})` : ''}`).join(', ');
+      console.log(`[overlay] STUCK after ${round + 1} attempt(s): ${stuck} - left alone, not forced`);
+      return cleared.concat(found.map((o) => ({ ...o, stuck: true })));
+    }
+    cleared.push(...found.filter((o) => !after.some((a) => a.kind === o.kind && a.label === o.label)));
+  }
+  return cleared;
+}
 
 /** Click the sidebar/list entry whose visible text contains `name`, and wait for the composer. */
 /**
@@ -121,7 +514,31 @@ export const origin = (cx) => evaluate(cx, 'location.origin');
  * user's click does not, and that difference is itself a bug this campaign has already found once.
  */
 export async function ensureChat(cx) {
+  // BEFORE the route test, not after: an overlay is what stops the clicks below from landing, and
+  // the early return would otherwise hand back `already` for a screen nothing can be clicked on.
+  await clearOverlays(cx);
   if ((await evaluate(cx, 'location.pathname')) === '/chat') return 'already';
+
+  // LEAVE THE OPEN CONVERSATION FIRST, ON A PHONE. The mobile layout gives the whole screen to the
+  // conversation, so the "Discussions" link is not on it and `realClick` dies with `no stable
+  // element` - which reads as a broken app and is a layout. It cost MSG-8 and MSG-8b a whole run.
+  //
+  // Addressed by its ACCESSIBLE NAME rather than a class: that string is what a screen reader
+  // announces, so it is the one part of this control that cannot change silently. Visibility is
+  // tested, not merely presence - the desktop layout keeps the list beside the conversation and has
+  // no such control on screen, and clicking a hidden one would navigate a browser out of its view.
+  const BACK = '[aria-label="Retour au menu"]';
+  const backVisible = `(function () {
+    var b = document.querySelector('${BACK}');
+    if (!b) return false;
+    var r = b.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  })()`;
+  if (await evaluate(cx, backVisible)) {
+    await realClick(cx, BACK);
+    await until(cx, `!document.querySelector('${COMPOSER}')`, 8000).catch(() => null);
+  }
+
   await realClick(cx, 'text=Discussions');
   await until(cx, `location.pathname === '/chat'`, 15000);
   return 'navigated';
@@ -139,24 +556,157 @@ export async function openDM(cx, name) {
   return openConversation(cx, name);
 }
 
-/** Opens the campaign's channel: community "Campagne de test", channel `general`. */
+/**
+ * Waits until the app has stopped MOVING - not until a duration has passed.
+ *
+ * THE STATE THIS NAMES. `MainChatPage` puts its status strips ("En attente de connexion",
+ * "Synchronisation des messages...") IN THE LAYOUT FLOW, above `main`. Each one therefore shoves the
+ * entire application down by its own height when it appears and lets it snap back when it goes -
+ * 29 px, measured. A startup sync raises one at ~480 ms and drops it at ~2 286 ms, and every
+ * `openChannel` meets that window because it navigates.
+ *
+ * WHY A CHECK MUST WAIT FOR IT. On 2026-08-14 a click aimed at the `general` row was received by the
+ * "Ajouter un canal" button 29 px below it: the strip vanished between the hit test and the dispatch.
+ * `stableCentreOf` cannot see that coming - it proves the point belonged to the element 120 ms ago,
+ * and no amount of re-proving it removes a race against a layout that is still settling. So the
+ * precondition is a STATE, read off the page: no status strip up, and `main` at the same offset for
+ * three consecutive reads. That is what a human tester waits for without noticing they do.
+ *
+ * At rest this returns almost immediately - measured 481 samples over 30 s with zero transitions.
+ */
+export async function awaitAppSettled(cx, timeoutMs = 20000) {
+  const READ = `(function () {
+    var strip = null, all = document.querySelectorAll('div');
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i].getBoundingClientRect();
+      if (!(r.height > 0 && r.height < 60 && r.top < 120)) continue;
+      var t = (all[i].innerText || '').trim();
+      if (/^(Synchronisation|En attente)/.test(t)) { strip = t.replace(/\\s+/g, ' ').slice(0, 32); break; }
+    }
+    var m = document.querySelector('main');
+    return JSON.stringify({ strip: strip, top: m ? Math.round(m.getBoundingClientRect().top) : null });
+  })()`;
+
+  const t0 = Date.now();
+  let stable = 0;
+  let last = null;
+  while (Date.now() - t0 < timeoutMs) {
+    const now = await evaluate(cx, READ);
+    const { strip } = JSON.parse(now);
+    stable = !strip && now === last ? stable + 1 : 0;
+    last = now;
+    if (stable >= 2) return Date.now() - t0;
+    await new Promise((r) => setTimeout(r, 80));
+  }
+  // NOT AN ERROR. A page that keeps moving is a finding for the caller to carry into its own
+  // failure, not a reason to abort here - and a check that clicks anyway will now SAY that it did.
+  return null;
+}
+
+/**
+ * Opens the campaign's channel: community "Campagne de test", channel `general`.
+ *
+ * THE FAILURE CARRIES THE SCREEN, because the bare timeout did not and cost a whole run to diagnose.
+ * `until() timed out: !!document.querySelector('.chat-composer-editor')` says the composer never
+ * came; it does not say that the click had opened the CREATE-CHANNEL modal instead, which is what
+ * had happened on 2026-08-14 - and since the modal then swallowed every later click, four checks
+ * accused an application that was working. A click is dispatched at COORDINATES, so what received it
+ * is a fact the harness can read and must: `realClick` returns the point, and the hit test below
+ * names the element that was actually under it.
+ */
 export async function openChannel(cx, community = 'Campagne de test', channel = 'general') {
+  /** The screen, at the moment something did not happen. */
+  const screen = async (point) =>
+    JSON.parse(
+      await evaluate(
+        cx,
+        `(function () {
+          var at = ${point ? `document.elementFromPoint(${point.x}, ${point.y})` : 'null'};
+          return JSON.stringify({
+            // The FULL url, not just the pathname: a channel is selected in the query string, so
+            // the bare path cannot say whether the click selected anything. NO BACKTICKS IN HERE -
+            // this comment lives inside a template literal, and a quoted identifier would close it.
+            url: location.pathname + location.search,
+            dialogs: [].slice.call(document.querySelectorAll('[role=dialog][aria-modal=true]'))
+              .map(function (d) { return d.getAttribute('aria-label') || '(unlabelled)'; }),
+            hitAt: at ? (at.tagName + (at.innerText || '').trim().slice(0, 40)) : null,
+            composer: !!document.querySelector('.chat-composer-footer .chat-composer-editor')
+          });
+        })()`
+      )
+    );
+
   await goto(cx, '/communities');
   await until(cx, `!!${RESOLVE}('text=${community}')`, 20000);
+  // SETTLE BEFORE EVERY CLICK, not once at the top: the community click itself starts work that can
+  // raise a strip again, so the state has to be re-established rather than assumed to persist.
+  const settledBefore = await awaitAppSettled(cx);
   await realClick(cx, `text=${community}`);
   await until(cx, `!!${RESOLVE}('text=${channel}')`, 15000);
-  await realClick(cx, `text=${channel}`);
-  await until(cx, `!!document.querySelector('${'.chat-composer-footer .chat-composer-editor'}')`, 15000);
+  const settledAfter = await awaitAppSettled(cx);
+  const point = await realClick(cx, `text=${channel}`);
+
+  // HIT-TEST NOW, NOT AT THE FAILURE. This used to read `elementFromPoint` only inside the catch -
+  // fifteen seconds after the click - and then present the answer as `hitAtClick`, which it was not.
+  // On 2026-08-14 that named the "Ajouter un canal" button as the thing clicked and sent a whole
+  // diagnosis chasing a locator bug, when `stableCentreOf` had already pinned the row and hit-tested
+  // the exact integer coordinates it was about to dispatch. A report must carry the evidence that
+  // separates the causes it cannot itself distinguish: `atClick` says whether the click LANDED,
+  // `atFailure` says what the page became while nothing happened. The two together tell a missed
+  // click apart from a channel that opened and never rendered its composer.
+  const atClick = await screen(point);
+
+  // AND THE CLICK ITSELF, which is the only witness that separates the two causes above. `atClick`
+  // once reported the create-channel modal covering the very coordinates `stableCentreOf` had just
+  // cleared - a contradiction no reading of the page can resolve, because both readings describe a
+  // moment the click did not happen. `realClick` now records what received it: if that is not the
+  // channel row, the click MISSED, and no amount of waiting for a composer is going to say so.
+  const received = point.received;
+  const hitTheRow =
+    received && `${received.text} ${received.label}`.toLowerCase().includes(channel.toLowerCase());
+
+  try {
+    if (received && !hitTheRow) throw new Error('click landed elsewhere');
+    await until(cx, `!!document.querySelector('.chat-composer-footer .chat-composer-editor')`, 15000);
+  } catch {
+    const atFailure = await screen(point);
+    throw new Error(
+      `openChannel: no composer in ${community}/${channel} - ${JSON.stringify({
+        clickedAt: { x: point.x, y: point.y },
+        received,
+        hitTheRow,
+        // null means the app was STILL MOVING when it was clicked - the one condition under which a
+        // verified coordinate can still deliver the click somewhere else.
+        settledBefore,
+        settledAfter,
+        atClick,
+        atFailure,
+      })}`
+    );
+  }
   return `${community}/${channel}`;
 }
 
 export async function openConversation(cx, name) {
+  // SEARCH THE SIDEBAR, NEVER THE DOCUMENT.
+  //
+  // This used to look at every button/link on the page and take the shortest match. The peer's name
+  // is not unique on that page: it labels their message rows, and - the case that actually broke
+  // MSG-4 - the author link above a REPLY quote, whose innerText is EXACTLY the name and therefore
+  // always shorter than the sidebar row's ("<name>\n<last message preview>"). So the shortest-match
+  // rule preferred it, the click navigated to `/profile/<hash>`, and the next `until()` waited 15 s
+  // for a composer on a profile page before dying. The check did not fail where the fault was.
+  //
+  // `.sidebar-panel` is a stable hook added to the conversation list for this (its `aria-label` is
+  // localized prose, so it cannot be the selector). Scoping first also means the shortest-match rule
+  // now only ever chooses BETWEEN CONVERSATION ROWS, which is what it was written for.
+  const scope = `(document.querySelector('.sidebar-panel') || document.body)`;
   // The list is fetched, so it is EMPTY for the first few hundred ms after a navigation. Failing
   // on the first look would make every check that navigates flaky for a reason that is the
   // harness's, not the app's.
   const find = `(function () {
       var wanted = ${JSON.stringify(name)}.toLowerCase();
-      var els = [].slice.call(document.querySelectorAll('button, [role=button], a, li'));
+      var els = [].slice.call(${scope}.querySelectorAll('button, [role=button], a, li'));
       var best = els.filter(function (e) {
         var t = (e.innerText || '').trim();
         return t && t.toLowerCase().indexOf(wanted) !== -1 && e.getBoundingClientRect().width > 0;
@@ -169,9 +719,74 @@ export async function openConversation(cx, name) {
   await until(cx, `${find} !== null`, 20000);
   const hit = await evaluate(cx, find);
   if (!hit) throw new Error(`no conversation entry matching ${name}`);
-  await realClick(cx, `text=${hit.split('\n')[0]}`);
+
+  // CLICK THE ELEMENT WE FOUND, not a description of it.
+  //
+  // This used to hand `realClick` a `text=<first line>` selector, so the element was located
+  // TWICE by two different rules - and the second one is ambiguous by construction: a peer's name
+  // appears in the DM row AND in the preview line of every group they were added to ("<peer> a
+  // ajoute <owner> au groupe"). Eight elements matched on W2, `realClick` picked one that
+  // failed its own hit test, and the check died with `no stable element` - after the reload only,
+  // because until then the conversation was already open and nothing ever clicked.
+  //
+  // The found element is tagged instead, so the click addresses exactly what the search chose.
+  // The attribute is removed afterwards: a stray marker left in the DOM would be picked up by the
+  // NEXT call, which is how a harness fix becomes the next harness fault.
+  const TAG = 'data-harness-open-conversation';
+  await evaluate(cx, find.replace('return best[0].innerText.trim().slice(0, 60);', `best[0].setAttribute('${TAG}', '1'); return best[0].innerText.trim().slice(0, 60);`));
+  try {
+    await realClick(cx, `[${TAG}]`);
+  } finally {
+    await evaluate(cx, `(function () { var e = document.querySelector('[${TAG}]'); if (e) e.removeAttribute('${TAG}'); return 'cleared'; })()`);
+  }
   await until(cx, `!!document.querySelector('${COMPOSER}')`, 15000);
   return hit;
+}
+
+/**
+ * What the OPEN conversation's header names. `''` when no conversation is open.
+ *
+ * The single source of truth for "which conversation am I looking at" - {@link SAMPLE} reads it too,
+ * so the answer cannot drift between a sample and a precondition.
+ */
+export const HEADER_NAME = `(function () {
+  var c = document.querySelector('${COMPOSER}');
+  var pane = c ? c.closest('section') : null;
+  var h = pane ? pane.querySelector('header') : null;
+  return h ? h.innerText.replace(/[\\r\\n]+/g, ' ').trim().slice(0, 80) : '';
+})()`;
+
+/**
+ * Guarantees `name`'s conversation is the OPEN one, and PROVES it before returning.
+ *
+ * A COMPOSER ON SCREEN PROVES THAT SOME CONVERSATION IS OPEN, NEVER WHICH ONE. Several checks
+ * inferred the second from the first - `msg8`/`msg8b` carried "A1 is already in the DM, so only open
+ * it when the composer is absent". On 2026-08-13 A1 had been left in the campaign CHANNEL by an
+ * earlier check, so the open composer satisfied that test, the DM was never opened, and three MSG-8
+ * markers went to the channel while the receiver watched the DM. The check reported a delivery loss
+ * that had not happened - the harness's own fault #29 wearing the costume of one.
+ *
+ * The header is the only thing that NAMES the open conversation, so it is what the precondition
+ * tests, and it is re-read AFTER opening: a check may not proceed on an unverified assumption about
+ * where its own traffic is going. Cheap, too - the common case is one CDP round trip and no click.
+ */
+export async function ensureConversation(cx, name) {
+  const wanted = name.toLowerCase();
+  const named = async () => (await evaluate(cx, HEADER_NAME)).toLowerCase();
+
+  // The header is readable THROUGH a modal, so the `already` branch is precisely the one that would
+  // certify a screen a check cannot then use. Clear first, and the precondition means what it says.
+  await clearOverlays(cx);
+  if ((await named()).includes(wanted)) return 'already';
+
+  await ensureChat(cx);
+  await openConversation(cx, name);
+
+  const now = await named();
+  if (!now.includes(wanted)) {
+    throw new Error(`wrong conversation open: header says ${JSON.stringify(now)}, wanted ${name}`);
+  }
+  return 'opened';
 }
 
 /**
@@ -201,15 +816,129 @@ export function countMessage(cx, marker) {
 }
 
 /**
- * Type into the composer and send.
+ * ONE sample of the receiver: the marker's count PLUS the facts that say what a zero means.
  *
- * The composer is a contenteditable (`mention-composer-editor`), so the value cannot be assigned:
- * Svelte never sees it. Focus with a real click, then Input.insertText, then activate the send
- * button. Returns the client-side timestamp of the send.
+ * A bare count cannot be interpreted. Zero has three readings and they need different fixes:
+ * the PANE is gone (composer unmounted, `PANE_TEXT` degrades to '' and every count reads 0), the
+ * MESSAGE is gone, or the harness is looking at the wrong conversation. So every sample carries the
+ * composer's presence, the pane's size, the WHOLE BODY's count and which conversation the header
+ * names - a marker in the body but not in the pane is the sidebar preview of a conversation nobody
+ * opened, a harness fault wearing the costume of a delivery loss (fault #29, 2026-08-12).
  */
-export async function send(cx, text) {
+export const SAMPLE = (marker) => `(function () {
+  var c = document.querySelector('${COMPOSER}');
+  var pane = c ? c.closest('section') : null;
+  var text = pane ? pane.innerText : '';
+  var draft = c ? (c.innerText || '').trim() : '';
+  var net = draft ? text.split(draft).join('') : text;
+  return JSON.stringify({
+    composer: !!c,
+    paneChars: text.length,
+    netChars: net.length,
+    draftChars: draft.length,
+    count: net.split(${JSON.stringify(marker)}).length - 1,
+    bodyCount: (document.body.innerText || '').split(${JSON.stringify(marker)}).length - 1,
+    header: ${HEADER_NAME}
+  });
+})()`;
+
+/** Take a single {@link SAMPLE}. */
+export async function sample(cx, marker) {
+  return JSON.parse(await evaluate(cx, SAMPLE(marker)));
+}
+
+/**
+ * Watch a delivery CONTINUOUSLY instead of reading it twice.
+ *
+ * TWO READINGS CANNOT CLASSIFY WHAT THEY FIND. MSG-1 returned `latencyMs: 987` and
+ * `copiesOnReceiver: 0` in the same record (2026-08-12): both readings were honest, and between
+ * them the message had been rendered and then dropped. A check that can fail BY DISAPPEARANCE has
+ * to sample across the whole window, so use this - not `awaitMessage` + `countMessage` - wherever
+ * the message's absence is the thing being measured.
+ *
+ * Stops early once the marker has been seen and has then held still for `settleMs`, so the common
+ * case stays fast; a message that never arrives costs the full `timeoutMs`.
+ */
+export async function traceArrival(cx, marker, { timeoutMs = 15000, everyMs = 250, settleMs = 3000 } = {}) {
+  const t0 = Date.now();
+  const samples = [];
+  let firstSeen = null;
+  let lost = null;
+  let regained = null;
+  while (Date.now() - t0 < timeoutMs) {
+    const s = await sample(cx, marker);
+    const at = Date.now() - t0;
+    samples.push({ at, ...s });
+    if (s.count > 0 && firstSeen === null) firstSeen = at;
+    if (firstSeen !== null && s.count === 0 && lost === null) lost = at;
+    if (lost !== null && s.count > 0 && regained === null) regained = at;
+    // A stable sighting ends the trace, but ONLY if nothing has disappeared yet: once it has, the
+    // whole remaining window is evidence about whether it comes back on its own.
+    if (firstSeen !== null && lost === null && at - firstSeen >= settleMs) break;
+    await new Promise((r) => setTimeout(r, everyMs));
+  }
+  return { firstSeen, lost, regained, samples, last: samples[samples.length - 1] ?? null, elapsedMs: Date.now() - t0 };
+}
+
+/**
+ * When the marker is NOT on screen at the end of a trace, name the mechanism.
+ *
+ * Three causes produce the same empty pane and need completely different fixes, so the two cheapest
+ * discriminators run in order:
+ *
+ *   - back after SCROLLING to the bottom -> the row was merely unmounted by the virtualised list;
+ *     the data is intact and it is a scroll-anchor defect;
+ *   - back only after REOPENING -> the in-memory list was overwritten by a page fetched before the
+ *     message existed, and the store had it all along - a stale-response overwrite (the WP fixed in
+ *     `dabed2f2`);
+ *   - back after neither -> it never reached the store, which is a real delivery loss.
+ *
+ * `reopen` is passed in rather than assumed because only the caller knows which conversation is
+ * under test.
+ */
+export async function classifyDisappearance(cx, marker, reopen) {
+  await evaluate(
+    cx,
+    `(function () {
+      var c = document.querySelector('${COMPOSER}');
+      var pane = c ? c.closest('section') : null;
+      var sc = pane ? [].slice.call(pane.querySelectorAll('*')).filter(function (e) { return e.scrollHeight > e.clientHeight + 50; }) : [];
+      sc.forEach(function (e) { e.scrollTop = e.scrollHeight; });
+      return sc.length;
+    })()`,
+  );
+  await new Promise((r) => setTimeout(r, 2500));
+  const scrolled = await sample(cx, marker);
+  if (scrolled.count > 0) return { verdict: 'SCROLL ANCHOR', scrolled, reopened: null };
+
+  await reopen();
+  await new Promise((r) => setTimeout(r, 8000));
+  const reopened = await sample(cx, marker);
+  return {
+    verdict: reopened.count > 0 ? 'STALE OVERWRITE' : 'NOT IN THE STORE EITHER',
+    scrolled,
+    reopened,
+  };
+}
+
+/**
+ * Put `text` in the composer and wait until the send control is live - everything but the send.
+ *
+ * SPLIT OUT SO A CHECK CAN AIM AT A WINDOW IT DOES NOT CONTROL. The WP-ECHO-1 window is the app's
+ * own bulk-ingest phase, which lasts anywhere from 40 ms to 3.5 s on this device, so a send driven
+ * by `sleep` misses it every time - measured: seven own sends, zero inside a window. Arming first
+ * leaves exactly one CDP round trip (`fireComposer`) between the decision and the submit, which is
+ * short enough to land inside a window observed in the LOG rather than guessed at.
+ */
+export async function armComposer(cx, text) {
   await realClick(cx, COMPOSER);
   await evaluate(cx, `document.querySelector('${COMPOSER}').focus()`);
+  // ARM ON AN EMPTY BOX, ALWAYS. `Input.insertText` inserts at the caret, so arming over a draft
+  // the previous attempt failed to submit produces ONE message carrying BOTH markers - which a
+  // marker count then reads as two deliveries. Seen 2026-08-11: eleven sends, twelve markers on
+  // screen, and the surplus was the app faithfully delivering what the harness had typed.
+  // `selectAll` + insertText replaces the selection, and Svelte sees the resulting input event.
+  await evaluate(cx, `document.execCommand('selectAll')`);
   await cx.send('Input.insertText', { text });
   const typed = await evaluate(cx, `document.querySelector('${COMPOSER}').innerText.trim()`);
   if (!typed.includes(text.slice(0, 20))) throw new Error(`composer did not take the text (has ${JSON.stringify(typed)})`);
@@ -219,7 +948,15 @@ export async function send(cx, text) {
   // phone's WebView it lost MSG-8b outright and the draft stayed in the box. Wait for the state,
   // never for a delay.
   await until(cx, SEND_ENABLED, 5000, 50);
+}
 
+/**
+ * Submit whatever {@link armComposer} left in the box. Returns the client-side timestamp.
+ *
+ * Separate from arming so that the only work between "the window opened" and "the message is
+ * submitted" is this call.
+ */
+export async function fireComposer(cx) {
   // ACTIVATE, NOT TAP, and only because coordinates are unusable here - see the rule in
   // `activate`. Focusing the composer opens the soft keyboard, which on Android shrinks the VISUAL
   // viewport (914 -> 572) while the LAYOUT viewport stays 914. The composer bar is pinned above
@@ -243,6 +980,18 @@ export async function send(cx, text) {
     throw new Error(`send did not submit - composer still holds ${JSON.stringify(left.slice(0, 80))}`);
   }
   return at;
+}
+
+/**
+ * Type into the composer and send.
+ *
+ * The composer is a contenteditable (`mention-composer-editor`), so the value cannot be assigned:
+ * Svelte never sees it. Focus with a real click, then Input.insertText, then activate the send
+ * button. Returns the client-side timestamp of the send.
+ */
+export async function send(cx, text) {
+  await armComposer(cx, text);
+  return fireComposer(cx);
 }
 
 /** Message bubbles are `<p>` leaves inside the pane; this is their viewport centre. */
@@ -282,9 +1031,13 @@ export async function hoverBubble(cx, textMatch) {
  * exactly that way on the first run of MSG-3. The button must be searched inside the bubble's own
  * row, and the row is the nearest ancestor that actually contains one.
  */
-export async function clickBubbleAction(cx, textMatch, label) {
+export async function clickBubbleAction(cx, textMatch, label, timeoutMs = 5000) {
   await hoverBubble(cx, textMatch);
-  const point = await evaluate(
+  // THE ACTION ROW FADES IN, so reading it once races the hover and the read usually loses. Every
+  // caller had compensated with `sleep(800)` of its own, which is the same guess repeated three
+  // times and charged to every run whether or not it was needed. Retrying the lookup here fixes it
+  // for all of them and returns on the first successful read - typically the first or second.
+  const locate = () => evaluate(
     cx,
     `JSON.stringify((function () {
       var pane = document.querySelector('${'.chat-composer-footer .chat-composer-editor'}').closest('section');
@@ -301,20 +1054,61 @@ export async function clickBubbleAction(cx, textMatch, label) {
         if (btn) {
           var r = btn.getBoundingClientRect();
           if (r.width === 0) return { blocked: 'action button has no box - not hovered?' };
-          return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), label: (btn.getAttribute('aria-label') || btn.innerText).trim() };
+          // MEASURED AND HIT-TESTED IN THE SAME EVALUATION, so no window exists between the two.
+          // Testing it from the driver instead leaves one round trip in which the row can
+          // un-render - which is exactly the failure this defends against, so a check placed there
+          // reports the miss it was supposed to prevent.
+          var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+          var hit = document.elementFromPoint(x, y);
+          if (!hit || !btn.contains(hit)) return { blocked: 'the action row is not on top at its own centre' + (hit ? ' (' + hit.tagName + ' is)' : ' (nothing is there)') };
+          return { x: x, y: y, label: (btn.getAttribute('aria-label') || btn.innerText).trim() };
         }
       }
       return null;
     })())`,
   );
-  if (!point || point === 'null') throw new Error(`no "${label}" action on the row of ${textMatch}`);
-  const p = JSON.parse(point);
-  if (p.blocked) throw new Error(p.blocked);
-  await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y, buttons: 0 });
-  for (const type of ['mousePressed', 'mouseReleased']) {
-    await cx.send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', clickCount: 1, buttons: type === 'mousePressed' ? 1 : 0 });
+
+  // THE CLICK IS PART OF THE ATTEMPT, NOT SOMETHING THAT HAPPENS AFTER IT SUCCEEDS. Locating and
+  // clicking used to be two phases: a retry loop that found the button, then a single dispatch. But
+  // the row can un-render between the two - the pane scrolls a newly arrived message into view and
+  // the hover is lost - so the dispatch went to whatever had slid underneath, silently, and the run
+  // failed 15 s later on a dialog that never opened. Nothing could then say whether the HARNESS had
+  // missed the button or the APP had failed to open it, and FWD lost passes to that ambiguity on
+  // 2026-08-15 reading as an application bug each time.
+  //
+  // Folding the click into the loop is what removes it: a miss is one failed attempt among several,
+  // like a rect that has not settled, and only an exhausted budget is an error. `stableCentreOf`
+  // reached the same shape for `realClick` for the same reason.
+  const t0 = Date.now();
+  let why = `no "${label}" action on the row of ${textMatch}`;
+  while (Date.now() - t0 < timeoutMs) {
+    const point = await locate();
+    const p = point && point !== 'null' ? JSON.parse(point) : null;
+
+    if (p && !p.blocked) {
+      const { received } = await clickAtPoint(cx, p.x, p.y);
+      // `received.btn` NAMES THE CONTROL THAT TOOK THE EVENT, which is the only witness that the
+      // click was delivered where it was aimed: the hit test above proves only where it was sent.
+      if (received?.btn?.indexOf(label) === 0) return { ...p, received };
+      // A click TAKEN BY SOMETHING ELSE is not retried. Whatever it hit has already run, and firing
+      // a second one compounds the side effect instead of recovering from it - so it stops here and
+      // says what it hit. Only a click that nothing received is safe to attempt again.
+      if (received) {
+        throw new Error(
+          `the "${label}" click was taken by "${received.btn || received.tag}" - the row moved under it after ${Date.now() - t0}ms`
+        );
+      }
+      why = 'the click was dispatched and nothing received it';
+    } else {
+      why = p ? p.blocked : `no "${label}" action on the row of ${textMatch}`;
+    }
+
+    await new Promise((r) => setTimeout(r, 100));
+    // Re-hover as well: a row can lose the pointer when the pane scrolls a new message into view,
+    // and then no amount of re-reading will ever find an action that is no longer rendered.
+    await hoverBubble(cx, textMatch).catch(() => null);
   }
-  return p;
+  throw new Error(`could not click "${label}" on the row of ${textMatch} after ${Date.now() - t0}ms: ${why}`);
 }
 
 /**
@@ -340,4 +1134,4 @@ export async function attachFiles(cx, files) {
   return files.length;
 }
 
-export { activate, evaluate, realClick, until };
+export { activate, evaluate, pressKey, realClick, until };

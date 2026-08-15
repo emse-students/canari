@@ -12,91 +12,156 @@
  *
  * The second tab is opened BY THE PAGE (`window.open`), which is the only way to get a real sibling
  * tab in the same window and the same profile - see `tabs.mjs` for why the CDP routes do not.
+ *
+ * REWRITTEN 2026-08-14, and the reason is worth keeping: this script computed three verdicts, printed
+ * them as JSON and exited. Nothing reached `results.ndjson`, so TAB-4a, TAB-4b and TAB-4c had never
+ * once appeared in the campaign's record - and a check that records nothing is indistinguishable
+ * from one that passed, which is the worse of the two directions to be wrong in.
  */
-import { client, ensureChat, openConversation, countMessage, awaitMessage, send } from './chat.mjs';
-import { listTargets, connect, evaluate } from './cdp.mjs';
-import { watch, report } from './watch.mjs';
-import { mark } from './results.mjs';
+import {
+  awaitAppReady,
+  awaitMessage,
+  client,
+  ensureConversation,
+  evaluate,
+  send,
+  settledCount,
+} from './chat.mjs';
+import { connect, listTargets } from './cdp.mjs';
+import { dirtOf, report, watch } from './watch.mjs';
+import { mark, record } from './results.mjs';
+import { PORTS, SITE, peerNameFor } from './names.mjs';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const w1 = await client(9224, 'canari-emse.fr');
-const w2 = await client(9223, 'canari-emse.fr');
+const w1 = await client(PORTS.W1, 'canari-emse.fr');
+const w2 = await client(PORTS.W2, 'canari-emse.fr');
 
 // Both clients are reloaded first, and this is not hygiene: a long-lived tab keeps the bundle it
 // loaded, so a page opened before a deploy runs the OLD code while a tab opened by this script runs
 // the new one. The first run after the WP-HIDDEN-1 deploy failed exactly that way.
 for (const cx of [w1, w2]) await cx.send('Page.reload');
-await sleep(10000);
-await ensureChat(w1);
-await openConversation(w1, 'PEER DISPLAY NAME');
-await ensureChat(w2);
-await openConversation(w2, 'OWNER DISPLAY NAME');
-await sleep(1500);
+for (const cx of [w1, w2]) await awaitAppReady(cx);
+await ensureConversation(w1, peerNameFor('W1'));
+await ensureConversation(w2, peerNameFor('W2'));
 
-const before = new Set((await listTargets(9224)).map((t) => t.id));
-await evaluate(w1, `(function () { window.__t2 = window.open('https://canari-emse.fr/chat', '_blank'); return !!window.__t2; })()`);
+const before = new Set((await listTargets(PORTS.W1)).map((t) => t.id));
+await evaluate(
+  w1,
+  `(function () { window.__t2 = window.open(${JSON.stringify(`${SITE}/chat`)}, '_blank'); return !!window.__t2; })()`,
+);
 
+// A NEW TARGET IS A FACT, so it is polled for and the bound is a failure rather than a wait. Twenty
+// seconds is well past the point where a tab that opened at all would be listed.
+const OPEN_DEADLINE_MS = 20000;
+const t0 = Date.now();
 let target = null;
-for (let i = 0; i < 40 && !target; i++) {
-  await sleep(500);
-  target = (await listTargets(9224)).find((t) => !before.has(t.id) && t.url.includes('canari-emse.fr'));
+while (!target && Date.now() - t0 < OPEN_DEADLINE_MS) {
+  target = (await listTargets(PORTS.W1)).find((t) => !before.has(t.id) && t.url.includes('canari-emse.fr'));
+  if (!target) await new Promise((r) => setTimeout(r, 200));
 }
-if (!target) throw new Error('the second tab never appeared on 9224');
+if (!target) {
+  // INCONCLUSIVE, never FAIL: the second tab never existing says nothing about whether two tabs
+  // diverge, which is the only thing TAB-4 is asking. Recording FAIL here would put a defect against
+  // the application for something the popup blocker did.
+  record('TAB-4', 'INCONCLUSIVE', {
+    why: `no second tab appeared on ${PORTS.W1} within ${OPEN_DEADLINE_MS}ms - window.open blocked?`,
+  });
+  process.exit(1);
+}
 
 const w1b = connect(target.webSocketDebuggerUrl);
 await w1b.ready;
 await w1b.send('Runtime.enable');
-w1b.port = 9224;
+w1b.port = PORTS.W1;
 console.log(`second tab attached: ${target.url}`);
 
-// A fresh tab needs its own load, PIN unlock included, before it can decrypt anything.
-await sleep(12000);
-await ensureChat(w1b);
-await openConversation(w1b, 'PEER DISPLAY NAME');
-await sleep(2000);
+/**
+ * A FRESH TAB MAY COME UP AT THE PIN GATE, and that is not this check's failure to report as one.
+ *
+ * The line this replaces was `sleep(12000)` under a comment saying "PIN unlock included" - which
+ * assumed an outcome it never verified. If the gate is up, no amount of waiting clears it, every
+ * assertion below then measures a tab that cannot decrypt, and the run reports a divergence between
+ * two tabs when what it saw was one locked one.
+ */
+const ready = await awaitAppReady(w1b, 30000).then(() => true, () => false);
+if (!ready) {
+  const gated = await evaluate(w1b, `!!document.querySelector('#encryption-pin')`).catch(() => false);
+  record('TAB-4', 'INCONCLUSIVE', {
+    why: gated
+      ? 'the second tab came up at the PIN gate - it cannot decrypt, so nothing here is measurable'
+      : 'the second tab never rendered within 30s',
+  });
+  process.exit(1);
+}
+await ensureConversation(w1b, peerNameFor('W1'));
 
-const rows = [];
+/** One round: send, wait for arrival, then let every count settle before reading any of them. */
+async function round(id, from, text, watched) {
+  const m = mark(id.replace(/\W/g, '').toUpperCase());
+  const obs = [];
+  for (const [label, cx] of watched) obs.push([label, cx, await watch(cx, `${id}-${label}`)]);
 
-/** TAB-4a - the peer sends; both tabs of the same account must show it, exactly once each. */
-{
-  const o = [await watch(w1, '4a-w1'), await watch(w1b, '4a-w1b')];
-  const m = mark('TAB4A');
-  await send(w2, `${m} from the peer, two tabs open`);
-  await awaitMessage(w1, m, 25000).catch(() => null);
-  await awaitMessage(w1b, m, 25000).catch(() => null);
-  await sleep(2500);
-  const [a, b] = [await countMessage(w1, m), await countMessage(w1b, m)];
-  const [ra, rb] = [await report(o[0]), await report(o[1])];
-  rows.push({ check: 'TAB-4a peer -> both tabs', marker: m, tab1: a, tab2: b, verdict: a === 1 && b === 1 ? 'PASS' : 'FAIL', tab1Notable: ra.notable, tab2Notable: rb.notable });
+  await send(from, `${m} ${text}`);
+  // Arrival on every watched client is what the round is FOR, so a client that never sees it is a
+  // measured zero rather than a thrown error - the counts below are the verdict, not this line.
+  for (const [, cx] of watched) await awaitMessage(cx, m, 25000).catch(() => null);
+
+  const counts = {};
+  let allSettled = true;
+  for (const [label, cx] of watched) {
+    const s = await settledCount(cx, m);
+    counts[label] = s.count;
+    allSettled &&= s.settled;
+  }
+
+  const reports = {};
+  for (const [label, , o] of obs) reports[label] = await report(o);
+  return { marker: m, counts, allSettled, reports };
 }
 
-/** TAB-4b - the SECOND tab sends. It is very likely the follower, which is the interesting half. */
-{
-  const o = [await watch(w1, '4b-w1'), await watch(w1b, '4b-w1b'), await watch(w2, '4b-w2')];
-  const m = mark('TAB4B');
-  await send(w1b, `${m} sent from the second tab`);
-  await awaitMessage(w2, m, 25000).catch(() => null);
-  await sleep(2500);
-  const [a, b, c] = [await countMessage(w1, m), await countMessage(w1b, m), await countMessage(w2, m)];
-  const [ra, rb, rc] = [await report(o[0]), await report(o[1]), await report(o[2])];
-  rows.push({ check: 'TAB-4b second tab sends', marker: m, tab1: a, tab2: b, peer: c, verdict: b === 1 && c === 1 ? 'PASS' : 'FAIL', tab1Notable: ra.notable, tab2Notable: rb.notable, peerNotable: rc.notable });
+const WATCHED = [
+  ['tab1', w1],
+  ['tab2', w1b],
+  ['peer', w2],
+];
+
+/**
+ * Records one round. THE OBSERVATION IS PART OF THE VERDICT, not a field beside it.
+ *
+ * The version this replaces kept `notable` in the row and computed the verdict from the counts
+ * alone, so a tab logging a ratchet collision recorded `PASS` with the collision in its own record.
+ * That is the exact shape that let MSG-6 pass twice with `SecretReuseError` inside it.
+ */
+function verdict(id, r, expected) {
+  const wrong = Object.entries(expected).filter(([k, v]) => r.counts[k] !== v);
+  const dirty = Object.entries(r.reports).filter(([, rep]) => !rep.clean);
+  const v = wrong.length
+    ? 'FAIL'
+    : !r.allSettled
+      ? 'INCONCLUSIVE'
+      : dirty.length
+        ? 'PASS-DIRTY'
+        : 'PASS';
+  record(id, v, {
+    marker: r.marker,
+    counts: r.counts,
+    expected,
+    countsSettled: r.allSettled,
+    dirt: Object.fromEntries(dirty.map(([k, rep]) => [k, dirtOf(rep)])),
+  });
 }
 
-/** TAB-4c - the FIRST tab sends straight after, the case where a rewind between tabs would show. */
-{
-  const o = [await watch(w1b, '4c-w1b'), await watch(w2, '4c-w2')];
-  const m = mark('TAB4C');
-  await send(w1, `${m} sent from the first tab right after`);
-  await awaitMessage(w2, m, 25000).catch(() => null);
-  await sleep(2500);
-  const [b, c] = [await countMessage(w1b, m), await countMessage(w2, m)];
-  const [rb, rc] = [await report(o[0]), await report(o[1])];
-  rows.push({ check: 'TAB-4c first tab sends after', marker: m, tab2: b, peer: c, verdict: c === 1 ? 'PASS' : 'FAIL', tab2Notable: rb.notable, peerNotable: rc.notable });
-}
+// TAB-4a - the peer sends; both tabs of the same account must show it, exactly once each.
+verdict('TAB-4a', await round('TAB4A', w2, 'from the peer, two tabs open', WATCHED), { tab1: 1, tab2: 1 });
 
-for (const r of rows) console.log(JSON.stringify(r));
+// TAB-4b - the SECOND tab sends. It is very likely the follower, which is the interesting half.
+verdict('TAB-4b', await round('TAB4B', w1b, 'sent from the second tab', WATCHED), { tab2: 1, peer: 1 });
 
+// TAB-4c - the FIRST tab sends straight after, the case where a rewind between tabs would show.
+verdict('TAB-4c', await round('TAB4C', w1, 'sent from the first tab right after', WATCHED), { tab1: 1, peer: 1 });
+
+// The tab this script opened is this script's to close - it is the one piece of debris the runner's
+// between-job repair cannot clear, because a stray tab is not an overlay and looks like a client.
 await evaluate(w1, '(function () { if (window.__t2) { window.__t2.close(); window.__t2 = null; } return true; })()').catch(() => null);
-const bad = rows.filter((r) => r.verdict !== 'PASS');
-console.log(`\n${rows.length - bad.length}/${rows.length} TAB-4 checks pass`);
-process.exit(bad.length ? 1 : 0);
+
+// No exit code here on purpose: `results.mjs` derives it from the verdicts recorded above, so this
+// script cannot report `done` beside a recorded FAIL the way it used to.

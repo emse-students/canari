@@ -15,7 +15,7 @@
  * key, and the wait below is what turns that into a fact rather than an intention.
  */
 import { client, ensureConversation, send, countMessage, evaluate } from './chat.mjs';
-import { dirtOf, ignoringOfflineCut, report, watch } from './watch.mjs';
+import { gate, ignoringOfflineCut, report, watch } from './watch.mjs';
 import { armCut, cutHard, link } from './net.mjs';
 import { awaitOffline, awaitOnline, whoIs } from './presence.mjs';
 import { finish, mark } from './results.mjs';
@@ -96,13 +96,14 @@ const senderCount = await countMessage(w1, m);
 const obs = { sender: await report(wA), receiver: ignoringOfflineCut(await report(wB)) };
 const delivered =
   whileOffline === 0 && finalCount === 1 && senderCount === 1 && backOnlineAfterMs !== null;
-const pass = delivered && obs.sender.clean && obs.receiver.clean;
+const gated = gate(delivered ? 'PASS' : 'FAIL', { sender: obs.sender, receiver: obs.receiver });
 
 // The full observation dump stays on stdout - it is what a reader needs when the verdict is bad -
 // while the verdict itself goes to the record `run.mjs` builds its table from.
 console.log(JSON.stringify({ check: 'MSG-9', marker: m, cutState, obs }, null, 1));
 
-finish('MSG-9', pass ? 'PASS' : delivered ? 'PASS-DIRTY' : 'FAIL', {
+finish('MSG-9', gated.verdict, {
+  ...gated.detail,
   marker: m,
   whileOffline,
   socketsClosed: cutInfo.socketsClosed,
@@ -112,8 +113,4 @@ finish('MSG-9', pass ? 'PASS' : delivered ? 'PASS-DIRTY' : 'FAIL', {
   finalCount,
   senderCount,
   elapsedMs: Date.now() - t0,
-  senderClean: obs.sender.clean,
-  receiverClean: obs.receiver.clean,
-  senderDirt: dirtOf(obs.sender),
-  receiverDirt: dirtOf(obs.receiver),
 });

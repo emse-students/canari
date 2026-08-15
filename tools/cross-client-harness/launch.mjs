@@ -11,16 +11,20 @@
  * Usage:  node launch.mjs kill w1        node launch.mjs start w1
  */
 import { spawn, execSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
+import { STATE_DIR } from './names.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 
+/**
+ * The profiles live in `STATE_DIR`, NOT next to this file: they are the devices, not instruments.
+ * A profile under the repository would be deleted by `git clean -xdf` like any other untracked
+ * directory, and re-enrolling costs the one step no tool here can answer.
+ */
 export const BROWSERS = {
-  w1: { port: 9224, profile: join(HERE, 'chrome-w1') },
-  w2: { port: 9223, profile: join(HERE, 'chrome-w2') },
+  w1: { port: 9224, profile: join(STATE_DIR, 'chrome-w1') },
+  w2: { port: 9223, profile: join(STATE_DIR, 'chrome-w2') },
 };
 
 /** True when something still answers on that debugging port. */

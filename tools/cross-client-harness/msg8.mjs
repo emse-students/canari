@@ -7,7 +7,7 @@
  * so this run is what establishes it.
  */
 import { client, ensureConversation, send, countMessage, evaluate } from './chat.mjs';
-import { watch, report, logcatSince, logcatNotable, dirtOf } from './watch.mjs';
+import { gate, logcatNotable, logcatSince, report, watch } from './watch.mjs';
 import { background } from './tabs.mjs';
 import { finish, mark } from './results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from './names.mjs';
@@ -68,19 +68,21 @@ const after = {
 const obs = { a1: await report(wA), w2: await report(wB) };
 const native = { logcat: await logcatNotable(await logcatSince(since)) };
 
-const pass = after.count === 1 && obs.a1.clean && obs.w2.clean;
+// CLEANLINESS IS NOT PART OF THE ASSERTION, it is a gate over it. Folding it in made a dirty run
+// report `FAIL`, which says the message did not arrive exactly once - a claim this check would then
+// be making without evidence, and the opposite of what happened. The assertion is the copy count;
+// `gate` decides whether that PASS is qualified.
+const arrivedOnce = after.count === 1;
+const gated = gate(arrivedOnce ? 'PASS' : 'FAIL', { A1: obs.a1, W2: obs.w2 });
 
 // The dump stays on stdout; the verdict goes to the record. This check exited on `pass` and never
 // recorded, so a run of twelve scripts showed nine verdicts and the three silent ones read as passes.
 console.log(JSON.stringify({ check: 'MSG-8', marker: m, before, during, obs, native }, null, 1));
 
-finish('MSG-8', pass ? 'PASS' : 'FAIL', {
+finish('MSG-8', gated.verdict, {
+  ...gated.detail,
   marker: m,
   arrivedWhileHiddenMs: arrivedHidden,
   copies: after.count,
   titleChanged: before.title !== during.title,
-  senderClean: obs.a1.clean,
-  receiverClean: obs.w2.clean,
-  senderDirt: dirtOf(obs.a1),
-  receiverDirt: dirtOf(obs.w2),
 });

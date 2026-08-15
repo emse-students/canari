@@ -26,6 +26,7 @@ import {
   until,
   awaitMessage,
   countMessage,
+  settledCount,
 } from './chat.mjs';
 import { watch, report, dirtOf } from './watch.mjs';
 import { record, mark } from './results.mjs';
@@ -56,8 +57,6 @@ for (let i = 0; i < N; i++) {
   await openChannel(w1);
   await send(w1, marker);
   await awaitMessage(w1, marker, 25000);
-  await sleep(800);
-
   await clickBubbleAction(w1, marker, 'Transférer');
   await until(w1, `!!document.querySelector('[role=dialog]')`, 15000);
   await realClick(w1, `text=${peerNameFor('W1')}`);
@@ -68,7 +67,9 @@ for (let i = 0; i < N; i++) {
     () => Date.now() - at,
     () => null
   );
-  await sleep(1500);
+  // Stability rather than a delay - see `settledCount`. The read below used to be a single sample
+  // taken 1500 ms after arrival, which reports a second copy landing at 1600 ms as no copy at all.
+  const settled = await settledCount(w2, marker);
 
   // The sender's requests for THIS iteration, drained before report() clears the buffer. Whether
   // `POST /api/mls/send` happened, and with what status, is the fork the whole diagnosis turns on:
@@ -91,7 +92,8 @@ for (let i = 0; i < N; i++) {
     i,
     marker,
     arrivedMs: arrived,
-    copies: await countMessage(w2, marker),
+    copies: settled.count,
+    copiesSettled: settled.settled,
     mlsSend: sends,
     senderClean: obs1.clean,
     // The sender's swallowed-outbox branches are the ONLY trace a loss leaves on that side, so
@@ -103,6 +105,10 @@ for (let i = 0; i < N; i++) {
     receiverDirt: dirtOf(obs2),
   });
   console.log(`[fwd] ${i + 1}/${N} ${marker} -> ${arrived === null ? 'LOST' : arrived + 'ms'}`);
+  // A DELIBERATE GAP BETWEEN ITERATIONS, not a wait for anything. Back-to-back forwards would make
+  // each round's observation window overlap the next one's traffic, and a stray line would then be
+  // attributed to whichever iteration happened to be watching. Kept short and stated, rather than
+  // removed: this one buys separability, which is the property the per-iteration records exist for.
   await sleep(1200);
 }
 

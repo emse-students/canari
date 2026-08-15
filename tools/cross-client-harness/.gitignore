@@ -1,10 +1,23 @@
-# Real credentials for the test accounts. The example file next to this one is the template.
-# This must never be committed: the campaign runs against PRODUCTION with real accounts.
-test-accounts.json
+# THE MACHINE-LOCAL POINTER. `names.example.mjs` is its template; it resolves the `owner` / `peer`
+# aliases the wiki uses to real display names, and points at the state directory. Every check imports
+# from it rather than spelling a name - which is what makes the rest of this directory publishable as
+# it stands, on a repository that is PUBLIC.
+names.mjs
 
-# Run artefacts - captures, verdict dumps, screenshots, logcat.
+# Nothing else machine-local lives here: the account file, the two Chrome profiles, the verdict
+# record, the debug APK and the phone baseline are OUTSIDE this repository, under `STATE_DIR`. The
+# two rules below are therefore about a mistake rather than about normal operation - a file copied
+# in "just to try something" is exactly how a credential reaches a public archive.
+test-accounts.json
+results.ndjson
+
+# Scratch space for one-shot probes and triage scripts. A diagnosis usually needs a throwaway script
+# written next to the rig it interrogates; before this directory existed they accumulated alongside
+# the real checks until 285 of 362 files were residue and nobody could tell an instrument from a
+# leftover. Write them here - nothing in it is ever committed, and it may be emptied without asking.
+scratch/
+
+# Run artefacts written next to the runner: captures, screenshots, logcat dumps.
 *.log
 *.png
-*-run*.json
-chrome-w1/
-chrome-w2/
+logs/

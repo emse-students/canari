@@ -11,8 +11,21 @@
  * What works is `window.open(..., '_blank')` from the page itself, which really is a sibling TAB
  * in the same window - the app page then reports `hidden`, which is what its own visibility
  * handlers listen to. It also closes cleanly, because a script may close what it opened.
+ *
+ * ONE PRECONDITION, and it is ours, not the browser's: `client()` turns FOCUS EMULATION on so three
+ * clients can each be "the focused window" at once, and an emulated-focus page is pinned `visible`
+ * whatever the tab strip does. The note here used to claim otherwise - measured again on 12 August
+ * it is simply false, and MSG-8 died on `page stayed visible after opening a sibling tab` with the
+ * app perfectly healthy. `background()` therefore turns it OFF for the duration and back on after,
+ * which is invisible to every caller and fixes the whole TAB phase in one place.
  */
 import { evaluate } from './cdp.mjs';
+
+/** Focus emulation pins a page `visible`; toggle it around anything that needs a real hide. */
+async function setFocusEmulation(cx, enabled) {
+  if (!cx.focusEmulated) return;
+  await cx.send('Emulation.setFocusEmulationEnabled', { enabled }).catch(() => {});
+}
 
 /**
  * Pushes the page to the background and returns the function that brings it back.
@@ -21,11 +34,15 @@ import { evaluate } from './cdp.mjs';
  * that silently runs in the foreground would pass for the wrong reason.
  */
 export async function background(cx, timeoutMs = 5000) {
+  await setFocusEmulation(cx, false);
   const opened = await evaluate(
     cx,
     `(function () { window.__bgTab = window.open('about:blank', '_blank'); return !!window.__bgTab; })()`
   );
-  if (!opened) throw new Error('window.open was blocked - cannot background this page');
+  if (!opened) {
+    await setFocusEmulation(cx, true);
+    throw new Error('window.open was blocked - cannot background this page');
+  }
 
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
@@ -35,15 +52,28 @@ export async function background(cx, timeoutMs = 5000) {
           cx,
           '(function () { if (window.__bgTab) { window.__bgTab.close(); window.__bgTab = null; } return true; })()'
         );
+        // Closing the sibling does not necessarily re-select US - Chrome activates whichever tab it
+        // likes, and the app can stay hidden behind another one. Ask for it explicitly.
+        await cx.send('Page.bringToFront').catch(() => {});
         const t1 = Date.now();
         while (Date.now() - t1 < timeoutMs) {
-          if ((await evaluate(cx, 'document.visibilityState')) === 'visible') return;
+          if ((await evaluate(cx, 'document.visibilityState')) === 'visible') {
+            await setFocusEmulation(cx, true);
+            return;
+          }
           await new Promise((r) => setTimeout(r, 100));
         }
+        await setFocusEmulation(cx, true);
         throw new Error('page did not come back to the foreground');
       };
     }
     await new Promise((r) => setTimeout(r, 100));
   }
+  // Leave no emulation off behind a failure: the next check would inherit an unfocused client.
+  await evaluate(
+    cx,
+    '(function () { if (window.__bgTab) { window.__bgTab.close(); window.__bgTab = null; } return true; })()'
+  ).catch(() => {});
+  await setFocusEmulation(cx, true);
   throw new Error('page stayed visible after opening a sibling tab');
 }

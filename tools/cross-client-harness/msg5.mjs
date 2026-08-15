@@ -9,12 +9,13 @@
  */
 import { writeFileSync } from 'node:fs';
 import { awaitMessage, client, countMessage, openChannel, send } from './chat.mjs';
-import { logcatSince, report, sanity, watch } from './watch.mjs';
+import { gate, logcatSince, report, sanity, watch } from './watch.mjs';
 import { mark, record } from './results.mjs';
+import { PORTS } from "./names.mjs";
 
 const w1 = await client(9224);
 const w2 = await client(9223);
-const a1 = await client(9222);
+const a1 = await client(PORTS.A1);
 const named = [
   ['W1', w1],
   ['W2', w2],
@@ -75,13 +76,22 @@ const copies = {
 const phone = await logcatSince(t0);
 
 const converged = Object.values(copies).every((c) => c === 1);
-const clean = observed.every((o) => o.clean);
+// ONE NAME FOR ONE STATE. This used to spell a dirty pass `PASS-WITH-NOISE` while MSG-10 spelt the
+// same state `PASS-DIRTY`, so counting the dirty runs on the dashboard meant knowing which script
+// wrote each row. `gate` is now the only place either word is chosen.
+//
+// A LEAK IS NOT DIRT, IT IS A FAILURE, and it stays out of the gate on purpose: this check searches
+// the network traffic for the plaintext secret, and finding it means the ciphertext-only guarantee
+// is broken. That is the most serious thing MSG-5 can report and it may never be softened to a
+// qualified pass.
+const gated = gate(converged && leaked.length === 0 ? 'PASS' : 'FAIL', Object.fromEntries(observed.map((o) => [o.label, o])));
 writeFileSync(
   new URL(`./logs/msg5-${marker}.json`, import.meta.url),
   JSON.stringify({ marker, at, latency, copies, pre, leaked, observed, phone }, null, 1),
 );
 
-record('MSG-5', converged && clean && leaked.length === 0 ? 'PASS' : converged && leaked.length === 0 ? 'PASS-WITH-NOISE' : 'FAIL', {
+record('MSG-5', gated.verdict, {
+  ...gated.detail,
   marker,
   secretsLeaked: leaked,
   latency,

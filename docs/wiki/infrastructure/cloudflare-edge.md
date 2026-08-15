@@ -63,8 +63,10 @@ Every indirect signal here is ambiguous, and two of them nearly produced a wrong
 
 Only the browser's own `securitypolicyviolation` event names the directive that refused, so it is
 the one reading that distinguishes "CSP said no" from "this happened to fail". An empty violation
-list is the verdict; anything else is a guess. `../canari-harness/probe-csp-blob.mjs` is built
-around it.
+list is the verdict; anything else is a guess. The probe that established this was a one-shot,
+removed with the harness residue; what it did is the whole of it - listen for
+`securitypolicyviolation` on the page, exercise the load, and read the collected violations rather
+than the element's own error.
 
 Counting the headers is the other half, and `curl -sI` is enough: **two `content-security-policy`
 lines mean the edge is injecting one.** There should be exactly one.

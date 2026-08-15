@@ -17,17 +17,18 @@ import { client, ensureChat, openConversation, countMessage, awaitMessage, send,
 import { watch, report } from './watch.mjs';
 import { mark } from './results.mjs';
 import * as phone from './phone.mjs';
+import { ACCOUNT_OF, PORTS, peerNameFor } from './names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
 const which = String(process.argv[2] || '2');
 
 /** Unlocks the PIN if the modal is up; returns what happened, never throws on "no modal". */
-function unlock(port = 9222) {
+function unlock(port = PORTS.A1) {
   try {
     return execFileSync(
       process.execPath,
-      ['pin.mjs', '--port', String(port), '--account', 'owner', '--match', 'tauri.localhost'],
+      ['pin.mjs', '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
       { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
     )
       .trim()
@@ -44,13 +45,13 @@ async function restore() {
   phone.wake();
   phone.launch();
   await sleep(6_000);
-  phone.forwardDevtools(9222);
+  phone.forwardDevtools(PORTS.A1);
   await sleep(2_000);
   const pinResult = unlock();
   await sleep(3_000);
-  const a1 = await client(9222, 'tauri.localhost');
+  const a1 = await client(PORTS.A1, 'tauri.localhost');
   await ensureChat(a1).catch(() => null);
-  await openConversation(a1, 'PEER DISPLAY NAME').catch(() => null);
+  await openConversation(a1, peerNameFor('A1')).catch(() => null);
   return { a1, pinResult };
 }
 
@@ -175,13 +176,13 @@ phone.wake();
 // state was entered would be counted as the state's own.
 phone.launch();
 await sleep(4_000);
-phone.forwardDevtools(9222);
-const a1Setup = await client(9222, 'tauri.localhost');
+phone.forwardDevtools(PORTS.A1);
+const a1Setup = await client(PORTS.A1, 'tauri.localhost');
 await ensureChat(a1Setup).catch(() => null);
-await openConversation(a1Setup, 'PEER DISPLAY NAME').catch(() => null);
+await openConversation(a1Setup, peerNameFor('A1')).catch(() => null);
 const w2 = await client(9223, 'canari-emse.fr');
 await ensureChat(w2);
-await openConversation(w2, 'OWNER DISPLAY NAME');
+await openConversation(w2, peerNameFor('W2'));
 await sleep(1_000);
 
 phone.clearLogcat();

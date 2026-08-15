@@ -19,6 +19,7 @@ import { listTargets, connect, until } from './cdp.mjs';
 import { watch, report } from './watch.mjs';
 import { mark } from './results.mjs';
 import { killBrowser, startBrowser, BROWSERS } from './launch.mjs';
+import { ACCOUNT_OF, PORTS, peerNameFor } from './names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const which = String(process.argv[2] || '2');
@@ -58,7 +59,7 @@ if (which === '2') {
   const w1 = await client(9224, 'canari-emse.fr');
   const w2 = await client(9223, 'canari-emse.fr');
   await ensureChat(w2);
-  await openConversation(w2, 'OWNER DISPLAY NAME');
+  await openConversation(w2, peerNameFor('W2'));
 
   // A blank sibling keeps the browser alive once the app tab goes; closing the last tab would
   // exit Chrome and turn this into TAB-3.
@@ -84,12 +85,12 @@ if (which === '2') {
   await reopened.send('Page.enable');
   await reopened.send('Page.navigate', { url: 'https://canari-emse.fr/chat' });
   await sleep(12_000);
-  const pinResult = unlock(9224, 'owner');
+  const pinResult = unlock(PORTS.W1, ACCOUNT_OF.W1);
   await sleep(4_000);
 
   const w1b = await client(9224, 'canari-emse.fr');
   const o1 = await watch(w1b, 'tab2-w1');
-  await openConversation(w1b, 'PEER DISPLAY NAME');
+  await openConversation(w1b, peerNameFor('W1'));
   const arrived = await awaitMessage(w1b, m, 30_000).then(() => true, () => false);
   await sleep(2_000);
   const count = await countMessage(w1b, m);
@@ -111,7 +112,7 @@ if (which === '2') {
 if (which === '3') {
   const w2 = await client(9223, 'canari-emse.fr');
   await ensureChat(w2);
-  await openConversation(w2, 'OWNER DISPLAY NAME');
+  await openConversation(w2, peerNameFor('W2'));
 
   // killBrowser throws unless the port really stops answering, so `down` is proven, not assumed.
   const downInMs = await killBrowser('w1');
@@ -132,13 +133,13 @@ if (which === '3') {
   // the distinction is the whole point of this check.
   const w1 = await client(9224, 'canari-emse.fr');
   const loginShowing = await evaluate(w1, LOGIN_SHOWING);
-  const pinResult = unlock(9224, 'owner');
+  const pinResult = unlock(PORTS.W1, ACCOUNT_OF.W1);
   await sleep(4_000);
 
   const w1b = await client(9224, 'canari-emse.fr');
   const o1 = await watch(w1b, 'tab3-w1');
   await ensureChat(w1b);
-  await openConversation(w1b, 'PEER DISPLAY NAME');
+  await openConversation(w1b, peerNameFor('W1'));
   // A cold start has to unlock, reconnect and fetch the queue before anything can decrypt, so the
   // window here is generous AND the elapsed time is reported: how long a relaunched browser takes
   // to catch up is the interesting number, and a 30 s window turned a pass into a false failure.

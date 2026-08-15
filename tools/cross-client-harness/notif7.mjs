@@ -24,6 +24,7 @@ import { mark } from './results.mjs';
 import * as phone from './phone.mjs';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
+import { ACCOUNT_OF, PEER_NAME, PORTS, peerNameFor } from './names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
@@ -68,11 +69,11 @@ function tapNotification(needle) {
   return { ok: true, x: Number(x), y: Number(y), row: row.trim() };
 }
 
-function unlock(port = 9222) {
+function unlock(port = PORTS.A1) {
   try {
     return execFileSync(
       process.execPath,
-      ['pin.mjs', '--port', String(port), '--account', 'owner', '--match', 'tauri.localhost'],
+      ['pin.mjs', '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
       { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
     )
       .trim()
@@ -90,11 +91,11 @@ function unlock(port = 9222) {
 //
 // AND WAIT FOR THE CONVERSATION, NOT FOR THE MARKER. This check is about the TAP; whether the body
 // carries the decrypted text is a different question, and on a backgrounded app the answer is often
-// no ("Nouveau message de PEER DISPLAY NAME", the fallback). Waiting on the marker made the check
+// no ("Nouveau message de <peer>", the fallback). Waiting on the marker made the check
 // report "no notification ever reached the shade" while a perfectly tappable notification for the
 // right conversation was sitting in it. So: wait on the sender's name, then RECORD whether the
 // marker is in it.
-const PEER = 'PEER DISPLAY NAME';
+const PEER = PEER_NAME;
 const awaitShade = (timeoutMs) => phone.awaitNotification(PEER, timeoutMs);
 
 const out = { check: `NOTIF-7 (${mode})`, mode };
@@ -104,8 +105,8 @@ stage('waking and launching the phone');
 phone.wake();
 phone.launch();
 await sleep(4_000);
-phone.forwardDevtools(9222);
-let a1 = await client(9222, 'tauri.localhost', { focus: false });
+phone.forwardDevtools(PORTS.A1);
+let a1 = await client(PORTS.A1, 'tauri.localhost', { focus: false });
 stage(`unlock -> ${unlock()}`);
 await ensureChat(a1).catch(() => null);
 await sleep(3_000);
@@ -116,24 +117,24 @@ await sleep(4_000);
 out.beforeUrl = await evaluate(a1, 'location.href');
 stage(`A1 before: ${out.beforeUrl}`);
 
-// ── W2 (PEER) is the sender, and that is not interchangeable with W1 ───────
+// ── W2, THE PEER, is the sender, and that is not interchangeable with W1 ───────
 //
-// A1 is one of owner's devices, so a message sent from W1 - owner's other device - is the user's
-// OWN message. The native layer classifies it exactly that way and suppresses the notification on
-// purpose, which is correct behaviour and not what this check is about:
+// A1 is one of the OWNER's devices, so a message sent from W1 - the owner's other device - is the
+// user's OWN message. The native layer classifies it exactly that way and suppresses the
+// notification on purpose, which is correct behaviour and not what this check is about:
 //
-//   CanariFCM: thread: ... senderName=OWNER DISPLAY NAME silent=true inlineProto=true
-//   CanariFCM: FCM silent from self -> cancelling notification for group=00000000
+//   CanariFCM: thread: ... senderName=<owner> silent=true inlineProto=true
+//   CanariFCM: FCM silent from self -> cancelling notification for group=<group id>
 //
 // The first run of this check used W1 and reported "no notification ever reached the shade" - a FAIL
 // against a build that was behaving correctly. The sender must be the PEER.
-stage('attaching W2 (the peer) as the sender');
+stage('attaching W2, the peer, as the sender');
 const w2 = await client(9223, 'canari-emse.fr');
 await ensureChat(w2);
-await openConversation(w2, 'OWNER DISPLAY NAME');
+await openConversation(w2, peerNameFor('W2'));
 const w = await watch(w2, 'W2');
 
-// W1 must be OFF the conversation. It is owner's other device: if it sits in the DM it marks the
+// W1 must be OFF the conversation. It is the owner's other device: if it sits in the DM it marks the
 // message read the moment it lands, which pushes a cross-device DISMISSAL to the phone - the exact
 // mechanism NOTIF-4 verifies - and the notification under test is cancelled by design. Seen in the
 // previous run's log, arriving BEFORE the message push it was meant to dismiss.
@@ -191,9 +192,9 @@ if (!out.tap.ok) throw new Error(`the tap had no target: ${out.tap.why}`);
 
 // ── where did it land? ───────────────────────────────────────────────────────
 await sleep(6_000);
-phone.forwardDevtools(9222); // a killed app came back under a NEW pid, so the old forward is dead
+phone.forwardDevtools(PORTS.A1); // a killed app came back under a NEW pid, so the old forward is dead
 await sleep(2_000);
-a1 = await client(9222, 'tauri.localhost', { focus: false });
+a1 = await client(PORTS.A1, 'tauri.localhost', { focus: false });
 out.foregroundedAfter = phone.foregrounded();
 
 // A COLD START RE-LOCKS, AND EVERY ASSERTION BELOW READS THE SCREEN BEHIND THE MODAL.
@@ -222,7 +223,7 @@ for (let i = 0; i < 40; i++) {
   await sleep(1_000);
 }
 const unlockStartedAt = Date.now();
-out.unlockAfterTap = out.pinGateMs === null ? 'no gate' : unlock(9222);
+out.unlockAfterTap = out.pinGateMs === null ? 'no gate' : unlock(PORTS.A1);
 out.unlockMs = Date.now() - unlockStartedAt;
 stage(`pin gate after ${out.pinGateMs} ms -> ${out.unlockAfterTap} (${out.unlockMs} ms)`);
 

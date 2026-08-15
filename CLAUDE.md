@@ -284,7 +284,7 @@ already tells it everything, earlier. `ignoringNavigation` was the whole fix. Ru
 [testing-methodology](docs/wiki/testing-methodology.md), with the two corollaries it cost: a
 discriminator that fires with AND without the change discriminates nothing (W2 was the control), and
 **a navigation does NOT pick up a deploy - only `Page.reload {ignoreCache:true}` does**, so any
-re-run "on the new build" must prove it with `bundleid.mjs` first.
+re-run "on the new build" must prove it with `bundle-id.mjs` first.
 
 **WP-BANNER-1 IS SHIPPED AND VERIFIED RUNNING (`e62c21f1`, 2026-08-15).** Six banners agreed on
 nothing; the whole contract is on
@@ -300,9 +300,11 @@ is what delivered a click aimed at a channel row to the button below it.
 was classified as a retryable ratchet gap, so the PHONE queued it in `pending_mls_messages` for three
 impossible retries and logged two errors per occurrence; `DecryptErrorKind::OwnMessage` now decides
 at the throw, story in `CHANGELOG.md`, mechanism on
-[mls-protocol](docs/wiki/protocols/mls-protocol.md)). Until A1 is rebuilt it is the POSITIVE CONTROL
-for that one too, and `watch.mjs`'s `SEVERE_BUT_EXPECTED` demotion must stay - it is now a
-mixed-fleet rule with its deletion condition written at the site.
+[mls-protocol](docs/wiki/protocols/mls-protocol.md)). **A1 is NOT a positive control for that one** -
+its Rust log goes to logcat, not to the console the harness observes, so the raw line never reached
+the harness from the phone at all. `watch.mjs`'s `SEVERE_BUT_EXPECTED` stays for a different and
+permanent reason, written at the site: the WELCOME path logs the same marker from TS on every
+platform, deliberately.
 **AND IT CANNOT BE WITHOUT A REBUILD** - `frontendDist` is `../build`, so the
 phone serves the bundle inside its APK and a deploy never reaches it. Its APK (built 21:20, installed
 21:30 on 2026-08-14) carries `6bfd805d` and `8a3edbdd` but predates `e62c21f1`. MSG's A1 half above
@@ -334,20 +336,23 @@ state here, and do not maintain a second copy.** The rig is
 [`tools/cross-client-harness/README.md`](tools/cross-client-harness/README.md) (ports, launch flags,
 adb, the build traps, the file inventory).
 
-**THE WORKING RIG LIVES AT `../canari-harness` (`C:\Users\jolan\Documents\Programmation\canari-harness`)**,
-moved there 2026-08-11 and NOT in a scratchpad: a scratchpad is scoped to one session, so the next
-session gets an empty one and the instrument would be unreachable. It holds 251 `.mjs` (the library,
-the checks, ~150 one-shot probes), `test-accounts.json`, the debug APK, A1's baseline, and
-**`chrome-w1` / `chrome-w2` - the two logged-in Chrome profiles, which ARE the W1 and W2 devices**:
-losing them costs a re-enrolment and SETUP-4's 2FA, the one step no tool here can answer. Reuse it,
-do not rebuild it. How a result earns belief is
+**THE RIG NOW LIVES IN THE REPO at `tools/cross-client-harness/` (2026-08-15) - 79 `.mjs`, the ones
+that RUN, no second copy and no archive.** The 285 one-shot probes that had accumulated beside them
+were deleted; `scratch/` (gitignored) is where their successors go. **Its STATE stays OUTSIDE at
+`../canari-harness`**: `test-accounts.json`, the debug APK, A1's baseline, `results.ndjson` and
+**`chrome-w1` / `chrome-w2` - the two logged-in Chrome profiles, which ARE the W1 and W2 devices**
+(losing them costs a re-enrolment and SETUP-4's 2FA, the one step no tool here can answer). Outside
+the work tree a credential CANNOT be committed and `git clean -xdf` cannot reach a profile - a
+structure, where a `.gitignore` rule would only be a policy. One constant bridges them, `STATE_DIR`
+in the gitignored `names.mjs`, with exactly three consumers: `launch.mjs`, `accounts.mjs`,
+`results.mjs`. How a result earns belief is
 [testing-methodology](docs/wiki/testing-methodology.md), which carries thirty-one harness faults
 distilled into ten rules plus the environment traps that read as application bugs. **Read it before
 writing a check or believing one.**
 
 Standing constraints, which are not findings and must survive any compaction:
 
-- Runs against **PRODUCTION**, two real accounts, credentials in `../canari-harness/test-accounts.json`, **never in the repo - which is PUBLIC**. No PIN, login, display name, device id, group id or device serial goes in a committed file; the harness copy is anonymised to `owner` / `peer` and the docs must stay that way. **No password is ever a tool-call argument.**
+- Runs against **PRODUCTION**, two real accounts, credentials in `../canari-harness/test-accounts.json`, **never in the repo - which is PUBLIC**. No PIN, login, display name, device id, group id or device serial goes in a committed file; the rig is anonymised to `owner` / `peer` BY CONSTRUCTION - every check imports from `names.mjs` and none spells a name - and the docs must stay that way. **No password is ever a tool-call argument.**
 - **EVERY test message goes in the two-test-account DM, and NOWHERE else.** For anything needing a CHANNEL, the venue is the `Campagne de test` community, never MiTV - a private channel is readable by every association admin.
 - **OBSERVATION IS PART OF EVERY CHECK, not a debugging step.** A verdict is `PASS` only if the assertions hold AND the run is clean. Several shipped bugs came out of a green check's noise.
 - **RECONCILIATION is the only way this campaign's loss class can be SEEN** (`recon.mjs`). No per-check verdict substitutes for it. **It now covers the PHONE too** (2026-08-15): the native store is read in place over `plugin:sql|select` from CDP, because `adb pull` would put a real account's conversations on this machine and there is no on-device `sqlite3`. Last run: **RECONCILED, W1/W2 and W1/A1, id by id, 0 divergence on all nine shared conversations** including the 4 282-message DM.

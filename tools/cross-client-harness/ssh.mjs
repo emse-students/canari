@@ -33,10 +33,36 @@ export const SSH = (() => {
  * Throws on a non-zero exit rather than returning what came back, so no caller can mistake an
  * unreachable server for an empty answer - the distinction `presence.mjs` exists to preserve.
  *
+ * `maxBuffer` IS PART OF THAT SAME DISTINCTION, and it is not a tuning knob. Node's default is 1 MB,
+ * and a command that produces more dies with `ENOBUFS` - which `srvReport` then files as
+ * `unreachable`. Measured 2026-08-14: `chat-delivery-service` over a 20-minute window is past 1 MB,
+ * so the BUSIEST service on the platform was the one whose logs could never be read, and the reason
+ * looked like a broken tunnel. The busiest service is exactly the one a run most needs to see.
+ *
  * @param host one of the aliases in `~/.ssh/config`: `canari`, `mitv`, `cercle`.
  */
-export function ssh(host, command, { timeoutMs = 30_000 } = {}) {
-  return execFileSync(SSH, [host, command], { encoding: 'utf8', timeout: timeoutMs }).trim();
+export function ssh(host, command, { timeoutMs = 30_000, maxBuffer = 256 * 1024 * 1024 } = {}) {
+  // A TRANSPORT FAILURE IS NOT AN ANSWER, AND ONLY ONE EXIT CODE SAYS WHICH IT IS. `ssh` reserves
+  // 255 for its own failures - the tunnel did not come up, the connection died - and passes the
+  // REMOTE command's status through for everything else. So 255 alone is retried, twice, and every
+  // other non-zero status is handed straight to the caller: a `redis-cli` that answered "no" must
+  // never be retried into a different answer.
+  //
+  // Bounded, and it SAYS SO. A cloudflared blip cost a whole FWD pass on 2026-08-15 - one failed
+  // presence read blocked the two scripts behind it - and a silent retry would replace that with a
+  // tunnel degrading unnoticed. The line is the only warning either way.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return execFileSync(SSH, [host, command], {
+        encoding: 'utf8',
+        timeout: timeoutMs,
+        maxBuffer,
+      }).trim();
+    } catch (e) {
+      if (e?.status !== 255 || attempt >= 2) throw e;
+      console.log(`  [ssh] ${host}: transport failure (255), retry ${attempt + 1}/2`);
+    }
+  }
 }
 
 /** `redis-cli <args...>` inside the gateway's Redis container. Arguments are already quoted by the caller. */

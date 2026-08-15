@@ -6,18 +6,19 @@
 import { client, ensureChat, openConversation, awaitMessage, send, countMessage } from './chat.mjs';
 import { mark } from './results.mjs';
 import * as phone from './phone.mjs';
+import { PORTS, peerNameFor } from './names.mjs';
 
 phone.wake();
 phone.launch();
 await new Promise((r) => setTimeout(r, 5000));
-phone.forwardDevtools(9222);
-const a1 = await client(9222, 'tauri.localhost');
+phone.forwardDevtools(PORTS.A1);
+const a1 = await client(PORTS.A1, 'tauri.localhost');
 await ensureChat(a1).catch(() => null);
-await openConversation(a1, 'PEER DISPLAY NAME').catch(() => null);
+await openConversation(a1, peerNameFor('A1')).catch(() => null);
 
 const w2 = await client(9223, 'canari-emse.fr');
 await ensureChat(w2);
-await openConversation(w2, 'OWNER DISPLAY NAME');
+await openConversation(w2, peerNameFor('W2'));
 
 for (let round = 1; round <= 3; round++) {
   const m = mark('HEAL');

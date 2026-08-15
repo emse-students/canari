@@ -6,6 +6,7 @@
  * because the LIFE phase cuts the radios, and a wireless transport dies with the wifi it rides on.
  */
 import { execFileSync } from 'node:child_process';
+import { A1_WIFI, PORTS } from './names.mjs';
 
 /** The USB serial if there is one, else the wireless entry. */
 export function serial() {
@@ -26,7 +27,19 @@ export function serial() {
 // module is using. When both a USB and a wireless entry are attached - which is the normal state of
 // this phone during a long run - `u2.connect()` with no serial raises rather than choosing, and it
 // aborted a NOTIF-7 run at the tap with the notification already found and sitting in the shade.
-export let SERIAL = serial();
+//
+// RESOLVED SAFELY AT IMPORT, because this used to throw here. A module that throws while being
+// imported cannot be caught by the caller's logic - so with the phone unplugged, merely importing
+// this file took down the whole runner, and every browser-only phase with it. The phone being absent
+// must cost the phone's phases and nothing else. `run()` re-resolves (and throws properly) the first
+// time anything actually needs the device.
+export let SERIAL = (() => {
+  try {
+    return serial();
+  } catch {
+    return null;
+  }
+})();
 export const PKG = 'fr.emse.canari';
 
 // `dumpsys notification --noredact` on this phone is over a megabyte, which is exactly Node's
@@ -45,6 +58,7 @@ const MAX_BUFFER = 64 * 1024 * 1024;
  * must reach the caller.
  */
 function run(args, timeout) {
+  if (!SERIAL) SERIAL = serial(); // throws 'no adb device' with the real reason, at use rather than at import
   try {
     return execFileSync('adb', ['-s', SERIAL, ...args], { encoding: 'utf8', timeout, maxBuffer: MAX_BUFFER });
   } catch (e) {
@@ -86,11 +100,85 @@ export const pid = () => {
  * reboot - leaves the old forward pointing at nothing. A check that forgets this does not fail: it
  * talks to a dead socket and reports the app as unresponsive.
  */
-export function forwardDevtools(port = 9222) {
+export function forwardDevtools(port) {
+  // NO DEFAULT, deliberately. It used to be 9222 - the port A1 has not used since the two browser
+  // profiles took 9223/9224 - so a caller that forgot the argument did not fail: it forwarded to a
+  // port nothing reads and reported the app as unresponsive. A missing argument must be an error,
+  // never a guess at which device was meant.
+  if (!port) throw new Error('forwardDevtools needs a port - pass PORTS.A1');
   const p = pid();
   if (!p) throw new Error('app is not running - nothing to forward to');
   adb(['forward', `tcp:${port}`, `localabstract:webview_devtools_remote_${p}`]);
   return p;
+}
+
+/**
+ * Brings the phone to a state a check can actually measure, or explains why it cannot - and NEVER
+ * throws for "the phone is not here".
+ *
+ * The ladder is USB, then wireless, then give up, in that order and for a reason: the LIFE phase
+ * cuts the radios, so a wireless transport would die inside the very check that needs it. Wireless
+ * is a way to finish a run whose cable has dropped, not a way to run.
+ *
+ * Every step below is one that has silently produced a wrong verdict:
+ *
+ *   - the device listed but the APP not running - the forward points at a dead socket and the app
+ *     reads as unresponsive;
+ *   - the app running but in the BACKGROUND - its WebView keeps the devtools socket listed and the
+ *     `adb forward` succeeds, and CDP never answers, which reads as "not debuggable";
+ *   - the forward left over from a previous pid, pointing at nothing or at another app's socket.
+ *
+ * So this does not report success until something has actually answered on the port.
+ *
+ * @returns `{ ok, how, pid, reason }` - `how` is 'usb' | 'wifi', `reason` is set only when `ok`.
+ */
+export async function ensure({ port, wifi, timeoutMs = 20_000 } = {}) {
+  const target = port ?? PORTS.A1;
+  const address = wifi ?? A1_WIFI;
+
+  let how = 'usb';
+  try {
+    SERIAL = serial();
+    if (SERIAL.includes(':')) how = 'wifi';
+  } catch {
+    try {
+      execFileSync('adb', ['connect', address], { encoding: 'utf8', timeout: 15_000 });
+      SERIAL = serial();
+      how = 'wifi';
+    } catch {
+      return { ok: false, how: null, reason: `no adb device on USB, and ${address} did not answer` };
+    }
+  }
+
+  try {
+    wake();
+    if (!pid()) launch();
+    const until = Date.now() + timeoutMs;
+    while (!pid() && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
+    if (!pid()) return { ok: false, how, reason: 'app would not start' };
+
+    // Foreground it unconditionally rather than testing first: `launch()` on an app already in front
+    // is a no-op, and `foregrounded()` reads a dumpsys line whose format has changed under us before.
+    launch();
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const p = forwardDevtools(target);
+
+    // THE PROOF. Everything above can succeed against a phone that will never answer.
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const r = await fetch(`http://127.0.0.1:${target}/json/version`);
+        if (r.ok) return { ok: true, how, pid: p };
+      } catch {
+        /* not yet */
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return { ok: false, how, reason: `forward is up but CDP never answered on ${target}` };
+  } catch (e) {
+    return { ok: false, how, reason: String(e.message || e).slice(0, 160) };
+  }
 }
 
 export const wake = () => {
