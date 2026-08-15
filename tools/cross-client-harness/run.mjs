@@ -473,6 +473,12 @@ const CELL = {
   FAIL: 'F',
   INCONCLUSIVE: 'I',
   CAPTURED: 'C',
+  // A DELIBERATE SKIP IS A VERDICT, NOT AN UNKNOWN ONE. READ-5 and READ-10 are skipped by
+  // construction - one needs a fourth reader, the other `--destructive` - so they printed `?` on
+  // every pass and every READ run ended `NOT REPRODUCIBLE`, exit 1, with 40 of 40 checks passing
+  // above it. A red that fires on every run is a red its reader learns to skip, which is the one
+  // thing an exit code must never become.
+  SKIPPED: 'x',
 };
 
 for (let pass = 1; pass <= repeat; pass++) {
@@ -519,9 +525,18 @@ if (repeat > 1) {
       // happens to be first.
       return row ? (CELL[row.verdict] ?? '?') : '-';
     });
-    const clean = cells.every((c) => c === '.');
-    allClean &&= clean;
-    console.log(`  ${id.padEnd(20)} ${cells.join(' ')}${clean ? '' : '   <-- not reproducible'}`);
+    // TWO DIFFERENT COMPLAINTS, KEPT APART. A row whose cells DIFFER is the thing `--repeat` exists
+    // to find: an intermittent check. A row that is the same verdict every time is perfectly
+    // reproducible and may still be bad - and calling that "not reproducible" sent the reader
+    // looking for a flake that was never there.
+    const varies = cells.some((c) => c !== cells[0]);
+    const settled = !varies && (cells[0] === CELL.PASS || cells[0] === CELL.SKIPPED);
+    allClean &&= settled;
+    console.log(
+      `  ${id.padEnd(20)} ${cells.join(' ')}${
+        varies ? '   <-- not reproducible' : settled ? '' : '   <-- every pass, not a flake'
+      }`
+    );
   }
   // THE SERVER GETS ITS OWN ROW, because it is the one observer no per-check verdict can carry: the
   // containers serve every client at once, so its window belongs to the pass rather than to a check.

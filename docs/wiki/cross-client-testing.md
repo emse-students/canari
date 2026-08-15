@@ -42,8 +42,8 @@ meet.
 | SETUP | - | 5 of 9 `passed`; SETUP-2 deliberately skipped, SETUP-7/8 owed (8 before CORRUPT and PIN) |
 | MSG | 12 | 13 of 13 `passed` 5/5 on `8a3edbdd`, then `e62c21f1`, then **`25376b86`: 65 verdicts, 65 `PASS`** |
 | TYPE | 5 | 5 of 5 `passed` 5/5 on `8a3edbdd`, then `e62c21f1`, then **`25376b86`: 25 verdicts, 25 `PASS`** |
-| READ | 10 | 8 of 8 runnable `passed` 5/5, 40 of 40 clean; READ-5 and READ-10 `blocked` (a 4th reader, `--destructive`) |
-| FWD | 5 | 5 of 5 `passed` - FWD-1/3/4/5 5/5 with every server window clean, FWD-2 25/25 delivered by hand |
+| READ | 10 | 8 of 8 runnable `passed` 5/5, then **`25376b86`: 40 verdicts, 40 `PASS`**; READ-5 and READ-10 `skipped` (a 4th reader, `--destructive`) |
+| FWD | 5 | FWD-1/3/4/5 5/5, then **`25376b86`: `CLEAN 5/5`, 20 verdicts, 20 `PASS`**; FWD-2 25/25 delivered by hand |
 | every other phase | 22 written, 6 with none | `pending` - not yet run on this build |
 
 Each phase section below names the build its row ran against; this table is the index, not the

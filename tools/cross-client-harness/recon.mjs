@@ -21,6 +21,12 @@
  * Ids stay on this machine: only counts and, when they differ, how many differ, are printed.
  *
  *   node recon.mjs [--left 9224] [--right 9223] [--leftName W1] [--rightName W2]
+ *   node recon.mjs --right 9333 --rightName A1 --rightUrl tauri.localhost      # against the phone
+ *
+ * `--rightUrl` is not optional for the phone and was missing from this line until 2026-08-15, which
+ * cost a run: the WebView serves the app from `tauri.localhost`, so the default `canari-emse.fr`
+ * filter matches no target there and `client()` dies naming what it did find. The flag existed and
+ * was documented eighty lines below, where nobody about to type a command is looking.
  */
 import { client, evaluate } from './chat.mjs';
 import { logcatSince, logcatNotable } from './watch.mjs';

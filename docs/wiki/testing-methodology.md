@@ -843,6 +843,18 @@ by anyone who has not met them.
 - **Clicking through to an external app backgrounds the WebView**, which throttles it, so every read
   taken after that point is against a frozen page.
 - **`tail`-piped output buffers until EOF**, so a progressing job looks hung.
+- **A LOCKED PHONE IS A LIVE APP THAT IS NOT CONNECTED, and the window it focuses is called
+  `NotificationShade`.** On 2026-08-15 the READ preflight stopped on `A1 OFFLINE` while the same
+  preflight had just reported the app unlocked with its ten conversations on screen. `dumpsys window`
+  said `mCurrentFocus=Window{... NotificationShade}` - which reads as "somebody left the shade pulled
+  down" and is in fact the keyguard, that being the window it is drawn in. Two further readings that
+  look like contradictions and are not: `am start` answers *"intent has been delivered to currently
+  running top-most instance"*, because the activity really is top-most with the keyguard over it; and
+  the socket is gone because the webview went `hidden` and the native foreground guard released it,
+  which is the design, not a reconnect failure. `input keyevent`, `cmd statusbar collapse` and a
+  swipe all fail against a keyguard; `wm dismiss-keyguard` clears it when there is no credential to
+  enter, and presence returns within seconds. **`svc power stayon usb` does not prevent this** - it
+  keeps the screen on, it does not keep the device unlocked.
 - **`logcat -b all` is the whole PHONE, not the app.** Any filter over it must be scoped to the app's
   pid (`adb shell pidof fr.emse.canari`) before it is scoped to a word. An unscoped search for
   `forbidden` - looking for a Tauri capability rejection - counted **26** of them, every one the modem
