@@ -737,14 +737,35 @@ pub(crate) async fn recevoir_message_bytes(
         Ok(val) => Ok(val),
         Err(e) => {
             let err_str = e.to_string();
-            log::error!(
-                "recevoir_message_bytes failed: group={} err={}",
-                group_id,
-                err_str
-            );
-
             // Classification centralisee cote mls-core (source unique du string-matching). [[S5]]
-            match e.decrypt_kind() {
+            let kind = e.decrypt_kind();
+
+            // SEVERITY IS THE CLASSIFICATION'S TO REPORT, NOT THE BARE FACT THAT A DECRYPT RETURNED
+            // `Err`. Every arm below already logs the conclusion it reached, and this line sat above
+            // all of them at `error!` - so an own frame re-offered by a replay, or a generation the
+            // ratchet has already consumed, each announced an application ERROR on the phone, where
+            // logs are hardest to read, every single time the protocol worked as specified. An error
+            // that fires on the normal path is one its reader learns to skip. Only what NOTHING has
+            // explained keeps `error!`.
+            if matches!(
+                kind,
+                DecryptErrorKind::Other | DecryptErrorKind::Unrecoverable
+            ) {
+                log::error!(
+                    "recevoir_message_bytes failed: group={} err={}",
+                    group_id,
+                    err_str
+                );
+            } else {
+                log::debug!(
+                    "recevoir_message_bytes classified: group={} kind={:?} err={}",
+                    group_id,
+                    kind,
+                    err_str
+                );
+            }
+
+            match kind {
                 // Corruption detected by mls-core -> unrecoverable state, trigger a re-bootstrap.
                 DecryptErrorKind::Unrecoverable => Err(format!("UNRECOVERABLE:{}", group_id)),
 
@@ -785,6 +806,15 @@ pub(crate) async fn recevoir_message_bytes(
                     );
                     Err(err_str)
                 }
+
+                // A frame this device itself encrypted, handed back by a replay of its own mailbox.
+                // NOT queued, for the reason the two arms above are not: no retry can decrypt what
+                // MLS forbids us to decrypt. Until this arm existed the string fell through to
+                // `SenderRatchetGap` below, so every own frame cost a row in `pending_mls_messages`
+                // and three drain attempts before the sweeper removed it. Surfaced verbatim so the
+                // frontend classifier answers `own-message` and ACKs - nothing is lost, the sender's
+                // optimistic render wrote this message already (WP-ECHO-1).
+                DecryptErrorKind::OwnMessage => Err(err_str),
 
                 // "Process error:" = OpenMLS error on the same epoch -> likely a Sender Ratchet gap
                 // (future generation received) -> queued in SQLite for retry.

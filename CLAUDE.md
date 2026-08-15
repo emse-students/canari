@@ -296,7 +296,14 @@ W2), `synopen.mjs` during a channel open, `synwatch.mjs` at idle: **zero appeara
 constant at 57 px**, against ON at 480 ms / OFF at 2 286 ms and 29 px of shift before the fix, which
 is what delivered a click aimed at a channel row to the button below it.
 
-**A1 IS NOT ON THIS FIX AND CANNOT BE WITHOUT A REBUILD** - `frontendDist` is `../build`, so the
+**A1 IS NOT ON THIS FIX EITHER, NOR ON THE OWN-MESSAGE ONE** (2026-08-15: our own re-offered frame
+was classified as a retryable ratchet gap, so the PHONE queued it in `pending_mls_messages` for three
+impossible retries and logged two errors per occurrence; `DecryptErrorKind::OwnMessage` now decides
+at the throw, story in `CHANGELOG.md`, mechanism on
+[mls-protocol](docs/wiki/protocols/mls-protocol.md)). Until A1 is rebuilt it is the POSITIVE CONTROL
+for that one too, and `watch.mjs`'s `SEVERE_BUT_EXPECTED` demotion must stay - it is now a
+mixed-fleet rule with its deletion condition written at the site.
+**AND IT CANNOT BE WITHOUT A REBUILD** - `frontendDist` is `../build`, so the
 phone serves the bundle inside its APK and a deploy never reaches it. Its APK (built 21:20, installed
 21:30 on 2026-08-14) carries `6bfd805d` and `8a3edbdd` but predates `e62c21f1`. MSG's A1 half above
 therefore ran on the older UI; that is a real mixed-fleet state, not an oversight, and the banner

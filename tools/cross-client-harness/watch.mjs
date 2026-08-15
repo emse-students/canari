@@ -146,9 +146,26 @@ const DECRYPT_CLASSIFIED = [
  *
  * `CannotDecryptOwnMessage` is RFC 9420 working: a member cannot decrypt its own application
  * message, which is exactly why the sender's optimistic render is that message's only writer
- * (the whole subject of WP-ECHO-1). It is logged at `RUST::DEBUG` on every single send, so leaving
- * it inside `SEVERE` marked every media check dirty on the first run the gate existed - a rule that
- * fires on the normal path teaches its reader to ignore it.
+ * (the whole subject of WP-ECHO-1). Leaving it inside `SEVERE` marked every media check dirty on
+ * the first run the gate existed - a rule that fires on the normal path teaches its reader to
+ * ignore it.
+ *
+ * THIS COMMENT USED TO SAY IT WAS LOGGED AT `RUST::DEBUG` ON EVERY SEND. Both halves were wrong,
+ * and measuring them is what found the defect underneath (2026-08-15):
+ *
+ *  - NOT on every send. The gateway's fanout already excludes the sender's own devices, so nobody
+ *    receives their own frame live. It comes from the HISTORY REPLAY reading our own mailbox back -
+ *    opening the DM on two peers with no send at all produced it once on each, and opening a
+ *    channel produced none.
+ *  - NOT `DEBUG` at the source. `mls-core` logged it at `error!` and TWO web-only shims rewrote the
+ *    level by re-matching the marker in the text. Native had neither, so the phone logged a real
+ *    ERROR per own frame - and, because `decrypt_kind` had no arm for it either, queued that frame
+ *    in `pending_mls_messages` for three retries it could never pass.
+ *
+ * It is now classified at the throw and logged at DEBUG on every platform, which is invisible on
+ * web. So this rule is a MIXED-FLEET rule, not a permanent one: A1 serves the bundle inside its APK
+ * and cannot pick a deploy up. DELETE IT once no device under test predates the fix - after that,
+ * this text reappearing is a new emitter and must be allowed to break `clean`.
  */
 const SEVERE_BUT_EXPECTED = /CannotDecryptOwnMessage/i;
 

@@ -71,11 +71,13 @@ export async function loadMlsWasmModule(): Promise<MlsWasmBindings> {
     };
     if (typeof g.wasm_bindings_log !== 'function') {
       g.wasm_bindings_log = (level: string, msg: string) => {
+        // `CannotDecryptOwnMessage` was listed here too, demoting a severity the wasm logger had
+        // already demoted one layer down - two string lists that had drifted apart (this one never
+        // carried `SecretReuseError`). Neither is needed for it now: `mls-core` classifies our own
+        // re-offered frame at the throw and logs it at DEBUG, so no ERROR carries that marker. A
+        // demotion that outlives its emitter hides the next thing to produce the same text.
         const isExpectedError =
-          level === 'ERROR' &&
-          (msg.includes('Wrong Epoch') ||
-            msg.includes('CannotDecryptOwnMessage') ||
-            msg.includes('wrong epoch'));
+          level === 'ERROR' && (msg.includes('Wrong Epoch') || msg.includes('wrong epoch'));
         if (isExpectedError) {
           console.debug(`[RUST::${level}] ${msg}`);
         } else if (level === 'DEBUG') {

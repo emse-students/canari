@@ -70,6 +70,11 @@ pub enum DecryptErrorKind {
     /// for good and retrying is dead weight, and like it the frame is a REAL MESSAGE rather than
     /// nothing to show - only a member re-sending it at the current epoch recovers it.
     PastEpochApplication,
+    /// A frame THIS device sent, re-offered by a history replay of its own mailbox. There is no
+    /// plaintext to recover and nothing was lost - the sender's optimistic render already wrote it
+    /// (WP-ECHO-1) - so it is ACKed and, unlike `SenderRatchetGap`, never queued: it can never
+    /// decrypt, and the queue is for frames a later attempt can still read.
+    OwnMessage,
     /// Unrecoverable MLS state (corruption/inconsistency): the frontend must re-bootstrap.
     Unrecoverable,
     /// Unclassified.
@@ -95,6 +100,14 @@ impl MlsError {
             // it is retried.
             MlsError::OpenMls(s) if s.contains("past epoch application frame") => {
                 DecryptErrorKind::PastEpochApplication
+            }
+            // Before the generic `Process error:` arm, and this one is why the rule above is a rule
+            // rather than a habit: our own frame IS a process error, and without an arm here it read
+            // as a retryable ratchet gap - so native queued a frame it had itself encrypted, then
+            // retried it three times before the sweeper removed it. Nothing was lost, but nothing
+            // could ever be gained either.
+            MlsError::OpenMls(s) if s.contains("CannotDecryptOwnMessage") => {
+                DecryptErrorKind::OwnMessage
             }
             MlsError::OpenMls(s) if s.contains("Process error:") => {
                 DecryptErrorKind::SenderRatchetGap

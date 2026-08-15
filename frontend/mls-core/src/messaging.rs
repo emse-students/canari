@@ -251,6 +251,41 @@ impl MlsManager {
                     return Ok(None);
                 }
 
+                // OUR OWN FRAME, READ BACK OUT OF OUR OWN MAILBOX - RFC 9420 WORKING, NOT A
+                // FAILURE. A device's history holds everything the group sent INCLUDING what this
+                // device sent, so every replay re-offers our own frames and OpenMLS refuses them by
+                // design (a member cannot decrypt itself). That is precisely why the sender's
+                // optimistic render is the only writer of its own message (WP-ECHO-1).
+                //
+                // Measured 2026-08-15: opening the DM on two peers with NO send at all produced
+                // this line once on each, and opening a channel produced none - so the source is the
+                // replay, not a live fanout (`broadcast_to_group_members` already excludes the
+                // sender's own devices). It is classified HERE because the arm below is
+                // `log::error!`, and an ERROR on the normal path is one its reader learns to skip:
+                // the web hid it TWICE by re-matching the marker in the log text (the wasm logger
+                // and `mlsWasmLoader`), while native had no such shim - and, worse, `decrypt_kind`
+                // had no arm for it either, so it fell through to `SenderRatchetGap` and the phone
+                // wrote a row into `pending_mls_messages` for a frame that can never decrypt. Dead
+                // weight retried three times before the sweeper reaches it: WP-PENDING-2's exact
+                // shape, one classification short.
+                //
+                // The return stays `Err`, NOT `Ok(None)`: "nothing of ours to read" and "no
+                // application payload" are the distinction this function was taught to keep (see the
+                // past-epoch arm above). The marker is carried verbatim because it IS the contract
+                // across both FFI boundaries - `classifyIncomingDecryptError` and `decrypt_kind`
+                // each read it to answer `own-message`, and every consumer then ACKs the frame.
+                if err_dbg.contains("CannotDecryptOwnMessage") {
+                    log::debug!(
+                        "Own frame read back from the mailbox, nothing to decrypt: group={} epoch={}",
+                        group_id,
+                        group_epoch
+                    );
+                    return Err(MlsError::OpenMls(format!(
+                        "Process error: CannotDecryptOwnMessage [msg_epoch={}, group_epoch={}]",
+                        msg_epoch, group_epoch
+                    )));
+                }
+
                 log::error!(
                     "MLS decryption failed: group={} msg_epoch={} group_epoch={} err={:?}",
                     group_id,

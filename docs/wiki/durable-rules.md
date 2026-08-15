@@ -202,6 +202,24 @@ three that must be seen without opening one:
   activeEpoch` after applying ZERO commits is "there was nothing to replay", never "it is healed".
 - A wrapper string carries BOTH markers (`GAP_QUEUED:<group>:<the real OpenMLS error>`), so the order
   of a substring classifier is a decision, not a formality.
+- **A SHIM THAT DOWNGRADES A LOG'S SEVERITY BY RE-READING ITS TEXT IS A MISSING CLASSIFICATION,
+  ANNOUNCING ITSELF.** `CannotDecryptOwnMessage` - our own frame, handed back by the replay of our
+  own mailbox, refused by RFC 9420 as designed - had no arm in `decrypt_kind`, so it fell through
+  `Process error:` to `SenderRatchetGap` and NATIVE QUEUED IT for three retries it could never pass.
+  Two web-only shims (`mls-wasm`'s logger, then `mlsWasmLoader`) rewrote its `error!` to `debug` by
+  matching the marker in the text, and the harness demoted it a third time - so the platform that
+  was actually doing the damage was the one place with no demotion at all. **Where the demotion is,
+  the classification is not**: the arm belongs at the throw next to `TooDistantInTheFuture` and
+  `past epoch application frame`, before the generic arm, and each shim's list must be re-checked for
+  an entry whose emitter no longer exists. Corollary: **severity is the classification's to report,
+  not the bare fact that a call returned `Err`** - `recevoir_message_bytes` logged `error!` above its
+  whole match, so every benign classified case announced an application error on the phone, where the
+  logs are hardest to read. Only what NOTHING has explained keeps `error!`.
+- **A COMMENT ASSERTING WHERE A LINE COMES FROM IS A CLAIM, AND IT IS CHEAP TO REFUTE.** The harness
+  had `CannotDecryptOwnMessage` written down as logged at DEBUG on every send; both halves were false
+  and the defect above lived under them. The refutation was one probe that sent NOTHING: opening the
+  DM on two peers produced the line once on each, opening a channel produced none. Same shape as the
+  avatar IPv6 diagnosis - **a bad measurement is worse than none, because it gets written down.**
 
 ## Outbound delivery -> [chat](frontend/modules/chat.md), [mobile](frontend/mobile.md)
 

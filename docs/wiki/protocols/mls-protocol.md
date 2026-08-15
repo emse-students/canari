@@ -400,6 +400,42 @@ reported, the overtaken frame still decrypts, the stale handshake stays silent -
 the wrapper carries its own marker and no other, since a string holding two markers makes the
 classifier's ORDER a decision rather than a fact.
 
+### Our own frame was classified as a retryable gap (2026-08-15)
+
+A device's mailbox holds every frame the group produced, **including the ones it sent itself**, so
+every history replay re-offers them and OpenMLS refuses them by design
+(`ValidationError(CannotDecryptOwnMessage)`). That refusal is the protocol working - it is exactly
+why the sender's optimistic render is its own message's only writer (WP-ECHO-1) - and it was
+nonetheless routed through the generic failure arm at all three layers:
+
+| Layer | Before | Consequence |
+|---|---|---|
+| `mls-core::process_incoming_on_group` | `log::error!("MLS decryption failed: … err={:?}")` | an ERROR on the normal path |
+| `mls-core::decrypt_kind` | no arm -> fell through `Process error:` to `SenderRatchetGap` | **native queued the frame in `pending_mls_messages`** and retried it 3x before the sweeper removed it |
+| `recevoir_message_bytes` | blanket `log::error!` above the match | a second ERROR, then a `[GAP]` WARN, per own frame |
+
+Only the WEB was quiet, and for the wrong reason: **two shims re-matched the marker in the log text
+and rewrote the level** (`mls-wasm`'s `WebLogger`, then `mlsWasmLoader`'s `wasm_bindings_log`), which
+is branching on an error message twice over. Their two lists had already drifted apart - one carried
+`SecretReuseError`, the other did not - and between them they hid the fact that native had no shim at
+all.
+
+**Where it comes from was itself measured, because the harness comment asserting it was wrong on both
+counts.** It does not happen on every send: `broadcast_to_group_members` already excludes the
+sender's own devices, so no live fanout returns our frame. Opening the DM on two peers **with no send
+at all** produced the line once on each, and opening a channel produced none - the source is the
+replay, nothing else.
+
+The fix is one arm at the throw, mirroring `TooDistantInTheFuture` and `past epoch application
+frame`: `DecryptErrorKind::OwnMessage`, matched **before** the generic `Process error:` rule, logged
+at `debug!`, never queued, and the error still surfaced verbatim so
+`classifyIncomingDecryptError` answers `'own-message'` and every consumer ACKs. `recevoir_message_bytes`
+now picks its severity from the classification instead of from the bare fact that a decrypt returned
+`Err` - only an **unclassified** failure keeps `error!`, since that is the one nobody has explained.
+`tests/own_message_frame.rs` pins the kind, the marker, and that the same ciphertext still decrypts
+for the member it was meant for (without which the classification could be right for the wrong
+reason: a malformed frame would pass the first assertion too).
+
 `requestReAdd(groupId)`: tries `externalJoin(groupId)` first (fetch the stored GroupInfo -> build a native external commit -> submit under the epoch gate -> merge, or discard + retry on an epoch race); falls back to a single `welcome_request` when no GroupInfo is available. Self-throttled to one attempt per `RECOVERY_TIMEOUT_MS`; the SYNC_WATCHDOG drives the cadence. No reboot/CAS/successor.
 
 **Server-side membership on an external join.** `validateCommit` promotes the committing device's `DeviceGroupMembership` to `active` (and adds it to the `group:members:<groupId>` Redis set) when it has no active row yet. An external commit is the ONE join path with no Welcome, so nothing else creates that row - and recipient resolution filters on `status='active'`. Without the promotion the rejoined device is invisible to routing while believing it is a member: its own sends work, but it receives neither the history bundle the reconciliation asks for nor any later live message. Idempotent, and skipped for ordinary commits from existing members.

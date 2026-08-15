@@ -45,6 +45,17 @@ Each phase section below names the build its row ran against; this table is the 
 evidence. **A phase re-runs when a commit touches the surface it measures** - which is why MSG and
 TYPE carry two builds each.
 
+**THE ORDER IS THIS FILE'S OWN NUMBERED LADDER, AND THERE IS NO OTHER.** Run the phase sections
+below top to bottom: 1 MSG, 2 TYPE, 3 READ, 4 MUT, 5 SEARCH, 6 MENTION, 7 FWD, 8 GRP, 9 COMM,
+10 DEL, 11 TAB, 12 MULTI, 13 LIFE, 14 NOTIF, 15 CALL, 16 HEAL, 17 PIN, 18 CORRUPT. It is ordered by
+[tier](#the-ladder), so each rung assumes what the one below it proved, and it already carries every
+sequencing constraint there is: HEAL before MULTI and PIN because it rewinds W1's ratchet in every
+group, PIN after HEAL because PIN-3 probes the lockout, CORRUPT last because it destroys state.
+**A second copy of this order was kept outside this file and drifted** - it still read
+`MSG -> FWD -> TAB` from before the matrix phases were interleaved, and on 2026-08-15 it sent a run
+to FWD straight after READ. It has been deleted. Two orders in two places IS the fault; if the order
+needs to change, it changes here.
+
 ## State vocabulary
 
 | State | Meaning |
