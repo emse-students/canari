@@ -234,6 +234,80 @@ async function bubbleRowLocator(cx, textMatch) {
   return id ? `#${id}` : null;
 }
 
+/**
+ * WHY a control is not on top at its own centre - as coordinates, in the SAME evaluation.
+ *
+ * Naming the element that took the point ("DIV.flex-1 overflow-y-auto p-2.5 is") was enough to turn
+ * five silent misses into five reports, and not enough to say what to fix: a control covered by a
+ * transient overlay and a control laid out off the edge of its own pane produce the same sentence.
+ * The numbers separate them - `btn.left < pane.left` is an OVERFLOW, and there is nothing racy
+ * about it. Emitted as a fragment shared by both click helpers so the two can never drift.
+ *
+ * @param {string} btnVar name of the in-page variable holding the button
+ * @param {string} rVar name of the in-page variable holding its already-read bounding rect
+ */
+const geometryOf = (btnVar, rVar) => `{
+  btn: { x: Math.round(${rVar}.left), y: Math.round(${rVar}.top), w: Math.round(${rVar}.width), h: Math.round(${rVar}.height) },
+  pane: (function () { var pr = pane.getBoundingClientRect(); return { x: Math.round(pr.left), w: Math.round(pr.width) }; })(),
+  viewport: { w: innerWidth, h: innerHeight },
+  overflowsPaneLeftBy: Math.max(0, Math.round(pane.getBoundingClientRect().left - ${rVar}.left)),
+  toolbar: (function () {
+    var t = ${btnVar}.parentElement;
+    if (!t) return null;
+    var tr = t.getBoundingClientRect();
+    return { x: Math.round(tr.left), w: Math.round(tr.width) };
+  })()
+}`;
+
+/**
+ * Runs `fn` with enough viewport width for the hover toolbar to be REACHABLE, then restores.
+ *
+ * THIS IS A COMPENSATION FOR A FILED APPLICATION DEFECT, and it is written as one. The strip is
+ * positioned `right-full` outside the bubble with nothing bounding it by the pane, so at the width
+ * these browsers launch at (958 px) it is laid out 54 px INTO the sidebar and `elementFromPoint`
+ * at the heart button's own centre returns a conversation row. Five checks whose subject is
+ * mutation cannot click a reaction at all. Measured, with the table, in
+ * [backlog](../../docs/wiki/backlog.md) - "the message hover bar is too wide on desktop".
+ *
+ * It is deliberately NOT the global launch width: every other phase's baseline is that window, and
+ * a campaign that quietly widens its own viewport stops measuring what users have. MUT-21 measures
+ * the defect at the launched width instead, so THE DAY IT IS FIXED, MUT-21 passes and this wrapper
+ * can be deleted. A compensation with no expiry is how a workaround becomes the design.
+ */
+const TOOLBAR_ROOM = { width: 1440, height: 900 };
+async function withToolbarRoom(clients, fn) {
+  for (const cx of clients)
+    await cx.send('Emulation.setDeviceMetricsOverride', {
+      ...TOOLBAR_ROOM,
+      deviceScaleFactor: 0,
+      mobile: false,
+    });
+  await sleep(500); // the layout settles before anything is measured against it
+  try {
+    return await fn();
+  } finally {
+    for (const cx of clients) await cx.send('Emulation.clearDeviceMetricsOverride').catch(() => {});
+  }
+}
+
+/** `'read'` / `'sent'` / `null` when the row shows neither - which is the normal state for anything
+ *  that is not the last own message, `MessageMetadata.svelte` rendering the indicator only on the
+ *  receipt anchor. `null` also covers a row that is gone, so callers that care must anchor by id. */
+async function readIndicator(cx, locator) {
+  return evaluate(
+    cx,
+    `(function () {
+      var pane = ${paneExpr()};
+      var findRow = ${FIND_ROW_FN};
+      var row = findRow(pane, ${JSON.stringify(locator)});
+      if (!row) return null;
+      if (row.querySelector('.msg-status-read')) return 'read';
+      if (row.querySelector('.msg-status-sent')) return 'sent';
+      return null;
+    })()`
+  );
+}
+
 /** What the row currently SHOWS: its paragraph text and whether that paragraph carries the deleted
  *  styling (`italic opacity-60` in `MessageTextBody.svelte` - the only DOM trace `isDeleted` leaves
  *  on the body). `null` means the row itself is gone, which is a different answer from "not
@@ -304,14 +378,17 @@ async function clickBubbleIcon(cx, textMatch, iconClass) {
       var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
       var hit = document.elementFromPoint(x, y);
       if (!hit || !btn.contains(hit)) {
-        return { blocked: 'the .${iconClass} button is not on top at its own centre' + (hit ? ' (' + hit.tagName + '.' + String(hit.className).slice(0, 40) + ' is)' : ' (nothing is there)') };
+        return {
+          blocked: 'the .${iconClass} button is not on top at its own centre' + (hit ? ' (' + hit.tagName + '.' + String(hit.className).slice(0, 40) + ' is)' : ' (nothing is there)'),
+          geometry: ${geometryOf('btn', 'r')}
+        };
       }
       return { x: x, y: y, name: (btn.getAttribute('aria-label') || btn.innerText || '').trim().slice(0, 40) };
     })())`
   );
   if (!point || point === 'null') throw new Error(`no .${iconClass} action on the row of ${textMatch}`);
   const p = JSON.parse(point);
-  if (p.blocked) throw new Error(p.blocked);
+  if (p.blocked) throw new Error(`${p.blocked} - ${JSON.stringify(p.geometry ?? null)}`);
   const { received } = await clickAtPoint(cx, p.x, p.y);
   // A click NOTHING received is the silent failure this exists to name. It is not retried here: the
   // caller decides, because for a reaction a second click TOGGLES rather than repeats.
@@ -342,14 +419,17 @@ async function clickReactionEmoji(cx, textMatch, emoji) {
       var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
       var hit = document.elementFromPoint(x, y);
       if (!hit || !btn.contains(hit)) {
-        return { blocked: 'the ' + ${JSON.stringify(emoji)} + ' button is not on top at its own centre' + (hit ? ' (' + hit.tagName + '.' + String(hit.className).slice(0, 40) + ' is)' : ' (nothing is there)') };
+        return {
+          blocked: 'the ' + ${JSON.stringify(emoji)} + ' button is not on top at its own centre' + (hit ? ' (' + hit.tagName + '.' + String(hit.className).slice(0, 40) + ' is)' : ' (nothing is there)'),
+          geometry: ${geometryOf('btn', 'r')}
+        };
       }
       return { x: x, y: y };
     })())`
   );
   if (!point || point === 'null') throw new Error(`no quick-reaction ${emoji} on the row of ${textMatch}`);
   const p = JSON.parse(point);
-  if (p.blocked) throw new Error(p.blocked);
+  if (p.blocked) throw new Error(`${p.blocked} - ${JSON.stringify(p.geometry ?? null)}`);
   const { received } = await clickAtPoint(cx, p.x, p.y);
   // THE EMOJI IS ITS OWN BUTTON LABEL, so unlike the icon helper this one can assert the click was
   // taken by the RIGHT control and not merely by some control. A reaction click is a toggle, so a
@@ -627,7 +707,21 @@ async function mut1() {
   }
 }
 
-// ── MUT-2: editing CLEARS readBy - .msg-status-read reverts to .msg-status-sent [DM] ───────────
+// ── MUT-2: editing does NOT un-read the message - the watermark is monotone [DM] ───────────────
+//
+// THIS CHECK ASSERTED A DESIGN THAT WAS DELIBERATELY REPLACED, and failed the application for
+// obeying the current one. It expected `.msg-status-read` to revert to `.msg-status-sent` after an
+// edit, i.e. that editing CLEARS `readBy` - and `readBy` is no longer stored on a message at all.
+// Read state is one monotone instant per participant on the CONVERSATION (`readState.ts`), merged
+// with `max`, compared against the message's original `timestamp`, which an edit does not touch
+// (`useMessaging.svelte.ts` writes `isEdited`, `editedAt`, `content`, and nothing else). There is no
+// representable state meaning "read up to T except message X", so a revert is not a behaviour that
+// was omitted - it is one the model cannot express, and `systemMessageHandler.ts` says so in a
+// comment at the exact line that used to clear it.
+//
+// So the oracle is inverted, and the residue is recorded rather than asserted: an edited message
+// keeps its read indicator although the peer has not seen the new text. That is the accepted cost
+// of a monotone watermark, and it belongs in the report where a reader can weigh it.
 
 async function mut2() {
   const [a, b, w] = await openDmPair();
@@ -659,34 +753,29 @@ async function mut2() {
       100
     ).catch(() => null);
 
+    // Anchored before the edit, because the edit is what makes `v1` stop naming anything.
+    const row = await bubbleRowLocator(a, v1);
+    if (!row) throw new Error(`no #msg-<id> anchor on the row of ${v1}`);
+
     await editBubble(a, v1, v2);
+    await awaitMessage(b, v2, 10000); // the edit reached the peer, so its watermark had every chance
 
-    const revertedMs = await until(
-      a,
-      `(function () {
-        var pane = ${paneExpr()};
-        var hits = [].filter.call(pane.querySelectorAll('p'), function (e) {
-          return (e.textContent || '').indexOf(${JSON.stringify(v2)}) !== -1;
-        });
-        if (!hits.length) return false;
-        var node = hits[hits.length - 1];
-        for (var i = 0; i < 8 && node.parentElement; i++) {
-          node = node.parentElement;
-          if (node.classList && node.classList.contains('group')) break;
-        }
-        return !!node.querySelector('.msg-status-sent') && !node.querySelector('.msg-status-read');
-      })()`,
-      8000,
-      100
-    ).catch(() => null);
+    // THE INDICATOR MUST NOT MOVE, and the second reading is what makes that an observation rather
+    // than a coincidence of timing: a revert, if one existed, would arrive with the edit's own round
+    // trip, which `awaitMessage` above has already waited out on the peer.
+    const readNow = await readIndicator(a, row);
+    await sleep(2000);
+    const readLater = await readIndicator(a, row);
 
-    const ok = readWaitMs !== null && revertedMs !== null;
+    const ok = readWaitMs !== null && readNow === 'read' && readLater === 'read';
     return await finish('MUT-2/dm', ok ? 'PASS' : 'FAIL', w, {
       readWaitMs,
-      revertedMs,
-      note: readWaitMs === null
-        ? 'never observed .msg-status-read before the edit - either this was not the last own message, or the peer window never got a real read receipt'
-        : undefined,
+      readNow,
+      readLater,
+      note:
+        readWaitMs === null
+          ? 'never observed .msg-status-read before the edit - either this was not the last own message, or the peer window never got a real read receipt'
+          : 'accepted tradeoff, recorded on purpose: the bubble still reads as READ although the peer has not seen the NEW text',
     });
   } catch (e) {
     return await finish('MUT-2/dm', 'ERROR', w, { error: e.message });
@@ -975,7 +1064,13 @@ async function mut9() {
       return true;
     }
 
-    await deleteBubble(deletingCx, target);
+    // Scoped to the one click that needs it. MUT-9's ERROR reads "nothing is there" rather than
+    // MUT-11/12's "a sidebar row is", so the trash button's centre was OUTSIDE the viewport, not
+    // merely covered - a different symptom, and its cause is NOT yet measured. MUT-21 measures the
+    // DM only, where a peer message's toolbar is 323 px and fits; a channel adds pin and moderate
+    // buttons to it, which is a hypothesis and nothing more until the geometry now attached to the
+    // throw arrives from a run. The wrapper is applied because it makes the click land either way.
+    await withToolbarRoom([deletingCx], () => deleteBubble(deletingCx, target));
     await sleep(600);
     const [aGone, bGone] = await Promise.all([
       countMessage(a, target),
@@ -1091,7 +1186,7 @@ async function mut11() {
   let [a, b, w] = await openDmPair();
   let dmOk = false;
   try {
-    dmOk = await mut11Body(a, b, w, 'dm');
+    dmOk = await withToolbarRoom([a, b], () => mut11Body(a, b, w, 'dm'));
   } catch (e) {
     await finish('MUT-11/dm', 'ERROR', w, { error: e.message });
   } finally {
@@ -1101,7 +1196,7 @@ async function mut11() {
   [a, b, w] = await openChannelPair();
   let chOk = false;
   try {
-    chOk = await mut11Body(a, b, w, 'channel');
+    chOk = await withToolbarRoom([a, b], () => mut11Body(a, b, w, 'channel'));
   } catch (e) {
     await finish('MUT-11/channel', 'ERROR', w, { error: e.message });
   } finally {
@@ -1171,7 +1266,7 @@ async function mut12() {
   let [a, b, w] = await openDmPair();
   let dmOk = false;
   try {
-    dmOk = await mut12Body(a, b, w, 'dm');
+    dmOk = await withToolbarRoom([a, b], () => mut12Body(a, b, w, 'dm'));
   } catch (e) {
     await finish('MUT-12/dm', 'ERROR', w, { error: e.message });
   } finally {
@@ -1181,7 +1276,7 @@ async function mut12() {
   [a, b, w] = await openChannelPair();
   let chOk = false;
   try {
-    chOk = await mut12Body(a, b, w, 'channel');
+    chOk = await withToolbarRoom([a, b], () => mut12Body(a, b, w, 'channel'));
   } catch (e) {
     await finish('MUT-12/channel', 'ERROR', w, { error: e.message });
   } finally {
@@ -1592,6 +1687,83 @@ async function mut20() {
 
 // ── Runner ───────────────────────────────────────────────────────────────────────────────────
 
+// ── MUT-21: the hover toolbar is laid out OUTSIDE the pane, and the sidebar takes its clicks [DM] ─
+//
+// THIS CHECK OWNS THE DEFECT THE OTHERS COMPENSATE FOR - see `withToolbarRoom`. It runs at the width
+// the browsers actually launch at, deliberately, because that is the width the report came from.
+// Its FAIL is expected and filed; the day it PASSES, `withToolbarRoom` has expired and every one of
+// its call sites can go. It measures both directions, which is the half the user's report did not
+// separate: an OWN message puts the strip `right-full`, so it overflows into the sidebar, while a
+// PEER message puts it `left-full`, so it overflows the viewport's right edge and lands on nothing.
+// Same cause, two symptoms, and only the first is a mis-click rather than a dead zone.
+
+/** Geometry + hit test for the one control at `iconOrEmoji` on this row, at the CURRENT width. */
+async function toolbarReach(cx, textMatch, selector) {
+  await hoverBubble(cx, textMatch);
+  const raw = await evaluate(
+    cx,
+    `JSON.stringify((function () {
+      var pane = ${paneExpr()};
+      var findRow = ${FIND_ROW_FN};
+      var row = findRow(pane, ${JSON.stringify(textMatch)});
+      if (!row) return null;
+      var btn = ${selector};
+      if (!btn) return { noControl: true };
+      var r = btn.getBoundingClientRect();
+      if (r.width === 0) return { noBox: true };
+      var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+      var hit = document.elementFromPoint(x, y);
+      var g = ${geometryOf('btn', 'r')};
+      g.reachable = !!(hit && btn.contains(hit));
+      g.onTop = hit ? hit.tagName + '.' + String(hit.className).slice(0, 46) : null;
+      g.overflowsViewportRightBy = Math.max(0, Math.round(r.left + r.width - innerWidth));
+      return g;
+    })())`
+  );
+  return raw && raw !== 'null' ? JSON.parse(raw) : null;
+}
+
+async function mut21() {
+  const [a, b, w] = await openDmPair();
+  try {
+    const own = mark('MUT21OWN');
+    await sendText(a, own);
+    await awaitMessage(b, own, 20000);
+    const peer = mark('MUT21PEER');
+    await sendText(b, peer);
+    await awaitMessage(a, peer, 20000);
+
+    // Own message -> strip is `right-full`, to the LEFT of a right-aligned bubble.
+    const ownReach = await toolbarReach(
+      a,
+      own,
+      `[].filter.call(row.querySelectorAll('button'), function (x) { return (x.innerText || '').trim() === '❤️'; })[0]`
+    );
+    // Peer message -> strip is `left-full`, to the RIGHT of a left-aligned bubble.
+    const peerReach = await toolbarReach(
+      a,
+      peer,
+      `(function () { var s = row.querySelector('svg.lucide-reply'); return s ? s.closest('button') : null; })()`
+    );
+
+    const ok = !!ownReach?.reachable && !!peerReach?.reachable;
+    await finish('MUT-21/dm', ok ? 'PASS' : 'FAIL', w, {
+      ownReach,
+      peerReach,
+      filedAs: 'backlog.md - "the message hover bar is too wide on desktop, and the sidebar takes its clicks"',
+      note: ok
+        ? 'REACHABLE at the launched width - the defect is fixed, and every withToolbarRoom() call site can now be deleted'
+        : 'expected FAIL: the documented layout defect is still present, and withToolbarRoom() is still earning its place',
+    });
+    // Like MUT-15: `ok` means "the documented hole was reproduced", not "the app is right".
+    return true;
+  } catch (e) {
+    return await finish('MUT-21/dm', 'ERROR', w, { error: e.message });
+  } finally {
+    closeAll(a, b);
+  }
+}
+
 const CHECKS = {
   1: mut1,
   2: mut2,
@@ -1613,6 +1785,7 @@ const CHECKS = {
   18: mut18,
   19: mut19,
   20: mut20,
+  21: mut21,
 };
 
 const results = [];

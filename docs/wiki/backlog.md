@@ -82,10 +82,64 @@ media service, a service-worker cache, the client's own store, or all three - be
 not a bug and a missing invalidation is. MiGallery is a separate origin with its own cache, so it
 also establishes whether the URL itself is content-addressed.
 
-### P2 - the message hover bar is too wide on desktop
+### P2 - the message hover bar is too wide on desktop, and the sidebar takes its clicks
 
-The react/reply/... strip shown on message hover does not fit when the window is half the screen, so
-its end is unreachable. A layout constraint, not a behaviour change.
+Reported by a user as "the end is unreachable when the window is half the screen". **Measured on
+2026-08-15, and it is worse than that: the strip is laid out beyond the pane's own left edge, over
+the sidebar, which then receives the clicks aimed at it.** Not a race - the same geometry every time.
+
+`MessageBubbleToolbar.svelte` positions itself `absolute ... right-full mr-2` for an own message,
+so the whole strip sits OUTSIDE the bubble, to its left, and nothing bounds it by the pane. It is
+383 px wide (six quick emoji, a divider, up to six icon buttons), and it needs
+`paneWidth - bubbleWidth >= 391`. One message, four viewport widths, sidebar 392 px:
+
+| viewport | pane | bubble | toolbar x | pane x | reachable |
+| --- | --- | --- | --- | --- | --- |
+| 958 x 944 | 566 | 210 | 329 | 392 | **no** - 54 px into the sidebar |
+| 1024 | 632 | 210 | 395 | 392 | yes, by 12 px |
+| 1280 | 888 | 210 | 651 | 392 | yes |
+| 1600 | 1208 | 210 | 971 | 392 | yes |
+
+At 958 px, `elementFromPoint` at the heart button's own centre returns a **sidebar conversation
+row**, not the button. So the reaction is not merely hard to reach - clicking where it is drawn hits
+the conversation list, and on a narrow window that means switching conversation.
+
+**Only the own-message direction is measured.** A peer's message puts the strip `left-full`, and
+there it is 323 px and reachable at 958 px in a DM (MUT-21 measures both). MUT-9 fails in a CHANNEL
+with "nothing is there" - the point outside the viewport rather than covered - and that is a
+different symptom whose cause is not yet measured; a channel toolbar carries pin and moderate on top
+of the rest, which is a hypothesis, not a finding.
+
+**The threshold is not a single width**, which is why it reads as intermittent: it is
+`paneWidth - bubbleWidth < 391`, so a long message overflows on a screen where a short one does not.
+Any fix must bound the strip inside the pane rather than pick a breakpoint - flipping to
+`left-full`/`bottom-full` when there is no room, or clamping, or reusing the `forceVisible`
+placement (`bottom-full left-1/2`) which is already the mobile answer to exactly this.
+
+**It blocks five MUT checks** (MUT-9, MUT-11 both transports, MUT-12 both transports) whose subject
+is mutation, not layout: they cannot click a reaction at all at the harness's launched width. That
+is what surfaced it - the checks used to dispatch blind, so the click landed in the sidebar and the
+reaction silently never happened. They now run inside a stated viewport override, and **MUT-21 owns
+the defect at the launched width so the override has an expiry**: the day MUT-21 passes, every
+`withToolbarRoom()` call site can be deleted.
+
+### P2 - a deleted message still offers the emoji picker, and using it throws
+
+Measured by MUT-17 on 2026-08-15. `MessageBubbleToolbar.svelte` gates the quick-reaction strip on
+`!isDeleted`, but the "open the full picker" (smile) button is passed on `onReact` alone, with no
+`!isDeleted` anywhere in that prop's derivation. So on a tombstone the strip correctly disappears and
+the picker button stays.
+
+Observed, on the same row, in one pass: `smileOnDeletedPresent: true`,
+`quickStripOnDeletedPresent: false`, `reactAttempted: true`, **`reactSucceeded: false`**, and W1
+raised `TypeError: Cannot read properties of undefined (reading 'replace')` at that exact moment.
+The row itself is undamaged on both clients - both show `Ce message a été supprimé.` with the
+deleted styling - so nothing is corrupted; an affordance is offered that cannot work and that throws
+when used.
+
+Two things to decide together: whether the picker button should be gated on `!isDeleted` like every
+other action (it should - a reaction to a tombstone means nothing), and what the `replace` is
+reading, since a guard on the button would hide that crash rather than fix it.
 
 ---
 
