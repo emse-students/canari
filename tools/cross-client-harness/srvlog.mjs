@@ -132,6 +132,12 @@ const BENIGN = [
   // no compressed variant was ever advertised, so 404 is again the correct answer to a request for
   // something this site does not claim. Spelt out as its own path for the reason above.
   /^\[404\] GET \/sitemap\.xml\.gz$/,
+  // AN AD-TECH CRAWLER ASKING FOR THE IAB CONVENTION FILE. Same family as the two sitemap guesses
+  // and verified the same way: `app-ads.txt` declares who may sell an app's ad inventory, Canari
+  // carries no advertising at all and has never claimed the path, so 404 is the correct answer.
+  // Spelt out per path for its neighbours' reason - a general `[404] GET /*.txt` would forgive
+  // `/robots.txt`, which this site really does serve.
+  /^\[404\] GET \/app-ads\.txt$/,
   // A BROWSER FETCHING THE TAB ICON. Spelt out per path for the same reason as the sitemap guesses
   // above: a general `GET /...` rule would forgive a request for a route that matters.
   /^\[\d+\] GET \/favicon\.ico$/,
@@ -218,6 +224,21 @@ const NOTABLE = [
   // does not break `clean`.
   /\[PUSH_DEFERRED\]\[send-/,
   /\[PUSH_SEND\]\[send-[0-9a-f-]+(?:-def)?\] FCM sent /,
+  // AN INTERNET SCANNER LOOKING FOR SECRETS ON A PUBLIC HOST - reported, and never a gate.
+  //
+  // NOTABLE rather than BENIGN, unlike the crawler 404s above, because the answer to "was this site
+  // scanned during the run" is worth reading even when the answer to "did it leak" is no. Measured
+  // before the rule was written: 9 requests in 24 h of production, ONE burst, all `404`, nothing
+  // served - so it gates nothing and hides nothing.
+  //
+  // WHAT MAKES IT SAFE IS THAT THE APPLICATION CANNOT OWN THESE SHAPES, not that they were the ones
+  // seen. A SvelteKit route cannot begin with a dot, `static/` holds no hidden file and no `.js`,
+  // and every script this app emits lives under `/_app/immutable/`, hashed.
+  //
+  // The three bundle guesses are spelt LITERALLY for the reason the sitemap rules are: a general
+  // `[404] GET /*.js` would forgive `/service-worker.js`, which SvelteKit really would own if one
+  // were ever added - and the bucket that would catch that must not be the bucket that hides it.
+  /^\[404\] (GET|HEAD) \/(\.[\w.-]+(\/[\w./-]*)?|(service-account|credentials)\.json|app\.js|bundle\.js|static\/js\/main\.js)$/,
   // A SERVICE STARTING INSIDE THE WINDOW - which means the window straddles a deploy, and every
   // client-side disconnection in it has an explanation that is not the application's fault. Never
   // benign: a run that does not know it was redeployed under itself will attribute the fallout to

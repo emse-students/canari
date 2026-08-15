@@ -304,12 +304,35 @@ async function type5() {
   // The channel transport is HTTP, not the WS the four checks above exercise - a different code
   // path end to end, which is why it gets its own row rather than being assumed from TYPE-1.
   const [a, b] = await Promise.all([client(W1), client(W2)]);
-  await openChannel(a);
-  await openChannel(b);
-  await clearComposer(a);
 
+  // OBSERVE THE SETUP TOO, because a setup that fails is the check failing and its evidence is the
+  // console like any other. On 2026-08-15 `openChannel` threw on pass 4 of 5 - the click was
+  // received by the right row and no composer ever appeared - and because the two windows opened
+  // AFTER it, the run recorded one sentence and not a single line from either client. Nothing could
+  // be attributed, and a re-run is not a recovery: it destroys the evidence it was meant to recover.
+  //
+  // The navigation `openChannel` performs is forgiven by `report` itself (it counts
+  // `Page.frameNavigated`), so opening the window earlier costs nothing and closes beyond that count
+  // still break `clean`.
   const wA = await watch(a, 'sender');
   const wB = await watch(b, 'receiver');
+
+  // AND THE SETUP'S FAILURE CARRIES THAT EVIDENCE OUT. Without this the throw unwinds to the file's
+  // top-level handler, which records `{error}` and nothing else - the windows are open, and their
+  // contents die with the frame.
+  try {
+    await openChannel(a);
+    await openChannel(b);
+  } catch (e) {
+    const gated = gate('ERROR', { W1: await report(wA), W2: await report(wB) });
+    record('TYPE-5', 'ERROR', { ...gated.detail, stage: 'setup', error: e.message });
+    [a, b].forEach((c) => c.close());
+    // RETURNED, NOT RETHROWN: the file's top-level handler would record a SECOND `TYPE-5 ERROR`
+    // carrying only the message, and the poorer of the two rows is the one a reader would find last.
+    console.log(`      [ERROR] TYPE-5 setup ${e.message}`);
+    return false;
+  }
+  await clearComposer(a);
 
   const before = await evaluate(b, INDICATOR);
   await typeOnly(a, 'TYPE5 probe');

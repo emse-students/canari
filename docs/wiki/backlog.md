@@ -384,6 +384,74 @@ Sequenced after WP-AVATAR-1 deliberately: that one settles the contract on a cas
 behaviours are known and measured, and this generalises it. Doing them in the other order would
 generalise from a shape nobody has validated once.
 
+### P2 - a link preview that could not be REACHED is reported as a bad request, and remembered as one
+
+Same family as WP-AVATAR-1, found the same way - by a check going PASS-DIRTY rather than by anyone
+looking. `msg6.mjs` posts a Wikipedia link; on 2026-08-15 at 14:37:02 the browser got
+`GET /api/mls/link-preview?url=…Signal_(application) -> 400`, and the server said why:
+
+```
+[LINK_PREVIEW] fr.wikipedia.org failed: ConnectTimeoutError: Connect Timeout Error
+  (attempted addresses: 185.15.58.224:443, 2a02:ec80:600:ed1a::1:443, timeout: 10000ms)
+```
+
+Both address families timed out - a real, transient upstream condition, and NOT the IPv6 story that
+was refuted on 2026-08-15 (an unroutable AAAA costs 0-2 ms; this is a 10 s connect timeout on v4 as
+well). Three things are wrong with what the endpoint does with it, and only the third is expensive:
+
+- **The status code lies.** `400` tells the client its URL was malformed. The truth is *I could not
+  reach it*, which is not an answer about the request at all - the standing rule, applied to a
+  response this service EMITS rather than one it reads.
+- **Two competing budgets.** The handler arms `AbortController` at 4 000 ms
+  (`security.controller.ts:381`) and the error that came back is undici's own 10 000 ms connect
+  timeout, so the stated budget is not the one that fired. One of them is dead code; decide which.
+- **A transient failure is cached as a verdict.** The refusal is stored for
+  `PREVIEW_FAILURE_TTL_MS` = **10 minutes** and replayed as `400` to every reader
+  (`security.controller.ts:375`), for a link that may have been reachable one second later - which is
+  what the log shows, `cache hit ... ok=true` at 14:43:42. Caching a refusal is right (a dead host
+  must not cost the full timeout per render); caching *unreachable* under the same key as *refused*
+  is what turns a blip into ten minutes of a wrong answer. Separate the two, or do not cache the
+  transport failure at all.
+
+Cheap to fix and deliberately not done mid-campaign: it changes a response code the frontend reads.
+
+**And the same check's OTHER dirt puts the two together.** `msg6` also recorded a `502` on both
+browsers, which the server names: `[AvatarService] Error fetching avatar for … from
+https://gallery.mitv.fr: ETIMEDOUT`, five of them at 14:39:58 - WP-AVATAR-1's signature to the
+character. So within one three-minute window, **two unrelated upstreams timed out from two different
+containers** (`chat-delivery-service` -> Wikipedia at 14:37:02, `core-service` -> gallery at
+14:39:58). That is not evidence about either upstream, and it is the second time this shape has been
+mistaken for one: the IPv6 reading was refuted by measuring the components, which all came back
+healthy. **Before either fix, measure EGRESS over time rather than the endpoints again** - the
+component probes already say each is fine at the moment it is asked, so what is left to establish is
+whether these stalls are correlated, and a one-shot probe cannot answer that by construction.
+
+### P3 - the SSR reports an unmatched route as a server error, in red, on stderr
+
+Found while classifying the pass-2 server window of the MSG x5 of 2026-08-15, which went `NOT CLEAN`
+on nine lines that turned out to be an internet scanner probing for secrets (`/.env`, `/.git/HEAD`,
+`/credentials.json`, `/app.js`, …). **All nine were answered `404` and nothing was served** - the
+finding is not the scan, which is background radiation on any public host. It is what the SSR does
+with a 404.
+
+`frontend/src/hooks.server.ts` exports `handle` and no `handleError`, so SvelteKit installs its
+default (`@sveltejs/kit` 2.70.1, `runtime/server/index.js:114`), which calls
+`format_server_error` (`runtime/server/utils.js:197`) and prints through **`console.error`** - to
+stderr, wrapped in a hardcoded `\x1b[1;31m`. A 404 is a *correct answer* about a route this
+application does not have; a 500 is the application failing. Both come out at the same level, in the
+same red, and only the 500 carries a stack.
+
+The consequence is the standing one about levels: a reader who learns that red SSR lines are
+scanners is a reader who will skim past the 500 that matters. Fix is one export - our own
+`handleError` that logs 4xx at warn (or info) with the method and path, and 5xx at error with the
+stack - which also gives the classifier a level to sort on instead of a path shape.
+
+Deliberately not done mid-campaign: it redeploys the SSR, and every client-side disconnection in a
+window that straddles a deploy has to be re-attributed. `srvlog.mjs` classifies the scan as
+`notable` in the meantime - reported on every run, gating none - and the two paths a general rule
+would have wrongly forgiven (`/service-worker.js`, `/chat`) are pinned in
+`srvclassify-selftest.mjs`.
+
 ### P3 - SEO for Sky, MiGallery and Portail-etu
 
 Canari's is done and the method is written up in [seo](frontend/seo.md), including the four checks no

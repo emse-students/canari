@@ -320,10 +320,20 @@ not design a staging environment before that conversation.**
 - **The `mongo` service in `docker-compose.prod.yml` is dead** - production holds no application database there (only `admin`, `config`, `local`) and nothing in the codebase carries a MongoDB connection string. A candidate for removal, not a fault; removing it is a prod service change and needs the user.
 - **A new device or a reinstall still sees no media older than 30 days.** That is what makes the storage forecast survivable, and it may not be what the user intends - a POLICY question, not a rendering one ([storage-forecast](docs/wiki/infrastructure/storage-forecast.md), section 6). The clock is now honest: it is refreshed on a client cache HIT, not only on a server download.
 
-**MSG AND TYPE ARE BOTH RUN FIVE TIMES ON `8a3edbdd` AND BOTH ARE CLEAN 5/5** - MSG 13 of 13 on
-every pass (2026-08-14 20:03-20:21Z), TYPE 5 of 5 on every pass (21:33-21:40Z), every server window
-clean in both. Durations and per-pass detail are on the dashboard; **do not copy the tables here.**
-The instrument faults behind them are rules 15 and 16 of
+**MSG AND TYPE ARE BOTH RE-RUN FIVE TIMES ON `25376b86` AND BOTH ARE CLEAN - MSG 65 verdicts / 65
+`PASS`, TYPE 25 / 25** (2026-08-15), every server window clean, on top of the earlier `8a3edbdd` and
+`e62c21f1` series. MSG's two questions are both answered: `MSG-6/7` **runs** on all five passes where
+it was `BLOCKED` 5/5, and the mailbox-barrier line is absent everywhere. **Two instrument faults came
+out of it and are rules 19 and 20 of [testing-methodology](docs/wiki/testing-methodology.md), not
+state** - a live filter that matched `server clean` and not `SERVER NOT CLEAN`, so it reported only
+the good windows; and `openChannel`, which waited 15 s for a state that two opposite causes both
+produce, with both `watch` windows opened AFTER the setup, so its one failure carried no console at
+all. It now asserts the row becoming `aria-current` and names the port. **That failure is
+unattributed, not explained** - it has not recurred in 50 further verdicts. Two 404 families are
+newly classified (a secret scan -> `notable`, `app-ads.txt` -> benign) and the SSR printing 404s
+through `console.error` is a P3 on [backlog](docs/wiki/backlog.md). Durations and per-pass detail are
+on the dashboard; **do not copy the tables here.**
+The instrument faults behind the EARLIER series are rules 15 and 16 of
 [testing-methodology](docs/wiki/testing-methodology.md) and must not be re-derived: a check that
 never established its precondition (TYPE-4 cut the peer with a setting already measured inert), a
 phase file that computed five verdicts while reading no console, and a click that could not say what

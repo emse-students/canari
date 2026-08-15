@@ -40,8 +40,8 @@ meet.
 | Phase | Scripts | State |
 | --- | --- | --- |
 | SETUP | - | 5 of 9 `passed`; SETUP-2 deliberately skipped, SETUP-7/8 owed (8 before CORRUPT and PIN) |
-| MSG | 12 | 13 of 13 `passed` 5/5 on `8a3edbdd`, re-run 13/13 on `e62c21f1` after the banner change touched this surface |
-| TYPE | 5 | 5 of 5 `passed` 5/5 on `8a3edbdd`, re-run 5/5 on `e62c21f1` |
+| MSG | 12 | 13 of 13 `passed` 5/5 on `8a3edbdd`, then `e62c21f1`, then **`25376b86`: 65 verdicts, 65 `PASS`** |
+| TYPE | 5 | 5 of 5 `passed` 5/5 on `8a3edbdd`, then `e62c21f1`, then **`25376b86`: 25 verdicts, 25 `PASS`** |
 | READ | 10 | 8 of 8 runnable `passed` 5/5, 40 of 40 clean; READ-5 and READ-10 `blocked` (a 4th reader, `--destructive`) |
 | FWD | 5 | 5 of 5 `passed` - FWD-1/3/4/5 5/5 with every server window clean, FWD-2 25/25 delivered by hand |
 | every other phase | 22 written, 6 with none | `pending` - not yet run on this build |
@@ -237,6 +237,15 @@ State is the last run, `8a3edbdd` x5 (2026-08-14, 20:03-20:21Z). `5/5` = clean o
 web, mobile and server. Durations are the spread across those five passes. Re-run once on
 `e62c21f1` (2026-08-15, 22:28Z) after the banner change touched this surface: **13/13, server clean**.
 
+**RE-RUN x5 ON `25376b86` (2026-08-15, 15:19-15:38Z) - 65 verdicts, 65 `PASS`.** The build carrying
+the repair-ask ordering fix, so all three clients were on it. What the run was taken to establish, and
+did: `MSG-6/7` **ran** on all five passes (`1 827-1 971 ms`) where it had been `BLOCKED` 5/5 before,
+and the `[QUEUE] mailbox barrier ... SKIPPED` line that dirtied pass 1 of the previous run is absent
+from all five. Server clean on every pass once the pass-2 window was read: nine `404`s, one burst, an
+internet scanner probing for secrets on a public host - nothing served, classified `notable` so it is
+reported and gates nothing, and the SSR's habit of printing a 404 through `console.error` filed as a
+P3 on [backlog](backlog.md).
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `passed` 5/5 - 264-326 ms |
@@ -263,6 +272,19 @@ that both clients are really talking to each other, and it leaves nothing behind
 State is the last run, `8a3edbdd` x5 (2026-08-14, 21:33-21:40Z). **5/5 = clean on all five passes**,
 web, mobile and server. Shown/cleared are the spreads across those passes. Re-run once on
 `e62c21f1` (2026-08-15, 22:32Z) after the banner change touched this surface: **5/5, server clean**.
+
+**RE-RUN x5 ON `25376b86` (2026-08-15) - 24 of 25, then 25 of 25 after the instrument was fixed.**
+`TYPE-5` threw on pass 4 of the first series: `openChannel` clicked the `general` row, the click was
+RECEIVED by that row, and no composer ever appeared. It could not be attributed, for two reasons that
+are now rule 20 of [testing-methodology](testing-methodology.md) - the check waited fifteen seconds
+for one state that two opposite causes both produce, and both `watch` windows opened *after* the
+setup, so the throw carried no console line from either client. `openChannel` now asserts the row
+becoming `aria-current` first (the attribute the screen-reader work had already added) and names
+which of the two happened, on which port; `type5` observes its own setup and drains both reports into
+the failure record. The re-run went 25/25 with every server window clean, and a third series taken
+straight after it exited **`CLEAN 5/5`** on its own - no window needing a rule written after the fact,
+which the second series had needed twice. The fault has not recurred in 50 further verdicts and is
+therefore **unattributed, not explained**: if it returns, the report will say which half it is.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |

@@ -100,6 +100,9 @@ const BENIGN_CASES = [
   `${GW}Client closed connection: None`,
   '[404] GET /sitemap_index.xml',
   '[404] GET /sitemap.xml.gz',
+  // The IAB advertising convention file, on a site that carries no advertising. Raised the pass-5
+  // window of the TYPE x5 re-run of 2026-08-15 and nothing else in it.
+  '[404] GET /app-ads.txt',
   '2026-08-14T12:22:33Z  INFO chat_gateway::subscribers: [Gateway] Channel event distributed to connected users (targets=2).',
   `${NEST}[MembersController] [GET_MEMBERS] group=00000000-0000-4000-8000-000000000001 count=3`,
   `${NEST}[DevicesController] [REGISTER_PREKEYS] user=aaaaaaaaaaaaaaaa device=web-a-b count=50`,
@@ -136,6 +139,16 @@ const NOTABLE_CASES = [
   // The hourly backlog report. Its identifiers are anonymised here for the same reason as every
   // other case in this file: the real line names real devices, and this file is committed.
   `${NEST}[AppController] [CRON] reportQueueDepth: 1078 frame(s) queued, heaviest 5: web-a-b=189/0.2MB web-c-d=86/0.4MB`,
+  // THE SECRET SCAN. Notable and not benign: whether the public host was scanned during a run is
+  // worth reading, even though every one of these was answered `404` and nothing was served.
+  // Verbatim from the pass-2 window of the MSG x5 of 2026-08-15, which is the run they made dirty.
+  '[404] GET /.env',
+  '[404] GET /.env.production',
+  '[404] GET /.git/HEAD',
+  '[404] GET /credentials.json',
+  '[404] GET /service-account.json',
+  '[404] GET /bundle.js',
+  '[404] GET /static/js/main.js',
 ];
 for (const l of NOTABLE_CASES) {
   const ok = matches(NOTABLE_RULES, l);
@@ -159,10 +172,23 @@ console.log(`${posterOk ? 'ok  ' : 'FAIL'} unexplained  a public read that serve
 
 // AND THE SAME SHAPE ON THE 404s. Each guessed path is forgiven by name; a 404 on a route this site
 // really does own must stay unexplained, or the bucket that would catch a broken page hides it.
-const ownedMiss = '[404] GET /sitemap.xml';
-const ownedOk = !matches(BENIGN_RULES, ownedMiss);
-if (!ownedOk) failures++;
-console.log(`${ownedOk ? 'ok  ' : 'FAIL'} unexplained  a 404 on a route we DO serve is not a crawler's guess`);
+for (const ownedMiss of ['[404] GET /sitemap.xml', '[404] GET /robots.txt']) {
+  const ownedOk = !matches(BENIGN_RULES, ownedMiss);
+  if (!ownedOk) failures++;
+  console.log(
+    `${ownedOk ? 'ok  ' : 'FAIL'} unexplained  a 404 on a route we DO serve is not a crawler's guess  ${ownedMiss}`
+  );
+}
+
+// AND THE SCANNER RULE AGAINST THE TWO THINGS IT MUST NOT REACH. `/service-worker.js` is the exact
+// path a general `[404] GET /*.js` would have forgiven and SvelteKit really would own it, so it is
+// the reason the three bundle guesses are spelt literally; `/chat` is an ordinary route of this
+// application, and a 404 on one is the finding this bucket exists to surface.
+for (const owned of ['[404] GET /service-worker.js', '[404] GET /chat']) {
+  const ok = !matches(BENIGN_RULES, owned) && !matches(NOTABLE_RULES, owned);
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} unexplained  a 404 on a path we could own is not a scanner's guess  ${owned}`);
+}
 
 // THE LINE THAT REPLACED THE ONE THIS FILE USED TO PIN. `FALLBACK_MEMBERS_CACHE` was kept out of
 // BENIGN because it fired on 100 % of sends and nobody had said that was the design; it wasn't -

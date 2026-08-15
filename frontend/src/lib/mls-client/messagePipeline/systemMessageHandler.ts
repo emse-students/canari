@@ -351,7 +351,7 @@ export async function handleSystemEvent(
 
     if (!channelId || !distributionId || keysToImport.length === 0) {
       log(
-        `[CHANNEL-KEY] Distribution rejetée - channelId=${channelId || '∅'} distributionId=${distributionId || '∅'} keysToImport=${keysToImport.length}`
+        `[CHANNEL-KEY] Distribution rejected - channelId=${channelId || '-'} distributionId=${distributionId || '-'} keysToImport=${keysToImport.length}`
       );
       return true;
     }

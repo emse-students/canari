@@ -16,7 +16,7 @@ over a filtered copy of its own evidence.
 
 ---
 
-## The sixteen rules
+## The twenty rules
 
 Ordered by how expensive it is to break them.
 
@@ -539,6 +539,57 @@ The general form, and the reason this is not rule 15 again: rule 15 is about a p
 never ESTABLISHED. Here the precondition was established, correctly, by the check itself - and then
 read before the system had finished responding to it. **Anything you did to the client is a
 transition; give it the same deadline you would give the application's own.**
+
+### 19. A WATCH THAT MATCHES THE SUCCESS WORDING REPORTS ONLY SUCCESS - and silence then reads as health
+
+The MSG x5 of 2026-08-15 was followed by a live filter over the runner's output, alternating on
+`server (clean|NOT)`. The runner prints `  server clean` when a window is clean and
+`  SERVER NOT CLEAN - run srvlog.mjs --since ...` when it is not. The alternation is
+**case-sensitive**, so it matched every clean window and **none** of the dirty ones: five passes were
+reported, four of them said `server clean`, and the fifth said nothing at all. The pass-2 window -
+`frontend-ssr NOT CLEAN, unexplained=9` - reached the reader only because the full output was read
+by hand afterwards.
+
+The failure is not the regex. It is that **the observer was written from the shape of the outcome it
+expected**, and the two outcomes of this runner do not share a spelling: one is lower case, the other
+is upper case with a remediation clause appended. A filter derived from the happy path cannot report
+the other one, and its silence is indistinguishable from "nothing happened yet".
+
+Applies to any live watch, not just this one: **enumerate the terminal states first, then write the
+pattern over all of them.** If you cannot enumerate them, widen rather than narrow - noise costs a
+read, a missed failure costs the finding. And the cheapest check on any such filter is to ask what it
+would have emitted had the thing being watched crashed at that instant; if the answer is "nothing",
+it is not a monitor.
+
+### 20. A WAIT THAT CAN END TWO WAYS MUST ASSERT THE STATE BETWEEN THEM - and the SETUP that reaches it is part of the check
+
+`openChannel` clicked a channel row and waited fifteen seconds for the composer. On pass 4 of 5 of
+the TYPE x5 of 2026-08-15 the composer never came, and the report - a good one, carrying the
+coordinates, the element that RECEIVED the click, and the screen at both instants - could still only
+say that. Two causes end in exactly that state and their fixes are opposite:
+
+- the click was received and never HANDLED, or
+- it was handled and the chat area rendered nothing. `ChatArea` renders **nothing at all** - header,
+  message list and composer - while its conversation is missing from the store, so a selected channel
+  with no entry looks identical to a click that never landed.
+
+A channel selection changes no url either (it is a state assignment), so the address bar cannot
+witness it, and fifteen seconds of waiting produce one bit where two are needed. The check now
+asserts the intermediate state first - the row becoming `aria-current` - and reports which of the two
+sentences applies. **The attribute already existed** for the screen reader, which is the recurring
+shape: the affordance that makes a state announceable is the same one that makes it assertable, and
+where it is missing, adding it serves both readers.
+
+**And the evidence was absent for a second, independent reason: the setup ran outside the observation
+window.** Both `watch` calls opened *after* `openChannel`, so the throw carried one sentence and not a
+single console line from either client - on a rig whose whole premise is that observation is part of
+every check. A setup that fails IS the check failing. Watch first; `report` already forgives the
+navigation the setup performs, by counting `Page.frameNavigated` itself. And a setup failure must
+drain those reports into its own record, or the file's top-level handler writes a poorer row over it
+and the richer one is the copy nobody finds.
+
+Corollary worth stating on its own: **a re-run is not a recovery.** The next four passes were green,
+which recovered nothing - it destroyed the only window in which the fault was visible.
 
 ---
 

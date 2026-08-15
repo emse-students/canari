@@ -665,16 +665,41 @@ export async function openChannel(cx, community = 'Campagne de test', channel = 
   const hitTheRow =
     received && `${received.text} ${received.label}`.toLowerCase().includes(channel.toLowerCase());
 
+  // THE SELECTION, ASSERTED BEFORE THE COMPOSER - the discriminator, taken where the decision is.
+  //
+  // A composer that never appears has two causes with opposite fixes: the click was not HANDLED, or
+  // it was handled and the chat area rendered nothing (`ChatArea` renders NOTHING - header, list and
+  // composer - while its conversation is missing from the store). Waiting fifteen seconds for the
+  // composer cannot tell them apart, and on 2026-08-15 it did not: TYPE-5 failed once in five passes
+  // and the report could only say that a composer was absent.
+  //
+  // A channel selection changes NO url - `onSelectChannelConversation` is a state assignment - so
+  // the address bar can never witness it. `aria-current` was added to the selected row for this (and
+  // for the screen reader that had the same problem), which makes the two states separable from
+  // outside the component. Not a gate on its own: it is recorded and read in the failure below.
+  const selectedMs = await until(
+    cx,
+    `[].slice.call(document.querySelectorAll('button[aria-current]')).some(function (el) {
+       return (el.innerText || '').toLowerCase().indexOf(${JSON.stringify(channel.toLowerCase())}) >= 0;
+     })`,
+    5000
+  ).catch(() => null);
+
   try {
     if (received && !hitTheRow) throw new Error('click landed elsewhere');
     await until(cx, `!!document.querySelector('.chat-composer-footer .chat-composer-editor')`, 15000);
   } catch {
     const atFailure = await screen(point);
     throw new Error(
-      `openChannel: no composer in ${community}/${channel} - ${JSON.stringify({
+      `openChannel: no composer in ${community}/${channel} on port ${cx.port} - ${
+        selectedMs === null
+          ? 'and the row never became aria-current: the click was RECEIVED and not HANDLED'
+          : `the row WAS selected after ${selectedMs}ms, so the chat area rendered nothing for a selected channel`
+      } - ${JSON.stringify({
         clickedAt: { x: point.x, y: point.y },
         received,
         hitTheRow,
+        selectedMs,
         // null means the app was STILL MOVING when it was clicked - the one condition under which a
         // verified coordinate can still deliver the click somewhere else.
         settledBefore,
