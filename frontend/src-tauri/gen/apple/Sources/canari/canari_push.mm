@@ -365,40 +365,59 @@ void CanariMirrorPushStateToAppGroup(void) {
   NSLog(@"[CanariPush] mirror to App Group done");
 }
 
-static NSString *CanariBuildFallbackText(NSString *senderName) {
-  if (senderName.length > 0) {
-    return [NSString stringWithFormat:@"Nouveau message de %@", senderName];
+/**
+ * The `.lproj` bundle for the language chosen INSIDE Canari, not the one the OS is set to.
+ *
+ * THOSE ARE TWO DIFFERENT SETTINGS, and only one of them is the user's answer about this app: an
+ * app set to English on a French phone was writing French. `NSLocalizedString` answers for the OS
+ * and is therefore the wrong call everywhere in this file - hence this indirection rather than the
+ * idiomatic macro. The language is mirrored into `push_context.json` by the web layer whenever it
+ * changes (`set_push_context_locale`), which is the only moment anything native can learn it.
+ *
+ * Falls back to the main bundle, which is French-first, when nothing has been mirrored yet (a
+ * device that has not opened the app since this shipped) or when the tag names no table we ship.
+ * `fr-FR` is tried as `fr` before giving up.
+ */
+static NSBundle *CanariLocaleBundle(void) {
+  CanariPushContext *ctx = CanariLoadPushContext();
+  NSString *lang = (ctx.locale.length > 0) ? ctx.locale : nil;
+  if (lang == nil) {
+    return [NSBundle mainBundle];
   }
-  return @"Vous avez recu un message chiffre";
+  NSString *path = [[NSBundle mainBundle] pathForResource:lang ofType:@"lproj"];
+  if (path == nil) {
+    NSString *base = [[lang componentsSeparatedByString:@"-"] firstObject];
+    path = [[NSBundle mainBundle] pathForResource:base ofType:@"lproj"];
+  }
+  NSBundle *bundle = (path != nil) ? [NSBundle bundleWithPath:path] : nil;
+  return (bundle != nil) ? bundle : [NSBundle mainBundle];
 }
 
 /**
- * The sentence shown for a reaction, in the phone's language.
+ * A notification string from `Localizable.strings`, in the app's own language.
  *
- * COMPOSED HERE AND NOT BY THE SERVER, for a reason no amount of server-side translation would fix:
- * the server does not know the recipient's language, so every sentence it writes is French for
- * everyone. The device is the only layer that knows.
+ * The extension has its OWN copy of this table and its own twin of this function: an app extension
+ * is a separate bundle, so it cannot read the app's. See `canari_NSE/*.lproj`.
  *
- * `locale` is the app's OWN language setting, mirrored into `push_context.json` while the app was
- * open. It is deliberately not `preferredLocalizations`, which answers for the OS: those are two
- * different settings, and an app set to English on a French phone was writing French. Empty means
- * nothing has been mirrored yet - a device that has not opened the app since this shipped - and the
- * platform's answer is then the honest fallback.
- *
- * NOT read from a strings table, because iOS has none. `fr.lproj` / `en.lproj` carry
- * `InfoPlist.strings` and nothing else, so there is no `Localizable.strings` for either the app or
- * the notification extension; creating one means adding a variant group to TWO targets in
- * `project.pbxproj`, which cannot be validated from a machine that cannot build iOS. This function
- * is the single place that changes once the table exists - tracked in `docs/wiki/backlog.md` as the
- * prerequisite for the other hardcoded native strings.
+ * COMPOSED ON THE DEVICE AND NOT BY THE SERVER, for a reason no amount of server-side translation
+ * would fix: the server does not know the recipient's language, so every sentence it writes is
+ * French for everyone. The device is the only layer that knows.
  */
-static NSString *CanariReactionBody(NSString *emoji, NSString *_Nullable locale) {
-  NSString *lang = (locale.length > 0) ? locale : [NSBundle mainBundle].preferredLocalizations.firstObject;
-  NSString *safeEmoji = (emoji.length > 0) ? emoji : @"";
-  if ([lang hasPrefix:@"en"]) {
-    return [NSString stringWithFormat:@"reacted %@ to your message", safeEmoji];
+static NSString *CanariLocalized(NSString *key) {
+  return [CanariLocaleBundle() localizedStringForKey:key value:key table:nil];
+}
+
+static NSString *CanariBuildFallbackText(NSString *senderName) {
+  if (senderName.length > 0) {
+    return [NSString stringWithFormat:CanariLocalized(@"notif.message.from"), senderName];
   }
-  return [NSString stringWithFormat:@"a réagi %@ à votre message", safeEmoji];
+  return CanariLocalized(@"notif.message.encrypted");
+}
+
+/** The sentence shown for a reaction. See `CanariLocalized` for where the language comes from. */
+static NSString *CanariReactionBody(NSString *emoji) {
+  NSString *safeEmoji = (emoji.length > 0) ? emoji : @"";
+  return [NSString stringWithFormat:CanariLocalized(@"notif.reaction.body"), safeEmoji];
 }
 
 static int CanariStableNotifId(NSString *groupId) {
@@ -1741,8 +1760,7 @@ static void CanariHandleMarkReadAction(NSString *groupId) {
 }
 
 static void CanariShowPendingSyncNotification(void) {
-  NSString *body =
-      @"Vous avez peut-etre des messages en attente, ouvrez l'application pour les envoyer.";
+  NSString *body = CanariLocalized(@"notif.outbox.pending");
   CanariShowLocalNotification(@"Canari", body, @"fr.emse.canari://chat", @"canari_messages",
                               kPendingSyncNotifId, nil, nil, NO, nil);
   NSLog(@"[CanariPush] showPendingSyncNotification");
@@ -2498,7 +2516,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
 
 // Generic body shown when a channel message cannot be decrypted (key missing or ciphertext omitted).
 static NSString *CanariBuildChannelFallbackText(NSString *channelName) {
-  return [NSString stringWithFormat:@"Nouveau message dans #%@", channelName];
+  return [NSString stringWithFormat:CanariLocalized(@"notif.channel.message"), channelName];
 }
 
 // Looks up the raw epoch key (base64) for a channel/keyVersion in the app-private channel_keys.json
@@ -2712,9 +2730,8 @@ static void CanariHandleFcmData(NSDictionary *data) {
 
     NSString *deepLink = [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
     NSLog(@"[CanariPush] reaction group=%@ actor=%@", groupId, actorId);
-    CanariShowLocalNotification(actorName, CanariReactionBody(emoji, ctx != nil ? ctx.locale : nil),
-                                deepLink, groupId, CanariStableNotifId(groupId), attachmentPath, nil,
-                                NO, nil);
+    CanariShowLocalNotification(actorName, CanariReactionBody(emoji), deepLink, groupId,
+                                CanariStableNotifId(groupId), attachmentPath, nil, NO, nil);
     return;
   }
 

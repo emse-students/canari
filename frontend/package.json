@@ -9,7 +9,7 @@
     "dev": "vite dev",
     "build": "vite build && node ./scripts/check-bundle-consistency.mjs",
     "preview": "vite preview",
-    "test": "vitest run --passWithNoTests",
+    "test": "npm run paraglide:compile && vitest run --passWithNoTests",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage --passWithNoTests",
     "bench:media-crypto": "bun run scripts/bench-image-encryption.ts",

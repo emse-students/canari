@@ -1,0 +1,8 @@
+/* Notification text composed by the app process (canari_push.mm) - English.
+   Keep in sync with fr.lproj/Localizable.strings and with canari_NSE/*.lproj, which is a separate
+   bundle and therefore a separate copy. See the French file for why. */
+"notif.reaction.body" = "reacted %@ to your message";
+"notif.message.from" = "New message from %@";
+"notif.message.encrypted" = "You received an encrypted message";
+"notif.channel.message" = "New message in #%@";
+"notif.outbox.pending" = "You may have messages waiting to be sent - open the app to send them.";

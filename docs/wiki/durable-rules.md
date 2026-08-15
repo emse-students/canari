@@ -613,11 +613,18 @@ prompt fields are all on those pages. What must not be forgotten between them:
   follow-up fix - a `showConfirm(...)` message and its custom button label were shipped as raw
   French literals (WP-SAFELINK-1), copying the shape of that store's own ~21 other call sites,
   none of which are Paraglide either; that existing pattern is not a precedent to extend.
-- Re-run `bun run paraglide:compile` before `bun run test` after any build - **an Android or iOS
-  build counts**, because `beforeBuildCommand` is `bun run build`. It fails as a handful of tests
-  asserting French text and receiving the English message, which reads like an i18n regression in
-  code nobody touched: 7 failures across 4 files right after an APK build, 1481/1481 after one
-  recompile with no source change between the two runs.
+- **A RULE THAT SAYS "REMEMBER TO RUN X FIRST" IS A MISSING DEPENDENCY, NOT A RULE.** This entry
+  used to say: re-run `bun run paraglide:compile` before `bun run test` after any build - **an
+  Android or iOS build counts**, because `beforeBuildCommand` is `bun run build`, and it leaves
+  Paraglide output resolving to English. It fails as a handful of tests asserting French text and
+  receiving the English message, which reads like an i18n regression in code nobody touched: 7
+  failures across 4 files right after an APK build, 1481/1481 after one recompile with no source
+  change between the two runs. **It cost the same 20 minutes a second time on 2026-08-15**, in a
+  session that had already read this page - which is what a rule relying on memory is worth.
+  `check` had always compiled first and `test` had not, so the fix was one word of
+  `package.json`: `"test": "npm run paraglide:compile && vitest run"`. The symmetry is the point -
+  when two scripts need the same precondition and only one declares it, the other does not have a
+  rule, it has a bug.
 - **AN INDEX INTO AN ARRAY YOU DO NOT OWN IS STATE THAT GOES STALE, AND `slice` PAST THE END IS
   SILENT.** `ChatArea` renders `messageGroups.slice(windowStart, …)` and recomputed `windowStart`
   only when the conversation KEY changed - while `loadHistoryForConversation` REPLACES

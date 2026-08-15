@@ -19,7 +19,7 @@ import { applyLocalChannelReaction, setChannelReactions } from '$lib/stores/reac
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { notifyReaction } from '$lib/utils/chat/messaging';
+import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 
 /** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {

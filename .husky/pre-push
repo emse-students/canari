@@ -42,11 +42,17 @@ if [ "$RUN_ALL" -eq 1 ]; then
   RUN_TAURI=1
 fi
 
+# `bun run test` est ici et pas au pre-commit : ~2 min sur 176 fichiers, trop cher a chaque commit,
+# mais le frontend etait le SEUL projet dont aucun hook ne jouait la suite (chat-delivery-service a
+# son `npm test` ci-dessous, mls-wasm son build wasm32 reel). Un cycle d'import est passe jusqu'a la
+# CD par ce trou : il ne casse ni le lint ni svelte-check, il casse a l'EXECUTION du module, donc
+# seul un test qui importe pouvait le voir. Le pre-commit miroite le job lint de la CI ; ceci
+# miroite son job test.
 if [ "$RUN_FRONTEND" -eq 1 ]; then
   (
-    cd frontend && bun run lint && bun run check && bun run format:check
+    cd frontend && bun run lint && bun run check && bun run format:check && bun run test
   ) || {
-    echo "❌ Frontend checks failed (oxlint/oxvelte/check/format:check)."
+    echo "❌ Frontend checks failed (oxlint/oxvelte/check/format:check/test)."
     exit 1
   }
 fi

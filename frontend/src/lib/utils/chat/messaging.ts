@@ -2,7 +2,6 @@ import type { IMlsService } from '$lib/mlsService';
 import type { ChatMessage, Conversation } from '$lib/types';
 import type { OutboxEntry } from '$lib/db';
 import { enqueueOutboxMessage } from './outbox';
-import { apiFetch } from '$lib/utils/apiFetch';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import {
@@ -10,6 +9,7 @@ import {
   isChannelConversationId,
 } from '$lib/utils/chat/channelCrypto';
 import { extractMentionUserIds } from '$lib/utils/mentions';
+import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { m } from '$lib/paraglide/messages';
 
 /**
@@ -182,49 +182,6 @@ async function enqueueControlEvent(conversationId: string, proto: Uint8Array): P
     attempts: 0,
     createdAt: now,
   });
-}
-
-/**
- * Notifies the author of a message that the current user reacted to it.
- *
- * IT SENDS AN ID, NEVER A COPY - and it used to send a copy. `messagePreview` carried 80
- * characters of the DECRYPTED message to the server, which built a sentence around them and put
- * that sentence in the FCM data map and in the APNs alert body. So plaintext from an end-to-end
- * encrypted conversation reached this server, Google and Apple on every reaction, three lines
- * under a comment asserting that it did not. The recipient is the message's AUTHOR and therefore
- * already holds the message: `messageId` is enough, and the device renders the reaction against
- * its own copy in its own language.
- *
- * Exported so it can be reused by other callers (e.g. channel reactions), which do not use it yet.
- */
-export async function notifyReaction(params: {
-  groupId: string;
-  targetSenderId: string;
-  emoji: string;
-  /** The reacted-to message, so the author's devices can find their own copy of it. */
-  messageId: string;
-  actorName: string;
-}): Promise<void> {
-  // Only the failure branches speak. A line on entry and a line on success fired on EVERY reaction,
-  // said nothing a reader could act on, and were the two most frequent lines in the chat console -
-  // the rest of this module already logs failures only. The two warns below stay: a swallowed
-  // best-effort call leaves nothing else behind.
-  //
-  // apiFetch attaches the Bearer token (in memory, never in a cookie) and replays once on 401
-  // after refresh. A raw fetch went out without Authorization -> nginx auth_request failed -> 401.
-  try {
-    const resp = await apiFetch('/api/mls/notify-reaction', {
-      method: 'POST',
-      body: JSON.stringify(params),
-    });
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => '');
-      console.warn(`[notifyReaction] HTTP error ${resp.status}:`, text.slice(0, 200));
-    }
-  } catch (e) {
-    // Fire-and-forget: an expired session must not surface an error to the caller.
-    console.warn(`[notifyReaction] Failed: ${e instanceof Error ? e.message : String(e)}`);
-  }
 }
 
 /**

@@ -1,0 +1,16 @@
+/* Notification text composed by the app process (canari_push.mm) - French, the default.
+
+   THIS TABLE IS NOT PICKED BY THE OS LANGUAGE. It is read through the .lproj bundle named by
+   `locale` in push_context.json, which is the Français/English the user chose INSIDE Canari - a
+   different setting from the device language. See CanariLocalized() in canari_push.mm.
+
+   The extension has its OWN copy at canari_NSE/*.lproj: an app extension is a separate bundle, so
+   `Bundle.main` there is the appex and cannot see this file. Keep the two in sync - that split is
+   the platform's, not a choice, and it is what Android does not have to do with res/values.
+
+   The Android twin is app/src/main/res/values/strings.xml. */
+"notif.reaction.body" = "a réagi %@ à votre message";
+"notif.message.from" = "Nouveau message de %@";
+"notif.message.encrypted" = "Vous avez reçu un message chiffré";
+"notif.channel.message" = "Nouveau message dans #%@";
+"notif.outbox.pending" = "Vous avez peut-être des messages en attente, ouvrez l'application pour les envoyer.";

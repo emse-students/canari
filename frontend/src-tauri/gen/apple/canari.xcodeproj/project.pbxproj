@@ -13,6 +13,8 @@
 		6B3F8A20631C134B8463C1F0 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3416F9F4A8BD192DF6A921B4 /* QuartzCore.framework */; };
 		6EE9A1414BAA40AC62FAAD10 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FC45C8DC231D096C520FA226 /* Assets.xcassets */; };
 		DA10CA11E0000000000000B1 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000000A1 /* InfoPlist.strings */; };
+		DA10CA11E0000000000000B2 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000000A2 /* Localizable.strings */; };
+		DA10CA11E0000000000000B3 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000000A3 /* Localizable.strings */; };
 		A1B2C3D4E5F6012345678AB /* canari_ios.mm in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6012345678ABCD /* canari_ios.mm */; };
 		BD49C851300FABF7000960D5 /* CanariNotifications.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BD49C84A300FABF7000960D5 /* CanariNotifications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		BD49C865300FADEB000960D5 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD49C862300FADEB000960D5 /* NotificationService.swift */; };
@@ -96,6 +98,10 @@
 		D4E5F6012345678ABCDEF04 /* PushKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PushKit.framework; path = System/Library/Frameworks/PushKit.framework; sourceTree = SDKROOT; };
 		DA10CA11E0000000000000F1 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		DA10CA11E0000000000000E1 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		DA10CA11E0000000000000F2 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/Localizable.strings; sourceTree = "<group>"; };
+		DA10CA11E0000000000000E2 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		DA10CA11E0000000000000F3 /* fr */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = fr; path = fr.lproj/Localizable.strings; sourceTree = "<group>"; };
+		DA10CA11E0000000000000E3 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		E5F6012345678ABCDEF011 /* canari_push.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = canari_push.h; sourceTree = "<group>"; };
 		F6012345678ABCDEF0123 /* canari_push.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = canari_push.mm; sourceTree = "<group>"; };
 		BDCC40C12FED454100576E31 /* KeyboardMediaBridge.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = KeyboardMediaBridge.mm; sourceTree = "<group>"; };
@@ -241,6 +247,7 @@
 				BD49C860300FADEB000960D5 /* canari_NSE-Bridging-Header.h */,
 				BD49C861300FADEB000960D5 /* Info.plist */,
 				BD49C862300FADEB000960D5 /* NotificationService.swift */,
+				DA10CA11E0000000000000A3 /* Localizable.strings */,
 			);
 			path = canari_NSE;
 			sourceTree = "<group>";
@@ -251,6 +258,7 @@
 				1E2DB18B9EA29D32EF469D92 /* canari_iOS.entitlements */,
 				72819ED7FEE13980538C60C8 /* Info.plist */,
 				DA10CA11E0000000000000A1 /* InfoPlist.strings */,
+				DA10CA11E0000000000000A2 /* Localizable.strings */,
 			);
 			path = canari_iOS;
 			sourceTree = "<group>";
@@ -265,6 +273,24 @@
 				DA10CA11E0000000000000E1 /* en */,
 			);
 			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+		DA10CA11E0000000000000A2 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				DA10CA11E0000000000000F2 /* fr */,
+				DA10CA11E0000000000000E2 /* en */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+		DA10CA11E0000000000000A3 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				DA10CA11E0000000000000F3 /* fr */,
+				DA10CA11E0000000000000E3 /* en */,
+			);
+			name = Localizable.strings;
 			sourceTree = "<group>";
 		};
 /* End PBXVariantGroup section */
@@ -362,6 +388,7 @@
 				EB4C666589AF7B0EDEBED1B6 /* assets in Resources */,
 				BD75AE00300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist in Resources */,
 				DA10CA11E0000000000000B1 /* InfoPlist.strings in Resources */,
+				DA10CA11E0000000000000B2 /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -369,6 +396,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DA10CA11E0000000000000B3 /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

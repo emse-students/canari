@@ -346,56 +346,47 @@ behind the fix that shipped is in
 [history-reconciliation](protocols/history-reconciliation.md) and the constants carry their own
 justification in `apps/chat-delivery-service/src/retention.constants.ts`.
 
-### P2 - a reaction to your message is delivered down the POSTS pipe, and inherits none of a message notification
+### P2 - the reaction notification is the same on both platforms, except on a KILLED iPhone
 
-Found by MUT-13 on 2026-08-15, first run. `messaging.controller.ts` `POST mls/notify-reaction` sends
-`{ type: 'social', deepLink, groupId }` - the same `type` a post like or a comment uses - and
-`sendPushToUser` merges only `title` and `body` onto it. **The payload carries no sender id, no
-message id and no avatar URL**, so nothing downstream could render an avatar even if it wanted to.
+The reaction rework shipped 2026-08-15 (`fbc8597b`) and closed the whole of the previous entry here -
+the POSTS pipe, the undismissable id, the missing avatar, the notification that fired over an open
+chat, and the plaintext of the reacted-to message travelling to our server, Google and Apple. The
+story is in `CHANGELOG.md`. **What is at parity, do not re-derive it**: both platforms take the
+MESSAGE path, both use the stable per-conversation id and thread, both suppress themselves in the
+foreground, both drop reply and mark-as-read, and both compose the sentence in the app's OWN
+Français/English rather than the OS one, from `locale` in `push_context.json`. That mirror is the one
+part of this with a test - `frontend/src/lib/mobile/pushContextFields.test.ts` pins the field across
+the Rust writer and all three native readers.
 
-`type: 'social'` then decides everything, and each consequence is a separate defect wearing one
-cause. In `CanariFirebaseMessagingService.kt`:
+**Two of the three gaps were closed the same night, BLIND** - this machine is Windows, so every line
+of it is compiled by CI and by nothing else, and none of it has run:
 
-- **It fires while you are looking at the conversation.** The foreground guard excludes `social`
-  deliberately and correctly - a pure notification touches no `mls.bin`, so it must not be dropped
-  with the MLS work - but `showSimpleNotification` then has no foreground check of its own, unlike
-  `showNotification`, which suppresses itself outright. So reacting to a message in an open chat
-  posts a system notification about a bubble already on screen.
-- **It can never be dismissed.** `showSimpleNotification` takes a fresh
-  `notificationIdCounter.incrementAndGet()` and retains no handle or tag, where a message uses
-  `getStableNotifId(groupId)`, persisted in SharedPreferences, which is what
-  `cancelConversationNotification` cancels on read, on quick reply, and on the silent FCM another
-  device sends. None of those can reach a reaction. **And the clear-on-open sweep excludes
-  `CHANNEL_SOCIAL`**, so they also survive opening the app. They stack for ever.
-- **No avatar, no stacking, and a lower priority** - `BigTextStyle` and `PRIORITY_DEFAULT` against
-  `MessagingStyle` + `Person` icon + `setLargeIcon` + `setGroup` + `refreshBadgeSummary` and
-  `PRIORITY_HIGH`.
+- The NSE - the path that runs when the app is KILLED - composed the sentence and stopped, so a
+  reaction on a closed iPhone showed a blank icon and left the app-icon count one too high, while
+  the in-app path and Android both did neither. It now fetches the actor's avatar and recomputes the
+  badge, through `fetchAvatar` / `attachImage` / `applyBadgeCount` - the same helpers
+  `applyMessageContent` uses.
+- **iOS has a `Localizable.strings` now**, on BOTH targets (`canari_iOS/*.lproj` and
+  `canari_NSE/*.lproj`, four files, wired as two `PBXVariantGroup`s into two Resources phases). The
+  appex is a separate bundle from the app, so the table is duplicated on purpose - that split is the
+  platform's. `CanariLocalized` / `NotificationService.localized` resolve it through the `.lproj`
+  named by `locale` in `push_context.json`, NOT `NSLocalizedString`, which answers for the OS - a
+  different setting from the one the user chose in Canari. Five keys, the five sentences that were
+  French literals: reaction, message-from, message-encrypted, channel-message, outbox-pending.
 
-**The spec, from the user:** a reaction notification should have most of what a message notification
-has, MINUS reply and mark-as-read, which mean nothing for a reaction. So: the avatar, the stable
-per-conversation id (hence dismissal, cross-device dismissal and clear-on-open), the bundling and the
-badge.
+**What is still NOT at parity:**
 
-**The destination is the MESSAGE path, not `social`** - `showNotification`, not
-`showSimpleNotification`. That is the whole of it: everything in the list above already exists there
-and nothing of it exists in `social`, so this is a reuse, not a build. Two things it needs and does
-not have: **a sender id in the payload** (`notify-reaction` sends `{ type, deepLink, groupId }` and
-nothing else, so no avatar can be fetched), and **the message id or the conversation's stable notif
-id**, so the reaction lands on the conversation's existing notification instead of stacking beside it.
+- **No initials fallback on iOS.** When the avatar cannot be fetched Android draws
+  `generateInitialsBitmap(actorName)` - a 96 px indigo disc with the first letter; both iOS paths
+  show no image at all. It needs a bitmap rendered to a file for `UNNotificationAttachment`, in
+  ObjC and again in Swift, and it was the one piece judged not worth writing blind in the same
+  sitting: it is additive and guarded, so it can go in whole whenever. Same shape as the
+  web/mobile avatar entry above.
 
-**And one thing it must NOT inherit literally - DECIDED by the user 2026-08-15, not an open
-question.** `showNotification`'s quick actions - reply and mark-as-read - are exactly the two that
-were ruled out, on the plain ground that replying to a reaction means nothing. So the message branch
-is adapted rather than taken whole: it wants that branch's PRESENTATION with the actions omitted,
-which is one extra argument, not a second code path. Everything else about how it should behave is
-NOTIF's to ask, at NOTIF. Worth deciding at the same time: that branch also suppresses
-itself outright when the app is in the foreground, and for a reaction that is arguably the RIGHT
-behaviour - you are looking at the conversation, the badge is already on screen - where `social`'s
-deliberate exemption is what makes it fire over an open chat today.
-
-**Deliberately not fixed on discovery**: this is NOTIF's subject and the campaign reaches it with its
-own observers. What is settled already is that it is not a rendering detail - the payload is missing
-the field the fix needs, so it is a server change and a client change, on both platforms.
+Already filed elsewhere and not repeated here: the iOS NSE treats `channel_read` as a pass-through
+while Android cancels (see the channel-push entry below), and seven Android notification strings are
+still French literals in `.kt` (see the entry above) - iOS having a table now makes Android the side
+that is behind on its own mechanism.
 
 ### P2 - the notification strings are French literals in native code, and iOS has no table to put them in
 
@@ -425,9 +416,16 @@ it and no column stores it. The MESSAGE push path already answers this correctly
 locale. Any server-composed body is therefore a design smell, not just an untranslated string, and
 the fix is to move the composition rather than to translate it in place.
 
-Scope note: the reaction rework (2026-08-15) adds its Android string to `strings.xml` and creates
-`Localizable.strings` on iOS rather than adding an eighth literal, so it is not the cause of any of
-the above and slightly reduces it.
+**RESOLVED ON THE iOS HALF, 2026-08-15, WRITTEN BLIND AND VERIFIED BY NOTHING.** The table exists on
+both targets and the five sentences above now come from it - see the parity entry below for what was
+built and how the language is resolved. **What remains of this entry is Android**, which is now the
+side behind on its own mechanism: the seven `.kt` literals listed above are still literals, and
+`CanariApplication.kt`'s channel names and descriptions are visible in the Android settings screen,
+not just in a banner. Each is a one-line move into two files that have existed all along.
+
+The paragraph about the services stands unchanged and is the load-bearing half: a server-composed
+body is a design smell, not an untranslated string, and the fix is to move the composition to the
+only layer that knows the recipient's language.
 
 ### P2 - the channel push carries three fields nobody reads, and one of them is the mention
 

@@ -1,0 +1,10 @@
+/* Notification text composed by the Notification Service Extension - French, the default.
+   The extension is a separate bundle from the app, so it cannot read canari_iOS/*.lproj; this is
+   a deliberate copy of the keys the NSE uses. Keep both sides in sync.
+
+   Read through the .lproj bundle named by `locale` in push_context.json - the language chosen in
+   the app, NOT the device language. See NotificationService.localized(). */
+"notif.reaction.body" = "a réagi %@ à votre message";
+"notif.message.from" = "Nouveau message de %@";
+"notif.message.encrypted" = "Vous avez reçu un message chiffré";
+"notif.channel.message" = "Nouveau message dans #%@";

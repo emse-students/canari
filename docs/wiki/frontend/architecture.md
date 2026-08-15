@@ -329,8 +329,10 @@ interface ChatMessage {
   all three shows four lines. Decide what each line adds before passing it, and remember the OS gets
   the last one for free.
 - **`bun run build` leaves Paraglide output that resolves to English**, which makes the
-  locale-asserting tests fail (4 of them, in `callSystemMessages.test.ts` and `pinChange.test.ts`).
-  Re-run `bun run paraglide:compile` before `bun run test` after any build.
+  locale-asserting tests fail (4 files: `callSystemMessages`, `pinChange`, `publicAppUrl`,
+  `canariLinkPreview`). `bun run test` therefore compiles Paraglide itself, exactly as `bun run
+  check` always has - it is not a step to remember. An Android or iOS build triggers this, because
+  `beforeBuildCommand` is `bun run build`.
 
 ## Mobile keyboard detection
 

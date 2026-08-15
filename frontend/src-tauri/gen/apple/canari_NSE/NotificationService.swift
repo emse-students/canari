@@ -113,28 +113,58 @@ class NotificationService: UNNotificationServiceExtension {
   ) {
     let emoji = Self.string(userInfo["emoji"]) ?? ""
     let groupId = Self.string(userInfo["groupId"]) ?? ""
+    let ctx = loadPushContext()
     if let actor = Self.string(userInfo["title"]), !actor.isEmpty {
       content.title = actor
     }
-    content.body = Self.reactionBody(emoji: emoji, locale: loadPushContext()?.locale)
+    content.body = Self.localizedFormat("notif.reaction.body", emoji, locale: ctx?.locale)
     if !groupId.isEmpty {
       content.threadIdentifier = groupId
     }
+    // The actor's avatar and the badge, exactly as applyMessageContent does them. THIS EXTENSION IS
+    // THE PATH THAT RUNS WHEN THE APP IS KILLED, and it used to stop at the sentence - so a
+    // reaction arriving on a phone with Canari closed showed a blank icon and left the app-icon
+    // count one too high, while the in-app path (canari_push.mm) and Android both did neither.
+    if let ctx = ctx, let actorId = Self.nonEmpty(Self.string(userInfo["senderId"])),
+      let avatarUrl = fetchAvatar(ctx: ctx, userId: actorId)
+    {
+      _ = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
+    }
+    applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
   }
 
-  /// See `CanariReactionBody` in `canari_push.mm` - same sentence, same reason, and the same
-  /// placeholder until iOS has a `Localizable.strings` at all (tracked in `docs/wiki/backlog.md`).
+  /// A notification string from the EXTENSION's own `Localizable.strings`, in the app's language.
   ///
-  /// `locale` is the app's OWN Français/English setting, mirrored into `push_context.json` while
-  /// the app was open. `preferredLocalizations` is the fallback and not the answer: it reports the
-  /// OS language, which is a different setting from the one the user set inside Canari. The server
-  /// cannot write this sentence at all - it does not know the recipient's language.
-  private static func reactionBody(emoji: String, locale: String?) -> String {
-    let lang = (locale?.isEmpty == false ? locale : nil)
-      ?? Bundle.main.preferredLocalizations.first ?? "fr"
-    return lang.hasPrefix("en")
-      ? "reacted \(emoji) to your message"
-      : "a réagi \(emoji) à votre message"
+  /// The appex is a separate bundle from the app, so `Bundle.main` here is the extension and cannot
+  /// see `canari_iOS/*.lproj`: the table is deliberately duplicated under `canari_NSE/*.lproj`.
+  /// That split is the platform's, not a choice.
+  ///
+  /// `locale` is the Français/English chosen INSIDE Canari, mirrored into `push_context.json`.
+  /// `Bundle.main` (French-first) is the fallback and `preferredLocalizations` is deliberately NOT
+  /// consulted: it answers for the OS, which is a different setting from the one the user set.
+  /// See `CanariLocaleBundle` in `canari_push.mm`, the app-process twin of this.
+  private static func localeBundle(_ locale: String?) -> Bundle {
+    guard let lang = locale, !lang.isEmpty else { return .main }
+    if let path = Bundle.main.path(forResource: lang, ofType: "lproj"),
+      let bundle = Bundle(path: path)
+    {
+      return bundle
+    }
+    let base = lang.split(separator: "-").first.map(String.init) ?? lang
+    if let path = Bundle.main.path(forResource: base, ofType: "lproj"),
+      let bundle = Bundle(path: path)
+    {
+      return bundle
+    }
+    return .main
+  }
+
+  private static func localized(_ key: String, locale: String?) -> String {
+    localeBundle(locale).localizedString(forKey: key, value: key, table: nil)
+  }
+
+  private static func localizedFormat(_ key: String, _ arg: String, locale: String?) -> String {
+    String(format: localized(key, locale: locale), arg)
   }
 
   override func serviceExtensionTimeWillExpire() {
@@ -167,8 +197,10 @@ class NotificationService: UNNotificationServiceExtension {
       NSLog("[CanariNSE] push_context absent - fallback")
       applyMessageContent(
         content: content, senderName: senderName, groupName: groupName,
-        body: Self.fallbackText(senderName: senderName), groupId: groupId, senderId: senderId,
-        ctx: nil, media: nil)
+        // No context means no mirrored locale either, so this one sentence falls back to the main
+        // bundle - French. It is the honest answer: nothing on the device knows better here.
+        body: Self.fallbackText(senderName: senderName, locale: nil), groupId: groupId,
+        senderId: senderId, ctx: nil, media: nil)
       return
     }
 
@@ -199,7 +231,7 @@ class NotificationService: UNNotificationServiceExtension {
       return
     }
 
-    let body = decrypted?.text ?? Self.fallbackText(senderName: senderName)
+    let body = decrypted?.text ?? Self.fallbackText(senderName: senderName, locale: ctx.locale)
 
     // Cache decrypted messages so the app can pre-inject them at boot. Do not cache
     // call signaling or empty fallback bodies. Android twin: writeFcmCache after the
@@ -632,7 +664,8 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     content.title = "#\(channelName)"
-    content.body = body ?? "Nouveau message dans #\(channelName)"
+    content.body =
+      body ?? Self.localizedFormat("notif.channel.message", channelName, locale: loadPushContext()?.locale)
     content.threadIdentifier = "channel_\(channelId)"
     content.userInfo["deepLink"] = "fr.emse.canari://chat/channel_\(channelId)"
     applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
@@ -924,8 +957,10 @@ class NotificationService: UNNotificationServiceExtension {
     }
   }
 
-  private static func fallbackText(senderName: String) -> String {
-    senderName.isEmpty ? "Vous avez recu un message chiffre" : "Nouveau message de \(senderName)"
+  private static func fallbackText(senderName: String, locale: String?) -> String {
+    senderName.isEmpty
+      ? localized("notif.message.encrypted", locale: locale)
+      : localizedFormat("notif.message.from", senderName, locale: locale)
   }
 
   private static func string(_ value: Any?) -> String? { value as? String }
