@@ -36,8 +36,14 @@ meet.
 | Phase | Scripts | State |
 | --- | --- | --- |
 | SETUP | - | 5 of 9 `passed`; SETUP-2 deliberately skipped, SETUP-7/8 owed (8 before CORRUPT and PIN) |
-| MSG | 12 | 13 of 13 `passed` 5/5 on `f391c199`. Every assertion held on every pass; the only dirt in the whole run was the instrument, twice, and both are fixed |
+| MSG | 12 | 13 of 13 `passed` 5/5 on `8a3edbdd`, re-run 13/13 on `e62c21f1` after the banner change touched this surface |
+| TYPE | 5 | 5 of 5 `passed` 5/5 on `8a3edbdd`, re-run 5/5 on `e62c21f1` |
+| READ | 10 | 8 of 8 runnable `passed` 5/5, 40 of 40 clean; READ-5 and READ-10 `blocked` (a 4th reader, `--destructive`) |
 | every other phase | 22 written, 6 with none | `pending` - not yet run on this build |
+
+Each phase section below names the build its row ran against; this table is the index, not the
+evidence. **A phase re-runs when a commit touches the surface it measures** - which is why MSG and
+TYPE carry two builds each.
 
 ## State vocabulary
 
@@ -264,8 +270,6 @@ in terms of per-message ids predates it. What did NOT change is the gate (`isWin
 isTabVisible`, no receipt on a channel, none on a conversation the peer deleted), the 2 s debounce,
 or the `.msg-status-sent` / `.msg-status-read` selectors the checks locate the anchor by.
 
-| Id | What it asks | Needs | State |
-| --- | --- | --- | --- |
 **RUN 5x ON 2026-08-15 (07:02-07:08Z), 8 of 8 runnable checks PASS on every pass - 40 of 40 clean.**
 Both clients classified on all five, server window clean on six of seven services; `core-service`
 carries the open avatar P2 ([backlog](backlog.md)), which is not READ's and is not silenced.

@@ -405,14 +405,10 @@ the class the campaign exists to catch. Note also that the obvious counter is th
 navigates second - the inverse of what it did when it was written. A window that opens late is a
 window blind to the boot it skipped, and the boot is where a startup defect lives.
 
-One application observation fell out of this and was fixed the same day: the app installed a
-`beforeunload` handler that sent an application-level `{type:'disconnect'}` frame but never called
-`ws.close()`, so every ordinary navigation produced a 1006. **A close code is a diagnostic, and
-spending it on routine navigation makes a real one unreadable.** `IMlsService.closeForUnload` now
-closes with 1001 (going away) from the unload path only - deliberately NOT from `sendDisconnect`,
-which is also called when the app is merely backgrounded and whose socket is expected to survive
-that. The harness rule above is unaffected either way: it attributes a close to a counted document
-replacement, and a document being replaced still closes its socket however politely it does so.
+An application "fix" fell out of this, shipped, and was **reverted the next day as inert** - the
+story is rule 17. The harness rule above is unaffected either way: it attributes a close to a counted
+document replacement, and a document being replaced still closes its socket however politely it does
+so. **`ignoringNavigation` is what actually removed this dirt**, and it was the whole of the fix.
 
 ### 15. A CHECK MUST ESTABLISH ITS PRECONDITION, AND WHAT ESTABLISHES IT BELONGS IN THE SHARED LAYER
 
@@ -476,6 +472,44 @@ Two lessons, and the second is rule 15 again from the other side:
 - **Then establish the precondition properly**: `awaitAppSettled` waits for a STATE - no status
   strip up, `main` at the same offset for three consecutive reads - not for a duration. It lives in
   `chat.mjs`, so every check that clicks inherits it rather than each learning the trap alone.
+
+### 17. A FIX MUST NAME THE OBSERVER WHOSE SIGNAL IT IMPROVES, AND THAT OBSERVER MUST BE ABLE TO SEE IT
+
+Rule 14 found that every `goto` closes its own socket and reports `1006`. The harness fix was right.
+The APPLICATION fix that shipped beside it - `closeForUnload`, closing with `1001 - going away` so a
+routine navigation would stop spending the code that means *an intermediary dropped the link* - was
+**measured inert the next day and reverted**. Nobody could ever have seen it:
+
+- **The client cannot.** `CloseEvent.code` carries the code the SERVER sent back in its half of the
+  closing handshake. At unload the document is destroyed long before a reply can arrive, so the
+  browser fills in `1006` whatever code the page asked for. Measured on a tab positively confirmed to
+  be running the new bundle: **3 navigations, 3 x 1006** - identical to before the fix.
+- **The gateway cannot either.** It matches the app's own `{"type":"disconnect"}` frame with
+  `handle_disconnect(...); break` (`chat-gateway/src/handlers.rs`), so it has already left its read
+  loop when the close frame arrives. Its `Client closed connection: {:?}` line is unreachable for any
+  client that announces itself: **0 occurrences against 12 explicit disconnects in 25 minutes of
+  production traffic.**
+
+So the change was a no-op with an interface method, four implementations and a test behind it, and
+its CHANGELOG entry promised users a reduction in something that never reduced. **Before writing the
+fix, name the log line, counter or screen that will read differently afterwards, and check that
+something actually reaches it.** Here the honest answer was already available: the `disconnect` frame
+tells the gateway everything a close code would, and earlier - so there was nothing to add.
+
+Two corollaries, both paid for on the same day:
+
+- **A discriminator that fires identically with and without the change discriminates nothing.**
+  `unloadframe.mjs` counted the `disconnect` frame at each navigation and called 3/3 a PASS for the
+  fix - but `sendDisconnect` PREDATES the fix. W2, on a bundle positively lacking the new chunk,
+  emitted the frames too. It only looked decisive because it was run first on the one client that
+  happened to have the change. **Run the negative control before believing the positive one.**
+- **A NAVIGATION DOES NOT PICK UP A DEPLOY; ONLY A CACHE-BUSTING RELOAD DOES.** W2 served the old
+  entry chunk across three `Page.navigate` calls made after a successful deploy. Any check re-run
+  "on the new build" without `Page.reload {ignoreCache:true}` is measuring the old one - rule 9 with
+  a sharper edge. `bundleid.mjs` reads the loaded chunk hashes off the resource timeline and answers
+  it directly; a fingerprint that comes back EMPTY compares equal to itself and will happily report
+  "unchanged" for ever, which is how the first attempt at this reported `INCONCLUSIVE` for a reason
+  that was not the true one.
 
 ---
 

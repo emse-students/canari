@@ -273,6 +273,19 @@ at most `documentsReplaced` closes so WP-RECONNECT-2's shape stays visible. Rule
 was WRONG and that is the lesson**: `wsclose.mjs` measured correctly and was asked a question it does
 not answer.
 
+**THE APPLICATION HALF OF THAT FIX WAS SHIPPED AND THEN REVERTED AS INERT (2026-08-15) - do not
+re-add it.** `closeForUnload` closed the socket with `1001 - going away` so a routine navigation
+would stop spending `1006`. **Nobody can see it**: `CloseEvent.code` needs the server's half of the
+closing handshake, which cannot arrive before the document dies (3 navigations, 3 x 1006 on a tab
+CONFIRMED to run the new bundle), and the gateway matches `{"type":"disconnect"}` with
+`handle_disconnect(...); break`, so it leaves its read loop before any close frame - **0 `Client
+closed connection` against 12 explicit disconnects in 25 min of prod.** The `disconnect` frame
+already tells it everything, earlier. `ignoringNavigation` was the whole fix. Rule 17 of
+[testing-methodology](docs/wiki/testing-methodology.md), with the two corollaries it cost: a
+discriminator that fires with AND without the change discriminates nothing (W2 was the control), and
+**a navigation does NOT pick up a deploy - only `Page.reload {ignoreCache:true}` does**, so any
+re-run "on the new build" must prove it with `bundleid.mjs` first.
+
 **WP-BANNER-1 IS SHIPPED AND VERIFIED RUNNING (`e62c21f1`, 2026-08-15).** Six banners agreed on
 nothing; the whole contract is on
 [frontend/architecture](docs/wiki/frontend/architecture.md#status-banners) - read it, do not

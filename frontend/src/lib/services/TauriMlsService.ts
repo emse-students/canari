@@ -344,20 +344,6 @@ export class TauriMlsService extends BaseMlsService {
     // behavior aligned between WebMlsService and TauriMlsService.
   }
 
-  /**
-   * Closes the native WebSocket because the page is going away.
-   *
-   * The socket lives in Rust, not in the WebView, so it does NOT die with the document the way a
-   * browser one does - which means an orphaned connection outliving the page is the native failure
-   * mode here, rather than the 1006 the web side is fixing. `destroyPlatformResources` already
-   * unlistens and disconnects in the right order (unlisten first, so the Close event does not fire
-   * `disconnectCallback` on a teardown nobody should react to), so this is that, under the name the
-   * interface asks for.
-   */
-  closeForUnload(): void {
-    this.destroyPlatformResources();
-  }
-
   /** Sends a disconnect control frame over the native WebSocket so the gateway removes the presence key immediately. */
   sendDisconnect(): void {
     if (this.ws) {

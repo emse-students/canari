@@ -284,7 +284,6 @@ export abstract class BaseMlsService implements IMlsService {
   abstract connect(token?: string): Promise<void>;
   abstract isWsOpen(): boolean;
   abstract sendDisconnect(): void;
-  abstract closeForUnload(): void;
 
   abstract sendTyping(groupId: string, isTyping: boolean): void;
 
