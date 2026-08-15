@@ -540,6 +540,24 @@ carry in the head:
   a swallowed branch that ends a device's session for good is an ERROR, and it must name the
   consequence (`n queued message(s) ... every mailbox barrier now open will never resolve`), not the
   condition.
+- **`void` IS NOT DEFERRAL - A TRIGGER RAISED FROM INSIDE A REGION RUNS INSIDE IT.** Fire-and-forget
+  hands the call to the microtask queue, which is emptied long before the enclosing `finally`; the
+  region is still open when the callee's first `await` lands. `replayConversationHistory` raised
+  `void reconcileGroup(...)` from inside its walk, under a comment claiming "the store is settled by
+  now" - but `session.finish()` runs in the `finally`, so the catch-up still held the global MLS
+  mutex, and `reconcileGroup` opens on the mailbox barrier, which needs that mutex for the drain. The
+  barrier refused it and the ask went out **against a mailbox that was never emptied** - the one
+  ordering guarantee that barrier exists to carry, and the reason it lives in `reconcileGroup` rather
+  than at the connection edge. Raise the trigger after the region closes; asserting it "was called"
+  passes either way, so **the test has to be an ORDERING against a gated close** (proven: it fails
+  against the old placement, `Number of calls: 1`). Found by one dirty line on prod, W1, MSG pass 1
+  of 5 - the only pass that followed a boot.
+- **A GLOBAL DEPTH CANNOT NAME AN OWNER, SO THE REPORT MUST NAME THE CALLER.** `catchUpDepth > 0`
+  answers "is a session open", never "is it MINE" - async JS has no current-holder notion, which is
+  exactly why the MLS mutex is non-reentrant. A caller nested inside the session deadlocks; a caller
+  merely running beside one would only wait, and is refused all the same. The two are fixed in
+  different places, so `waitForMessageQueueIdle(caller)` takes the label at all seven call sites and
+  both refusals quote it: without it, one `SKIPPED` line cost a read of every call site to attribute.
 - **A RESPONSE HEADER IS INVISIBLE CROSS-ORIGIN UNLESS IT IS EXPOSED.** Carrying new metadata in a
   header keeps an array-shaped body compatible with every deployed client - the right trade - but the
   app runs cross-origin under Tauri (`http://tauri.localhost`), so without

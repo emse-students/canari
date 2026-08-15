@@ -474,7 +474,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // (silent loss - the "cold send on resume" race). Waiting for idle guarantees the local
       // epoch is up to date. In steady state the queue is already idle -> immediate resolution,
       // no added latency. [[DF1c]]
-      await mlsService.waitForMessageQueueIdle().catch((e) =>
+      await mlsService.waitForMessageQueueIdle('outbox flush').catch((e) =>
         // The barrier failing does NOT stop the flush - a queue that cannot drain must not block
         // sending forever. But it means exactly the condition the barrier exists to prevent, so it
         // is the first thing to look for when a message is accepted locally and never arrives.

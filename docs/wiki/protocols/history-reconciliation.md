@@ -1120,6 +1120,36 @@ and returns - skipping is strictly better than hanging, because a duplicate is c
 fingerprint ledger and a client that never connects again is caught by nobody. And `processQueue`'s
 own branch is now an error that names the consequence rather than the condition.
 
+###### And the guard's first sighting on prod was a real one - the replay trigger asked from inside its own session
+
+The `catchUpDepth` guard fired once during MSG ×5 on `1647f10a`: **W1, pass 1 of 5, the only pass that
+followed a boot.** It is not a false positive, and it is not new - the guard is, which is why it had
+never been seen.
+
+`replayConversationHistory` raises `void reconcileGroup(...)` when the walk meets a frame it can never
+read, under a comment reading *"once, now that the whole page has been walked and the store is
+settled"*. `session.finish()` runs in that function's `finally`, i.e. **after**, so the catch-up still
+held the global MLS mutex. `reconcileGroup`'s first act is the mailbox barrier, the drain needs that
+same mutex - and `void` defers nothing: the microtask runs roughly a full replay before `finish`.
+
+The consequence is not the log line. The barrier refused, so **the ask went out against a mailbox that
+had never been emptied** - the exact ordering guarantee that barrier carries, and the reason it lives
+inside `reconcileGroup` rather than at the connection edge (see the section above: it is the one door
+every trigger comes through). An ask raised against a difference the device was about to close by
+itself is the routine case reconciliation must never become.
+
+The trigger now fires from the `finally`, after `await session?.finish()` - so it also fires when the
+walk threw, which is correct: the unreadable frame was seen either way. Pinned by an ORDERING test
+against a gated `finish` (`history.consumedFrames.test.ts`), because asserting the ask *happened*
+passes against the defect too; run against the old placement it fails with `Number of calls: 1`.
+
+**And the report now names its caller.** `catchUpDepth` is a global: it can say a session is open,
+never whose. A caller nested inside one deadlocks, a caller merely running beside one would only wait,
+and both were refused with the same sentence - so `waitForMessageQueueIdle(caller)` takes a label at
+all seven call sites (`archive replay`, `history ask`, `history answer`, `history request answer`,
+`outbox flush`, `connection sync`, `media send`) and both refusals quote it. Attributing this one
+without it cost a read of every call site.
+
 ---
 
 ## Open questions

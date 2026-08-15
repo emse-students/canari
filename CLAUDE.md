@@ -167,6 +167,25 @@ in `CHANGELOG.md`, the shim and its **2026-11-13** removal date in
   registered before anything can pull), NOT a refusal to pull, which would trade the hang for a
   duplicate at every startup; the guard and `processQueue`'s branch raised to an error are defence in
   depth.
+- **AND THAT GUARD'S FIRST SIGHTING ON PROD WAS A REAL DEFECT, FIXED THE SAME DAY.** MSG x5 on
+  `1647f10a`: **11 of 11 PASS on all five passes**, one dirty line - W1, pass 1, the only pass
+  following a boot. `replayConversationHistory` raised `void reconcileGroup(...)` from inside its
+  walk, above the `finally` that calls `session.finish()`, so the catch-up still held the MLS mutex
+  and the ask's mailbox barrier was refused: **the ask went out against a mailbox never emptied**,
+  which is the one ordering guarantee that barrier carries. `void` defers nothing. Trigger moved
+  below `finish()`; pinned by an ORDERING test against a gated finish (asserting it "was called"
+  passes against the defect - proven, it fails on the old placement with `Number of calls: 1`). And
+  `waitForMessageQueueIdle(caller)` now takes a label at all seven call sites, because `catchUpDepth`
+  is a GLOBAL and cannot say whose session is open - nested deadlocks, concurrent would only wait,
+  and both got the same sentence. Mechanism on
+  [history-reconciliation](docs/wiki/protocols/history-reconciliation.md), two rules in
+  [durable-rules](docs/wiki/durable-rules.md).
+- **MSG-6/7 was `BLOCKED` 5 of 5 and the phone was fine - rule 18 of
+  [testing-methodology](docs/wiki/testing-methodology.md).** The in-run preflight repairs a client
+  parked on `/communities` with a full navigation, then sampled gateway presence ONCE, with no
+  deadline, while every other repair there has one. Measured: A1 back **10 832 ms** later WITHOUT
+  leaving the page (OFFLINE at 4.9 s and 7.8 s), so the route was never in it - the reconnect cost
+  was. Now polled to a 25 s deadline, last attempt only.
 
 **SHIPPED, VERIFIED AND CLOSED - do not re-open, do not reconstruct any of them here.**
 WP-FALSELOSS-1, the two A1 startup defects, WP-PENDING-2 (the undrained queue, measured to `0` rows

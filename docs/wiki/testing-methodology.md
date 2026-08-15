@@ -513,6 +513,35 @@ Two corollaries, both paid for on the same day:
 
 ---
 
+### 18. A CHECK THAT REPAIRS THE CLIENT MUST WAIT FOR ITS OWN REPAIR - a single sample right after it measures the instrument
+
+`run.mjs`'s in-run preflight repairs a client parked on `/communities` - where the PIN gate does not
+mount, so readiness reads `unknown` - by sending it to `/chat` with a full document navigation. Every
+other repair in that loop then waits on a DEADLINE (`settle`, 3-20 s). The gateway-presence check did
+not: one `presence.mjs` sample, taken immediately, and a non-zero exit blocked the phase.
+
+**MSG-6/7 was `BLOCKED` on five passes out of five** on a phone that was working perfectly. Measured
+directly by parking A1 and polling:
+
+| after the navigation | gateway |
+| --- | --- |
+| 4 879 ms | OFFLINE |
+| 7 828 ms | OFFLINE |
+| **10 832 ms** | **ONLINE**, still on `/communities` |
+
+The route was never the problem - the page it sits on is irrelevant, the reconnect cost is
+everything. A document navigation destroys the socket with the document, so the read that follows
+answers about the harness's own action. It now polls to a 25 s deadline and prints only the last
+attempt: a client already connected answers on the first sample and pays nothing, and a client
+genuinely absent still fails - the diagnostic value is untouched.
+
+The general form, and the reason this is not rule 15 again: rule 15 is about a precondition the check
+never ESTABLISHED. Here the precondition was established, correctly, by the check itself - and then
+read before the system had finished responding to it. **Anything you did to the client is a
+transition; give it the same deadline you would give the application's own.**
+
+---
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

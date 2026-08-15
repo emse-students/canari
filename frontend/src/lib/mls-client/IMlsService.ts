@@ -367,8 +367,16 @@ export interface IMlsService {
   /** Fetches messages queued on the delivery service that were not yet delivered
    * (e.g. during a disconnect). Should be called after every connect/reconnect. */
   fetchPendingMessages(): Promise<void>;
-  /** Resolves when the internal MLS message queue is drained. */
-  waitForMessageQueueIdle(): Promise<void>;
+  /**
+   * Resolves when this device's mailbox is empty - nothing left to fetch, nothing left to apply.
+   *
+   * `caller` NAMES THE CALL SITE, and it is required because the two states this barrier refuses are
+   * both defects in the CALLER, not in the barrier: taken from inside a catch-up it can never
+   * resolve, and taken before the inbound pipeline exists it fills a queue nothing can drain. Both
+   * are reported as errors, and an error that cannot say who earned it sends its reader through
+   * every call site by hand - which is exactly what one `SKIPPED` line on W1 cost on 2026-08-15.
+   */
+  waitForMessageQueueIdle(caller: string): Promise<void>;
   /**
    * Tells the service the local conversation store is now authoritative.
    *

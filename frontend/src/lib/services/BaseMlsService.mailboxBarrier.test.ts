@@ -137,7 +137,7 @@ describe('waitForMessageQueueIdle', () => {
     await Promise.resolve();
 
     let idle = false;
-    const barrier = svc.waitForMessageQueueIdle().then(() => {
+    const barrier = svc.waitForMessageQueueIdle('a test').then(() => {
       idle = true;
     });
     // Several turns: the scheduler resolves immediately, so a barrier that only consulted it would
@@ -160,15 +160,15 @@ describe('waitForMessageQueueIdle', () => {
    * the pull that is RUNNING is not the same question as whether the mailbox is empty.
    */
   it('pulls when nothing else has, rather than calling an un-pulled mailbox empty', async () => {
-    await svc.waitForMessageQueueIdle();
+    await svc.waitForMessageQueueIdle('a test');
 
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
     expect(waitUntilIdle).toHaveBeenCalled();
   });
 
   it('does not pull twice when a completed pull already emptied it', async () => {
-    await svc.waitForMessageQueueIdle();
-    await svc.waitForMessageQueueIdle();
+    await svc.waitForMessageQueueIdle('a test');
+    await svc.waitForMessageQueueIdle('a test');
 
     // Otherwise the bootstrap restore, which replays every conversation, spends one request per
     // conversation to be told the same nothing.
@@ -176,10 +176,10 @@ describe('waitForMessageQueueIdle', () => {
   });
 
   it('pulls again once the socket has dropped, because frames queue while a device is unreachable', async () => {
-    await svc.waitForMessageQueueIdle();
+    await svc.waitForMessageQueueIdle('a test');
     withSocket(false);
 
-    await svc.waitForMessageQueueIdle();
+    await svc.waitForMessageQueueIdle('a test');
 
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
   });
@@ -190,7 +190,7 @@ describe('waitForMessageQueueIdle', () => {
     // `fetchPendingMessages` swallows the failure (the backlog stays on the server for the next
     // reconnect), so the barrier must not inherit a rejection - nor stay pending for ever.
     await svc.fetchPendingMessages();
-    await expect(svc.waitForMessageQueueIdle()).resolves.toBeUndefined();
+    await expect(svc.waitForMessageQueueIdle('a test')).resolves.toBeUndefined();
   });
 
   /**
@@ -208,14 +208,18 @@ describe('waitForMessageQueueIdle', () => {
     catchUp.beginCatchUp();
 
     // Resolving is the point: a promise that never settles here is exactly the defect.
-    await expect(svc.waitForMessageQueueIdle()).resolves.toBeUndefined();
+    await expect(svc.waitForMessageQueueIdle('history ask')).resolves.toBeUndefined();
     expect(pullPendingMessagesJson).not.toHaveBeenCalled();
     expect(waitUntilIdle).not.toHaveBeenCalled();
     expect(complaint).toHaveBeenCalledOnce();
+    // NAMING THE CALLER IS PART OF THE REPORT, not decoration: `catchUpDepth` is a global, so the
+    // line cannot say whose session is open, and the fix is at the call site either way. The one
+    // occurrence on prod took a read of all six call sites to attribute.
+    expect(String(complaint.mock.calls[0]?.[0])).toContain('history ask');
 
     // And it is the SESSION that is refused, not the device: once closed, the barrier works again.
     catchUp.endCatchUp();
-    await svc.waitForMessageQueueIdle();
+    await svc.waitForMessageQueueIdle('a test');
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
     complaint.mockRestore();
   });
@@ -236,13 +240,14 @@ describe('waitForMessageQueueIdle', () => {
     poke(svc, { messageCallback: undefined });
     const complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    await expect(svc.waitForMessageQueueIdle()).resolves.toBeUndefined();
+    await expect(svc.waitForMessageQueueIdle('archive replay')).resolves.toBeUndefined();
 
     // Pulling is the harm here, not just the waiting: it is the pull that fills a queue nothing can
     // empty, so the refusal has to come BEFORE it.
     expect(pullPendingMessagesJson).not.toHaveBeenCalled();
     expect(waitUntilIdle).not.toHaveBeenCalled();
     expect(complaint).toHaveBeenCalledOnce();
+    expect(String(complaint.mock.calls[0]?.[0])).toContain('archive replay');
     complaint.mockRestore();
   });
 
@@ -250,7 +255,7 @@ describe('waitForMessageQueueIdle', () => {
     pullPendingMessagesJson.mockRejectedValueOnce(new Error('offline'));
 
     await svc.fetchPendingMessages();
-    await svc.waitForMessageQueueIdle();
+    await svc.waitForMessageQueueIdle('a test');
 
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
   });

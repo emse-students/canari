@@ -498,7 +498,7 @@ export abstract class BaseMlsService implements IMlsService {
    * The evidence for "empty" is a COMPLETED pull plus a socket still open (see
    * {@link mailboxEmptiedByAPull}), never a duration.
    */
-  async waitForMessageQueueIdle(): Promise<void> {
+  async waitForMessageQueueIdle(caller: string): Promise<void> {
     /**
      * FROM INSIDE A CATCH-UP THIS BARRIER CANNOT RESOLVE, SO IT ACCUSES INSTEAD OF HANGING.
      *
@@ -518,13 +518,20 @@ export abstract class BaseMlsService implements IMlsService {
      * solve the same problem the other way, by DEFERRING past the drain rather than awaiting it
      * (`answerAfterMailboxDrained`), which is the shape to copy when a call site cannot know whether
      * it runs inside one.
+     *
+     * `catchUpDepth` IS A GLOBAL, so this also catches a caller that merely runs BESIDE someone
+     * else's session - which would not deadlock, only wait - and refuses it too. That is why the
+     * line names its caller: the depth cannot say whose session it is, and the two are fixed in
+     * different places. The one occurrence measured so far was neither ambiguous nor concurrent -
+     * `reconcileGroup` raised from inside a replay, above the `finish` that closes it - and it is
+     * fixed at the call site, where the fact was already known.
      */
     if (this.catchUpDepth > 0) {
       console.error(
-        '[QUEUE] mailbox barrier awaited from inside a catch-up session - it can never resolve there' +
-          ' (the drain needs the MLS mutex this session holds), so it was SKIPPED and the caller is' +
-          ' proceeding against a mailbox that may not be empty. Take the barrier before opening the' +
-          ' session, or defer past the drain instead of awaiting it.'
+        `[QUEUE] mailbox barrier awaited by "${caller}" from inside a catch-up session - it can never` +
+          ' resolve there (the drain needs the MLS mutex this session holds), so it was SKIPPED and' +
+          ' the caller is proceeding against a mailbox that may not be empty. Take the barrier before' +
+          ' opening the session, or defer past the drain instead of awaiting it.'
       );
       return;
     }
@@ -550,9 +557,9 @@ export abstract class BaseMlsService implements IMlsService {
      */
     if (!this.messageCallback) {
       console.error(
-        '[QUEUE] mailbox barrier awaited before the inbound pipeline was registered - nothing can' +
-          ' drain the queue this barrier pulls into, so it can never resolve and it was SKIPPED.' +
-          ' Register the message handler before any caller can take this barrier.'
+        `[QUEUE] mailbox barrier awaited by "${caller}" before the inbound pipeline was registered -` +
+          ' nothing can drain the queue this barrier pulls into, so it can never resolve and it was' +
+          ' SKIPPED. Register the message handler before any caller can take this barrier.'
       );
       return;
     }

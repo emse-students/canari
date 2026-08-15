@@ -1050,7 +1050,7 @@ export async function handleHistoryRequest(params: {
   const electedAt = Date.now();
 
   // Answer from a settled store, not from one still being written - see the note above.
-  await mlsService.waitForMessageQueueIdle().catch(() => {});
+  await mlsService.waitForMessageQueueIdle('history request answer').catch(() => {});
 
   let probe = await awaitProbe(groupId, requesterIdentity, probeWaitMs, electedAt);
   if (!probe) {

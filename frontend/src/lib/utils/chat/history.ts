@@ -501,7 +501,7 @@ export async function replayConversationHistory(params: {
      */
     pendingPrimedPage ??= await mlsService.fetchHistory(id, fetchCursor, undefined, undefined);
     walkHead = pendingPrimedPage.head;
-    await mlsService.waitForMessageQueueIdle().catch(() => {});
+    await mlsService.waitForMessageQueueIdle('archive replay').catch(() => {});
 
     // Paged decrypt session: the ratchet advances worker-side across pages and is committed
     // to the live client once by session.finish() (run in the outer `finally`, always).
@@ -946,13 +946,6 @@ export async function replayConversationHistory(params: {
       log(`[HISTORY] ${id.slice(0, 8)}… epoch gap during replay - flagged for recovery`);
     }
 
-    // Something in this replay is lost to this device for good. Ask a peer that still holds it -
-    // once, now that the whole page has been walked and the store is settled.
-    if (sawUnreadableFrame) {
-      log(`[HISTORY] ${id.slice(0, 8)}… holds frames it can never read - reconciling`);
-      void reconcileGroup(mlsService, id, log);
-    }
-
     if (!fetchedAnyPage) return undefined;
 
     // Durable progress is committed by the caller AFTER the encrypted checkpoint flush,
@@ -971,6 +964,30 @@ export async function replayConversationHistory(params: {
   } finally {
     // Commit the accumulated ratchet to the live client and release the worker / mutex.
     await session?.finish();
+
+    /**
+     * AND ONLY THEN ASK A PEER - the SESSION has to be closed, not merely the page walked.
+     *
+     * Something in this replay is lost to this device for good, so a peer that still holds it is
+     * asked, once. This used to sit above, next to the walk, under a comment claiming the store was
+     * settled by then: it was not. `session.finish()` runs in this `finally`, so the catch-up was
+     * still open and still holding the global MLS mutex - and `reconcileGroup`'s first act is to
+     * await the mailbox barrier, which needs that same mutex for the drain. `void` does not save it:
+     * the microtask runs immediately, roughly a full replay before `finish`.
+     *
+     * The barrier therefore refused it (`awaited from inside a catch-up session ... SKIPPED`) and the
+     * ask went out against a mailbox that had never been emptied - the one ordering guarantee
+     * `reconcileGroup` exists to carry, and the reason its barrier lives there rather than at the
+     * connection edge. Measured on prod 2026-08-15: one such line on W1, on pass 1 of 5 of MSG, the
+     * only pass that followed a boot.
+     *
+     * Raised from the `finally` rather than the try, so a replay that threw mid-walk still asks: it
+     * saw the unreadable frame either way, and that is what the ask is about.
+     */
+    if (sawUnreadableFrame) {
+      log(`[HISTORY] ${id.slice(0, 8)}… holds frames it can never read - reconciling`);
+      void reconcileGroup(mlsService, id, log);
+    }
   }
 }
 

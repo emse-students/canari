@@ -319,10 +319,30 @@ async function preflight(devices, { quiet = false } = {}) {
   // Rust, so the WebView can never be watched for frames.
   const ports = [...devices].map((d) => PORTS[d]).filter(Boolean);
   if (ports.length) {
-    const r = spawnSync(process.execPath, ['presence.mjs', '--ports', ports.join(',')], {
-      cwd: new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
-      encoding: 'utf8',
-    });
+    // AND IT IS ASKED TO A DEADLINE, because the repairs above are what disconnected the client.
+    //
+    // Every repair in the loop above ends in a full document navigation, which tears the socket down
+    // with the document; a presence read taken immediately after therefore measures OUR OWN repair
+    // and not the client. It is a DEADLINE and not a delay, exactly like `settle`: a client that is
+    // already connected answers on the first sample and pays nothing.
+    //
+    // 25 s from the measurement, not from taste: A1 parked on `/communities` (where the PIN gate does
+    // not mount, so the repair always fires) was still OFFLINE at 4.9 s and 7.8 s, and back at
+    // 10.8 s WITHOUT leaving the page - the route was never the problem, the reconnect cost was. One
+    // sample at ~5 s blocked MSG-6/7 on five passes out of five, on a phone that was working.
+    const cwd = new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+    const deadline = Date.now() + 25000;
+    let r;
+    for (;;) {
+      r = spawnSync(process.execPath, ['presence.mjs', '--ports', ports.join(',')], {
+        cwd,
+        encoding: 'utf8',
+      });
+      if (r.status === 0 || Date.now() >= deadline) break;
+      await sleep(2000);
+    }
+    // The LAST attempt only: printing every sample would report a client as absent and present in
+    // the same preflight, and the reader has no way to tell which line the verdict rests on.
     for (const line of String(r.stdout || '').trim().split('\n').filter(Boolean)) {
       const online = /ONLINE/.test(line);
       if (!online || !quiet) console.log(`  ${online ? 'ok  ' : 'STOP'} ${line}`);

@@ -676,7 +676,7 @@ export function useMessaging() {
       // costs nothing when there is no drain to wait for.
       await ctx
         .ensureMls()
-        .waitForMessageQueueIdle()
+        .waitForMessageQueueIdle('media send')
         .catch((e) => ctx.log(`[SEND] queue-idle barrier failed, sending anyway: ${String(e)}`));
       const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
       if (!stillMember || convo.lifecycle !== 'active') {

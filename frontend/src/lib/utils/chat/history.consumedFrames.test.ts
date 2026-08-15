@@ -291,6 +291,66 @@ describe('a frame the archive replay consumed', () => {
     // And the row is still consumed, or the replay walks it again on every load.
     expect(hasHistoryFrameBeenConsumed(USER, GROUP, row.id)).toBe(true);
   });
+
+  /**
+   * AND WHEN IT IS A LOSS, THE ASK WAITS FOR THE SESSION TO CLOSE.
+   *
+   * `reconcileGroup` opens on the mailbox barrier, and the barrier needs the global MLS mutex that
+   * this replay's catch-up holds until `finish` resolves. Raised from inside the walk it is therefore
+   * refused outright - the barrier says so and skips - and the ask goes out against a mailbox that
+   * was never emptied, which is the one ordering guarantee it carries. `void` does not help: the
+   * microtask runs at once, a whole replay before `finish`.
+   *
+   * It shipped that way under a comment claiming the store was settled by then, and cost one dirty
+   * line on prod (W1, MSG pass 1 of 5, 2026-08-15 - the only pass that followed a boot). The
+   * assertion is an ORDERING against a gated `finish`, because asserting that the ask happened at
+   * all would have passed just as well before the fix.
+   */
+  it('does not ask a peer until the catch-up session it holds has been closed', async () => {
+    let closeSession!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      closeSession = resolve;
+    });
+    const finish = vi.fn().mockReturnValue(finished);
+    const mlsService = createMlsServiceStub({
+      getLocalGroups: vi.fn().mockReturnValue([GROUP]),
+      createDecryptSession: vi.fn().mockResolvedValue({
+        decryptPage: vi.fn().mockResolvedValue([
+          {
+            ok: false,
+            error: 'ValidationError(UnableToDecrypt(SecretTreeError(SecretReuseError)))',
+          },
+        ]),
+        finish,
+      }),
+      fetchHistory: vi.fn().mockResolvedValue({ rows: [] }),
+    });
+    const replay = replayConversationHistory({
+      mlsService,
+      id: GROUP,
+      contactName: 'peer',
+      userId: USER,
+      deviceKeyB64: 'device-key',
+      storage: null,
+      getConversation: () => undefined,
+      setConversation: () => undefined,
+      messageReactions: new Map(),
+      log: () => undefined,
+      primedFirstPage: { rows: [row] },
+    });
+
+    // WAIT UNTIL THE REPLAY IS ACTUALLY BLOCKED ON `finish`, and assert only then. A fixed number of
+    // microtask turns would not discriminate: it can expire before the walk has even reached the
+    // failure, and the case would then pass against the very code it is here to refuse.
+    for (let turn = 0; turn < 200 && !finish.mock.calls.length; turn++) await flush();
+    expect(finish).toHaveBeenCalled();
+    expect(vi.mocked(reconcileGroup)).not.toHaveBeenCalled();
+
+    closeSession();
+    await replay;
+
+    expect(vi.mocked(reconcileGroup)).toHaveBeenCalledWith(mlsService, GROUP, expect.any(Function));
+  });
 });
 
 /**
