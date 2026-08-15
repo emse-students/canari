@@ -1175,7 +1175,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // `if (decrypted == null && silent) return`, so the dismissal was silently conditional
             // on being able to decrypt the receipt: exactly the case where the app has been killed
             // and is behind. Measured on device 2026-08-06 (NOTIF-4): the receipt arrived at
-            // 23:33:31 tagged `senderName=Jolan BOUDIN silent=true`, the decrypt gave up 16 s later
+            // 23:33:31 tagged `senderName=<owner> silent=true`, the decrypt gave up 16 s later
             // with "Silent push decryption failed -> returning silently", and the notification
             // stayed on screen. Doing it here also spares those 16 s.
             //

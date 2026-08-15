@@ -65,13 +65,13 @@ describe('applyFuzzyNameSearch', () => {
 
   it('adds a fuzzy branch (substring OR word_similarity) for a >=3 char term', () => {
     const { qb, andWhere } = makeQbSpy();
-    applyFuzzyNameSearch(qb, 'jolan');
+    applyFuzzyNameSearch(qb, 'dupont');
     expect(andWhere).toHaveLength(1);
     expect(andWhere[0].sql).toContain('LIKE');
     expect(andWhere[0].sql).toContain('word_similarity');
     expect(andWhere[0].params).toMatchObject({
-      like0: '%jolan%',
-      term0: 'jolan',
+      like0: '%dupont%',
+      term0: 'dupont',
       fuzzyThreshold: FUZZY_TERM_THRESHOLD,
     });
   });
@@ -94,7 +94,7 @@ describe('applyFuzzyNameSearch', () => {
 
   it('orders by the computed relevance score first, then name', () => {
     const { qb, orderBy, getAddSelect } = makeQbSpy();
-    applyFuzzyNameSearch(qb, 'jolan');
+    applyFuzzyNameSearch(qb, 'dupont');
     expect(getAddSelect()).toContain('similarity');
     expect(orderBy[0]).toEqual({ field: 'search_score', dir: 'DESC' });
     expect(orderBy[1]).toEqual({ field: 'user.displayName', dir: 'ASC' });

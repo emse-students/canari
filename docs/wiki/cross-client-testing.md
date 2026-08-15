@@ -43,6 +43,7 @@ meet.
 | MSG | 12 | 13 of 13 `passed` 5/5 on `8a3edbdd`, re-run 13/13 on `e62c21f1` after the banner change touched this surface |
 | TYPE | 5 | 5 of 5 `passed` 5/5 on `8a3edbdd`, re-run 5/5 on `e62c21f1` |
 | READ | 10 | 8 of 8 runnable `passed` 5/5, 40 of 40 clean; READ-5 and READ-10 `blocked` (a 4th reader, `--destructive`) |
+| FWD | 5 | 5 of 5 `passed` - FWD-1/3/4/5 5/5 with every server window clean, FWD-2 25/25 delivered by hand |
 | every other phase | 22 written, 6 with none | `pending` - not yet run on this build |
 
 Each phase section below names the build its row ran against; this table is the index, not the
@@ -375,11 +376,30 @@ ratchet and the receiver silently drops the next message).
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `pending` |
-| FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `pending` |
-| FWD-3 | Forward while the sender goes offline mid-send | `W1 W2` | `pending` |
-| FWD-4 | Forward from A1, backgrounded 200 ms later | `+A1` | `pending` |
-| FWD-5 | Forward into a conversation not opened this session | `W1 W2` | `pending` - its root cause was the reload, not the forward |
+| FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `passed` 5/5 |
+| FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `passed` - 25/25 delivered, 0 lost, 0 duplicated, both sides clean on every iteration, arrival 125-234 ms (median 149) |
+| FWD-3 | Forward while the sender goes offline mid-send | `W1 W2` | `passed` 5/5 |
+| FWD-4 | Forward from A1, backgrounded 200 ms later | `+A1` | `passed` 5/5 |
+| FWD-5 | Forward into a conversation not opened this session | `W1 W2` | `passed` 5/5 - its root cause was the reload, not the forward |
+
+**FWD is closed: five passes, every runnable check `PASS` on every one, every server window clean**
+(2026-08-15, run on the migrated rig). FWD-2 is not in the manifest - it is volume, not a phase step -
+so it is run by hand: `node fwd.mjs 25`.
+
+Two things the run says that a bare verdict does not:
+
+- **The phase only became reproducible once the CLICK could name what received it.** Before that,
+  `clickBubbleAction` computed its own coordinates and therefore grew its own dispatch, inheriting no
+  hit-test, no recorder and no parking - it clicked blind, and a miss surfaced ~15 s later as a
+  missing dialog, indistinguishable from an application defect. The run before the fix was 4 passes
+  of 5; the failing one now names its own cause at the click instead
+  (`"Transférer" action moved before the click: nothing clickable at the point`). See
+  [testing-methodology](testing-methodology.md).
+- **8 of FWD-2's 25 iterations log a `SecretReuseError` on the SENDER, and every one is expected.**
+  The sender receives its own forwarded frame back, the archive replay has already read it, so the
+  ratchet secret is spent. The line names itself - `Duplicate delivery … silent ACK (SecretReuseError,
+  already read by the archive replay)` - which is exactly what the false-loss fix was for: recognised
+  and acknowledged, never counted as a loss. `receiverClean` is true on all 25.
 
 ## 8 - GRP - group membership and invitations
 
