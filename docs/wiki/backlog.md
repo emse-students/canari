@@ -363,6 +363,37 @@ the tracked state, not only the document describing it.
 
 ## Cross-repo
 
+### P2 - converge the five projects on the best version of each shared solution
+
+**The avatar proxy is the sample, not the subject.** Four projects fetch the same MiGallery endpoint
+and four different failure behaviours were written for it (see the P2 in *Outbound connectivity*):
+Le Cercle has a stated timeout budget, a `null` return and a log line that separates *no key* /
+*legitimate 404* / *unreachable*; Sky has no timeout at all; Canari alone answers **502 and logs an
+error** where the others degrade to initials silently. **Nobody chose that spread** - each was
+written once, in isolation, and the best version never travelled. That is a process outcome, so it
+will keep happening, and the avatar case is only the one a server log happened to expose.
+
+**What this asks for is an inventory first, not a refactor.** The list below is what is ACTUALLY
+established today; everything else is a guess until someone looks, and a guessed inventory is how the
+IPv6 diagnosis got written down:
+
+- **verified** - the avatar proxy, four implementations, table in the *Outbound connectivity* P2;
+- **known partial** - tolerant search (done in Sky, owed in Canari and MiGallery), and the i18n /
+  wiki / English-comments normalisation (done in Canari, partial elsewhere) - both already tracked;
+- **to inventory** - outbound HTTP handling in general (timeout, retry, what a failure degrades to),
+  logging conventions, and whatever else turns up. Do NOT enumerate these from memory.
+
+**A shared package is probably the wrong shape, and that is worth deciding before any code.** Three
+of the four are SvelteKit and Canari's is NestJS; there is no monorepo spanning them; and **Le Cercle
+is Aurel's repo**, so convergence there is a merge request and his decision, never a commit. The
+realistic form is *one written contract, four aligned implementations*, with the contract living
+where it can be read from all five - and the contract's first clause is the one the avatar case
+already proves: **an optional decoration that cannot be fetched degrades, it does not error.**
+
+Sequenced after WP-AVATAR-1 deliberately: that one settles the contract on a case where all four
+behaviours are known and measured, and this generalises it. Doing them in the other order would
+generalise from a shape nobody has validated once.
+
 ### P3 - SEO for Sky, MiGallery and Portail-etu
 
 Canari's is done and the method is written up in [seo](frontend/seo.md), including the four checks no
