@@ -106,21 +106,29 @@ describe('waitForCatchUpIdle', () => {
 describe('waitForMessageQueueIdle', () => {
   let svc: BaseMlsService;
   let waitUntilIdle: ReturnType<typeof vi.fn>;
+  let pullPendingMessagesJson: ReturnType<typeof vi.fn>;
+
+  /** A socket that is up, unless a case says otherwise. */
+  const withSocket = (open: boolean) => poke(svc, { isWsOpen: () => open });
 
   beforeEach(() => {
     svc = makeService();
     waitUntilIdle = vi.fn().mockResolvedValue(undefined);
-    poke(svc, { userId: 'user-a', messageScheduler: { waitUntilIdle } });
+    pullPendingMessagesJson = vi.fn().mockResolvedValue(undefined);
+    poke(svc, {
+      userId: 'user-a',
+      messageScheduler: { waitUntilIdle },
+      delivery: {
+        ackMessages: vi.fn().mockResolvedValue(undefined),
+        pullPendingMessagesJson,
+      },
+    });
+    withSocket(true);
   });
 
   it('does not call the mailbox empty while pages are still being pulled', async () => {
     const pull = gate();
-    poke(svc, {
-      delivery: {
-        ackMessages: vi.fn().mockResolvedValue(undefined),
-        pullPendingMessagesJson: vi.fn().mockReturnValue(pull.promise),
-      },
-    });
+    pullPendingMessagesJson.mockReturnValue(pull.promise);
 
     const fetching = svc.fetchPendingMessages();
     await Promise.resolve();
@@ -142,23 +150,52 @@ describe('waitForMessageQueueIdle', () => {
     expect(idle).toBe(true);
   });
 
-  it('resolves on the scheduler alone when no pull is running', async () => {
+  /**
+   * WP-DUPDELIVERY-1. With no pull running, both halves used to resolve at once and the caller went
+   * on to read the archive with its own frames still sitting on the server - which the next pull
+   * then handed over as a `Duplicate delivery ... already read by the archive replay`. Waiting on
+   * the pull that is RUNNING is not the same question as whether the mailbox is empty.
+   */
+  it('pulls when nothing else has, rather than calling an un-pulled mailbox empty', async () => {
     await svc.waitForMessageQueueIdle();
 
-    expect(waitUntilIdle).toHaveBeenCalledTimes(1);
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
+    expect(waitUntilIdle).toHaveBeenCalled();
+  });
+
+  it('does not pull twice when a completed pull already emptied it', async () => {
+    await svc.waitForMessageQueueIdle();
+    await svc.waitForMessageQueueIdle();
+
+    // Otherwise the bootstrap restore, which replays every conversation, spends one request per
+    // conversation to be told the same nothing.
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
+  });
+
+  it('pulls again once the socket has dropped, because frames queue while a device is unreachable', async () => {
+    await svc.waitForMessageQueueIdle();
+    withSocket(false);
+
+    await svc.waitForMessageQueueIdle();
+
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
   });
 
   it('is not held open by a pull that failed - a transport error is not a full mailbox', async () => {
-    poke(svc, {
-      delivery: {
-        ackMessages: vi.fn().mockResolvedValue(undefined),
-        pullPendingMessagesJson: vi.fn().mockRejectedValue(new Error('offline')),
-      },
-    });
+    pullPendingMessagesJson.mockRejectedValue(new Error('offline'));
 
     // `fetchPendingMessages` swallows the failure (the backlog stays on the server for the next
     // reconnect), so the barrier must not inherit a rejection - nor stay pending for ever.
     await svc.fetchPendingMessages();
     await expect(svc.waitForMessageQueueIdle()).resolves.toBeUndefined();
+  });
+
+  it('pulls again after a failure, because a pull that died half-way proves nothing', async () => {
+    pullPendingMessagesJson.mockRejectedValueOnce(new Error('offline'));
+
+    await svc.fetchPendingMessages();
+    await svc.waitForMessageQueueIdle();
+
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
   });
 });

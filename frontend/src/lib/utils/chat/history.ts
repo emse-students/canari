@@ -330,26 +330,6 @@ export async function replayConversationHistory(params: {
     primedFirstPage,
   } = params;
 
-  /**
-   * EMPTY THE MAILBOX BEFORE READING THE ARCHIVE. The other half of the rule `reconcileGroup`
-   * already states for the ASK, and it belongs here for the same reason: this device must not go
-   * looking in the shared log for frames its own queue is about to hand it.
-   *
-   * The archive holds every frame, including the ones still queued for live delivery, so a replay
-   * started mid-drain walks rows the drain is seconds away from delivering - and both paths then
-   * present the same ciphertext to MLS. Measured on 2026-08-14: generations 618 and 629 refused
-   * TWICE each, once per path, while 619, 625 and 630 were read by the replay first and refused as
-   * duplicates when their live copies arrived. Five refusals, one race, and no message ever lost -
-   * the reconciliations they triggered all answered "same state, nothing to do".
-   *
-   * It is a BARRIER, not a delay: `waitUntilIdle` resolves on the drain loop ending, so it states a
-   * fact about the queue instead of guessing at a duration, and it costs nothing when no drain is
-   * running. Safe to await here because neither caller runs inside the pipeline - a conversation
-   * being opened and the bootstrap restore - which is exactly why the responder legs in
-   * `historyReconcile` schedule past the drain instead of awaiting it.
-   */
-  await mlsService.waitForMessageQueueIdle().catch(() => {});
-
   // Stale-behind detection: a group present in local WASM whose replay hits an epoch gap
   // (missing commit) is forked behind the server. We capture the epoch on entry to tell a real
   // gap from a transient one that a catch-up commit resolves during this same replay.
@@ -493,6 +473,9 @@ export async function replayConversationHistory(params: {
      */
     let walkHead: string | undefined;
 
+    /** The mailbox barrier runs once, after the head is pinned and before any row is touched. */
+    let mailboxSettled = false;
+
     while (true) {
       let page: HistoryPage;
       if (pendingPrimedPage !== undefined) {
@@ -511,6 +494,36 @@ export async function replayConversationHistory(params: {
         break;
       }
       fetchedAnyPage = true;
+
+      /**
+       * PIN THE HEAD, THEN EMPTY THE MAILBOX, THEN READ - and that order is the whole fix.
+       *
+       * Two facts have to hold for the archive walk and the delivery queue never to hand MLS the
+       * same ciphertext, and each closes the window the other leaves:
+       *
+       *  - Nothing ABOVE the head is walked. A frame sent after the pin has its row out of range,
+       *    so the queue owns it alone. That half shipped as `HistoryPage.head`.
+       *  - Nothing BELOW the head is still in the mailbox when a row is processed. A frame sent
+       *    before the pin has a row in range AND a queued copy, so the mailbox must be emptied
+       *    first: live delivery marks the frame, and the fingerprint check below skips the row.
+       *
+       * The barrier used to run BEFORE the first fetch, which left exactly the frames sent between
+       * "mailbox empty" and "head pinned" in both sets - one HTTP round trip wide, and the window
+       * every `Duplicate delivery ... already read by the archive replay` line came through. It ran
+       * one await too early, not one too late. Fetching the page first costs nothing: the rows are
+       * not touched until the barrier resolves, and a page whose frames the drain delivered
+       * meanwhile is skipped row by row rather than re-decrypted.
+       *
+       * `waitForMessageQueueIdle` now PULLS when nothing else has, which is what makes it a fact
+       * about the mailbox rather than about whichever drain happened to be running.
+       *
+       * Once per replay: later pages are all at or below the same head, so the same two facts
+       * already cover them.
+       */
+      if (!mailboxSettled) {
+        mailboxSettled = true;
+        await mlsService.waitForMessageQueueIdle().catch(() => {});
+      }
 
       const pageLastId = history[history.length - 1]?.id;
       // Reaching the head IS the end of the walk - no request is spent discovering an empty page.

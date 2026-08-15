@@ -120,37 +120,29 @@ identified it (the ABSENCE of `[TAB] Another tab is active`) are in
 [backlog](docs/wiki/backlog.md). Owed with it: a check that sends INSIDE the gap on purpose - no
 test does, which is why this is still inference about the consequence rather than a measurement.
 
-**WP-SENDPATH-1 (P2) - three defects on one send path, found together 2026-08-15, all VERIFIED IN CODE
-and none yet fixed.** Read this instead of re-deriving it; every line below was checked at its site.
+**WP-SENDPATH-1a/1c AND WP-DUPDELIVERY-1 ARE FIXED AND PUSHED (2026-08-15), AND NOT ONE OF THE THREE
+IS VERIFIED ON A CLIENT.** That is the only thing owed on them: the MSG/FWD/`recon.mjs` re-run.
+**Do not re-derive any of them** - mechanisms on
+[chat-delivery](docs/wiki/services/chat-delivery.md) ("Who a frame is queued for", and the shared-log
+section for `sender_device_id`) and
+[history-reconciliation](docs/wiki/protocols/history-reconciliation.md) (WP-DUPDELIVERY-1), stories
+in `CHANGELOG.md`, the shim and its **2026-11-13** removal date in
+[legacy-compatibility](docs/wiki/legacy-compatibility.md). What must not be lost:
 
-- **The client never populates `recipients`.** `postApplicationMessage` posts `senderId`,
-  `senderDeviceId`, `groupId`, `proto`, `silent`, `durable` and nothing else, so `ops.length === 0`
-  always and `sendMessage` takes the branch labelled *"Fallback: recipients not provided (Redis cache
-  miss)"* on **every send**. That is why `FALLBACK_MEMBERS_CACHE` appears on 100 % of sends - the
-  backlog's P2 is hereby EXPLAINED, and it is not a cache miss: there is no cache hit to be had.
-  Worse, the `group:members:<gid>` set that branch writes has **no reader in `sendMessage`** - only
-  the gateway reads it (`ws_dispatch.rs:184`). A DB round trip and a Redis write per send, named a
-  fallback so nobody looked.
-- **Nobody sends a device its own frame, and the earlier claim that they did is WITHDRAWN.** Both
-  fan-outs exclude the sender explicitly: `messaging.service.ts:585` and `ws_dispatch.rs:195`. The
-  sender's own copy is written from plaintext by `addMessageToChat` and never decrypted - WP-ECHO-1.
-- **The own-frame noise comes from the SHARED ARCHIVE, and the design cannot filter it.**
-  `history:{gid}` is one stream per group; it must hold this device's frames because the other
-  members read it, so every replay re-offers them and OpenMLS refuses by construction
-  (`CannotDecryptOwnMessage`, correctly classified at the throw since `mls-core`). But the row carries
-  `sender_id` (a USER) and **not `sender_device_id`**, and a user's OTHER device's frames are both
-  decryptable and wanted - so the replay cannot skip its own without attempting them. Measured: **5
-  per MSG-msg4 capture, every capture** - structural, not a race. The fix is the discriminator the
-  server already holds in the request body, written at `XADD` and filtered at the walk. A 4 282-message
-  DM otherwise pays thousands of certain-to-fail decrypts per full replay.
-
-**WP-DUPDELIVERY-1 (P2) - the archive replay and the live queue still hand MLS the same ciphertext.**
-`head`-pinning makes the archive walk disjoint from rows appended DURING it (`historyTypes.ts`), but
-not from rows already sitting in the delivery queue: **22 of 22 `Duplicate delivery` lines across
-every capture say `already read by the archive replay`, and not one says `live delivery`.** So the
-`seenLive` arm has never fired and the two-ledger reconciliation is carrying a real ordering hole in
-silence. WP-FALSELOSS-2 made it quiet, which was right and is not the fix. **The heal is the witness,
-not the answer** - the overlap itself is what to remove.
+- `FALLBACK_MEMBERS_CACHE` is GONE and the backlog's P2 with it. No caller ever populated
+  `recipients`, so the branch naming itself a cache miss was the only path there is. Its successor
+  `MEMBERS_CACHE_REPAIRED` fires only on a real repair and is matched by NO rule in `srvlog.mjs` -
+  one sighting is a defect report. **Measured on prod first**: of 23 groups with active memberships,
+  the 15 that HAVE a routing set are complete to the row (0 missing, 0 stale); all 11 missing rows
+  live in the 8 setless groups, the residue of Redis running without a volume until 2026-08-12.
+- **The claim that a device is sent its own frame stays WITHDRAWN.** Both fan-outs exclude the
+  sender. The own-frame noise was the shared archive, now filtered by `sender_device_id` written at
+  `XADD`; the `own-message` arm is the SHIM, not the mechanism, and it is not to be deleted with it.
+- WP-DUPDELIVERY-1 was NOT "rows already in the queue that head-pinning missed" - **that reading is
+  superseded.** It was two things: `waitForMessageQueueIdle` answered *has the running pull
+  finished* rather than *is the mailbox empty* (measured: replay ends 11:43:10, pull starts
+  11:43:12.889, its one row already read), and the barrier ran BEFORE the first fetch so the head
+  was pinned after it. **Pin, empty, read** - in that order. The heal stays as the witness.
 
 **SHIPPED, VERIFIED AND CLOSED - do not re-open, do not reconstruct any of them here.**
 WP-FALSELOSS-1, the two A1 startup defects, WP-PENDING-2 (the undrained queue, measured to `0` rows

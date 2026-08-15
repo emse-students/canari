@@ -33,12 +33,17 @@ export type HistoryStreamRow = {
 /**
  * One history page, plus the stream head the server saw when it read it.
  *
- * `head` is the upper bound a walk must carry for the rest of its pages (`until`), and it is what
- * keeps the archive replay and the live delivery queue from ever handing MLS the same frame. The
- * archive holds every frame, including those still queued for delivery, so a walk bounded by "the
- * tail whenever I reach it" necessarily covers rows appended while it was running - exactly the
- * ones the queue is about to deliver. Pinned at the start, the two sets are disjoint by
- * construction, and no row is fetched, decrypted or ledgered twice.
+ * `head` is the upper bound a walk must carry for the rest of its pages (`until`), and it is ONE of
+ * the two ends that keep the archive replay and the live delivery queue from ever handing MLS the
+ * same frame. The archive holds every frame, including those still queued for delivery, so a walk
+ * bounded by "the tail whenever I reach it" necessarily covers rows appended while it was running -
+ * exactly the ones the queue is about to deliver. Pinned at the start, nothing above it is fetched,
+ * decrypted or ledgered at all.
+ *
+ * The other end is the mailbox barrier, and the ORDER between them is load-bearing: the head is
+ * pinned FIRST and the mailbox emptied after (`replayConversationHistory`). Emptying first left the
+ * frames sent in between in both sets - the window every `Duplicate delivery ... already read by
+ * the archive replay` line came through (WP-DUPDELIVERY-1).
  *
  * Undefined when the group's stream is empty, or when the server predates the bound - see
  * `docs/wiki/legacy-compatibility.md`.

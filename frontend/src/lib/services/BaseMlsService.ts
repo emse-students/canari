@@ -385,6 +385,17 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private pendingPullInFlight: Promise<void> | null = null;
 
+  /**
+   * True while the LAST pull ran to completion - every page fetched, no transport failure.
+   *
+   * It is what lets {@link waitForMessageQueueIdle} state emptiness instead of idleness. Read
+   * together with `isWsOpen()`, never alone: a socket that has since dropped means frames may have
+   * been queued while this device was unreachable, and the pull that covers them is the reconnect's
+   * (`initializeConnection` runs one immediately after every `connect`). Cleared at the start of
+   * each pull, so a pull that failed half-way leaves it false and the next barrier pulls again.
+   */
+  private mailboxEmptiedByAPull = false;
+
   /** Open catch-up sessions. A depth rather than a flag: nothing guarantees only one at a time. */
   private catchUpDepth = 0;
 
@@ -473,8 +484,39 @@ export abstract class BaseMlsService implements IMlsService {
    * Sequential rather than a loop, and that is what makes it terminate: the pull is edge-driven (a
    * connection), so nothing starts a new one while the queue it filled is draining. A pull that DOES
    * begin later is a new edge, which re-triggers the reconciliation by itself.
+   *
+   * AND IT PULLS IF NOBODY ELSE HAS, which is the half this was missing and the docblock was already
+   * claiming (WP-DUPDELIVERY-1). Waiting on `pendingPullInFlight` answers "has the pull that is
+   * RUNNING finished" - so with no pull running and a full mailbox on the server, both halves
+   * resolved instantly and the caller went on to read the archive with its own frames still queued.
+   * Measured on prod 2026-08-15: an archive replay finished at 11:43:10, a pull started at
+   * 11:43:12.889 on a connection edge, and the single row it returned was a frame the replay had
+   * already read - `Duplicate delivery ... already read by the archive replay`. Every such line in
+   * every capture says the archive won, and not one says live delivery, so this arm had never once
+   * been the one that fired. The heal was the witness; the overlap is what had to go.
+   *
+   * The evidence for "empty" is a COMPLETED pull plus a socket still open (see
+   * {@link mailboxEmptiedByAPull}), never a duration.
    */
   async waitForMessageQueueIdle(): Promise<void> {
+    if (
+      !this.pendingPullInFlight &&
+      !(this.mailboxEmptiedByAPull && this.isWsOpen()) &&
+      this.userId !== 'unknown'
+    ) {
+      // Ends by awaiting `settleMailbox` itself, so this is the whole barrier and not a step of it.
+      return this.fetchPendingMessages().catch(() => {});
+    }
+    return this.settleMailbox();
+  }
+
+  /**
+   * The wait alone: whatever pull is in flight has landed, and the scheduler has applied it.
+   *
+   * Split out of {@link waitForMessageQueueIdle} because {@link fetchPendingMessages} ends on it -
+   * calling the full barrier there would have the pull wait on itself.
+   */
+  private async settleMailbox(): Promise<void> {
     await this.pendingPullInFlight?.catch(() => {});
     return this.messageScheduler.waitUntilIdle();
   }
@@ -702,6 +744,10 @@ export abstract class BaseMlsService implements IMlsService {
   async fetchPendingMessages(): Promise<void> {
     if (this.userId === 'unknown') return;
 
+    // Cleared here rather than on failure: what the barrier may trust is a pull that finished, and
+    // this one has not started. A pull that dies half-way therefore leaves it false.
+    this.mailboxEmptiedByAPull = false;
+
     void this.delivery.ackMessages([]).catch(() => {});
 
     /** Per-page deadline: one request's worth of transfer, not the whole backlog's. */
@@ -724,6 +770,9 @@ export abstract class BaseMlsService implements IMlsService {
             this.enqueuePendingRows(rows as Record<string, unknown>[]);
           },
         });
+        // Every page fetched and enqueued: the server holds nothing more for this device, which is
+        // the fact the barrier is allowed to stand on.
+        this.mailboxEmptiedByAPull = true;
         if (fetched === 0) {
           console.log(`[PENDING] No pending MLS messages for ${this.userId}:${this.deviceId}`);
         }
@@ -752,7 +801,7 @@ export abstract class BaseMlsService implements IMlsService {
       // announcing itself here would be waiting on its own completion.
       this.pendingPullInFlight = null;
     }
-    await this.waitForMessageQueueIdle();
+    await this.settleMailbox();
     // Only now is the answer complete: the rows were enqueued, not handled, so what the handler
     // refused to acknowledge is known only once the queue has drained. Without this, a device that
     // re-fetches the same backlog on every reconnect reports a perfectly healthy pull each time.

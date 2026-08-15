@@ -294,34 +294,46 @@ describe('a frame the archive replay consumed', () => {
 });
 
 /**
- * THE MAILBOX IS EMPTIED BEFORE THE ARCHIVE IS READ.
+ * THE HEAD IS PINNED, THEN THE MAILBOX IS EMPTIED, THEN THE ROWS ARE READ.
  *
- * The archive holds every frame, INCLUDING the ones still queued for live delivery, so a replay
- * started mid-drain walks rows the drain is seconds away from handing over - and both paths then
- * present the same ciphertext to MLS. `reconcileGroup` has stated this rule for the ASK since
- * 2026-08-13; this is the same rule for the READ, at the one seam both callers come through.
+ * The archive holds every frame, INCLUDING the ones still queued for live delivery, so the walk and
+ * the queue only stay disjoint if BOTH ends are closed: nothing above the head is walked (a frame
+ * sent after the pin belongs to the queue alone), and nothing below it is still in the mailbox when
+ * a row is processed (a frame sent before the pin is delivered first, and skipped by fingerprint).
+ *
+ * The barrier used to run BEFORE the first fetch, and this file used to assert exactly that - which
+ * is what left the frames sent between "mailbox empty" and "head pinned" in both sets. Every
+ * `Duplicate delivery ... already read by the archive replay` line in every capture came through
+ * that window, and not one line ever named live delivery: the reconciling arm had never fired at
+ * all (WP-DUPDELIVERY-1).
  *
  * The assertion is an ORDERING, which is why the gate stays shut: asserting that the barrier was
  * called proves only that it was called, not that anything waited for it.
  */
 describe('the mailbox barrier', () => {
-  it('touches neither the archive nor MLS state until the inbound queue is drained', async () => {
+  const row = {
+    id: '1-0',
+    sender_id: 'peer',
+    content: toBase64(new Uint8Array([0xd0, 0xd1, 0xd2])),
+    timestamp: String(1786655250946),
+  };
+
+  /** A replay held open at the barrier, with the calls it made before and after in reach. */
+  const gatedReplay = () => {
     let openGate!: () => void;
     const drained = new Promise<void>((resolve) => {
       openGate = resolve;
     });
     const fetchHistory = vi.fn().mockResolvedValue({ rows: [] });
-    const getLocalGroups = vi.fn().mockReturnValue([GROUP]);
+    const decryptPage = vi.fn().mockResolvedValue([{ ok: true, plaintext: null }]);
     const mlsService = createMlsServiceStub({
-      getLocalGroups,
+      getLocalGroups: vi.fn().mockReturnValue([GROUP]),
       fetchHistory,
-      createDecryptSession: vi.fn().mockResolvedValue({
-        decryptPage: vi.fn().mockResolvedValue([]),
-        finish: vi.fn().mockResolvedValue(undefined),
-      }),
+      createDecryptSession: vi
+        .fn()
+        .mockResolvedValue({ decryptPage, finish: vi.fn().mockResolvedValue(undefined) }),
       waitForMessageQueueIdle: vi.fn().mockReturnValue(drained),
     });
-
     const replay = replayConversationHistory({
       mlsService,
       id: GROUP,
@@ -333,18 +345,35 @@ describe('the mailbox barrier', () => {
       setConversation: () => undefined,
       messageReactions: new Map(),
       log: () => undefined,
+      primedFirstPage: { rows: [row], head: '9-0' },
     });
+    return { replay, openGate, fetchHistory, decryptPage };
+  };
+
+  it('hands MLS nothing until the mailbox is empty', async () => {
+    const { replay, openGate, decryptPage } = gatedReplay();
 
     // Several turns, so a barrier placed one await too late would still be caught.
     await Promise.resolve();
     await Promise.resolve();
-    expect(fetchHistory).not.toHaveBeenCalled();
-    expect(getLocalGroups).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(decryptPage).not.toHaveBeenCalled();
 
     openGate();
     await replay;
 
-    expect(fetchHistory).toHaveBeenCalled();
+    expect(decryptPage).toHaveBeenCalled();
+  });
+
+  it('has already pinned its upper bound when it waits, so the wait cannot widen the walk', async () => {
+    // The half the old ordering got wrong. Whatever is sent while the mailbox drains is above this
+    // bound and belongs to the queue alone - which is only true if the bound was taken first.
+    const { replay, openGate, fetchHistory } = gatedReplay();
+
+    openGate();
+    await replay;
+
+    expect(fetchHistory).toHaveBeenCalledWith(GROUP, '1-0', undefined, '9-0');
   });
 });
 

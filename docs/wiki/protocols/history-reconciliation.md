@@ -1015,6 +1015,46 @@ claim. If it persists, a consumer this client does not account for is spending t
 the two lines are now comparable for the first time: same fingerprint on both is a ledger gap, two
 fingerprints at one generation is genuine sender-side reuse.
 
+##### WP-DUPDELIVERY-1 - the ledger was the witness, and the overlap was one await wide
+
+Everything above makes the two consumers RECOGNISE each other. None of it stops them meeting, and
+the logs said so in a way that is easy to miss: across every capture, **every single
+`Duplicate delivery` line names `already read by the archive replay`, and not one names live
+delivery.** A reconciliation whose other arm has never once fired is not a reconciliation, it is a
+one-directional heal standing over a real ordering hole. **A race that heals cleanly is still a
+defect** - if the mechanism needs a heal in theory, the mechanism is wrong, whatever it does in
+practice.
+
+Two ends have to be closed for the walk and the queue to be disjoint by construction:
+
+- **Above the head:** a frame sent after the pin has its row out of the walk's range, so the queue
+  owns it alone. Shipped 2026-08-14 as `HistoryPage.head`.
+- **Below the head:** a frame sent before the pin has a row in range AND a queued copy, so the
+  mailbox has to be empty before any row is processed - live delivery marks the frame, and the
+  fingerprint check skips the row.
+
+Both existed. **The order between them was wrong, and the barrier did not do what its own docblock
+claimed.**
+
+`waitForMessageQueueIdle` was `await pendingPullInFlight` then `waitUntilIdle()`. That answers *has
+the pull that is RUNNING finished* - which, with no pull running and a full mailbox on the server,
+is instantly yes. Captured on prod 2026-08-15: a replay finished at `11:43:10`, a pull started at
+`11:43:12.889` on a connection edge, and the one row it returned was a frame the replay had already
+read. The barrier now PULLS when nothing else has, and its evidence for "empty" is a **completed
+pull plus a socket still open** (`mailboxEmptiedByAPull`) - a fact about a finished operation, never
+a duration. A pull that died half-way leaves it false.
+
+And the barrier ran BEFORE the first page was fetched, so the head was pinned *after* it. That left
+exactly the frames sent between "mailbox empty" and "head pinned" - one HTTP round trip - in both
+sets. The barrier now runs after the first page lands and before any row is touched: pin, empty,
+read. Fetching first costs nothing, because a page whose frames the drain delivered meanwhile is
+skipped row by row rather than re-decrypted.
+
+**The heal stays.** It is the witness that says whether the overlap is really gone, and it is what
+covers a consumer this client does not account for. What changes is that reaching it is now a
+finding rather than the normal path - so a `Duplicate delivery` line in any later capture is a
+defect report, and its arm finally distinguishes two causes that can both occur.
+
 ---
 
 ## Open questions
