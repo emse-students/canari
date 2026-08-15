@@ -82,8 +82,16 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
     }
 
     if (typeof window !== 'undefined') {
-      const sendDisconnectOnUnload = () => mlsService.sendDisconnect();
-      window.addEventListener('beforeunload', sendDisconnectOnUnload, { once: true });
+      // TWO STEPS, IN THIS ORDER, AND THEY ARE NOT THE SAME THING. The control frame drops the
+      // presence key server-side; the close ends the connection with `1001 - going away` so the
+      // peer is not handed a `1006` by a document being torn down. Without the second, every
+      // ordinary navigation reports an abnormal closure and the code stops distinguishing a dropped
+      // link from a page change - see `IMlsService.closeForUnload`.
+      const disconnectOnUnload = () => {
+        mlsService.sendDisconnect();
+        mlsService.closeForUnload();
+      };
+      window.addEventListener('beforeunload', disconnectOnUnload, { once: true });
     }
     return true;
   } catch (wsErr: unknown) {

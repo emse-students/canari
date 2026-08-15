@@ -266,16 +266,22 @@ or the `.msg-status-sent` / `.msg-status-read` selectors the checks locate the a
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| READ-1 | Reading on W1 clears the unread badge on W1 and marks it read for the sender | `W1 W2` | `pending` |
-| READ-2 | The SAME user's other device also clears - a receipt from yourself resets your own count | `+A1` | `pending` |
-| READ-3 | The receipt only fires with the window FOCUSED and the tab visible: a background tab must not mark read | `W1 W2` | `pending` |
-| READ-4 | The 2 s debounce batches: reading twenty messages sends ONE watermark, not twenty receipts | `W1 W2` | `pending` |
-| READ-5 | "Seen by" resolves to display names, and to `+N` past three | `W1 W2` | `pending` |
-| READ-6 | Channels send no receipts at all, by design - and their read state comes from the server tally | `W1 W2` | `pending` |
-| READ-7 | Unread count after a reload, with the receipt still in flight | `W1 W2` | `pending` |
-| READ-8 | Unread count on a conversation whose messages arrived while logged out | `W1 W2` | `pending` |
-| READ-9 | Read on A1 while W1 is open: the count on W1 goes without a reload | `+A1` | `pending` |
-| READ-10 | Reading a conversation whose peer has deleted it | `W1 W2` | `pending` - crosses DEL |
+**RUN 5x ON 2026-08-15 (07:02-07:08Z), 8 of 8 runnable checks PASS on every pass - 40 of 40 clean.**
+Both clients classified on all five, server window clean on six of seven services; `core-service`
+carries the open avatar P2 ([backlog](backlog.md)), which is not READ's and is not silenced.
+
+| Id | What it asks | Needs | State |
+| --- | --- | --- | --- |
+| READ-1 | Reading on W1 clears the unread badge on W1 and marks it read for the sender | `W1 W2` | `PASS` 5/5 - clears 3-11 ms, read 1-4 ms |
+| READ-2 | The SAME user's other device also clears - a receipt from yourself resets your own count | `+A1` | `PASS` 5/5 - A1 clears in ~2.2 s, untouched |
+| READ-3 | The receipt only fires with the window FOCUSED and the tab visible: a background tab must not mark read | `W1 W2` | `PASS` 5/5 - silent 6 s hidden, ~2.1 s once restored |
+| READ-4 | The 2 s debounce batches: reading twenty messages sends ONE watermark, not twenty receipts | `W1 W2` | `PASS` 5/5 - 20 markers, one flip in 2-8 ms |
+| READ-5 | "Seen by" resolves to display names, and to `+N` past three | `W1 W2` | `SKIPPED` - `+N` needs a 4th reader, the campaign has 2 accounts |
+| READ-6 | Channels send no receipts at all, by design - and their read state comes from the server tally | `W1 W2` | `PASS` 5/5 - no receipt in a 4 s window, no exception |
+| READ-7 | Unread count after a reload, with the receipt still in flight | `W1 W2` | `PASS` 5/5 - clears, no duplicate |
+| READ-8 | Unread count on a conversation whose messages arrived while logged out | `W1 W2` | `PASS` 5/5 - 3 of 3 counted, ~215 ms after reconnect |
+| READ-9 | Read on A1 while W1 is open: the count on W1 goes without a reload | `+A1` | `PASS` 5/5 - W1 clears live in ~2.1 s |
+| READ-10 | Reading a conversation whose peer has deleted it | `W1 W2` | `SKIPPED` - `--destructive` only; creates debris the cleanup must know about |
 
 ## 4 - MUT - editing, deleting, reacting, pinning
 

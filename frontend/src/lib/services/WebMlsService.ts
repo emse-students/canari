@@ -547,6 +547,19 @@ export class WebMlsService extends BaseMlsService {
     }
   }
 
+  /**
+   * Closes the socket with `1001 - going away`, so the peer is not told `1006` by a dying document.
+   *
+   * See {@link IMlsService.closeForUnload} for why the code matters. The heartbeat is cleared first:
+   * its interval would otherwise fire once more against a socket that is on its way out and log a
+   * zombie-connection warning for a connection nobody expected to survive.
+   */
+  closeForUnload(): void {
+    if (!this.ws) return;
+    this.clearHeartbeat();
+    this.safeCloseWebSocket(this.ws, 1001, 'navigating');
+  }
+
   /** Sends a disconnect control frame over the browser WebSocket so the gateway removes the presence key immediately. */
   sendDisconnect(): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {

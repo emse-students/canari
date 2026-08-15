@@ -62,7 +62,18 @@ export class AvatarService {
         }
       }
 
-      this.logger.error('Error fetching avatar', error);
+      // LOG WHAT IDENTIFIES THE FAILURE, NOT THE WHOLE OBJECT. Handing an axios error to the Nest
+      // logger prints `util.inspect` of the underlying TLS socket - roughly 500 lines per
+      // occurrence, `Symbol(kCapture)` and all. Eleven timeouts in one five-minute window produced
+      // 5 581 log lines on 2026-08-15 and made the service's entire window unreadable, which costs
+      // far more than the incident itself: a real line anywhere in that span would not have been
+      // found. The cause is `code` and the destination, and both fit on one line.
+      const detail =
+        axios.isAxiosError(error) ?
+          `${error.code ?? 'no code'} ${error.message}`
+        : error instanceof Error ? error.message
+        : String(error);
+      this.logger.error(`Error fetching avatar for ${userId} from ${this.avatarApiUrl}: ${detail}`);
       throw new HttpException(
         'Failed to fetch avatar from external service',
         HttpStatus.BAD_GATEWAY

@@ -77,6 +77,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
+      closeForUnload: vi.fn(),
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
       getLocalGroups: vi.fn().mockReturnValue(['g-in-wasm', 'g-orphan']),
@@ -124,12 +125,54 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Connected to network!'));
   });
 
+  it('leaves the page with a close handshake, not just a disconnect frame', async () => {
+    // A document torn down without `close()` gives the peer 1006 - "abnormal closure", the code that
+    // means an intermediary dropped the link. Spending it on every navigation makes a real one
+    // unreadable, so the unload path owes BOTH: the control frame that drops the presence key, and
+    // the close that ends the connection as 1001 "going away".
+    const mls = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
+      onDisconnect: vi.fn(),
+      sendDisconnect: vi.fn(),
+      closeForUnload: vi.fn(),
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+      getLocalGroups: vi.fn().mockReturnValue([]),
+      getUserGroups: vi.fn().mockResolvedValue([]),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await initializeConnection({
+      mlsService: mls as any,
+      userId: 'u1',
+      deviceKeyB64: 'pin1',
+      scheduleReconnect: vi.fn(),
+      setIsWsConnected: vi.fn(),
+      setReconnectAttempts: vi.fn(),
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+    });
+
+    // Neither may fire before the page actually goes away - `sendDisconnect` is also called when the
+    // app is merely backgrounded, and a close there would cost a full reconnect on every resume.
+    expect(mls.sendDisconnect).not.toHaveBeenCalled();
+    expect(mls.closeForUnload).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new Event('beforeunload'));
+
+    expect(mls.sendDisconnect).toHaveBeenCalledTimes(1);
+    expect(mls.closeForUnload).toHaveBeenCalledTimes(1);
+  });
+
   it('purges WASM and notifies for deleted groups (deletedAt)', async () => {
     const mls = {
       connect: vi.fn().mockResolvedValue(undefined),
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
+      closeForUnload: vi.fn(),
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
       getLocalGroups: vi.fn().mockReturnValue(['g-deleted']),
@@ -176,6 +219,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
+      closeForUnload: vi.fn(),
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
       reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
       getLocalGroups: vi.fn().mockReturnValue([]),
@@ -212,6 +256,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       fetchPendingMessages: vi.fn(),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
+      closeForUnload: vi.fn(),
       generateKeyPackage: vi.fn().mockResolvedValue(undefined),
       getDeviceMemberships: vi.fn().mockResolvedValue([]),
       getLocalGroups: vi.fn().mockReturnValue([]),

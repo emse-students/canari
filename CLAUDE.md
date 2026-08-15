@@ -152,10 +152,15 @@ ladder climbs itself". Mechanism, both captures and the completed test fixture a
 three rules in [durable-rules](docs/wiki/durable-rules.md). **The campaign masked it structurally** -
 every check reloads, which is why the proof had to be MADE rather than found.
 
-**The avatar 404s are attributed and are a SERVER fault, not a client one.** `[AvatarService] Error
-fetching avatar` in `core-service`, 17 outbound HTTPS timeouts to Cloudflare IPs over one 5-minute
-run: the endpoint proxies a remote avatar, the fetch times out, it answers 404. The UI falls back to
-initials. Not a WP yet - a fix needs the user's call on whether that proxy should exist.
+**The avatar 404s are attributed and the CAUSE is now known (2026-08-15).** `gallery.mitv.fr` gives
+four addresses; from inside `core-service` the two IPv6 ones answer **`ENETUNREACH`** and both IPv4
+ones connect fine - the container has no IPv6 route while DNS keeps handing it AAAA records, so every
+fetch burns happy-eyeballs attempts against a 5 s budget and can die `ETIMEDOUT` -> 404 -> initials.
+Diagnosis, the capture and the three candidate fixes are in [backlog](docs/wiki/backlog.md) (P2).
+**Still the user's call whether that proxy should exist at all**, which is prior to picking a fix.
+The LOG-VOLUME half is fixed: the handler passed the whole axios error to the Nest logger, printing
+`util.inspect` of the TLS socket - **5 581 lines from 11 incidents**, which made the service's entire
+window unreadable. `srvlog.mjs` now also collapses a dump to its error line and reports the count.
 
 **WP-GARAGE-1 IS SHIPPED (2026-08-14) - MinIO -> Garage, verified on prod.** Every object
 (200 / 45.370 MiB) copied via `rclone sync` and confirmed identical with `rclone check` (0 diffs)
@@ -227,6 +232,20 @@ never established its precondition (TYPE-4 cut the peer with a setting already m
 phase file that computed five verdicts while reading no console, and a click that could not say what
 had RECEIVED it. `srvlog.mjs` now partitions its window by SUBJECT - prod is shared, and 27
 "unexplained" lines were one real third-party user's phone climbing its recovery ladder.
+
+**READ IS DONE - 5 PASSES, 8 OF 8 RUNNABLE CHECKS PASS ON EVERY ONE, 40 OF 40 `clean`.** The rows,
+the durations and the two named SKIPs are on [cross-client-testing](docs/wiki/cross-client-testing.md)
+- do not copy them here. Three instrument faults came out of it and are rules, not state: READ never
+classified a console line at all (eight PASSes rested on nobody looking); `ensureChat` could not park
+a phone, because it returns `already` the instant the path is `/chat` and a phone IN a DM is on
+`/chat`, which is how READ-3 blamed a hidden tab for a receipt the PHONE had sent (the watermark is
+per-USER); and the `PASS-DIRTY` that followed was the check's OWN second navigation - `openDM` is
+`goto` is `Page.navigate` - not a live socket dying. `wsidle.mjs` (0 closes, 8 min, both browsers)
+and `navclose.mjs` (3 navigations -> 3 closes, exactly) settled it; `ignoringNavigation` now forgives
+at most `documentsReplaced` closes so WP-RECONNECT-2's shape stays visible. Rule 14 of
+[testing-methodology](docs/wiki/testing-methodology.md) carries all of it. **The first attribution
+was WRONG and that is the lesson**: `wsclose.mjs` measured correctly and was asked a question it does
+not answer.
 
 **WP-BANNER-1 IS SHIPPED AND VERIFIED RUNNING (`e62c21f1`, 2026-08-15).** Six banners agreed on
 nothing; the whole contract is on

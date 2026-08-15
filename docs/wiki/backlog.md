@@ -89,6 +89,34 @@ its end is unreachable. A layout constraint, not a behaviour change.
 
 ---
 
+## Outbound connectivity
+
+### P2 - the avatar proxy pays a 5 s budget on IPv6 addresses the container cannot reach
+
+**Diagnosed 2026-08-15, from inside `core-service` on prod.** `gallery.mitv.fr` resolves to four
+addresses; the two IPv6 ones answer `ENETUNREACH` and the two IPv4 ones connect fine:
+
+```
+lookup: 172.67.180.204 (4), 104.21.31.239 (4), 2606:4700:3031::6815:1fef (6), 2606:4700:3032::ac43:b4cc (6)
+ERR  6 ...:6815:1fef  ENETUNREACH        OK 4 172.67.180.204
+ERR  6 ...:ac43:b4cc  ENETUNREACH        OK 4 104.21.31.239
+```
+
+The container has no IPv6 route, but DNS keeps handing it AAAA records, so every avatar fetch enters
+Node's happy-eyeballs path - `internalConnectMultiple` and `Timeout.internalConnectMultipleTimeout`
+are in every captured stack - against the `timeout: 5000` in `avatar.service.ts`. When those attempts
+hang rather than failing fast, the whole request dies `ETIMEDOUT` and the endpoint answers 404 with
+the UI falling back to initials. **Eleven of them in one five-minute READ window.**
+
+Three candidate fixes, and the choice is a judgement rather than a lookup: pin the avatar client to
+IPv4 (`family: 4`, or `dns.setDefaultResultOrder('ipv4first')`), give the container a working IPv6
+route, or turn `autoSelectFamily` off for that client. **Whether the proxy should exist at all is a
+separate and prior question, and it is the user's** - see the note in `CLAUDE.md`.
+
+The log-volume half of this is already fixed: the handler used to pass the whole axios error to the
+Nest logger, which printed `util.inspect` of the TLS socket - about 500 lines per occurrence, 5 581
+lines from those eleven incidents, enough to make the service's whole window unreadable.
+
 ## Interface
 
 ### P3 - the whole mobile page is selectable
@@ -137,20 +165,42 @@ bounds the backlog of a device that simply never returns.
 
 ## Protocol and delivery
 
-### Observed once - the phone skipped an outbox flush as a "follower tab"
+### P2 - an unresolved tab leadership is read as "another tab is the leader", and the skipped flush reschedules nothing
 
-`[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.` on **A1**,
-right after a reload (`burn.mjs`, 2026-08-15). A standalone app has no sibling tab, so the reading
-that fits is a startup ordering artifact: `runFlush` consults `getIsTabLeader()` before the reloaded
-page has re-acquired the Web Lock, skips, and asks the leader - which is itself a moment later. It
-self-corrected and the message went (3 589 ms), and it did NOT recur on a second reload of the same
-device.
+`[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.` Seen first on
+**A1** after a reload (`burn.mjs`, 2026-08-15), then on **W1** - a single-tab Chrome profile - seven
+seconds into READ pass 4 (2026-08-15 06:57:12Z), at that check's `goto`.
 
-**Deliberately NOT given a classifier rule.** A rule matching this line would also forgive a genuine
-leadership failure, where the queue would never drain at all - and one occurrence is not a
-predicate. Left in `unexplained`, where a second sighting will surface it again with a pattern to
-read. If it does recur, the question to answer first is whether the flush is merely early or the
-lock is genuinely lost.
+**The second sighting answered the question the first one left open.** That question was "is the
+flush merely early, or is the lock genuinely lost", and the discriminator is a companion line:
+a tab that really lost the election logs `[TAB] Another tab is active - read-only mode`. W1's window
+contains no such line. The flush is EARLY.
+
+**The mechanism.** `isTabLeader` starts `false` and is set true only once `initTabLeadershipAsync`
+resolves the Web Lock, so between page load and that resolution `getIsTabLeader()` answers `false` -
+and `runFlush` reads that as *another tab holds leadership*. **A predicate is only evidence for the
+question it was written to answer**: "am I the leader" and "has leadership been decided" differ only
+in a state neither is modelling, and using one for the other is what produced this. The phone met it
+first because a cold native boot widens the gap.
+
+**Why it is P2 and not cosmetic.** The follower branch does two things and neither recovers:
+`requestLeaderOutboxFlush()` broadcasts to a leader that, on a single-tab client, does not exist; and
+it returns before `scheduleBackoff`, which would not have armed anything anyway - a never-attempted
+entry has no `nextAttemptAt`, so the `filter(t => t > now)` finds nothing and the function returns.
+The remaining triggers are `connectivity.onReconnect`, a `visibilitychange`, a peer tab's request and
+the next `enqueue`. So **a message enqueued inside the boot gap can wait for an unrelated wake-up**,
+because `enqueue`'s own `runFlush()` is precisely the one that gets skipped. Nothing observed has
+lost a message - both sightings self-corrected, A1's went in 3 589 ms - and no check has yet been
+written that sends inside the gap on purpose. That check belongs to the outbox phase, not to READ.
+
+**The fix is a state, not a retry.** Leadership has three states and the code models two; `runFlush`
+should await resolution rather than treat "undecided" as "someone else's job". A timer here would be
+the pattern this area was deliberately cleared of.
+
+**Classifier**: the skipped-flush line is now `NOTABLE` - reported in every record, never silent,
+never breaking an unrelated verdict. That does not forgive a genuine leadership failure the way the
+earlier note feared: such a failure also emits `[TAB] Another tab is active`, `[TAB] Race election`
+or `[TAB] Promoted to leader`, none of which is classified, so all three still break `clean`.
 
 ### P3 - the composer sits behind the soft keyboard on Android
 

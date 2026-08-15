@@ -96,6 +96,7 @@ export function createMlsServiceStub(
     sendHistoryRequest: vi.fn().mockResolvedValue(undefined),
     onHistoryRequest: vi.fn(),
     sendDisconnect: vi.fn(),
+    closeForUnload: vi.fn(),
     sendTyping: vi.fn(),
     onChannelEvent: undefined,
     addBulkIngestObserver: vi.fn(),

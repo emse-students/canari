@@ -365,6 +365,55 @@ the fix under test deployed at 12:45:20, **after all of them**. `webstate.mjs` t
 still on `__sveltekit_1prkb1y` against a served `__sveltekit_1ywe1to`. Re-running without reloading
 would have measured the old bundle a fourth time and called it a verification.
 
+#### The same rule pointed at the CLIENT - where the replacer is the check itself
+
+READ was the first phase whose runner classified console lines at all, and on the run that wired it
+in, READ-1, READ-2 and READ-4 each came back `PASS-DIRTY` on exactly one `Network.webSocketClosed`,
+with `[WS] Disconnected. Code: 1006, Reason: no reason` beside it. 1006 means no close frame was
+received - the signature of an intermediary dropping a connection - so it read as a live socket dying,
+which is WP-RECONNECT-2's exact shape.
+
+**The first attribution was wrong, and the probe that produced it was not.** `wsclose.mjs` reported
+that the closed socket had never been created inside the window, which is true and correctly
+measured. The conclusion drawn - that the window had inherited the *previous* page's close - did not
+follow, because that probe never performs the check's SECOND navigation. `gotoWatched` was built on
+it, delayed each window until the new page's handshake, and the next run came back identically dirty.
+**A probe answers the question it was written to answer**, which is the client-side twin of "a column
+is only evidence for the question it was written to answer": the measurement was reusable, the
+inference was not.
+
+What settled it were two CONTROLS rather than more evidence of the same kind:
+
+- `wsidle.mjs` left W1 **and W2** alone for eight minutes, touching neither - same instrument, two
+  subjects, one window. **Zero closes on both.** That kills the idle-timeout-on-the-path reading
+  outright: nothing drops an untouched socket, so the event is caused by something the check does.
+- `navclose.mjs` then navigated three times and counted: three main-frame `Page.frameNavigated`,
+  three `webSocketCreated`, three `webSocketClosed`, three `Code: 1006`. **One document replacement,
+  one close, exactly.** `openDM` is `goto` is `Page.navigate`, so each of those checks was tearing
+  down its own socket and then reporting the teardown as dirt.
+
+Two things follow, and neither is "ignore socket closes".
+
+**Forgiveness is bounded by a counted proof.** `ignoringNavigation` forgives at most
+`documentsReplaced` closes and no more; the (N+1)th still breaks `clean`, so a live socket dying stays
+visible. The tempting rule - *ignore a close whose open I never saw* - would have silenced precisely
+the class the campaign exists to catch. Note also that the obvious counter is the wrong one:
+`Runtime.executionContextsCleared` fired **six** times for three navigations, and only main-frame
+`Page.frameNavigated` is 1:1.
+
+**And the window opens BEFORE the navigation, not after it.** `gotoWatched` now watches first and
+navigates second - the inverse of what it did when it was written. A window that opens late is a
+window blind to the boot it skipped, and the boot is where a startup defect lives.
+
+One application observation fell out of this and was fixed the same day: the app installed a
+`beforeunload` handler that sent an application-level `{type:'disconnect'}` frame but never called
+`ws.close()`, so every ordinary navigation produced a 1006. **A close code is a diagnostic, and
+spending it on routine navigation makes a real one unreadable.** `IMlsService.closeForUnload` now
+closes with 1001 (going away) from the unload path only - deliberately NOT from `sendDisconnect`,
+which is also called when the app is merely backgrounded and whose socket is expected to survive
+that. The harness rule above is unaffected either way: it attributes a close to a counted document
+replacement, and a document being replaced still closes its socket however politely it does so.
+
 ### 15. A CHECK MUST ESTABLISH ITS PRECONDITION, AND WHAT ESTABLISHES IT BELONGS IN THE SHARED LAYER
 
 TYPE-4 asks that an **offline** peer sees no typing indicator and gets none replayed when it returns.

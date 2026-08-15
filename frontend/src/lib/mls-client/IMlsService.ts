@@ -585,8 +585,33 @@ export interface IMlsService {
    * removes the presence key immediately (instead of waiting for TTL / heartbeat
    * miss). Call this in `beforeunload` or when the app is intentionally closed.
    * No-op if the socket is not open.
+   *
+   * THIS DOES NOT CLOSE THE SOCKET, and must not: `pauseConnectionImpl` calls it when the app is
+   * backgrounded, and the socket is deliberately expected to survive that - the resume path reports
+   * `[LIFECYCLE] Resume: already connected (flag=true, socket=true)` precisely because it usually
+   * does. Closing here would force a full reconnect on every backgrounding. To close on the way out
+   * of the page, use {@link closeForUnload}.
    */
   sendDisconnect(): void;
+
+  /**
+   * Close the gateway socket with a real close handshake, because this page is going away.
+   *
+   * WHY A CLOSE CODE IS WORTH SPENDING A METHOD ON. When a document is torn down, the socket dies
+   * with it and no close frame is ever sent, so the peer sees **1006 - abnormal closure**. That code
+   * is a diagnostic: it is how "an intermediary dropped the connection" is told apart from "the
+   * other side hung up". Emitting it on every ordinary navigation - and every `goto` in the test
+   * rig is one - makes a genuine 1006 indistinguishable from routine traffic in any log anyone
+   * reads. Measured 2026-08-15: three navigations, three 1006, exactly one per document replaced.
+   *
+   * So this closes with **1001 (going away)**, which is what the code means. It does not eliminate
+   * 1006 - `beforeunload` does not run for a killed tab or a crashed renderer - it makes it RARE,
+   * which is all a signal needs to be readable again.
+   *
+   * Called only from the unload handler installed by `openGatewayConnection`. No-op if the socket is
+   * already closed.
+   */
+  closeForUnload(): void;
 
   /**
    * Send an ephemeral `typing` signal over the WebSocket for a DM/group conversation.
