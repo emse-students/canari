@@ -142,7 +142,19 @@ in `CHANGELOG.md`, the shim and its **2026-11-13** removal date in
   superseded.** It was two things: `waitForMessageQueueIdle` answered *has the running pull
   finished* rather than *is the mailbox empty* (measured: replay ends 11:43:10, pull starts
   11:43:12.889, its one row already read), and the barrier ran BEFORE the first fetch so the head
-  was pinned after it. **Pin, empty, read** - in that order. The heal stays as the witness.
+  was pinned after it. The heal stays as the witness.
+- **THE FIRST ATTEMPT AT THAT ORDER DEADLOCKED THE CLIENT AND WAS CAUGHT BY MSG-1b ON PASS 1**
+  (`4604eda5`, fixed same day). The barrier landed one await too far - inside the walk loop, so
+  AFTER `createDecryptSession`, which opens a catch-up that holds the MLS mutex for its whole life
+  while the drain needs it per message. W2: bulk ingest `depth=1` at 14:58:44.612, frame at
+  14:58:45.001, drain nested to `depth=2`, then no `Drain complete` and no `Bulk ingest done`, ever;
+  `copiesOnReceiver: 0`; server saw the same two frames unACKed -> `PUSH_DEFERRED -> FCM fallback`
+  on a browser with no push token. It does NOT heal - W2 read OFFLINE for the rest of the run, so
+  passes 2-5 were BLOCKED rather than given verdicts. **Pin, empty, OPEN, read** - the first two
+  above the session, where the mutex is free. `waitForMessageQueueIdle` now refuses (logs an error,
+  returns) when `catchUpDepth > 0` instead of hanging. Mechanism on
+  [history-reconciliation](docs/wiki/protocols/history-reconciliation.md), rule in
+  [durable-rules](docs/wiki/durable-rules.md).
 
 **SHIPPED, VERIFIED AND CLOSED - do not re-open, do not reconstruct any of them here.**
 WP-FALSELOSS-1, the two A1 startup defects, WP-PENDING-2 (the undrained queue, measured to `0` rows

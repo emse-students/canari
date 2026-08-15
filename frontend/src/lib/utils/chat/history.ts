@@ -443,10 +443,6 @@ export async function replayConversationHistory(params: {
       addedMsg++;
     };
 
-    // Paged decrypt session: the ratchet advances worker-side across pages and is committed
-    // to the live client once by session.finish() (run in the outer `finally`, always).
-    session = await mlsService.createDecryptSession(id);
-
     // Batch login may have prefetched with a cursor we just invalidated (DB wipe).
     let pendingPrimedPage: HistoryPage | undefined =
       cursorBeforeDbCheck && !afterStreamId ? undefined : primedFirstPage;
@@ -456,7 +452,7 @@ export async function replayConversationHistory(params: {
      * THE UPPER BOUND OF THIS WALK, PINNED AT ITS FIRST PAGE - so the archive and the delivery queue
      * can never hand MLS the same frame.
      *
-     * The mailbox barrier above orders the two paths at the START: nothing this device's queue held
+     * The mailbox barrier below orders the two paths at the START: nothing this device's queue held
      * is still undelivered when the walk begins. It says nothing about what arrives DURING the walk,
      * and the archive holds every frame including the queued ones - so a walk whose upper bound is
      * "the tail whenever I reach it" necessarily covers rows written while it was running, which are
@@ -473,8 +469,43 @@ export async function replayConversationHistory(params: {
      */
     let walkHead: string | undefined;
 
-    /** The mailbox barrier runs once, after the head is pinned and before any row is touched. */
-    let mailboxSettled = false;
+    /**
+     * PIN THE HEAD, EMPTY THE MAILBOX, OPEN THE SESSION - in that order, and the first two with the
+     * MLS MUTEX STILL FREE.
+     *
+     * Two facts have to hold for the archive walk and the delivery queue never to hand MLS the same
+     * ciphertext, and each closes the window the other leaves:
+     *
+     *  - Nothing ABOVE the head is walked. A frame sent after the pin has its row out of range, so
+     *    the queue owns it alone. That half is `walkHead`, passed to every fetch.
+     *  - Nothing BELOW the head is still in the mailbox when a row is processed. A frame sent before
+     *    the pin has a row in range AND a queued copy, so the mailbox is emptied after the pin: live
+     *    delivery marks the frame, and the fingerprint check below skips the row.
+     *
+     * The barrier used to run before the first FETCH, which left exactly the frames sent between
+     * "mailbox empty" and "head pinned" in both sets - one HTTP round trip wide, and the window every
+     * `Duplicate delivery ... already read by the archive replay` line came through.
+     *
+     * BUT IT MAY NOT MOVE PAST `createDecryptSession`, AND THAT IS A DEADLOCK RATHER THAN A
+     * PREFERENCE. Opening the session acquires the global MLS mutex, a catch-up holds it for its
+     * whole life, and the drain needs that same non-reentrant mutex for every message - so a barrier
+     * awaited from inside the session waits for a drain that cannot start. Measured 2026-08-15 on
+     * W2: bulk ingest opened at 14:58:44.612, the frame arrived at 14:58:45.001, its drain nested to
+     * depth 2, and neither ever finished. The client stayed wedged until it was reloaded, and the
+     * server saw the same event from the other side - two frames unACKed, `PUSH_DEFERRED -> FCM
+     * fallback`, on a browser that has no push token.
+     *
+     * Both facts are therefore established here, before the session exists: pinning the head is one
+     * HTTP read that touches no MLS state at all, and emptying the mailbox is precisely letting the
+     * drain have the mutex.
+     */
+    pendingPrimedPage ??= await mlsService.fetchHistory(id, fetchCursor, undefined, undefined);
+    walkHead = pendingPrimedPage.head;
+    await mlsService.waitForMessageQueueIdle().catch(() => {});
+
+    // Paged decrypt session: the ratchet advances worker-side across pages and is committed
+    // to the live client once by session.finish() (run in the outer `finally`, always).
+    session = await mlsService.createDecryptSession(id);
 
     while (true) {
       let page: HistoryPage;
@@ -494,36 +525,6 @@ export async function replayConversationHistory(params: {
         break;
       }
       fetchedAnyPage = true;
-
-      /**
-       * PIN THE HEAD, THEN EMPTY THE MAILBOX, THEN READ - and that order is the whole fix.
-       *
-       * Two facts have to hold for the archive walk and the delivery queue never to hand MLS the
-       * same ciphertext, and each closes the window the other leaves:
-       *
-       *  - Nothing ABOVE the head is walked. A frame sent after the pin has its row out of range,
-       *    so the queue owns it alone. That half shipped as `HistoryPage.head`.
-       *  - Nothing BELOW the head is still in the mailbox when a row is processed. A frame sent
-       *    before the pin has a row in range AND a queued copy, so the mailbox must be emptied
-       *    first: live delivery marks the frame, and the fingerprint check below skips the row.
-       *
-       * The barrier used to run BEFORE the first fetch, which left exactly the frames sent between
-       * "mailbox empty" and "head pinned" in both sets - one HTTP round trip wide, and the window
-       * every `Duplicate delivery ... already read by the archive replay` line came through. It ran
-       * one await too early, not one too late. Fetching the page first costs nothing: the rows are
-       * not touched until the barrier resolves, and a page whose frames the drain delivered
-       * meanwhile is skipped row by row rather than re-decrypted.
-       *
-       * `waitForMessageQueueIdle` now PULLS when nothing else has, which is what makes it a fact
-       * about the mailbox rather than about whichever drain happened to be running.
-       *
-       * Once per replay: later pages are all at or below the same head, so the same two facts
-       * already cover them.
-       */
-      if (!mailboxSettled) {
-        mailboxSettled = true;
-        await mlsService.waitForMessageQueueIdle().catch(() => {});
-      }
 
       const pageLastId = history[history.length - 1]?.id;
       // Reaching the head IS the end of the walk - no request is spent discovering an empty page.

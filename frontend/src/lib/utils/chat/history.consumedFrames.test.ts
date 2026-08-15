@@ -326,12 +326,13 @@ describe('the mailbox barrier', () => {
     });
     const fetchHistory = vi.fn().mockResolvedValue({ rows: [] });
     const decryptPage = vi.fn().mockResolvedValue([{ ok: true, plaintext: null }]);
+    const createDecryptSession = vi
+      .fn()
+      .mockResolvedValue({ decryptPage, finish: vi.fn().mockResolvedValue(undefined) });
     const mlsService = createMlsServiceStub({
       getLocalGroups: vi.fn().mockReturnValue([GROUP]),
       fetchHistory,
-      createDecryptSession: vi
-        .fn()
-        .mockResolvedValue({ decryptPage, finish: vi.fn().mockResolvedValue(undefined) }),
+      createDecryptSession,
       waitForMessageQueueIdle: vi.fn().mockReturnValue(drained),
     });
     const replay = replayConversationHistory({
@@ -347,7 +348,7 @@ describe('the mailbox barrier', () => {
       log: () => undefined,
       primedFirstPage: { rows: [row], head: '9-0' },
     });
-    return { replay, openGate, fetchHistory, decryptPage };
+    return { replay, openGate, fetchHistory, decryptPage, createDecryptSession };
   };
 
   it('hands MLS nothing until the mailbox is empty', async () => {
@@ -374,6 +375,31 @@ describe('the mailbox barrier', () => {
     await replay;
 
     expect(fetchHistory).toHaveBeenCalledWith(GROUP, '1-0', undefined, '9-0');
+  });
+
+  /**
+   * THE BARRIER MAY NOT BE AWAITED FROM INSIDE THE SESSION - a deadlock, not a slow path.
+   *
+   * `createDecryptSession` acquires the global MLS mutex and a catch-up holds it for its whole life,
+   * while the drain needs that same non-reentrant mutex for every message. Waiting for the mailbox
+   * with the session already open therefore waits for a drain that can never start. Shipped that way
+   * on 2026-08-15 and measured within one check: the receiver's bulk ingest opened, the frame landed
+   * 389 ms later, its drain nested to depth 2, and neither finished - the client stayed wedged until
+   * it was reloaded, and the message never appeared. The two tests above both passed throughout,
+   * because a stub has no mutex; this one pins the ORDER, which is the part a stub can still answer.
+   */
+  it('has not opened the decrypt session while it waits, so the drain still has the mutex', async () => {
+    const { replay, openGate, createDecryptSession } = gatedReplay();
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(createDecryptSession).not.toHaveBeenCalled();
+
+    openGate();
+    await replay;
+
+    expect(createDecryptSession).toHaveBeenCalled();
   });
 });
 

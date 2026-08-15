@@ -1050,6 +1050,35 @@ sets. The barrier now runs after the first page lands and before any row is touc
 read. Fetching first costs nothing, because a page whose frames the drain delivered meanwhile is
 skipped row by row rather than re-decrypted.
 
+###### The first attempt at that order deadlocked the client, and where the barrier may be taken is part of the order
+
+Shipped as `4604eda5`, the barrier moved one await too far: it landed inside the walk loop, which is
+**after `createDecryptSession`**. Opening a decrypt session opens a catch-up, and a catch-up holds
+the global MLS mutex for its whole life, while the drain needs that same non-reentrant mutex for
+every message. The walk therefore waited for a drain that could not start.
+
+Caught by MSG-1b on the first pass of the verification run, 2026-08-15, and the two sides of the log
+agree frame for frame:
+
+| Where | What it showed |
+| --- | --- |
+| W2 console | `Disk writes deferred (bulk ingest depth=1)` at `14:58:44.612`, the frame at `14:58:45.001`, its drain nesting to `depth=2` - then no `Processing message`, no `Drain complete`, no `Bulk ingest done`, ever |
+| The check | `copiesOnReceiver: 0`, and `NOT IN THE STORE EITHER` after a scroll and a reopen |
+| chat-delivery | the same two frames unACKed -> `PUSH_DEFERRED ... -> FCM fallback`, then `No push token for user=... device=web-...` - it is a browser |
+| The rig | W2 read **OFFLINE** for the rest of the run, so all 12 scripts of passes 2-5 were BLOCKED rather than given verdicts |
+
+It does not heal: the client stayed wedged until it was reloaded. **The order was right and the
+placement was wrong** - and both facts can be established with the mutex free, because pinning the
+head is one HTTP read that touches no MLS state and emptying the mailbox *is* letting the drain have
+the mutex. So the sequence is **pin, empty, open, read**, with the first two above the session.
+
+Two things came out of it that outlive the fix. The hazard was **already named in this codebase**,
+at `answerAfterMailboxDrained`, for the responder legs - which solve it the other way, by deferring
+past the drain instead of awaiting it. And `waitForMessageQueueIdle` is now the place that states
+the fact rather than discovers it: it is the only code that can see `catchUpDepth > 0` at the moment
+of the call, so it logs an error naming the call site's mistake and returns, turning an
+unrecoverable hang into a defect report.
+
 **The heal stays.** It is the witness that says whether the overlap is really gone, and it is what
 covers a consumer this client does not account for. What changes is that reaching it is now a
 finding rather than the normal path - so a `Duplicate delivery` line in any later capture is a

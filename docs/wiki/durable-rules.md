@@ -499,6 +499,27 @@ carry in the head:
   server's stream head, read once, not the client's clock), and *what width of seam is left* (here,
   one round trip instead of one walk - the queue and the stream are written at different moments, so
   no client-side ordering makes it zero, and the ledger keeps covering that remainder).
+- **A BARRIER MAY NOT BE AWAITED FROM INSIDE THE THING THAT HOLDS WHAT IT WAITS FOR - AND WHERE IT
+  MAY BE TAKEN IS PART OF THE ORDER IT ENFORCES.** The rule above orders the archive walk against the
+  delivery queue as *pin the head, empty the mailbox, then read*; the correction to it moved the
+  barrier one await LATER, past `createDecryptSession`. That opens a catch-up, which holds the global
+  MLS mutex **for its whole life**, while the drain needs the same non-reentrant mutex for every
+  message - so the walk waited for a drain that could not start. Both stopped for good: measured
+  2026-08-15, bulk ingest opened at 14:58:44.612, the frame landed at 14:58:45.001, its drain nested
+  to depth 2, and neither `Drain complete` nor `Bulk ingest done` ever came. The client stayed wedged
+  until reload, and the server saw the same event from the far side - two frames unACKed, then
+  `PUSH_DEFERRED -> FCM fallback` on a browser that has no push token. **The order was right and the
+  placement was wrong**, and both facts can be had with the mutex free: pinning the head is one HTTP
+  read that touches no MLS state, and emptying the mailbox IS letting the drain have the mutex. Three
+  things this must keep. **The codebase already knew the class** - `answerAfterMailboxDrained` names
+  it exactly, for the responder legs, and solves it the other way, by DEFERRING past the drain
+  instead of awaiting it; a hazard already named in one place is the first thing to check when
+  touching another. **The barrier now refuses rather than hangs**: it is the only place that can see
+  `catchUpDepth > 0` at the moment of the call, so it logs an error naming the call site's mistake
+  and returns, converting an unrecoverable hang into a defect report. And **a unit test that stubs
+  the lock cannot see this** - the two tests covering that ordering both passed throughout, because a
+  stub has no mutex; what a stub can still pin is the ORDER, so assert that the session is not open
+  while the barrier is pending.
 - **A RESPONSE HEADER IS INVISIBLE CROSS-ORIGIN UNLESS IT IS EXPOSED.** Carrying new metadata in a
   header keeps an array-shaped body compatible with every deployed client - the right trade - but the
   app runs cross-origin under Tauri (`http://tauri.localhost`), so without
@@ -554,7 +575,11 @@ prompt fields are all on those pages. What must not be forgotten between them:
   follow-up fix - a `showConfirm(...)` message and its custom button label were shipped as raw
   French literals (WP-SAFELINK-1), copying the shape of that store's own ~21 other call sites,
   none of which are Paraglide either; that existing pattern is not a precedent to extend.
-- Re-run `bun run paraglide:compile` before `bun run test` after any build.
+- Re-run `bun run paraglide:compile` before `bun run test` after any build - **an Android or iOS
+  build counts**, because `beforeBuildCommand` is `bun run build`. It fails as a handful of tests
+  asserting French text and receiving the English message, which reads like an i18n regression in
+  code nobody touched: 7 failures across 4 files right after an APK build, 1481/1481 after one
+  recompile with no source change between the two runs.
 - **AN INDEX INTO AN ARRAY YOU DO NOT OWN IS STATE THAT GOES STALE, AND `slice` PAST THE END IS
   SILENT.** `ChatArea` renders `messageGroups.slice(windowStart, …)` and recomputed `windowStart`
   only when the conversation KEY changed - while `loadHistoryForConversation` REPLACES

@@ -190,6 +190,33 @@ describe('waitForMessageQueueIdle', () => {
     await expect(svc.waitForMessageQueueIdle()).resolves.toBeUndefined();
   });
 
+  /**
+   * THE ONE CALLER THAT CANNOT BE SERVED, AND IS TOLD SO.
+   *
+   * A catch-up holds the MLS mutex for its whole life and the drain needs it for every message, so
+   * awaiting the mailbox from inside a session waits for a drain that can never start - the client
+   * stops for good. Shipped once, on 2026-08-15, and it wedged a browser mid-check. The barrier is
+   * the only place that can see the state at the moment of the call, so it is where the fact is
+   * stated rather than discovered.
+   */
+  it('refuses, loudly, to be awaited from inside a catch-up instead of never resolving', async () => {
+    const catchUp = svc as unknown as { beginCatchUp(): void; endCatchUp(): void };
+    const complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    catchUp.beginCatchUp();
+
+    // Resolving is the point: a promise that never settles here is exactly the defect.
+    await expect(svc.waitForMessageQueueIdle()).resolves.toBeUndefined();
+    expect(pullPendingMessagesJson).not.toHaveBeenCalled();
+    expect(waitUntilIdle).not.toHaveBeenCalled();
+    expect(complaint).toHaveBeenCalledOnce();
+
+    // And it is the SESSION that is refused, not the device: once closed, the barrier works again.
+    catchUp.endCatchUp();
+    await svc.waitForMessageQueueIdle();
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
+    complaint.mockRestore();
+  });
+
   it('pulls again after a failure, because a pull that died half-way proves nothing', async () => {
     pullPendingMessagesJson.mockRejectedValueOnce(new Error('offline'));
 

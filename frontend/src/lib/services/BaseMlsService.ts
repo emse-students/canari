@@ -499,6 +499,35 @@ export abstract class BaseMlsService implements IMlsService {
    * {@link mailboxEmptiedByAPull}), never a duration.
    */
   async waitForMessageQueueIdle(): Promise<void> {
+    /**
+     * FROM INSIDE A CATCH-UP THIS BARRIER CANNOT RESOLVE, SO IT ACCUSES INSTEAD OF HANGING.
+     *
+     * A catch-up session holds the global MLS mutex for its whole life (`createDecryptSession` ->
+     * {@link beginCatchUp}) and the drain needs that same non-reentrant mutex for every message. A
+     * caller that opens one and then waits for its mailbox waits for a drain that cannot start:
+     * both sides stop for good, and nothing in the client recovers without a reload.
+     *
+     * It is a deadlock in theory before it is one in practice, and it shipped once - 2026-08-15, the
+     * archive replay took this barrier after opening its session. W2 opened a bulk ingest at
+     * 14:58:44.612, the frame arrived 389 ms later, its drain nested to depth 2, and neither ever
+     * finished; the server saw the other side of the same event as two frames unACKed and a
+     * `PUSH_DEFERRED -> FCM fallback` on a browser with no push token.
+     *
+     * There is no legitimate caller here - the barrier's whole purpose is to be taken BEFORE the
+     * session - so this is a defect report, not a degradation to absorb quietly. The responder legs
+     * solve the same problem the other way, by DEFERRING past the drain rather than awaiting it
+     * (`answerAfterMailboxDrained`), which is the shape to copy when a call site cannot know whether
+     * it runs inside one.
+     */
+    if (this.catchUpDepth > 0) {
+      console.error(
+        '[QUEUE] mailbox barrier awaited from inside a catch-up session - it can never resolve there' +
+          ' (the drain needs the MLS mutex this session holds), so it was SKIPPED and the caller is' +
+          ' proceeding against a mailbox that may not be empty. Take the barrier before opening the' +
+          ' session, or defer past the drain instead of awaiting it.'
+      );
+      return;
+    }
     if (
       !this.pendingPullInFlight &&
       !(this.mailboxEmptiedByAPull && this.isWsOpen()) &&
