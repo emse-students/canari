@@ -259,37 +259,6 @@ const geometryOf = (btnVar, rVar) => `{
   })()
 }`;
 
-/**
- * Runs `fn` with enough viewport width for the hover toolbar to be REACHABLE, then restores.
- *
- * THIS IS A COMPENSATION FOR A FILED APPLICATION DEFECT, and it is written as one. The strip is
- * positioned `right-full` outside the bubble with nothing bounding it by the pane, so at the width
- * these browsers launch at (958 px) it is laid out 54 px INTO the sidebar and `elementFromPoint`
- * at the heart button's own centre returns a conversation row. Five checks whose subject is
- * mutation cannot click a reaction at all. Measured, with the table, in
- * [backlog](../../docs/wiki/backlog.md) - "the message hover bar is too wide on desktop".
- *
- * It is deliberately NOT the global launch width: every other phase's baseline is that window, and
- * a campaign that quietly widens its own viewport stops measuring what users have. MUT-21 measures
- * the defect at the launched width instead, so THE DAY IT IS FIXED, MUT-21 passes and this wrapper
- * can be deleted. A compensation with no expiry is how a workaround becomes the design.
- */
-const TOOLBAR_ROOM = { width: 1440, height: 900 };
-async function withToolbarRoom(clients, fn) {
-  for (const cx of clients)
-    await cx.send('Emulation.setDeviceMetricsOverride', {
-      ...TOOLBAR_ROOM,
-      deviceScaleFactor: 0,
-      mobile: false,
-    });
-  await sleep(500); // the layout settles before anything is measured against it
-  try {
-    return await fn();
-  } finally {
-    for (const cx of clients) await cx.send('Emulation.clearDeviceMetricsOverride').catch(() => {});
-  }
-}
-
 /** `'read'` / `'sent'` / `null` when the row shows neither - which is the normal state for anything
  *  that is not the last own message, `MessageMetadata.svelte` rendering the indicator only on the
  *  receipt anchor. `null` also covers a row that is gone, so callers that care must anchor by id. */
@@ -501,6 +470,32 @@ async function pinState(cx, textMatch) {
   const unpinned = await bubbleIconPresent(cx, textMatch, 'lucide-pin');
   if (unpinned) return 'unpinned';
   return null;
+}
+
+/**
+ * Leaves the message UNPINNED, and says so if it could not - never silently.
+ *
+ * THE CAMPAIGN LEFT A PIN STANDING ON THE PRODUCTION CONVERSATION, which the user found before this
+ * did. Both pin checks do call the unpin, but each wrote it as `clickPinIcon(...).catch(() => {})`
+ * INSIDE the try: so a click the layout made impossible was swallowed without a word, and a check
+ * that threw earlier skipped the cleanup entirely. A best-effort cleanup that cannot report is
+ * indistinguishable from no cleanup at all - the whole reason this file is not allowed to swallow a
+ * branch. Called from `finally`, it also runs on the paths that failed.
+ *
+ * @returns {Promise<string|null>} null when the message ends up unpinned, else why it did not.
+ */
+async function ensureUnpinned(cx, textMatch) {
+  try {
+    const s = await pinState(cx, textMatch);
+    if (s === null) return `no pin control on the row of ${textMatch} - cannot confirm it is unpinned`;
+    if (s === 'unpinned') return null;
+    await clickBubbleIcon(cx, textMatch, 'lucide-pin-off');
+    await sleep(400);
+    const after = await pinState(cx, textMatch);
+    return after === 'unpinned' ? null : `still ${after} after clicking unpin`;
+  } catch (e) {
+    return `unpin failed: ${e.message}`;
+  }
 }
 
 async function clickPinIcon(cx, textMatch) {
@@ -1070,7 +1065,7 @@ async function mut9() {
     // DM only, where a peer message's toolbar is 323 px and fits; a channel adds pin and moderate
     // buttons to it, which is a hypothesis and nothing more until the geometry now attached to the
     // throw arrives from a run. The wrapper is applied because it makes the click land either way.
-    await withToolbarRoom([deletingCx], () => deleteBubble(deletingCx, target));
+    await deleteBubble(deletingCx, target);
     await sleep(600);
     const [aGone, bGone] = await Promise.all([
       countMessage(a, target),
@@ -1186,7 +1181,7 @@ async function mut11() {
   let [a, b, w] = await openDmPair();
   let dmOk = false;
   try {
-    dmOk = await withToolbarRoom([a, b], () => mut11Body(a, b, w, 'dm'));
+    dmOk = await mut11Body(a, b, w, 'dm');
   } catch (e) {
     await finish('MUT-11/dm', 'ERROR', w, { error: e.message });
   } finally {
@@ -1196,7 +1191,7 @@ async function mut11() {
   [a, b, w] = await openChannelPair();
   let chOk = false;
   try {
-    chOk = await withToolbarRoom([a, b], () => mut11Body(a, b, w, 'channel'));
+    chOk = await mut11Body(a, b, w, 'channel');
   } catch (e) {
     await finish('MUT-11/channel', 'ERROR', w, { error: e.message });
   } finally {
@@ -1266,7 +1261,7 @@ async function mut12() {
   let [a, b, w] = await openDmPair();
   let dmOk = false;
   try {
-    dmOk = await withToolbarRoom([a, b], () => mut12Body(a, b, w, 'dm'));
+    dmOk = await mut12Body(a, b, w, 'dm');
   } catch (e) {
     await finish('MUT-12/dm', 'ERROR', w, { error: e.message });
   } finally {
@@ -1276,7 +1271,7 @@ async function mut12() {
   [a, b, w] = await openChannelPair();
   let chOk = false;
   try {
-    chOk = await withToolbarRoom([a, b], () => mut12Body(a, b, w, 'channel'));
+    chOk = await mut12Body(a, b, w, 'channel');
   } catch (e) {
     await finish('MUT-12/channel', 'ERROR', w, { error: e.message });
   } finally {
@@ -1435,7 +1430,7 @@ async function mut15() {
     // Cleanup: b still correctly shows it pinned (it was online throughout), so unpin FROM b - a's
     // wiped-then-reloaded client is online now too and will receive the live 'unpin' event, which
     // converges both sides correctly regardless of a's stale local read above.
-    await clickPinIcon(b, marker).catch(() => {});
+    const unpinFailure = await ensureUnpinned(b, marker);
 
     // FAIL IS THE HONEST WORD AND IT STAYS. The pin genuinely does not survive, so this row is red
     // on every pass and the MUT phase cannot exit 0 while the hole stands. Renaming it to something
@@ -1444,6 +1439,9 @@ async function mut15() {
     await finish('MUT-15/dm', survived ? 'PASS' : 'FAIL', w, {
       stateAfterFreshLoad,
       documentedHole: !survived,
+      // Non-null means this check LEFT A PIN on the production conversation. It does not change the
+      // verdict - the subject is durability, not tidiness - but it must never again be invisible.
+      unpinFailure,
       reason: 'pinStore.svelte.ts is localStorage-only; history_bundle merge (systemMessageHandler.ts) never touches pin state, so a device with no local record of a pin has no way to recover it',
     });
 
@@ -1459,8 +1457,10 @@ async function mut15() {
 
 async function mut16() {
   let [a, b, w] = await openChannelPair();
+  // Declared OUTSIDE the try so `finally` can name the message it must leave unpinned - the cleanup
+  // is needed precisely on the paths where the body did not reach its own end.
+  const marker = mark('MUT16');
   try {
-    const marker = mark('MUT16');
     await sendText(a, marker);
     await awaitMessage(b, marker, 25000);
 
@@ -1479,14 +1479,19 @@ async function mut16() {
 
     const stateAfterFreshLoad = await pinState(a, marker);
     const ok = stateAfterFreshLoad === 'pinned';
-    await clickPinIcon(a, marker).catch(() => {});
     return await finish('MUT-16/channel', ok ? 'PASS' : 'FAIL', w, {
       stateAfterFreshLoad,
+      unpinFailure: await ensureUnpinned(a, marker),
       contrastNote: 'compare against MUT-15/dm: same simulated-fresh-device technique, opposite result',
     });
   } catch (e) {
     return await finish('MUT-16/channel', 'ERROR', w, { error: e.message });
   } finally {
+    // IN `finally`, because a channel pin is SERVER-side: left standing it is visible to every
+    // member of the community, and the paths that throw are exactly the ones that pinned and then
+    // could not finish. Idempotent, so running it twice on the success path costs one DOM read.
+    const leftover = await ensureUnpinned(a, marker);
+    if (leftover) console.log(`[MUT-16] CLEANUP FAILED, a pin is standing on the channel: ${leftover}`);
     closeAll(a, b);
   }
 }
@@ -1687,15 +1692,20 @@ async function mut20() {
 
 // ── Runner ───────────────────────────────────────────────────────────────────────────────────
 
-// ── MUT-21: the hover toolbar is laid out OUTSIDE the pane, and the sidebar takes its clicks [DM] ─
+// ── MUT-21: the hover toolbar stays inside the pane, at the width the report came from [DM] ────
 //
-// THIS CHECK OWNS THE DEFECT THE OTHERS COMPENSATE FOR - see `withToolbarRoom`. It runs at the width
-// the browsers actually launch at, deliberately, because that is the width the report came from.
-// Its FAIL is expected and filed; the day it PASSES, `withToolbarRoom` has expired and every one of
-// its call sites can go. It measures both directions, which is the half the user's report did not
-// separate: an OWN message puts the strip `right-full`, so it overflows into the sidebar, while a
-// PEER message puts it `left-full`, so it overflows the viewport's right edge and lands on nothing.
-// Same cause, two symptoms, and only the first is a mis-click rather than a dead zone.
+// IT WAS WRITTEN TO FAIL AND IT NOW GUARDS THE FIX. The strip used to be positioned `right-full`,
+// entirely outside the bubble, with nothing bounding it by the pane - so at the width these browsers
+// launch at (958 px) it was laid out 69 px INTO the sidebar and `elementFromPoint` at the heart
+// button's own centre returned a conversation row. Five checks whose subject is mutation could not
+// click a reaction at all; each ran inside a viewport override, and this check existed to give that
+// override an expiry. It PASSED on 2026-08-15 against the fix, the overrides were deleted the same
+// hour, and what is left is a regression guard.
+//
+// It runs at the LAUNCHED width on purpose - a campaign that quietly widens its own viewport stops
+// measuring what users have - and it measures both directions, because they are not symmetric: an
+// own message hangs the strip to the left of a right-aligned bubble, a peer message to the right of
+// a left-aligned one, and only the first ever reached the sidebar.
 
 /** Geometry + hit test for the one control at `iconOrEmoji` on this row, at the CURRENT width. */
 async function toolbarReach(cx, textMatch, selector) {
@@ -1752,8 +1762,8 @@ async function mut21() {
       peerReach,
       filedAs: 'backlog.md - "the message hover bar is too wide on desktop, and the sidebar takes its clicks"',
       note: ok
-        ? 'REACHABLE at the launched width - the defect is fixed, and every withToolbarRoom() call site can now be deleted'
-        : 'expected FAIL: the documented layout defect is still present, and withToolbarRoom() is still earning its place',
+        ? undefined
+        : 'REGRESSION: the strip has left the pane again - see the fix in MessageBubbleToolbar.svelte, which anchors it above the bubble on its outer edge precisely so bubble width cannot push it out',
     });
     // Like MUT-15: `ok` means "the documented hole was reproduced", not "the app is right".
     return true;

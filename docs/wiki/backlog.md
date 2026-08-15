@@ -125,9 +125,10 @@ scroll. Recorded rather than hidden.
 **It blocks five MUT checks** (MUT-9, MUT-11 both transports, MUT-12 both transports) whose subject
 is mutation, not layout: they cannot click a reaction at all at the harness's launched width. That
 is what surfaced it - the checks used to dispatch blind, so the click landed in the sidebar and the
-reaction silently never happened. They now run inside a stated viewport override, and **MUT-21 owns
-the defect at the launched width so the override has an expiry**: the day MUT-21 passes, every
-`withToolbarRoom()` call site can be deleted.
+reaction silently never happened. They ran inside a stated viewport override, and MUT-21 was written
+to own the defect at the launched width so that override could not outlive it. **MUT-21 passed
+against the fix the same day - `overflowsPaneLeftBy: 0`, `reachable: true` in both directions at
+958 px - and every override was deleted with it.** MUT-21 stays as the regression guard.
 
 ### P2 - a deleted message still offers the emoji picker, and using it throws
 
