@@ -520,6 +520,26 @@ carry in the head:
   the lock cannot see this** - the two tests covering that ordering both passed throughout, because a
   stub has no mutex; what a stub can still pin is the ORDER, so assert that the session is not open
   while the barrier is pending.
+- **A BARRIER THAT ALSO ACTS MUST NOT BE REACHABLE BEFORE THE THING THAT ANSWERS FOR ITS ACTION -
+  AND AT BOOT, "BEFORE" IS DECIDED BY A LINE NUMBER.** `waitForMessageQueueIdle` does not only wait,
+  it PULLS when nothing else has (that half is what closed WP-DUPDELIVERY-1). `processQueue` returns
+  immediately while `messageCallback` is unset, so a barrier taken before `setupMessageHandler`
+  fetches frames into a queue with no consumer and then waits on the queue it has just filled -
+  `waitUntilIdle` has nothing that can ever fire it. **Measured on prod 2026-08-15**: the startup
+  archive replay sat above the handler registration in `sessionAuth`, and W2 - holding 2 frames
+  queued since that morning's deadlock - stopped at 1 s on EVERY reload, before
+  `[TAB] Leadership acquired`, so no socket was ever opened; the only trace was one
+  `console.warn` about a callback. **W1 was the control: identical bundle, identical code, empty
+  server-side mailbox, normal boot.** The trigger is therefore the ordinary state of anyone who has
+  been away, and it does not heal - each restart re-runs it. Three things this must keep. **The fix
+  is the ORDER, not the guard**: the consumer is registered before anything can pull, which keeps
+  the pull (and so WP-DUPDELIVERY-1) intact - refusing to pull instead would trade a hang for a
+  duplicate. **The guard is still owed**, because it is the only place that can see the fact at the
+  moment of the call, and skipping beats hanging: a duplicate is caught by the fingerprint ledger, a
+  client that never connects again is caught by nobody. And **`console.warn` was the whole report** -
+  a swallowed branch that ends a device's session for good is an ERROR, and it must name the
+  consequence (`n queued message(s) ... every mailbox barrier now open will never resolve`), not the
+  condition.
 - **A RESPONSE HEADER IS INVISIBLE CROSS-ORIGIN UNLESS IT IS EXPOSED.** Carrying new metadata in a
   header keeps an array-shaped body compatible with every deployed client - the right trade - but the
   app runs cross-origin under Tauri (`http://tauri.localhost`), so without

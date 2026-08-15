@@ -528,6 +528,34 @@ export abstract class BaseMlsService implements IMlsService {
       );
       return;
     }
+    /**
+     * AND IT CANNOT RESOLVE BEFORE THERE IS ANYTHING TO DRAIN IT, EITHER.
+     *
+     * `processQueue` returns immediately while {@link messageCallback} is unset, so nothing empties
+     * the buckets and `waitUntilIdle` has no way to fire - and this barrier PULLS, so awaiting it
+     * without a consumer is what fills the queue it is then waiting on. The device stops mid-boot
+     * with no socket, for ever, and the only visible trace is a `console.warn` about a callback.
+     *
+     * Measured on prod 2026-08-15: W2 held 2 frames queued since the deadlock earlier that day, and
+     * every boot afterwards pulled them, hung inside the startup archive replay before
+     * `setupMessageHandler`, and never reached tab leadership - no `[TAB] Leadership acquired`, no
+     * `Connecting to Gateway…`, silence from 1 s onwards. W1, same bundle and same code with an
+     * EMPTY server-side mailbox, booted normally: the backlog alone decided it.
+     *
+     * The order is fixed at the call site - the inbound pipeline is registered before anything can
+     * replay an archive - so reaching this is a defect report, not a state to absorb. Skipping is
+     * still strictly better than hanging: the caller reads an archive whose mailbox may not be
+     * settled, which the shared-fingerprint ledger catches, and a duplicate is recoverable where a
+     * client that never connects again is not.
+     */
+    if (!this.messageCallback) {
+      console.error(
+        '[QUEUE] mailbox barrier awaited before the inbound pipeline was registered - nothing can' +
+          ' drain the queue this barrier pulls into, so it can never resolve and it was SKIPPED.' +
+          ' Register the message handler before any caller can take this barrier.'
+      );
+      return;
+    }
     if (
       !this.pendingPullInFlight &&
       !(this.mailboxEmptiedByAPull && this.isWsOpen()) &&
@@ -601,7 +629,14 @@ export abstract class BaseMlsService implements IMlsService {
   /** Drains per-group queues with round-robin scheduling and a global MLS mutex. */
   protected async processQueue(): Promise<void> {
     if (!this.messageCallback) {
-      console.warn('[QUEUE] messageCallback not set - queued messages will not be processed');
+      // A frame reached the queue before the pipeline that consumes it existed. Nothing here can
+      // drain it, and anything already waiting on `waitUntilIdle` is waiting for good - so this is
+      // an error, not a notice: the inbound pipeline is registered during boot BEFORE any path that
+      // can pull or receive, and a line here means that order was broken.
+      console.error(
+        `[QUEUE] messageCallback not set - ${this.messageScheduler.getPendingCount()} queued message(s)` +
+          ' cannot be processed and every mailbox barrier now open will never resolve'
+      );
       return;
     }
 

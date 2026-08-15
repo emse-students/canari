@@ -155,6 +155,18 @@ in `CHANGELOG.md`, the shim and its **2026-11-13** removal date in
   returns) when `catchUpDepth > 0` instead of hanging. Mechanism on
   [history-reconciliation](docs/wiki/protocols/history-reconciliation.md), rule in
   [durable-rules](docs/wiki/durable-rules.md).
+- **AND THE SECOND ATTEMPT KILLED THE BOOT INSTEAD - P1, found 2026-08-15 while restoring the
+  clients for the re-run, fixed the same day.** The barrier also PULLS, and `setupMessageHandler` sat
+  AFTER `loadAndRestoreConversations`, which drives the replay that takes it - so a device with
+  anything queued fetched frames into a queue with no consumer, then waited on the queue it had just
+  filled. Boot stopped at 1 s, before `[TAB] Leadership acquired`; **no socket ever opened, on every
+  reload**, with one `console.warn` as the entire report. **The A/B is the proof and W1 is the
+  control**: same bundle, same code, 0 queued rows -> normal boot; W2 with 2 rows (the deadlock's own
+  residue, `12:58:45`/`12:58:47`) -> dead every time. It does NOT heal - the frames stay queued
+  because the device that would ACK them never connects. **The fix is the ORDER** (the pipeline is
+  registered before anything can pull), NOT a refusal to pull, which would trade the hang for a
+  duplicate at every startup; the guard and `processQueue`'s branch raised to an error are defence in
+  depth.
 
 **SHIPPED, VERIFIED AND CLOSED - do not re-open, do not reconstruct any of them here.**
 WP-FALSELOSS-1, the two A1 startup defects, WP-PENDING-2 (the undrained queue, measured to `0` rows

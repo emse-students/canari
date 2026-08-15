@@ -117,6 +117,9 @@ describe('waitForMessageQueueIdle', () => {
     pullPendingMessagesJson = vi.fn().mockResolvedValue(undefined);
     poke(svc, {
       userId: 'user-a',
+      // The inbound consumer. Present in every case but the one that removes it on purpose: the
+      // barrier refuses to pull without one, because nothing would drain what the pull enqueues.
+      messageCallback: vi.fn().mockResolvedValue(true),
       messageScheduler: { waitUntilIdle },
       delivery: {
         ackMessages: vi.fn().mockResolvedValue(undefined),
@@ -214,6 +217,32 @@ describe('waitForMessageQueueIdle', () => {
     catchUp.endCatchUp();
     await svc.waitForMessageQueueIdle();
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
+    complaint.mockRestore();
+  });
+
+  /**
+   * THE OTHER CALLER THAT CANNOT BE SERVED - the one that arrives too EARLY.
+   *
+   * `processQueue` returns at once while no message callback is set, so nothing empties the buckets
+   * and `waitUntilIdle` has nothing to fire on. Since this barrier PULLS, awaiting it without a
+   * consumer is what fills the queue it then waits on for ever.
+   *
+   * Measured on prod 2026-08-15: W2 held 2 frames queued since that morning's deadlock, and every
+   * boot afterwards pulled them from inside the startup archive replay - which ran BEFORE
+   * `setupMessageHandler` - and stopped there. No tab leadership, no socket, no error, on every
+   * reload. W1 differed in nothing but an empty server-side mailbox and booted normally.
+   */
+  it('refuses, loudly, to be awaited before there is anything to drain the queue it pulls', async () => {
+    poke(svc, { messageCallback: undefined });
+    const complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(svc.waitForMessageQueueIdle()).resolves.toBeUndefined();
+
+    // Pulling is the harm here, not just the waiting: it is the pull that fills a queue nothing can
+    // empty, so the refusal has to come BEFORE it.
+    expect(pullPendingMessagesJson).not.toHaveBeenCalled();
+    expect(waitUntilIdle).not.toHaveBeenCalled();
+    expect(complaint).toHaveBeenCalledOnce();
     complaint.mockRestore();
   });
 

@@ -639,86 +639,13 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // deciding whether a listener exists.
     registerOfflinePromotion(ctx, cb, () => makeConnectionDeps(ctx, cb));
 
-    // Adopt anything the native side queued on its own (an undelivered notification quick reply
-    // lives only in the mirror file, which the next mirror rewrite would erase). BEFORE the load:
-    // the adopted message is written to the store, so the ordinary history load displays it and
-    // applyOutboxPendingStatuses below marks it pending.
-    await adoptOrphanedMirrorEntries(ctx.getStorage()!, ctx.getDeviceKey(), ctx.getUserId()).catch(
-      (e) => cb.log(`[OUTBOX_MIRROR] Adoption pass failed: ${String(e)}`)
-    );
-
-    // Load conversations first: consumeFcmCache can access
-    // the conversations Map via addMessageToChat once it is populated.
-    beginStartupCatchupPhase('load_conversations');
-    await cb.loadAndRestoreConversations();
-    {
-      const stats = summarizeConversationStats(cb.conversations);
-      endStartupCatchupPhase({
-        conversationCount: stats.conversationCount,
-        messageCount: stats.localMessageCount,
-      });
-    }
-    // Reconcile background sends (killed app) first: remove from the outbox any
-    // messages already delivered by the native service, BEFORE re-deriving "pending"
-    // statuses (otherwise an already-sent message would be shown as pending again).
-    await reconcileOutboxSent(ctx.getStorage()!).catch(() => {});
-    // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
-    await applyOutboxPendingStatuses();
-
-    beginStartupCatchupPhase('fcm_cache');
-    const fcmInjected = await consumeFcmCache(ctx.getDeviceKey(), ctx.getStorage()!).catch(
-      () => [] as []
-    );
-    if (Array.isArray(fcmInjected) && fcmInjected.length > 0) {
-      const mergedCount = mergeFcmMessagesIntoConversations(
-        fcmInjected,
-        cb.conversations,
-        ctx.getUserId()
-      );
-      cb.log(`[FCM_CACHE] ${mergedCount} message(s) merged in memory at login`);
-    }
-    endStartupCatchupPhase({
-      messageCount: Array.isArray(fcmInjected) ? fcmInjected.length : 0,
-    });
-
-    try {
-      const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
-      const missingKeys: string[] = [];
-      // Conversations stuck in 'pending' while their local MLS state exists:
-      // the "Sync" badge would remain forever (DF5). Reconciliation demoted absent
-      // groups but never promoted the inverse - this adds the mirror promotion.
-      const recoveredKeys: string[] = [];
-      for (const [key, c] of cb.conversations.entries()) {
-        if (isChannelConversationId(c.id)) continue;
-        if (c.lifecycle === 'active' && !localMlsGroups.has(c.id)) {
-          cb.conversations.set(key, { ...c, lifecycle: 'pending' });
-          missingKeys.push(key);
-        } else if (c.lifecycle === 'pending' && localMlsGroups.has(c.id)) {
-          cb.conversations.set(key, { ...c, lifecycle: 'active' });
-          recoveredKeys.push(key);
-        }
-      }
-      if (missingKeys.length > 0) {
-        cb.log(
-          `[WARN] Groups without local MLS state detected - ${missingKeys.length} conversation(s) marked not-ready, re-invite triggered on next connect.`
-        );
-        console.warn(
-          `[INIT] ${missingKeys.length} conversation(s) missing local MLS state - marked not-ready`
-        );
-        await Promise.all(missingKeys.map((key) => cb.saveConversation(key).catch(() => {})));
-      }
-      if (recoveredKeys.length > 0) {
-        cb.log(
-          `[INIT] ${recoveredKeys.length} conversation(s) stuck pending but already synced - "Sync" badge cleared.`
-        );
-        await Promise.all(recoveredKeys.map((key) => cb.saveConversation(key).catch(() => {})));
-      }
-    } catch (e) {
-      console.warn('[INIT] Error detecting missing MLS groups:', e);
-    }
-
-    // processDeviceInvitationsLocally is called at the end of syncConnectionAfterWsOpen -
-    // calling it here before the WebSocket is opened is redundant.
+    // THE INBOUND PIPELINE IS REGISTERED BEFORE ANYTHING CAN PULL, and that ordering is load-
+    // bearing rather than tidy. The startup archive replay takes the mailbox barrier, the barrier
+    // PULLS the delivery queue, and `processQueue` cannot drain a single frame until
+    // `setupMessageHandler` has set the message callback - so with this block below the restore, a
+    // device holding anything server-side pulled it into a queue with no consumer and waited for an
+    // idle that could never come. Measured on prod 2026-08-15: 2 queued frames were enough to stop
+    // a browser mid-boot, before tab leadership, with no socket and no error line, on every reload.
 
     beginStartupCatchupPhase('setup_handler');
 
@@ -844,6 +771,87 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       });
     }
     endStartupCatchupPhase();
+
+    // Adopt anything the native side queued on its own (an undelivered notification quick reply
+    // lives only in the mirror file, which the next mirror rewrite would erase). BEFORE the load:
+    // the adopted message is written to the store, so the ordinary history load displays it and
+    // applyOutboxPendingStatuses below marks it pending.
+    await adoptOrphanedMirrorEntries(ctx.getStorage()!, ctx.getDeviceKey(), ctx.getUserId()).catch(
+      (e) => cb.log(`[OUTBOX_MIRROR] Adoption pass failed: ${String(e)}`)
+    );
+
+    // Load conversations first: consumeFcmCache can access
+    // the conversations Map via addMessageToChat once it is populated.
+    beginStartupCatchupPhase('load_conversations');
+    await cb.loadAndRestoreConversations();
+    {
+      const stats = summarizeConversationStats(cb.conversations);
+      endStartupCatchupPhase({
+        conversationCount: stats.conversationCount,
+        messageCount: stats.localMessageCount,
+      });
+    }
+    // Reconcile background sends (killed app) first: remove from the outbox any
+    // messages already delivered by the native service, BEFORE re-deriving "pending"
+    // statuses (otherwise an already-sent message would be shown as pending again).
+    await reconcileOutboxSent(ctx.getStorage()!).catch(() => {});
+    // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
+    await applyOutboxPendingStatuses();
+
+    beginStartupCatchupPhase('fcm_cache');
+    const fcmInjected = await consumeFcmCache(ctx.getDeviceKey(), ctx.getStorage()!).catch(
+      () => [] as []
+    );
+    if (Array.isArray(fcmInjected) && fcmInjected.length > 0) {
+      const mergedCount = mergeFcmMessagesIntoConversations(
+        fcmInjected,
+        cb.conversations,
+        ctx.getUserId()
+      );
+      cb.log(`[FCM_CACHE] ${mergedCount} message(s) merged in memory at login`);
+    }
+    endStartupCatchupPhase({
+      messageCount: Array.isArray(fcmInjected) ? fcmInjected.length : 0,
+    });
+
+    try {
+      const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
+      const missingKeys: string[] = [];
+      // Conversations stuck in 'pending' while their local MLS state exists:
+      // the "Sync" badge would remain forever (DF5). Reconciliation demoted absent
+      // groups but never promoted the inverse - this adds the mirror promotion.
+      const recoveredKeys: string[] = [];
+      for (const [key, c] of cb.conversations.entries()) {
+        if (isChannelConversationId(c.id)) continue;
+        if (c.lifecycle === 'active' && !localMlsGroups.has(c.id)) {
+          cb.conversations.set(key, { ...c, lifecycle: 'pending' });
+          missingKeys.push(key);
+        } else if (c.lifecycle === 'pending' && localMlsGroups.has(c.id)) {
+          cb.conversations.set(key, { ...c, lifecycle: 'active' });
+          recoveredKeys.push(key);
+        }
+      }
+      if (missingKeys.length > 0) {
+        cb.log(
+          `[WARN] Groups without local MLS state detected - ${missingKeys.length} conversation(s) marked not-ready, re-invite triggered on next connect.`
+        );
+        console.warn(
+          `[INIT] ${missingKeys.length} conversation(s) missing local MLS state - marked not-ready`
+        );
+        await Promise.all(missingKeys.map((key) => cb.saveConversation(key).catch(() => {})));
+      }
+      if (recoveredKeys.length > 0) {
+        cb.log(
+          `[INIT] ${recoveredKeys.length} conversation(s) stuck pending but already synced - "Sync" badge cleared.`
+        );
+        await Promise.all(recoveredKeys.map((key) => cb.saveConversation(key).catch(() => {})));
+      }
+    } catch (e) {
+      console.warn('[INIT] Error detecting missing MLS groups:', e);
+    }
+
+    // processDeviceInvitationsLocally is called at the end of syncConnectionAfterWsOpen -
+    // calling it here before the WebSocket is opened is redundant.
 
     if ('onWelcomeProcessed' in mlsService) {
       (mlsService as any).onWelcomeProcessed(async (groupId?: string) => {

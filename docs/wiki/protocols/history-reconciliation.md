@@ -1084,6 +1084,42 @@ covers a consumer this client does not account for. What changes is that reachin
 finding rather than the normal path - so a `Duplicate delivery` line in any later capture is a
 defect report, and its arm finally distinguishes two causes that can both occur.
 
+###### The barrier also PULLS, and at boot it was reachable before anything could drain what it pulled
+
+The second attempt was correct in its ordering and still stopped a client dead - this time on the
+**startup** path, and for a reason that has nothing to do with the mutex.
+
+`waitForMessageQueueIdle` does not only wait. When no pull has happened it *fetches* the delivery
+queue, which is the half that closed WP-DUPDELIVERY-1. `processQueue` returns at its first line while
+`messageCallback` is unset. In `sessionAuth`, `setupMessageHandler` - which sets that callback - sat
+**after** `loadAndRestoreConversations`, and the restore drives the archive replay, which takes this
+barrier. So on a device with anything queued server-side, boot went: replay → barrier → pull → frames
+enqueued → nothing can drain them → `waitUntilIdle` waits on a queue it has just filled itself.
+
+Found on 2026-08-15 while restoring the clients for the re-run, and the A/B is complete:
+
+| | W1 | W2 |
+| --- | --- | --- |
+| Bundle | `__sveltekit_1yypc8t` | `__sveltekit_1yypc8t` (identical) |
+| Server-side queue | 0 rows | **2 rows**, `12:58:45.088` and `12:58:47.077` - the deadlock's residue |
+| Boot | `[TAB] Leadership acquired` at 2 s, socket at 2.5 s, `[WS] Connected to Chat Gateway` | last line at 1 s, then **silence**; no leadership, no `Connecting to Gateway…`, no socket created at all |
+| Gateway presence | `ONLINE` | `OFFLINE`, on every reload |
+
+The backlog alone decided it. Nothing recovers it either: the frames stay queued because the device
+that would ACK them never connects, so every subsequent start reproduces it exactly. The only visible
+trace was `[QUEUE] messageCallback not set` at `console.warn`, twice - which reads as a notice.
+
+**The fix is the order, and deliberately not the guard.** The inbound pipeline is registered before
+anything can pull, so the boot pull drains normally and WP-DUPDELIVERY-1 stays closed *at boot*,
+which is where it matters most. Refusing to pull instead would have traded a permanent hang for a
+duplicate-delivery window on every startup.
+
+The guard is still owed, for the same reason as the `catchUpDepth` one above: the barrier is the only
+code that can see the fact at the moment of the call. It logs an error naming the call site's mistake
+and returns - skipping is strictly better than hanging, because a duplicate is caught by the shared
+fingerprint ledger and a client that never connects again is caught by nobody. And `processQueue`'s
+own branch is now an error that names the consequence rather than the condition.
+
 ---
 
 ## Open questions
