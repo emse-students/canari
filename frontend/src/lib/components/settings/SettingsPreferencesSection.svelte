@@ -168,7 +168,7 @@
             aria-checked={getLocale() === locale}
             aria-label={LOCALE_LABELS[locale]}
             title={LOCALE_LABELS[locale]}
-            onclick={() => changeLocale(locale)}
+            onclick={() => void changeLocale(locale)}
             class="rounded-lg px-3 py-1.5 text-xs font-semibold uppercase outline-none transition-colors focus-visible:ring-2 focus-visible:ring-cn-yellow
               {getLocale() === locale
               ? 'bg-cn-yellow text-cn-ink shadow'

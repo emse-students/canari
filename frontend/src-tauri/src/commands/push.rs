@@ -340,6 +340,10 @@ pub(crate) fn store_push_context(
     device_id: String,
     base_url: String,
     push_token: Option<String>,
+    // The language CHOSEN IN THE APP, not the one the OS is set to. Every notification the native
+    // side composes while the app is closed is written in it - see `set_push_context_locale` for
+    // why it is mirrored here rather than read from the platform.
+    locale: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -358,13 +362,68 @@ pub(crate) fn store_push_context(
         .store_device_key(&key_bytes, &alias)
         .map_err(|e| format!("keystore write failed (background decrypt will not work): {e}"))?;
 
+    // This call REPLACES the file, so a locale already mirrored must survive a caller that does not
+    // know one - otherwise a device-key refresh silently reverts every background notification to
+    // the default language until the user next changes it by hand.
+    let locale = locale
+        .filter(|l| !l.trim().is_empty())
+        .or_else(|| read_push_context_locale(&data_dir))
+        .unwrap_or_else(|| DEFAULT_PUSH_LOCALE.to_string());
+
     let json = serde_json::json!({
         "userId": user_id,
         "deviceId": device_id,
         "baseUrl": base_url,
         "pushToken": push_token.unwrap_or_default(),
+        "locale": locale,
     });
     std::fs::write(data_dir.join("push_context.json"), json.to_string()).map_err(|e| e.to_string())
+}
+
+/// The language a background notification falls back to when nothing has been mirrored yet.
+/// Matches Paraglide's `baseLocale`.
+const DEFAULT_PUSH_LOCALE: &str = "fr";
+
+/// Reads just the mirrored locale out of `push_context.json`, or `None` when the file is absent,
+/// unreadable or carries no locale (every device before this field existed).
+fn read_push_context_locale(data_dir: &std::path::Path) -> Option<String> {
+    let bytes = std::fs::read(data_dir.join("push_context.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let locale = value.get("locale")?.as_str()?.trim().to_string();
+    (!locale.is_empty()).then_some(locale)
+}
+
+/// Mirrors the app's CHOSEN language so the native background side can write a notification in it.
+///
+/// WHY A MIRROR AT ALL. Android's `R.string` resolves against the OS locale and iOS's
+/// `preferredLocalizations` against the bundle's - neither is the Français/English choice made
+/// inside the app, so a French phone running the app in English produced French notifications.
+/// The app's choice lives in the WebView, which is not running when a push arrives; the only way
+/// the native side can honour it is if it was written down while the app was open. This is the
+/// same posture as `channel_keys.json`: the WebView is the source of truth, the file is what
+/// survives it being closed.
+///
+/// Patches one key rather than rewriting the file: the locale changes on a settings toggle, which
+/// knows nothing about the device key, the push token or the base URL.
+#[tauri::command]
+pub(crate) fn set_push_context_locale(locale: String, app: tauri::AppHandle) -> Result<(), String> {
+    let locale = locale.trim().to_string();
+    if locale.is_empty() {
+        return Err("locale is empty".to_string());
+    }
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    let path = data_dir.join("push_context.json");
+
+    // Absent file: the user changed language before ever logging in. Writing a lone locale here
+    // would be a push context with no device key, which every reader treats as unusable - so this
+    // is not an error, and `store_push_context` picks the value up at login through the read above.
+    let mut ctx: serde_json::Map<String, serde_json::Value> = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        Err(_) => return Ok(()),
+    };
+    ctx.insert("locale".to_string(), serde_json::Value::String(locale));
+    std::fs::write(&path, serde_json::Value::Object(ctx).to_string()).map_err(|e| e.to_string())
 }
 
 /// Reads {app_data_dir}/push_context.json and returns its contents.

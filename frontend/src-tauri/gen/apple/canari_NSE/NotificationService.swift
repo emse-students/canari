@@ -85,6 +85,13 @@ class NotificationService: UNNotificationServiceExtension {
     switch type {
     case "channel":
       handleChannelMessage(userInfo: userInfo, content: content)
+    case "social" where Self.string(userInfo["reaction"]) == "true":
+      // A reaction rides on `social` so that clients predating this change still render it
+      // rather than dropping it into the MLS ladder - see notify-reaction in
+      // chat-delivery-service. Its server-composed body is a French fallback for exactly those
+      // clients; here it is replaced by one in the phone's own language.
+      applyReactionContent(userInfo: userInfo, content: content)
+      finish()
     case "social", "form_reminder", "channel_read":
       // Not encrypted (or a silent control frame): the payload already carries the
       // final title/body, so leave the alert untouched and deliver as-is.
@@ -92,6 +99,42 @@ class NotificationService: UNNotificationServiceExtension {
     default:
       handleMlsMessage(userInfo: userInfo, content: content)
     }
+  }
+
+  /// Rewrites a reaction alert: the phone's own sentence, and the CONVERSATION's thread rather
+  /// than the coarse `canari_social` one, so it groups with that conversation's notifications.
+  ///
+  /// Nothing here decrypts, because there is nothing to decrypt: the push carries an id, an emoji
+  /// and who reacted. It used to carry 80 characters of the message in clear - the recipient is
+  /// the message's AUTHOR, so the device already holds it and never needed a copy.
+  private func applyReactionContent(
+    userInfo: [AnyHashable: Any],
+    content: UNMutableNotificationContent
+  ) {
+    let emoji = Self.string(userInfo["emoji"]) ?? ""
+    let groupId = Self.string(userInfo["groupId"]) ?? ""
+    if let actor = Self.string(userInfo["title"]), !actor.isEmpty {
+      content.title = actor
+    }
+    content.body = Self.reactionBody(emoji: emoji, locale: loadPushContext()?.locale)
+    if !groupId.isEmpty {
+      content.threadIdentifier = groupId
+    }
+  }
+
+  /// See `CanariReactionBody` in `canari_push.mm` - same sentence, same reason, and the same
+  /// placeholder until iOS has a `Localizable.strings` at all (tracked in `docs/wiki/backlog.md`).
+  ///
+  /// `locale` is the app's OWN Français/English setting, mirrored into `push_context.json` while
+  /// the app was open. `preferredLocalizations` is the fallback and not the answer: it reports the
+  /// OS language, which is a different setting from the one the user set inside Canari. The server
+  /// cannot write this sentence at all - it does not know the recipient's language.
+  private static func reactionBody(emoji: String, locale: String?) -> String {
+    let lang = (locale?.isEmpty == false ? locale : nil)
+      ?? Bundle.main.preferredLocalizations.first ?? "fr"
+    return lang.hasPrefix("en")
+      ? "reacted \(emoji) to your message"
+      : "a réagi \(emoji) à votre message"
   }
 
   override func serviceExtensionTimeWillExpire() {
@@ -649,6 +692,11 @@ class NotificationService: UNNotificationServiceExtension {
     let userId: String
     let deviceId: String
     let baseUrl: String
+    /// The language CHOSEN IN THE APP ("fr" / "en"), mirrored from the WebView, which is not
+    /// running when a push arrives. NOT `preferredLocalizations`, which answers for the OS - two
+    /// different settings, and an app set to English on a French phone was writing French.
+    /// Empty on a device that has not opened the app since this shipped.
+    let locale: String
   }
 
   private static func appGroupDir() -> URL? {
@@ -674,7 +722,10 @@ class NotificationService: UNNotificationServiceExtension {
     // parse the JSON first, then hit the Keychain. An empty key means the Keychain is
     // unavailable — the push falls back to the generic text (acceptable one-push cost).
     let deviceKeyB64 = Self.retrieveDeviceKey(userId: userId, deviceId: deviceId) ?? ""
-    return PushContext(deviceKeyB64: deviceKeyB64, userId: userId, deviceId: deviceId, baseUrl: baseUrl)
+    let locale = json["locale"] as? String ?? ""
+    return PushContext(
+      deviceKeyB64: deviceKeyB64, userId: userId, deviceId: deviceId, baseUrl: baseUrl,
+      locale: locale)
   }
 
   /// WP-SEC-1: retrieves the MLS device key from the background-accessible Keychain item

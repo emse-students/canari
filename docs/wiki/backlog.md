@@ -397,6 +397,38 @@ deliberate exemption is what makes it fire over an open chat today.
 own observers. What is settled already is that it is not a rendering detail - the payload is missing
 the field the fix needs, so it is a server change and a client change, on both platforms.
 
+### P2 - the notification strings are French literals in native code, and iOS has no table to put them in
+
+Measured 2026-08-15 while reworking the reaction push. **Paraglide reaches neither the native
+clients nor the services** - it compiles into the web bundle, and the FCM handler, the iOS
+extension and NestJS have no access to it. So the rule "user-visible strings use Paraglide" has no
+enforcement mechanism at all outside the bundle, and the three layers have each answered
+differently.
+
+**Android has the mechanism and uses it for six strings.** `res/values/strings.xml` (French,
+default) and `res/values-en/strings.xml` exist, and `R.string` covers the two quick-action labels
+and the four call labels. Seven other user-visible strings are French literals in `.kt`:
+`MlsBackgroundWorker.kt:47`; `CanariApplication.kt:238`, `:248`, `:251` - the notification channel
+NAMES and DESCRIPTIONS, which are visible in the Android settings screen, not just in a banner;
+`CanariFirebaseMessagingService.kt:836`, `:1962`, `:2746`. Each is a one-line move into the two
+files that already exist.
+
+**iOS has no string table.** `fr.lproj` / `en.lproj` carry `InfoPlist.strings` only - there is no
+`Localizable.strings`, so everything the NSE and `canari_push.mm` compose (`"Nouveau message dans
+#<channel>"` and its siblings) is a hardcoded French literal with no mechanism to be anything else.
+Creating the table is the prerequisite for the rest.
+
+**The services cannot be fixed where they are wrong.** `chat-delivery-service` and `social-service`
+compose French sentences for pushes and do not know the recipient's language - no header carries
+it and no column stores it. The MESSAGE push path already answers this correctly by sending
+`body: ''` and letting the device compose after decrypting, which is the only layer that knows the
+locale. Any server-composed body is therefore a design smell, not just an untranslated string, and
+the fix is to move the composition rather than to translate it in place.
+
+Scope note: the reaction rework (2026-08-15) adds its Android string to `strings.xml` and creates
+`Localizable.strings` on iOS rather than adding an eighth literal, so it is not the cause of any of
+the above and slightly reduces it.
+
 ### P2 - the channel push carries three fields nobody reads, and one of them is the mention
 
 **The route itself is CORRECT and this entry is not about it - do not re-open that.** The user asked

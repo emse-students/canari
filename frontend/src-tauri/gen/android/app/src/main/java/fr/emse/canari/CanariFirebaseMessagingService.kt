@@ -1017,6 +1017,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         val msgType = data["type"]
 
+        // A REACTION RIDES ON `social` WITHOUT BEING ONE. Its wire type stays `social` on purpose:
+        // minClientVersion is 0.13.0 and the store rollout has not reached devices, so an unknown
+        // `type` would fall through this whole chain into the MLS decrypt ladder on every phone that
+        // predates this change - noise, for a push carrying no ciphertext. The discriminator is a
+        // separate field, and everything below asks THIS rather than msgType.
+        // See notify-reaction in chat-delivery-service, and docs/wiki/legacy-compatibility.md.
+        val isReaction = msgType == "social" && data["reaction"] == "true"
+
         // Ring-end (WP-XP-5), handled BEFORE the foreground guard: a stale ringing notification
         // must be cleared even when the app is foreground (the user may have opened the app by
         // hand while the ring notification was still up).
@@ -1034,7 +1042,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Observed result: lost KeyPackages (n_secrets drops back to 1), epoch gaps, UseAfterEviction.
         // So we let the foreground handle it; the background only acts when the app is closed/backgrounded.
         // Pure notifications (social/form_reminder) do not touch mls.bin -> not concerned.
-        if (MainActivity.isInForeground && msgType != "social" && msgType != "form_reminder") {
+        //
+        // A REACTION IS EXCLUDED FROM THAT EXEMPTION, deliberately. It touches no mls.bin either, so
+        // the reason above does not cover it - but it is drawn INTO the conversation's own
+        // notification, and posting one over a conversation you are reading is noise: the bubble on
+        // screen already carries the reaction, delivered by the WebSocket. It is therefore suppressed
+        // exactly like a message, which is what `showNotification` would do on its own anyway.
+        val showsWhileForeground = msgType == "form_reminder" || (msgType == "social" && !isReaction)
+        if (MainActivity.isInForeground && !showsWhileForeground) {
             Log.d(TAG, "App in foreground -> MLS handled by the foreground (WS), skip background processing")
             return
         }
@@ -1090,6 +1105,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             runSerializedWithWakeLock("welcome_join", 90_000L) {
                 processReceivedWelcomeBackground(groupId, queuedMessageId, inlineProto)
             }
+            return
+        }
+
+        // A reaction to one of MY messages. It arrives typed `social` for the reason given at the
+        // top, and leaves through the MESSAGE path, which is where everything it needs already is.
+        if (isReaction) {
+            runWithWakeLock("fcm_reaction") { handleReactionNotification(data) }
             return
         }
 
@@ -2490,6 +2512,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         mediaUri: Uri? = null,
         mediaMime: String? = null,
         channel: String = CHANNEL_MESSAGES,
+        /**
+         * Offer reply and mark-as-read. False for a REACTION: both actions answer "there is a
+         * message here for you", and neither means anything against a reaction - replying to one
+         * is nonsense and there is nothing of it to mark read. Everything else this function does
+         * is exactly what a reaction wants, which is why this is a parameter and not a second path.
+         */
+        quickActions: Boolean = true,
     ) {
         if (MainActivity.isInForeground) {
             Log.d(TAG, "showNotification: app in foreground -> notification suppressed (groupId=${groupId.take(8)})")
@@ -2579,7 +2608,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
         // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
-        if (groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
+        if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
             notifBuilder.addAction(buildReplyAction(groupId, notifId))
             notifBuilder.addAction(buildMarkReadAction(groupId, notifId))
         }
@@ -2661,6 +2690,93 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setContentIntent(pendingIntent)
             .build()
         manager.notify(notifId, notification)
+    }
+
+    // --- Reaction push -----------------------------------------------------------
+
+    /**
+     * A Context whose resources resolve in the language CHOSEN IN THE APP.
+     *
+     * Every string this service shows is user-facing and must follow the Français/English toggle in
+     * Canari's settings, not the phone's system language - they are two different settings and only
+     * one of them is the user telling THIS app what to speak. The choice is mirrored into
+     * `push_context.json` by the WebView while the app is open; it is unavailable here otherwise,
+     * which is precisely why it is written down.
+     *
+     * Falls back to `this` - i.e. the OS locale - when nothing has been mirrored yet, which is the
+     * state of every device that has not opened the app since this shipped. That is a degraded
+     * answer rather than a wrong one, and it corrects itself at the next login.
+     */
+    private fun appLocaleContext(): Context {
+        val tag = MlsContextLoader.loadPushContext(this)?.locale?.takeIf { it.isNotBlank() }
+            ?: return this
+        return try {
+            val config = android.content.res.Configuration(resources.configuration)
+            config.setLocale(java.util.Locale.forLanguageTag(tag))
+            createConfigurationContext(config)
+        } catch (e: Exception) {
+            Log.w(TAG, "appLocaleContext: cannot apply locale '$tag' - falling back to the system one: ${e.message}")
+            this
+        }
+    }
+
+    /**
+     * Draws a reaction to one of MY messages into that conversation's own notification.
+     *
+     * THE PUSH CARRIES NO MESSAGE TEXT, and cannot: the recipient is the message's author, so this
+     * device already holds it. It used to carry 80 characters of the decrypted message, composed by
+     * the reacting client into a sentence by the server - which put conversation plaintext through
+     * our server, Google and Apple on every reaction. What arrives now is an id, an emoji and who
+     * reacted.
+     *
+     * The sentence is therefore built HERE, from `strings.xml`. A server cannot: it has no locale
+     * for the recipient, so any sentence it composes is French for everyone.
+     *
+     * AND IT IS RESOLVED AGAINST THE APP'S LANGUAGE, NOT THE PHONE'S. A plain `getString` reads
+     * `values-en/` or `values/` according to the OS locale, which is a different setting from the
+     * Français/English choice made inside Canari - an app set to English on a French phone wrote
+     * French notifications. The choice is mirrored into `push_context.json` while the app is open
+     * (see `set_push_context_locale`), and read back here through a configured Context so the
+     * translations stay in the one place translators look at.
+     *
+     * It goes out through `showNotification` rather than `showSimpleNotification`, and that single
+     * choice is the whole fix. The message path already has the stable per-conversation id (so a
+     * reaction updates the conversation's notification instead of stacking a new one for ever), the
+     * avatar, the MessagingStyle bundling, the badge, the clear-on-open sweep and the cross-device
+     * dismissal. The `social` path has none of them, which is why reactions could never be dismissed.
+     * Only the two quick actions are dropped - see `quickActions`.
+     *
+     * The conversation NAME is not available and is not guessed: it is end-to-end encrypted, so the
+     * server cannot send it. `groupName` is left empty, which renders the reaction as a message from
+     * its author - correct in a DM, and in a group it costs the conversation title on that one
+     * notification until the next real message rebuilds it.
+     */
+    private fun handleReactionNotification(data: Map<String, String>) {
+        val groupId = data["groupId"] ?: ""
+        val emoji = data["emoji"] ?: ""
+        val actorId = data["senderId"] ?: ""
+        val actorName = data["title"] ?: "Canari"
+
+        if (groupId.isEmpty()) {
+            // Without it there is no conversation to attach to and no stable id to reuse, so the
+            // notification would be exactly the unremovable stray this change removes.
+            Log.w(TAG, "reaction push without groupId - dropped, nothing to attach it to")
+            return
+        }
+
+        Log.d(TAG, "reaction: group=${groupId.take(8)} actor=${actorId.take(8)} emoji=$emoji")
+        val largeIcon = (if (actorId.isNotEmpty()) fetchAvatar(actorId) else null)
+            ?: generateInitialsBitmap(actorName)
+
+        showNotification(
+            senderName = actorName,
+            groupName = "",
+            body = appLocaleContext().getString(R.string.notif_reaction_body, emoji),
+            largeIcon = largeIcon,
+            groupId = groupId,
+            channel = CHANNEL_MESSAGES,
+            quickActions = false,
+        )
     }
 
     // --- Channel (community) message push --------------------------------------

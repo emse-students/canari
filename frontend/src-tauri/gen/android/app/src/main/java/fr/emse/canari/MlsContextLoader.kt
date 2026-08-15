@@ -25,6 +25,14 @@ object MlsContextLoader {
         val deviceId: String,
         val baseUrl: String,
         val deviceKeyB64: String = "",
+        /**
+         * The language CHOSEN IN THE APP ("fr" / "en"), mirrored here because the WebView that
+         * holds that choice is not running when a push arrives. It is NOT the phone's language:
+         * `R.string` would resolve against the OS locale, so an app set to English on a French
+         * phone wrote French notifications. Empty on a device that has not written it yet, in
+         * which case the caller keeps the OS answer.
+         */
+        val locale: String = "",
     )
 
     /**
@@ -59,6 +67,7 @@ object MlsContextLoader {
                 deviceId = deviceId,
                 baseUrl = baseUrl,
                 deviceKeyB64 = deviceKeyB64,
+                locale = j.optString("locale"),
             )
         } catch (_: Exception) { null }
     }

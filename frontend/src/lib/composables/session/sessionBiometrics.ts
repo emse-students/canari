@@ -131,12 +131,16 @@ export async function disableBiometricImpl(ctx: SessionContext): Promise<void> {
     }).catch(() => {});
     const { getToken } = await import('$lib/stores/auth');
     const pushToken = await getToken().catch(() => undefined);
+    const { getLocale } = await import('$lib/i18n');
     await invoke('store_push_context', {
       deviceKeyB64,
       userId,
       deviceId,
       baseUrl: ctx.getHistoryBaseUrl(),
       pushToken,
+      // This call REPLACES push_context.json, so the language the native side writes its
+      // notifications in has to be restated here or it reverts to the default.
+      locale: getLocale(),
     }).catch(() => {});
   }
   localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);

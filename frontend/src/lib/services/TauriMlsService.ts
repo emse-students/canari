@@ -14,6 +14,7 @@ import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { getLocale } from '$lib/i18n';
 import { BaseMlsService } from './BaseMlsService';
 import { keystoreUnlockPrompt } from './biometric';
 
@@ -487,6 +488,8 @@ export class TauriMlsService extends BaseMlsService {
               deviceId: this.deviceId,
               baseUrl: this.historyUrl,
               pushToken,
+              // Restated because this call REPLACES push_context.json - see set_push_context_locale.
+              locale: getLocale(),
             })
           )
           .catch(() => {})
@@ -685,6 +688,8 @@ export class TauriMlsService extends BaseMlsService {
           deviceId: this.deviceId,
           baseUrl: this.historyUrl,
           pushToken,
+          // Restated because this call REPLACES push_context.json - see set_push_context_locale.
+          locale: getLocale(),
         })
       )
       .catch((e) =>

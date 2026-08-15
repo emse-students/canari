@@ -73,6 +73,10 @@ static NSLock *g_cacheLock = nil;
 @property(nonatomic, copy) NSString *userId;
 @property(nonatomic, copy) NSString *deviceId;
 @property(nonatomic, copy) NSString *baseUrl;
+/// The language CHOSEN IN THE APP ("fr" / "en"), mirrored from the WebView, which is not running
+/// when a push arrives. NOT `preferredLocalizations`, which answers for the OS and would make an
+/// app set to English on a French phone write French notifications. Empty until first mirrored.
+@property(nonatomic, copy) NSString *locale;
 @end
 
 @implementation CanariPushContext
@@ -303,6 +307,7 @@ static CanariPushContext *_Nullable CanariLoadPushContext(void) {
   NSString *deviceKeyB64 = CanariRetrieveDeviceKey(userId, deviceId) ?: @"";
   CanariPushContext *ctx = [[CanariPushContext alloc] init];
   ctx.deviceKeyB64 = deviceKeyB64;
+  ctx.locale = [dict[@"locale"] isKindOfClass:[NSString class]] ? dict[@"locale"] : @"";
   ctx.userId = userId;
   ctx.deviceId = deviceId;
   ctx.baseUrl = baseUrl;
@@ -365,6 +370,35 @@ static NSString *CanariBuildFallbackText(NSString *senderName) {
     return [NSString stringWithFormat:@"Nouveau message de %@", senderName];
   }
   return @"Vous avez recu un message chiffre";
+}
+
+/**
+ * The sentence shown for a reaction, in the phone's language.
+ *
+ * COMPOSED HERE AND NOT BY THE SERVER, for a reason no amount of server-side translation would fix:
+ * the server does not know the recipient's language, so every sentence it writes is French for
+ * everyone. The device is the only layer that knows.
+ *
+ * `locale` is the app's OWN language setting, mirrored into `push_context.json` while the app was
+ * open. It is deliberately not `preferredLocalizations`, which answers for the OS: those are two
+ * different settings, and an app set to English on a French phone was writing French. Empty means
+ * nothing has been mirrored yet - a device that has not opened the app since this shipped - and the
+ * platform's answer is then the honest fallback.
+ *
+ * NOT read from a strings table, because iOS has none. `fr.lproj` / `en.lproj` carry
+ * `InfoPlist.strings` and nothing else, so there is no `Localizable.strings` for either the app or
+ * the notification extension; creating one means adding a variant group to TWO targets in
+ * `project.pbxproj`, which cannot be validated from a machine that cannot build iOS. This function
+ * is the single place that changes once the table exists - tracked in `docs/wiki/backlog.md` as the
+ * prerequisite for the other hardcoded native strings.
+ */
+static NSString *CanariReactionBody(NSString *emoji, NSString *_Nullable locale) {
+  NSString *lang = (locale.length > 0) ? locale : [NSBundle mainBundle].preferredLocalizations.firstObject;
+  NSString *safeEmoji = (emoji.length > 0) ? emoji : @"";
+  if ([lang hasPrefix:@"en"]) {
+    return [NSString stringWithFormat:@"reacted %@ to your message", safeEmoji];
+  }
+  return [NSString stringWithFormat:@"a réagi %@ à votre message", safeEmoji];
 }
 
 static int CanariStableNotifId(NSString *groupId) {
@@ -2602,8 +2636,19 @@ static void CanariHandleFcmData(NSDictionary *data) {
     return;
   }
 
-  if (canari_ios_is_in_foreground() && ![msgType isEqualToString:@"social"] &&
-      ![msgType isEqualToString:@"form_reminder"]) {
+  // A REACTION RIDES ON `social` WITHOUT BEING ONE - see the Android service and notify-reaction in
+  // chat-delivery-service. The wire type stays `social` so clients predating this change render it
+  // instead of dropping it into the MLS ladder; the discriminator is a separate field.
+  BOOL isReaction = [msgType isEqualToString:@"social"] &&
+                    [data[@"reaction"] isKindOfClass:[NSString class]] &&
+                    [(NSString *)data[@"reaction"] isEqualToString:@"true"];
+
+  // The `social` exemption below does not extend to a reaction: it is drawn INTO the conversation's
+  // own notification, and posting one over a conversation being read is noise - the bubble on screen
+  // already carries it, delivered by the WebSocket.
+  BOOL showsWhileForeground =
+      [msgType isEqualToString:@"form_reminder"] || ([msgType isEqualToString:@"social"] && !isReaction);
+  if (canari_ios_is_in_foreground() && !showsWhileForeground) {
     NSLog(@"[CanariPush] foreground actif - skip background MLS");
     return;
   }
@@ -2636,6 +2681,40 @@ static void CanariHandleFcmData(NSDictionary *data) {
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
       CanariProcessReceivedWelcomeBackground(groupId, queuedMessageId, inlineProto);
     });
+    return;
+  }
+
+  // A reaction to one of MY messages. The push carries an id, an emoji and who reacted - never the
+  // message, which this device holds already, being its author's. It used to carry 80 characters of
+  // the decrypted text, put there by the reacting client and turned into a sentence by the server,
+  // so conversation plaintext crossed our server, Google and Apple on every reaction.
+  //
+  // It leaves through the notification primitive rather than the `social` one, with `groupId` passed
+  // as nil ON PURPOSE: that argument is what attaches the reply / mark-as-read category, and neither
+  // means anything against a reaction. The stable id and the conversation thread are passed
+  // separately, so the reaction still lands IN the conversation's notification and still replaces
+  // itself instead of stacking a new one for ever - which is the defect being fixed.
+  if (isReaction) {
+    NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
+    if (groupId.length == 0) {
+      NSLog(@"[CanariPush] reaction without groupId - dropped, nothing to attach it to");
+      return;
+    }
+    NSString *actorName = [data[@"title"] isKindOfClass:[NSString class]] ? data[@"title"] : @"Canari";
+    NSString *emoji = [data[@"emoji"] isKindOfClass:[NSString class]] ? data[@"emoji"] : @"";
+    NSString *actorId = [data[@"senderId"] isKindOfClass:[NSString class]] ? data[@"senderId"] : @"";
+
+    NSString *attachmentPath = nil;
+    CanariPushContext *ctx = CanariLoadPushContext();
+    if (ctx != nil && actorId.length > 0) {
+      attachmentPath = CanariFetchAvatar(ctx, actorId);
+    }
+
+    NSString *deepLink = [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
+    NSLog(@"[CanariPush] reaction group=%@ actor=%@", groupId, actorId);
+    CanariShowLocalNotification(actorName, CanariReactionBody(emoji, ctx != nil ? ctx.locale : nil),
+                                deepLink, groupId, CanariStableNotifId(groupId), attachmentPath, nil,
+                                NO, nil);
     return;
   }
 

@@ -4,7 +4,7 @@ import type { OutboxEntry } from '$lib/db';
 import { enqueueOutboxMessage } from './outbox';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
-import { serializeEnvelope, mkTextEnvelope, parseEnvelope, getPreviewText } from '$lib/envelope';
+import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import {
   sendEncryptedChannelMessage,
   isChannelConversationId,
@@ -186,14 +186,23 @@ async function enqueueControlEvent(conversationId: string, proto: Uint8Array): P
 
 /**
  * Notifies the author of a message that the current user reacted to it.
- * Fire-and-forget REST call - the server never sees MLS plaintext.
- * Exported so it can be reused by other callers (e.g. channel reactions).
+ *
+ * IT SENDS AN ID, NEVER A COPY - and it used to send a copy. `messagePreview` carried 80
+ * characters of the DECRYPTED message to the server, which built a sentence around them and put
+ * that sentence in the FCM data map and in the APNs alert body. So plaintext from an end-to-end
+ * encrypted conversation reached this server, Google and Apple on every reaction, three lines
+ * under a comment asserting that it did not. The recipient is the message's AUTHOR and therefore
+ * already holds the message: `messageId` is enough, and the device renders the reaction against
+ * its own copy in its own language.
+ *
+ * Exported so it can be reused by other callers (e.g. channel reactions), which do not use it yet.
  */
 export async function notifyReaction(params: {
   groupId: string;
   targetSenderId: string;
   emoji: string;
-  messagePreview: string;
+  /** The reacted-to message, so the author's devices can find their own copy of it. */
+  messageId: string;
   actorName: string;
 }): Promise<void> {
   // Only the failure branches speak. A line on entry and a line on success fired on EVERY reaction,
@@ -233,15 +242,15 @@ export async function addReaction(
 
   await enqueueControlEvent(conversation.id, encodeAppMessage(mkReaction(messageId, emoji, at)));
 
-  // Notify the message author (fire-and-forget, non-fatal).
+  // Notify the message author (fire-and-forget, non-fatal). The message's CONTENT is deliberately
+  // not read here - see notifyReaction: the author's own devices hold it already.
   const targetMsg = conversation.messages.find((m) => m.id === messageId);
   if (targetMsg?.senderId && targetMsg.senderId !== userId) {
-    const preview = getPreviewText(parseEnvelope(String(targetMsg.content ?? ''))).slice(0, 80);
     void notifyReaction({
       groupId: conversation.id,
       targetSenderId: targetMsg.senderId,
       emoji,
-      messagePreview: preview,
+      messageId,
       actorName: currentUserDisplayName ?? userId,
     }).catch(() => {});
   }

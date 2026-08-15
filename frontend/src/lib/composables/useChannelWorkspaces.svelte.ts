@@ -19,6 +19,7 @@ import { applyLocalChannelReaction, setChannelReactions } from '$lib/stores/reac
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
+import { notifyReaction } from '$lib/utils/chat/messaging';
 
 /** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {
@@ -907,6 +908,31 @@ export function useChannelWorkspaces() {
     try {
       const tally = await service.toggleReaction(channelConversationId, messageId, emoji);
       setChannelReactions(messageId, tally);
+
+      // NOTIFY THE AUTHOR, AND NOBODY ELSE. A channel reaction reached every member as a
+      // `channel.reaction` broadcast and reached no phone at all - a tally that repaints a bubble
+      // is not a notification, and nothing pushed. Only the author is told: a reaction concerns
+      // the person reacted to, and telling a whole channel about each one is exactly the noise a
+      // busy community cannot afford.
+      //
+      // The SAME endpoint as a DM reaction, deliberately: `channel_<id>` is a conversation id like
+      // any other, so the phone attaches it to that channel's notification, with the same avatar,
+      // the same stable id and the same dismissal. Nothing of the message crosses - see
+      // `notifyReaction`.
+      const added = Array.isArray(tally[emoji]) && tally[emoji].includes(userId);
+      const author = ctx.conversations
+        .get(channelConversationId)
+        ?.messages.find((msg) => msg.id === messageId)?.senderId;
+      if (added && author && author !== userId) {
+        const getName = await resolveDisplayNames([userId]);
+        void notifyReaction({
+          groupId: channelConversationId,
+          targetSenderId: author,
+          emoji,
+          messageId,
+          actorName: getName(userId),
+        }).catch(() => {});
+      }
     } catch (error) {
       applyLocalChannelReaction(messageId, userId, emoji);
       ctx.log(toUiActionError(m.channel_action_message_react(), error));

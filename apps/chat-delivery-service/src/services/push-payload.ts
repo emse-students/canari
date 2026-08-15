@@ -152,13 +152,20 @@ export function buildInternalApnsRequest(
     };
   }
 
-  // Per-conversation grouping: channel messages stack under their channel thread; other
-  // pushes fall back to a coarse per-kind thread.
+  // Per-conversation grouping: channel messages stack under their channel thread; a reaction
+  // stacks under the CONVERSATION it belongs to, like the message it is attached to; anything
+  // else falls back to a coarse per-kind thread.
+  //
+  // The extension rewrites this thread itself when it runs, so this line is what applies when it
+  // does NOT - iOS may skip it under memory pressure, and a reaction filed under `canari_social`
+  // there is the stray notification this whole change removes.
   const threadId = data.channelId
     ? `channel_${data.channelId}`
-    : data.type === 'form_reminder'
-      ? 'canari_forms'
-      : 'canari_social';
+    : data.reaction === 'true' && data.groupId
+      ? data.groupId
+      : data.type === 'form_reminder'
+        ? 'canari_forms'
+        : 'canari_social';
 
   return {
     payload: {

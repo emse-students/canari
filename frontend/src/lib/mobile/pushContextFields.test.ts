@@ -103,7 +103,12 @@ describe('push_context.json contract (Rust writer vs 3 native readers)', () => {
   );
 
   it('writes the fields it is expected to write', () => {
-    expect(rustKeys).toEqual(['baseUrl', 'deviceId', 'pushToken', 'userId']);
+    // `locale` is the app's OWN Français/English choice, not the phone's language. It is here
+    // because the WebView that holds it is not running when a push arrives, and the platform's
+    // answer (Android `R.string`, iOS `preferredLocalizations`) is the OS setting - a different
+    // one. Adding it to this list is deliberate: every reader below must pick it up, which is
+    // what the next three cases enforce.
+    expect(rustKeys).toEqual(['baseUrl', 'deviceId', 'locale', 'pushToken', 'userId']);
   });
 
   it.each([

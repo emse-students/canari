@@ -1,6 +1,9 @@
 <resources>
     <string name="app_name">Canari</string>
     <string name="main_activity_title">Canari</string>
+    <!-- Rendered under the reactor's name in the conversation's notification, so it reads
+         "Claire: a réagi 😂 à votre message". %1$s is the emoji. -->
+    <string name="notif_reaction_body">a réagi %1$s à votre message</string>
     <string name="notif_action_reply">Répondre</string>
     <string name="notif_action_mark_read">Marquer comme lu</string>
     <string name="notif_incoming_call">Appel entrant</string>
