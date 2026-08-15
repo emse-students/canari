@@ -112,9 +112,15 @@ of the rest, which is a hypothesis, not a finding.
 
 **The threshold is not a single width**, which is why it reads as intermittent: it is
 `paneWidth - bubbleWidth < 391`, so a long message overflows on a screen where a short one does not.
-Any fix must bound the strip inside the pane rather than pick a breakpoint - flipping to
-`left-full`/`bottom-full` when there is no room, or clamping, or reusing the `forceVisible`
-placement (`bottom-full left-1/2`) which is already the mobile answer to exactly this.
+
+**FIXED 2026-08-15 by a placement change, not a breakpoint** - a breakpoint would answer a question
+about the viewport, and the question was never about the viewport. The strip now anchors ABOVE the
+bubble on its outer edge (`bottom-full right-0` / `left-0`) and extends inward, which removes the
+bubble width from the condition entirely: it can only overflow if the strip is wider than the PANE,
+which no message can cause. Measured in the live page before being written: a middle row fits with
+zero overflow either side. Its cost, also measured: the strip is clipped by the scroller for
+whichever row sits within ~46 px of the pane's top edge - one row at a time, back with the smallest
+scroll. Recorded rather than hidden.
 
 **It blocks five MUT checks** (MUT-9, MUT-11 both transports, MUT-12 both transports) whose subject
 is mutation, not layout: they cannot click a reaction at all at the harness's launched width. That

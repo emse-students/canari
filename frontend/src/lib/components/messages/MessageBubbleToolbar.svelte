@@ -61,19 +61,43 @@
   }: Props = $props();
 </script>
 
+<!--
+  ANCHORED ABOVE THE BUBBLE, ON ITS OUTER EDGE - never beside it.
+
+  It used to sit `right-full` / `left-full`, i.e. entirely OUTSIDE the bubble, horizontally, with
+  nothing bounding it by the message pane. The strip is a fixed ~383 px and a bubble can be any
+  width, so it fitted only while `paneWidth - bubbleWidth >= toolbarWidth`. Measured on 2026-08-15
+  at a 958 px window: the strip was laid out 69 px INTO the sidebar, and `elementFromPoint` at the
+  heart button's own centre returned a conversation row - so a click aimed at a reaction did not
+  merely miss, it switched conversation. Reported by a user as "the end is unreachable when the
+  window is half the screen"; the threshold is not a window width, which is why it read as
+  intermittent - a long message overflowed where a short one did not.
+
+  Aligning it to the bubble's OUTER edge and letting it extend inward removes the bubble width from
+  the condition entirely: it can only overflow if the strip is wider than the PANE, which no message
+  can cause. That is why this is a placement change and not a breakpoint - a breakpoint would answer
+  a question about the viewport, and the question was never about the viewport.
+
+  ITS COST, MEASURED RATHER THAN ASSUMED: drawn above the bubble, the strip is clipped by the
+  scroller for whichever row sits within ~46 px of the pane's top edge - about one row at a time,
+  and it comes back with the smallest scroll. The candidate was measured in the live page before
+  being written here: a middle row fits with zero overflow on either side, the topmost visible row
+  loses the strip entirely. That is a worse-looking trade than it is: the old placement delivered a
+  reaction click to the conversation list, and this one delays a control by one scroll wheel notch.
+-->
 <div
   class="absolute {forceVisible
-    ? 'bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap'
+    ? 'bottom-full mb-2 left-1/2 -translate-x-1/2'
     : isOwn
-      ? 'top-1/2 -translate-y-1/2 right-full mr-2'
-      : 'top-1/2 -translate-y-1/2 left-full ml-2'} opacity-0 {showEmojiPicker || forceVisible
+      ? 'bottom-full mb-1 right-0'
+      : 'bottom-full mb-1 left-0'} whitespace-nowrap opacity-0 {showEmojiPicker || forceVisible
     ? 'opacity-100'
     : 'group-hover:opacity-100'} transition-opacity duration-200 {forceVisible
     ? 'flex'
     : 'hidden md:flex'} flex-row items-center gap-0.5 rounded-full bg-white/90 dark:bg-black/70 backdrop-blur-xl border border-black/5 dark:border-white/10 shadow-lg px-2 py-1.5 z-10 text-text-muted"
 >
-  <!-- Réactions rapides (web) : même set que mobile, masquées en mode long-press mobile
-       où MessageMobileActions affiche déjà sa propre bande de réactions. -->
+  <!-- Quick reactions (web): the same set as mobile, hidden in mobile long-press mode where
+       MessageMobileActions already shows its own reaction strip. -->
   {#if !isDeleted && onReact && !forceVisible}
     {#each QUICK_EMOJIS as emoji (emoji)}
       {@const isActive = userReactions.includes(emoji)}
