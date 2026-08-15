@@ -270,9 +270,18 @@ in terms of per-message ids predates it. What did NOT change is the gate (`isWin
 isTabVisible`, no receipt on a channel, none on a conversation the peer deleted), the 2 s debounce,
 or the `.msg-status-sent` / `.msg-status-read` selectors the checks locate the anchor by.
 
-**RUN 5x ON 2026-08-15 (07:02-07:08Z), 8 of 8 runnable checks PASS on every pass - 40 of 40 clean.**
-Both clients classified on all five, server window clean on six of seven services; `core-service`
-carries the open avatar P2 ([backlog](backlog.md)), which is not READ's and is not silenced.
+**RUN 5x ON `f823496a`, 2026-08-15 (07:02-07:08Z), 8 of 8 runnable checks PASS on every pass - 40 of
+40 clean.** Both clients classified on all five, server window clean on six of seven services;
+`core-service` carries the open avatar P2 ([backlog](backlog.md)), which is not READ's and is not
+silenced.
+
+**STILL VALID ON `1c655cb4`, and that is a measurement, not an assumption.** The close-handshake fix
+(`a60599e2`) landed on the unload path AFTER this run and was reverted the same day, so the surface
+READ measures went out and came back: `git diff f823496a..1c655cb4 -- frontend/src` is a comment, a
+test, and `const sendDisconnectOnUnload = () => x()` rewritten as an inline arrow - same function,
+same listener, same `{ once: true }`. A phase re-runs when a commit touches the surface it measures;
+a comment does not touch it. **Name the build in the row, and the question answers itself** - these
+rows did not, until this one.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
