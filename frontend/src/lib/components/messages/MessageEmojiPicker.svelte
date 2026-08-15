@@ -10,6 +10,7 @@
     canAddDistinctReactionEmoji,
   } from '$lib/utils/chat/messageReactions';
   import 'emoji-picker-element';
+  import enI18n from 'emoji-picker-element/i18n/en';
 
   interface Props {
     /** Whether the emoji picker panel is visible. */
@@ -86,11 +87,29 @@
   }
 
   /**
+   * The library's own English strings, used as the BASE both overrides are spread onto.
+   *
+   * THIS EXISTS BECAUSE ONE MISSING KEY CRASHED THE PICKER, in production, on every reaction.
+   * `emoji-picker-element` runs `state.i18n.skinToneLabel.replace('{skinTone}', ...)` inside one of
+   * its own effects, and our two hand-written objects defined thirteen of its fourteen keys -
+   * `skinToneLabel` was the one nobody noticed. The effect also depends on `currentSkinTone`, which
+   * is written asynchronously once the emoji database has loaded, so it did not throw at import
+   * time: it threw when the picker was opened, as `TypeError: Cannot read properties of undefined
+   * (reading 'replace')`, from inside the library where no stack frame named us.
+   *
+   * Adding the missing key would fix today and not tomorrow: the next version of the library that
+   * adds a fifteenth key would break the same way. Spreading its defaults makes a missing key
+   * IMPOSSIBLE rather than merely absent, which is the only version of this worth writing.
+   */
+  const EMOJI_PICKER_BASE_I18N = enI18n;
+
+  /**
    * French UI strings for emoji-picker-element. The `locale` attribute alone does NOT
    * translate the interface (only the data-source provides localized search keywords),
    * so the `i18n` property must be set explicitly - otherwise the search box reads "Search".
    */
   const EMOJI_PICKER_FR_I18N = {
+    ...EMOJI_PICKER_BASE_I18N,
     categoriesLabel: 'Catégories',
     emojiUnsupportedMessage: 'Votre navigateur ne supporte pas les emojis en couleur.',
     favoritesLabel: 'Favoris',
@@ -120,6 +139,7 @@
   };
 
   const EMOJI_PICKER_EN_I18N = {
+    ...EMOJI_PICKER_BASE_I18N,
     categoriesLabel: 'Categories',
     emojiUnsupportedMessage: 'Your browser does not support color emoji.',
     favoritesLabel: 'Favorites',

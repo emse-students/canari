@@ -196,11 +196,11 @@ export async function notifyReaction(params: {
   messagePreview: string;
   actorName: string;
 }): Promise<void> {
-  console.log('[notifyReaction] POST notify-reaction', {
-    groupId: params.groupId.slice(0, 8),
-    targetSenderId: params.targetSenderId.slice(0, 8),
-    emoji: params.emoji,
-  });
+  // Only the failure branches speak. A line on entry and a line on success fired on EVERY reaction,
+  // said nothing a reader could act on, and were the two most frequent lines in the chat console -
+  // the rest of this module already logs failures only. The two warns below stay: a swallowed
+  // best-effort call leaves nothing else behind.
+  //
   // apiFetch attaches the Bearer token (in memory, never in a cookie) and replays once on 401
   // after refresh. A raw fetch went out without Authorization -> nginx auth_request failed -> 401.
   try {
@@ -211,8 +211,6 @@ export async function notifyReaction(params: {
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       console.warn(`[notifyReaction] HTTP error ${resp.status}:`, text.slice(0, 200));
-    } else {
-      console.log('[notifyReaction] Reaction notification sent successfully');
     }
   } catch (e) {
     // Fire-and-forget: an expired session must not surface an error to the caller.

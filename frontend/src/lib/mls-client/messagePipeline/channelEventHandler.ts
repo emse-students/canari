@@ -55,7 +55,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onOutOfSync,
   } = ctx;
 
-  log(`[Channel Event] ${event.type}`);
+  // NO LINE ON ENTRY. It used to log every event here, which meant a line per `typing` and
+  // `channel.typing` signal - the most frequent event on the transport by an order of magnitude,
+  // and the noisiest line in the chat console during the MUT campaign. It said only that the
+  // dispatcher had been reached, which the branch that follows says better and only when something
+  // actually happened. The accusing line is now at the TAIL, where it names a type nobody handles:
+  // that one can only fire if the server and this client disagree about the protocol, and it fired
+  // nowhere before, because the function simply fell out of its last `if` in silence.
 
   // Ephemeral typing signal: `typing` (DM/group, keyed by groupId) and
   // `channel.typing` (community channel, keyed by channel_<id>). Both update the
@@ -284,5 +290,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     } else {
       log(`Message received for an unknown channel: ${channelId}`);
     }
+    return;
   }
+
+  // NOTHING HANDLED IT. Every branch above returns, so reaching here means the delivery service
+  // broadcast an event type this bundle does not know - a client older than the server, or a type
+  // added on one side only. It is silent data loss dressed as a no-op, so it accuses rather than
+  // informs, and it can never fire on a matched pair.
+  log(`[ERROR] Unhandled channel event type: ${event?.type}`);
+  console.error('[Channel Event] no handler for type', event?.type);
 }

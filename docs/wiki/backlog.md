@@ -374,14 +374,64 @@ cause. In `CanariFirebaseMessagingService.kt`:
 **The spec, from the user:** a reaction notification should have most of what a message notification
 has, MINUS reply and mark-as-read, which mean nothing for a reaction. So: the avatar, the stable
 per-conversation id (hence dismissal, cross-device dismissal and clear-on-open), the bundling and the
-badge. That needs a sender id in the payload, which today it does not carry, and a notification type
-that is not `social` - the guard that excludes `social` from foreground suppression is right for a
-post and wrong for this, and no amount of branching inside `social` fixes a type that is simply not
-the one being sent.
+badge.
+
+**The destination is the MESSAGE path, not `social`** - `showNotification`, not
+`showSimpleNotification`. That is the whole of it: everything in the list above already exists there
+and nothing of it exists in `social`, so this is a reuse, not a build. Two things it needs and does
+not have: **a sender id in the payload** (`notify-reaction` sends `{ type, deepLink, groupId }` and
+nothing else, so no avatar can be fetched), and **the message id or the conversation's stable notif
+id**, so the reaction lands on the conversation's existing notification instead of stacking beside it.
+
+**And one thing it must NOT inherit literally - DECIDED by the user 2026-08-15, not an open
+question.** `showNotification`'s quick actions - reply and mark-as-read - are exactly the two that
+were ruled out, on the plain ground that replying to a reaction means nothing. So the message branch
+is adapted rather than taken whole: it wants that branch's PRESENTATION with the actions omitted,
+which is one extra argument, not a second code path. Everything else about how it should behave is
+NOTIF's to ask, at NOTIF. Worth deciding at the same time: that branch also suppresses
+itself outright when the app is in the foreground, and for a reaction that is arguably the RIGHT
+behaviour - you are looking at the conversation, the badge is already on screen - where `social`'s
+deliberate exemption is what makes it fire over an open chat today.
 
 **Deliberately not fixed on discovery**: this is NOTIF's subject and the campaign reaches it with its
 own observers. What is settled already is that it is not a rendering detail - the payload is missing
 the field the fix needs, so it is a server change and a client change, on both platforms.
+
+### P2 - the channel push carries three fields nobody reads, and one of them is the mention
+
+**The route itself is CORRECT and this entry is not about it - do not re-open that.** The user asked
+on 2026-08-15 whether `[CHANNEL_PUSH]` / `type: 'channel'` was wired to the right path, remembering
+WP-PREFIX-1. It was one of that WP's three broken call sites: `POST /internal/push/notify` without
+the global prefix answered **404 on every channel message**, under a `logger.warn` nobody read, for
+the whole life of the feature. Fixed 2026-08-14 by `deliveryUrl()`, and **measured on prod since the
+corrected container started (`2026-08-14T18:00:01Z`): 269 `[CHANNEL_PUSH]` fan-outs, ZERO `notify
+HTTP` lines**, `[INTERNAL_PUSH]` acknowledging each. A 404 that stopped is not a banner that
+appeared, so the phone still owes the positive check - that is NOTIF's first measurement, not a
+finding.
+
+What the same trace DID find is three payload fields that reach every client and are read by none.
+The server sends `type, channelId, workspaceId, channelName, keyVersion, ciphertext, nonce, senderId,
+messageId, createdAt, mentioned` ([channel.service.ts](../../apps/social-service/src/channels/channel.service.ts),
+`notifyChannelRecipients`):
+
+- **`mentioned` is dead on Android, which is the one that costs a user something.** The server
+  computes it per recipient and honours the `mentions` level with it, then `handleChannelMessage`
+  calls `showNotification` without a `channel` argument, so it defaults to `CHANNEL_MESSAGES`. An `@`
+  in a salon is indistinguishable from any other message: `canari_mentions` exists and no channel
+  push ever lands on it. `mentionsMe` is computed on the MLS path only.
+- **`workspaceId` is read by nobody on any of the three clients**, and the notification title is
+  `#<salon>` alone - no community name, no community logo. That is exactly the format question the
+  user raised for NOTIF, and it is worth knowing that **the data is already in the payload**: what is
+  missing is the decision and the rendering, not a server change.
+- **`messageId` / `createdAt` are unused** - no `fcm_message_cache` entry is written for a channel
+  message, unlike the MLS path, so a message decrypted in the background is fetched again at open.
+
+And one asymmetry between platforms, same trace: **the iOS NSE treats `channel_read` as a
+pass-through delivery** while Android and the iOS in-app path both cancel the notification. A killed
+iOS app therefore shows a banner for a salon already read on another device - the exact thing
+`channel_read` exists to prevent.
+
+Filed together because they are one read of one path; they are not one fix. NOTIF's to schedule.
 
 ---
 

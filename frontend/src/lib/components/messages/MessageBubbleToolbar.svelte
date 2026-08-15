@@ -14,8 +14,6 @@
     hasMedia: boolean;
     /** When true, keeps the toolbar fully visible (emoji picker is open). */
     showEmojiPicker: boolean;
-    /** When true, forces the toolbar visible on mobile (triggered by long press). */
-    forceVisible?: boolean;
     /** Called when the reply button is clicked. Omit to hide the button. */
     onReply?: () => void;
     /** Called when the forward button is clicked. Omit to hide the button. */
@@ -47,7 +45,6 @@
     isDeleted,
     hasMedia,
     showEmojiPicker,
-    forceVisible = false,
     onReply,
     onForward,
     onReact,
@@ -84,21 +81,23 @@
   being written here: a middle row fits with zero overflow on either side, the topmost visible row
   loses the strip entirely. That is a worse-looking trade than it is: the old placement delivered a
   reaction click to the conversation list, and this one delays a control by one scroll wheel notch.
+
+  IT IS A DESKTOP SURFACE ONLY - `hidden md:flex`, with no mobile mode at all. There used to be a
+  `forceVisible` branch that showed this same strip on a long press, BESIDE the action sheet a long
+  press already opens: two panels for one gesture, one of them a hover affordance on a device with
+  no hover. Reported by the user, who could see both at once. The sheet is the mobile answer, this
+  is the desktop one, and neither needs to know about the other.
 -->
 <div
-  class="absolute {forceVisible
-    ? 'bottom-full mb-2 left-1/2 -translate-x-1/2'
-    : isOwn
-      ? 'bottom-full mb-1 right-0'
-      : 'bottom-full mb-1 left-0'} whitespace-nowrap opacity-0 {showEmojiPicker || forceVisible
+  class="absolute {isOwn
+    ? 'bottom-full mb-1 right-0'
+    : 'bottom-full mb-1 left-0'} whitespace-nowrap opacity-0 {showEmojiPicker
     ? 'opacity-100'
-    : 'group-hover:opacity-100'} transition-opacity duration-200 {forceVisible
-    ? 'flex'
-    : 'hidden md:flex'} flex-row items-center gap-0.5 rounded-full bg-white/90 dark:bg-black/70 backdrop-blur-xl border border-black/5 dark:border-white/10 shadow-lg px-2 py-1.5 z-10 text-text-muted"
+    : 'group-hover:opacity-100'} transition-opacity duration-200 hidden md:flex flex-row items-center gap-0.5 rounded-full bg-white/90 dark:bg-black/70 backdrop-blur-xl border border-black/5 dark:border-white/10 shadow-lg px-2 py-1.5 z-10 text-text-muted"
 >
   <!-- Quick reactions (web): the same set as mobile, hidden in mobile long-press mode where
        MessageMobileActions already shows its own reaction strip. -->
-  {#if !isDeleted && onReact && !forceVisible}
+  {#if !isDeleted && onReact}
     {#each QUICK_EMOJIS as emoji (emoji)}
       {@const isActive = userReactions.includes(emoji)}
       <button

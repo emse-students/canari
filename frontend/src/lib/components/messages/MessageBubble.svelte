@@ -369,6 +369,11 @@
       if (longPressTimer) clearTimeout(longPressTimer);
       longPressTimer = setTimeout(() => {
         if (replyGesture?.phase === 'horizontal') return;
+        // A TOMBSTONE HAS NOTHING TO OFFER. `MessageMobileActions` gates every one of its items on
+        // `!isDeleted` individually, so opening it on a deleted message produced an EMPTY sheet -
+        // each action correctly hidden, the panel itself never asked whether it should exist. Same
+        // family as the picker button below: the actions were gated, the surfaces were not.
+        if (isDeleted) return;
         showMobileActions = true;
         showEmojiPicker = false;
         showInfo = false;
@@ -622,6 +627,7 @@
         ontouchcancel={endSwipeReply}
         oncontextmenu={(e) => {
           e.preventDefault();
+          if (isDeleted) return; // see the long-press timer: the sheet has no items on a tombstone
           showMobileActions = true;
         }}
         onkeydown={(e) => {
@@ -714,12 +720,11 @@
         {isDeleted}
         hasMedia={!!mediaRef}
         {showEmojiPicker}
-        forceVisible={showMobileActions && isMobile}
         onReply={onReply ? () => onReply!(messageId) : undefined}
         onForward={onForward ? () => onForward!(messageId) : undefined}
         onReact={onReact ? (emoji) => onReact!(messageId, emoji) : undefined}
         userReactions={userOwnReactions}
-        onToggleEmojiPicker={onReact
+        onToggleEmojiPicker={!isDeleted && onReact
           ? () => {
               showEmojiPicker = !showEmojiPicker;
             }
