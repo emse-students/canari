@@ -66,6 +66,10 @@ task escapes.
 - **Default to Paraglide for ANY new user-visible string, on the first draft.** Nothing types a string as user-visible, so no compiler enforces it. Re-run `bun run paraglide:compile` before `bun run test`.
 - **Never assert a wall clock in a test.** Two isolated browser contexts = two devices.
 - **A green gate is not a working system.** Everything native is verified by COMPILING, which proves nothing about running; a green deploy proves the containers started, never that the site answers.
+- **A FALLBACK IS A SIGNAL, NEVER A PATH.** Reaching one means the primary path failed and the fix belongs THERE; a fallback that fires on every request is not a fallback, it is the design lying in its own logs. So it is logged at a level that ACCUSES, and its rate is measured against the population before its name is believed - `FALLBACK_MEMBERS_CACHE` says "Redis cache miss" and fires on 100 % of sends, because the caller never populates `recipients` at all and the set it writes has no reader on that path.
+- **A RACE THAT HEALS CLEANLY IS STILL A DEFECT.** Resilience is not design: if the mechanism needs a heal in THEORY, the mechanism is wrong, whatever it does in practice. Name what makes the two paths overlap and delete the overlap - a ledger that reconciles them afterwards is a witness, never a fix. 22 of 22 `Duplicate delivery` lines say `already read by the archive replay`, which is a real ordering hole reported as normal.
+- **NEVER LEARN BY FAILING WHAT A FACT COULD HAVE TOLD YOU.** Handing an operation to a layer certain to refuse it, in order to classify the refusal, is work the design owes: carry the discriminator to where the decision is made, from the point where it is already KNOWN. The archive row carries `sender_id` and not `sender_device_id`, so every replay re-offers this device's own frames to MLS to be told, once per frame for ever, what the server held at write time.
+- **NOISE IS NEVER ACCEPTABLE - web, mobile or server.** A line is either expected AND necessary, or it is the visible end of something upstream: a request nobody reads, a decrypt that could never succeed, a retry with no possible success. Explain it or fix it, and never demote it - the cost is real (network, storage, battery) and a line its reader learns to skip is the one that hides the next defect.
 
 ---
 
@@ -115,6 +119,38 @@ resolution rather than treat "undecided" as "not mine". Mechanism and the discri
 identified it (the ABSENCE of `[TAB] Another tab is active`) are in
 [backlog](docs/wiki/backlog.md). Owed with it: a check that sends INSIDE the gap on purpose - no
 test does, which is why this is still inference about the consequence rather than a measurement.
+
+**WP-SENDPATH-1 (P2) - three defects on one send path, found together 2026-08-15, all VERIFIED IN CODE
+and none yet fixed.** Read this instead of re-deriving it; every line below was checked at its site.
+
+- **The client never populates `recipients`.** `postApplicationMessage` posts `senderId`,
+  `senderDeviceId`, `groupId`, `proto`, `silent`, `durable` and nothing else, so `ops.length === 0`
+  always and `sendMessage` takes the branch labelled *"Fallback: recipients not provided (Redis cache
+  miss)"* on **every send**. That is why `FALLBACK_MEMBERS_CACHE` appears on 100 % of sends - the
+  backlog's P2 is hereby EXPLAINED, and it is not a cache miss: there is no cache hit to be had.
+  Worse, the `group:members:<gid>` set that branch writes has **no reader in `sendMessage`** - only
+  the gateway reads it (`ws_dispatch.rs:184`). A DB round trip and a Redis write per send, named a
+  fallback so nobody looked.
+- **Nobody sends a device its own frame, and the earlier claim that they did is WITHDRAWN.** Both
+  fan-outs exclude the sender explicitly: `messaging.service.ts:585` and `ws_dispatch.rs:195`. The
+  sender's own copy is written from plaintext by `addMessageToChat` and never decrypted - WP-ECHO-1.
+- **The own-frame noise comes from the SHARED ARCHIVE, and the design cannot filter it.**
+  `history:{gid}` is one stream per group; it must hold this device's frames because the other
+  members read it, so every replay re-offers them and OpenMLS refuses by construction
+  (`CannotDecryptOwnMessage`, correctly classified at the throw since `mls-core`). But the row carries
+  `sender_id` (a USER) and **not `sender_device_id`**, and a user's OTHER device's frames are both
+  decryptable and wanted - so the replay cannot skip its own without attempting them. Measured: **5
+  per MSG-msg4 capture, every capture** - structural, not a race. The fix is the discriminator the
+  server already holds in the request body, written at `XADD` and filtered at the walk. A 4 282-message
+  DM otherwise pays thousands of certain-to-fail decrypts per full replay.
+
+**WP-DUPDELIVERY-1 (P2) - the archive replay and the live queue still hand MLS the same ciphertext.**
+`head`-pinning makes the archive walk disjoint from rows appended DURING it (`historyTypes.ts`), but
+not from rows already sitting in the delivery queue: **22 of 22 `Duplicate delivery` lines across
+every capture say `already read by the archive replay`, and not one says `live delivery`.** So the
+`seenLive` arm has never fired and the two-ledger reconciliation is carrying a real ordering hole in
+silence. WP-FALSELOSS-2 made it quiet, which was right and is not the fix. **The heal is the witness,
+not the answer** - the overlap itself is what to remove.
 
 **SHIPPED, VERIFIED AND CLOSED - do not re-open, do not reconstruct any of them here.**
 WP-FALSELOSS-1, the two A1 startup defects, WP-PENDING-2 (the undrained queue, measured to `0` rows
