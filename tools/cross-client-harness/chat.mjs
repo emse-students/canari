@@ -1019,24 +1019,83 @@ export async function send(cx, text) {
   return fireComposer(cx);
 }
 
-/** Message bubbles are `<p>` leaves inside the pane; this is their viewport centre. */
+/**
+ * Message bubbles are `<p>` leaves inside the pane; this is their viewport centre.
+ *
+ * THE MISS CARRIES ITS OWN EVIDENCE, because `no bubble matching <marker>` did not survive contact
+ * with a real failure. MUT-11/dm and MUT-12/dm died on that sentence in the first MUT run, having
+ * already confirmed the message ARRIVED ON THE PEER - so the sender was missing a message it had
+ * just sent and the words gave a reader nothing to act on. A probe run minutes later found the
+ * bubble (`hits: 1`), which is the worst outcome: a fault that does not reproduce and left no trace.
+ *
+ * The three states it could not tell apart are the three that matter, and each wants a different
+ * fix: the pane was never found (a layout change, and every check breaks); the text is in the pane
+ * but not in a `<p>` (a markup change, and only this lookup breaks); or it is nowhere, which is the
+ * only one that accuses the application. The rendered window is reported with it - the DM holds 5474
+ * messages and the pane renders about 60, so "not rendered yet" is a real and expected state that
+ * says nothing about delivery.
+ *
+ * `textMatch` MAY INSTEAD BE '#msg-<messageId>', and for a message whose text is about to change it
+ * must be: an edit rewrites the body and a delete replaces it with a tombstone, after which the
+ * text this was called with locates nothing - not because the message left, but because it stopped
+ * being called that. The id is `MessageBubble.svelte`'s own, on the row wrapper itself.
+ */
 export async function bubbleCentre(cx, textMatch) {
   const p = await evaluate(
     cx,
     `JSON.stringify((function () {
-      var pane = document.querySelector('${'.chat-composer-footer .chat-composer-editor'}').closest('section');
-      var hits = [].filter.call(pane.querySelectorAll('p'), function (e) {
+      var editor = document.querySelector('${'.chat-composer-footer .chat-composer-editor'}');
+      var pane = editor && editor.closest('section');
+      if (!pane) return { miss: true, hasEditor: !!editor, hasPane: false };
+      var byId = ${JSON.stringify(textMatch)}.charAt(0) === '#'
+        ? document.getElementById(${JSON.stringify(textMatch)}.slice(1)) : null;
+      if (${JSON.stringify(textMatch)}.charAt(0) === '#') {
+        if (!byId || !pane.contains(byId)) return {
+          miss: true, hasEditor: true, hasPane: true, byId: !!byId,
+          renderedParagraphs: pane.querySelectorAll('p').length,
+          note: byId ? 'that row exists but is outside the message pane' : 'no element carries that id'
+        };
+        byId.scrollIntoView({ block: 'center' });
+        var br = byId.getBoundingClientRect();
+        return {
+          x: Math.round(br.left + br.width / 2), y: Math.round(br.top + br.height / 2),
+          text: (byId.textContent || '').slice(0, 50)
+        };
+      }
+      var ps = [].slice.call(pane.querySelectorAll('p'));
+      var hits = ps.filter(function (e) {
         return (e.textContent || '').indexOf(${JSON.stringify(textMatch)}) !== -1;
       });
-      if (!hits.length) return null;
+      if (!hits.length) return {
+        miss: true,
+        hasEditor: true,
+        hasPane: true,
+        renderedParagraphs: ps.length,
+        inPaneText: pane.innerText.indexOf(${JSON.stringify(textMatch)}) !== -1,
+        inBodyText: document.body.innerText.indexOf(${JSON.stringify(textMatch)}) !== -1,
+        lastRendered: ps.slice(-4).map(function (e) { return (e.textContent || '').slice(0, 40); }),
+        overlays: JSON.parse(${OVERLAYS}).length
+      };
       var el = hits[hits.length - 1];
       el.scrollIntoView({ block: 'center' });
       var r = el.getBoundingClientRect();
       return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), text: el.textContent.slice(0, 50) };
     })())`,
   );
-  if (!p || p === 'null') throw new Error(`no bubble matching ${textMatch}`);
-  return JSON.parse(p);
+  const seen = p && p !== 'null' ? JSON.parse(p) : { miss: true, unreadable: true };
+  if (seen.miss) {
+    const why = !seen.hasPane
+      ? 'the composer/pane could not be located at all - this is a layout change, not a missing message'
+      : seen.note
+        ? seen.note
+        : seen.inPaneText
+        ? 'the text IS in the pane but not inside any <p> - the bubble markup changed'
+        : seen.inBodyText
+          ? 'the text is on the page but outside the message pane - wrong conversation open?'
+          : `absent from the page; the pane has ${seen.renderedParagraphs} rendered paragraph(s)`;
+    throw new Error(`no bubble matching ${textMatch} - ${why} - ${JSON.stringify(seen)}`);
+  }
+  return seen;
 }
 
 /** Hovers a bubble so its action row appears, and returns what became clickable. */
@@ -1159,4 +1218,4 @@ export async function attachFiles(cx, files) {
   return files.length;
 }
 
-export { activate, evaluate, pressKey, realClick, until };
+export { activate, clickAtPoint, evaluate, pressKey, realClick, until };

@@ -378,6 +378,8 @@ export function consoleLines(cx) {
 export async function report(w) {
   const { cx, label } = w;
   const reqs = new Map();
+  /** `Network.loadingFailed` events for a requestId this window never saw start - see the case. */
+  let untrackedFailures = 0;
   const console_ = [];
   const ws = [];
   const exceptions = [];
@@ -398,14 +400,35 @@ export async function report(w) {
         if (monoToWallOffset === null && p.wallTime && p.timestamp)
           monoToWallOffset = p.wallTime * 1000 - p.timestamp * 1000;
         break;
+      // A RESPONSE WHOSE REQUEST WAS NEVER SEEN IS STILL AN ANSWER, and `if (r)` threw it away.
+      //
+      // MUT-11/channel's first run is the proof: `dirt_W1.errors` carried "the server responded with
+      // a status of 415" and `badHttp` was EMPTY, so the one bucket built to name the URL said
+      // nothing while the console shouted the status. Any request whose `requestWillBeSent` fell
+      // outside this window - armed late, retried by a worker, replayed from cache - lands here with
+      // an id `reqs` never heard of, and was silently dropped. `p.response.url` carries the URL, so
+      // there is no reason at all not to record it; `seenRequest: false` keeps it distinguishable
+      // from a normally-tracked one rather than pretending the pair was complete.
       case 'Network.responseReceived': {
         const r = reqs.get(p.requestId);
         if (r) r.status = p.response.status;
+        else
+          reqs.set(p.requestId, {
+            url: p.response.url,
+            method: p.response.requestHeaders?.[':method'] ?? '???',
+            status: p.response.status,
+            seenRequest: false,
+          });
         break;
       }
+      // Nothing equivalent is possible for a failure: `Network.loadingFailed` carries no URL at all,
+      // so an untracked one can only be COUNTED - reported below, and deliberately outside `clean`,
+      // because a number with no URL cannot be classified and a gate that cannot be acted on is a
+      // gate that gets ignored. It is there to say the window has a blind spot, not to fail a run.
       case 'Network.loadingFailed': {
         const r = reqs.get(p.requestId);
         if (r) r.failed = p.errorText;
+        else untrackedFailures++;
         break;
       }
       case 'Network.webSocketFrameError':
@@ -565,6 +588,7 @@ export async function report(w) {
     exceptions,
     badHttp: badHttp.map((r) => `${r.method} ${r.url.replace('https://canari-emse.fr', '')} -> ${r.status ?? r.failed}`),
     knownBadHttp: knownBadHttp.map((r) => `${r.method} ${r.url.replace('https://canari-emse.fr', '')} -> ${r.status ?? r.failed}`),
+    ...(untrackedFailures ? { untrackedFailures } : {}),
     wsEvents: ws.map((w) => `${hhmmss(w.at)} ${w.text}`),
     documentsReplaced,
     warnings: warnings.map((l) => l.text),

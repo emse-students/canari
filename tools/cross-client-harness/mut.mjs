@@ -38,6 +38,14 @@
  *   - `messaging.ts` `addReaction`/`notifyReaction`: a `POST /api/mls/notify-reaction` fires
  *     if-and-only-if `targetMsg.senderId !== userId` - the author-only, never-the-reactor rule.
  *
+ * OBSERVATION IS PART OF EVERY CHECK HERE, and it was not until 2026-08-15. This file computed
+ * twenty verdicts while reading no console line at all - the same fault READ shipped eight PASSes
+ * under (rule 14 of testing-methodology). Both clients are now watched from BEFORE the setup
+ * navigates, and every outcome, including each `catch`, goes through `finish` -> `gate`, so a dirty
+ * window turns a PASS into `PASS-DIRTY` and records WHICH client said what. The three checks that
+ * cut a client on purpose (MUT-4, MUT-7, MUT-19) narrow that client's window with
+ * `ignoringOfflineCut`, and only that client's.
+ *
  * STABLE HOOKS USED (deliberately never French prose where one exists):
  *   - `.msg-status-sent` / `.msg-status-read` (`MessageMetadata.svelte`, added this session).
  *   - `lucide-svelte`'s `Icon.svelte` injects `lucide-<icon-name>` on every icon's own `<svg>`
@@ -71,6 +79,7 @@ import {
   openChannel,
   evaluate,
   realClick,
+  clickAtPoint,
   activate,
   hoverBubble,
   bubbleCentre,
@@ -82,6 +91,7 @@ import {
   until,
   COMPOSER,
 } from './chat.mjs';
+import { watch, report, gate, ignoringOfflineCut } from './watch.mjs';
 import { record, mark } from './results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from './names.mjs';
 import { fileURLToPath } from 'node:url';
@@ -96,22 +106,64 @@ const only = argv.includes('--only') ? Number(argv[argv.indexOf('--only') + 1]) 
 
 // ── Connection helpers ───────────────────────────────────────────────────────────────────────
 
+/**
+ * THE WATCHERS ARE ARMED BEFORE THE SETUP NAVIGATES, NOT AFTER IT.
+ *
+ * A window opened after `openDM` cannot see the boot the navigation causes, which is where a check's
+ * own setup goes wrong - TYPE-5 failed inside its setup with both its windows opened below it, and
+ * the one failure it produced carried no console at all. `report` forgives `documentsReplaced`
+ * socket closes by itself, so covering the navigation costs nothing and buys the only view of it.
+ */
 async function openDmPair() {
   const [a, b] = await Promise.all([client(W1, MATCH), client(W2, MATCH)]);
+  const w = { W1: await watch(a, 'W1'), W2: await watch(b, 'W2') };
   await openDM(a, PEER_NAME);
   await openDM(b, OWNER_NAME);
-  return [a, b];
+  return [a, b, w];
 }
 
 async function openChannelPair() {
   const [a, b] = await Promise.all([client(W1, MATCH), client(W2, MATCH)]);
+  const w = { W1: await watch(a, 'W1'), W2: await watch(b, 'W2') };
   await openChannel(a, VENUE.community, VENUE.channel);
   await openChannel(b, VENUE.community, VENUE.channel);
-  return [a, b];
+  return [a, b, w];
 }
 
 function closeAll(...clients) {
   for (const c of clients) c.close();
+}
+
+/**
+ * Drains and classifies both windows, narrowing whichever client THIS check deliberately cut.
+ *
+ * `narrow` is per-label on purpose: `ignoringOfflineCut` forgives the consequences of an outage the
+ * check performed, and applying it to the client that was never cut would forgive a real one.
+ */
+async function observe(w, narrow = {}) {
+  const out = {};
+  for (const [label, ow] of Object.entries(w)) {
+    const rep = await report(ow);
+    out[label] = narrow[label] ? narrow[label](rep) : rep;
+  }
+  return out;
+}
+
+/**
+ * THE ONE PLACE A VERDICT IS WRITTEN IN THIS FILE - gated on both clients being clean.
+ *
+ * Every check used to call `record` itself and none of them looked at a console line, so twenty
+ * verdicts would have rested on nobody observing - the campaign's rule is that a check passes when
+ * its assertions hold AND its run is clean, and READ once shipped eight PASSes that met only the
+ * first half. Routing every outcome (including the `catch`) through here makes the second half
+ * impossible to forget, and impossible to spell differently from the phases that already do it.
+ *
+ * @returns {boolean} whether this counts as ok for the tally - a gated PASS, and nothing else.
+ */
+async function finish(id, verdict, w, detail, narrow) {
+  const gated = gate(verdict, await observe(w, narrow));
+  record(id, gated.verdict, { ...gated.detail, ...detail });
+  return gated.verdict === 'PASS';
 }
 
 async function setOffline(cx, offline) {
@@ -139,7 +191,19 @@ async function sendText(cx, text) {
 // ancestors until `classList.contains('group')` reproduces that fix without depending on a fixed
 // number of hops, which differs between a text message (`MessageTextBody`) and a media caption
 // (`MessageMediaRenderer`) - both nest inside the SAME outer `.group`, just at different depths.
+//
+// A LOCATOR MAY ALSO BE AN ID ('#msg-<messageId>'), and for anything that outlives its own text it
+// MUST be: a deletion swaps the body for a tombstone, so MUT-17 searched for the text it had just
+// caused to disappear and read `null` - "row not found" - at every observation, then passed on an
+// `indexOf(...) === -1` that a missing row satisfies just as well as a tombstoned one. The id is
+// `MessageBubble.svelte`'s own `id={`msg-${messageId}`}`, on the very element that carries `.group`,
+// so both locators land on exactly the same node; `getElementById` avoids the CSS-escaping question
+// entirely, since a message id may begin with a digit and would not be a valid `#` selector.
 const FIND_ROW_FN = `function (pane, text) {
+  if (text.charAt(0) === '#') {
+    var byId = document.getElementById(text.slice(1));
+    return byId && pane.contains(byId) ? byId : null;
+  }
   var hits = [].filter.call(pane.querySelectorAll('p'), function (e) {
     return (e.textContent || '').indexOf(text) !== -1;
   });
@@ -153,6 +217,44 @@ const FIND_ROW_FN = `function (pane, text) {
 }`;
 
 const paneExpr = () => `document.querySelector('${COMPOSER}').closest('section')`;
+
+/** The row's stable locator (`#msg-<messageId>`), or null. Take it BEFORE any mutation that rewrites
+ *  the text you would otherwise search by - and it is the SAME string on every client, because the
+ *  id is the message id, so a row captured on the sender locates the receiver's row too. */
+async function bubbleRowLocator(cx, textMatch) {
+  const id = await evaluate(
+    cx,
+    `(function () {
+      var pane = ${paneExpr()};
+      var findRow = ${FIND_ROW_FN};
+      var row = findRow(pane, ${JSON.stringify(textMatch)});
+      return row && row.id ? row.id : null;
+    })()`
+  );
+  return id ? `#${id}` : null;
+}
+
+/** What the row currently SHOWS: its paragraph text and whether that paragraph carries the deleted
+ *  styling (`italic opacity-60` in `MessageTextBody.svelte` - the only DOM trace `isDeleted` leaves
+ *  on the body). `null` means the row itself is gone, which is a different answer from "not
+ *  tombstoned" and must never again be collapsed into one. */
+async function bubbleBody(cx, locator) {
+  const raw = await evaluate(
+    cx,
+    `JSON.stringify((function () {
+      var pane = ${paneExpr()};
+      var findRow = ${FIND_ROW_FN};
+      var row = findRow(pane, ${JSON.stringify(locator)});
+      if (!row) return null;
+      var p = row.querySelector('p');
+      return {
+        text: p ? (p.textContent || '').trim().slice(0, 80) : null,
+        styledAsDeleted: !!(p && p.classList.contains('italic') && p.classList.contains('opacity-60')),
+      };
+    })())`
+  );
+  return JSON.parse(raw);
+}
 
 /** True/false/null(row not found) for whether `svg.<iconClass>` exists anywhere in the row. */
 async function bubbleIconPresent(cx, textMatch, iconClass) {
@@ -168,9 +270,23 @@ async function bubbleIconPresent(cx, textMatch, iconClass) {
   );
 }
 
-/** Clicks the button that owns `svg.<iconClass>` within the message's row. Hovers first (cheap,
- *  matches the established convention in `clickBubbleAction` even though the toolbar's `md:flex`
- *  keeps it in layout regardless of hover on a desktop-width viewport). */
+/**
+ * Clicks the button that owns `svg.<iconClass>` within the message's row, AND SAYS WHAT TOOK IT.
+ *
+ * THIS FILE'S TWO CLICK HELPERS DISPATCHED BLIND UNTIL 2026-08-15, which is the fault
+ * `clickBubbleAction` in chat.mjs was rebuilt to remove and which was reproduced here by copying its
+ * pre-fix shape. The cost was paid twice on the first MUT run: MUT-9 died 5 s later on a dialog that
+ * never opened, with nothing able to say whether the trash button had been missed or the app had
+ * failed to open its modal; and MUT-12 counted 13 of 15 emoji with no record of WHICH two never
+ * landed. A dispatch is not an activation - only the recorded event is, so both go through
+ * `clickAtPoint` now and assert on `received`.
+ *
+ * The hit test lives in the SAME evaluation as the measurement (see `clickBubbleAction`): testing it
+ * from the driver leaves a round trip in which the row can un-render, which is the very miss being
+ * defended against.
+ *
+ * @returns {{x,y,received}} `received.btn` names the control that took the click.
+ */
 async function clickBubbleIcon(cx, textMatch, iconClass) {
   await hoverBubble(cx, textMatch);
   const point = await evaluate(
@@ -185,24 +301,24 @@ async function clickBubbleIcon(cx, textMatch, iconClass) {
       if (!btn) return null;
       var r = btn.getBoundingClientRect();
       if (r.width === 0) return { blocked: 'icon button has no box - not hovered?' };
-      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+      var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+      var hit = document.elementFromPoint(x, y);
+      if (!hit || !btn.contains(hit)) {
+        return { blocked: 'the .${iconClass} button is not on top at its own centre' + (hit ? ' (' + hit.tagName + '.' + String(hit.className).slice(0, 40) + ' is)' : ' (nothing is there)') };
+      }
+      return { x: x, y: y, name: (btn.getAttribute('aria-label') || btn.innerText || '').trim().slice(0, 40) };
     })())`
   );
   if (!point || point === 'null') throw new Error(`no .${iconClass} action on the row of ${textMatch}`);
   const p = JSON.parse(point);
   if (p.blocked) throw new Error(p.blocked);
-  await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y, buttons: 0 });
-  for (const type of ['mousePressed', 'mouseReleased']) {
-    await cx.send('Input.dispatchMouseEvent', {
-      type,
-      x: p.x,
-      y: p.y,
-      button: 'left',
-      clickCount: 1,
-      buttons: type === 'mousePressed' ? 1 : 0,
-    });
+  const { received } = await clickAtPoint(cx, p.x, p.y);
+  // A click NOTHING received is the silent failure this exists to name. It is not retried here: the
+  // caller decides, because for a reaction a second click TOGGLES rather than repeats.
+  if (!received) {
+    throw new Error(`the .${iconClass} click at ${p.x},${p.y} on the row of ${textMatch} was dispatched and nothing received it`);
   }
-  return p;
+  return { ...p, received };
 }
 
 /** Clicks a reaction-emoji button (the quick strip OR the picker's "recent" panel - both render the
@@ -223,24 +339,57 @@ async function clickReactionEmoji(cx, textMatch, emoji) {
       if (!btn) return null;
       var r = btn.getBoundingClientRect();
       if (r.width === 0) return { blocked: 'reaction button has no box - picker closed?' };
-      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+      var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+      var hit = document.elementFromPoint(x, y);
+      if (!hit || !btn.contains(hit)) {
+        return { blocked: 'the ' + ${JSON.stringify(emoji)} + ' button is not on top at its own centre' + (hit ? ' (' + hit.tagName + '.' + String(hit.className).slice(0, 40) + ' is)' : ' (nothing is there)') };
+      }
+      return { x: x, y: y };
     })())`
   );
   if (!point || point === 'null') throw new Error(`no quick-reaction ${emoji} on the row of ${textMatch}`);
   const p = JSON.parse(point);
   if (p.blocked) throw new Error(p.blocked);
-  await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y, buttons: 0 });
-  for (const type of ['mousePressed', 'mouseReleased']) {
-    await cx.send('Input.dispatchMouseEvent', {
-      type,
-      x: p.x,
-      y: p.y,
-      button: 'left',
-      clickCount: 1,
-      buttons: type === 'mousePressed' ? 1 : 0,
-    });
+  const { received } = await clickAtPoint(cx, p.x, p.y);
+  // THE EMOJI IS ITS OWN BUTTON LABEL, so unlike the icon helper this one can assert the click was
+  // taken by the RIGHT control and not merely by some control. A reaction click is a toggle, so a
+  // miss retried is a reaction removed - hence the throw, and no retry.
+  if (!received) {
+    throw new Error(`the ${emoji} click at ${p.x},${p.y} on the row of ${textMatch} was dispatched and nothing received it`);
   }
-  return p;
+  if (received.btn !== emoji && received.text !== emoji) {
+    throw new Error(`the ${emoji} click was taken by "${received.btn || received.tag}" - the row moved under it`);
+  }
+  return { ...p, received };
+}
+
+/** Emoji equality that ignores the variation selector - `❤️` is U+2764 U+FE0F in this file's source
+ *  and may render as either form in the badge's text node, so `===` would compare presentation.
+ *  The selector is BUILT rather than typed on purpose: it renders as nothing at all, so a literal
+ *  one inside `/.../` is a character no reviewer can see and no diff can show. */
+const VARIATION_SELECTOR = new RegExp(String.fromCharCode(0xfe0f), 'g');
+const sameEmoji = (x, y) =>
+  String(x).replace(VARIATION_SELECTOR, '') === String(y).replace(VARIATION_SELECTOR, '');
+
+/**
+ * Clicks `emoji` and WAITS FOR ITS BADGE, returning the delay in ms, or `null` if it never came.
+ *
+ * MUT-12's first run reported `atCapCount: 13` where 15 were expected and could name neither of the
+ * two that never landed: fifteen clicks had been fired behind fifteen fixed 150 ms sleeps, so "the
+ * click never happened" and "the badge had not rendered yet" produced the same evidence - none.
+ * `clickReactionEmoji` now proves the click was RECEIVED, by the right control; this proves the
+ * reaction ARRIVED. The deadline is not a guess at latency - it is only the point past which the
+ * absence is reported, and the delay is returned so a slow one is distinguishable from a lost one.
+ */
+async function reactAndConfirm(cx, textMatch, emoji, timeoutMs = 5000) {
+  await clickReactionEmoji(cx, textMatch, emoji);
+  const started = Date.now();
+  for (;;) {
+    const badges = (await reactionBadges(cx, textMatch)) || [];
+    if (badges.some((r) => sameEmoji(r.emoji, emoji))) return Date.now() - started;
+    if (Date.now() - started > timeoutMs) return null;
+    await sleep(100);
+  }
 }
 
 /** Whether the full emoji picker is open on this row - the `<emoji-picker>` custom element only
@@ -310,8 +459,33 @@ async function reactionBadges(cx, textMatch) {
  *  header comment), so it is the one action here that still resolves by French text, scoped to
  *  `[role="dialog"]` so it can never match anything behind the modal's backdrop. */
 async function deleteBubble(cx, textMatch) {
-  await clickBubbleIcon(cx, textMatch, 'lucide-trash-2');
-  await until(cx, `!!document.querySelector('[role="dialog"]')`, 5000);
+  const clicked = await clickBubbleIcon(cx, textMatch, 'lucide-trash-2');
+  try {
+    await until(cx, `!!document.querySelector('[role="dialog"]')`, 5000);
+  } catch {
+    // A BARE `until() timed out` NAMES NOTHING. MUT-9's first ERROR read exactly that and could not
+    // separate "the trash button was never activated" from "the app failed to open its modal" - and
+    // the modal genuinely renders for `isOwn || canModerate`, so the expectation was right and the
+    // cause unknown. `received` settles the first half (the click WAS taken, by what); the DOM read
+    // below settles the second (a dialog under another name, or none at all).
+    const seen = JSON.parse(
+      await evaluate(
+        cx,
+        `JSON.stringify({
+          dialogs: document.querySelectorAll('[role="dialog"]').length,
+          modals: document.querySelectorAll('[aria-modal="true"]').length,
+          fixedOverlays: [].filter.call(document.querySelectorAll('div'), function (d) {
+            return getComputedStyle(d).position === 'fixed' && d.getBoundingClientRect().width > innerWidth * 0.5;
+          }).length
+        })`,
+      ),
+    );
+    throw new Error(
+      `no delete-confirmation dialog 5s after the trash click on ${textMatch} - ` +
+        `the click WAS received by "${clicked.received.btn || clicked.received.tag}" ` +
+        `(aimed at "${clicked.name}" at ${clicked.x},${clicked.y}), and the page shows ${JSON.stringify(seen)}`,
+    );
+  }
   await realClick(cx, 'text=Supprimer');
   await until(cx, `!document.querySelector('[role="dialog"]')`, 5000);
 }
@@ -409,7 +583,7 @@ async function restorePinKey(cx, key, beforeValue) {
 // ── MUT-1: edit a text message, both sides show the new text + edited marker [DM] ──────────────
 
 async function mut1() {
-  const [a, b] = await openDmPair();
+  const [a, b, w] = await openDmPair();
   try {
     const base = mark('MUT1');
     const v1 = `${base} v1`;
@@ -422,10 +596,6 @@ async function mut1() {
     const [aHasV2, bHasV2] = await Promise.all([
       awaitMessage(a, v2, 10000).then(() => true, () => false),
       awaitMessage(b, v2, 10000).then(() => true, () => false),
-    ]);
-    const [aHasV1, bHasV1] = await Promise.all([
-      evaluate(a, `${await import('./chat.mjs').then((m) => 'null')}`).then(() => null).catch(() => null),
-      Promise.resolve(null),
     ]);
     // countMessage is the real check for "the old text is truly gone, not just off-screen".
     const aOldCount = await countMessage(a, v1);
@@ -441,7 +611,7 @@ async function mut1() {
     ]);
 
     const ok = arrivedMs !== null && aHasV2 && bHasV2 && aOldCount === 0 && bOldCount === 0 && aMarker && bMarker;
-    record('MUT-1/dm', ok ? 'PASS' : 'FAIL', {
+    return await finish('MUT-1/dm', ok ? 'PASS' : 'FAIL', w, {
       arrivedMs,
       aHasV2,
       bHasV2,
@@ -450,10 +620,8 @@ async function mut1() {
       editedMarkerPresent: { sender: aMarker, receiver: bMarker },
       note: 'edited-marker assertion has no stable hook, matched against "modifi" (fr: "(modifie)") - see header comment',
     });
-    return ok;
   } catch (e) {
-    record('MUT-1/dm', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-1/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -462,7 +630,7 @@ async function mut1() {
 // ── MUT-2: editing CLEARS readBy - .msg-status-read reverts to .msg-status-sent [DM] ───────────
 
 async function mut2() {
-  const [a, b] = await openDmPair();
+  const [a, b, w] = await openDmPair();
   try {
     const base = mark('MUT2');
     const v1 = `${base} v1`;
@@ -472,10 +640,6 @@ async function mut2() {
 
     // Peer reads it: `client()` focus-emulates both windows, which is what makes the receipt fire
     // at all (see chat.mjs's comment on `client` - MainChatPage.svelte:435 gates it on real focus).
-    const readMs = await evaluate(
-      a,
-      `(function(){return null;})()` // placeholder replaced by until() below
-    ).then(() => null).catch(() => null);
     const readWaitMs = await until(
       a,
       `(function () {
@@ -495,7 +659,6 @@ async function mut2() {
       100
     ).catch(() => null);
 
-    const editedMs = Date.now();
     await editBubble(a, v1, v2);
 
     const revertedMs = await until(
@@ -518,17 +681,15 @@ async function mut2() {
     ).catch(() => null);
 
     const ok = readWaitMs !== null && revertedMs !== null;
-    record('MUT-2/dm', ok ? 'PASS' : 'FAIL', {
+    return await finish('MUT-2/dm', ok ? 'PASS' : 'FAIL', w, {
       readWaitMs,
       revertedMs,
       note: readWaitMs === null
         ? 'never observed .msg-status-read before the edit - either this was not the last own message, or the peer window never got a real read receipt'
         : undefined,
     });
-    return ok;
   } catch (e) {
-    record('MUT-2/dm', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-2/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -537,7 +698,7 @@ async function mut2() {
 // ── MUT-3: edit REFUSED on media, and on someone else's message [DM] ───────────────────────────
 
 async function mut3() {
-  const [a, b] = await openDmPair();
+  const [a, b, w] = await openDmPair();
   try {
     // (a) own message WITH media: `MessageBubbleToolbar` gates edit on `!hasMedia`.
     const mediaCaption = mark('MUT3MEDIA');
@@ -556,11 +717,9 @@ async function mut3() {
     const othersEditPresent = await bubbleIconPresent(a, othersText, 'lucide-pencil');
 
     const ok = mediaEditPresent === false && othersEditPresent === false;
-    record('MUT-3/dm', ok ? 'PASS' : 'FAIL', { mediaEditPresent, othersEditPresent });
-    return ok;
+    return await finish('MUT-3/dm', ok ? 'PASS' : 'FAIL', w, { mediaEditPresent, othersEditPresent });
   } catch (e) {
-    record('MUT-3/dm', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-3/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -569,7 +728,9 @@ async function mut3() {
 // ── MUT-4: edit a message the peer has not yet received; peer ends with the new text, once [DM] ─
 
 async function mut4() {
-  const [a, b] = await openDmPair();
+  const [a, b, w] = await openDmPair();
+  // W2 is cut on purpose below, so ITS window is narrowed by the cut and W1's is not - see observe().
+  const cut = { W2: ignoringOfflineCut };
   try {
     await setOffline(b, true);
 
@@ -595,16 +756,15 @@ async function mut4() {
 
     const ok =
       sawOriginalWhileOffline === 0 && arrivedMs !== null && editedCount === 1 && originalCount === 0;
-    record('MUT-4/dm', ok ? 'PASS' : 'FAIL', {
-      sawOriginalWhileOffline,
-      arrivedMs,
-      editedCount,
-      originalCount,
-    });
-    return ok;
+    return await finish(
+      'MUT-4/dm',
+      ok ? 'PASS' : 'FAIL',
+      w,
+      { sawOriginalWhileOffline, arrivedMs, editedCount, originalCount },
+      cut
+    );
   } catch (e) {
-    record('MUT-4/dm', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-4/dm', 'ERROR', w, { error: e.message }, cut);
   } finally {
     await setOffline(b, false).catch(() => {});
     closeAll(a, b);
@@ -614,7 +774,7 @@ async function mut4() {
 // ── MUT-5: edit is ABSENT in channels, by design [Channel] ─────────────────────────────────────
 
 async function mut5() {
-  const [a, b] = await openChannelPair();
+  const [a, b, w] = await openChannelPair();
   try {
     const marker = mark('MUT5');
     await sendText(a, marker);
@@ -624,11 +784,9 @@ async function mut5() {
     // true here regardless of ownership. This asserts the OBSERVABLE consequence of that wiring.
     const editPresent = await bubbleIconPresent(a, marker, 'lucide-pencil');
     const ok = editPresent === false;
-    record('MUT-5/channel', ok ? 'PASS' : 'FAIL', { editPresent });
-    return ok;
+    return await finish('MUT-5/channel', ok ? 'PASS' : 'FAIL', w, { editPresent });
   } catch (e) {
-    record('MUT-5/channel', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-5/channel', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -637,7 +795,7 @@ async function mut5() {
 // ── MUT-6: delete shows a tombstone on both sides, not a gap [DM] ──────────────────────────────
 
 async function mut6() {
-  const [a, b] = await openDmPair();
+  const [a, b, w] = await openDmPair();
   try {
     const base = mark('MUT6');
     const before = `${base} before`;
@@ -653,11 +811,6 @@ async function mut6() {
 
     const aGap = await paragraphsBetween(a, before, after);
     // The peer's copy converges over the live WS (`event === 'delete_message'`), not a reload.
-    const bGap = await until(
-      b,
-      `true`, // placeholder: real wait is the poll below
-      1
-    ).then(() => null).catch(() => null);
     const bGapMs = await (async () => {
       const t0 = Date.now();
       while (Date.now() - t0 < 15000) {
@@ -672,11 +825,13 @@ async function mut6() {
     const ok =
       !!aGap && aGap.count === 1 && aGap.tombstoneCount === 1 && aGap.texts.every((t) => t.indexOf(target) === -1) &&
       !!bGapFinal && bGapFinal.count === 1 && bGapFinal.tombstoneCount === 1;
-    record('MUT-6/dm', ok ? 'PASS' : 'FAIL', { senderGap: aGap, receiverGap: bGapFinal, receiverConvergedMs: bGapMs });
-    return ok;
+    return await finish('MUT-6/dm', ok ? 'PASS' : 'FAIL', w, {
+      senderGap: aGap,
+      receiverGap: bGapFinal,
+      receiverConvergedMs: bGapMs,
+    });
   } catch (e) {
-    record('MUT-6/dm', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-6/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -686,7 +841,8 @@ async function mut6() {
 //    it [DM] ───────────────────────────────────────────────────────────────────────────────────
 
 async function mut7() {
-  const [a, b] = await openDmPair();
+  const [a, b, w] = await openDmPair();
+  const cut = { W2: ignoringOfflineCut };
   try {
     const base = mark('MUT7');
     const before = `${base} before`;
@@ -717,11 +873,15 @@ async function mut7() {
     const resurrected = finalGap ? finalGap.texts.some((t) => t.indexOf(target) !== -1) : null;
 
     const ok = heldOriginal && convergedMs !== null && resurrected === false;
-    record('MUT-7/dm', ok ? 'PASS' : 'FAIL', { heldOriginal, convergedMs, finalGap, resurrected });
-    return ok;
+    return await finish(
+      'MUT-7/dm',
+      ok ? 'PASS' : 'FAIL',
+      w,
+      { heldOriginal, convergedMs, finalGap, resurrected },
+      cut
+    );
   } catch (e) {
-    record('MUT-7/dm', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-7/dm', 'ERROR', w, { error: e.message }, cut);
   } finally {
     await setOffline(b, false).catch(() => {});
     closeAll(a, b);
@@ -732,7 +892,7 @@ async function mut7() {
 //    [Channel] ───────────────────────────────────────────────────────────────────────────────
 
 async function mut8() {
-  let [a, b] = await openChannelPair();
+  let [a, b, w] = await openChannelPair();
   try {
     const base = mark('MUT8');
     const before = `${base} before`;
@@ -766,16 +926,14 @@ async function mut8() {
 
     const ok =
       !!aGapAfterReload && aGapAfterReload.count === 0 && !!bGapAfterReload && bGapAfterReload.count === 0;
-    record('MUT-8/channel', ok ? 'PASS' : 'FAIL', {
+    return await finish('MUT-8/channel', ok ? 'PASS' : 'FAIL', w, {
       immediateGap,
       aGapAfterReload,
       bGapAfterReload,
       contrastNote: 'compare against MUT-6/dm: same immediate shape, opposite shape after a reload',
     });
-    return ok;
   } catch (e) {
-    record('MUT-8/channel', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-8/channel', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -784,7 +942,7 @@ async function mut8() {
 // ── MUT-9: a moderator deletes another user's channel message [Channel] ────────────────────────
 
 async function mut9() {
-  const [a, b] = await openChannelPair();
+  const [a, b, w] = await openChannelPair();
   try {
     const markerAB = mark('MUT9AB'); // sent by b (W2/peer), target for a (W1/owner) to moderate
     await sendText(b, markerAB);
@@ -808,7 +966,9 @@ async function mut9() {
     }
 
     if (!modPresent) {
-      record('MUT-9/channel', 'VACUOUS', {
+      // NOT a pass and not a skip: the check is armable in principle and could not be armed HERE, so
+      // it stays visible as an unmet precondition rather than resolving to a colour.
+      await finish('MUT-9/channel', 'VACUOUS', w, {
         reason: 'neither test account holds channel.moderate in Campagne de test/general - tried both directions',
         checkedW1OnW2Message: markerAB,
       });
@@ -822,11 +982,9 @@ async function mut9() {
       countMessage(b, target),
     ]);
     const ok = aGone === 0 && bGone === 0;
-    record('MUT-9/channel', ok ? 'PASS' : 'FAIL', { actor, target, aGone, bGone });
-    return ok;
+    return await finish('MUT-9/channel', ok ? 'PASS' : 'FAIL', w, { actor, target, aGone, bGone });
   } catch (e) {
-    record('MUT-9/channel', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-9/channel', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -835,7 +993,7 @@ async function mut9() {
 // ── MUT-10: investigative - does the toolbar offer Delete to a moderator in a DM? [DM] ─────────
 
 async function mut10() {
-  const [a, b] = await openDmPair();
+  const [a, b, w] = await openDmPair();
   try {
     const marker = mark('MUT10');
     await sendText(b, marker);
@@ -864,7 +1022,7 @@ async function mut10() {
     // forbid regardless of what it might prove. It is recorded here as a source-verified
     // architectural finding for a human to weigh.
     const ok = deletePresent === false;
-    record('MUT-10/dm', ok ? 'PASS' : 'FAIL', {
+    return await finish('MUT-10/dm', ok ? 'PASS' : 'FAIL', w, {
       toolbarOffersDeleteOnPeerMessageInDm: deletePresent,
       claimAsWrittenOnDashboard: 'the toolbar offers Delete to a moderator in a DM, where the handler refuses it',
       verdictOnLiteralClaim: deletePresent
@@ -874,10 +1032,8 @@ async function mut10() {
       architecturalGapDetail:
         'systemMessageHandler.ts delete_message (~L486) and edit_message (~L525) apply unconditionally on RECEIPT with no sender===original-author check; the only ownership check (useMessaging.svelte.ts handleDeleteMessage/handleEditMessage, ~L894/L919) runs on the SENDING device only, before broadcast. DM/group mutation integrity rests entirely on well-behaved clients, never on the receiving side or a server. Not exploited here - would require mutating a message this harness did not create.',
     });
-    return ok;
   } catch (e) {
-    record('MUT-10/dm', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-10/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -885,7 +1041,7 @@ async function mut10() {
 
 // ── MUT-11: react, un-react, re-react; two users same message; one user several emoji [both] ───
 
-async function mut11Body(a, b, idSuffix) {
+async function mut11Body(a, b, w, idSuffix) {
   const marker = mark('MUT11');
   await sendText(a, marker);
   await awaitMessage(b, marker, 25000);
@@ -918,33 +1074,36 @@ async function mut11Body(a, b, idSuffix) {
     !!laugh &&
     laugh.count === 1;
 
-  record(`MUT-11/${idSuffix}`, ok ? 'PASS' : 'FAIL', { afterFirstReact, afterUnreact, final });
-
-  // Cleanup: leave the message clean, per the campaign rule.
+  // Cleanup: leave the message clean, per the campaign rule - INSIDE the observed window, because a
+  // cleanup that makes the app complain is still the app complaining.
   await clickReactionEmoji(a, marker, '❤️').catch(() => {});
   await clickReactionEmoji(b, marker, '❤️').catch(() => {});
   await clickReactionEmoji(a, marker, '😂').catch(() => {});
 
-  return ok;
+  return await finish(`MUT-11/${idSuffix}`, ok ? 'PASS' : 'FAIL', w, {
+    afterFirstReact,
+    afterUnreact,
+    final,
+  });
 }
 
 async function mut11() {
-  let [a, b] = await openDmPair();
+  let [a, b, w] = await openDmPair();
   let dmOk = false;
   try {
-    dmOk = await mut11Body(a, b, 'dm');
+    dmOk = await mut11Body(a, b, w, 'dm');
   } catch (e) {
-    record('MUT-11/dm', 'ERROR', { error: e.message });
+    await finish('MUT-11/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
 
-  [a, b] = await openChannelPair();
+  [a, b, w] = await openChannelPair();
   let chOk = false;
   try {
-    chOk = await mut11Body(a, b, 'channel');
+    chOk = await mut11Body(a, b, w, 'channel');
   } catch (e) {
-    record('MUT-11/channel', 'ERROR', { error: e.message });
+    await finish('MUT-11/channel', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -956,7 +1115,7 @@ async function mut11() {
 const QUICK_EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '😡']; // MessageBubbleToolbar.svelte's own set
 const RECENT_SEED = ['🎉', '🔥', '🥳', '🤔', '👀', '💯', '🚀', '🌟', '🍀', '🐝']; // 9 to reach 15 + 1 spare
 
-async function mut12Body(a, b, idSuffix) {
+async function mut12Body(a, b, w, idSuffix) {
   const marker = mark('MUT12');
   await sendText(a, marker);
   await awaitMessage(b, marker, 25000);
@@ -965,15 +1124,21 @@ async function mut12Body(a, b, idSuffix) {
   // reads localStorage in `onMount`, so seeding after the first open would be silently ignored.
   await evaluate(a, `localStorage.setItem('canari_recent_emojis', ${JSON.stringify(JSON.stringify(RECENT_SEED))})`);
 
-  for (const emoji of QUICK_EMOJIS) {
-    await clickReactionEmoji(a, marker, emoji);
-    await sleep(150);
-  }
-  await ensurePickerOpen(a, marker);
-  for (const emoji of RECENT_SEED.slice(0, 9)) {
-    await clickReactionEmoji(a, marker, emoji);
-    await sleep(150);
-  }
+  // WHICH emoji landed, one by one. The picker is re-asserted per iteration rather than once before
+  // the loop: `ensurePickerOpen` is idempotent on the picker's own state, so a panel that closes on
+  // selection is handled by construction instead of by luck - and if it does close, the reopen is
+  // recorded rather than being the silent difference between an emoji that landed and one that
+  // could not even be aimed at.
+  const missing = [];
+  const delays = [];
+  const react = async (emoji, viaPicker) => {
+    if (viaPicker) await ensurePickerOpen(a, marker);
+    const ms = await reactAndConfirm(a, marker, emoji);
+    if (ms === null) missing.push(emoji);
+    else delays.push(ms);
+  };
+  for (const emoji of QUICK_EMOJIS) await react(emoji, false);
+  for (const emoji of RECENT_SEED.slice(0, 9)) await react(emoji, true);
   const atCap = await reactionBadges(a, marker);
 
   // The 16th: `canAddDistinctReactionEmoji` (client, DM) / the server (channel) must refuse it.
@@ -982,11 +1147,6 @@ async function mut12Body(a, b, idSuffix) {
   const afterOverCap = await reactionBadges(a, marker);
 
   const ok = atCap.length === 15 && afterOverCap.length === 15;
-  record(`MUT-12/${idSuffix}`, ok ? 'PASS' : 'FAIL', {
-    atCapCount: atCap.length,
-    afterOverCapCount: afterOverCap.length,
-    refusedEmoji: RECENT_SEED[9],
-  });
 
   // Cleanup: un-react everything we added, and stop seeding this account's real "recent" list.
   for (const emoji of [...QUICK_EMOJIS, ...RECENT_SEED.slice(0, 9)]) {
@@ -995,26 +1155,35 @@ async function mut12Body(a, b, idSuffix) {
   }
   await evaluate(a, `localStorage.removeItem('canari_recent_emojis')`).catch(() => {});
 
-  return ok;
+  return await finish(`MUT-12/${idSuffix}`, ok ? 'PASS' : 'FAIL', w, {
+    atCapCount: atCap.length,
+    afterOverCapCount: afterOverCap.length,
+    refusedEmoji: RECENT_SEED[9],
+    // THE TWO THAT WENT MISSING ON THE FIRST RUN NOW HAVE NAMES. `missing` empty with a short
+    // `atCapCount` would mean something else entirely - a badge that appeared and then vanished -
+    // and the two are no longer the same report.
+    missing,
+    slowestMs: delays.length ? Math.max(...delays) : null,
+  });
 }
 
 async function mut12() {
-  let [a, b] = await openDmPair();
+  let [a, b, w] = await openDmPair();
   let dmOk = false;
   try {
-    dmOk = await mut12Body(a, b, 'dm');
+    dmOk = await mut12Body(a, b, w, 'dm');
   } catch (e) {
-    record('MUT-12/dm', 'ERROR', { error: e.message });
+    await finish('MUT-12/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
 
-  [a, b] = await openChannelPair();
+  [a, b, w] = await openChannelPair();
   let chOk = false;
   try {
-    chOk = await mut12Body(a, b, 'channel');
+    chOk = await mut12Body(a, b, w, 'channel');
   } catch (e) {
-    record('MUT-12/channel', 'ERROR', { error: e.message });
+    await finish('MUT-12/channel', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -1024,12 +1193,14 @@ async function mut12() {
 // ── MUT-13: a reaction notifies the message AUTHOR only, never the reactor [DM] ────────────────
 
 async function mut13() {
-  const [a, b] = await openDmPair();
+  const [a, b, w] = await openDmPair();
   try {
     const marker = mark('MUT13');
     await sendText(a, marker); // authored by a (W1)
 
-    await b.send('Network.enable');
+    // `Network.enable` is not repeated here: `watch()` armed it on both clients before the setup
+    // navigated, and `cx.events` has been accumulating since. Re-enabling would read as "the buffer
+    // starts here", which is exactly what it does NOT do.
     await awaitMessage(b, marker, 20000);
     await clickReactionEmoji(b, marker, '❤️'); // b (not the author) reacts
     await sleep(1500); // let the fire-and-forget POST actually leave
@@ -1040,7 +1211,6 @@ async function mut13() {
         String(e.params?.request?.url || '').includes('/api/mls/notify-reaction')
     );
 
-    await a.send('Network.enable');
     await clickReactionEmoji(a, marker, '👍'); // a reacts to THEIR OWN message
     await sleep(1500);
 
@@ -1051,7 +1221,12 @@ async function mut13() {
     );
 
     const ok = notifyHitsFromReactor.length > 0 && notifyHitsFromAuthorSelfReact.length === 0;
-    record('MUT-13/dm', ok ? 'PASS' : 'FAIL', {
+
+    // Cleanup, inside the window - see MUT-11.
+    await clickReactionEmoji(b, marker, '❤️').catch(() => {});
+    await clickReactionEmoji(a, marker, '👍').catch(() => {});
+
+    return await finish('MUT-13/dm', ok ? 'PASS' : 'FAIL', w, {
       reactorFiredNotify: notifyHitsFromReactor.length,
       selfReactFiredNotify: notifyHitsFromAuthorSelfReact.length,
       note:
@@ -1059,15 +1234,8 @@ async function mut13() {
         'iff targetMsg.senderId !== userId). Whether the push actually reaches the author\'s DEVICE is not observable ' +
         'from a browser - that half is owed to the mobile phase and is NOT claimed passed here.',
     });
-
-    // Cleanup.
-    await clickReactionEmoji(b, marker, '❤️').catch(() => {});
-    await clickReactionEmoji(a, marker, '👍').catch(() => {});
-
-    return ok;
   } catch (e) {
-    record('MUT-13/dm', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-13/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -1075,13 +1243,12 @@ async function mut13() {
 
 // ── MUT-14: pin and unpin, seen on the OTHER device [both] ─────────────────────────────────────
 
-async function mut14Body(a, b, idSuffix) {
+async function mut14Body(a, b, w, idSuffix) {
   const marker = mark('MUT14');
   await sendText(a, marker);
   await awaitMessage(b, marker, 25000);
 
   await clickPinIcon(a, marker);
-  const aPinnedMs = await until(a, `true`, 1).then(() => 0).catch(() => null); // immediate, optimistic
   const bPinnedMs = await (async () => {
     const t0 = Date.now();
     while (Date.now() - t0 < 15000) {
@@ -1105,27 +1272,31 @@ async function mut14Body(a, b, idSuffix) {
 
   const ok =
     aStatePinned === 'pinned' && bPinnedMs !== null && aStateUnpinned === 'unpinned' && bUnpinnedMs !== null;
-  record(`MUT-14/${idSuffix}`, ok ? 'PASS' : 'FAIL', { bPinnedMs, bUnpinnedMs, aStatePinned, aStateUnpinned });
-  return ok;
+  return await finish(`MUT-14/${idSuffix}`, ok ? 'PASS' : 'FAIL', w, {
+    bPinnedMs,
+    bUnpinnedMs,
+    aStatePinned,
+    aStateUnpinned,
+  });
 }
 
 async function mut14() {
-  let [a, b] = await openDmPair();
+  let [a, b, w] = await openDmPair();
   let dmOk = false;
   try {
-    dmOk = await mut14Body(a, b, 'dm');
+    dmOk = await mut14Body(a, b, w, 'dm');
   } catch (e) {
-    record('MUT-14/dm', 'ERROR', { error: e.message });
+    await finish('MUT-14/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
 
-  [a, b] = await openChannelPair();
+  [a, b, w] = await openChannelPair();
   let chOk = false;
   try {
-    chOk = await mut14Body(a, b, 'channel');
+    chOk = await mut14Body(a, b, w, 'channel');
   } catch (e) {
-    record('MUT-14/channel', 'ERROR', { error: e.message });
+    await finish('MUT-14/channel', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -1135,7 +1306,7 @@ async function mut14() {
 // ── MUT-15: a DM pin does NOT survive on a fresh device - documented hole, EXPECTED to fail [DM] ─
 
 async function mut15() {
-  const [a, b] = await openDmPair();
+  const [a, b, w] = await openDmPair();
   try {
     const marker = mark('MUT15');
     await sendText(a, marker);
@@ -1165,21 +1336,25 @@ async function mut15() {
     // that is the honest verdict on "does the pin survive" - `documentedHole: true` is what keeps
     // it from reading as a surprise on the dashboard.
     const survived = stateAfterFreshLoad === 'pinned';
-    record('MUT-15/dm', survived ? 'PASS' : 'FAIL', {
-      stateAfterFreshLoad,
-      documentedHole: !survived,
-      reason: 'pinStore.svelte.ts is localStorage-only; history_bundle merge (systemMessageHandler.ts) never touches pin state, so a device with no local record of a pin has no way to recover it',
-    });
 
     // Cleanup: b still correctly shows it pinned (it was online throughout), so unpin FROM b - a's
     // wiped-then-reloaded client is online now too and will receive the live 'unpin' event, which
     // converges both sides correctly regardless of a's stale local read above.
     await clickPinIcon(b, marker).catch(() => {});
 
+    // FAIL IS THE HONEST WORD AND IT STAYS. The pin genuinely does not survive, so this row is red
+    // on every pass and the MUT phase cannot exit 0 while the hole stands. Renaming it to something
+    // green because the hole is KNOWN would make the dashboard say the opposite of what the
+    // application does, which is the one thing no verdict here may do.
+    await finish('MUT-15/dm', survived ? 'PASS' : 'FAIL', w, {
+      stateAfterFreshLoad,
+      documentedHole: !survived,
+      reason: 'pinStore.svelte.ts is localStorage-only; history_bundle merge (systemMessageHandler.ts) never touches pin state, so a device with no local record of a pin has no way to recover it',
+    });
+
     return !survived; // "ok" for the tally means "reproduced the known hole", not "pin survived"
   } catch (e) {
-    record('MUT-15/dm', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-15/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -1188,7 +1363,7 @@ async function mut15() {
 // ── MUT-16: a channel pin DOES survive - the server re-hydrates it [Channel] ───────────────────
 
 async function mut16() {
-  let [a, b] = await openChannelPair();
+  let [a, b, w] = await openChannelPair();
   try {
     const marker = mark('MUT16');
     await sendText(a, marker);
@@ -1209,16 +1384,13 @@ async function mut16() {
 
     const stateAfterFreshLoad = await pinState(a, marker);
     const ok = stateAfterFreshLoad === 'pinned';
-    record('MUT-16/channel', ok ? 'PASS' : 'FAIL', {
+    await clickPinIcon(a, marker).catch(() => {});
+    return await finish('MUT-16/channel', ok ? 'PASS' : 'FAIL', w, {
       stateAfterFreshLoad,
       contrastNote: 'compare against MUT-15/dm: same simulated-fresh-device technique, opposite result',
     });
-
-    await clickPinIcon(a, marker).catch(() => {});
-    return ok;
   } catch (e) {
-    record('MUT-16/channel', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-16/channel', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -1227,7 +1399,7 @@ async function mut16() {
 // ── MUT-17: edit, then delete, then react to the deleted message - the absurd crossing [DM] ────
 
 async function mut17() {
-  const [a, b] = await openDmPair();
+  const [a, b, w] = await openDmPair();
   try {
     const base = mark('MUT17');
     const v1 = `${base} v1`;
@@ -1238,6 +1410,13 @@ async function mut17() {
     await editBubble(a, v1, v2);
     await awaitMessage(b, v2, 10000);
 
+    // THE ANCHOR IS TAKEN WHILE THE TEXT STILL EXISTS. Everything below happens to a message whose
+    // body has been replaced by a tombstone, so `v2` stops locating anything the instant the delete
+    // lands - which is exactly how this check used to record `null` at every observation and still
+    // pass. Captured on A, valid on B: the id IS the message id.
+    const row = await bubbleRowLocator(a, v2);
+    if (!row) throw new Error(`no #msg-<id> anchor on the row of ${v2} - the bubble carries no id`);
+
     await deleteBubble(a, v2);
     await sleep(600);
 
@@ -1247,13 +1426,13 @@ async function mut17() {
     // derivation. So reacting to a deleted message through the FULL picker is reachable from the
     // shipped UI, even though the quick strip hides it - an inconsistency worth surfacing on its
     // own, independent of whatever this check finds when it actually does it.
-    const smileOnDeletedPresent = await bubbleIconPresent(a, v2, 'lucide-smile');
+    const smileOnDeletedPresent = await bubbleIconPresent(a, row, 'lucide-smile');
     const quickStripOnDeletedPresent = await evaluate(
       a,
       `(function () {
         var pane = ${paneExpr()};
         var findRow = ${FIND_ROW_FN};
-        var row = findRow(pane, ${JSON.stringify(v2)});
+        var row = findRow(pane, ${JSON.stringify(row)});
         if (!row) return null;
         // The quick strip's emoji buttons carry no icon, so presence is inferred from a bare-emoji
         // button existing OUTSIDE the reactions [role=group] (which only appears once a reaction
@@ -1269,41 +1448,40 @@ async function mut17() {
     let reactSucceeded = false;
     if (smileOnDeletedPresent) {
       await evaluate(a, `localStorage.setItem('canari_recent_emojis', ${JSON.stringify(JSON.stringify(['🧩']))})`);
-      await ensurePickerOpen(a, v2);
+      await ensurePickerOpen(a, row);
       reactAttempted = true;
-      await clickReactionEmoji(a, v2, '🧩').catch(() => {});
+      await clickReactionEmoji(a, row, '🧩').catch(() => {});
       await sleep(500);
-      const badges = await reactionBadges(a, v2);
-      reactSucceeded = badges.some((r) => r.emoji === '🧩');
+      const badges = (await reactionBadges(a, row)) || [];
+      reactSucceeded = badges.some((r) => sameEmoji(r.emoji, '🧩'));
     }
 
-    const aGapNow = await paragraphsBetween(a, v1, v2).catch(() => null); // v1/v2 both gone as text now
-    const [aTombstoned, bTombstoned] = await Promise.all([
-      evaluate(a, `${paneExpr()}.innerText.indexOf(${JSON.stringify(v2)}) === -1`),
-      evaluate(b, `${paneExpr()}.innerText.indexOf(${JSON.stringify(v2)}) === -1`),
-    ]);
+    // WHAT EACH CLIENT NOW SHOWS FOR THAT ROW, which is the observation this check was always
+    // supposed to make. `aTombstoned` used to be `pane.innerText.indexOf(v2) === -1` - satisfied
+    // just as well by a row that had vanished entirely, or by the wrong conversation being open, as
+    // by the tombstone it meant to assert. A `null` here now says the ROW is gone, which is a
+    // failure, and `styledAsDeleted` says the body is the tombstone rather than merely different.
+    const [aBody, bBody] = await Promise.all([bubbleBody(a, row), bubbleBody(b, row)]);
+    const tombstoned = (body) => !!body && body.styledAsDeleted && !(body.text || '').includes(v2);
 
-    // PASS means: the crossing did not corrupt anything - the message stayed a tombstone (content
-    // never resurrected by the reaction), and if the reaction stuck, both clients agree about it.
-    // This is investigative: the interesting output is the recorded shape, not a strict oracle.
-    const ok = aTombstoned && bTombstoned;
-    record('MUT-17/dm', ok ? 'PASS' : 'FAIL', {
+    // PASS means: the crossing did not corrupt anything - the row is still THERE on both clients,
+    // still a tombstone, its content never resurrected by the reaction. Whether the reaction stuck
+    // is investigative and does not decide the verdict; it is the recorded shape that matters.
+    const ok = tombstoned(aBody) && tombstoned(bBody);
+    await evaluate(a, `localStorage.removeItem('canari_recent_emojis')`).catch(() => {});
+    return await finish('MUT-17/dm', ok ? 'PASS' : 'FAIL', w, {
       smileOnDeletedPresent,
       quickStripOnDeletedPresent,
       reactAttempted,
       reactSucceeded,
-      aTombstoned,
-      bTombstoned,
+      aBody,
+      bBody,
       note: reactSucceeded
         ? 'reacting to a deleted message SUCCEEDED via the full picker (quick strip correctly hid it) - a reaction badge now sits under a tombstone bubble'
         : undefined,
     });
-
-    await evaluate(a, `localStorage.removeItem('canari_recent_emojis')`).catch(() => {});
-    return ok;
   } catch (e) {
-    record('MUT-17/dm', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-17/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
@@ -1312,8 +1490,21 @@ async function mut17() {
 // ── MUT-18: two devices of the SAME user edit the same message at once - SKIPPED [DM] ──────────
 
 async function mut18() {
+  // THE REASON THIS CARRIED WAS FALSE, AND A FALSE REASON IS WORSE THAN NONE. It said A1 was off adb
+  // and cited a SESSION STATE that has since said the opposite for weeks: the phone is reachable on
+  // 9333 and every other phase that needs it uses it. Anyone reading the old sentence would have gone
+  // looking at the cable.
+  //
+  // What is ACTUALLY missing is a way to drive a message's toolbar on the phone. Every mutation
+  // helper in this file resolves its control by hovering the bubble and clicking `svg.lucide-*` in
+  // the desktop toolbar; the mobile layout has no hover and puts those actions in an action sheet
+  // that carries neither `[role=dialog]` nor `[aria-modal]` (which is why `OVERLAYS` in chat.mjs
+  // needs its own clause for it). So arming this needs a mobile equivalent of `clickBubbleIcon`
+  // first, and writing one is not something to do inside the check that would be its first user.
   record('MUT-18/dm', 'SKIPPED', {
-    reason: 'A1 (the second device of the owner account) is unreachable this session - adb devices is empty and survives kill-server (see SESSION STATE)',
+    reason:
+      'no mobile equivalent of clickBubbleIcon exists: the phone opens an action sheet instead of the hover toolbar this file resolves every control through. A1 itself is reachable and is NOT the obstacle.',
+    owes: 'a mobile bubble-action helper in chat.mjs, then this check against W1 + A1 (both the owner account)',
   });
   return true;
 }
@@ -1321,7 +1512,8 @@ async function mut18() {
 // ── MUT-19: delete a message still in the outbox, unsent (sender offline) [DM] ─────────────────
 
 async function mut19() {
-  const [a, b] = await openDmPair();
+  const [a, b, w] = await openDmPair();
+  const cut = { W1: ignoringOfflineCut };
   try {
     await setOffline(a, true);
 
@@ -1345,7 +1537,6 @@ async function mut19() {
     // finding even if it settles correctly.
     let everSawOriginal = false;
     let finalHasOriginal = false;
-    let finalHasTombstoneShape = false;
     const t0 = Date.now();
     while (Date.now() - t0 < 15000) {
       const c = await countMessage(b, marker).catch(() => 0);
@@ -1355,19 +1546,23 @@ async function mut19() {
     finalHasOriginal = (await countMessage(b, marker).catch(() => 0)) > 0;
 
     const ok = !everSawOriginal;
-    record('MUT-19/dm', ok ? 'PASS' : 'FAIL', {
-      renderedLocally,
-      peerSawItWhileSenderOffline,
-      everSawOriginal,
-      finalHasOriginal,
-      note: everSawOriginal
-        ? 'the original text WAS visible to the peer at some point - the delete_message event chased the send rather than cancelling it (no outbox-cancellation path exists for this case)'
-        : 'the peer never saw the original text at all',
-    });
-    return ok;
+    return await finish(
+      'MUT-19/dm',
+      ok ? 'PASS' : 'FAIL',
+      w,
+      {
+        renderedLocally,
+        peerSawItWhileSenderOffline,
+        everSawOriginal,
+        finalHasOriginal,
+        note: everSawOriginal
+          ? 'the original text WAS visible to the peer at some point - the delete_message event chased the send rather than cancelling it (no outbox-cancellation path exists for this case)'
+          : 'the peer never saw the original text at all',
+      },
+      cut
+    );
   } catch (e) {
-    record('MUT-19/dm', 'ERROR', { error: e.message });
-    return false;
+    return await finish('MUT-19/dm', 'ERROR', w, { error: e.message }, cut);
   } finally {
     await setOffline(a, false).catch(() => {});
     closeAll(a, b);
@@ -1382,8 +1577,15 @@ async function mut20() {
   // of what it would prove). The campaign and this test DM are both recent relative to a 90-day
   // window (see CLAUDE.md SESSION STATE dates), so there is no message that is BOTH provably ours
   // AND old enough to test this safely yet.
-  record('MUT-20/dm', 'VACUOUS', {
+  //
+  // SKIPPED, NOT VACUOUS. `VACUOUS` is what `recon.mjs` says when it compared nothing and therefore
+  // knows nothing - a result to be distrusted. This is the opposite: a stated precondition that
+  // provably cannot be met yet, decided before the check runs, exactly like READ-5 and READ-10. The
+  // matrix in `run.mjs` reads a deliberate skip as a verdict and an unknown one as a red on every
+  // pass, and calling this VACUOUS made MUT permanently unable to report itself reproducible.
+  record('MUT-20/dm', 'SKIPPED', {
     reason: 'cannot safely arm: would need a message that is both confirmed created by this harness and older than 90 days; none exists yet given how recently the campaign started',
+    armableFrom: 'the first campaign message reaching 90 days - the earliest markers date from 2026-08-11',
   });
   return true;
 }

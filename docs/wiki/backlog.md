@@ -285,6 +285,43 @@ behind the fix that shipped is in
 [history-reconciliation](protocols/history-reconciliation.md) and the constants carry their own
 justification in `apps/chat-delivery-service/src/retention.constants.ts`.
 
+### P2 - a reaction to your message is delivered down the POSTS pipe, and inherits none of a message notification
+
+Found by MUT-13 on 2026-08-15, first run. `messaging.controller.ts` `POST mls/notify-reaction` sends
+`{ type: 'social', deepLink, groupId }` - the same `type` a post like or a comment uses - and
+`sendPushToUser` merges only `title` and `body` onto it. **The payload carries no sender id, no
+message id and no avatar URL**, so nothing downstream could render an avatar even if it wanted to.
+
+`type: 'social'` then decides everything, and each consequence is a separate defect wearing one
+cause. In `CanariFirebaseMessagingService.kt`:
+
+- **It fires while you are looking at the conversation.** The foreground guard excludes `social`
+  deliberately and correctly - a pure notification touches no `mls.bin`, so it must not be dropped
+  with the MLS work - but `showSimpleNotification` then has no foreground check of its own, unlike
+  `showNotification`, which suppresses itself outright. So reacting to a message in an open chat
+  posts a system notification about a bubble already on screen.
+- **It can never be dismissed.** `showSimpleNotification` takes a fresh
+  `notificationIdCounter.incrementAndGet()` and retains no handle or tag, where a message uses
+  `getStableNotifId(groupId)`, persisted in SharedPreferences, which is what
+  `cancelConversationNotification` cancels on read, on quick reply, and on the silent FCM another
+  device sends. None of those can reach a reaction. **And the clear-on-open sweep excludes
+  `CHANNEL_SOCIAL`**, so they also survive opening the app. They stack for ever.
+- **No avatar, no stacking, and a lower priority** - `BigTextStyle` and `PRIORITY_DEFAULT` against
+  `MessagingStyle` + `Person` icon + `setLargeIcon` + `setGroup` + `refreshBadgeSummary` and
+  `PRIORITY_HIGH`.
+
+**The spec, from the user:** a reaction notification should have most of what a message notification
+has, MINUS reply and mark-as-read, which mean nothing for a reaction. So: the avatar, the stable
+per-conversation id (hence dismissal, cross-device dismissal and clear-on-open), the bundling and the
+badge. That needs a sender id in the payload, which today it does not carry, and a notification type
+that is not `social` - the guard that excludes `social` from foreground suppression is right for a
+post and wrong for this, and no amount of branching inside `social` fixes a type that is simply not
+the one being sent.
+
+**Deliberately not fixed on discovery**: this is NOTIF's subject and the campaign reaches it with its
+own observers. What is settled already is that it is not a rendering detail - the payload is missing
+the field the fix needs, so it is a server change and a client change, on both platforms.
+
 ---
 
 ## Storage and retention

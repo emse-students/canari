@@ -479,6 +479,12 @@ const CELL = {
   // above it. A red that fires on every run is a red its reader learns to skip, which is the one
   // thing an exit code must never become.
   SKIPPED: 'x',
+  // A KNOWN VERDICT MEANING "COULD NOT ARM", which is not the same as `?`. `?` says the legend has
+  // no letter for what the check wrote - a fault in this table. `v` says the check ran, found its
+  // precondition unmet, and reported that honestly. It is deliberately NOT settled: unlike a skip,
+  // nobody decided in advance that it would not run, so a row that is `v` on every pass is a
+  // precondition that has silently stopped being satisfiable and must stay visible.
+  VACUOUS: 'v',
 };
 
 for (let pass = 1; pass <= repeat; pass++) {
