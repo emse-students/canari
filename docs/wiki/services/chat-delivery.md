@@ -76,6 +76,51 @@ then the per-group cap may rise. Raising the per-group cap first lets eviction c
 conversations keep a shared copy. Full reasoning in
 [history-reconciliation](../protocols/history-reconciliation.md).
 
+### Who a frame is queued for, and who owns the gateway's routing set
+
+Two different questions that a single `sadd` used to blur together.
+
+**The recipient set is resolved from `dm_device_group_memberships`, and that is the only way it has
+ever been resolved.** `SendMessageBody.recipients` exists, `libs/proto/canari.proto` carries it, and
+the branch that reads it was written first with the membership query behind
+`if (ops.length === 0 && body.groupId)` under a comment reading *"Fallback: recipients not provided
+(Redis cache miss). Resolve from DB and repopulate `group:members` so subsequent messages no longer
+need this round-trip."*
+
+No caller has ever populated the field. Not `postApplicationMessage`, which posts six keys and none
+is `recipients`; not the gateway, where the word does not occur in the source at all; not
+`POST mls/push/send` or the background-Welcome route; not the commit fan-out in `validateCommit`.
+The proto file says as much itself - *"leave empty = derive from group members"*. So the guard was
+true on every send, the fallback was the design, and `FALLBACK_MEMBERS_CACHE` announced a Redis
+cache miss on **279 of 279 sends in a 23-minute window** for a cache `sendMessage` never reads. The
+branch is now unconditional and named for what it does. **A fallback is a signal, never a path**: it
+went unexamined for as long as it had a name that excused it.
+
+That also had a second victim: five assertions in `messaging.durability.spec.ts` supplied their
+recipients through `body.recipients`, so the suite was green while measuring the branch production
+never takes and leaving the branch it always takes unasserted. They now declare membership rows and
+KeyPackages, the way a real send finds them.
+
+**The routing set is owned by `activateDeviceMembership`**, which writes `group:members:{groupId}`
+at the pending→active transition - the moment membership is decided. What is left on the send path
+is a reconciliation, and it exists for one historical reason: Redis ran without a volume until
+2026-08-12, so the sets that died with the container have no other writer until each device happens
+to re-activate.
+
+Measured on prod 2026-08-15, which is what settled the design: of the 23 groups holding active
+memberships, the 15 that **have** a set are complete to the row - **0 missing, 0 stale** - and all
+11 missing rows live in the 8 groups that have no set at all. The reconciliation therefore adds
+nothing on any group it has ever run against, so it reports only when it **changes** something, and
+it accuses when it does: `MEMBERS_CACHE_REPAIRED` is a `warn`, matched by no rule in `srvlog.mjs`,
+so a campaign run stops on it. An active device absent from that set is one
+`broadcast_to_group_members` silently fails to reach (it proceeds with an empty member list and
+sends to nobody) and one `forward_to_one_peer` can never elect to answer a `welcome_request` or a
+`history_request`.
+
+It reconciles against every **live** member, sender included. Reconciling against the delivery set
+instead left the sender - and any `excludeDeviceIds` entry - out for ever, which made the repair
+incomplete by construction.
+
 ### The queue is bounded on ONE axis, and observed on the other
 
 `cleanupExpiredQueuedMessages` bounds the queue by AGE, and that is the only axis on which

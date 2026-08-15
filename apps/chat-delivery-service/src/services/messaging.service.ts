@@ -45,6 +45,15 @@ import {
 
 export interface SendMessageBody {
   proto?: string;
+  /**
+   * LEGACY CONTENT PATH ONLY, and unset there too by every client shipped since MLS.
+   *
+   * The proto path ignores it entirely and resolves recipients from `dm_device_group_memberships`
+   * - which is what `libs/proto/canari.proto` has always specified ("leave empty = derive from
+   * group members"). It used to be read first there, with the DB resolve behind an
+   * `ops.length === 0` guard labelled a Redis cache miss; since nothing has ever filled this
+   * field, that guard was true on every send and the "fallback" was the design.
+   */
   recipients?: { userId: string; deviceId?: string }[];
   senderId?: string;
   senderDeviceId?: string;
@@ -506,7 +515,8 @@ export class MessagingService {
 
   /**
    * Persists and delivers an MLS application message to all group members.
-   * Handles both the proto path (from gateway) and legacy content path (frontend fallback).
+   * Handles the proto path - every live client, plus the two PushSecret routes and the commit
+   * fan-out - and a legacy plaintext-`content` path no shipped client has taken since MLS.
    * For online recipients, publishes via Redis pub/sub and schedules a deferred FCM fallback.
    * For offline recipients, schedules an immediate FCM push (non-blocking).
    */
@@ -526,50 +536,39 @@ export class MessagingService {
     let sentCount = 0;
 
     this.logger.log(
-      `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} recipients=${body.recipients?.length ?? 0} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}`
+      `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}`
     );
 
     if (body.proto) {
-      // ── Proto path (gateway): proto = base64(raw MLS ciphertext) ─────────
+      // ── Proto path: proto = base64(raw MLS ciphertext) ────────────────────
+      //
+      // The recipient set is RESOLVED HERE, from the membership table. It is the path, not a
+      // repair of one. It used to sit behind `if (ops.length === 0)`, after a loop over
+      // `body.recipients`, under a comment reading "Fallback: recipients not provided (Redis
+      // cache miss)" - and NO caller has ever populated that field: not the client
+      // (`postApplicationMessage` posts six keys and none is `recipients`), not the gateway (the
+      // word does not occur anywhere in its source), not either PushSecret route, not the commit
+      // fan-out. `libs/proto/canari.proto` says so outright: "leave empty = derive from group
+      // members". So the guard was true on every send, the "fallback" was the only path, and it
+      // announced a cache miss on 100 % of traffic for a cache it never read. A fallback is a
+      // signal, never a path: named one, it went unexamined for as long as it existed.
       const { proto } = body;
-      for (const r of body.recipients ?? []) {
-        if (!r.userId || !r.deviceId) continue;
-        const recipientUserId = sanitizeQueryValue(r.userId, 'recipients.userId');
-        const recipientDeviceId = sanitizeQueryValue(r.deviceId, 'recipients.deviceId');
-        ops.push(
-          this.queuedMessageRepo.create({
-            recipientId: recipientUserId,
-            deviceId: recipientDeviceId,
-            senderId: body.senderId,
-            senderDeviceId: body.senderDeviceId,
-            groupId: body.groupId,
-            isWelcome: body.isWelcome,
-            isCommit: body.isCommit,
-            proto,
-            createdAt: new Date(),
-          })
-        );
-      }
-
-      // ── Fallback: recipients not provided (Redis cache miss) ─────────────
-      // Resolve from DB and repopulate group:members so subsequent messages
-      // no longer need this round-trip.
-      if (ops.length === 0 && body.groupId) {
-        const fallbackGroupId = body.groupId;
+      if (body.groupId) {
+        const groupId = body.groupId;
         const memberships = await this.deviceGroupRepo.find({
           where: {
-            groupId: fallbackGroupId,
+            groupId,
             status: 'active' as const,
           },
         });
         const excludeSet = new Set<string>(body.excludeDeviceIds ?? []);
+        const isSender = (m: { userId: string; deviceId: string }) =>
+          m.userId === body.senderId && m.deviceId === body.senderDeviceId;
         // A device with no static KeyPackage does not exist server-side: it cannot be invited, it
         // cannot be Welcomed, and it is not even listed to its own owner - so queueing for it is
-        // storage that nothing will ever collect or read (WP-GHOST-1). This is the path that SEEDS
-        // `group:members:<groupId>`, so filtering here also keeps the Redis fast path clean rather
-        // than paying a lookup on every send. Deliberately narrow: an `active` membership whose
-        // device merely went quiet still has its KeyPackage for the whole 90-day window, so a
-        // legitimately offline device is never dropped.
+        // storage that nothing will ever collect or read (WP-GHOST-1). Deliberately narrow: an
+        // `active` membership whose device merely went quiet still has its KeyPackage for the
+        // whole 90-day window, so a legitimately offline device is never dropped.
         const liveDeviceIds = memberships.length
           ? new Set(
               (
@@ -580,15 +579,15 @@ export class MessagingService {
               ).map((kp) => `${kp.userId}:${kp.deviceId}`)
             )
           : new Set<string>();
-        const fallback = memberships.filter(
+        const targets = memberships.filter(
           (m) =>
-            !(m.userId === body.senderId && m.deviceId === body.senderDeviceId) &&
+            !isSender(m) &&
             !excludeSet.has(`${m.userId}:${m.deviceId}`) &&
             liveDeviceIds.has(`${m.userId}:${m.deviceId}`)
         );
         const ghosts = memberships.filter(
           (m) =>
-            !(m.userId === body.senderId && m.deviceId === body.senderDeviceId) &&
+            !isSender(m) &&
             !excludeSet.has(`${m.userId}:${m.deviceId}`) &&
             !liveDeviceIds.has(`${m.userId}:${m.deviceId}`)
         );
@@ -596,18 +595,18 @@ export class MessagingService {
           // The outbox is best-effort at every step, so every swallowed branch logs - that is all
           // a dropped recipient leaves behind.
           this.logger.warn(
-            `[SEND][${traceId}] SKIPPED_NO_KEY_PACKAGE group=${fallbackGroupId} ` +
+            `[SEND][${traceId}] SKIPPED_NO_KEY_PACKAGE group=${groupId} ` +
               `devices=${ghosts.map((m) => `${m.userId}:${m.deviceId}`).join(',')}`
           );
         }
-        for (const m of fallback) {
+        for (const m of targets) {
           ops.push(
             this.queuedMessageRepo.create({
               recipientId: m.userId,
               deviceId: m.deviceId,
               senderId: body.senderId,
               senderDeviceId: body.senderDeviceId,
-              groupId: fallbackGroupId,
+              groupId,
               isWelcome: body.isWelcome,
               isCommit: body.isCommit,
               proto,
@@ -615,14 +614,37 @@ export class MessagingService {
             })
           );
         }
-        if (fallback.length > 0) {
-          await this.redis.sadd(
-            `group:members:${fallbackGroupId}`,
-            ...fallback.map((m) => `${m.userId}:${m.deviceId}`)
-          );
-          this.logger.log(
-            `[SEND][${traceId}] FALLBACK_MEMBERS_CACHE group=${fallbackGroupId} count=${fallback.length}`
-          );
+
+        // The gateway's routing set is OWNED by `activateDeviceMembership`, which writes it at
+        // the pending->active transition - the moment membership is decided. What remains here is
+        // a RECONCILIATION, and it exists for one historical reason: Redis ran without a volume
+        // until 2026-08-12, so the sets that died with the container have no other writer until
+        // each device happens to re-activate. Measured on prod 2026-08-15: of the 23 groups
+        // holding active memberships, the 15 that HAVE a set are complete to the row - 0 missing,
+        // 0 stale - so this adds nothing at all on any group it has ever run against, and the 11
+        // rows spread over the 8 setless groups are the whole of what it still has to repair.
+        //
+        // It therefore reports only when it CHANGES something, and it accuses when it does: an
+        // active device absent from this set is one the gateway silently fails to reach
+        // (`broadcast_to_group_members` proceeds with an empty member list and sends to nobody)
+        // and one that can never be elected to answer a `welcome_request` or a `history_request`.
+        // Firing at all means an owner did not write, and the fix belongs there.
+        //
+        // Reconciled against every LIVE member, not against `targets`: the sender is excluded from
+        // its own delivery and an `excludeDeviceIds` entry from this one send, but both are
+        // routable members like any other, and leaving them out made the repair incomplete by
+        // construction - a member missing from the set is unelectable for ever.
+        const routable = memberships
+          .filter((m) => liveDeviceIds.has(`${m.userId}:${m.deviceId}`))
+          .map((m) => `${m.userId}:${m.deviceId}`);
+        if (routable.length > 0) {
+          const added = await this.redis.sadd(`group:members:${groupId}`, ...routable);
+          if (added > 0) {
+            this.logger.warn(
+              `[SEND][${traceId}] MEMBERS_CACHE_REPAIRED group=${groupId} added=${added} of=${routable.length}` +
+                ` - these active devices were absent from the gateway routing set and unreachable by it`
+            );
+          }
         }
       }
     } else {

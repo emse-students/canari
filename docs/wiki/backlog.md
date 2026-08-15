@@ -285,43 +285,6 @@ behind the fix that shipped is in
 [history-reconciliation](protocols/history-reconciliation.md) and the constants carry their own
 justification in `apps/chat-delivery-service/src/retention.constants.ts`.
 
-### P2 - every send writes a membership cache the send path never reads, and pays two DB queries to do it
-
-Found 2026-08-14 by classifying the server's own logs, not by a failure: `FALLBACK_MEMBERS_CACHE`
-fired on **279 of 279 sends** in a 23-minute window. A branch named for an exception, taken 100% of
-the time, is the shape of a comment that has outlived its architecture.
-
-What the code says (`messaging.service.ts`, the `ops.length === 0 && body.groupId` branch): *"Fallback:
-recipients not provided (Redis cache miss). Resolve from DB and repopulate `group:members` so
-subsequent messages no longer need this round-trip."* It reads as a one-time warm-up per group.
-
-What actually happens:
-
-- **The client never sends `recipients`.** The live send path is `postApplicationMessage` in
-  `mlsDeliveryApi.ts`, which posts `senderId`, `senderDeviceId`, `groupId`, `proto`, `silent`,
-  `durable` - and nothing else. `mkMlsEnvelope` in `proto/codec.ts` still takes a `recipients` array
-  and is called from nowhere: it belongs to the WebSocket send path, which is dead
-  (`ws_dispatch.rs`: *"All send-path operations now go directly from the frontend to the delivery
-  service via HTTP. The gateway WS connection is receive-only for those message types"*).
-- **So the branch is not a fallback, it is the only path**, and "subsequent messages no longer need
-  this round-trip" is never true for any message.
-- **`sendMessage` never reads `group:members:` at all.** It goes straight from an empty `ops` to the
-  database. The `sadd` it performs on the way out feeds the GATEWAY's routing and diagnostics, which
-  do read the key - so the write is not useless, but the send path writes a cache it never consults.
-
-The cost is two queries per message - `deviceGroupRepo.find` over the group's memberships, then
-`keyPackageRepo.find` over their device ids - both O(members). On a two-person DM that is invisible.
-It is exactly the shape the standing directive rules out for a large conversation: *"doit marcher
-avec une conversation de toute les tailles"*.
-
-**Not fixed unilaterally because the right answer is a design decision, not a repair.** Three
-candidates, in increasing order of change: read `group:members:` in `sendMessage` before falling back
-to the database (smallest, and it makes the existing comment true); or have the client send
-`recipients` again, which the server already accepts and the proto already carries; or accept the DB
-resolution as authoritative and delete the language of caching from the branch. Whichever is chosen,
-**the log line must stop calling itself a fallback** - it misfiled itself as `notable` in the
-classifier for exactly that reason, and it will mislead the next reader the same way.
-
 ---
 
 ## Storage and retention

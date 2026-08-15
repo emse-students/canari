@@ -62,13 +62,19 @@ describe('MessagingService - visibility vs durability', () => {
     create: jest.fn().mockImplementation((e: unknown) => e),
   });
 
+  /**
+   * Static KeyPackages - the server-side proof that a device is addressable at all (WP-GHOST-1).
+   *
+   * Held at this scope rather than built inside `beforeEach` so a test can say who exists.
+   */
+  const keyPackageRepo = emptyRepo();
+
   /** A proto send with no resolvable recipient: nothing is queued, so only the log write is exercised. */
   const send = (extra: Partial<SendMessageBody>): SendMessageBody => ({
     proto: 'cGF5bG9hZA==',
     groupId: 'g1',
     senderId: 'u1',
     senderDeviceId: 'd1',
-    recipients: [],
     ...extra,
   });
 
@@ -108,13 +114,17 @@ describe('MessagingService - visibility vs durability', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // `clearAllMocks` keeps implementations, so a set restored by one test would leak into the
+    // next; both are stated here so every test starts from "this group has no members".
+    deviceGroupRepo.find.mockResolvedValue([]);
+    keyPackageRepo.find.mockResolvedValue([]);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagingService,
         { provide: getRepositoryToken(QueuedMessage), useValue: queuedMessageRepo },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
         { provide: getRepositoryToken(Group), useValue: emptyRepo() },
-        { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
+        { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
         { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
         { provide: getRepositoryToken(PushToken), useValue: emptyRepo() },
@@ -215,12 +225,23 @@ describe('MessagingService - visibility vs durability', () => {
   });
 
   describe('who a transport frame is queued for', () => {
-    /** Two peer devices, so one can be online and the other not. */
-    const twoPeers = {
-      recipients: [
+    /**
+     * Two peer devices, so one can be online and the other not.
+     *
+     * Declared the way production declares them - an active membership row and a static
+     * KeyPackage each - and NOT through `body.recipients`, which is what these five tests used to
+     * fill. The proto path read that field first and kept the DB resolve behind an
+     * `ops.length === 0` guard labelled a Redis cache miss; since no client has ever sent the
+     * field, the fixture was exercising the branch production never takes while the branch it
+     * always takes went unasserted.
+     */
+    const twoPeers = () => {
+      const devices = [
         { userId: 'u2', deviceId: 'dA' },
         { userId: 'u2', deviceId: 'dB' },
-      ],
+      ];
+      deviceGroupRepo.find.mockResolvedValue(devices);
+      keyPackageRepo.find.mockResolvedValue(devices);
     };
 
     /** `dA` online, `dB` offline. */
@@ -243,20 +264,22 @@ describe('MessagingService - visibility vs durability', () => {
       // The election that summons a responder only ever picks an online device, so an offline one
       // could not have answered even holding the frame - and the rendezvous it belongs to expires
       // in 60 s, long before that device drains its mailbox.
+      twoPeers();
       onlyAOnline();
       pushSpies();
 
-      await service.sendMessage(send({ silent: true, durable: false, ...twoPeers }));
+      await service.sendMessage(send({ silent: true, durable: false }));
 
       const queued = queuedMessageRepo.save.mock.calls[0][0] as unknown as { deviceId: string }[];
       expect(queued.map((q) => q.deviceId)).toEqual(['dA']);
     });
 
     it('sends NO push at all for a transport frame', async () => {
+      twoPeers();
       onlyAOnline();
       const { deferred, immediate } = pushSpies();
 
-      await service.sendMessage(send({ silent: true, durable: false, ...twoPeers }));
+      await service.sendMessage(send({ silent: true, durable: false }));
 
       expect(deferred).not.toHaveBeenCalled();
       expect(immediate).not.toHaveBeenCalled();
@@ -264,20 +287,22 @@ describe('MessagingService - visibility vs durability', () => {
 
     it('reports the number of rows it WROTE, not the number it considered', async () => {
       // A log that still counted the candidates would describe rows that do not exist.
+      twoPeers();
       onlyAOnline();
       pushSpies();
 
-      const res = await service.sendMessage(send({ silent: true, durable: false, ...twoPeers }));
+      const res = await service.sendMessage(send({ silent: true, durable: false }));
 
       expect(res).toEqual(expect.objectContaining({ queued: 1 }));
     });
 
     it('still queues a DURABLE frame for an offline device, and pushes to it', async () => {
       // The whole point of the distinction: a real message must survive the recipient being away.
+      twoPeers();
       onlyAOnline();
       const { immediate } = pushSpies();
 
-      await service.sendMessage(send({ silent: false, durable: true, ...twoPeers }));
+      await service.sendMessage(send({ silent: false, durable: true }));
 
       const queued = queuedMessageRepo.save.mock.calls[0][0] as unknown as { deviceId: string }[];
       expect(queued.map((q) => q.deviceId)).toEqual(['dA', 'dB']);
@@ -286,15 +311,99 @@ describe('MessagingService - visibility vs durability', () => {
 
     it('asks Redis whether a device is online ONCE, not once per pass', async () => {
       // The filter and the delivery loop used to ask the same question separately.
+      twoPeers();
       onlyAOnline();
       pushSpies();
 
-      await service.sendMessage(send({ silent: true, durable: false, ...twoPeers }));
+      await service.sendMessage(send({ silent: true, durable: false }));
 
       const onlineChecks = redis.exists.mock.calls.filter((c: string[]) =>
         String(c[0]).startsWith('user:online:')
       );
       expect(onlineChecks).toHaveLength(2);
+    });
+  });
+
+  /**
+   * WP-SENDPATH-1a. The proto path used to read `body.recipients` first and keep the membership
+   * resolve behind an `ops.length === 0` guard commented "Fallback: recipients not provided (Redis
+   * cache miss)". Nothing has ever filled that field - not the client, not the gateway, not either
+   * PushSecret route, not the commit fan-out - so the guard was true on every send, a fallback was
+   * the whole design, and it announced a cache miss on 100 % of production traffic for a cache it
+   * never consulted.
+   */
+  describe('where the recipient set comes from', () => {
+    const threeDevices = () => {
+      // The sender's own device is a member like any other; it is excluded from DELIVERY, not
+      // from the group.
+      const devices = [
+        { userId: 'u1', deviceId: 'd1' },
+        { userId: 'u2', deviceId: 'dA' },
+        { userId: 'u2', deviceId: 'dB' },
+      ];
+      deviceGroupRepo.find.mockResolvedValue(devices);
+      keyPackageRepo.find.mockResolvedValue(devices);
+    };
+
+    const silencePush = () => {
+      jest
+        .spyOn(service as unknown as { scheduleDeferredPush: () => void }, 'scheduleDeferredPush')
+        .mockImplementation(() => {});
+      jest
+        .spyOn(service as unknown as { sendFcmForQueued: () => Promise<void> }, 'sendFcmForQueued')
+        .mockResolvedValue(undefined);
+    };
+
+    it('resolves from the membership table and ignores what the caller claims', async () => {
+      threeDevices();
+      silencePush();
+
+      await service.sendMessage(
+        send({ recipients: [{ userId: 'u9', deviceId: 'd9' }], durable: true })
+      );
+
+      const queued = queuedMessageRepo.save.mock.calls[0][0] as unknown as { deviceId: string }[];
+      expect(queued.map((q) => q.deviceId)).toEqual(['dA', 'dB']);
+    });
+
+    it('reconciles the gateway routing set with every live member, the sender included', async () => {
+      // Reconciling with the DELIVERY set instead left the sender out for ever, and a member
+      // missing from this set is one `forward_to_one_peer` can never elect to answer a
+      // `welcome_request` or a `history_request`.
+      threeDevices();
+      silencePush();
+
+      await service.sendMessage(send({ durable: true }));
+
+      expect(redis.sadd).toHaveBeenCalledWith('group:members:g1', 'u1:d1', 'u2:dA', 'u2:dB');
+    });
+
+    it('says nothing when the routing set was already complete', async () => {
+      // Measured on prod 2026-08-15: every group that has a set has a COMPLETE one, so this is
+      // what the reconciliation does on essentially every send. A line here would be noise, and
+      // noise is what let the old one go unread on 100 % of traffic.
+      threeDevices();
+      silencePush();
+      redis.sadd.mockResolvedValueOnce(0);
+      const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => {});
+
+      await service.sendMessage(send({ durable: true }));
+
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('MEMBERS_CACHE_REPAIRED'));
+    });
+
+    it('accuses when it actually had to repair the routing set', async () => {
+      // An active device absent from the set is one the gateway silently fails to reach:
+      // `broadcast_to_group_members` proceeds with an empty member list and sends to nobody.
+      // Reaching this line means an owner did not write, and the fix belongs there.
+      threeDevices();
+      silencePush();
+      redis.sadd.mockResolvedValueOnce(2);
+      const warn = jest.spyOn(service['logger'], 'warn').mockImplementation(() => {});
+
+      await service.sendMessage(send({ durable: true }));
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('MEMBERS_CACHE_REPAIRED'));
     });
   });
 

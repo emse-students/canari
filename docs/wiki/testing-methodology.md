@@ -571,11 +571,22 @@ without a close frame, which every reload this campaign performs produces. Forgi
 kept in the record, per rule 11.
 
 The first fully classified window, 2026-08-14 12:22-12:45Z: **8 534 lines across seven services, zero
-unexplained**, five notable shapes. Two of those five are open questions rather than noise -
-`FALLBACK_MEMBERS_CACHE` fired on **279 of 279 sends**, meaning the client supplies no recipient list
-at all and a server-side cache decides the membership of every message; and five `NO_PEER_ONLINE`
-history asks were requests for repair that nobody could answer. Neither is a defect on this evidence;
-both are things somebody has to decide are intended. `call-service` deserves its own note: **0 lines
+unexplained**, five notable shapes. Two of those five were open questions rather than noise -
+`FALLBACK_MEMBERS_CACHE` fired on **279 of 279 sends**, and five `NO_PEER_ONLINE` history asks were
+requests for repair that nobody could answer.
+
+**The first of the two turned out to be a defect, and refusing to file it as routine is the whole
+reason it was ever read.** It was kept out of `BENIGN` on the grounds that a 100 % rate may be the
+design but nobody had said so; it was not. No caller has ever populated `recipients`, so the branch
+calling itself a Redis cache miss was the only path a proto send has, for a cache `sendMessage`
+never reads - and the fixture in `messaging.durability.spec.ts` was supplying recipients through
+that same dead field, so five green assertions measured a branch production never takes. The
+narrative is on [chat-delivery](services/chat-delivery.md); what generalises is the rule: **a rate
+is a measurement against a population, and a name is not evidence.** Its replacement,
+`MEMBERS_CACHE_REPAIRED`, is matched by no rule at all, on purpose - a defect report a bucket
+forgives is one nobody reads.
+
+`call-service` deserves its own note: **0 lines
 in 24 hours**, its last entry the startup line from two days earlier - so the CALL phase, when it is
 written, will have no server-side observer at all until that service logs something.
 

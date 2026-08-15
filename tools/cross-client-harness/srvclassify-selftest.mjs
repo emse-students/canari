@@ -47,8 +47,8 @@ const sameShape = (name, a, b) => check(name, shapeOf(a) === shapeOf(b), true);
 
 sameShape(
   'two correlation ids collapse',
-  `${NEST}[MessagingService] [SEND][send-cd9583ef] FALLBACK_MEMBERS_CACHE group=00000000-0000-4000-8000-000000000001 count=3`,
-  `${NEST}[MessagingService] [SEND][send-33f8f65a] FALLBACK_MEMBERS_CACHE group=00000000-0000-4000-8000-000000000002 count=9`
+  `${NEST}[MessagingService] [SEND][send-cd9583ef] QUEUED count=3`,
+  `${NEST}[MessagingService] [SEND][send-33f8f65a] QUEUED count=9`
 );
 sameShape(
   'an all-digit correlation id collapses with a hex one',
@@ -129,7 +129,6 @@ for (const l of BENIGN_CASES) {
 }
 
 const NOTABLE_CASES = [
-  `${NEST}[MessagingService] [SEND][send-33f8f65a] FALLBACK_MEMBERS_CACHE group=g count=3`,
   `${NEST}[MessagingService] [HISTORY_REQ][history-req-fcd21c9c] FORWARDED target=a:web-a-b group=g requester=c:web-c-d`,
   `${NEST}[MessagingService] [HISTORY_REQ][history-req-13bea09c] NO_PEER_ONLINE group=g requester=a:web-a-b`,
   `${NEST}[MessagingService] [SEND][send-85d25af2] TRANSPORT_SKIPPED_OFFLINE count=1 group=g - no row, no push: the rendezvous would expire first`,
@@ -164,6 +163,17 @@ const ownedMiss = '[404] GET /sitemap.xml';
 const ownedOk = !matches(BENIGN_RULES, ownedMiss);
 if (!ownedOk) failures++;
 console.log(`${ownedOk ? 'ok  ' : 'FAIL'} unexplained  a 404 on a route we DO serve is not a crawler's guess`);
+
+// THE LINE THAT REPLACED THE ONE THIS FILE USED TO PIN. `FALLBACK_MEMBERS_CACHE` was kept out of
+// BENIGN because it fired on 100 % of sends and nobody had said that was the design; it wasn't -
+// no caller has ever populated `recipients`, so the branch calling itself a cache miss was the
+// only path a proto send has (WP-SENDPATH-1a). `MEMBERS_CACHE_REPAIRED` is what remains, and it
+// fires ONLY when the reconciliation really added a device the gateway could not reach. It gets no
+// rule at all: a defect report that a bucket forgives is a defect report nobody reads.
+const repaired = `${NEST}[MessagingService] [SEND][send-33f8f65a] MEMBERS_CACHE_REPAIRED group=00000000-0000-4000-8000-000000000001 added=2 of=5 - these active devices were absent from the gateway routing set and unreachable by it`;
+const repairedOk = !matches(BENIGN_RULES, repaired) && !matches(NOTABLE_RULES, repaired);
+if (!repairedOk) failures++;
+console.log(`${repairedOk ? 'ok  ' : 'FAIL'} unexplained  a routing set that HAD to be repaired is forgiven by nothing`);
 
 // AND THE SHARPEST OF THEM ALL, because the two lines come out of the SAME function twelve lines
 // apart and differ only in wording. One says a concurrent refresh was tolerated; the other says a

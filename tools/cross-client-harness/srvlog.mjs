@@ -174,13 +174,18 @@ const BENIGN = [
 /**
  * Reported, never silent, and never fatal on its own - the server equivalent of `NOTABLE`.
  *
- * `FALLBACK_MEMBERS_CACHE` is here rather than in `BENIGN` deliberately. It fires on every single
- * send observed on 2026-08-14, always paired with `recipients=0` in the START line above it, so the
- * client is sending no recipient list at all and a cache is supplying the whole membership. That may
- * be the design; it is not something to file as routine before someone has said so.
+ * `FALLBACK_MEMBERS_CACHE` USED TO HEAD THIS LIST, and refusing to file it as routine is what
+ * eventually got it read. It fired on every send observed on 2026-08-14, always paired with
+ * `recipients=0` in the START line above it, and the reason turned out to be that NO caller has
+ * ever populated `recipients`: the branch calling itself a Redis cache miss was the only path the
+ * proto send has, for a cache it never consulted (WP-SENDPATH-1a). The line is gone with it.
+ *
+ * `MEMBERS_CACHE_REPAIRED` replaces it and is deliberately NOT here: it is a warn that fires only
+ * when the reconciliation actually added a device to the gateway's routing set, which means an
+ * owner did not write and the gateway was silently unable to reach that device. It belongs in
+ * `unexplained` so a campaign run stops on it.
  */
 const NOTABLE = [
-  /FALLBACK_MEMBERS_CACHE/,
   /welcome_request|history_request|history_bundle|history_digest/i,
   /epoch|re-?add|revoke|forget/i,
   /retention|purge|evict/i,
