@@ -172,6 +172,16 @@ describe('MessagingService - visibility vs durability', () => {
       expect(fieldOf('content')).toBe('cGF5bG9hZA==');
     });
 
+    it('records the sending DEVICE, which is the only thing a replay can filter its own rows by', async () => {
+      // The stream is shared by the whole group, so it necessarily holds this device's own frames -
+      // and MLS refuses them by construction. `sender_id` cannot discriminate: the same user's
+      // OTHER device wrote frames that are both decryptable and wanted. Written here because here
+      // is the last point where the device is known. Never learn by failing what a fact could tell.
+      await service.sendMessage(send({ senderDeviceId: 'd-sender', durable: true }));
+
+      expect(fieldOf('sender_device_id')).toBe('d-sender');
+    });
+
     it('marks that mutation as showing nothing, so no consumer may notify for it', async () => {
       await service.sendMessage(send({ silent: true, durable: true }));
 

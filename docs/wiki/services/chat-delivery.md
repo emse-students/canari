@@ -70,6 +70,17 @@ that reads the stream in order to **notify** must honour it -
 without the filter it would ring the user for every reaction. An absent field reads as visible: it
 can only come from an entry written when the stream held nothing else.
 
+Each entry also records the DEVICE that wrote it (`sender_device_id`, since 2026-08-15), and that
+field exists for one reason: the stream is shared, so it necessarily holds the reader's own frames,
+and MLS refuses every one of them by construction (`CannotDecryptOwnMessage`). `sender_id` cannot
+filter them - the same account's OTHER device wrote frames that are both decryptable and wanted - so
+without the device the replay learnt which rows were its own only by handing each one to MLS to be
+refused. Measured before the fix: 5 certain-to-fail decrypts per MSG capture, in every capture, and
+thousands per full replay of a 4 282-message DM. **Never learn by failing what a fact could have
+told you** - the server holds the discriminator in the request body and now writes it down. Rows
+predating the deploy still reach MLS and are still recognised by their refusal; that arm is the shim
+and its removal date is in [legacy-compatibility](../legacy-compatibility.md).
+
 Sizing is `HISTORY_STREAM_MAXLEN` (`retention.constants.ts`), raised 1000 → 8000 the same day. The
 order matters and is not cosmetic: the store must be durable, then `maxmemory` must have headroom,
 then the per-group cap may rise. Raising the per-group cap first lets eviction choose which

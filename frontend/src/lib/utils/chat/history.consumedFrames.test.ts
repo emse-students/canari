@@ -418,6 +418,95 @@ describe('the walk is bounded by the head observed at its start', () => {
   });
 });
 
+/**
+ * WHAT THE SERVER KNEW AT WRITE TIME IS NOT LEARNT BY FAILING.
+ *
+ * `history:{groupId}` is one stream per group and must hold this device's own frames, because every
+ * other member reads it - so a replay walks them by construction and MLS refuses every one
+ * (`CannotDecryptOwnMessage`). That was the design asking to be told, once per frame for ever, what
+ * the request body already carried: measured at 5 certain-to-fail decrypts per MSG capture, in
+ * every capture, and thousands per full replay of a 4 282-message DM.
+ *
+ * `sender_id` cannot do it and never could: the SAME account's other device wrote frames that are
+ * both decryptable and wanted, which is the whole reason this needed a new field.
+ */
+describe("this device's own rows in the shared archive", () => {
+  const ME = 'device-test'; // what `createMlsServiceStub` answers for `getDeviceId`
+  const row = (id: string, marker: number, sender_device_id?: string) => ({
+    id,
+    sender_id: USER,
+    sender_device_id,
+    content: toBase64(new Uint8Array([0xc0, marker, 0xc2])),
+    timestamp: String(1786655250946),
+  });
+
+  /** Replays one primed page and reports what was actually handed to MLS. */
+  const replayWith = async (rows: ReturnType<typeof row>[]) => {
+    const decryptPage = vi.fn().mockResolvedValue(rows.map(() => ({ ok: true, plaintext: null })));
+    const mlsService = createMlsServiceStub({
+      getLocalGroups: vi.fn().mockReturnValue([GROUP]),
+      fetchHistory: vi.fn().mockResolvedValue({ rows: [] }),
+      createDecryptSession: vi
+        .fn()
+        .mockResolvedValue({ decryptPage, finish: vi.fn().mockResolvedValue(undefined) }),
+    });
+    await replayConversationHistory({
+      mlsService,
+      id: GROUP,
+      contactName: 'peer',
+      userId: USER,
+      deviceKeyB64: 'device-key',
+      storage: null,
+      getConversation: () => undefined,
+      setConversation: () => undefined,
+      messageReactions: new Map(),
+      log: () => undefined,
+      primedFirstPage: { rows },
+    });
+    return decryptPage;
+  };
+
+  it('are never offered to MLS at all', async () => {
+    const decryptPage = await replayWith([row('1-0', 0x01, ME)]);
+
+    expect(decryptPage).not.toHaveBeenCalled();
+  });
+
+  it('do not stop the rows around them from being read', async () => {
+    const decryptPage = await replayWith([
+      row('1-0', 0x01, ME),
+      row('2-0', 0x02, 'peer-device'),
+      row('3-0', 0x03, ME),
+    ]);
+
+    expect(decryptPage).toHaveBeenCalledTimes(1);
+    expect(decryptPage.mock.calls[0][0]).toHaveLength(1);
+  });
+
+  it('are marked seen, so a later replay answers from the cheap check and the cursor moves past', async () => {
+    await replayWith([row('1-0', 0x01, ME)]);
+
+    expect(hasHistoryFrameBeenConsumed(USER, GROUP, '1-0')).toBe(true);
+  });
+
+  it('are still offered when the row predates the field, which is the shim and not the mechanism', async () => {
+    // A row written before 2026-08-15 carries no `sender_device_id`, so it reaches MLS and is
+    // recognised by its refusal - the `own-message` arm of the replay's catch. Removable one
+    // retention window after the deploy; see `docs/wiki/legacy-compatibility.md`.
+    const decryptPage = await replayWith([row('1-0', 0x01, undefined)]);
+
+    expect(decryptPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("are not confused with the same USER's other device, whose frames are wanted", async () => {
+    // The discriminator has to be the device. A user-level check would have skipped exactly the
+    // frames a second device of this account needs to read.
+    const decryptPage = await replayWith([row('1-0', 0x01, 'my-other-device')]);
+
+    expect(decryptPage).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('hasHistoryFrameBeenConsumed', () => {
   it('answers no for a frame nothing has marked, so an unread frame still reconciles', () => {
     expect(hasHistoryFrameBeenConsumed(USER, GROUP, 'never-seen')).toBe(false);

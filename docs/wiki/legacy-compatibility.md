@@ -91,6 +91,30 @@ on mobile only - green build, green deploy, wrong behaviour.
 site even though the server always sends one. No correctness cost: a missing head means an unbounded
 walk, which is what every client did before the bound existed.
 
+### History rows with no `sender_device_id` - written before 2026-08-15
+
+**Site:** `messaging.service.ts` (`XADD` now writes `sender_device_id`), `historyTypes.ts`
+(`HistoryStreamRow.sender_device_id?`) and the `kind === 'own-message'` arm of the replay's catch in
+`frontend/src/lib/utils/chat/history.ts`.
+**Shim:** the replay skips a row whose `sender_device_id` is this device before offering it to MLS.
+A row written earlier has no such field, so it still reaches MLS and is still recognised by its
+refusal - `CannotDecryptOwnMessage`, classified at the throw in `mls-core`. That arm is now the
+shim; the skip is the mechanism.
+**Why the field and not `sender_id`:** the archive is ONE stream per group and must hold this
+device's own frames, because every other member reads it. The user cannot discriminate - the same
+account's other device wrote frames that are both decryptable and wanted. Only the device can.
+**Replacement:** the field is required, and the `own-message` arm becomes unreachable from the
+replay (it stays reachable, and correct, from live delivery).
+**On removal:** delete the `ownFramesSkipped++` line in the catch, keep the classification itself,
+and make `sender_device_id` non-optional in `HistoryStreamRow`.
+**Removal condition, and it needs no judgement:** `history:{groupId}` carries a TTL of
+`RETENTION_WINDOW_MS`, refreshed on every write, and `HISTORY_STREAM_MAXLEN` caps each group at
+8 000 entries. One full retention window after the deploy, no row without the field can exist in
+any stream - so this can go on **2026-11-13** (90 days), with no migration and nothing to verify
+beyond the date.
+**Cost of keeping it:** none in traffic. The old rows are still handed to MLS to be refused, which
+is exactly what happened before; the fix simply stops that from being the design.
+
 ---
 
 ## Closed

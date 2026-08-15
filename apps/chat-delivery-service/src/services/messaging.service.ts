@@ -779,6 +779,16 @@ export class MessagingService {
           '*',
           'sender_id',
           body.senderId,
+          // THE DEVICE, NOT ONLY THE USER - and it is written here because here is the only place
+          // it is still known. `history:{gid}` is ONE stream per group and must hold this device's
+          // own frames, because every other member reads it; MLS then refuses them by construction
+          // (`CannotDecryptOwnMessage`). `sender_id` cannot filter them: a user's OTHER device's
+          // frames are both decryptable and wanted. So without this field a replay learns which
+          // rows are its own only by handing each one to MLS to be refused - measured at 5 certain
+          // failures per capture, every capture, and thousands per full replay of a 4 282-message
+          // DM. Never learn by failing what a fact could have told you.
+          'sender_device_id',
+          body.senderDeviceId ?? '',
           'content',
           body.proto,
           'timestamp',

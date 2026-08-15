@@ -269,6 +269,13 @@ impl MlsManager {
                 // weight retried three times before the sweeper reaches it: WP-PENDING-2's exact
                 // shape, one classification short.
                 //
+                // SINCE 2026-08-15 THE REPLAY NO LONGER ASKS. The archive row carries
+                // `sender_device_id`, written at `XADD` from the request body, and the replay skips
+                // its own rows before offering them - so this arm is reached only by rows older
+                // than that deploy, and by a genuinely unexpected live frame. It is not dead code
+                // and must not be deleted with the shim: the classification is what every consumer
+                // ACKs on. See `docs/wiki/legacy-compatibility.md`.
+                //
                 // The return stays `Err`, NOT `Ok(None)`: "nothing of ours to read" and "no
                 // application payload" are the distinction this function was taught to keep (see the
                 // past-epoch arm above). The marker is carried verbatim because it IS the contract

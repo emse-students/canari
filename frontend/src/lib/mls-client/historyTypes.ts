@@ -2,6 +2,21 @@
 export type HistoryStreamRow = {
   id?: string;
   sender_id: string;
+  /**
+   * The DEVICE that wrote the frame, which is the only thing that can tell a replay its own rows
+   * from the ones it must read.
+   *
+   * `history:{groupId}` is one stream per group and necessarily holds this device's own frames -
+   * the other members read it. MLS refuses them by construction (`CannotDecryptOwnMessage`), and
+   * `sender_id` cannot filter them out because the SAME user's other device wrote frames that are
+   * both decryptable and wanted. Recorded by the server at `XADD`, from the request body, which is
+   * the last point where it is known.
+   *
+   * Absent on rows written before 2026-08-15. Those still reach MLS and are still classified at
+   * the throw, which is the shim and its own removal condition - see
+   * `docs/wiki/legacy-compatibility.md`.
+   */
+  sender_device_id?: string;
   content: string;
   timestamp: string;
   /**

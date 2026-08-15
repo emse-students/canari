@@ -420,6 +420,16 @@ export async function replayConversationHistory(params: {
     let addedMsg = 0;
     let mlsUpdated = false;
 
+    /**
+     * This device's own rows in the shared archive, skipped rather than offered to MLS.
+     *
+     * Counted rather than logged per row: it is the expected, structural case - the archive is one
+     * stream per group and has to hold what we sent - so a line each would be exactly the noise
+     * this change removes. Reported once, and only alongside a replay that did something.
+     */
+    let ownFramesSkipped = 0;
+    const myDeviceId = mlsService.getDeviceId();
+
     // Collect reaction mutations so we can persist them to DB in one pass after
     // the main message batch write (reactions reference messages from previous
     // sessions that are already in DB).
@@ -518,6 +528,30 @@ export async function replayConversationHistory(params: {
       for (const msg of history) {
         const rowKey = msg.id || `${msg.timestamp}:${msg.content.slice(0, 64)}`;
         if (seenCipherHashes.has(rowKey)) {
+          advancePast(msg.id);
+          continue;
+        }
+        /**
+         * OUR OWN FRAME, RECOGNISED BEFORE IT IS OFFERED TO MLS.
+         *
+         * The shared archive must hold this device's frames - every other member reads that same
+         * stream - so a replay walks them by construction, and MLS refuses every one
+         * (`CannotDecryptOwnMessage`). That was the design ASKING to be told, once per frame for
+         * ever, what the server already knew when it wrote the row. Measured before the fix: 5
+         * certain-to-fail decrypts per MSG capture, in every capture, and thousands per full
+         * replay of a 4 282-message DM.
+         *
+         * The USER is not the discriminator and never could be: this account's other device wrote
+         * frames that are both decryptable and wanted. The device is, and the server now carries
+         * it (`sender_device_id`).
+         *
+         * The row is marked seen so later replays answer from the cheap check above, and the
+         * cursor moves past it - a frame we sent is a frame we have, by definition.
+         */
+        if (msg.sender_device_id && msg.sender_device_id === myDeviceId) {
+          ownFramesSkipped++;
+          seenCipherHashes.add(rowKey);
+          seenUpdated = true;
           advancePast(msg.id);
           continue;
         }
@@ -636,6 +670,13 @@ export async function replayConversationHistory(params: {
           const kind = classifyIncomingDecryptError(err);
           if (kind === 'own-message') {
             // MLS gives no echo of our own message; there is nothing to read and nothing is lost.
+            //
+            // THIS IS NOW THE SHIM, NOT THE MECHANISM. Rows written from 2026-08-15 carry
+            // `sender_device_id` and are skipped above without ever reaching MLS; only rows older
+            // than that deploy still arrive here to be classified by their refusal. It is kept for
+            // exactly as long as such rows can exist - one `RETENTION_WINDOW_MS` past the deploy,
+            // after which the stream cannot hold one. See `docs/wiki/legacy-compatibility.md`.
+            ownFramesSkipped++;
             seenCipherHashes.add(rowKey);
             seenUpdated = true;
             continue;
@@ -876,7 +917,10 @@ export async function replayConversationHistory(params: {
     }
 
     if (mlsUpdated) {
-      log(`[OK] ${addedMsg} message(s) caught up for ${contactName}.`);
+      log(
+        `[OK] ${addedMsg} message(s) caught up for ${contactName}.` +
+          (ownFramesSkipped > 0 ? ` ${ownFramesSkipped} own frame(s) skipped.` : '')
+      );
     }
 
     // Stale-behind: replay hit an epoch gap for a locally-held group and our epoch did NOT
