@@ -91,31 +91,51 @@ its end is unreachable. A layout constraint, not a behaviour change.
 
 ## Outbound connectivity
 
-### P2 - the avatar proxy pays a 5 s budget on IPv6 addresses the container cannot reach
+### P2 - four projects proxy one avatar endpoint, and only Canari calls a transient blip an error
 
-**Diagnosed 2026-08-15, from inside `core-service` on prod.** `gallery.mitv.fr` resolves to four
-addresses; the two IPv6 ones answer `ENETUNREACH` and the two IPv4 ones connect fine:
+**THE IPv6 DIAGNOSIS THAT USED TO BE HERE IS REFUTED. Measured 2026-08-15 from inside the
+containers, and it was wrong.** It said the host has no IPv6 route while DNS hands out AAAA, so every
+avatar fetch burned a 5 s happy-eyeballs budget. The first half is true and the conclusion does not
+follow:
 
-```
-lookup: 172.67.180.204 (4), 104.21.31.239 (4), 2606:4700:3031::6815:1fef (6), 2606:4700:3032::ac43:b4cc (6)
-ERR  6 ...:6815:1fef  ENETUNREACH        OK 4 172.67.180.204
-ERR  6 ...:ac43:b4cc  ENETUNREACH        OK 4 104.21.31.239
-```
+| measurement | result |
+| --- | --- |
+| `ENETUNREACH` on a v6 address, from `core-service` | **0-2 ms** - the kernel answers with no packet sent |
+| `GET https://gallery.mitv.fr/` default vs `family: 4` | **85 ms vs 73 ms** - the whole IPv6 tax is 12 ms |
+| the real avatar endpoint, 40 sequential | **40/40 HTTP 404, median 30 ms** |
+| 30 CONCURRENT, three rounds | **51-146 ms for the whole burst, no failure** |
+| Immich `/api/people/<id>/thumbnail`, 15 real users | **200 x15, median 13 ms, max 80 ms** |
 
-The container has no IPv6 route, but DNS keeps handing it AAAA records, so every avatar fetch enters
-Node's happy-eyeballs path - `internalConnectMultiple` and `Timeout.internalConnectMultipleTimeout`
-are in every captured stack - against the `timeout: 5000` in `avatar.service.ts`. When those attempts
-hang rather than failing fast, the whole request dies `ETIMEDOUT` and the endpoint answers 404 with
-the UI falling back to initials. **Eleven of them in one five-minute READ window.**
+A failure mode costing 2 ms cannot produce a 5 s timeout. **The lesson is the measurement, not the
+conclusion**: the original evidence was a `grep -c` over the whole `util.inspect` dump, where one
+error object repeats its codes throughout its own graph - so "16 ENETUNREACH, 34 ETIMEDOUT" counted
+an object, not events. The `AggregateError`'s own code, read properly, is `ETIMEDOUT`, twice: two
+transient failures to complete a TCP connection, on a path that measures healthy in every component
+now. **Every outbound dependency is dual-stacked** (gallery, Stripe, FCM, the Cloudflare API, Lydia,
+`canari-emse.fr` itself), so if AAAA records were the fault it would be platform-wide - and it is
+not, because the tax is 12 ms.
 
-Three candidate fixes, and the choice is a judgement rather than a lookup: pin the avatar client to
-IPv4 (`family: 4`, or `dns.setDefaultResultOrder('ipv4first')`), give the container a working IPv6
-route, or turn `autoSelectFamily` off for that client. **Whether the proxy should exist at all is a
-separate and prior question, and it is the user's** - see the note in `CLAUDE.md`.
+**What IS real, and is the actual finding.** Four projects fetch `gallery.mitv.fr/api/users/<id>/avatar`
+with `x-api-key`, each having written its own failure handling:
 
-The log-volume half of this is already fixed: the handler used to pass the whole axios error to the
-Nest logger, which printed `util.inspect` of the TLS socket - about 500 lines per occurrence, 5 581
-lines from those eleven incidents, enough to make the service's whole window unreadable.
+| project | timeout | on failure |
+| --- | --- | --- |
+| Le Cercle (`lib/server/migallery/index.ts`) | `AbortSignal.timeout(4000)`, justified in a comment | `null` -> initials, one log line that separates *no key* / *legitimate 404* / *unreachable* |
+| Canari (`core-service/users/avatar.service.ts`) | axios `timeout: 5000` | **502 + `logger.error`** |
+| Sky (`routes/api/avatar/[id]/+server.ts`) | **none at all** | generated initials SVG |
+| Portail-etu (`routes/api/users/[userId]/avatar/+server.ts`) | its own `GALLERY_API_URL` | separate again |
+
+Canari is the only one that turns a transient upstream blip into an ERROR rather than degrading, and
+that is the whole reason only its logs are noisy - the other three reach the same user-visible
+outcome (initials) silently. **Le Cercle's is the version to copy**: a stated budget, a null return,
+and a log line whose wording tells the three causes apart. Sky's missing timeout is the opposite
+risk and is worth fixing on its own.
+
+The log-volume half is already fixed: the handler used to pass the whole axios error to the Nest
+logger, printing `util.inspect` of the TLS socket - about 500 lines per occurrence, 5 581 lines from
+eleven incidents, enough to make the service's whole window unreadable. It now also names the user
+and the destination, which makes the line partitionable by subject; it was not, which is why those
+errors could never be attributed to a campaign account or to a stranger.
 
 ## Interface
 

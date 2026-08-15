@@ -89,6 +89,33 @@ Everything wanted but NOT scheduled is [backlog](docs/wiki/backlog.md) - file it
 
 ### CANARI - what is open
 
+**WP-AVATAR-1 (P2) - one avatar endpoint, four proxies, four different failure behaviours.**
+Canari, Sky, Le Cercle and Portail-etu each fetch `gallery.mitv.fr/api/users/<id>/avatar` with
+`x-api-key`, each having independently written what happens when it does not answer. **Le Cercle's is
+the one to copy** (`lib/server/migallery/index.ts`): a stated budget - `AbortSignal.timeout(4000)`
+with the reason in a comment - a `null` return, and one log line whose wording separates *no key
+configured* / *legitimate 404* / *unreachable*. **Canari is the outlier**: it is the only one that
+turns a transient upstream blip into a **502 and a `logger.error`**, which is the entire reason only
+its logs are noisy while the other three degrade to initials silently and say nothing. Sky is the
+opposite risk - **no timeout at all**, so a hung upstream hangs the request. The comparison table and
+every refuting measurement are in [backlog](docs/wiki/backlog.md); do not re-derive them.
+Scope to decide before starting: whether this becomes ONE shared client or four aligned copies
+across four repos, and whether Canari should degrade to initials rather than 502.
+
+**WP-OUTBOX-2 (P2) - an undecided tab leadership is read as "another tab is the leader".**
+`isTabLeader` starts `false` and is only set once `initTabLeadershipAsync` resolves the Web Lock, so
+during boot `getIsTabLeader()` answers `false` and `runFlush` reads that as *someone else will do
+it*. It then delegates to a leader that, on a single-tab client, does not exist, and returns before
+`scheduleBackoff` - which would not have armed anything anyway, since a never-attempted entry has no
+`nextAttemptAt`. So a message enqueued inside the boot gap waits for an unrelated wake-up
+(`onReconnect`, a `visibilitychange`, a peer tab, the next `enqueue`). **Observed twice**: A1 after a
+reload, and W1 - a single-tab profile - at READ pass 4's `goto`. Neither lost a message. **The fix is
+a state, not a retry**: leadership has three states and the code models two; `runFlush` must await
+resolution rather than treat "undecided" as "not mine". Mechanism and the discriminator that
+identified it (the ABSENCE of `[TAB] Another tab is active`) are in
+[backlog](docs/wiki/backlog.md). Owed with it: a check that sends INSIDE the gap on purpose - no
+test does, which is why this is still inference about the consequence rather than a measurement.
+
 **SHIPPED, VERIFIED AND CLOSED - do not re-open, do not reconstruct any of them here.**
 WP-FALSELOSS-1, the two A1 startup defects, WP-PENDING-2 (the undrained queue, measured to `0` rows
 on A1 and no runaway device left on the fleet), WP-PREFIX-1 (six of seven internal cross-service
@@ -152,15 +179,14 @@ ladder climbs itself". Mechanism, both captures and the completed test fixture a
 three rules in [durable-rules](docs/wiki/durable-rules.md). **The campaign masked it structurally** -
 every check reloads, which is why the proof had to be MADE rather than found.
 
-**The avatar 404s are attributed and the CAUSE is now known (2026-08-15).** `gallery.mitv.fr` gives
-four addresses; from inside `core-service` the two IPv6 ones answer **`ENETUNREACH`** and both IPv4
-ones connect fine - the container has no IPv6 route while DNS keeps handing it AAAA records, so every
-fetch burns happy-eyeballs attempts against a 5 s budget and can die `ETIMEDOUT` -> 404 -> initials.
-Diagnosis, the capture and the three candidate fixes are in [backlog](docs/wiki/backlog.md) (P2).
-**Still the user's call whether that proxy should exist at all**, which is prior to picking a fix.
-The LOG-VOLUME half is fixed: the handler passed the whole axios error to the Nest logger, printing
-`util.inspect` of the TLS socket - **5 581 lines from 11 incidents**, which made the service's entire
-window unreadable. `srvlog.mjs` now also collapses a dump to its error line and reports the count.
+**THE AVATAR IPv6 DIAGNOSIS IS REFUTED - do not re-derive it (2026-08-15).** This file asserted that
+AAAA records the container cannot route burn a 5 s budget. Measured from inside the containers:
+`ENETUNREACH` costs **0-2 ms**, the IPv6 tax on a real request is **12 ms** (85 ms vs 73 ms forced
+v4), the avatar endpoint answers **40/40 in 30 ms**, 30 CONCURRENT in 51 ms, and Immich thumbnails
+in 13 ms. A 2 ms failure cannot make a 5 s timeout. The original evidence was a `grep -c` over a
+`util.inspect` dump, which counts one object's repeated fields as events - **a bad measurement is
+worse than none, because it gets written down.** What remains is two transient `ETIMEDOUT` on a path
+that measures healthy in every component. **The real finding is WP-AVATAR-1 below.**
 
 **WP-GARAGE-1 IS SHIPPED (2026-08-14) - MinIO -> Garage, verified on prod.** Every object
 (200 / 45.370 MiB) copied via `rclone sync` and confirmed identical with `rclone check` (0 diffs)
