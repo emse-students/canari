@@ -82,7 +82,36 @@ media service, a service-worker cache, the client's own store, or all three - be
 not a bug and a missing invalidation is. MiGallery is a separate origin with its own cache, so it
 also establishes whether the URL itself is content-addressed.
 
-### P2 - a name that fails to resolve once is "Utilisateur inconnu" for two minutes, silently
+### P2 - what made the profile fetches fail on that device at that moment
+
+**THE MECHANISM HALF IS CLOSED (2026-08-16). WHAT REMAINS IS THE TRIGGER**, which no amount of code
+reading answers and which is the only reason this entry still exists. Everything below the horizontal
+rule is the original finding, kept because it is the measurement; what shipped against it, in order:
+
+1. a `console.warn` that ACCUSES on every failed lookup, so the fallback can finally be counted -
+   the file had no logging at all, which is why "9 of 10 rows unknown" reached a run log with
+   nothing anywhere to explain it;
+2. a `connectivity.onReconnect` listener that clears `failedAt`, because **a failure recorded while
+   the network was down is evidence about the network, not about the user** - regaining
+   connectivity refutes the suppression outright, and a shorter timer would only have made the same
+   wrong answer shorter;
+3. the placeholder-caching guard, read against the VALUE rather than against the doc comment, and
+   left as an explicit answer: a profile that really carries no name is a definitive result;
+4. **a failed lookup now answers `null` instead of the label.** The label is truthy and all
+   twenty-six call sites read `if (resolved) use it`, so ONE failed request made every screen
+   overwrite a name it already had - and only the first time, the backoff answering `null`
+   afterwards, so the same event rendered two different ways depending on how recently it had
+   happened. The synchronous read stopped discarding the caller's `fallback` during the backoff for
+   the same reason. Both are pinned by `displayName.spec.ts`.
+
+So a single blip no longer anonymises anything a caller could name by itself. **What is still owed is
+the denominator**: with the log line in place, measure how often that `catch` actually fires and
+against what population, before deciding whether the two-minute backoff has any case left to serve.
+Do not assume it is the same fault as the avatar endpoint, and do not assume it is not.
+
+---
+
+#### The original finding, 2026-08-16 - a name that fails to resolve once is "Utilisateur inconnu" for two minutes, silently
 
 **Measured twice on 2026-08-16, on BOTH platforms**, by `awaitListed`'s first two sightings since it
 learnt to report state - 11:14Z on the phone and 11:18Z on a desktop browser, the same numbers each

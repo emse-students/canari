@@ -124,10 +124,13 @@ export function getUserDisplayNameSync(userId: string, fallback?: string): strin
     }
   }
 
-  // During the failure backoff window, surface the "unknown" label synchronously
-  // so the UI doesn't flicker between the raw ID and the async-resolved label.
-  if (shouldSkipRetry(normalized)) return m.user_unknown_label();
-
+  // A FAILED LOOKUP MAY NOT OVERRULE A NAME THE CALLER ALREADY HAS. There used to be a branch here
+  // returning the label during the backoff window, whose stated purpose - "don't flicker between the
+  // raw ID and the label" - was already served by the line below, which never returns an id either.
+  // What it actually did was DIFFERENT: it dropped the caller's `fallback`. So a conversation row
+  // that knew perfectly well whose it was rendered as "Utilisateur inconnu" for two minutes because
+  // one unrelated profile fetch had failed. Not knowing a name is not the same as knowing there is
+  // none, and only the second may erase what the caller brought.
   return fallback?.trim() || m.user_unknown_label();
 }
 
@@ -176,7 +179,15 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
         { userId: normalized, error: e }
       );
       failedAt.set(normalized, Date.now());
-      return m.user_unknown_label();
+      // NULL, NOT THE LABEL - "I could not find out" is what happened, and it is already what this
+      // function returns for every other unresolved case (the system sender, the backoff window).
+      // Returning the label instead made a failure indistinguishable from an answer, and all
+      // twenty-six call sites are written as `if (resolved) use it`: every one of them therefore
+      // OVERWROTE a name it already had with "Utilisateur inconnu" on the first failed fetch, and
+      // then stopped doing so for the rest of the backoff - the same event rendering two different
+      // ways depending on how recently it had happened. Rendering the label is the caller's
+      // decision and `getUserDisplayNameSync` already makes it.
+      return null;
     })
     .finally(() => {
       inFlight.delete(normalized);
@@ -205,6 +216,10 @@ export async function resolveDisplayNames(ids: string[]): Promise<(id: string) =
         return;
       }
       const resolved = await resolveUserDisplayName(norm);
+      // `null` now also covers a fetch that FAILED, which used to arrive here as the label. Keeping
+      // the id is the decision this function already made for the other unresolved cases, and its
+      // reason holds for this one too: the text built here is STORED, so a label baked into it
+      // outlives the outage that produced it, while an id can still be resolved by a later reader.
       map.set(norm, resolved ?? id);
     })
   );

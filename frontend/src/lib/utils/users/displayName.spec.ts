@@ -303,6 +303,39 @@ describe('formatProfileDisplayName (indirect)', () => {
     expect(result).toBe('Jean Dupont');
   });
 
+  it('answers null when the fetch FAILS, so a caller cannot mistake it for an answer', async () => {
+    // THE DEFECT THIS PINS: the catch used to return the "unknown user" label, which is truthy, and
+    // every call site in the app is written as `if (resolved) use it`. So one failed request made
+    // twenty-six different screens overwrite a name they already had with "Utilisateur inconnu" -
+    // and only the FIRST time, because the backoff answered null afterwards. The same event
+    // rendering two different ways depending on how recently it had happened.
+    const userModule = await import('$lib/stores/user');
+    vi.mocked(userModule.fetchUserProfile).mockRejectedValueOnce(new Error('network down'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const mod = await import('./displayName');
+    const result = await mod.resolveUserDisplayName('usr_unreachable');
+
+    expect(result).toBeNull();
+    // And it accuses: a fallback is a signal, and this one hides a name with no retry.
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('keeps the caller fallback while a lookup is suppressed by the backoff', async () => {
+    // The synchronous read used to answer the label during the backoff window, discarding the
+    // fallback the caller had passed - so a row that knew whose it was went anonymous for two
+    // minutes because an unrelated profile fetch had failed.
+    const userModule = await import('$lib/stores/user');
+    vi.mocked(userModule.fetchUserProfile).mockRejectedValueOnce(new Error('network down'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const mod = await import('./displayName');
+    await mod.resolveUserDisplayName('usr_suppressed');
+
+    expect(mod.getUserDisplayNameSync('usr_suppressed', 'Marie Curie')).toBe('Marie Curie');
+    expect(mod.getUserDisplayNameSync('usr_suppressed')).toBe(UNKNOWN_LABEL);
+  });
+
   it('should return firstName when only firstName is set', async () => {
     const userModule = await import('$lib/stores/user');
     vi.mocked(userModule.fetchUserProfile).mockResolvedValueOnce({

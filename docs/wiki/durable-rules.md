@@ -809,6 +809,13 @@ The three that generalise beyond it:
   on the portal, and two requests per faceless avatar per mount on the web client.
 - **OUR CREDENTIALS ARE NOT THE USER'S, SO OUR UPSTREAM'S 401 MUST NOT BECOME THEIRS.** A proxy that
   forwards an upstream 401 hands the browser the one status the standing rule lets log a user out.
+- **A LOOKUP THAT FAILED RETURNS "I DO NOT KNOW", NEVER THE TEXT IT WOULD HAVE DISPLAYED.** The
+  moment a failure answers with a renderable value, it is TRUTHY, and every caller written as
+  `if (resolved) use it` overwrites what it already had - a name, a fallback, a cached row - with a
+  placeholder. `resolveUserDisplayName` did exactly that to twenty-six call sites, and only on the
+  FIRST failure, the suppression window answering `null` afterwards: one event, two renderings,
+  chosen by how recently it had happened. **Rendering a placeholder is the caller's decision**; the
+  resolver's job ends at the fact.
 
 ## Service-to-service calls -> [api-surface](protocols/api-surface.md#internal-cross-service-calls)
 
