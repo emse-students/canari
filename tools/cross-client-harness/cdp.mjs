@@ -182,7 +182,49 @@ export async function until(cx, predicate, timeoutMs = 20000, stepMs = 60) {
   throw new Error(`until() timed out after ${timeoutMs}ms: ${predicate}`);
 }
 
-/** Scrolls the element into view and returns viewport-centre coordinates, or null. */
+/**
+ * Page-side predicate: is this element under an animation that is going to END?
+ *
+ * IT ANSWERS A QUESTION NO PAIR OF SAMPLES CAN - is this thing moving RIGHT NOW. `getAnimations()`
+ * is the page's own answer, and it covers a CSS animation, a CSS transition and a Svelte transition
+ * alike. The walk goes up the ancestors because an element rarely carries its own motion: a modal's
+ * entry `fly` is on the PANEL and every control inside it travels as a passenger.
+ *
+ * `pending` counts as moving. An animation created this frame has not started painting, so the rect
+ * still reads as its resting place - which is precisely the window that made a confirm button get
+ * clicked 24 px below itself.
+ *
+ * INFINITE ANIMATIONS ARE NOT MOTION TO WAIT FOR. A spinner or a pulse never settles, so counting it
+ * would hang every click near a loader for the whole budget and then report the element unfindable.
+ * Only an animation with an end can be waited out.
+ *
+ * Exported because the callers that compute their own coordinates - the hovered action rows inside a
+ * message bubble, which cannot be named by a selector - need the same answer, and a second copy of
+ * this walk is how one fix becomes two behaviours.
+ */
+export const IS_MOVING_FN = `(function (el) {
+  if (!el || typeof el.getAnimations !== 'function') return false;
+  for (var n = el; n; n = n.parentElement) {
+    var as = n.getAnimations();
+    for (var i = 0; i < as.length; i++) {
+      var a = as[i];
+      if (a.playState !== 'running' && a.playState !== 'pending') continue;
+      var iterations = 1;
+      try { iterations = a.effect.getTiming().iterations; } catch (e) { iterations = 1; }
+      if (iterations === Infinity || iterations === null) continue;
+      return true;
+    }
+  }
+  return false;
+})`;
+
+/**
+ * Scrolls the element into view and returns viewport-centre coordinates, or null.
+ *
+ * `moving` travels WITH the coordinates on purpose: a point and the question of whether it is still
+ * true are one answer, not two, and splitting them is what let a caller aim at a rect that had
+ * already been superseded. See `IS_MOVING_FN` for what it means.
+ */
 export async function centreOf(cx, selector) {
   return evaluate(
     cx,
@@ -191,7 +233,7 @@ export async function centreOf(cx, selector) {
       if (!el) return null;
       el.scrollIntoView({ block: 'center', inline: 'center' });
       var r = el.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2, tag: el.tagName, text: (el.innerText || el.value || '').slice(0, 80) };
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, tag: el.tagName, moving: ${IS_MOVING_FN}(el), text: (el.innerText || el.value || '').slice(0, 80) };
     })()`,
   );
 }
@@ -209,13 +251,26 @@ export async function centreOf(cx, selector) {
  * So: poll until the rect stops moving, then hit-test the integer coordinates that will actually
  * be dispatched. Returns null when the element cannot be pinned down, which the caller must treat
  * as a failure rather than clicking anyway.
+ *
+ * TWO IDENTICAL SAMPLES ARE NOT A PROOF OF REST - they only prove the element was not SEEN moving.
+ * An entry animation that has not begun to paint reads exactly like a settled rect, and a
+ * background tab does not advance one at all. Measured on 2026-08-16: the delete-confirmation
+ * button was clicked 24 px below itself - `dx=0`, `dy=24`, and 24 is precisely the amplitude of the
+ * modal's `in:fly={{ duration: 220, y: 24 }}`. The centre was taken at the animation's START and
+ * dispatched after its END, so the point landed in the footer that holds the button and the click
+ * did nothing at all. Three checks were losing runs to it (MUT-7, MUT-8, MUT-19), in both venues,
+ * on roughly one call in six.
+ *
+ * The repair is a PROOF, not a longer wait: the page is asked whether the element is animating, and
+ * a moving element resets the stability count instead of feeding it. A duration would have been a
+ * guess at every animation in the app; `getAnimations()` is the answer for all of them at once.
  */
 export async function stableCentreOf(cx, selector, timeoutMs = 4000) {
   const t0 = Date.now();
   let last = null;
   while (Date.now() - t0 < timeoutMs) {
     const p = await centreOf(cx, selector);
-    if (!p) {
+    if (!p || p.moving) {
       last = null;
       await new Promise((r) => setTimeout(r, 120));
       continue;
@@ -240,6 +295,95 @@ export async function stableCentreOf(cx, selector, timeoutMs = 4000) {
 }
 
 /**
+ * `stableCentreOf` for a point the CALLER computes, because some targets have no selector.
+ *
+ * A hovered action row inside a message bubble, a reaction in the emoji picker, a sheet icon on the
+ * phone: each is found by walking the DOM from a message row, which `RESOLVE` cannot express. Those
+ * helpers therefore computed a rect and clicked it - inheriting no hit test, no recorder and, once
+ * `stableCentreOf` learnt to wait out animations, not that either. MUT-12 named the consequence on
+ * the first run that could see it: `the 🎉 click was taken by "EMOJI-PICKER" (target was ANIMATING
+ * when measured)`. The picker was still opening.
+ *
+ * `expression` must evaluate to a JSON string of `{x, y, moving, ...}`, or `null` while the target
+ * does not exist yet, or `{blocked: '...'}` when it exists but is covered. ALL THREE ARE POLLED
+ * rather than thrown on: "not there yet", "covered" and "moving" are the same sentence at three
+ * moments of one animation, and a helper that threw on the first two while waiting out the third
+ * would just fail earlier. The last observation is returned on timeout so the caller can say WHICH
+ * of them it died on.
+ */
+export async function stablePoint(cx, expression, timeoutMs = 4000) {
+  const t0 = Date.now();
+  let last = null;
+  let seen = null;
+  while (Date.now() - t0 < timeoutMs) {
+    const raw = await evaluate(cx, expression);
+    seen = raw && raw !== 'null' ? JSON.parse(raw) : null;
+    if (seen && !seen.blocked && !seen.moving) {
+      const x = Math.round(seen.x);
+      const y = Math.round(seen.y);
+      if (last && last.x === x && last.y === y) return { ...seen, x, y };
+      last = { x, y };
+    } else {
+      last = null;
+    }
+    await new Promise((r) => setTimeout(r, 120));
+  }
+  return { timedOut: true, last: seen };
+}
+
+/**
+ * Why `stableCentreOf` gave up - absent, never still, or never on top.
+ *
+ * `no stable element for selector: X` covers three causes with opposite fixes and states none of
+ * them, which is the fault this file keeps re-learning. The animation wait made it worse before it
+ * made it better: an element blocked by a motion nobody has named now fails EVERY time instead of
+ * one time in six, and the message was the same sentence either way.
+ *
+ * The animating ancestor is NAMED, because "something is moving" is not actionable and the walk
+ * already knows which node it stopped at. Read on failure only - it is a diagnostic, not a gate.
+ */
+export async function whyNotStable(cx, selector) {
+  return JSON.parse(
+    await evaluate(
+      cx,
+      `JSON.stringify((function () {
+        var el = ${RESOLVE}(${JSON.stringify(selector)});
+        if (!el) return { found: false };
+        var r = el.getBoundingClientRect();
+        var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+        var hit = document.elementFromPoint(x, y);
+        var blocking = null;
+        for (var n = el; n && !blocking; n = n.parentElement) {
+          var as = n.getAnimations ? n.getAnimations() : [];
+          for (var i = 0; i < as.length; i++) {
+            var a = as[i];
+            if (a.playState !== 'running' && a.playState !== 'pending') continue;
+            var t = {};
+            try { t = a.effect.getTiming(); } catch (e) { t = {}; }
+            if (t.iterations === Infinity || t.iterations === null) continue;
+            blocking = {
+              on: n.tagName + '.' + String(n.className || '').slice(0, 60),
+              name: a.animationName || a.transitionProperty || '(unnamed)',
+              playState: a.playState,
+              durationMs: t.duration || null,
+              iterations: t.iterations === undefined ? null : t.iterations
+            };
+            break;
+          }
+        }
+        return {
+          found: true,
+          rect: [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)],
+          onTopAtOwnCentre: !!(hit && (hit === el || el.contains(hit))),
+          whatIsOnTop: hit ? hit.tagName + '.' + String(hit.className || '').slice(0, 60) : null,
+          blocking: blocking
+        };
+      })())`
+    )
+  );
+}
+
+/**
  * Dispatches ONE recorded click at a point, with the input modality the target actually listens to.
  *
  * THE TRAP, paid for on A1: mobile Chrome does NOT activate a button from
@@ -258,9 +402,14 @@ export async function stableCentreOf(cx, selector, timeoutMs = 4000) {
  * @returns {{modality: 'touch'|'mouse', received: object|null}} `received` NAMES what took the
  *   click - the caller asserts on it, and `null` is not by itself a failure (see `lastClick`).
  */
-export async function clickAtPoint(cx, x, y, { park = true } = {}) {
-  const touch = await evaluate(cx, 'navigator.maxTouchPoints > 0');
-  await armClickRecorder(cx);
+export async function clickAtPoint(cx, x, y, { park = true, expect = null } = {}) {
+  // EVERY ROUND TRIP BETWEEN THE MEASUREMENT AND THE DISPATCH IS DRIFT THE POINT CANNOT SURVIVE, and
+  // this one bought nothing: `maxTouchPoints` is a property of the device behind the connection, so
+  // it was being re-asked on every click of every run for an answer that cannot change. Cached on
+  // the connection, it is asked once per browser per session.
+  if (cx.__touch === undefined) cx.__touch = await evaluate(cx, 'navigator.maxTouchPoints > 0');
+  const touch = cx.__touch;
+  await armClickRecorder(cx, expect);
 
   if (touch) {
     const point = [{ x, y, radiusX: 12, radiusY: 12, force: 1 }];
@@ -298,11 +447,34 @@ export async function clickAtPoint(cx, x, y, { park = true } = {}) {
 
 /**
  * Clicks the element a selector names, at a centre that is still true when the click lands.
+ *
+ * AND SAYS SO IF IT WAS NOT. A dispatch that misses is silent by nature - the wrong element usually
+ * has no handler, so the page simply does not change and the check dies later, somewhere else,
+ * waiting for a consequence that was never set in motion. That is how a 24 px miss on a modal
+ * button spent five runs looking like "the delete-confirmation dialog never closed". The recorder
+ * already knows the answer at click time; refusing to look at it was the whole cost.
+ *
+ * This must never fire now that `stableCentreOf` waits out animations - so if it does, it is a
+ * motion nobody has named yet, and the message carries what is needed to name it.
  */
 export async function realClick(cx, selector, { park = true } = {}) {
   const p = await stableCentreOf(cx, selector);
-  if (!p) throw new Error(`no stable element for selector: ${selector}`);
-  return { ...p, ...(await clickAtPoint(cx, p.x, p.y, { park })) };
+  if (!p) {
+    throw new Error(
+      `no stable element for selector: ${selector} - ${JSON.stringify(await whyNotStable(cx, selector))}`
+    );
+  }
+  const outcome = await clickAtPoint(cx, p.x, p.y, { park, expect: selector });
+  // `expected === null` means the recorder saw no click at all, which is NOT a failure: a touch
+  // dispatch synthesises its click asynchronously and a click that navigates tears the context down
+  // before the read. Only a click that WAS seen, landing outside the element, is a miss.
+  if (outcome.received && outcome.received.expected === false) {
+    throw new Error(
+      `click missed its target: ${selector} - dispatched at ${p.x},${p.y} on <${p.tag}>, ` +
+        `taken by ${JSON.stringify(outcome.received)}`
+    );
+  }
+  return { ...p, ...outcome };
 }
 
 /**
@@ -316,15 +488,22 @@ export async function realClick(cx, selector, { park = true } = {}) {
  * cleared, and nothing in the run could say whether the click opened that modal or merely found it.
  * The event is the only witness, so listen for it - in the CAPTURE phase, which no page handler can
  * pre-empt or stop.
+ *
+ * `expect` NAMES THE ELEMENT THE CALLER MEANT, and the verdict is computed AT CLICK TIME. Reading it
+ * afterwards cannot work: a click that succeeds usually destroys its own target (the modal closes,
+ * the row unmounts), so re-resolving the selector after the fact answers "gone" for a hit and for a
+ * miss alike. Resolved once here, compared inside the listener, and reported as `expected`.
  */
-export async function armClickRecorder(cx) {
+export async function armClickRecorder(cx, expect = null) {
   await evaluate(
     cx,
     `(function () {
       window.__lastClick = null;
+      window.__clickExpect = ${expect === null ? 'null' : `${RESOLVE}(${JSON.stringify(expect)})`};
       if (window.__clickRec) document.removeEventListener('click', window.__clickRec, true);
       window.__clickRec = function (e) {
         var t = e.target;
+        var want = window.__clickExpect;
         // THE TARGET IS USUALLY NOT THE CONTROL. A click on a button lands on the span or the
         // svg inside it, so tag/label/text describe a decoration and answer nothing about WHICH
         // control took the event - the only question this recorder exists to answer. The enclosing
@@ -336,7 +515,8 @@ export async function armClickRecorder(cx) {
           tag: t.tagName,
           label: t.getAttribute('aria-label') || '',
           text: (t.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40),
-          btn: b ? (b.getAttribute('aria-label') || b.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40) : ''
+          btn: b ? (b.getAttribute('aria-label') || b.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40) : '',
+          expected: want ? (t === want || want.contains(t)) : null
         };
       };
       document.addEventListener('click', window.__clickRec, true);

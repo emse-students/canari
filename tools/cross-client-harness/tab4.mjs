@@ -28,7 +28,7 @@ import {
   settledCount,
 } from './chat.mjs';
 import { connect, listTargets } from './cdp.mjs';
-import { dirtOf, report, watch } from './watch.mjs';
+import { gate, report, watch } from './watch.mjs';
 import { mark, record } from './results.mjs';
 import { PORTS, SITE, peerNameFor } from './names.mjs';
 
@@ -133,20 +133,20 @@ const WATCHED = [
  */
 function verdict(id, r, expected) {
   const wrong = Object.entries(expected).filter(([k, v]) => r.counts[k] !== v);
-  const dirty = Object.entries(r.reports).filter(([, rep]) => !rep.clean);
-  const v = wrong.length
-    ? 'FAIL'
-    : !r.allSettled
-      ? 'INCONCLUSIVE'
-      : dirty.length
-        ? 'PASS-DIRTY'
-        : 'PASS';
-  record(id, v, {
+  const asserted = wrong.length ? 'FAIL' : !r.allSettled ? 'INCONCLUSIVE' : 'PASS';
+  // `gate`, not a hand-rolled copy of it. This function computed the same thing correctly and named
+  // it `dirt`, which is one field away from `dirtOf` and one CONCEPT away from the record every other
+  // check writes: no `clean` key, so a reader filtering the ledger for observed runs skipped all
+  // three TAB-4 rows, and `record`'s own refusal - which recognises an observation by that key -
+  // would now demote them to UNOBSERVED. A private reimplementation of a shared rule stays right
+  // exactly until the shared one moves.
+  const gated = gate(asserted, r.reports);
+  record(id, gated.verdict, {
+    ...gated.detail,
     marker: r.marker,
     counts: r.counts,
     expected,
     countsSettled: r.allSettled,
-    dirt: Object.fromEntries(dirty.map(([k, rep]) => [k, dirtOf(rep)])),
   });
 }
 

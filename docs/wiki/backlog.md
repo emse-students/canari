@@ -82,6 +82,50 @@ media service, a service-worker cache, the client's own store, or all three - be
 not a bug and a missing invalidation is. MiGallery is a separate origin with its own cache, so it
 also establishes whether the URL itself is content-addressed.
 
+### P2 - a name that fails to resolve once is "Utilisateur inconnu" for two minutes, silently
+
+**Measured twice on 2026-08-16, on BOTH platforms**, by `awaitListed`'s first two sightings since it
+learnt to report state - 11:14Z on the phone and 11:18Z on a desktop browser, the same numbers each
+time: `{"path":"/chat","sidebarPanel":true,"listedEntries":10,"unknownLabelRows":9}`. The list HAD
+loaded - ten rows - and **nine of them carried the fallback label**, for the twenty seconds the check
+waited. Not a race, not device-specific, and not a stale bundle: `8b68bfe9` is an ancestor of both
+the deployed build and the APK, so both clients are running the fix for the PREVIOUS instance of this
+symptom, which its own commit message describes as "on web and on Android, permanently".
+
+**It also corrects four earlier sightings.** MUT-13, MUT-19 and one each on MUT-7 and MUT-8 had been
+read as "a list that fails to populate", and the reading was wrong in a way no amount of thought
+would have caught: the lists were full every time, and only the NAMES were missing, so a search by
+name could not match. The bare `until()` timeout could not tell the two apart, and the difference is
+an application defect versus a loading problem that does not exist.
+
+Three facts in `frontend/src/lib/utils/users/displayName.ts`, all readable without reproducing
+anything:
+
+- **`FAILURE_BACKOFF_MS` is 2 minutes and nothing announces it.** One failed `fetchUserProfile` sets
+  `failedAt`, and for the next 120 s `getUserDisplayNameSync` returns the label while
+  `resolveUserDisplayName` returns `null` WITHOUT retrying (`shouldSkipRetry`, both call sites). One
+  blip anonymises every affected row for two minutes.
+- **The `catch` swallows the error entirely** (line ~137: `failedAt.set(...); return
+  m.user_unknown_label()`). The file contains no `Log.`, no `console.`, nothing - so the fallback
+  that fires cannot be counted, and its rate against the population is unknown. This alone is a
+  defect under the standing rules: a swallowed branch logs, and a fallback is logged at a level that
+  ACCUSES.
+- **A 200 carrying no names is cached as though it were a resolved name, for ever.**
+  `formatProfileDisplayName` returns the LABEL when a profile has no `firstName`/`lastName`/
+  `displayName`; the guard then asks `value !== normalized` - is it different from the user ID - which
+  is true of the label always, so the placeholder is written into `displayNameCache` and that Map has
+  no expiry. The guard was written against the function's doc comment ("firstName+lastName >
+  displayName > **id**"), which describes a behaviour the code does not have. **A guard tested
+  against the documentation instead of the value is a guard that cannot fire.**
+
+What is NOT established, and must be before this is scheduled: **what made the fetches fail on that
+device at that moment.** The mechanism above turns one failure into two silent minutes, but the
+trigger is unknown, and the neighbouring
+[four projects proxy one avatar endpoint](#p2---four-projects-proxy-one-avatar-endpoint-and-only-canari-calls-a-transient-blip-an-error)
+entry covers adjacent user endpoints - do not assume they are the same fault, and do not assume they
+are not. The first move is the log line that does not exist yet: without it there is no denominator,
+and the previous instance of this symptom survived precisely because reloading hid it.
+
 ### P2 - the message hover bar is too wide on desktop, and the sidebar takes its clicks
 
 Reported by a user as "the end is unreachable when the window is half the screen". **Measured on
@@ -674,3 +718,50 @@ It sits at the repository root and its name says what it uses rather than what i
 device logs for the verification pass. It belongs with the harness documentation that references it
 ([device-verification](device-verification.md)). A rename touches every doc that names it, so grep
 before moving.
+
+### The campaign covers chat, and the app is not only chat
+
+**Asked for on 2026-08-16, explicitly for AFTER the current campaign closes** - nothing here is
+scheduled and nothing here blocks the 18 sections.
+
+**It is a SECOND CAMPAIGN, not more sections on this one** - the user's framing, and it settles a
+structural question rather than a stylistic one. The expected size is dozens of checks per surface,
+where the current dashboard already carries 18 sections in one file whose entire job is to be a LIVE
+summary someone can read. Pouring a second campaign into it destroys that property, and the rule
+that keeps it readable (state only, no narrative, no second copy of anything) is exactly the rule
+that would be broken first. So: its own dashboard, its own manifest, its own phase files - and
+`checks.mjs`'s phase list is the seam to look at first, since a second campaign must be runnable
+without re-running this one.
+
+The dashboard's 18 sections were written around one class of failure: a message crossing between two
+transports and two platforms, and the silent loss that class produces. That is where the incidents
+were. It leaves whole surfaces of the product with **no check at all** - posts, forms, communities as
+a management surface, profiles, media browsing, calendar, payments - and a surface with no check is
+not a surface that works, it is one nobody has asked about.
+
+The named starting point is the **`social` notification family**: a post, a comment, a reaction on a
+post, a form alert. What makes it worth its own sections rather than a few rows appended to NOTIF is
+that it does **not** share the chat path - no MLS, no per-device fan-out, no outbox - so none of the
+verdicts already taken transfer to it. Its delivery is server-decided, which is a different failure
+mode (an audience computed wrong sends a notification to the wrong people, and nothing on the client
+can detect that).
+
+Three things must be settled BEFORE writing checks, or this repeats the campaign's own early
+mistakes rather than inheriting its lessons:
+
+- **The venue.** Every existing check sends into the two-test-account DM or `Campagne de test`
+  precisely because production is shared. A post or a form alert has an AUDIENCE, so the same
+  discipline needs an answer that does not exist yet: what does a test post look like that no real
+  member is notified by? Until that is answered, no social check may run on prod.
+- **The observer.** `srvlog.mjs` partitions its window by subject and classifies every line. The
+  services behind posts and forms are not in that window today, and an unclassified window is not an
+  observation - so the server half of `social` has to be added to the classifier, with its
+  self-test, before the first verdict is believed.
+- **What a verdict rests on.** A chat check reads the peer's DOM. A notification with an audience is
+  only correct if the people who should NOT get it did not - which is an assertion about absence,
+  over a population, and needs its window sized from a measured latency rather than guessed
+  ([testing-methodology](testing-methodology.md), rule 13).
+
+Cost is the reason this is a backlog entry and not a plan: each new section carries a phase file, its
+classifier rules, and its cleanup on a production database. Scope it against what has actually broken
+in these surfaces before deciding how many of them earn a section.

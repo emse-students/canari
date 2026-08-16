@@ -20,7 +20,7 @@
  */
 import { client, openConversation, send, evaluate, markers } from './chat.mjs';
 import { watch } from './watch.mjs';
-import { mark } from './results.mjs';
+import { mark, record } from './results.mjs';
 import { execFileSync } from 'node:child_process';
 import { peerNameFor } from './names.mjs';
 
@@ -204,6 +204,8 @@ if (preOnW2 < REWIND_SENDS) {
   process.exit(2);
 }
 
+/** The recorded row, hoisted out of the `try` so the exit code at the foot can read the VERDICT. */
+let row = null;
 try {
 // --------------------------------------------------------------------------- 2. break it
 console.log('[heal] restore:', execFileSync('node', ['mlsdb.mjs', '--port', '9224', 'restore'], { encoding: 'utf8' }).replace(/\s+/g, ' ').slice(0, 200));
@@ -262,9 +264,29 @@ console.log(
   `[heal] VERDICT: ${finalOnW2 === BREAK_SENDS ? 'HEALED' : finalOnW2 > 0 ? 'PARTIAL' : 'NOT HEALED'} ` +
     `- ${finalOnW2}/${BREAK_SENDS} of the messages sent from a rewound state reached the peer`
 );
+
+// `unobservable` rather than a gate, for the reason spelt out at the same point in `heal-a1.mjs`:
+// this check rewinds W1's MLS store deliberately, so the loss markers are its stimulus and the
+// console is read as the ASSERTION (`sawLoss`, `escalated`, `diffRan`) rather than as a gate.
+row = record('HEAL-WEB', finalOnW2 === BREAK_SENDS ? 'PASS' : finalOnW2 > 0 ? 'PARTIAL' : 'FAIL', {
+  unobservable:
+    'rewinds W1 MLS store on purpose - LOST frame / SecretReuse / out-of-bounds are the stimulus. ' +
+    'The console is the assertion here: see lossDetected / escalated / historyDiffRan.',
+  sends: BREAK_SENDS,
+  onReceiver: finalOnW2,
+  onSender: finalOnW1,
+  lossDetected: sawLoss,
+  narrowRetransmission: narrow,
+  escalated,
+  historyDiffRan: diffRan,
+  fellBackToWholeStore: fellBack,
+  timeline,
+});
 } finally {
   // Runs on the happy path AND on any throw: a check that puts the app through a transition must
   // restore every precondition that transition destroys, and this one destroys the rig's own.
   await ensureDeliverable(TEARDOWN_PROBES);
 }
-process.exit(0);
+// Explicit - two CDP sockets stay open, so `beforeExit` never fires - and read off the recorded
+// verdict, where `process.exit(0)` used to report success over a group that healed nothing.
+process.exit(row?.verdict === 'PASS' ? 0 : 1);

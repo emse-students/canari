@@ -9,7 +9,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { awaitMessage, client, countMessage, openChannel, send } from './chat.mjs';
-import { gate, logcatSince, report, sanity, watch } from './watch.mjs';
+import { gate, logcatReport, logcatSince, report, sanity, watch } from './watch.mjs';
 import { mark, record } from './results.mjs';
 import { PORTS } from "./names.mjs";
 
@@ -73,7 +73,9 @@ const copies = {
   W2: await countMessage(w2, marker),
   A1: await countMessage(a1, marker),
 };
-const phone = await logcatSince(t0);
+// CLASSIFIED, not dumped. This used to be the raw `logcatSince` array, written whole into
+// `logs/msg5-<marker>.json` and read by nobody - a capture is not an observation.
+const phone = logcatReport(await logcatSince(t0), 'A1-native');
 
 const converged = Object.values(copies).every((c) => c === 1);
 // ONE NAME FOR ONE STATE. This used to spell a dirty pass `PASS-WITH-NOISE` while MSG-10 spelt the
@@ -84,7 +86,10 @@ const converged = Object.values(copies).every((c) => c === 1);
 // the network traffic for the plaintext secret, and finding it means the ciphertext-only guarantee
 // is broken. That is the most serious thing MSG-5 can report and it may never be softened to a
 // qualified pass.
-const gated = gate(converged && leaked.length === 0 ? 'PASS' : 'FAIL', Object.fromEntries(observed.map((o) => [o.label, o])));
+const gated = gate(converged && leaked.length === 0 ? 'PASS' : 'FAIL', {
+  ...Object.fromEntries(observed.map((o) => [o.label, o])),
+  'A1-native': phone,
+});
 writeFileSync(
   new URL(`./logs/msg5-${marker}.json`, import.meta.url),
   JSON.stringify({ marker, at, latency, copies, pre, leaked, observed, phone }, null, 1),

@@ -7,7 +7,7 @@
  *
  * See docs/wiki/cross-client-testing.md section 9 (evidence rule).
  */
-import { RESOLVE, activate, clickAtPoint, connect, evaluate, listTargets, pressKey, realClick, until } from './cdp.mjs';
+import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, evaluate, listTargets, pressKey, realClick, stablePoint, until } from './cdp.mjs';
 
 // SCOPED TO THE CHAT, and that scoping is the whole point.
 //
@@ -637,12 +637,12 @@ export async function openChannel(cx, community = 'Campagne de test', channel = 
     );
 
   await goto(cx, '/communities');
-  await until(cx, `!!${RESOLVE}('text=${community}')`, 20000);
+  await awaitListed(cx, `!!${RESOLVE}('text=${community}')`, 20000, 'the community', cx.port);
   // SETTLE BEFORE EVERY CLICK, not once at the top: the community click itself starts work that can
   // raise a strip again, so the state has to be re-established rather than assumed to persist.
   const settledBefore = await awaitAppSettled(cx);
   await realClick(cx, `text=${community}`);
-  await until(cx, `!!${RESOLVE}('text=${channel}')`, 15000);
+  await awaitListed(cx, `!!${RESOLVE}('text=${channel}')`, 15000, 'the channel', cx.port);
   const settledAfter = await awaitAppSettled(cx);
   const point = await realClick(cx, `text=${channel}`);
 
@@ -712,6 +712,57 @@ export async function openChannel(cx, community = 'Campagne de test', channel = 
   return `${community}/${channel}`;
 }
 
+/**
+ * Waits for an entry to be LISTED, and says what the list held when it never was.
+ *
+ * `until(RESOLVE('text=X'))` rethrows its own source on timeout, which is forty lines of resolver
+ * and no state at all. Four sightings on 2026-08-16 - MUT-13, MUT-19, and one each on MUT-7 and
+ * MUT-8 - died that way, and none of them could be attributed: the same message covers a list that
+ * never loaded, a list that loaded WITHOUT this entry, and an entry present under a label the
+ * search cannot match. Those are one instrument fault and two application defects.
+ *
+ * `listedEntries` is the discriminator, and it names no one: ZERO is a fetch that did not land or a
+ * surface that never mounted, while a populated list missing this one entry is a membership or a
+ * labelling question. The rows themselves are never printed - this runs against a real account
+ * whose sidebar carries real conversations, and `unknownLabelRows` covers the only row text worth
+ * counting: a conversation rendered under the "Utilisateur inconnu" fallback exists but can never
+ * match a search by name.
+ *
+ * Takes a PREDICATE rather than a selector because its two callers search differently -
+ * `openChannel` by `RESOLVE('text=')`, `openConversation` by a sidebar-scoped shortest-match - and
+ * a helper that fits only one of them is how the second caller keeps its bare timeout.
+ */
+export async function awaitListed(cx, predicate, timeoutMs, what, port) {
+  try {
+    return await until(cx, predicate, timeoutMs);
+  } catch {
+    const state = JSON.parse(
+      await evaluate(
+        cx,
+        `JSON.stringify((function () {
+          var panel = document.querySelector('.sidebar-panel');
+          var scope = panel || document.body;
+          var rows = [].slice.call(scope.querySelectorAll('button, [role=button], a, li')).filter(function (e) {
+            return e.getBoundingClientRect().width > 0;
+          });
+          return {
+            path: location.pathname + location.search,
+            sidebarPanel: !!panel,
+            listedEntries: rows.length,
+            unknownLabelRows: rows.filter(function (e) {
+              return (e.innerText || '').indexOf('Utilisateur inconnu') !== -1;
+            }).length,
+            bodyChars: (document.body.innerText || '').length,
+          };
+        })())`
+      )
+    );
+    throw new Error(
+      `${what} was never listed within ${timeoutMs}ms on port ${port} - ${JSON.stringify(state)}`
+    );
+  }
+}
+
 export async function openConversation(cx, name) {
   // SEARCH THE SIDEBAR, NEVER THE DOCUMENT.
   //
@@ -741,9 +792,24 @@ export async function openConversation(cx, name) {
       best[0].scrollIntoView({ block: 'center' });
       return best[0].innerText.trim().slice(0, 60);
     })()`;
-  await until(cx, `${find} !== null`, 20000);
+  // THE TIMEOUT HERE USED TO RETHROW THE PREDICATE, WHICH IS BOTH USELESS AND UNSAFE.
+  //
+  // Useless: `until() timed out: (function () { var wanted = ... })() !== null` says the row never
+  // came and nothing about WHY - an empty list, a list that loaded without this row, or a row whose
+  // label never resolved are three different findings and two of them are the application's. It
+  // fired on MUT-19 and again on MUT-7 on 2026-08-16 and neither sighting could be attributed.
+  //
+  // Unsafe: `find` embeds the peer's display name, so the message carries a real person's name into
+  // a run log. The rig is anonymised BY CONSTRUCTION - no check spells a name - but an error built
+  // at runtime escapes that, and `idcheck.mjs` cannot see it because it guards the git index only.
+  //
+  // So the state is read instead, and it names no one: counts, not labels. The sidebar lists the
+  // owner's REAL conversations, so dumping row text would leak far more than the peer's name.
+  // `unknownLabelRows` is the discriminator that matters - a row rendered under the "Utilisateur
+  // inconnu" fallback exists but can never match a search by name.
+  await awaitListed(cx, `${find} !== null`, 20000, "the peer's conversation row", cx.port);
   const hit = await evaluate(cx, find);
-  if (!hit) throw new Error(`no conversation entry matching ${name}`);
+  if (!hit) throw new Error(`no conversation entry matching the requested peer on port ${cx.port}`);
 
   // CLICK THE ELEMENT WE FOUND, not a description of it.
   //
@@ -1265,7 +1331,7 @@ export async function longPressBubble(cx, textMatch, holdMs = 700) {
  * is reported as one, with the icons that ARE offered.
  */
 export async function tapSheetIcon(cx, iconClass) {
-  const point = await evaluate(
+  const p = await stablePoint(
     cx,
     `JSON.stringify((function () {
       var sheet = document.querySelector('${'[data-keyboard-aware-actions]'}');
@@ -1287,11 +1353,18 @@ export async function tapSheetIcon(cx, iconClass) {
       if (!hit || !btn.contains(hit)) {
         return { blocked: 'the .${iconClass} item is not on top at its own centre' + (hit ? ' (' + hit.tagName + ' is)' : ' (nothing is there)') };
       }
-      return { x: x, y: y };
+      return { x: x, y: y, moving: ${IS_MOVING_FN}(btn) };
     })())`
   );
-  const p = point && point !== 'null' ? JSON.parse(point) : { blocked: 'unreadable' };
-  if (p.blocked) throw new Error(p.blocked);
+  // THE SHEET SLIDES UP FROM THE BOTTOM, so this helper read the one geometry in the rig that is
+  // guaranteed to be wrong when read early - and it read it exactly once, with no retry at all. Its
+  // three "blocked" answers (sheet not open / item absent / item covered) are the same sheet at
+  // three moments of that slide, so they are polled together and only the timeout is a failure.
+  if (p.timedOut) {
+    throw new Error(
+      `no settled .${iconClass} item in the mobile action sheet within 4s - last read: ${JSON.stringify(p.last)}`
+    );
+  }
   const { received } = await clickAtPoint(cx, p.x, p.y);
   if (!received) {
     throw new Error(`the .${iconClass} tap at ${p.x},${p.y} was dispatched and nothing received it`);
@@ -1338,6 +1411,7 @@ export async function clickBubbleAction(cx, textMatch, label, timeoutMs = 5000) 
           var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
           var hit = document.elementFromPoint(x, y);
           if (!hit || !btn.contains(hit)) return { blocked: 'the action row is not on top at its own centre' + (hit ? ' (' + hit.tagName + ' is)' : ' (nothing is there)') };
+          if (${IS_MOVING_FN}(btn)) return { blocked: 'the action row is still animating in' };
           return { x: x, y: y, label: (btn.getAttribute('aria-label') || btn.innerText).trim() };
         }
       }
@@ -1411,4 +1485,4 @@ export async function attachFiles(cx, files) {
   return files.length;
 }
 
-export { activate, clickAtPoint, evaluate, pressKey, realClick, until };
+export { IS_MOVING_FN, activate, clickAtPoint, evaluate, pressKey, realClick, stablePoint, until };

@@ -8,6 +8,7 @@
 import { appendFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { STATE_DIR } from './names.mjs';
+import { gate, report } from './watch.mjs';
 
 /**
  * Outside the repository, with the rest of the machine-local state: a verdict row carries the
@@ -18,10 +19,44 @@ const FILE = join(STATE_DIR, 'results.ndjson');
 /** Every verdict THIS process has recorded, so the exit code can be derived rather than remembered. */
 const recorded = [];
 
+/**
+ * Did this verdict look at anything? `gate()` is the ONLY producer of `clean`, so its presence is
+ * the proof an observation happened; `unobservable` is the explicit, written-down alternative.
+ */
+const observed = (detail) =>
+  !!detail && (typeof detail.clean === 'boolean' || typeof detail.unobservable === 'string');
+
 export function record(id, verdict, detail) {
-  const row = { id, verdict, at: new Date().toISOString(), ...detail };
+  // A PASS THAT LOOKED AT NOTHING IS NOT A PASS, AND THIS IS THE ONLY PLACE THAT CAN KNOW IT.
+  //
+  // The campaign's rule has two halves - the assertions hold AND the run is clean - and half of the
+  // scripts implemented the first one only. They were not silent about it: they printed a full
+  // `report()` UNDER the verdict, where it could be read but never contradict anything. Measured
+  // 2026-08-16 across the whole harness: MSG, TYPE, READ, MUT and FWD-345 gate; NOTIF, NOTIF7, LIFE,
+  // TAB, FWD-1/2, FWD-5 and HEAL print; SEARCH, MENTION and GRP - the three phases queued to run
+  // next - had no observer at all, `watch=0` and `report=0`. Twenty-odd verdicts rested on nobody
+  // looking, which is precisely the fault READ shipped eight PASSes on and `mut.mjs` was rewritten
+  // for. A rule stating "gate every check" would have been the same rule that was already stated,
+  // and forgotten the same way, so the refusal lives HERE - one place, no call to remember.
+  //
+  // DEMOTED, NEVER DROPPED, and only from PASS: PASS is the sole verdict that CLAIMS the run was
+  // clean, so it is the sole one whose claim can be unfounded. FAIL, SLOW, INVALID and the rest are
+  // already work owed and already exit non-zero; rewriting them would destroy evidence to say
+  // something the row already says. `UNOBSERVED` is distinct from `PASS-DIRTY` on purpose - "nobody
+  // looked" and "someone looked and it was dirty" send their reader to different places.
+  const owedObservation = verdict === 'PASS' && !observed(detail);
+  const stated = owedObservation ? 'UNOBSERVED' : verdict;
+  const row = {
+    id,
+    verdict: stated,
+    at: new Date().toISOString(),
+    ...detail,
+    ...(owedObservation
+      ? { claimedVerdict: verdict, unobserved: 'no report was gated into this verdict - see gate() in watch.mjs' }
+      : {}),
+  };
   appendFileSync(FILE, `${JSON.stringify(row)}\n`);
-  console.log(`[${verdict}] ${id} ${JSON.stringify(detail)}`);
+  console.log(`[${stated}] ${id} ${JSON.stringify(detail)}`);
   recorded.push(row);
   return row;
 }
@@ -74,6 +109,47 @@ process.on('beforeExit', () => {
 export function finish(id, verdict, detail) {
   record(id, verdict, detail);
   process.exit(verdict === 'PASS' ? 0 : 1);
+}
+
+/**
+ * RECORD A VERDICT ON WHAT WAS WATCHED - one call, so obeying the rule is shorter than breaking it.
+ *
+ * `record` above REFUSES an unobserved PASS; this is the affordance that makes the refusal easy to
+ * satisfy, and the two were written together on purpose. A refusal with no affordance beside it does
+ * not get obeyed, it gets worked around - and `unobservable: '...'` is one string away.
+ *
+ * The three lines it replaces (`await report` per client, `gate`, spread the detail) were the whole
+ * reason twelve verdicts across SEARCH and MENTION had no observer: not disagreement with the rule,
+ * just three lines nobody wrote at check number two and every check after it copied.
+ *
+ * VALUES MAY BE EITHER a handle from {@link watch} or a report already computed - the phone's
+ * {@link logcatReport} is never a handle, and neither is a window a check had to close early. A
+ * report is recognised by carrying `clean`; anything else is reported here.
+ *
+ * @param {string} id the check id, as the dashboard spells it
+ * @param {string} verdict the ASSERTION outcome - the observation is applied on top, never under
+ * @param {object} detail what the check measured
+ * @param {Record<string, object>} observers label -> `watch()` handle or a finished report
+ */
+export async function recordObserved(id, verdict, detail, observers) {
+  const reports = {};
+  for (const [label, o] of Object.entries(observers))
+    if (o) reports[label] = typeof o.clean === 'boolean' ? o : await report(o);
+  const gated = gate(verdict, reports);
+  return record(id, gated.verdict, { ...gated.detail, ...detail });
+}
+
+/**
+ * {@link recordObserved} and then {@link finish}'s exit - for a check that must not fall off its end.
+ *
+ * Most scripts can simply reach their last line and let `beforeExit` derive the code. The ones that
+ * cannot are the ones holding a CDP socket or an adb forward open: nothing closes those, so the
+ * process never idles and `beforeExit` never fires. `life.mjs` is exactly that shape, which is why
+ * it had a `process.exit` - and why the fix is to keep the exit and gate what it exits ON.
+ */
+export async function finishObserved(id, verdict, detail, observers) {
+  const row = await recordObserved(id, verdict, detail, observers);
+  process.exit(row.verdict === 'PASS' ? 0 : 1);
 }
 
 export function all() {

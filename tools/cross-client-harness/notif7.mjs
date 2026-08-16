@@ -19,8 +19,8 @@
  * measure nothing.
  */
 import { client, ensureChat, openConversation, countMessage, send, evaluate, goto, COMPOSER } from './chat.mjs';
-import { watch, report } from './watch.mjs';
-import { mark } from './results.mjs';
+import { logcatReport, logcatSince, watch } from './watch.mjs';
+import { finishObserved, mark } from './results.mjs';
 import * as phone from './phone.mjs';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -133,6 +133,11 @@ const w2 = await client(9223, 'canari-emse.fr');
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 const w = await watch(w2, 'W2');
+// The phone's window opens with the peer's, and it is the one that matters here: everything under
+// test from this line on happens with no WebView attached - the app is about to be backgrounded or
+// killed - so `CanariFCM`, the Rust core and the keystores are the only witnesses there are.
+phone.clearLogcat();
+const phoneWindowFrom = Date.now();
 
 // W1 must be OFF the conversation. It is the owner's other device: if it sits in the DM it marks the
 // message read the moment it lands, which pushes a cross-device DISMISSAL to the phone - the exact
@@ -183,9 +188,12 @@ stage(`shade in ${out.shadeInMs} ms, decrypted=${out.decrypted}; ${JSON.stringif
 if (out.shadeInMs === null) {
   out.verdict = 'FAIL';
   out.why = 'no notification for this conversation ever reached the shade - nothing to tap';
-  writeFileSync(new URL(`./notif7-${mode}.log`, import.meta.url), JSON.stringify({ ...out, w2: await report(w) }, null, 2));
-  console.log(JSON.stringify(out, null, 2));
-  process.exit(1);
+  const phoneReport = logcatReport(await logcatSince(phoneWindowFrom), 'A1');
+  writeFileSync(new URL(`./notif7-${mode}.log`, import.meta.url), JSON.stringify({ ...out, a1: phoneReport }, null, 2));
+  // THE FAILING PATH RECORDS TOO, and this is the one where the phone's log is the whole diagnosis:
+  // "nothing reached the shade" has several causes - no push delivered, a decrypt that threw, a
+  // notification posted and cancelled - and they are indistinguishable from the shade's silence.
+  await finishObserved(`NOTIF-7-${mode}`, 'FAIL', out, { W2: w, A1: phoneReport });
 }
 
 // ── the tap ──────────────────────────────────────────────────────────────────
@@ -256,8 +264,21 @@ stage(`landed: ${JSON.stringify(landed)} after ${out.deepLinkMs} ms (${out.lande
 
 out.count = await countMessage(a1, marker);
 out.verdict = out.foregroundedAfter && landed.composer && landed.marker && out.count === 1 ? 'PASS' : 'FAIL';
-out.w2 = await report(w);
-out.phoneNotable = [];
 
-writeFileSync(new URL(`./notif7-${mode}.log`, import.meta.url), JSON.stringify(out, null, 2));
-console.log(JSON.stringify(out, null, 2));
+/**
+ * `out.phoneNotable = []` was the whole native observation - a literal empty array, assigned and
+ * written to the log file as if something had filled it.
+ *
+ * It also settles `out.decrypted`, which this file explicitly recorded "next to the verdict rather
+ * than gating it". That stays true and is now enough: a generic fallback body means the app logged
+ * `Fallback notification:` at `W` on `CanariFCM`, which the classifier files as an ERROR, so the
+ * fallback breaks `clean` without NOTIF-7 having to assert anything outside its own subject. The
+ * deep link remains what this check FAILS on; the failed decrypt beside it can no longer pass
+ * unremarked.
+ */
+const phoneReport = logcatReport(await logcatSince(phoneWindowFrom), 'A1');
+
+writeFileSync(new URL(`./notif7-${mode}.log`, import.meta.url), JSON.stringify({ ...out, a1: phoneReport }, null, 2));
+// One id per MODE: `bg` and `killed` are two checks on the dashboard, and a shared id would let the
+// second overwrite the first's row in every reading of the ledger.
+await finishObserved(`NOTIF-7-${mode}`, out.verdict, out, { W2: w, A1: phoneReport });

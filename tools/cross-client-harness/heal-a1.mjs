@@ -34,7 +34,7 @@
 import { client, openConversation, send, evaluate, markers } from './chat.mjs';
 import { gotoRoute, ensureConversation } from './nav.mjs';
 import { watch } from './watch.mjs';
-import { mark } from './results.mjs';
+import { mark, record } from './results.mjs';
 import { execFileSync } from 'node:child_process';
 import { PORTS, peerNameFor } from './names.mjs';
 
@@ -174,6 +174,8 @@ if (preOnA1 < REWIND_SENDS) {
   process.exit(2);
 }
 
+/** The recorded row, hoisted out of the `try` so the exit code at the foot can read the VERDICT. */
+let row = null;
 try {
   // ------------------------------------------------------------------------- 2. break it
   console.log(
@@ -233,7 +235,40 @@ try {
     `[heal-a1] VERDICT: ${finalOnA1 === BREAK_SENDS ? 'HEALED' : finalOnA1 > 0 ? 'PARTIAL' : 'NOT HEALED'} ` +
       `- ${finalOnA1}/${BREAK_SENDS} of the messages sent from a rewound state reached the PHONE`
   );
+
+  /**
+   * RECORDED AT LAST - and `unobservable` rather than a gate, which is a decision, not an omission.
+   *
+   * Every other check in this campaign is gated on `clean`. This one may not be, and the reason is
+   * the point of the check: it REWINDS W2's MLS store on purpose, so `LOST frame`, `SecretReuseError`
+   * and `Ciphertext generation out of bounds` are its STIMULUS. A gate would report `PASS-DIRTY` on
+   * every single run, for lines the script itself caused - and dirt that is always there is dirt
+   * nobody reads.
+   *
+   * The console is not ignored, it is PROMOTED: `sawLoss`, `solicited`, `diffRan` and `digestSent`
+   * are read out of it and they ARE the assertions - this check fails if the phone did NOT log the
+   * loss. `unobservable` says exactly that, in the record, where the alternative was a row that
+   * looked identical to a check nobody had instrumented.
+   */
+  row = record('HEAL-A1', finalOnA1 === BREAK_SENDS ? 'PASS' : finalOnA1 > 0 ? 'PARTIAL' : 'FAIL', {
+    unobservable:
+      'this check rewinds W2 MLS store on purpose, so LOST frame / SecretReuseError / out-of-bounds ' +
+      'are its stimulus and a cleanliness gate would fire on every run. The console is read as the ' +
+      'ASSERTION instead - see sawLoss / solicited / diffRan / digestSent below.',
+    sends: BREAK_SENDS,
+    onPhone: finalOnA1,
+    onSender: finalOnW2,
+    lossDetectedByPhone: sawLoss,
+    phoneSolicitedHistory: solicited,
+    historyDiffRan: diffRan,
+    digestExchanged: digestSent,
+    fellBackToWholeStore: fellBack,
+    timeline,
+  });
 } finally {
   await ensureDeliverable(TEARDOWN_PROBES);
 }
-process.exit(0);
+// EXPLICIT, because this script holds two CDP sockets and an adb forward open - the event loop never
+// idles, so `beforeExit` cannot fire. It reads the recorded VERDICT, where `process.exit(0)` used to
+// report success over a phone that had healed nothing.
+process.exit(row?.verdict === 'PASS' ? 0 : 1);

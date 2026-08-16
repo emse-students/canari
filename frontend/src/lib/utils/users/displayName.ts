@@ -1,10 +1,33 @@
 import { currentUserId, fetchUserProfile, getSavedDisplayName } from '$lib/stores/user';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import { m } from '$lib/paraglide/messages';
 
 const displayNameCache = new Map<string, string>();
 const inFlight = new Map<string, Promise<string | null>>();
 const failedAt = new Map<string, number>();
 const FAILURE_BACKOFF_MS = 2 * 60 * 1000;
+
+/**
+ * A FAILURE RECORDED WHILE THE NETWORK WAS DOWN IS EVIDENCE ABOUT THE NETWORK, NOT ABOUT THE USER.
+ *
+ * `failedAt` answers "did this lookup fail", and `shouldSkipRetry` reads it as "will this lookup
+ * fail" - two different questions, and regaining connectivity refutes the second one outright. Until
+ * this listener existed, one blip anonymised every affected row for the FULL two minutes even though
+ * the link was back within seconds: measured 2026-08-16, where a deliberate radio outage left the
+ * phone logging `failed to lookup address information` for every profile fetch, and the sidebar then
+ * read "Utilisateur inconnu" on 9 of 10 rows well after the radios returned.
+ *
+ * A SHORTER TIMER WOULD NOT HAVE BEEN THE FIX - it would only have made the same wrong answer
+ * shorter. The backoff still earns its keep against a server that is genuinely refusing, which is the
+ * case it was written for; what it may not do is outlive the condition it recorded.
+ */
+connectivity.onReconnect(() => {
+  if (failedAt.size === 0) return;
+  console.log(
+    `[DISPLAYNAME] connectivity returned - retrying ${failedAt.size} suppressed lookup(s)`
+  );
+  failedAt.clear();
+});
 
 function normalizeUserId(userId: string): string {
   return userId.trim().toLowerCase();
@@ -126,15 +149,32 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
   const promise = fetchUserProfile(normalized)
     .then((profile) => {
       const value = formatProfileDisplayName(profile);
-      if (value !== normalized) {
-        displayNameCache.set(normalized, value);
-        failedAt.delete(normalized);
-        return value;
-      }
-      failedAt.set(normalized, Date.now());
-      return null;
+      // WHAT THIS CONDITION MEANT AND WHAT IT DOES ARE NOT THE SAME. It asks "is the result
+      // different from the raw user id", which was written against this function's doc comment
+      // ("firstName+lastName > displayName > id") - and the function returns the LABEL, never the
+      // id. So the test is true for every profile that has ever been fetched, and the branch below
+      // it has never run. Left as an explicit ANSWER rather than a repair: a profile that really
+      // carries no name is a definitive result and caching the label for it is correct (the spec
+      // pins exactly that). The dead `failedAt.set` is gone because a resolved fetch is not a
+      // failure, whatever the profile turned out to contain.
+      displayNameCache.set(normalized, value);
+      failedAt.delete(normalized);
+      return value;
     })
-    .catch(() => {
+    .catch((e) => {
+      // THE ONLY PLACE THAT KNOWS A NAME WAS LOST, AND IT USED TO SAY NOTHING. This file had no
+      // logging at all, so a fallback that anonymises a conversation row could not be counted and
+      // its rate against the population was unknown - which is how "9 of 10 rows read Utilisateur
+      // inconnu" reached a run log with no matching line anywhere to explain it (2026-08-16, both
+      // platforms). It ACCUSES because it is a fallback, not a path: one failure here hides this
+      // user's name everywhere for FAILURE_BACKOFF_MS, without a single retry, and the previous
+      // instance of this symptom survived for months because reloading hid it.
+      console.warn(
+        `[DISPLAYNAME] profile fetch failed - this user renders as "unknown" for the next ${
+          FAILURE_BACKOFF_MS / 1000
+        }s with no retry`,
+        { userId: normalized, error: e }
+      );
       failedAt.set(normalized, Date.now());
       return m.user_unknown_label();
     })

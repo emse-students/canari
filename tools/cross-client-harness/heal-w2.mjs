@@ -30,7 +30,7 @@ import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { client, openConversation, send, evaluate, markers, goto } from './chat.mjs';
 import { openGroup as openGroupByName } from './groupnav.mjs';
-import { watch, report, consoleLines } from './watch.mjs';
+import { watch, report, consoleLines, gate } from './watch.mjs';
 import { mark, record } from './results.mjs';
 import { peerNameFor } from './names.mjs';
 
@@ -168,6 +168,8 @@ const teardown = async (maxProbes = 24) => {
   }
 };
 
+/** The recorded row, hoisted out of the `try` so the exit code at the foot can read the VERDICT. */
+let row = null;
 try {
 // ---------------------------------------------------------------- 3. break it
 console.log(
@@ -280,13 +282,21 @@ console.log('\n[w2] --- W1 recovery lines ---');
 const w1Noise = await report({ cx: w1, label: 'W1' });
 const brokeForReal = afterRestore === afterReload;
 const recovered = gotBroken.length > 0;
-const verdict = !brokeForReal
-  ? 'SETUP-FAILED'
-  : recovered && drainStart === drainDone && w1Noise.clean
-    ? 'PASS'
-    : recovered
-      ? 'PARTIAL'
-      : 'FAIL';
+/**
+ * THE ASSERTION AND THE OBSERVATION, SEPARATED - they were folded into one ternary.
+ *
+ * `w1Noise.clean` sat inside the PASS arm, so a run that recovered and drained correctly but logged
+ * something unexpected came out as `PARTIAL` - the same word this check uses for "recovered but the
+ * drain never completed", which is WP-HIDDEN-1's actual shape and the thing it was written to catch.
+ * One name for two states, and the more serious of the two is the one that gets read as the other.
+ *
+ * `gate` separates them: the drain is the assertion, noise makes it `PASS-DIRTY`. It also produces
+ * the `clean` key every other row in the ledger carries - this file was the last one whose
+ * observation was invisible to anything reading the record rather than the source.
+ */
+const asserted = !brokeForReal ? 'SETUP-FAILED' : recovered && drainStart === drainDone ? 'PASS' : recovered ? 'PARTIAL' : 'FAIL';
+const gated = gate(asserted, { W1: w1Noise });
+const verdict = gated.verdict;
 
 console.log(
   `\n[w2] break took=${brokeForReal}, message recovered=${recovered}, ` +
@@ -297,7 +307,8 @@ console.log(
 );
 console.log(`[w2] VERDICT: ${verdict}`);
 
-record('HEAL-W2', verdict, {
+row = record('HEAL-W2', verdict, {
+  ...gated.detail,
   group: GROUP,
   brokeForReal,
   recovered,
@@ -307,12 +318,17 @@ record('HEAL-W2', verdict, {
   recoveryLines: recovery.length,
   drainStart,
   drainDone,
-  clean: w1Noise.clean,
-  errors: w1Noise.errors.slice(0, 6),
+  // `clean` and the dirt now come from `gated.detail` above - the hand-written `clean:` and a
+  // six-item slice of `errors` that used to sit here said less: `dirtOf` carries every bucket that
+  // can break the verdict, whole, which is the whole point of it being one definition.
 });
 } finally {
   // Runs on the happy path AND on any throw: a check that puts the app through a transition must
   // restore every precondition that transition destroys, and this one destroys the rig's own.
   await teardown();
 }
-process.exit(0);
+// EXIT ON THE VERDICT, not on having reached the end. `process.exit(0)` sat under a `record` that
+// can be FAIL, PARTIAL or SETUP-FAILED, so the runner printed `done` beside every one of them - the
+// same half-contract `finish()` exists to close. It cannot be `finish` here: the record has to
+// happen before `teardown`, and the exit after it.
+process.exit(row?.verdict === 'PASS' ? 0 : 1);

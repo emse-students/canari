@@ -117,6 +117,31 @@ counting marks rather than comparing offsets - two marks reading the same 107 sc
 movements - which is rule 1 again in a third dress: the mark fires on a change in the WHOLE probe,
 so only the field being judged may be compared.
 
+**AND A WHOLE PHASE CAN BE THE PATH THAT NEVER RAN.** Found 2026-08-16 by noticing that a run
+announcing NOTIF-10 had not cut the phone's radios: `notif.mjs` selects ONE check from `argv[2]` and
+defaults it (`|| '4'`), `notif7.mjs` does the same (`|| 'bg'`), and the manifest listed both bare. So
+`run.mjs NOTIF` ran two of five checks and reported the phase. Sweeping every manifest script for the
+shape found two more, and one names itself: **`tab236.mjs` implements checks 2, 3 and 6 and ran only
+2**, while `life.mjs` implements seven Android lifecycle states and ran only one. The manifest now
+spells every argument out - NOTIF 2 -> 5 scripts, TAB 3 -> 5, LIFE 1 -> 6.
+
+**A default is indistinguishable from a choice**, which is why nothing ever said so: no output
+differs between "the phase asked for check 4" and "the phase asked for nothing and got 4". The
+omission that must stay explicit is LIFE-5 - it REBOOTS the phone and the unlock afterwards needs the
+pattern, so it is a human check named in a comment rather than a gap nobody can see. **A coverage
+omission belongs in the manifest as a sentence, never as an absence.**
+
+**A RUNNER THAT BUFFERS ITS CHILD'S OUTPUT UNTIL EXIT CANNOT REPORT THE FAILURE THAT NEVER EXITS.**
+The same day and the same cause: every phase script announces its stages on stderr precisely so a
+stall is distinguishable from slowness - `notif.mjs` says so in its own header - and `run.mjs`
+collected the whole stream into a string it only wrote on `close`. Two `notif.mjs` processes sat
+there for FOUR HOURS driving the same browsers as every other measurement of the day, and were found
+by listing OS processes, not by the runner that owned them. There is now a heartbeat and a watchdog
+that bounds SILENCE rather than work - set well past NOTIF-10's deliberate 600 s of quiet - and it
+kills and ACCUSES rather than retrying, because a runner that quietly restarts a hung script hides
+what it exists to surface. `STALLED` is reported as itself: a killed child otherwise reports a signal
+and reads as an ordinary crash in its last statement.
+
 **Where the defect can be re-created, the check should re-create it.** WP-RELOAD-DL-1 asserts that a
 reload does NOT navigate - and a build with deep links entirely broken passes that too. Deleting the
 one key the fix relies on (`sessionStorage['canari:deeplink:handled']`) and reloading again brought
@@ -242,6 +267,64 @@ miss surfaced ~15 s later as a missing dialog, indistinguishable from an applica
 through the shared primitive, the same failure now names itself at the click: `"Transférer" action
 moved before the click: nothing clickable at the point`. **A second implementation of a shared
 primitive is a second place for this rule to be un-learnt** - extend the primitive instead.
+
+**AND THE SAME RULE FROM A THIRD SIDE: TWO IDENTICAL SAMPLES ARE NOT A PROOF OF REST.** They prove
+only that the element was not SEEN moving. `stableCentreOf` polled a rect every 120 ms and returned
+a point once two consecutive rounded centres agreed - which an entry animation satisfies twice over:
+before it has begun to paint, and again after it has finished. A backgrounded tab does not advance
+one at all.
+
+Measured on 2026-08-16, and the number is the whole diagnosis: the delete-confirmation button was
+clicked at `dx=0, dy=24` from its own centre, with `candidatesInDocument: 1` - **24 px is exactly
+the amplitude of `Modal.svelte`'s `in:fly={{ duration: 220, y: 24 }}`**. The centre was taken at the
+animation's start and dispatched after its end, so the point landed in the footer that HOLDS the
+button, which has no handler. Nothing happened, and the check died 5 s later on "the dialog never
+closed". Three checks were losing runs to it - MUT-7, MUT-8, MUT-19, both venues, ~1 call in 6 - and
+five passes of attribution went to the wrong halves first: a mis-resolved selector, then a slow
+delete, then the two motions that turned out too small to matter (`hover:-translate-y-0.5` is 2 px
+over 150 ms, and `mousePressed` follows `mouseMoved` by milliseconds).
+
+**The repair is a proof, not a longer wait**: `IS_MOVING_FN` asks the page whether the element - or
+any ancestor, because a modal's `fly` is on the PANEL and its buttons are passengers - is under an
+animation that will end. `getAnimations()` covers CSS animations, CSS transitions and Svelte
+transitions in one answer, so no duration has to be guessed for any of them. `pending` counts as
+moving: an animation created this frame has not painted, which is the exact window that lied.
+Infinite animations are skipped - a spinner never settles, and waiting for one would report every
+button near a loader as unfindable.
+
+Two corollaries, both paid for here:
+
+- **Closing the window is not the same as closing the hole.** The check and the click are two
+  messages over a socket and can never be simultaneous, so a verified point is stale by
+  construction. Removing round trips between them shrinks the exposure (`maxTouchPoints` was being
+  re-asked on every click for an answer that cannot change, and is now cached per connection) but
+  only the absence of motion makes it safe. The in-page atomic alternative - `element.click()` -
+  is the one that must NOT be used: it skips hit-testing, hover and touch, so it would have passed
+  straight through both the create-channel modal and the phone's touch-only activation.
+- **A miss must accuse at the click.** `realClick` now resolves the intended element BEFORE
+  dispatch and the recorder compares against it inside the listener - after the fact is too late,
+  because a successful click usually destroys its own target, so re-resolving answers "gone" for a
+  hit and a miss alike. It should never fire now; if it does, it is a motion nobody has named yet.
+
+**AND THE PROOF HAD TO REACH THE HELPERS THAT COMPUTE THEIR OWN POINTS, which is the paragraph above
+happening again within the hour.** A hovered action row, a reaction in the emoji picker and a tap in
+the phone's action sheet have no selector - they are found by walking the DOM from a message row -
+so they never went through `stableCentreOf` and inherited none of it. Fixing only `realClick` left
+them clicking mid-animation, and the very first run that could see it said so: `the 🎉 click was
+taken by "EMOJI-PICKER" (target was ANIMATING when measured)`. The picker was still opening.
+
+`stablePoint` is `stableCentreOf` for a caller-computed point, and the reason it is one function is
+that three of the four sites had already drifted apart: one retried, one did not, one threw on its
+first read. **Its polling set is the lesson** - "not there yet", "covered by something" and "still
+moving" are one animation seen at three moments, so all three are polled and only the exhausted
+budget is a failure. `tapSheetIcon` was the starkest: it read a sheet that SLIDES UP from the bottom
+of the screen, exactly once, with no retry at all.
+
+One corollary about reports, paid immediately: after the wait was added, `clickReactionEmoji`'s
+failure still printed *was the target animating* - a question the new code can only answer one way,
+because the point it clicks is settled by construction. **A discriminator that can no longer take
+two values is not a discriminator**, and leaving it in would send the next reader after the cause
+that had just been eliminated.
 
 **THE PHONE'S SOFT KEYBOARD MAKES COORDINATES LIE, SO A CONTROL REACHED AFTER A FIELD HAS FOCUS CANNOT BE RESOLVED BY GEOMETRY**
 
@@ -830,6 +913,52 @@ and stays that way. **A result you cannot read is a result you cannot believe, a
 recovery: it destroys the evidence it was meant to recover.** Each check listing buckets by hand is
 how they drift apart from the definition of `clean`, so they are listed once, next to it: `dirtOf()`
 returns every clean-breaking bucket that is non-empty, and checks record that.
+
+### AND IT APPLIES TO EVERY CHECK OF EVERY PHASE - which was measured, and was not true
+
+Set by the user on 2026-08-16, after `NOTIF-10` reported `PASS` over a phone that had been raising
+generic "Nouveau message de X" notifications: *"il faut que dans TOUTES les phases de TOUTE la
+campagne, il faut que tout soit mesure ... nous devons etre extremement precis et TOUT verifier."*
+
+The rule above was already written, and the harness was audited against it the same day rather than
+assumed to follow it. It did not. **Twelve phases, three different behaviours:**
+
+| | Phases | What actually happened |
+| --- | --- | --- |
+| Observed **and** gated | MSG (11 scripts), TYPE, READ, MUT, FWD-3/4/5 | the bar, enforced |
+| Recorded, never gated | FWD-1/2, TAB-4, TAB-5, HEAL-W2, **SEARCH (6 checks)**, **MENTION (6 checks)** | the report printed **under** the verdict, where it could be read but never contradict it |
+| Recorded **nothing at all** | NOTIF, NOTIF7, FWD-5, LIFE, TAB-2/3/6, HEAL, HEAL-A1, HEAL-WEB, GRP | a verdict computed, printed as JSON, and absent from `results.ndjson` - so `run.mjs` printed `done` |
+
+SEARCH, MENTION and GRP - the three phases queued to run next - had **no observer at all**:
+`watch = 0`, `report = 0`. Twelve verdicts between them, resting on nobody looking. That is the exact
+fault READ shipped eight passes on, and `mut.mjs` was rewritten for, reappearing in the phases nobody
+had rewritten yet.
+
+**THE REPAIR IS NOT THIS PARAGRAPH.** A rule saying "gate every check" is the rule that was already
+stated at the top of this section, and it was forgotten in seven scripts by authors who had read it.
+An omission of MEMORY is not fixed by a second thing to remember - the same reasoning `results.mjs`
+already carries for the exit code. So the refusal lives in the two places that cannot be bypassed:
+
+- **`record()` demotes a `PASS` that carries no gated report to `UNOBSERVED`.** `gate()` is the only
+  producer of `clean`, so its presence in the detail IS the proof an observation happened. A check
+  that genuinely cannot observe must say so as a written sentence (`unobservable: '<why>'`), which is
+  a decision in the record rather than an absence in it. `UNOBSERVED` is deliberately distinct from
+  `PASS-DIRTY`: "nobody looked" and "someone looked and it was dirty" send their reader to different
+  places, and both exit non-zero through the `beforeExit` derivation that already existed.
+- **`run.mjs` counts the rows each job wrote and reports a job that exited 0 having written none.**
+  `results.mjs` can only see the rows a process wrote, never the rows it owed; the runner is the only
+  observer that knows a script was supposed to speak. A silent job now counts against the pass,
+  because a phase claiming coverage its record cannot support is the same debt as a dirty window.
+
+**The three surfaces were at three different levels of rigour, and the phone was the lowest.** The
+server has a full classifier with a per-rule self-test; the web has `report()`'s buckets; the phone
+had a **keyword grep** - `/\bE\b|FATAL|Exception|...|fail|error/i` over raw logcat. Measured against a
+real 2 627-line capture, that predicate marks 43 lines that are not Canari's at all: 39 from the
+WebView's own Chrome-Sync subsystem, and four `Could not create Worker com.linkedin.android...` from
+**a different application on the device**. Gating on it would have made the phone permanently dirty,
+which is dirt nobody reads. The phone's own native tags are a small, structured population - 25
+distinct shapes across the captures, all `D/` or `I/` - so it is classifiable exactly like the other
+two, with everything foreign COUNTED rather than judged. See {@link watch.mjs}'s `logcatReport`.
 
 ### The bar is "expected", not "no failure" - and it applies to the server too
 

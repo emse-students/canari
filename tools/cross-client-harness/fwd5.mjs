@@ -25,7 +25,7 @@ import {
   settledCount,
 } from './chat.mjs';
 import { watch, report, dirtOf } from './watch.mjs';
-import { mark } from './results.mjs';
+import { finishObserved, mark } from './results.mjs';
 // See fwd.mjs: a real display name belongs in names.mjs, which never reaches the public repo.
 import { peerNameFor } from './names.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -55,6 +55,8 @@ await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 
 const summary = [];
+/** Every iteration's two reports, keyed - so the gate can say WHICH round was noisy. */
+const reports = {};
 for (let i = 0; i < N; i++) {
   const m = mark('FWD5');
 
@@ -92,6 +94,8 @@ for (let i = 0; i < N; i++) {
     sends,
     obs: { w1: await report(o1), w2: await report(o2) },
   };
+  reports[`W1#${i}`] = row.obs.w1;
+  reports[`W2#${i}`] = row.obs.w2;
   writeFileSync(`logs/fwd5-${i}.json`, JSON.stringify(row, null, 1));
 
   summary.push({
@@ -109,4 +113,22 @@ for (let i = 0; i < N; i++) {
 
 const lost = summary.filter((s) => !s.delivered);
 console.log(`\n${summary.length - lost.length}/${summary.length} delivered; ${lost.length} lost`);
-process.exit(lost.length ? 1 : 0);
+
+/**
+ * A SEPARATE ID FROM `fwd345.mjs`'s FWD-5, on purpose.
+ *
+ * This is the same shape run N times from a fresh session each round; `fwd345.mjs` records the
+ * single FWD-5 the dashboard names. Sharing the id would put N rows under one check and leave any
+ * reader of the ledger unable to say which instrument produced which - the volume is the whole
+ * point of this file, and it deserves to be legible as volume rather than as five FWD-5s.
+ *
+ * Until now it recorded nothing at all: the per-round evidence went to `logs/fwd5-<n>.json`, which
+ * `.gitignore` covers and `git clean -xdf` removes, and the campaign's own record held no trace that
+ * the repeat ever ran.
+ */
+await finishObserved(
+  `FWD-5-repeat`,
+  lost.length ? 'FAIL' : 'PASS',
+  { iterations: N, lostCount: lost.length, lostRounds: lost.map((s) => s.i), rounds: summary },
+  reports,
+);

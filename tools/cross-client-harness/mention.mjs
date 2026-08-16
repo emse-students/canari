@@ -67,8 +67,22 @@ import {
   COMPOSER,
   SEND_ENABLED,
 } from './chat.mjs';
-import { record, mark } from './results.mjs';
+import { record, recordObserved, mark } from './results.mjs';
+import { watch } from './watch.mjs';
 import { PEER_NAME, PORTS, VENUE } from './names.mjs';
+
+/**
+ * A CLIENT AND THE OBSERVER THAT WATCHES IT - see the twin in `search.mjs` for why they are one call.
+ *
+ * MENTION recorded six verdicts having attached no observer at all. It is the phase least able to
+ * afford that: a mention is a chip whose whole content is a UUID, and every failure mode here -
+ * an unresolved user, a chip that renders as raw `@[...]`, a navigation to a profile that 404s -
+ * announces itself in the console long before it changes anything this check can see on screen.
+ */
+async function observed(port, label) {
+  const cx = await client(port);
+  return [cx, await watch(cx, label)];
+}
 
 const { W1 } = PORTS;
 
@@ -230,7 +244,7 @@ async function awaitChannelSendBody(cx, sinceIdx) {
 // navigates to the mentioned user's profile.
 // ---------------------------------------------------------------------------------------------
 async function mention1() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'MENTION-1');
   await openDM(cx, PEER_NAME);
 
   const term = mark('MENTION1');
@@ -252,14 +266,14 @@ async function mention1() {
   const navigatedId = navigatedPath ? navigatedPath.replace('/profile/', '') : null;
 
   const ok = !!mentionId && !!bubbleChip && navigatedId === mentionId;
-  record('MENTION-1', ok ? 'PASS' : 'FAIL', {
+  await recordObserved('MENTION-1', ok ? 'PASS' : 'FAIL', {
     query,
     composerChipMentionId: mentionId, // the one hooked surface - ground truth for the rest
     bubbleChipFound: !!bubbleChip,
     bubbleChipText: bubbleChip?.text ?? null,
     navigatedPath,
     idsMatch: navigatedId === mentionId,
-  });
+  }, { W1: obs });
   if (navigatedPath) await goto(cx, '/chat'); // leave W1 on the conversation list, not a profile page
   cx.close();
   return ok;
@@ -271,7 +285,7 @@ async function mention1() {
 // be PARTIAL, never PASS.
 // ---------------------------------------------------------------------------------------------
 async function mention2() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'MENTION-2');
   await openChannel(cx, VENUE.community, VENUE.channel);
 
   const levelSet = await setChannelNotifLevel(cx, NOTIF_MENTIONS);
@@ -294,7 +308,7 @@ async function mention2() {
   await setChannelNotifLevel(cx, NOTIF_ALL); // restore the default - do not leave the account on "mentions"
 
   const clientPreconditionOk = levelSet && !!mentionId && containsPeer;
-  record('MENTION-2', clientPreconditionOk ? 'PARTIAL' : 'FAIL', {
+  await recordObserved('MENTION-2', clientPreconditionOk ? 'PARTIAL' : 'FAIL', {
     notifLevelSet: 'mentions',
     notifLevelUiConfirmed: levelSet,
     mentionId,
@@ -306,7 +320,7 @@ async function mention2() {
       'mentionedUserIds attached for a mentions-level channel). Whether the peer actually received a ' +
       'push is not observable from a browser tab - owed to the mobile verification phase ' +
       '(docs/wiki/device-verification.md).',
-  });
+  }, { W1: obs });
   cx.close();
   return clientPreconditionOk;
 }
@@ -318,7 +332,7 @@ async function mention2() {
 // "The mention triggers nothing" for the receiver is a push claim this harness cannot make.
 // ---------------------------------------------------------------------------------------------
 async function mention3() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'MENTION-3');
   await openChannel(cx, VENUE.community, VENUE.channel);
 
   const levelSet = await setChannelNotifLevel(cx, NOTIF_NONE);
@@ -341,7 +355,7 @@ async function mention3() {
   await setChannelNotifLevel(cx, NOTIF_ALL); // restore the default
 
   const ok = levelSet && stillSentClientSide;
-  record('MENTION-3', ok ? 'PASS' : 'FAIL', {
+  await recordObserved('MENTION-3', ok ? 'PASS' : 'FAIL', {
     notifLevelSet: 'none',
     notifLevelUiConfirmed: levelSet,
     mentionId,
@@ -350,7 +364,7 @@ async function mention3() {
       'PASS confirms the client attaches mentionedUserIds regardless of the level - suppression, if ' +
       'any, is a server routing decision this harness cannot observe. NOT a claim that no push arrived ' +
       'at the peer; that half is owed to the mobile phase, same as MENTION-2.',
-  });
+  }, { W1: obs });
   cx.close();
   return ok;
 }
@@ -362,7 +376,7 @@ async function mention3() {
 // claim is "nothing extra rides along" and a narrower filter would beg the question.
 // ---------------------------------------------------------------------------------------------
 async function mention4() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'MENTION-4');
   await openDM(cx, PEER_NAME);
 
   await cx.send('Network.enable');
@@ -389,7 +403,7 @@ async function mention4() {
   const leaked = bodies.filter((b) => typeof b.body === 'string' && b.body.includes('mentionedUserIds'));
 
   const ok = !channelEndpointHit && leaked.length === 0;
-  record('MENTION-4', ok ? 'PASS' : 'FAIL', {
+  await recordObserved('MENTION-4', ok ? 'PASS' : 'FAIL', {
     mentionId,
     channelEndpointHit,
     requestsObserved: since.length,
@@ -397,7 +411,7 @@ async function mention4() {
     source:
       'messaging.ts:101 - extractMentionUserIds runs ONLY inside the isChannelConversationId branch; ' +
       'the DM/group path above it never calls it.',
-  });
+  }, { W1: obs });
   cx.close();
   return ok;
 }
@@ -409,7 +423,7 @@ async function mention4() {
 // membership check. Recorded as a finding of what happens, not graded against an expected outcome.
 // ---------------------------------------------------------------------------------------------
 async function mention5() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'MENTION-5');
   await openChannel(cx, VENUE.community, VENUE.channel);
 
   await cx.send('Network.enable');
@@ -432,7 +446,7 @@ async function mention5() {
   const sentDespiteNonMembership = Array.isArray(mentionedUserIds) && mentionedUserIds.includes(fakeId);
   const bubbleChip = await chipButtonIn(cx, term);
 
-  record('MENTION-5', sentDespiteNonMembership ? 'PASS' : 'FAIL', {
+  await recordObserved('MENTION-5', sentDespiteNonMembership ? 'PASS' : 'FAIL', {
     fakeUserId: fakeId,
     mentionedUserIdsSent: mentionedUserIds,
     sentDespiteNonMembership,
@@ -441,7 +455,7 @@ async function mention5() {
       'PASS here means the client neither blocks the send nor validates membership, matching the ' +
       'source read above - it is a finding about the CLIENT, not a verdict on the server: whether the ' +
       'server routes a push for a mention outside the channel is unobserved by this check.',
-  });
+  }, { W1: obs });
   cx.close();
   return sentDespiteNonMembership;
 }
@@ -453,7 +467,7 @@ async function mention5() {
 // record: logging them would put a second secret into the file this check exists to keep clean of one.
 // ---------------------------------------------------------------------------------------------
 async function mention6() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'MENTION-6');
   await openChannel(cx, VENUE.community, VENUE.channel);
 
   await cx.send('Network.enable');
@@ -481,7 +495,7 @@ async function mention6() {
   const noncePresent = typeof body?.nonce === 'string' && body.nonce.length > 0;
 
   const ok = bodyKeys.length > 0 && unexpectedKeys.length === 0 && carriesPeerId && onlyPeerId;
-  record('MENTION-6', ok ? 'PASS' : 'FAIL', {
+  await recordObserved('MENTION-6', ok ? 'PASS' : 'FAIL', {
     bodyKeysObserved: bodyKeys,
     unexpectedKeys, // must be empty - anything here is a wider leak than the documented one
     mentionedUserIdsCount: mentionedUserIds?.length ?? null,
@@ -491,7 +505,7 @@ async function mention6() {
     noncePresent,
     nonceLength: body?.nonce?.length ?? null, // length only, never the value
     redactionNote: 'ciphertext/nonce values and all request headers are excluded from this record on purpose.',
-  });
+  }, { W1: obs });
   cx.close();
   return ok;
 }
@@ -508,5 +522,14 @@ for (const [n, fn] of Object.entries(CHECKS)) {
     results.push([n, false]);
   }
 }
-console.log(`\nMENTION: ${results.filter(([, ok]) => ok).length}/${results.length} passed`);
-process.exit(results.every(([, ok]) => ok) ? 0 : 1);
+console.log(`\nMENTION: ${results.filter(([, ok]) => ok).length}/${results.length} assertions held`);
+// NO EXIT CODE HERE - see the twin note at the foot of `search.mjs`. These booleans are the assertion
+// half only; `results.mjs` derives the code from the recorded verdicts, which are the gated ones.
+// MENTION-2 makes the point sharply: it returns `clientPreconditionOk` and records PARTIAL, so this
+// loop called a run that is explicitly NOT a pass a pass, and exited 0 on it.
+//
+// CONSEQUENCE, STATED RATHER THAN WORKED AROUND: MENTION-2 is PARTIAL by construction - whether the
+// peer's phone actually rang is not observable from a browser tab - so this phase exits non-zero
+// until the mobile half is taken. That is a standing debt reported accurately, not a false alarm,
+// and it clears the day `device-verification` covers it. Making PARTIAL exit 0 would buy silence by
+// declaring the unverified half verified, which is the trade this whole audit exists to refuse.

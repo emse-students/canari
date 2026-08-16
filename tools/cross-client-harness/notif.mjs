@@ -12,8 +12,8 @@
  * Usage: node notif.mjs 4|9|10
  */
 import { client, ensureChat, openConversation, countMessage, awaitMessage, send, evaluate, COMPOSER } from './chat.mjs';
-import { watch, report } from './watch.mjs';
-import { mark } from './results.mjs';
+import { gate, logcatReport, logcatSince, report, watch } from './watch.mjs';
+import { mark, record } from './results.mjs';
 import * as phone from './phone.mjs';
 import { execFileSync } from 'node:child_process';
 import { ACCOUNT_OF, PORTS, peerNameFor } from './names.mjs';
@@ -54,6 +54,35 @@ async function killPhone() {
 
 /** How many of the phone's current notifications mention `needle`. */
 const shadeHits = (needle) => phone.notifications().filter((n) => n.full.includes(needle)).length;
+
+/**
+ * The exact bodies `CanariFirebaseMessagingService` renders when it could NOT decrypt.
+ *
+ * A NOTIFICATION THAT ARRIVED IS NOT A NOTIFICATION THAT WORKED, and no check here could tell the
+ * two apart: NOTIF-4/9/10 all asked `full.includes(marker)`, so a shade full of "Nouveau message de
+ * X" simply made the marker absent, which reads as "the notification has not arrived yet" and then
+ * as a timeout - a completely different diagnosis from "background MLS decryption failed". The user
+ * saw the generic form on the phone during a run this file called `PASS`.
+ *
+ * Kept as literals rather than a loose pattern because they are literals in the Kotlin
+ * (`buildFallbackText`, `buildChannelFallbackText`) and in `push-payload.ts` for the APNs side. A
+ * pattern would drift from them silently; a literal that stops matching is a rename, which is a
+ * change to go and look at.
+ */
+const GENERIC_BODIES = [/^Nouveau message de /, /^Nouveau message dans #/, /^Vous avez re.u un message chiffr/, /^Nouveau message$/];
+
+/**
+ * Every notification currently in the shade that this app raised WITHOUT decrypting the message.
+ *
+ * Titles and bodies are real conversation content, so only the matched PATTERN is returned - never
+ * the line. The count is the finding; the text is on the device for whoever is holding it.
+ */
+const undecryptedInShade = () =>
+  phone
+    .notifications()
+    .map((n) => GENERIC_BODIES.findIndex((re) => re.test(n.body)))
+    .filter((i) => i >= 0)
+    .map((i) => String(GENERIC_BODIES[i]));
 
 /** Waits for a notification carrying `needle` to DISAPPEAR; returns elapsed ms or null on timeout. */
 async function awaitDismissal(needle, timeoutMs = 60_000) {
@@ -121,6 +150,11 @@ await evaluate(w1, `history.pushState({}, '', '/chat'); dispatchEvent(new PopSta
 await sleep(2_500);
 
 phone.clearLogcat();
+// The instant the phone's window opens, so `logcatSince` can be asked for exactly this check's
+// traffic rather than for a line count. `clearLogcat` alone is not a window: a check that reads "the
+// last 3000 lines" gets whatever the device wrote, which on this hardware is dominated by other
+// applications and can bury an entire run.
+const phoneWindowFrom = Date.now();
 const oW2 = await watch(w2, `notif${which}-w2`);
 const oW1 = await watch(w1, `notif${which}-w1`);
 const out = { check: `NOTIF-${which}` };
@@ -137,6 +171,7 @@ if (which === '4') {
   stage('waiting for the notification');
   out.notifiedInMs = await phone.awaitNotification(m, 60_000);
   out.shadeBefore = shadeHits(m);
+  out.undecrypted = undecryptedInShade();
   stage(`notified after ${out.notifiedInMs}ms; W1 now reads it`);
 
   // W1 reads it. Opening the conversation is what emits the read receipt - but ONLY if the window
@@ -156,7 +191,10 @@ if (which === '4') {
   out.dismissedInMs = await awaitDismissal(m, 90_000);
   stage(`dismissal: ${out.dismissedInMs}`);
   out.shadeAfter = shadeHits(m);
-  out.verdict = out.notifiedInMs !== null && out.readOnW1 === 1 && out.dismissedInMs !== null ? 'PASS' : 'FAIL';
+  out.verdict =
+    out.notifiedInMs !== null && out.readOnW1 === 1 && out.dismissedInMs !== null && out.undecrypted.length === 0
+      ? 'PASS'
+      : 'FAIL';
   out.marker = m;
 } else if (which === '9') {
   // Two devices of one user, one message: the phone must raise exactly ONE notification for it,
@@ -189,6 +227,7 @@ if (which === '4') {
   }
   out.shadeCount = shadeHits(m);
   out.shade = phone.notifications().map((n) => `${n.title} | ${n.body}`.slice(0, 120));
+  out.undecrypted = undecryptedInShade();
 
   stage(`shade holds ${out.shadeCount}; opening the DM on W1`);
   await withDeadline(openConversation(w1, peerNameFor('W1')), 60_000, 'openConversation(W1)');
@@ -197,7 +236,10 @@ if (which === '4') {
   await sleep(2_000);
   out.onW1 = await countMessage(w1, m);
   stage(`W1 holds ${out.onW1}`);
-  out.verdict = out.notifiedInMs !== null && out.shadeCount === 1 && out.onW1 === 1 ? 'PASS' : 'FAIL';
+  out.verdict =
+    out.notifiedInMs !== null && out.shadeCount === 1 && out.onW1 === 1 && out.undecrypted.length === 0
+      ? 'PASS'
+      : 'FAIL';
   out.marker = m;
 } else if (which === '10') {
   // Five messages across a ten-minute outage. The question is not whether they arrive - LIFE-6
@@ -235,6 +277,7 @@ if (which === '4') {
   out.notifiedInMs = await phone.awaitNotification(markers[markers.length - 1], 120_000);
   out.shadeHits = markers.map((m) => shadeHits(m));
   out.shade = phone.notifications().map((n) => `${n.title} | ${n.body}`.slice(0, 120));
+  out.undecrypted = undecryptedInShade();
   out.reconnectToShadeMs = out.notifiedInMs === null ? null : Date.now() - backAt;
 
   stage('relaunching the app and re-pointing devtools at the NEW pid');
@@ -266,19 +309,35 @@ if (which === '4') {
   await sleep(3_000);
   out.counts = [];
   for (const m of markers) out.counts.push(await countMessage(a1, m));
-  out.verdict = out.counts.every((c) => c === 1) ? 'PASS' : 'FAIL';
+  out.verdict = out.counts.every((c) => c === 1) && out.undecrypted.length === 0 ? 'PASS' : 'FAIL';
   out.markers = markers;
 } else {
   throw new Error(`unknown NOTIF check ${which}`);
 }
 
-// ── observation ──────────────────────────────────────────────────────────────
-const phoneConsole = phone.console_();
-out.phoneNotable = phoneConsole.filter((l) =>
-  /\[KP\]|SecretReuse|out of bounds|LOST frame|silent ACK|Duplicate|error|failed|epoch|STUCK/i.test(l)
-);
-// The whole report, not just `notable`: a verdict is PASS only if the assertions hold AND the run
-// is clean, and two shipped bugs came out of a passing check's noise.
+// ── observation, WHICH IS NOW PART OF THE VERDICT ────────────────────────────
+//
+// This block used to compute exactly what it computes now and then do NOTHING with it: three full
+// reports were printed UNDER `out.verdict`, where a reader could see them and no verdict could ever
+// be contradicted by them. `NOTIF-10: PASS` therefore meant "the five messages arrived", full stop -
+// not "and the run was clean" - and it was not even a row in `results.ndjson`, because this file
+// never called `record` at all. Both halves of the campaign's rule were missing from the phase that
+// exercises the phone hardest.
+//
+// The phone's own half was a keyword `grep` over `phone.console_()`, which reads only the WebView's
+// TypeScript console out of logcat - so the Rust core, the FCM service and the workers, the entire
+// reason a phone check exists, were never looked at. `logcatReport` classifies them.
+const phoneReport = logcatReport(await logcatSince(phoneWindowFrom), 'A1');
+out.phone = {
+  clean: phoneReport.clean,
+  severe: phoneReport.severe,
+  errors: phoneReport.errors,
+  unexplained: phoneReport.unexplained,
+  notable: phoneReport.notable,
+  foreign: phoneReport.foreign,
+  explainedBy: phoneReport.explainedBy,
+  pids: phoneReport.pids,
+};
 const trim = (r) => ({
   clean: r.clean,
   errors: r.errors,
@@ -288,6 +347,22 @@ const trim = (r) => ({
   notable: r.notable,
   unexplained: r.unexplained,
 });
-out.w2 = trim(await report(oW2));
-out.w1 = trim(await report(oW1));
+const rW2 = await report(oW2);
+const rW1 = await report(oW1);
+out.w2 = trim(rW2);
+out.w1 = trim(rW1);
+
+// NOT `ignoringOfflineCut`, deliberately, even though NOTIF-10 cuts the radios. That helper forgives
+// a CLIENT's reaction to a cut this check performed, and here the client that was cut is the PHONE -
+// whose report comes from logcat, which the helper does not model. Applying it to W1/W2 would forgive
+// them for an outage they never had. If NOTIF-10's phone window turns out to carry the app's honest
+// reconnect chatter, that is a rule to add to `logcatReport` with its reason, not a blanket pardon.
+const gated = gate(out.verdict, { W1: rW1, W2: rW2, A1: phoneReport });
+out.verdict = gated.verdict;
+record(`NOTIF-${which}`, gated.verdict, {
+  ...gated.detail,
+  undecryptedInShade: out.undecrypted,
+  notifiedInMs: out.notifiedInMs ?? null,
+  markers: out.markers ?? (out.marker ? [out.marker] : []),
+});
 console.log(JSON.stringify(out, null, 2));

@@ -718,18 +718,34 @@ export function longestSilence(timeline) {
 }
 
 /**
- * The phone's logcat since a wall-clock instant, over the SAME 19-tag whitelist as `test_adb.py`.
+ * THE TAG WHITELIST IS GONE, AND IT WAS HIDING THE CAMPAIGN'S OWN PRIMARY EVIDENCE.
  *
- * The tag list is not decoration: `*:S` silences everything else, so a tag missing here is a line
- * that can never arrive - and a check whose verdict lives on that line can never pass. Kept in sync
- * with `docs/wiki/device-verification.md`.
+ * This used to pass `*:S` plus nineteen literal tags, with a comment stating exactly the risk it was
+ * running: *"a tag missing here is a line that can never arrive - and a check whose verdict lives on
+ * that line can never pass"*. It was right, and it was describing itself.
+ *
+ * `adb`'s tag filters are EQUALITIES, not prefixes, and the Rust half of this application does not
+ * log under `CanariRust` at all - the logger emits the MODULE PATH as the tag. Measured 2026-08-16
+ * against a stored capture: `mines_app_lib::commands::mls`, `mls_core::state`, `mls_core::messaging`,
+ * `openmls::schedule`, `openmls::tree::sender_ratchet`, `openmls::framing::private_message_in` and a
+ * dozen more were all being silenced, because `mines_app_lib:D` matches the tag `mines_app_lib` and
+ * nothing else. Among the silenced lines, in that one capture:
+ *
+ *     E/openmls::framing::private_message_in   SecretReuseError                          x3
+ *     E/openmls::framing::private_message_in   Ciphertext generation out of bounds 280   x1
+ *     E/openmls::framing::private_message_in   Ciphertext generation out of bounds 281   x2
+ *
+ * which are the two markers of the false-loss class this whole campaign exists to detect - named
+ * verbatim in `logcatNotable`'s own predicate, on a tag that predicate could never be handed. So the
+ * phone was blind to its own MLS core on every check that read it, and the web half's CDP console
+ * cannot cover it: the Rust log does not go there. (Those particular sightings pre-date the fix and
+ * are not a live defect. The blind spot was.)
+ *
+ * CAPTURE WIDE, CLASSIFY PRECISELY - the same shape the server observer already has. A whitelist
+ * decides what may be seen BEFORE anything is known about it, which is the wrong end: `logcatReport`
+ * partitions by ownership afterwards, where a Rust module path is recognisable by its shape and
+ * everything else is counted rather than judged. Nothing can be silenced by an omission any more.
  */
-const LOGCAT_TAGS = [
-  'mines_app_lib:D', 'CanariRust:D', 'CanariFCM:D', 'CanariWorker:D', 'CanariApp:D', 'CanariBoot:D',
-  'CanariNotifAction:D', 'CanariOutboxRetry:D', 'MlsDeviceKeyStore:D', 'PushSecretKeystore:D',
-  'KeyboardMedia:D', 'fr.emse.canari:D', 'chromium:I', 'Tauri/Console:V', 'MainActivity:D',
-  'FirebaseMessaging:W', 'WM-WorkerWrapper:W', 'AndroidRuntime:E', 'System.err:W',
-];
 
 /**
  * The phone's adb serial, RESOLVED rather than hard-coded.
@@ -765,10 +781,15 @@ export async function logcatSince(sinceMs) {
   const p2 = (n) => String(n).padStart(2, '0');
   const stamp = `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}.000`;
   try {
-    const out = execFileSync('adb', ['-s', A1_SERIAL, 'logcat', '-d', '-T', stamp, '*:S', ...LOGCAT_TAGS], {
+    // No tag filter, and a buffer sized for it: an unfiltered window over a long check runs to tens
+    // of thousands of lines (28 464 in the capture this was measured against), and `execFileSync`
+    // does not truncate on overflow - it THROWS, which this function reports as `LOGCAT UNAVAILABLE`.
+    // A silent instrument would have been bad; one that fails loudly at a size it should handle is
+    // just a wrong constant.
+    const out = execFileSync('adb', ['-s', A1_SERIAL, 'logcat', '-d', '-T', stamp], {
       encoding: 'utf8',
       timeout: 25000,
-      maxBuffer: 8 * 1024 * 1024,
+      maxBuffer: 128 * 1024 * 1024,
     });
     return out
       .split(/\r?\n/)
@@ -779,14 +800,18 @@ export async function logcatSince(sinceMs) {
   }
 }
 
-/** Logcat lines that are a real signal rather than routine chatter. */
-export function logcatNotable(lines) {
-  // A bare /E/i would match almost every line - logcat's severity column is a lone letter,
-  // so it has to be anchored as a word.
-  return lines.filter((l) =>
-    /\bE\b|FATAL|Exception|panic|SecretReuse|out of bounds|epoch|GAP|decrypt|fail|error/i.test(l)
-  );
-}
+// `logcatNotable` LIVED HERE AND IS DELETED - the keyword filter every phone check used to call.
+//
+// It answered "does this line contain a scary word", which is not the question: a line is either
+// EXPECTED AND NAMED or it is a finding, and a filter can only ever produce a subset of the first
+// kind. Measured against a real 2 627-line capture, its predicate marked 43 lines that are not this
+// application at all - 39 from the WebView's Chrome-Sync subsystem, four from a DIFFERENT app's
+// WorkManager - while the six that mattered (`SecretReuseError` x3, `Ciphertext generation out of
+// bounds` x3) were unreachable behind the tag whitelist above it. Wrong in both directions at once.
+//
+// Its five call sites now use {@link logcatReport}. Deleted rather than deprecated: a filter left
+// exported is a filter the next phone check will reach for, and it reads as an alternative to the
+// classifier rather than as the thing the classifier replaced.
 
 /** What a DELIBERATE network cut makes a healthy client say. Nothing here is a defect on its own. */
 const OFFLINE_NOISE =
@@ -805,6 +830,276 @@ const OFFLINE_NOISE =
 // SUBJECT instead is both shorter and immune to the truncation.
 const CUT_REACTION =
   /WebSocket connection to '?wss?:|\[WS\] WebSocket error|\[WS\] Gateway connection failed|Connection lost\. Retrying|\[OUTBOX\] \S+ transient failure|Gateway inaccessible: WebSocket connection failed/i;
+
+/**
+ * THE PHONE'S NATIVE HALF, CLASSIFIED - the third surface, which had a `grep` where the other two
+ * have classifiers.
+ *
+ * It replaces `logcatNotable`, a keyword filter, and a filter is not an observation: it answered
+ * "does this line contain a scary word", never "is every line here expected". Measured 2026-08-16
+ * against a real 2 627-line capture, that predicate marked 43 lines that are not this app at all - 39
+ * from the WebView's own Chrome-Sync subsystem (`get_updates_processor.cc`, `syncer_proto_util.cc`)
+ * and four `Could not create Worker com.linkedin.android.litrackingcomponent...`, which is A DIFFERENT
+ * APP's WorkManager job landing in the same buffer. Gating a verdict on that would have made the
+ * phone permanently dirty, and dirt that is always there is dirt nobody reads.
+ *
+ * SO THE PARTITION IS BY OWNERSHIP FIRST, SEVERITY SECOND. Only lines this application emitted can
+ * break `clean`; everything else is COUNTED by tag, so the blind spot is visible in the record
+ * instead of being silently forgiven. A number beside a tag says "this is here and it is not ours";
+ * dropping it entirely would say nothing at all.
+ *
+ * `Tauri/Console` IS DELIBERATELY EXCLUDED, and counted so the exclusion is legible. Those lines are
+ * the app's TypeScript console, which `watch(a1)` already captures over CDP with a stack frame and
+ * the network events around it - strictly more than logcat's flattened copy. Classifying them twice
+ * would double every web-side finding and let the two halves disagree. What CDP CANNOT see is the
+ * native side - `CanariRust`, `CanariFCM`, the keystores, the workers, a `AndroidRuntime` crash -
+ * which is exactly what this covers, and the reason a phone check that only watched CDP had observed
+ * half its client.
+ *
+ * The `EXPLAINED` list is measured, not imagined: every entry was read off a real capture, and
+ * anything native that matches none of them lands in `unexplained` verbatim, which breaks `clean`.
+ * That is the same contract as the server observer - a line is either expected AND named here, or it
+ * is a finding.
+ *
+ * @param {string[]} lines raw logcat, as {@link logcatSince} returns it
+ * @param {string} label which client this is, for the record
+ */
+export function logcatReport(lines, label = 'A1') {
+  /**
+   * Tags this application's own code writes - Kotlin by NAME, Rust by SHAPE.
+   *
+   * The Kotlin half is a list because it is one. The Rust half cannot be: `env_logger` emits the
+   * MODULE PATH as the tag, so the set is every module of this binary and of every crate it links -
+   * `openmls::tree::sender_ratchet`, `mls_core::state`, `hyper_util::client::legacy::connect::http`.
+   * Enumerating that is a list that goes stale on a `cargo update`, which is how the old tag
+   * whitelist silenced the MLS core for months.
+   *
+   * `::` IS THE DISCRIMINATOR, and it was checked against the population rather than assumed: over a
+   * 28 464-line unfiltered capture of the whole device, no Android tag contains `::` and every tag
+   * that does belongs to this binary. Bare snake_case is deliberately NOT used even though
+   * `tokio_tungstenite` wants it - `audio_hw`, `usf_sensor_hal`, `wpa_supplicant` and `word_detector_0`
+   * are all platform tags of the same shape, and a discriminator that cannot separate them would
+   * hand this app the platform's failures.
+   */
+  const OURS_BY_NAME =
+    /^(CanariRust|CanariFCM|CanariWorker|CanariApp|CanariBoot|CanariNotifAction|CanariOutboxRetry|MlsDeviceKeyStore|PushSecretKeystore|KeyboardMedia|MainActivity|mines_app_lib|tokio_tungstenite|RustStdoutStderr|Tauri\/Plugin)$/;
+  const RUST_MODULE = /^[a-z][a-z0-9_]*(::[a-z0-9_]+)+$/;
+  const isOurs = (tag) => OURS_BY_NAME.test(tag) || RUST_MODULE.test(tag);
+
+  /**
+   * Every native shape seen on a healthy run, each named. Ordered only for readability - the first
+   * match wins, and none of these overlap.
+   */
+  const EXPLAINED = [
+    ['lifecycle', /^(onPause|onResume|onCreate|onDestroy|onNewIntent): /],
+    ['keystore-read', /^retrieve: success alias=/],
+    ['keystore-health', /^checkKeystoreHealth: Keystore operational/],
+    ['push-secret', /^processPendingPushSecret: /],
+    ['installer', /^recordInstallerPackage: /],
+    ['fcm-token', /^FCM token synced/],
+    ['fcm-received', /^onMessageReceived: type=/],
+    ['fcm-foreground-skip', /^App in foreground -> MLS handled by the foreground/],
+    ['fcm-decrypt', /^(tryDecrypt|decryptProto): (MLS state loaded|success)/],
+    ['fcm-notify', /^(showNotification|refreshBadgeSummary|thread): /],
+    ['fcm-cache', /^(writeFcmCache|fetchAvatar): /],
+    ['outbox-drain', /^(drainOutboxBackground|sendQueuedMessagePush): /],
+    ['worker-flag', /^resetFailureFlag: flag reset/],
+    ['paths', /^\[mines_app_lib\] \[Path\] /],
+    // ── the Rust half, silenced by the old tag whitelist and therefore never classified before ──
+    // Each of these was read off a real capture; the module path is already in the tag, so matching
+    // the bracketed prefix the logger repeats would only restate it.
+    ['mls-benign-drop', /^\[mls_core::messaging\] Benign /],
+    ['mls-state', /^\[mls_core::(state|messaging)\] /],
+    ['mls-commands', /^\[mines_app_lib::commands::mls\] /],
+    ['push-commands', /^\[mines_app_lib::commands::push\] /],
+    ['storage-commands', /^\[mines_app_lib::commands::(storage|cookies)\] /],
+    ['background-send', /^\[mines_app_lib::mobile::background\] /],
+    // openmls at DEBUG is the key schedule narrating itself - one line per derivation, several per
+    // frame. It is loud and it is not a signal; an ERROR from the same module is not covered here
+    // and cannot be, because the `E` branch above returns before any rule is consulted.
+    ['openmls-debug', /^\[openmls::(schedule|tree::secret_tree|tree::sender_ratchet|framing::private_message)/],
+    ['sql', /^\[sqlx::query\] /],
+    ['http-pool', /^\[(hyper_util|reqwest)::/],
+    ['websocket', /^\[(tokio_tungstenite|tungstenite)(::[a-z_:]+)?\]/],
+    ['tauri-asset', /^\[tauri::manager\] Asset/],
+    ['jni-attach', /^\[jni::wrapper::java_vm::vm\] /],
+    ['tauri-plugin', /^Tauri plugin: /],
+    // Rust's stdout capture relays the WebView's own startup chatter under an app tag. It is the
+    // engine's line wearing our tag, so it is named rather than left to read as ours.
+    ['webview-stdout-relay', /^\[\d{4}\/\d{6}|^\[(INFO|WARNING|ERROR):/],
+  ];
+
+  const parsed = [];
+  const skipped = { unparsed: 0, tauriConsole: 0 };
+  const foreign = {};
+
+  for (const raw of lines) {
+    if (!raw || raw.startsWith('---------')) continue;
+    // TWO FORMATS, because two producers. `logcatSince` takes adb's default (`threadtime`:
+    // `MM-DD hh:mm:ss.mmm PID TID L Tag: msg`) while the captures `test_adb.py` left on disk are
+    // `brief` with a time column (`MM-DD hh:mm:ss.mmm L/Tag(PID): msg`). A parser that knew one of
+    // them would classify a whole capture as `unparsed` and report it as a blind spot rather than a
+    // population - which is how a measurement gets made against nothing.
+    // THE TAG ENDS AT THE FIRST COLON-SPACE, NOT THE FIRST COLON - and getting that wrong silenced
+    // the Rust half a second time, in this parser, one layer below the adb whitelist that had just
+    // been removed for the same reason. `([^\s:]+)` reads `mls_core::state` as the tag `mls_core`,
+    // which carries no `::` and is therefore filed as somebody else's line. The stored captures did
+    // not catch it because they are in adb's `brief` format, where `(pid)` delimits the tag; the
+    // threadtime branch is the one `logcatSince` actually produces, so the fix would have been inert
+    // in the field and green on the bench. `logcatclassify-selftest.mjs` is what found it.
+    const tt = /^(\d{2}-\d{2} [\d:.]+)\s+(\d+)\s+\d+\s+([VDIWEF])\s+(\S+?):\s(.*)$/.exec(raw);
+    const br = tt ? null : /^(\d{2}-\d{2} [\d:.]+)\s+([VDIWEF])\/(.+?)\(\s*(\d+)\):\s?(.*)$/.exec(raw);
+    if (!tt && !br) {
+      // `LOGCAT UNAVAILABLE: ...` is `logcatSince` reporting it could not read the device at all,
+      // and an unreadable surface is NOT a clean one - it goes straight to `errors`.
+      if (/^LOGCAT UNAVAILABLE/.test(raw))
+        parsed.push({ at: null, pid: null, sev: 'E', tag: 'adb', msg: raw, ours: true });
+      else skipped.unparsed++;
+      continue;
+    }
+    const [at, pid, sev, tag, msg] = tt
+      ? [tt[1], tt[2], tt[3], tt[4], tt[5]]
+      : [br[1], br[4], br[2], br[3], br[5]];
+    parsed.push({ at, pid, sev, tag: tag.trim(), msg, ours: isOurs(tag.trim()) });
+  }
+
+  const errors = [];
+  const severe = [];
+  const notable = [];
+  const unexplained = [];
+  const explainedBy = {};
+  const pids = new Set();
+
+  for (const l of parsed) {
+    if (l.tag === 'Tauri/Console') {
+      skipped.tauriConsole++;
+      continue;
+    }
+    // WorkManager and the crash handler carry BOTH owners' lines on one tag, so ownership is read
+    // from the payload rather than the tag. `com.linkedin.android...` on `WM-WorkerWrapper` is the
+    // measured case: judging it by tag alone put another app's failure in this app's record.
+    const ours =
+      l.ours ||
+      ((l.tag === 'WM-WorkerWrapper' || l.tag === 'AndroidRuntime' || l.tag === 'System.err') &&
+        /fr\.emse\.canari|CanariRust|mines_app_lib/.test(l.msg));
+    if (!ours) {
+      foreign[`${l.sev}/${l.tag}`] = (foreign[`${l.sev}/${l.tag}`] || 0) + 1;
+      continue;
+    }
+    // THE PIDS OUR LINES CAME FROM, so the ownership rule above can be REFUTED rather than trusted.
+    // `::` is a shape argument, and a shape argument holds until some other Rust binary on the device
+    // writes one; a tag attributed to this app from a pid the app never had is that refutation, and
+    // without this the claim would be unfalsifiable. It also dates the restarts a check performed:
+    // `am kill` gives the next launch a new pid, so a NOTIF or LIFE window legitimately holds two.
+    if (l.pid) pids.add(l.pid);
+
+    const text = `${l.at ?? ''} ${l.sev}/${l.tag}: ${l.msg}`.trim();
+    const MARKERS = /FATAL EXCEPTION|AndroidRuntime|panic|SecretReuse|LOST frame|out of bounds/i;
+
+    // SEVERITY IS READ FROM THE LEVEL FIRST, AND A RULE MAY NEVER EXPLAIN AWAY AN `E`.
+    if (l.sev === 'F' || (l.sev === 'E' && MARKERS.test(l.msg))) {
+      severe.push(text);
+      continue;
+    }
+    if (l.sev === 'E') {
+      errors.push(text);
+      continue;
+    }
+
+    // THE APP'S OWN CLASSIFICATION OUTRANKS THE OBSERVER'S SUBSTRING, and getting this backwards was
+    // measured here rather than argued: `D/mls_core::messaging  Benign same-epoch ratchet frame
+    // dropped: group=... reason=SecretReuseError` is the application stating, at DEBUG, that it
+    // recognised the condition and handled it - and the marker test above it read the word
+    // `SecretReuseError` inside that sentence and filed the line as `severe`. Three of the nine
+    // severe lines in the capture this was built against were that exact self-report.
+    //
+    // This is the campaign's own "classify at the THROW, never on an error MESSAGE" rule seen from
+    // the observing end: where the code has already decided, the observer's job is to honour the
+    // decision, not to re-derive it from prose. Restricted to D/I/W/V precisely so it cannot become
+    // a way to silence a real failure - an `E` never reaches this point.
+    const hit = EXPLAINED.find(([, re]) => re.test(l.msg));
+    if (hit) {
+      explainedBy[hit[0]] = (explainedBy[hit[0]] || 0) + 1;
+      // Explained AND worth seeing: an epoch gap or a re-enrolment is normal traffic and still the
+      // first thing a reader wants beside a delivery verdict.
+      if (/epoch|GAP|welcome|revoke|forget|out-of-sync/i.test(l.msg)) notable.push(text);
+      continue;
+    }
+    // An UNCLASSIFIED line carrying a marker still escalates: the rules above are what is known to be
+    // benign, and a line nobody has named is not covered by any of them.
+    if (MARKERS.test(l.msg)) {
+      severe.push(text);
+      continue;
+    }
+    // A FALLBACK IS A SIGNAL, NEVER A PATH - so it breaks `clean` from whatever level it was logged
+    // at. `CanariFirebaseMessagingService` renders "Nouveau message de X" when background MLS
+    // decryption failed, and says so: `Log.w(TAG, "Fallback notification: $it")`. At `W` it would
+    // have landed in `notable`, which does not gate, and the phone would keep reporting PASS while
+    // every notification it raised was undecrypted - which is exactly what was asked about NOTIF-10
+    // on 2026-08-16 and exactly what no check could answer.
+    //
+    // The ONE case where this is the correct behaviour is a notification for a message in an epoch
+    // the background context cannot reach (NOTIF-2). That check must forgive this line EXPLICITLY,
+    // the way `ignoringOfflineCut` forgives a cut it performed - never by lowering the bar here.
+    if (/Fallback notification:|generic fallback/i.test(l.msg)) {
+      errors.push(text);
+      continue;
+    }
+    if (l.sev === 'W') {
+      // A WARNING THIS APP EMITTED IS NOT AUTOMATICALLY BENIGN, but it does not break `clean` on its
+      // own - same rule the web report applies - so it is surfaced rather than judged.
+      notable.push(text);
+      continue;
+    }
+    unexplained.push(text);
+  }
+
+  return {
+    label,
+    // The same six buckets `dirtOf` reads, so a phone report drops into `gate()` unchanged. The two
+    // that cannot exist here are present and empty on purpose: an absent key would read as "this
+    // instrument does not check that", which is a different claim from "it found none".
+    errors,
+    severe,
+    exceptions: [],
+    badHttp: [],
+    wsEvents: [],
+    unexplained,
+    notable,
+    clean: errors.length === 0 && severe.length === 0 && unexplained.length === 0,
+    /**
+     * Counted, never judged: the WebView engine, the ART runtime, and every other app on the device.
+     *
+     * SUMMARISED, because the window is now unfiltered and a whole-device capture carries several
+     * HUNDRED distinct foreign tags - a record that inlined them all would be unreadable and would
+     * bury the six buckets above it. The total is what says "this window was wide"; the busiest few
+     * are what a reader needs if a foreign subsystem ever turns out to matter, and the full dump is
+     * one re-run of `scratch/logcatpop.mjs` away.
+     */
+    foreign: {
+      lines: Object.values(foreign).reduce((a, b) => a + b, 0),
+      tags: Object.keys(foreign).length,
+      busiest: Object.fromEntries(
+        Object.entries(foreign)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+      ),
+    },
+    /** `Tauri/Console` belongs to the CDP watcher; `unparsed` is this parser's own blind spot. */
+    skipped,
+    explainedBy,
+    /**
+     * Every rule this classifier declares, matched or not - so `logcatclassify-selftest.mjs` can
+     * assert that each one is exercised by a fixture. `explainedBy` only ever names the rules that
+     * FIRED, which cannot distinguish "no such line in this window" from "this rule stopped
+     * matching when the message was reworded".
+     */
+    ruleNames: EXPLAINED.map(([n]) => n),
+    /** Distinct pids our own lines came from - see the note where they are collected. */
+    pids: [...pids],
+    linesSeen: parsed.length,
+  };
+}
 
 /**
  * WHY a report is not clean, as one object - and `{}` when it is clean.

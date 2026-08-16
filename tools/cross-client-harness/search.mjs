@@ -63,10 +63,26 @@ import {
   activate,
   goto,
 } from './chat.mjs';
-import { record, mark } from './results.mjs';
+import { record, recordObserved, mark } from './results.mjs';
+import { ignoringOfflineCut, report, watch } from './watch.mjs';
 import { PEER_NAME, PORTS, VENUE } from './names.mjs';
 
 const { W1 } = PORTS;
+
+/**
+ * A CLIENT AND THE OBSERVER THAT WATCHES IT, together - because separately, six checks took the
+ * first and none took the second.
+ *
+ * SEARCH shipped six verdicts with `watch = 0` and `report = 0`: not one of them looked at a console
+ * line, and all six read as passes. Search is the phase where that omission bites hardest - every
+ * check here DECRYPTS (`searchChannelHistory` walks up to 2000 rows through MLS), so a failing
+ * decrypt shows up as a missing hit and nothing else. `0/0` is what a search with no matches looks
+ * like AND what a search whose messages would not open looks like; only the console separates them.
+ */
+async function observed(port, label) {
+  const cx = await client(port);
+  return [cx, await watch(cx, label)];
+}
 
 const argv = process.argv.slice(2);
 const only = argv.includes('--only') ? Number(argv[argv.indexOf('--only') + 1]) : null;
@@ -124,7 +140,7 @@ const bodyHasWarning = (cx) =>
 // SEARCH-1 - a recent term is found and highlighted; prev/next walk the hits.
 // ---------------------------------------------------------------------------------------------
 async function search1() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'SEARCH-1');
   await openDM(cx, PEER_NAME);
 
   const term = mark('SEARCH1');
@@ -186,7 +202,7 @@ async function search1() {
 
   const ok =
     settled !== null && hitsMatchTerm && afterNext === '2/2' && afterPrev === '1/2' && wrapped === '2/2';
-  record('SEARCH-1', ok ? 'PASS' : 'FAIL', {
+  await recordObserved('SEARCH-1', ok ? 'PASS' : 'FAIL', {
     initialCount: countAfterOpen,
     hits,
     afterNext,
@@ -194,7 +210,7 @@ async function search1() {
     wrappedAfterPrev: wrapped,
     jumpHighlightApplied: jumpHighlighted > 0,
     note: 'isHighlighted (per-hit ring) is declared on MessageBubble but never passed anywhere in the tree - not asserted on, see file header',
-  });
+  }, { W1: obs });
   cx.close();
   return ok;
 }
@@ -210,7 +226,7 @@ async function search1() {
 // silent empty result would be worse than either.
 // ---------------------------------------------------------------------------------------------
 async function search2() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'SEARCH-2');
   await openChannel(cx, VENUE.community, VENUE.channel);
 
   const term = mark('SEARCH2');
@@ -246,7 +262,12 @@ async function search2() {
   // is already in `conversation.messages`, live) AND the UI admits it was limited. Either half
   // failing is the interesting result, so both are recorded regardless of the verdict.
   const ok = foundViaFallback && warningShown;
-  record('SEARCH-2', ok ? 'PASS' : 'FAIL', {
+  // THE CUT IS THIS CHECK'S OWN, so its consequences are forgiven and counted - and only those. The
+  // whole method here is to make a server fetch reject, which produces exactly the disconnected
+  // fetches `ignoringOfflineCut` names; left in, SEARCH-2 could never be clean and its observation
+  // would discriminate nothing. What it does NOT forgive is the interesting half: an unhandled
+  // rejection while offline is a defect, and a decrypt that failed is not a network error.
+  await recordObserved('SEARCH-2', ok ? 'PASS' : 'FAIL', {
     scenario: 'server fetch forced offline mid-search (channel path)',
     count,
     foundViaFallback,
@@ -256,7 +277,7 @@ async function search2() {
       'searchChannelHistory caps at 2000 rows (useConversations.svelte.ts ~440) and never sets ' +
       'searchLimitedToLoaded when capped - only the throw path does. Not reproduced here (would need ' +
       '>2000 messages in the channel); flagged from the source read only.',
-  });
+  }, { W1: ignoringOfflineCut(await report(obs)) });
   cx.close();
   return ok;
 }
@@ -267,7 +288,7 @@ async function search2() {
 // this runs in the DM, never the channel.
 // ---------------------------------------------------------------------------------------------
 async function search3() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'SEARCH-3');
   await openDM(cx, PEER_NAME);
 
   const termDeleted = mark('SEARCH3DEL');
@@ -325,11 +346,11 @@ async function search3() {
   const newCount = await searchCountText(cx);
 
   const ok = deletedCount === '0/0' && oldCount === '0/0' && newCount === '1/1';
-  record('SEARCH-3', ok ? 'PASS' : 'FAIL', {
+  await recordObserved('SEARCH-3', ok ? 'PASS' : 'FAIL', {
     deletedMessageSearch: deletedCount, // expect 0/0
     editedMessageOldTextSearch: oldCount, // expect 0/0 - the old text no longer exists anywhere
     editedMessageNewTextSearch: newCount, // expect 1/1
-  });
+  }, { W1: obs });
   cx.close();
   return ok;
 }
@@ -338,7 +359,7 @@ async function search3() {
 // SEARCH-4 - channel search (the 2000-row decrypt path), timed.
 // ---------------------------------------------------------------------------------------------
 async function search4() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'SEARCH-4');
   await openChannel(cx, VENUE.community, VENUE.channel);
 
   const term = mark('SEARCH4');
@@ -361,12 +382,16 @@ async function search4() {
 
   const STALL_MS = 8000; // generous over the WP-PUSHHERD baseline; flagged, not failed, past this
   const ok = elapsedMs !== null;
-  record('SEARCH-4', ok ? 'PASS' : 'FAIL', {
+  // THE OBSERVATION MATTERS MORE HERE THAN THE TIMING. This path decrypts up to 2000 rows one by
+  // one, and every frame that will not open is a console line and a hit that is simply absent - so
+  // `1/1` arriving on time says nothing about the 1999 rows walked to find it. The gate is what
+  // makes this check able to see a partial decrypt failure at all.
+  await recordObserved('SEARCH-4', ok ? 'PASS' : 'FAIL', {
     elapsedMs,
     totalWallClockMs: totalMs,
     stall: elapsedMs !== null && elapsedMs > STALL_MS,
     warningShownDuringSuccessfulSearch: warningShown, // must be false - see SEARCH-2's header note
-  });
+  }, { W1: obs });
   cx.close();
   return ok;
 }
@@ -375,7 +400,7 @@ async function search4() {
 // SEARCH-5 - accents and case. splitWithHighlight/toLowerCase() folds CASE, not diacritics.
 // ---------------------------------------------------------------------------------------------
 async function search5() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'SEARCH-5');
   await openDM(cx, PEER_NAME);
 
   // One inseparable token so the ONLY variable between the two queries is the accent/case of a
@@ -405,7 +430,7 @@ async function search5() {
   // works" would miss this; the verdict below is about which DIRECTION holds, not whether either
   // one alone passes or fails.
   const matchesPrediction = !noAccentFound && accentUpperFound;
-  record('SEARCH-5', matchesPrediction ? 'PASS' : 'FAIL', {
+  await recordObserved('SEARCH-5', matchesPrediction ? 'PASS' : 'FAIL', {
     word,
     noAccentQuery: queryNoAccent,
     noAccentFound,
@@ -417,7 +442,7 @@ async function search5() {
       "PASS here means the app's accent-insensitivity gap is confirmed exactly as predicted from " +
       "the source (case folds, diacritics do not) - it is a FINDING either way, not a pass/fail on " +
       'whether accent-insensitive search "works": it does not, by design of splitWithHighlight.',
-  });
+  }, { W1: obs });
   cx.close();
   return matchesPrediction;
 }
@@ -427,7 +452,7 @@ async function search5() {
 // not claim to search full history.
 // ---------------------------------------------------------------------------------------------
 async function search6() {
-  const cx = await client(W1);
+  const [cx, obs] = await observed(W1, 'SEARCH-6');
   await openDM(cx, PEER_NAME);
 
   const termA = mark('SEARCH6A');
@@ -497,14 +522,14 @@ async function search6() {
     !matchesSupersededMessage &&
     matchesName &&
     rowsUnderJunkQuery === 0;
-  record('SEARCH-6', ok ? 'PASS' : 'FAIL', {
+  await recordObserved('SEARCH-6', ok ? 'PASS' : 'FAIL', {
     beforeRowsForPeerName: beforeRows,
     matchesCurrentLastMessage,
     matchesSupersededMessage, // expect false - this is the "does NOT search full history" assertion
     matchesName,
     rowsUnderJunkQuery, // expect 0 - proves the filter isn't a silent no-op
     note: "sidebar list has no data-conversation-id/role hook; scoped via the list container's utility-class triple, see file header",
-  });
+  }, { W1: obs });
   cx.close();
   return ok;
 }
@@ -521,5 +546,8 @@ for (const [n, fn] of Object.entries(CHECKS)) {
     results.push([n, false]);
   }
 }
-console.log(`\nSEARCH: ${results.filter(([, ok]) => ok).length}/${results.length} passed`);
-process.exit(results.every(([, ok]) => ok) ? 0 : 1);
+console.log(`\nSEARCH: ${results.filter(([, ok]) => ok).length}/${results.length} assertions held`);
+// NO EXIT CODE HERE - `results.mjs` derives it from the VERDICTS, and these booleans are not the
+// verdicts. Each one is the ASSERTION half only, computed before the observation was applied, so
+// `process.exit(results.every(...))` reported 0 for a run whose every recorded row said PASS-DIRTY.
+// Two sources of truth for one answer, and the one that exited was the one that had not looked.

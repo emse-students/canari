@@ -14,7 +14,8 @@
  */
 import { client, evaluate, send } from './chat.mjs';
 import { openGroup } from './groupnav.mjs';
-import { mark } from './results.mjs';
+import { finishObserved, mark } from './results.mjs';
+import { watch } from './watch.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const NAME = process.argv[2] || 'GRP2-msp1wknq';
@@ -49,6 +50,12 @@ console.log(`[grp] before: W1=${before.W1.ids.length} W2=${before.W2.ids.length}
 
 const fromW1 = mark('GRPT1');
 const fromW2 = mark('GRPT2');
+
+// THE WINDOW OPENS HERE, not at connect: the `before` reads above walk IndexedDB on both clients and
+// are this script's own doing, while everything from this line on is the application's group path -
+// a commit, a fan-out over a roster larger than two, and two decrypts. That is the whole subject.
+const oW1 = await watch(W1, 'GRP-W1');
+const oW2 = await watch(W2, 'GRP-W2');
 
 await openGroup(W1, NAME, { navigate: true, label: 'grp' });
 await sleep(1500);
@@ -99,7 +106,30 @@ const ok =
   seen.W1.own && seen.W1.peer && seen.W2.own && seen.W2.peer;
 
 console.log(`[grp] rendered: ${JSON.stringify(seen)}`);
-console.log(
-  `[grp] VERDICT ${ok ? 'PASS' : `FAIL - onlyW1=${onlyW1.length} onlyW2=${onlyW2.length} gained=${JSON.stringify({ w1: gained.W1.length, w2: gained.W2.length })} rendered=${JSON.stringify(seen)}`}`
+
+/**
+ * THE WHOLE GRP PHASE HAS NEVER WRITTEN A ROW, and this is the only script in it.
+ *
+ * `checks.mjs` lists GRP as covered by this file alone; the file printed `[grp] VERDICT PASS` to
+ * stdout and exited on it. So the dashboard's GRP line has only ever been able to say "a script
+ * ran", and a run whose terminal has scrolled is a run that left nothing.
+ *
+ * It observed nothing either, which matters more here than in most places: this is the only check
+ * that exercises the MLS group path (a commit, then a fan-out over a roster larger than two), and
+ * every failure mode of that path - a commit applied out of order, a member whose ratchet gapped,
+ * an epoch that moved under a pending send - announces itself in the console before it ever changes
+ * an id set. The id sets are ciphertext; they cannot say why they differ.
+ */
+await finishObserved(
+  'GRP-TRAFFIC',
+  ok ? 'PASS' : 'FAIL',
+  {
+    group: NAME,
+    gained: { W1: gained.W1.length, W2: gained.W2.length },
+    onlyOnW1: onlyW1.length,
+    onlyOnW2: onlyW2.length,
+    rendered: seen,
+    markers: [fromW1, fromW2],
+  },
+  { W1: oW1, W2: oW2 },
 );
-process.exit(ok ? 0 : 1);

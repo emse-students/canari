@@ -14,8 +14,8 @@
  */
 import { execFileSync } from 'node:child_process';
 import { client, ensureChat, openConversation, countMessage, awaitMessage, send, evaluate } from './chat.mjs';
-import { watch, report } from './watch.mjs';
-import { mark } from './results.mjs';
+import { logcatReport, logcatSince, watch } from './watch.mjs';
+import { finishObserved, mark } from './results.mjs';
 import * as phone from './phone.mjs';
 import { ACCOUNT_OF, PORTS, peerNameFor } from './names.mjs';
 
@@ -186,6 +186,9 @@ await openConversation(w2, peerNameFor('W2'));
 await sleep(1_000);
 
 phone.clearLogcat();
+// The instant the phone's own window opens, so the native half can be classified rather than
+// grepped - see the note at the verdict.
+const phoneWindowFrom = Date.now();
 const oW = await watch(w2, `life${which}-w2`);
 const pidBefore = phone.pid();
 
@@ -219,12 +222,23 @@ const notable = phoneConsole.filter((l) =>
   /\[KP\]|SecretReuse|out of bounds|LOST frame|silent ACK|Duplicate|error|failed|epoch/i.test(l)
 );
 
+/**
+ * THE PHONE'S NATIVE HALF, CLASSIFIED - and it is the half this phase is entirely about.
+ *
+ * LIFE is the only phase where the app is BACKGROUNDED or KILLED for the duration, which means the
+ * work under test runs in Kotlin and Rust with no WebView attached: `CanariFCM` receiving the push,
+ * the Rust core decrypting it, the keystores, the workers. `phone.console_()` above cannot see any
+ * of it - it is the WebView's console, and during LIFE-4/7/8 there is no WebView. So every previous
+ * run of this check observed the one surface that was switched off.
+ */
+const phoneReport = logcatReport(await logcatSince(phoneWindowFrom), 'A1');
+
 const wantNotification = state.expectNotification !== false;
 // The lifecycle transition is an ASSERTION, not a note printed beside the verdict: a check whose
 // state was never entered can still satisfy every other condition, and then reads as a real result
 // about a state the phone was never in.
 const diedAsExpected = state.processDies === (pidDuring === null);
-const verdict =
+const asserted =
   count === 1 &&
   arrivedInMs !== null &&
   diedAsExpected &&
@@ -232,21 +246,20 @@ const verdict =
     ? 'PASS'
     : 'FAIL';
 
-console.log(
-  JSON.stringify(
-    {
-      check: state.name,
-      marker: m,
-      verdict,
-      pid: { before: pidBefore, during: pidDuring, after: phone.pid(), diedAsExpected },
-      notification: { expected: wantNotification, afterMs: notifiedInMs, shade },
-      conversation: { arrivedInMs, afterRestoreMs, count },
-      pin: pinResult,
-      phoneNotable: notable.slice(-12),
-      w2Notable: (await report(oW)).notable,
-    },
-    null,
-    2
-  )
-);
-process.exit(verdict === 'PASS' ? 0 : 1);
+// RECORDED, GATED, AND EXITED ON - none of which this script did. Seven checks (LIFE-2, 3, 4, 6, 7,
+// 8 and the human LIFE-5) printed a `verdict` field to stdout and exited on it; not one of them has
+// ever appeared in `results.ndjson`, so the phase's whole history is a terminal buffer.
+//
+// The notification assertion is stronger here than it looks and is worth naming: `awaitNotification`
+// waits for the MARKER in the shade, and the generic fallback body carries no marker - so
+// `notifiedInMs !== null` already proves the background decrypt produced real text. That is the
+// property NOTIF had to be taught explicitly; LIFE had it by construction.
+await finishObserved(`LIFE-${which}`, asserted, {
+  check: state.name,
+  marker: m,
+  pid: { before: pidBefore, during: pidDuring, after: phone.pid(), diedAsExpected },
+  notification: { expected: wantNotification, afterMs: notifiedInMs, shade },
+  conversation: { arrivedInMs, afterRestoreMs, count },
+  pin: pinResult,
+  phoneWebviewNotable: notable.slice(-12),
+}, { W2: oW, A1: phoneReport });

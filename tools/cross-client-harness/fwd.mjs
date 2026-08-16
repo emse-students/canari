@@ -28,8 +28,8 @@ import {
   countMessage,
   settledCount,
 } from './chat.mjs';
-import { watch, report, dirtOf } from './watch.mjs';
-import { record, mark } from './results.mjs';
+import { watch, report, dirtOf, gate } from './watch.mjs';
+import { finish, mark } from './results.mjs';
 // NO DISPLAY NAME IS EVER SPELT IN A CHECK. `names.mjs` is the one file that holds real identities
 // and the one file that never reaches the repo, which is PUBLIC - so a check that imports cannot
 // leak, and a check that spells the name relies on someone noticing before the mirror. One did not:
@@ -48,6 +48,10 @@ await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 
 const rows = [];
+// Every iteration's two reports, keyed so the gate can name WHICH round was dirty. A run of ten
+// forwards reduced to one boolean would say "something was noisy" and send its reader back to a
+// stdout dump the next nine rounds have scrolled past.
+const reports = {};
 for (let i = 0; i < N; i++) {
   const marker = mark('FWD');
   const ow1 = await watch(w1, `FWD-${i}-W1`);
@@ -88,6 +92,8 @@ for (let i = 0; i < N; i++) {
 
   const obs2 = await report(ow2);
   const obs1 = await report(ow1);
+  reports[`W1#${i}`] = obs1;
+  reports[`W2#${i}`] = obs2;
   rows.push({
     i,
     marker,
@@ -114,7 +120,11 @@ for (let i = 0; i < N; i++) {
 
 const lost = rows.filter((r) => r.arrivedMs === null);
 const dupes = rows.filter((r) => r.copies > 1);
-const verdict = lost.length === 0 && dupes.length === 0 ? 'PASS' : 'FAIL';
-record(N > 1 ? 'FWD-2' : 'FWD-1', verdict, { iterations: N, lost, dupes, rows });
-console.log(JSON.stringify({ verdict, iterations: N, lostCount: lost.length, dupes: dupes.length, rows }, null, 1));
-process.exit(0);
+const asserted = lost.length === 0 && dupes.length === 0 ? 'PASS' : 'FAIL';
+// THE OBSERVATION DECIDES, having been computed and ignored until now. Both reports were read into
+// `senderClean` / `receiverClean` on every row, where they could be printed but never contradict the
+// verdict - which is the exact fault this check was written to catch in the APPLICATION, running in
+// the instrument. And `process.exit(0)` sat under a `record` that can be FAIL, so `run.mjs` printed
+// `done` next to a recorded loss; `finish` is the one place that cannot do half of it.
+const gated = gate(asserted, reports);
+finish(N > 1 ? 'FWD-2' : 'FWD-1', gated.verdict, { ...gated.detail, iterations: N, lost, dupes, rows });

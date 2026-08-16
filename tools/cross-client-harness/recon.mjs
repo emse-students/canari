@@ -29,7 +29,7 @@
  * was documented eighty lines below, where nobody about to type a command is looking.
  */
 import { client, evaluate } from './chat.mjs';
-import { logcatSince, logcatNotable } from './watch.mjs';
+import { logcatSince, logcatReport } from './watch.mjs';
 
 /**
  * Everything one client knows: which conversations it lists, and which message ids it holds.
@@ -220,7 +220,17 @@ console.log(
       shared,
       differing,
       oneSided,
-      logcatNotable: logcatNotable(await logcatSince(t0)).slice(0, 10),
+      // CLASSIFIED, and deliberately NOT gating: this instrument's verdict is a comparison of two
+      // stores, and a noisy phone does not make two matching stores differ. What the classifier adds
+      // over the keyword grep it replaces is that a line here is now either NAMED or `unexplained` -
+      // and an unexplained line beside a `LOSS` is the first place to look for why.
+      phone: (({ clean, severe, errors, unexplained, notable }) => ({
+        clean,
+        severe,
+        errors,
+        unexplained,
+        notable: notable.slice(0, 10),
+      }))(logcatReport(await logcatSince(t0), 'A1')),
     },
     null,
     1

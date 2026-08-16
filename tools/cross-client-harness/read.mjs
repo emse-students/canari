@@ -848,9 +848,15 @@ async function read10() {
   await until(w2, `document.body.innerText.indexOf(${JSON.stringify(NAME)}) === -1`, 30000).catch(() => {});
   await sleep(5000);
 
-  // Clear the exception log HERE - group create/invite/delete above is noisy by nature (three
-  // overlay open/closes on W2), and none of it is what this check is about.
-  w1.events.length = 0;
+  // THE WINDOW OPENS HERE, and it is a `watch` rather than a hand-cleared buffer.
+  //
+  // Clearing the events was right - group create/invite/delete above is noisy by nature (three
+  // overlay open/closes on W2) and none of it is what this check is about - but it left READ-10 the
+  // ONE check in this file that reads a single bucket. `exceptionsOf(w1)` answers "did anything
+  // throw", and the failure this check exists to catch is the opposite shape: a receipt that WAS
+  // sent for a dead conversation is an outbound request or a WS frame, neither of which throws
+  // anything. It would have passed over the very event it is named for.
+  const oR10 = await watch(w1, 'READ-10-W1');
 
   // W1 opens the now-dead row and "reads" it - focused + visible + open, exactly the state that
   // fires a receipt on an ACTIVE conversation. `convo.lifecycle !== 'active'`
@@ -863,9 +869,11 @@ async function read10() {
   }
   await sleep(4000); // full debounce window + slack, for a receipt that must never be sent
 
-  const exceptions = exceptionsOf(w1);
+  const rW1 = await report(oR10);
+  const exceptions = rW1.exceptions;
   const ok = threw === null && exceptions.length === 0;
-  record('READ-10', ok ? 'PASS' : 'FAIL', { group: NAME, marker: m, threw, exceptions });
+  const gated = gate(ok ? 'PASS' : 'FAIL', { W1: rW1 });
+  record('READ-10', gated.verdict, { ...gated.detail, group: NAME, marker: m, threw, exceptions });
   [w1, w2].forEach((c) => c.close());
   return ok;
 }

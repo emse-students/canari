@@ -34,9 +34,34 @@ export const PHASES = {
   MENTION: { title: 'mentions and what they trigger', scripts: ['mention.mjs'], needs: ['W1', 'W2'] },
   FWD: { title: 'forwarding', scripts: ['fwd.mjs', 'fwd345.mjs', 'fwd5.mjs'], needs: ['W1', 'W2', 'A1'] },
   GRP: { title: 'group membership and invitations', scripts: ['grp-traffic.mjs'], needs: ['W1', 'W2'] },
-  TAB: { title: 'tabs and windows', scripts: ['tab236.mjs', 'tab4.mjs', 'tab5.mjs'], needs: ['W1', 'W2'] },
-  LIFE: { title: 'Android lifecycle', scripts: ['life.mjs'], needs: ['W1', 'W2', 'A1'] },
-  NOTIF: { title: 'notifications', scripts: ['notif.mjs', 'notif7.mjs'], needs: ['W1', 'W2', 'A1'] },
+  // `tab236.mjs` is named for the three checks it implements and selects ONE of them from `argv[2]`,
+  // defaulting to '2' - so the bare entry ran a third of the script its own filename advertises.
+  TAB: {
+    title: 'tabs and windows',
+    scripts: ['tab236.mjs 2', 'tab236.mjs 3', 'tab236.mjs 6', 'tab4.mjs', 'tab5.mjs'],
+    needs: ['W1', 'W2'],
+  },
+  // `life.mjs` implements seven states (2-8) and defaulted to '2', so the LIFE phase covered one of
+  // them. LIFE-5 is deliberately NOT here and that is the only omission: it REBOOTS the phone, and
+  // the unlock after a reboot needs the pattern, which no adb call can answer - it is a human check
+  // and belongs on the device-verification ladder, not in an automated phase. LIFE-6 must run over
+  // USB: the wireless transport rides the wifi that check switches off.
+  LIFE: {
+    title: 'Android lifecycle',
+    scripts: ['life.mjs 2', 'life.mjs 3', 'life.mjs 4', 'life.mjs 6', 'life.mjs 7', 'life.mjs 8'],
+    needs: ['W1', 'W2', 'A1'],
+  },
+  // EVERY RUN IS SPELT OUT, because both scripts here select ONE check from an argument and default
+  // it: `notif.mjs` is `argv[2] || '4'` and `notif7.mjs` is `argv[2] || 'bg'`. Listed bare, the phase
+  // announced NOTIF and silently ran 4 and bg only - two of five - and no output said so, because a
+  // default is indistinguishable from a choice. Found 2026-08-16 while a run that claimed to be
+  // NOTIF-10 never cut the radios. A manifest entry that relies on a default covers what the script
+  // felt like doing, not what the phase claims.
+  NOTIF: {
+    title: 'notifications',
+    scripts: ['notif.mjs 4', 'notif.mjs 9', 'notif.mjs 10', 'notif7.mjs bg', 'notif7.mjs killed'],
+    needs: ['W1', 'W2', 'A1'],
+  },
   HEAL: {
     title: 'does a broken group repair itself',
     scripts: ['heal.mjs', 'heal-a1.mjs', 'heal-w2.mjs', 'heal-web.mjs'],

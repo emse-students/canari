@@ -7,7 +7,7 @@
  * so this run is what establishes it.
  */
 import { client, ensureConversation, send, countMessage, evaluate } from './chat.mjs';
-import { gate, logcatNotable, logcatSince, report, watch } from './watch.mjs';
+import { gate, logcatReport, logcatSince, report, watch } from './watch.mjs';
 import { background } from './tabs.mjs';
 import { finish, mark } from './results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from './names.mjs';
@@ -66,14 +66,17 @@ const after = {
 };
 
 const obs = { a1: await report(wA), w2: await report(wB) };
-const native = { logcat: await logcatNotable(await logcatSince(since)) };
+// CLASSIFIED AND IN THE GATE, where it used to be a keyword grep printed under the verdict. `wA`
+// above is the phone's WEBVIEW over CDP; this is the phone's NATIVE half, and on a check about a
+// hidden/backgrounded window it is the half doing the work.
+const native = logcatReport(await logcatSince(since), 'A1-native');
 
 // CLEANLINESS IS NOT PART OF THE ASSERTION, it is a gate over it. Folding it in made a dirty run
 // report `FAIL`, which says the message did not arrive exactly once - a claim this check would then
 // be making without evidence, and the opposite of what happened. The assertion is the copy count;
 // `gate` decides whether that PASS is qualified.
 const arrivedOnce = after.count === 1;
-const gated = gate(arrivedOnce ? 'PASS' : 'FAIL', { A1: obs.a1, W2: obs.w2 });
+const gated = gate(arrivedOnce ? 'PASS' : 'FAIL', { A1: obs.a1, W2: obs.w2, 'A1-native': native });
 
 // The dump stays on stdout; the verdict goes to the record. This check exited on `pass` and never
 // recorded, so a run of twelve scripts showed nine verdicts and the three silent ones read as passes.

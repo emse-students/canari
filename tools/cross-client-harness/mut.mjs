@@ -105,6 +105,8 @@ import {
   sameAccountAs,
   until,
   COMPOSER,
+  IS_MOVING_FN,
+  stablePoint,
 } from './chat.mjs';
 import { watch, report, gate, ignoringOfflineCut } from './watch.mjs';
 import { record, mark } from './results.mjs';
@@ -347,7 +349,7 @@ async function bubbleIconPresent(cx, textMatch, iconClass) {
  */
 async function clickBubbleIcon(cx, textMatch, iconClass) {
   await hoverBubble(cx, textMatch);
-  const point = await evaluate(
+  const p = await stablePoint(
     cx,
     `JSON.stringify((function () {
       var pane = ${paneExpr()};
@@ -367,17 +369,24 @@ async function clickBubbleIcon(cx, textMatch, iconClass) {
           geometry: ${geometryOf('btn', 'r')}
         };
       }
-      return { x: x, y: y, name: (btn.getAttribute('aria-label') || btn.innerText || '').trim().slice(0, 40) };
+      return { x: x, y: y, moving: ${IS_MOVING_FN}(btn), name: (btn.getAttribute('aria-label') || btn.innerText || '').trim().slice(0, 40) };
     })())`
   );
-  if (!point || point === 'null') throw new Error(`no .${iconClass} action on the row of ${textMatch}`);
-  const p = JSON.parse(point);
-  if (p.blocked) throw new Error(`${p.blocked} - ${JSON.stringify(p.geometry ?? null)}`);
+  // The action row appears ON HOVER, so it is the likeliest target in the app to be aimed at while
+  // it is still arriving. `stablePoint` polls through "not there yet" / "covered" / "moving" alike -
+  // they are one animation seen at three moments - and only the timeout is a failure.
+  if (p.timedOut) {
+    throw new Error(
+      `no settled .${iconClass} action on the row of ${textMatch} within 4s - last read: ${JSON.stringify(p.last)}`
+    );
+  }
   const { received } = await clickAtPoint(cx, p.x, p.y);
   // A click NOTHING received is the silent failure this exists to name. It is not retried here: the
   // caller decides, because for a reaction a second click TOGGLES rather than repeats.
   if (!received) {
-    throw new Error(`the .${iconClass} click at ${p.x},${p.y} on the row of ${textMatch} was dispatched and nothing received it`);
+    throw new Error(
+      `the .${iconClass} click at ${p.x},${p.y} on the row of ${textMatch} was dispatched and nothing received it`
+    );
   }
   return { ...p, received };
 }
@@ -386,7 +395,7 @@ async function clickBubbleIcon(cx, textMatch, iconClass) {
  *  bare emoji as `button.innerText`, unlike every other action which carries a localised label). */
 async function clickReactionEmoji(cx, textMatch, emoji) {
   await hoverBubble(cx, textMatch);
-  const point = await evaluate(
+  const p = await stablePoint(
     cx,
     `JSON.stringify((function () {
       var pane = ${paneExpr()};
@@ -408,12 +417,18 @@ async function clickReactionEmoji(cx, textMatch, emoji) {
           geometry: ${geometryOf('btn', 'r')}
         };
       }
-      return { x: x, y: y };
+      return { x: x, y: y, moving: ${IS_MOVING_FN}(btn) };
     })())`
   );
-  if (!point || point === 'null') throw new Error(`no quick-reaction ${emoji} on the row of ${textMatch}`);
-  const p = JSON.parse(point);
-  if (p.blocked) throw new Error(`${p.blocked} - ${JSON.stringify(p.geometry ?? null)}`);
+  // THE PICKER OPENS WITH AN ANIMATION, which is what made this the first helper to be caught by it:
+  // `the 🎉 click was taken by "EMOJI-PICKER" (target was ANIMATING when measured)`. Waiting for the
+  // emoji to be still is the whole fix - a closed picker, a covered button and a moving one are the
+  // same panel at three moments, so all three are polled and only the timeout is a failure.
+  if (p.timedOut) {
+    throw new Error(
+      `no settled ${emoji} reaction on the row of ${textMatch} within 4s - last read: ${JSON.stringify(p.last)}`
+    );
+  }
   const { received } = await clickAtPoint(cx, p.x, p.y);
   // THE EMOJI IS ITS OWN BUTTON LABEL, so unlike the icon helper this one can assert the click was
   // taken by the RIGHT control and not merely by some control. A reaction click is a toggle, so a
@@ -422,7 +437,14 @@ async function clickReactionEmoji(cx, textMatch, emoji) {
     throw new Error(`the ${emoji} click at ${p.x},${p.y} on the row of ${textMatch} was dispatched and nothing received it`);
   }
   if (received.btn !== emoji && received.text !== emoji) {
-    throw new Error(`the ${emoji} click was taken by "${received.btn || received.tag}" - the row moved under it`);
+    // NO "was it animating" HERE ANY MORE, and its absence is the point: `stablePoint` only returns
+    // a settled point, so that question can now only be answered one way and answers nothing. A miss
+    // reaching this line is therefore a motion the animation proof does not cover - report the point
+    // and what took it, and do not offer a cause the code can no longer distinguish.
+    throw new Error(
+      `the ${emoji} click at ${p.x},${p.y} was taken by "${received.btn || received.tag}" - ` +
+        `the row moved under a point that had settled`
+    );
   }
   return { ...p, received };
 }
@@ -624,8 +646,72 @@ async function deleteBubble(cx, textMatch) {
         `(aimed at "${clicked.name}" at ${clicked.x},${clicked.y}), and the page shows ${JSON.stringify(seen)}`,
     );
   }
-  await realClick(cx, 'text=Supprimer');
-  await until(cx, `!document.querySelector('[role="dialog"]')`, 5000);
+  const confirmed = await realClick(cx, 'text=Supprimer');
+  try {
+    await until(cx, `!document.querySelector('[role="dialog"]')`, 5000);
+  } catch {
+    // THE OPEN WAIT ABOVE NAMES ITS CAUSE AND THIS ONE USED TO THROW A BARE TIMEOUT - so when MUT-7
+    // and MUT-8 both died here on 2026-08-16 (pass 2 of 5, pass 1 clean throughout) nothing in the
+    // run could separate the three causes, and by the time a probe looked the modal had closed on
+    // its own. They want opposite fixes: a confirm click that resolved to the WRONG element is the
+    // harness (`RESOLVE('text=')` searches the whole document - the modal only wins because the
+    // backdrop makes every other candidate fail the hit-test, which is protection by accident); a
+    // dialog still standing with the message already gone is a UI that lingers past its own work;
+    // a dialog standing with the message still there is the delete itself being slow.
+    // WHAT IS AT THE AIMED POINT NOW is the half the recorder cannot give: it names the element
+    // that TOOK the click, and the question this leaves open is what was sitting on top of the
+    // button to take it. Read at the coordinates that were actually dispatched.
+    const seen = JSON.parse(
+      await evaluate(
+        cx,
+        `JSON.stringify((function () {
+          var d = document.querySelector('[role="dialog"]');
+          var pane = ${paneExpr()};
+          var ax = ${Number(confirmed?.x) || 0}, ay = ${Number(confirmed?.y) || 0};
+          var at = document.elementFromPoint(ax, ay);
+          // The button the click was MEANT for, found the way a user finds it: the confirm control
+          // inside the standing dialog. Its rect NOW against the point that was dispatched is the
+          // discriminator - a miss of a few px means the target moved between hit-test and dispatch
+          // (the panel flies in over 220ms and the button carries hover:-translate-y-0.5), while a
+          // point far outside it means the resolver picked a different element entirely.
+          var want = d ? [].slice.call(d.querySelectorAll('button')).filter(function (b) {
+            return (b.innerText || '').trim() === 'Supprimer';
+          })[0] : null;
+          var r = want ? want.getBoundingClientRect() : null;
+          return {
+            dialogStillOpen: !!d,
+            dialogText: d ? (d.innerText || '').replace(/\\s+/g, ' ').slice(0, 160) : null,
+            messageStillOnScreen: !!pane && pane.innerText.indexOf(${JSON.stringify(textMatch)}) !== -1,
+            nowAtAimedPoint: at
+              ? {
+                  tag: at.tagName,
+                  cls: (at.className && at.className.baseVal !== undefined ? at.className.baseVal : String(at.className || '')).slice(0, 90),
+                  text: (at.innerText || '').replace(/\\s+/g, ' ').slice(0, 60),
+                  inDialog: !!(d && d.contains(at)),
+                }
+              : null,
+            confirmButtonNow: r
+              ? {
+                  rect: [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)],
+                  containsAimedPoint: ax >= r.left && ax <= r.right && ay >= r.top && ay <= r.bottom,
+                  dyFromCentre: Math.round(ay - (r.top + r.bottom) / 2),
+                  dxFromCentre: Math.round(ax - (r.left + r.right) / 2),
+                }
+              : null,
+            candidatesInDocument: [].filter.call(document.querySelectorAll('button'), function (b) {
+              return (b.innerText || '').trim() === 'Supprimer' && (b.offsetWidth || b.offsetHeight);
+            }).length,
+          };
+        })())`
+      )
+    );
+    throw new Error(
+      `the delete-confirmation dialog was still open 5s after the confirm click on ${textMatch} - ` +
+        `aimed at <${confirmed?.tag}> "${confirmed?.text}" at ${confirmed?.x},${confirmed?.y}; ` +
+        `the click was TAKEN BY ${JSON.stringify(confirmed?.received)}; ` +
+        `and the page shows ${JSON.stringify(seen)}`
+    );
+  }
 }
 
 /**

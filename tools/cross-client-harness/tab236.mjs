@@ -16,14 +16,33 @@
 import { execFileSync } from 'node:child_process';
 import { client, ensureChat, openConversation, countMessage, awaitMessage, send, evaluate } from './chat.mjs';
 import { listTargets, connect, until } from './cdp.mjs';
-import { watch, report } from './watch.mjs';
-import { mark } from './results.mjs';
+import { watch } from './watch.mjs';
+import { mark, recordObserved } from './results.mjs';
 import { killBrowser, startBrowser, BROWSERS } from './launch.mjs';
 import { ACCOUNT_OF, PORTS, peerNameFor } from './names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const which = String(process.argv[2] || '2');
 const rows = [];
+
+/**
+ * RECORD THE VERDICT, GATED - which none of the three checks in this file has ever done.
+ *
+ * TAB-2, TAB-3 and TAB-6 computed a `verdict` field inside a local object, printed it as JSON and
+ * exited on it. Nothing reached `results.ndjson`, so three checks the dashboard lists have never once
+ * appeared in the campaign's record - the same fault `tab4.mjs` was rewritten for on 2026-08-14, in
+ * the file next to it.
+ *
+ * The observation was half-broken in its own way too: each row kept `(await report(o)).notable` and
+ * nothing else. `notable` is the ONE bucket that never breaks `clean` - it is the "surfaced, not
+ * judged" list - so these checks read out precisely the evidence that cannot contradict them and
+ * discarded `errors`, `severe`, `exceptions`, `badHttp` and `unexplained`. TAB-6 is the sharpest
+ * case: it deletes the refresh cookie and asks whether the app admits it, which is a question about
+ * what the client does on a 401 - and it was reading the bucket 401s do not land in.
+ */
+async function row(id, verdict, detail, observers) {
+  rows.push(await recordObserved(id, verdict, detail, observers));
+}
 
 /** Enters the PIN through the CLI, which reads it from test-accounts.json - never from argv. */
 function unlock(port, account) {
@@ -95,17 +114,19 @@ if (which === '2') {
   await sleep(2_000);
   const count = await countMessage(w1b, m);
 
-  rows.push({
-    check: 'TAB-2 tab closed -> message -> reopened',
-    marker: m,
-    tabReallyClosed: !stillThere,
-    pin: pinResult,
-    arrived,
-    count,
-    verdict: !stillThere && count === 1 ? 'PASS' : 'FAIL',
-    w1Notable: (await report(o1)).notable,
-    w2Notable: (await report(o2)).notable,
-  });
+  await row(
+    'TAB-2',
+    !stillThere && count === 1 ? 'PASS' : 'FAIL',
+    {
+      check: 'tab closed -> message -> reopened',
+      marker: m,
+      tabReallyClosed: !stillThere,
+      pin: pinResult,
+      arrived,
+      count,
+    },
+    { W1: o1, W2: o2 },
+  );
 }
 
 // ── TAB-3: the whole browser is killed, messages arrive, it is relaunched ─────
@@ -150,20 +171,22 @@ if (which === '3') {
   const c1 = await countMessage(w1b, m1);
   const c2 = await countMessage(w1b, m2);
 
-  rows.push({
-    check: 'TAB-3 browser killed -> 2 messages -> relaunched',
-    browserWasDown: down,
-    downInMs,
-    upInMs: upIn,
-    appTabsOnRelaunch: (await listTargets(9224)).filter((t) => t.url.includes('canari-emse.fr')).length,
-    reLoginRequired: loginShowing,
-    pin: pinResult,
-    first: { afterMs: got1, count: c1 },
-    second: { afterMs: got2, count: c2 },
-    verdict: down && !loginShowing && c1 === 1 && c2 === 1 ? 'PASS' : 'FAIL',
-    w1Notable: (await report(o1)).notable,
-    w2Notable: (await report(o2)).notable,
-  });
+  await row(
+    'TAB-3',
+    down && !loginShowing && c1 === 1 && c2 === 1 ? 'PASS' : 'FAIL',
+    {
+      check: 'browser killed -> 2 messages -> relaunched',
+      browserWasDown: down,
+      downInMs,
+      upInMs: upIn,
+      appTabsOnRelaunch: (await listTargets(9224)).filter((t) => t.url.includes('canari-emse.fr')).length,
+      reLoginRequired: loginShowing,
+      pin: pinResult,
+      first: { afterMs: got1, count: c1 },
+      second: { afterMs: got2, count: c2 },
+    },
+    { W1: o1, W2: o2 },
+  );
 }
 
 // ── TAB-6: the refresh cookie is deleted, then the app is made to act ─────────
@@ -204,20 +227,32 @@ if (which === '6') {
   // shows an empty, logged-in-looking list.
   const emptyListInstead = !loginShowing && /discussion/i.test(bodyText) && !/connexion|se connecter/i.test(bodyText);
 
-  rows.push({
-    check: 'TAB-6 refresh cookie deleted -> reload',
-    cookiesBefore: names,
-    deleted: refresh.map((c) => c.name),
-    cookiesAfter: after,
-    path,
-    loginShowing,
-    emptyListInstead,
-    verdict: loginShowing && !emptyListInstead ? 'PASS' : 'FAIL',
-    excerpt: bodyText.replace(/\s+/g, ' ').slice(0, 200),
-    w1Notable: (await report(o1)).notable,
-  });
+  // GATED WITH NO FORGIVENESS LIST, ON PURPOSE - and the first run is expected to need one.
+  //
+  // This check deletes the refresh cookie, so a 401 on `/api/auth/refresh` is its STIMULUS, not a
+  // defect, exactly as the disconnected fetches are in a check that cuts the network. The difference
+  // is that `ignoringOfflineCut` was written from a measured capture, and the equivalent list here
+  // would be written from imagination - which is how a forgiveness rule ends up silencing the one
+  // line that mattered. So this runs honestly first: whatever it reports lands in the record as dirt,
+  // gets read, and only the lines that ARE the deliberate logout get named. A PASS-DIRTY on the first
+  // run is the instrument working, not the app failing.
+  await row(
+    'TAB-6',
+    loginShowing && !emptyListInstead ? 'PASS' : 'FAIL',
+    {
+      check: 'refresh cookie deleted -> reload',
+      cookiesBefore: names,
+      deleted: refresh.map((c) => c.name),
+      cookiesAfter: after,
+      path,
+      loginShowing,
+      emptyListInstead,
+      excerpt: bodyText.replace(/\s+/g, ' ').slice(0, 200),
+    },
+    { W1: o1 },
+  );
 }
 
-for (const r of rows) console.log(JSON.stringify(r));
 console.log(`\n${rows.filter((r) => r.verdict === 'PASS').length}/${rows.length} pass`);
-process.exit(rows.some((r) => r.verdict !== 'PASS') ? 1 : 0);
+// No exit code and no second JSON dump: `record` printed each row as it was written, and
+// `results.mjs` derives the code from the verdicts it holds.

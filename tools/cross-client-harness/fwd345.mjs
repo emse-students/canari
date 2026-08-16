@@ -177,10 +177,16 @@ const results = [];
 //
 // The assertion itself is unchanged: exactly one copy on the receiver. `countSettled` is reported but
 // deliberately not fatal - it says the count stopped moving, which a slow arrival can fail honestly.
+const rows = [];
 for (const r of results) {
   const gated = gate(r.onReceiver === 1 ? 'PASS' : 'FAIL', r.obs);
   console.log(`${r.check} ${gated.verdict}`);
   console.log(JSON.stringify(r, null, 1));
-  record(r.check, gated.verdict, { ...r, ...gated.detail, obs: undefined });
+  rows.push(record(r.check, gated.verdict, { ...r, ...gated.detail, obs: undefined }));
 }
-process.exit(results.every((r) => r.onReceiver === 1) ? 0 : 1);
+// THE ASSERTION IS NOT THE VERDICT. `gate` sits four lines above and may have turned any of these
+// into PASS-DIRTY; the line this replaces re-derived the code from `onReceiver` alone and exited 0
+// over it, so a dirty forward reported `done` in the runner's table. The exit stays explicit - this
+// script holds two CDP sockets open, so `beforeExit` would never fire - but it now reads the
+// VERDICTS that were recorded, which is the only thing that can disagree with `onReceiver`.
+process.exit(rows.every((r) => r.verdict === 'PASS') ? 0 : 1);

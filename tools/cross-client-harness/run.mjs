@@ -597,6 +597,14 @@ for (const job of jobs) {
     }
   }
   process.stdout.write(`  ${job.phase.padEnd(8)} ${job.script.padEnd(22)} `);
+  // A SCRIPT THAT RECORDS NOTHING IS INDISTINGUISHABLE FROM ONE THAT PASSED, and only the runner can
+  // tell the two apart: `results.mjs` sees the rows a process wrote, never the rows it owed. Counted
+  // per job, because the run-wide total below cannot attribute a missing row to the script that
+  // failed to write it. Measured 2026-08-16: NINE of the manifest's scripts - `notif.mjs`,
+  // `notif7.mjs`, `fwd5.mjs`, `life.mjs`, `tab236.mjs`, `heal.mjs`, `heal-a1.mjs`, `heal-web.mjs`,
+  // `grp-traffic.mjs` - computed a verdict, printed it as JSON, and recorded nothing at all. Every
+  // one of them exited 0 and every one of them printed `done` here.
+  const rowsBefore = all().length;
   const code = await new Promise((resolve) => {
     const child = spawn(process.execPath, [file, ...args], {
       cwd: HERE,
@@ -605,9 +613,46 @@ for (const job of jobs) {
     let tail = '';
     // Kept, not discarded: a script that dies says why on stderr, and that sentence is the whole
     // difference between "the app is broken" and "this script points at a port nothing listens on".
-    child.stdout.on('data', (b) => (tail += b));
-    child.stderr.on('data', (b) => (tail += b));
+    //
+    // AND WATCHED WHILE IT RUNS, which is the half that was missing. Every phase script announces
+    // its stages on stderr precisely so that a stall is distinguishable from slowness - `notif.mjs`
+    // says so in its own header - and this runner then buffered the whole stream to disk and showed
+    // nothing until the process closed. So a script that never closes shows NOTHING, ever: on
+    // 2026-08-16 two `notif.mjs` runs sat here for FOUR HOURS driving the same browsers as
+    // everything else, and were found by listing processes, not by the runner that owned them.
+    // A buffer that is only flushed on exit cannot report the one failure that never exits.
+    let lastOutputAt = Date.now();
+    let lastLine = '';
+    const note = (b) => {
+      tail += b;
+      lastOutputAt = Date.now();
+      const lines = String(b).split('\n').filter((l) => l.trim());
+      if (lines.length) lastLine = lines[lines.length - 1].slice(0, 120);
+    };
+    child.stdout.on('data', note);
+    child.stderr.on('data', note);
+
+    // THE WATCHDOG BOUNDS SILENCE, NOT WORK. It does not decide anything about the app and never
+    // shortens a legitimate wait: NOTIF-10's radio outage is 600 s of deliberate quiet, so the
+    // window is set well beyond it, and reaching it means no stage line has been printed for a
+    // quarter of an hour - which no check in this rig does on purpose. It ACCUSES rather than
+    // retrying: the script is killed and the job is marked, because a runner that quietly restarts
+    // a hung script would hide exactly what it exists to surface.
+    const STALL_MS = 15 * 60 * 1000;
+    const HEARTBEAT_MS = 60 * 1000;
+    const heartbeat = setInterval(() => {
+      const quietMs = Date.now() - lastOutputAt;
+      if (quietMs >= STALL_MS) {
+        job.stalled = Math.round(quietMs / 1000);
+        console.log(`\n      STALLED - no output for ${job.stalled}s, killing. Last line: ${lastLine || '(none)'}`);
+        child.kill('SIGKILL');
+        return;
+      }
+      console.log(`\n      ...${Math.round((Date.now() - lastOutputAt) / 1000)}s quiet | ${lastLine || '(no output yet)'}`);
+    }, HEARTBEAT_MS);
+
     child.on('close', (c) => {
+      clearInterval(heartbeat);
       /**
        * THE WHOLE OUTPUT IS KEPT ON DISK, and only the console summary is four lines.
        *
@@ -633,7 +678,23 @@ for (const job of jobs) {
     });
   });
   job.exit = code;
-  console.log(code === 0 ? 'done' : `EXIT ${code}`);
+  job.rows = all().length - rowsBefore;
+  // STALLED IS NOT "EXIT null". A killed child reports whatever signal ended it, which reads as an
+  // ordinary crash and sends the next reader looking for a bug in the script's last statement. The
+  // distinction is the finding: this one never got there.
+  //
+  // NOR IS "done" THE SAME AS "recorded". A job that exits 0 having written no verdict is reported
+  // as what it is, in the column a reader is already looking at, rather than left to be inferred
+  // from a verdict table that is short by one line.
+  console.log(
+    job.stalled
+      ? `STALLED after ${job.stalled}s of silence`
+      : code !== 0
+        ? `EXIT ${code}${job.rows ? '' : ' (and recorded nothing)'}`
+        : job.rows
+          ? 'done'
+          : 'NO VERDICT - exited 0 and recorded nothing'
+  );
   if (code !== 0) console.log(`      ${job.tail}`);
 }
 
@@ -664,6 +725,14 @@ const bad = rows.filter((r) => r.verdict !== 'PASS').length;
 const blocked = jobs.filter((j) => j.blocked);
 const crashed = jobs.filter((j) => !j.blocked && j.exit !== 0).length;
 if (crashed) console.log(`\n  ${crashed} script(s) exited non-zero - see the tails above.`);
+// A JOB THAT RAN, SUCCEEDED, AND RECORDED NOTHING IS THE ONE FAILURE THIS TABLE CANNOT SHOW, because
+// its evidence is an ABSENT row and the table is made of rows. It counts against the pass: the phase
+// claimed coverage the record cannot support, which is the same debt as a dirty window.
+const silent = jobs.filter((j) => !j.blocked && j.exit === 0 && !j.rows);
+if (silent.length) {
+  console.log(`\n  ${silent.length} script(s) exited 0 without recording a verdict - the record cannot show they ran:`);
+  for (const j of silent) console.log(`      ${j.script}`);
+}
 if (blocked.length) {
   console.log(`\n  ${blocked.length} script(s) never ran - the clients were not in a known state:`);
   for (const j of blocked) console.log(`      ${j.script} - ${j.blocked}`);
@@ -701,5 +770,5 @@ console.log('');
 // A dirty SERVER window is a dirty run. It cannot be attributed to one check - the containers serve
 // every client at once - so it counts once, against the pass, which is exactly what it is evidence
 // about.
-return { rows, bad: bad + (server.clean ? 0 : 1), crashed, blocked, server };
+return { rows, bad: bad + (server.clean ? 0 : 1) + silent.length, crashed, blocked, silent, server };
 }

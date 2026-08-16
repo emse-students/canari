@@ -26,7 +26,7 @@ import {
   settledCount,
 } from './chat.mjs';
 import { activate, realClick, until } from './cdp.mjs';
-import { dirtOf, report, watch } from './watch.mjs';
+import { dirtOf, gate, report, watch } from './watch.mjs';
 import { mark, record } from './results.mjs';
 import { PORTS, peerNameFor } from './names.mjs';
 
@@ -42,6 +42,8 @@ async function reopenW1() {
 }
 
 const rows = [];
+/** Every round's two reports, keyed - so the gate can name WHICH round was dirty, not just that one was. */
+const reports = {};
 for (let i = 0; i < ROUNDS; i++) {
   const m = mark(`TAB5X${i}`);
   const o1 = await watch(w1, `TAB5-${i}-W1`);
@@ -67,6 +69,8 @@ for (let i = 0; i < ROUNDS; i++) {
   const receiver = await settledCount(w2, m);
   const sender = await settledCount(w1, m);
   const [r1, r2] = [await report(o1), await report(o2)];
+  reports[`W1#${i}`] = r1;
+  reports[`W2#${i}`] = r2;
 
   rows.push({
     round: i,
@@ -93,10 +97,15 @@ for (let i = 0; i < ROUNDS; i++) {
 const failed = rows.filter((r) => !r.delivered);
 const unsettled = rows.filter((r) => !r.countsSettled);
 const dirty = rows.filter((r) => !r.senderClean || !r.receiverClean);
+// `gate` rather than the third hand-written copy of it - see the same change in `tab4.mjs`. This one
+// spelt the outcome right and still produced no `clean` key, which is what `record` reads to tell an
+// observed verdict from an unobserved one.
+const gated = gate(failed.length ? 'FAIL' : unsettled.length ? 'INCONCLUSIVE' : 'PASS', reports);
 record(
   'TAB-5',
-  failed.length ? 'FAIL' : unsettled.length ? 'INCONCLUSIVE' : dirty.length ? 'PASS-DIRTY' : 'PASS',
+  gated.verdict,
   {
+    ...gated.detail,
     rounds: ROUNDS,
     // The gap is the check's own claim about itself and belongs in the record: a round that reloaded
     // 400 ms after submit did not test the window TAB-5 is named for.
