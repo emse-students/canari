@@ -149,13 +149,18 @@ if (/\/chat/.test(out.w1Url)) throw new Error(`W1 is still on the chat (${out.w1
 phone.home();
 await sleep(2_000);
 if (mode === 'killed') {
-  // `am kill` does NOT reclaim a foreground process, hence HOME first - and the death is ASSERTED,
-  // because a kill that killed nothing has already produced a fictional verdict on this page.
-  phone.kill();
+  // `am kill` reclaims a CACHED process and nothing else, so `phone.kill` drops it there first and
+  // reports the state it killed from - and the death is ASSERTED, because a kill that killed nothing
+  // has already produced a fictional verdict on this page.
+  out.stateAtKill = await phone.kill();
   await sleep(2_000);
   out.pidAfterKill = phone.pid();
-  stage(`pid after kill: ${out.pidAfterKill}`);
-  if (out.pidAfterKill !== null) throw new Error('the app is still alive - the check would measure a warm start');
+  stage(`pid after kill: ${out.pidAfterKill} (state at kill: ${out.stateAtKill})`);
+  if (out.pidAfterKill !== null) {
+    throw new Error(
+      `the app is still alive after am kill from state ${out.stateAtKill} - the check would measure a warm start`
+    );
+  }
 } else {
   out.pidBackgrounded = phone.pid();
   stage(`pid backgrounded: ${out.pidBackgrounded}`);

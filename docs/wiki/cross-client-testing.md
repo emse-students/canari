@@ -354,13 +354,13 @@ owner-peer DM and once in `Campagne de test`, with the two results recorded sepa
 | MUT-10 | **DM.** The toolbar offers Delete to a moderator, where the handler refuses it | `W1 W2` | `pending` - a suspected defect, see the negatives |
 | MUT-11 | **Both.** React, un-react, re-react; two users on the same message; the same user with several emoji | `W1 W2` | `pending` |
 | MUT-12 | **Both.** The 15-distinct-emoji cap, on both transports | `W1 W2` | `pending` |
-| MUT-13 | **DM.** A reaction pushes a notification to the message author only, never to the reactor | `+push` | `pending` |
+| MUT-13 | **Both.** A reaction pushes a notification to the message author only, never to the reactor | `W1 W2` | `pending` - the channel leg exists since 2026-08-16, when the channel path gained the same notify |
 | MUT-14 | **Both.** Pin and unpin, seen on the OTHER device | `+A1` | `pending` |
 | MUT-15 | **DM.** A pin does not survive on a fresh device - localStorage-only, no history replay | `+A1` | `pending` - expected to fail; it is a real hole |
 | MUT-16 | **Channel.** A pin DOES survive, because it is re-hydrated from the server | `+A1` | `pending` |
 | MUT-17 | **DM.** Edit, then delete, then react to the deleted message | `W1 W2` | `pending` - the absurd crossing |
-| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `pending` |
-| MUT-19 | **DM.** Delete a message that is still in the outbox, unsent | `W1 W2` | `pending` |
+| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `pending` - armed 2026-08-16; its SKIP blamed adb and the obstacle was a missing mobile helper |
+| MUT-19 | **DM.** Delete a message that is still in the outbox, unsent | `W1 W2` | `pending` - asserts the SETTLED state; the transient leak it found is a P2 in the backlog |
 | MUT-20 | **DM.** Mutate a message older than the 90-day server retention window | `W1 W2` | `pending` |
 
 ## 5 - SEARCH - finding a message

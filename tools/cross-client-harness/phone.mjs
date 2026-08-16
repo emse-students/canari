@@ -188,9 +188,87 @@ export const wake = () => {
 
 export const home = () => sh('input keyevent KEYCODE_HOME');
 export const forceStop = () => sh(`am force-stop ${PKG}`);
-/** The OS reclaiming the process, which keeps WorkManager state - not the user swiping it away. */
-export const kill = () => sh(`am kill ${PKG}`);
 export const launch = () => sh(`am start -n ${PKG}/.MainActivity`);
+
+/**
+ * The app's current OOM state as Android names it (`CAC*` cached, `LAST` previous, `FGS`, ...), or
+ * null when the process is gone or the dump cannot be read.
+ *
+ * The dump lists the WebView's sandboxed renderer under this package's uid as well, so the process
+ * is matched on `<pid>:fr.emse.canari/` specifically - the renderer's own state answers a different
+ * question and is usually one rung apart.
+ */
+export function procState() {
+  let out;
+  try {
+    out = sh(`dumpsys activity processes ${PKG}`);
+  } catch {
+    return null;
+  }
+  const lines = out.split('\n');
+  const own = new RegExp(`\\d+:${PKG.replace(/\./g, '\\.')}/`);
+  for (let i = 0; i < lines.length; i++) {
+    if (!own.test(lines[i])) continue;
+    // The state sits on its own line just under the `Proc #` line it belongs to.
+    for (let j = i; j < Math.min(i + 4, lines.length); j++) {
+      const m = lines[j].match(/state:\s*cur=(\S+)/);
+      if (m) return m[1];
+    }
+  }
+  return null;
+}
+
+/**
+ * Drops the app to CACHED, which is the precondition `am kill` has and HOME does not establish.
+ *
+ * `am kill` RECLAIMS A CACHED PROCESS AND NOTHING ELSE. After HOME the app holds Android's
+ * "previous" slot - `state: cur=LAST` - whose adj sits below the threshold the command uses, so the
+ * kill succeeds, prints nothing, and the process lives. That reads exactly like a kill the framework
+ * ignored, and it cost NOTIF-4 its first run on 2026-08-16: `am kill did not kill the app`, with the
+ * process measured at `LAST` two seconds after HOME, which is precisely how long the sleep was.
+ *
+ * Opening any OTHER app displaces it from that slot and it falls to cached. That is a STATE, so it
+ * is polled for rather than slept on - the delay depends on what else the phone is doing, and a
+ * fixed wait here is the same guess that failed above.
+ *
+ * `am force-stop` is not the alternative and must never become one: a force-stopped package sits in
+ * Android's STOPPED state, where the framework cancels every FCM broadcast to it - destroying the
+ * one thing every push check exists to measure.
+ */
+export async function evictToCache(timeoutMs = 20_000) {
+  home();
+  try {
+    // Settings is the neutral displacer: present on every Android, and it starts without network,
+    // account or notification state of its own that a later assertion could trip over.
+    sh('am start -a android.settings.SETTINGS');
+  } catch {
+    // A device without it still reaches cached on its own eventually; the poll below decides.
+  }
+  const t0 = Date.now();
+  let state = procState();
+  while (Date.now() - t0 < timeoutMs) {
+    state = procState();
+    if (state === null || /^CAC/.test(state)) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  home();
+  return state;
+}
+
+/**
+ * The OS reclaiming the process, which keeps WorkManager state - not the user swiping it away.
+ *
+ * Establishes its own precondition (see {@link evictToCache}) rather than trusting the caller to
+ * have slept long enough, because every caller had written the same two lines and all three were
+ * wrong in the same way.
+ *
+ * @returns the state the process was in when the kill was issued - evidence for a kill that misses.
+ */
+export async function kill() {
+  const state = await evictToCache();
+  sh(`am kill ${PKG}`);
+  return state;
+}
 
 export const foregrounded = () => /fr\.emse\.canari/.test(sh('dumpsys window | grep mCurrentFocus'));
 

@@ -44,10 +44,12 @@ async function requireDead(what, timeoutMs = 20_000) {
 
 /** HOME, then `am kill`, then prove it died. */
 async function killPhone() {
-  phone.home();
-  await sleep(2_000);
-  phone.kill();
-  return requireDead('am kill');
+  // No HOME and no sleep here any more: `phone.kill` establishes its own precondition (the process
+  // must be CACHED, which HOME alone does not make it) and returns the state it killed from, so a
+  // miss carries its own evidence instead of a bare "still alive".
+  const stateAtKill = await phone.kill();
+  const deadInMs = await requireDead(`am kill (state at kill: ${stateAtKill})`);
+  return deadInMs;
 }
 
 /** How many of the phone's current notifications mention `needle`. */

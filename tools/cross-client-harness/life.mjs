@@ -142,15 +142,15 @@ const STATES = {
   },
   8: {
     name: 'LIFE-8 process reclaimed (am kill)',
-    // HOME first, and it is not cosmetic: `am kill` only reclaims a process the framework considers
-    // safe to kill, so a foreground app survives it silently. The first run of this check killed
-    // nothing, measured the ordinary foreground path, and reported FAIL - one more instance of the
-    // rule that an action which cannot prove it took effect still yields a verdict.
+    // `am kill` only reclaims a process the framework considers safe to kill, so an app that is
+    // merely out of the foreground survives it silently. The first run of this check killed nothing,
+    // measured the ordinary foreground path, and reported FAIL - one more instance of the rule that
+    // an action which cannot prove it took effect still yields a verdict. HOME and a sleep were the
+    // first attempt at that precondition and were NOT enough: HOME leaves the app in the "previous"
+    // slot, one rung above cached. `phone.kill` now establishes it and reports what it killed from.
     enter: async () => {
-      phone.home();
-      await sleep(2_000);
-      phone.kill();
-      await requireDead('am kill');
+      const stateAtKill = await phone.kill();
+      await requireDead(`am kill (state at kill: ${stateAtKill})`);
     },
     processDies: true,
   },
