@@ -43,12 +43,21 @@ const wA = await watch(a1, 'a1-sender');
 const wB = await watch(w2, 'w2-receiver');
 const restore = await background(w2);
 
+// THE SIBLING IS CLOSED ON EVERY EXIT PATH, and this check is what proved it has to be. The send
+// below goes to the PHONE, so anything wrong with the phone's composer throws here - and on
+// 2026-08-16 it did, leaving W2 backgrounded with an extra tab that the next job's preflight had to
+// clean up. A leaked tab is not litter: it is a second MLS client on that profile, which is the very
+// fault rule 5 exists for. A teardown that only runs on the happy path is not a teardown.
 const m = mark('MSG8B');
-await send(a1, `${m} unread signal probe`);
-await new Promise((r) => setTimeout(r, 12000));
-const during = await evaluate(w2, SIGNAL);
-
-await restore();
+let during;
+try {
+  await send(a1, `${m} unread signal probe`);
+  await new Promise((r) => setTimeout(r, 12000));
+  during = await evaluate(w2, SIGNAL);
+} finally {
+  // Never let the restore's own failure replace the error that got us here.
+  await restore().catch((e) => console.error('[MSG-8b] restore failed:', e.message));
+}
 await new Promise((r) => setTimeout(r, 2000));
 const afterFocus = await evaluate(w2, SIGNAL);
 

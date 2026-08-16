@@ -38,26 +38,34 @@ const since = Date.now();
 
 const restore = await background(w2);
 
+// THE SIBLING IS CLOSED ON EVERY EXIT PATH. Everything below can throw - the send goes to the PHONE,
+// and the poll evaluates in a hidden page - and a throw between here and `restore()` leaves an extra
+// tab on the profile, which is a second MLS client, which is the fault rule 5 exists for. A teardown
+// that only runs on the happy path is not a teardown.
 const m = mark('MSG8');
 const t0 = Date.now();
-await send(a1, `${m} sent to a backgrounded tab`);
-
-// While hidden: does the frame even arrive, and does anything signal it to the user?
 let arrivedHidden = null;
-for (let i = 0; i < 40; i++) {
-  await new Promise((r) => setTimeout(r, 500));
-  if (await evaluate(w2, `document.body.innerText.includes(${JSON.stringify(m)})`)) {
-    arrivedHidden = Date.now() - t0;
-    break;
-  }
-}
-const during = {
-  title: await evaluate(w2, 'document.title'),
-  sidebar: await evaluate(w2, SIDEBAR),
-  visibility: await evaluate(w2, 'document.visibilityState'),
-};
+let during;
+try {
+  await send(a1, `${m} sent to a backgrounded tab`);
 
-await restore();
+  // While hidden: does the frame even arrive, and does anything signal it to the user?
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (await evaluate(w2, `document.body.innerText.includes(${JSON.stringify(m)})`)) {
+      arrivedHidden = Date.now() - t0;
+      break;
+    }
+  }
+  during = {
+    title: await evaluate(w2, 'document.title'),
+    sidebar: await evaluate(w2, SIDEBAR),
+    visibility: await evaluate(w2, 'document.visibilityState'),
+  };
+} finally {
+  // Never let the restore's own failure replace the error that got us here.
+  await restore().catch((e) => console.error('[MSG-8] restore failed:', e.message));
+}
 await new Promise((r) => setTimeout(r, 2500));
 const after = {
   title: await evaluate(w2, 'document.title'),

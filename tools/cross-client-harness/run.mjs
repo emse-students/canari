@@ -268,7 +268,14 @@ async function preflight(devices, { quiet = false } = {}) {
     let s;
     try {
       s = await readiness(d);
-    } catch {
+    } catch (e) {
+      // NOT EVERY FAILURE HERE IS AN ABSENCE. `client()` also refuses a browser holding more than one
+      // page, and that wants the opposite fix from "the browser is closed" - so the refusal is passed
+      // through verbatim rather than translated into a hint about a cable (rule 6).
+      if (/so no tab can be chosen/.test(String(e.message))) {
+        problems.push(`${d}: ${e.message}`);
+        continue;
+      }
       // A1's own message ("fetch failed") sends the reader to the network rather than to the phone,
       // which is where every one of these has actually been.
       const hint =

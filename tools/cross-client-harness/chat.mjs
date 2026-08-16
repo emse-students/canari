@@ -94,9 +94,13 @@ const PANE_TEXT = `(function () {
 export async function client(port, match = null, { focus = true, allowMany = false } = {}) {
   const targets = await listTargets(port);
   const hits = match ? targets.filter((x) => x.url.includes(match)) : targets;
-  if (match && !allowMany && hits.length > 1)
+  // The check is the same with and without `match`, because the fault is the same: `hits[0]` is a
+  // POSITION. Seventeen call sites pass no match at all and were relying on the browser having one
+  // page - true after the preflight, and silently false the moment anything leaves a tab behind.
+  if (!allowMany && hits.length > 1)
     throw new Error(
-      `${hits.length} tabs on ${port} match ${match}, so no tab can be chosen: ${hits.map((x) => new URL(x.url).pathname).join(' | ')}. ` +
+      `${hits.length} tabs on ${port}${match ? ` match ${match}` : ''}, so no tab can be chosen: ` +
+        `${hits.map((x) => new URL(x.url).pathname).join(' | ')}. ` +
         'Close the extras (node onetab.mjs) or pass { allowMany: true } if the sibling is deliberate.'
     );
   const t = hits[0];

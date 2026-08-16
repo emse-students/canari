@@ -387,11 +387,22 @@ browser**, naming the count and the paths, and `{ allowMany: true }` is the opt-
 opened a sibling on purpose. `onetab.mjs` is the repair, and `--dry` exits non-zero so a preflight
 cannot ignore it.
 
-The origin is worth keeping too, because it is a rule about scratch code: the tabs came from a
-one-shot probe that spawned `chrome.exe` itself instead of going through `startBrowser`, whose
-docstring already says a second process on a live `--user-data-dir` **hands its URL to the running
-instance as a tab**. A throwaway probe that bypasses the shared layer does not just risk being
-wrong - it can leave the rig in a state that costs a whole phase.
+**The origin is NOT established, and saying so is the point.** The first account written here - a
+one-shot probe that spawned `chrome.exe` beside a live instance, which `startBrowser`'s docstring
+says hands its URL to the running browser as a tab - is plausible and was **not** what happened: that
+probe waited for the port to stop answering before every relaunch. The obvious successor theory was
+measured and refuted too: a force-kill followed by `startBrowser` restores **nothing**, one tab in
+and one tab out. What remains is that some path between 14:50 and 15:07 on 2026-08-16 left six
+extras, and no capture from that window survives to name it.
+
+That is exactly why the fix is a refusal and a preflight repair rather than a fix to whatever opened
+them. **A precondition worth having is one the rig ENFORCES, not one it trusts every caller to
+preserve** - the enforcement holds against the cause nobody identified.
+
+The contamination window is bounded, and by the record rather than by memory: `MSG-9` cannot pass on
+an ambiguous browser, and it reads PASS on all five passes of the 2026-08-15 series, PASS again at
+14:48 on 2026-08-16, `INVALID` at 15:12, and PASS again at 15:35 after the repair. `Skipping stale`
+appears nowhere else in `results.ndjson`. One run was affected; the x5 series was not.
 
 #### 6. A MATCHER TESTS ONE SPELLING - and one written from the success wording can only ever report success
 
