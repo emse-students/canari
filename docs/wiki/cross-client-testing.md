@@ -135,7 +135,7 @@ checks rewritten, and the mailbox-barrier fix touches the pipeline every row her
 | MUT-15 | **DM.** A pin reaches a device that was OFFLINE when it was placed | `+A1` | `FAIL` 5/5 on `25376b86`; fixed 2026-08-16, check re-architected - **re-run owed** |
 | MUT-16 | **Channel.** A pin DOES survive, re-hydrated from the server | `+A1` | `PASS` 5/5 |
 | MUT-17 | **DM.** Edit, then delete, then react to the deleted message | `W1 W2` | `PASS` 5/5 |
-| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `PASS` 5/5 - converges in 22-44 ms |
+| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `PASS` 5/5 on `25376b86`, `PASS` 1/1 on `e1d47951` with A1 on its APK bundle - converges in 12-44 ms, window clean on all three |
 | MUT-19 | **DM.** Delete a message still in the outbox: no peer sees it, and the sender keeps no row | `W1 W2` | `PASS` 5/5 on the peer half; sender half added 2026-08-16 with its fix - **re-run owed** |
 | MUT-20 | **DM.** Mutate a message older than the 90-day retention window | `W1 W2` | `SKIPPED` - unarmable until 2026-11-09 |
 | MUT-21 | **DM.** The hover action bar stays inside the pane and takes its own clicks | `W1 W2` | `PASS` 5/5 |
