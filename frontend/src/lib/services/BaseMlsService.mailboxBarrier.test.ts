@@ -244,6 +244,7 @@ describe('waitForMessageQueueIdle', () => {
       endCatchUp(groupId: string): void;
     };
     const complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const note = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
     catchUp.beginCatchUp('g-other');
 
     await expect(svc.waitForMessageQueueIdle('outbox flush', null)).resolves.toBeUndefined();
@@ -253,9 +254,17 @@ describe('waitForMessageQueueIdle', () => {
     expect(waitUntilIdle).toHaveBeenCalled();
     // And it is not a defect, so it does not accuse anybody of one.
     expect(complaint).not.toHaveBeenCalled();
+    // BUT IT SAYS IT WAITED. Without this the fix is invisible in the field and its only evidence
+    // is the absence of the old refusal - which proves nothing about a branch that fired on 2 runs
+    // in 5. The line names the caller and whose session it waited behind.
+    expect(note).toHaveBeenCalledOnce();
+    expect(String(note.mock.calls[0]?.[0])).toContain('outbox flush');
+    expect(String(note.mock.calls[0]?.[0])).toContain('g-other');
+    expect(String(note.mock.calls[0]?.[0])).toContain('waited out rather than refused');
 
     catchUp.endCatchUp('g-other');
     complaint.mockRestore();
+    note.mockRestore();
   });
 
   /**

@@ -17,6 +17,11 @@ const BENIGN = [
   /^\[API\] (→|←)/,
   /^\[WS (RCV|SND)\]/,
   /^\[QUEUE\] (Drain (start|complete)|Processing message|messageCallback)/,
+  // The barrier waiting out ANOTHER group's catch-up (2026-08-16). Benign by construction - it is
+  // the barrier doing exactly its job - and added here deliberately rather than left to surface as
+  // unexplained, because it replaces a refusal that WAS a defect and the two must not be confused.
+  // It stays visible in the capture: only the `unexplained` bucket is what this list empties.
+  /^\[QUEUE\] mailbox barrier for ".*" waited \d+ms behind/,
   /^\[OUTBOX\] (Queued|Flushing|[0-9a-f]{8}… sent)/,
   /^\[MLS\] (Disk writes deferred|Bulk ingest done|Encrypted state checkpoint persisted)/,
   // A resume finding a socket that BOTH answers agree is alive - a tab hidden and shown again, which

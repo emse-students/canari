@@ -620,6 +620,40 @@ export abstract class BaseMlsService implements IMlsService {
       );
       return;
     }
+    /**
+     * A WAIT NOBODY CAN SEE CANNOT BE VERIFIED, and this one replaced a refusal that was loud.
+     *
+     * Every other session is now waited out rather than refused, which is correct and completely
+     * silent - so the only evidence the fix works would have been the ABSENCE of the old line, and
+     * an absence proves nothing about a branch that fires on 2 runs in 5. This states the wait
+     * instead: which caller, how long, and whose session it was behind.
+     *
+     * It is `debug`, not `error`, because it is not a defect - it is the barrier doing its job while
+     * something legitimately holds the mutex. It is rare by construction (only while a catch-up
+     * overlaps a barrier, twice on a busy boot at most) and it explains a latency that would
+     * otherwise have no account at all, which is the whole bar for keeping a line.
+     */
+    const behind = this.openCatchUps.map((s) => s.groupId);
+    if (behind.length > 0) {
+      const waitedFrom = Date.now();
+      await this.settleBarrier();
+      console.debug(
+        `[QUEUE] mailbox barrier for "${caller}" waited ${Date.now() - waitedFrom}ms behind` +
+          ` ${behind.length} catch-up session(s) on [${behind.join(', ')}] - not this caller's, so it` +
+          ' was waited out rather than refused.'
+      );
+      return;
+    }
+    return this.settleBarrier();
+  }
+
+  /**
+   * The barrier proper: pull if nobody has, then wait for the queue to be applied.
+   *
+   * Split out so the guards above can time it without repeating it - the two call sites must not be
+   * able to drift apart, since one of them is what the other claims to have measured.
+   */
+  private settleBarrier(): Promise<void> {
     if (
       !this.pendingPullInFlight &&
       !(this.mailboxEmptiedByAPull && this.isWsOpen()) &&
