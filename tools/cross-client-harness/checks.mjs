@@ -13,7 +13,23 @@
  * does not fail honestly - it reports on whatever was left on screen.
  *
  * KEEP THIS IN STEP WITH THE DASHBOARD. When a phase gains a script, add it here in the same commit.
+ *
+ * ONE JOB PER CHECK, WHEREVER THE SCRIPT CAN SELECT ONE. Rule 19 of
+ * `docs/wiki/testing-methodology.md`: a job that owns a whole phase fails as one unit, so a single
+ * throw takes every verdict downstream of it in that process - which is how a phase reports one
+ * defect and eleven silences. The five multi-check scripts all accept `--only N` already and each
+ * check is a self-contained function, so this costs nothing but a line per row and buys per-check
+ * isolation, a per-check server window, and the ability to re-run exactly what failed. TAB and LIFE
+ * were expanded first, for the narrower reason that their bare entry silently ran ONE of the checks
+ * its filename advertised.
+ *
+ * The price is one preflight per job, which is a deadline and not a delay: a client already ready
+ * answers on the first sample and pays nothing.
  */
+
+/** `n..m` inclusive, as `script --only N` jobs - one job per check. */
+const only = (script, from, to) =>
+  Array.from({ length: to - from + 1 }, (_, i) => `${script} --only ${from + i}`);
 
 /** Devices a phase needs. `W1`/`W2` are the two Chrome profiles; `A1` is the phone over adb. */
 export const PHASES = {
@@ -23,15 +39,17 @@ export const PHASES = {
       'msg5.mjs', 'msg67.mjs', 'msg8.mjs', 'msg8b.mjs', 'msg9.mjs', 'msg10.mjs'],
     needs: ['W1', 'W2', 'A1'],
   },
-  TYPE: { title: 'typing indicators', scripts: ['type.mjs'], needs: ['W1', 'W2'] },
-  READ: { title: 'receipts and unread counts', scripts: ['read.mjs'], needs: ['W1', 'W2', 'A1'] },
+  TYPE: { title: 'typing indicators', scripts: only('type.mjs', 1, 5), needs: ['W1', 'W2'] },
+  // READ-5 and READ-10 record SKIPPED on their own (a 4th reader, `--destructive`), and they are
+  // listed anyway: a skip that produces a row is a state, a skip that produces nothing is a hole.
+  READ: { title: 'receipts and unread counts', scripts: only('read.mjs', 1, 10), needs: ['W1', 'W2', 'A1'] },
   MUT: {
     title: 'editing, deleting, reacting, pinning',
-    scripts: ['mut.mjs'],
+    scripts: only('mut.mjs', 1, 21),
     needs: ['W1', 'W2'],
   },
-  SEARCH: { title: 'finding a message', scripts: ['search.mjs'], needs: ['W1', 'W2'] },
-  MENTION: { title: 'mentions and what they trigger', scripts: ['mention.mjs'], needs: ['W1', 'W2'] },
+  SEARCH: { title: 'finding a message', scripts: only('search.mjs', 1, 6), needs: ['W1', 'W2'] },
+  MENTION: { title: 'mentions and what they trigger', scripts: only('mention.mjs', 1, 6), needs: ['W1', 'W2'] },
   FWD: { title: 'forwarding', scripts: ['fwd.mjs', 'fwd345.mjs', 'fwd5.mjs'], needs: ['W1', 'W2', 'A1'] },
   GRP: { title: 'group membership and invitations', scripts: ['grp-traffic.mjs'], needs: ['W1', 'W2'] },
   // `tab236.mjs` is named for the three checks it implements and selects ONE of them from `argv[2]`,
