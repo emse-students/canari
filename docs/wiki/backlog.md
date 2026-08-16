@@ -551,7 +551,7 @@ The paragraph about the services stands unchanged and is the load-bearing half: 
 body is a design smell, not an untranslated string, and the fix is to move the composition to the
 only layer that knows the recipient's language.
 
-### P2 - the channel push carries three fields nobody reads, and one of them is the mention
+### P2 - what is left on the channel notification: the title format, and the banner iOS never cancels
 
 **The route itself is CORRECT and this entry is not about it - do not re-open that.** The user asked
 on 2026-08-15 whether `[CHANNEL_PUSH]` / `type: 'channel'` was wired to the right path, remembering
@@ -563,29 +563,31 @@ HTTP` lines**, `[INTERNAL_PUSH]` acknowledging each. A 404 that stopped is not a
 appeared, so the phone still owes the positive check - that is NOTIF's first measurement, not a
 finding.
 
-What the same trace DID find is three payload fields that reach every client and are read by none.
-The server sends `type, channelId, workspaceId, channelName, keyVersion, ciphertext, nonce, senderId,
-messageId, createdAt, mentioned` ([channel.service.ts](../../apps/social-service/src/channels/channel.service.ts),
-`notifyChannelRecipients`):
+**THE PAYLOAD HALF IS CLOSED (2026-08-16), WRITTEN BLIND AND VERIFIED BY A SOURCE-READING TEST, NOT
+BY A DEVICE.** `mentioned` is read by all three handlers now: Android posts on `canari_mentions`,
+both iOS paths set `interruptionLevel = .timeSensitive`, and the flag is the SERVER's rather than an
+`@[uuid]` scan - the only answer that survives a ciphertext too large to inline. The three fields no
+client read (`workspaceId`, `messageId`, `createdAt`) were dropped instead of left looking like a
+contract, and the same read found a fourth thing: the NSE was the one surface showing a salon message
+with no avatar at all, though the payload had carried `senderId` for it all along. The reasoning for
+each, and the contract itself, are on
+[social-service](services/social-service.md#channel-push-notifications); the guardrail that would
+have caught the whole class is `frontend/src/lib/mobile/channelPushFields.test.ts`, and its rule is
+in [durable-rules](durable-rules.md#contracts-the-compiler-does-not-check).
 
-- **`mentioned` is dead on Android, which is the one that costs a user something.** The server
-  computes it per recipient and honours the `mentions` level with it, then `handleChannelMessage`
-  calls `showNotification` without a `channel` argument, so it defaults to `CHANNEL_MESSAGES`. An `@`
-  in a salon is indistinguishable from any other message: `canari_mentions` exists and no channel
-  push ever lands on it. `mentionsMe` is computed on the MLS path only.
-- **`workspaceId` is read by nobody on any of the three clients**, and the notification title is
-  `#<salon>` alone - no community name, no community logo. That is exactly the format question the
-  user raised for NOTIF, and it is worth knowing that **the data is already in the payload**: what is
-  missing is the decision and the rendering, not a server change.
-- **`messageId` / `createdAt` are unused** - no `fcm_message_cache` entry is written for a channel
-  message, unlike the MLS path, so a message decrypted in the background is fetched again at open.
+**What is left of this entry is one product decision and two measurements.**
 
-And one asymmetry between platforms, same trace: **the iOS NSE treats `channel_read` as a
-pass-through delivery** while Android and the iOS in-app path both cancel the notification. A killed
-iOS app therefore shows a banner for a salon already read on another device - the exact thing
-`channel_read` exists to prevent.
-
-Filed together because they are one read of one path; they are not one fix. NOTIF's to schedule.
+- **The notification title is `#<salon>` alone - no community name, no community logo.** That is the
+  format question the user raised for NOTIF, and the correction worth carrying: **the data is NOT
+  already in the payload.** `workspaceId` was a uuid, and no native surface can turn one into a name
+  (there is no workspace mirror the way `channel_keys.json` mirrors the keys). Rendering the
+  community needs a `workspaceName` in the payload - a server change - *plus* the format decision.
+- **A killed iOS app shows a banner for a salon already read on another device**: the NSE treats
+  `channel_read` as a pass-through delivery while Android and the iOS in-app path both cancel. The
+  exact thing `channel_read` exists to prevent.
+- **The phone still owes the positive check** (above): a 404 that stopped is not a banner that
+  appeared. NOTIF's first measurement, and it now also has to show the mention landing on the right
+  tier on each platform.
 
 ---
 

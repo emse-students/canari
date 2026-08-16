@@ -877,6 +877,14 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
 
 - A cross-process contract is only as good as its test: pin the PATHS as well as the field names,
   or a writer on one OS fills a directory nothing ever reads.
+- **A PAYLOAD FIELD WITH NO READER-SIDE CHECK DRIFTS IN BOTH DIRECTIONS, SILENTLY.** The channel push
+  sent `workspaceId`, `messageId` and `createdAt` to every device for the whole life of the feature
+  and no client read one of them, while `mentioned` - computed per recipient, and the only field that
+  costs a user something - was read by none either, so an `@` in a salon was indistinguishable from
+  any other message. Nothing could have caught it: the native halves are verified by COMPILING, which
+  says nothing about which keys they read, and the payload never passes through TypeScript. Pin such
+  a seam with a source-reading test in BOTH directions - every key sent is read, every key read is
+  still sent (`channelPushFields.test.ts`, twin of `fcmCacheFields.test.ts`).
 - Never let a capability probe swallow its own failure, and never branch on an error MESSAGE.
 - **MAKING A DEAD CODE PATH REACHABLE RE-OPENS EVERY CHECK THAT PATH NEVER HAD.** The replay handlers
   for `delete_message` / `edit_message` applied a mutation by id with NO author check, which had

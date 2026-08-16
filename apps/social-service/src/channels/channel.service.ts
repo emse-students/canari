@@ -1920,6 +1920,12 @@ export class ChannelService {
    * The sender is always skipped, as are members who cannot access the channel. The server holds
    * the channel key but never decrypts here: the ciphertext travels inline so the device decrypts
    * it locally (Google/FCM never sees the plaintext), mirroring the MLS DM push path.
+   *
+   * `mentioned` is computed per recipient and is the ONE fact only this side knows: the MLS path
+   * has to scan the decrypted text for `@[<uuid>]` because the server cannot read it, whereas a
+   * channel message carries a cleartext `mentionedUserIds` from the sender. So the device is TOLD
+   * rather than left to infer - which is also the only answer that survives a push whose ciphertext
+   * was too large to inline, where there is no text to scan.
    */
   private async notifyChannelRecipients(
     channel: Channel,
@@ -1935,7 +1941,8 @@ export class ChannelService {
     const mentioned = new Set((input.mentionedUserIds ?? []).map((id) => id.trim().toLowerCase()));
 
     // FCM caps a data payload at ~4 KB; inline the ciphertext only when it comfortably fits,
-    // otherwise the device fetches the message by id (Phase 2). nonce stays inline (small).
+    // otherwise the notification degrades to the generic "new message in #channel" body until the
+    // app opens and fetches the channel over HTTP. nonce stays inline (small).
     const inlineCiphertext = input.ciphertext.length <= 3000 ? input.ciphertext : '';
 
     const recipients: ChannelMember[] = [];
@@ -1953,17 +1960,27 @@ export class ChannelService {
       `[CHANNEL_PUSH] channel=${channel.id} message=${message.id} recipients=${recipients.length}`
     );
 
+    // EVERY FIELD HERE IS READ BY A CLIENT. Three others used to travel with it and were read by
+    // none of the three (measured 2026-08-15), so they were dropped rather than left to look like a
+    // contract:
+    //  - `workspaceId` is a uuid, and no native surface can turn it into a community name: there is
+    //    no workspace mirror the way `channel_keys.json` mirrors the keys. Putting the community in
+    //    the notification title needs `workspaceName` in this payload plus a title-format decision,
+    //    which is a different change from re-adding an id nobody can render.
+    //  - `messageId` / `createdAt` cannot repeat what the MLS path does with them. That path writes
+    //    `fcm_message_cache.ndjson` so a background-decrypted message is already in the local store
+    //    at open; a channel message is DELIBERATELY never persisted locally (`useMessaging` skips
+    //    the DB save for a `channel_` conversation - channels are server-authoritative and refetched
+    //    over HTTP), so the cache has nowhere to inject.
+    // Fewer bytes on the wire also buys headroom under the same 4 KB cap the ciphertext competes for.
     const data: Record<string, string> = {
       type: 'channel',
       channelId: channel.id,
-      workspaceId: channel.workspaceId,
       channelName: channel.name,
       keyVersion: String(message.keyVersion ?? channel.keyVersion),
       ciphertext: inlineCiphertext,
       nonce: input.nonce,
       senderId: input.senderId,
-      messageId: message.id,
-      createdAt: message.createdAt.toISOString(),
     };
 
     await Promise.all(

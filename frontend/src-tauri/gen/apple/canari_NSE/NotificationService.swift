@@ -643,6 +643,13 @@ class NotificationService: UNNotificationServiceExtension {
     let keyVersion = Self.string(userInfo["keyVersion"]) ?? ""
     let ciphertext = Self.string(userInfo["ciphertext"]) ?? ""
     let nonce = Self.string(userInfo["nonce"]) ?? ""
+    let senderId = Self.string(userInfo["senderId"]) ?? ""
+    // An `@` of me is TOLD here, not inferred: a channel message carries a cleartext
+    // `mentionedUserIds` from the sender, so the server computes `mentioned` per recipient (the same
+    // fact that honours the `mentions` level). The MLS path has to scan the decrypted text because
+    // the server cannot read it - and that scan is impossible anyway when the ciphertext was too
+    // large to inline, where this flag still holds.
+    let mentionsMe = Self.string(userInfo["mentioned"]) == "true"
 
     guard !channelId.isEmpty else {
       NSLog("[CanariNSE] handleChannelMessage: channelId missing")
@@ -663,11 +670,25 @@ class NotificationService: UNNotificationServiceExtension {
       NSLog("[CanariNSE] handleChannelMessage: no key/ciphertext - generic channel=\(channelId)")
     }
 
+    let ctx = loadPushContext()
     content.title = "#\(channelName)"
     content.body =
-      body ?? Self.localizedFormat("notif.channel.message", channelName, locale: loadPushContext()?.locale)
+      body ?? Self.localizedFormat("notif.channel.message", channelName, locale: ctx?.locale)
     content.threadIdentifier = "channel_\(channelId)"
     content.userInfo["deepLink"] = "fr.emse.canari://chat/channel_\(channelId)"
+    // Same elevation the MLS path gives a mention (applyMessageContent): break through Focus.
+    // Requires the app's Time Sensitive Notifications entitlement - silently downgraded to .active
+    // without it. iOS has no notification-channel concept, so this is the whole Android twin of
+    // posting on `canari_mentions`.
+    if mentionsMe, #available(iOS 15.0, *) {
+      content.interruptionLevel = .timeSensitive
+    }
+    // The sender's face, exactly as the MLS path and both Android paths do it. Without this the
+    // killed-app iPhone was the only surface showing a salon message with no avatar at all, while
+    // the payload had carried `senderId` for it all along. No media thumbnail: WP-XP-3 is MLS-only.
+    if let ctx = ctx, !senderId.isEmpty, let avatarUrl = fetchAvatar(ctx: ctx, userId: senderId) {
+      _ = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
+    }
     applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
     finish()
   }

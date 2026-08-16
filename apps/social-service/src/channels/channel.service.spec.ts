@@ -799,10 +799,29 @@ describe('ChannelService security hardening', () => {
         { senderId: 'u1', ciphertext: 'c', nonce: 'n', mentionedUserIds: ['u5'] }
       );
 
-      const notifiedUsers = fetchMock.mock.calls
-        .map((call) => JSON.parse(call[1].body).userId as string)
-        .sort();
-      expect(notifiedUsers).toEqual(['u2', 'u5']);
+      const sent = fetchMock.mock.calls
+        .map((call) => JSON.parse(call[1].body) as { userId: string; data: Record<string, string> })
+        .sort((a, b) => a.userId.localeCompare(b.userId));
+      expect(sent.map((s) => s.userId)).toEqual(['u2', 'u5']);
+
+      // The mention travels per recipient: only u5 was named, and the device routes its own
+      // notification channel on this field alone (it cannot read the ciphertext to find out).
+      expect(sent[0].data.mentioned).toBe('false');
+      expect(sent[1].data.mentioned).toBe('true');
+
+      // And the payload carries nothing a client does not read: workspaceId / messageId / createdAt
+      // were dropped once measured dead on all three clients. A field nobody reads still costs
+      // room under FCM's 4 KB cap, which the inlined ciphertext competes for.
+      expect(Object.keys(sent[0].data).sort()).toEqual([
+        'channelId',
+        'channelName',
+        'ciphertext',
+        'keyVersion',
+        'mentioned',
+        'nonce',
+        'senderId',
+        'type',
+      ]);
     } finally {
       process.env.INTERNAL_SECRET = prevSecret;
       global.fetch = prevFetch;

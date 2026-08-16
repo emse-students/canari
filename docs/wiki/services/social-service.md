@@ -252,6 +252,28 @@ push carries the ciphertext inline; the Android native layer decrypts it locally
 mirrored to `channel_keys.json` (so plaintext never transits FCM). See the frontend chat module for
 the vault mirror and the per-channel level selector.
 
+**The payload is exactly what a client reads: `type, channelId, channelName, keyVersion, ciphertext,
+nonce, senderId` plus a per-recipient `mentioned`.** Three more fields (`workspaceId`, `messageId`,
+`createdAt`) travelled with it until 2026-08-16 and were read by none of the three native handlers -
+dropped rather than left looking like a contract. `workspaceId` is a uuid no native surface can turn
+into a community name (there is no workspace mirror the way `channel_keys.json` mirrors the keys), so
+putting the community in the notification title needs a `workspaceName` **plus** a title-format
+decision, not an id nobody can render. `messageId` / `createdAt` cannot repeat what the MLS path does
+with them: that path writes `fcm_message_cache.ndjson` so a background-decrypted message is already
+in the store at open, whereas a channel message is DELIBERATELY never persisted locally
+(`useMessaging` skips the DB save for a `channel_` conversation - channels are server-authoritative
+and refetched over HTTP), so the cache has nowhere to inject. Fewer bytes also buys headroom under
+the same ~4 KB FCM cap the inlined ciphertext competes for (over 3000 chars it is omitted and the
+notification degrades to the generic body). The whole contract is pinned in both directions by
+`frontend/src/lib/mobile/channelPushFields.test.ts`, which reads the four source files.
+
+**`mentioned` is the one fact only the server holds**, and all three clients read it since
+2026-08-16: Android posts on `canari_mentions` (IMPORTANCE_HIGH, bypass-DND), both iOS paths set
+`interruptionLevel = .timeSensitive`. The MLS path has to scan the decrypted text for `@[<uuid>]`
+because the server cannot read it; a channel message carries the sender's cleartext
+`mentionedUserIds`, so the device is TOLD - which is also the only answer that survives a push whose
+ciphertext was too large to inline, where there is no text to scan.
+
 Tapping a channel notification opens the deep link `fr.emse.canari://chat/channel_<uuid>`. Because
 channels live under `/communities` (not `/chat`), the deep-link handler routes by target type
 (`chatDeepLinkRoute`): a `channel_` target goes to `/communities` and sets the selected channel so

@@ -706,8 +706,13 @@ opened the app.
   `didBecomeActive` - handover to the in-app call UI. The PushKit token is persisted to
   `voip_token.txt` and registered via `/api/mls/push/register` (`voipToken` field) and rotations
   via `/api/mls/push/refresh-token`.
-- **@mentions**: native detection = decrypted text contains `@[<myUserId>]` (case-insensitive;
-  userId from `push_context.json`). Android posts on `canari_mentions` (IMPORTANCE_HIGH,
+- **@mentions**: for an MLS message, native detection = decrypted text contains `@[<myUserId>]`
+  (case-insensitive; userId from `push_context.json`) - the server cannot read the message, so the
+  device has to look. **A CHANNEL MESSAGE IS TOLD INSTEAD**: it carries the sender's cleartext
+  `mentionedUserIds`, so the social-service computes `mentioned` per recipient (the same fact that
+  honours the `mentions` level) and all three handlers read it since 2026-08-16 - the only answer
+  that still works when the ciphertext was too large to inline and there is no text to scan. Both
+  paths then land in the same place: Android posts on `canari_mentions` (IMPORTANCE_HIGH,
   `setBypassDnd`; posted-notification channel switches require cancel-then-notify). iOS sets
   `interruptionLevel = .timeSensitive` (app-alive path and NSE), which needs the
   `com.apple.developer.usernotifications.time-sensitive` entitlement - without it iOS silently

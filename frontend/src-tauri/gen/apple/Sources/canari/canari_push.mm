@@ -2052,9 +2052,14 @@ static NSString *_Nullable CanariFetchAndDecryptMedia(CanariPushContext *ctx,
   return tmpPath;
 }
 
+// `mentionedByServer` is the channel path's answer to "does this @ me": a channel message carries a
+// cleartext `mentionedUserIds` from the sender, so the server computes it per recipient. An MLS
+// message has no such list - the server cannot read it - which is why the body scan below exists.
+// Two paths, one question, each answered from where the answer actually is.
 static void CanariShowMessageNotification(NSString *senderName, NSString *groupName, NSString *body,
                                           NSString *groupId, NSString *senderId,
-                                          CanariDecryptedMessage *_Nullable decrypted) {
+                                          CanariDecryptedMessage *_Nullable decrypted,
+                                          BOOL mentionedByServer) {
   if (canari_ios_is_in_foreground()) {
     return;
   }
@@ -2077,8 +2082,8 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   }
   // @-mention of me (WP-XP-5): the decrypted body carries inline `@[uuid]` tokens; when one
   // targets my own userId the notification is delivered time-sensitive (Focus breakthrough).
-  BOOL mentionsMe = NO;
-  if (ctx != nil && ctx.userId.length > 0 && body.length > 0) {
+  BOOL mentionsMe = mentionedByServer;
+  if (!mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {
     NSString *needle = [NSString stringWithFormat:@"@[%@]", ctx.userId];
     mentionsMe = [body rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound;
   }
@@ -2501,7 +2506,8 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     }
 
     dispatch_async(dispatch_get_main_queue(), ^{
-      CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted);
+      // MLS: the server cannot know who is mentioned, so the body scan inside decides.
+      CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted, NO);
     });
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
@@ -2561,6 +2567,10 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       [data[@"ciphertext"] isKindOfClass:[NSString class]] ? data[@"ciphertext"] : @"";
   NSString *nonce = [data[@"nonce"] isKindOfClass:[NSString class]] ? data[@"nonce"] : @"";
   NSString *senderId = [data[@"senderId"] isKindOfClass:[NSString class]] ? data[@"senderId"] : @"";
+  // Stated by the server (per recipient, from the sender's cleartext mentionedUserIds) rather than
+  // scanned out of the body - the only answer that survives a ciphertext too large to inline.
+  BOOL mentionsMe = [data[@"mentioned"] isKindOfClass:[NSString class]] &&
+                    [(NSString *)data[@"mentioned"] isEqualToString:@"true"];
   if (channelId.length == 0) {
     NSLog(@"[CanariPush] handleChannelMessage: channelId missing - abort");
     return;
@@ -2609,7 +2619,7 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
     dispatch_async(dispatch_get_main_queue(), ^{
       // groupName empty + senderName "#<channel>" -> title is "#<channel>"; avatar from senderId.
       // No media thumbnail for channels (WP-XP-3 is MLS DM/group only) -> pass nil.
-      CanariShowMessageNotification(displayName, @"", body, conversationId, senderId, nil);
+      CanariShowMessageNotification(displayName, @"", body, conversationId, senderId, nil, mentionsMe);
     });
   });
 }

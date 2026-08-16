@@ -2787,6 +2787,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * AES-256-GCM-decrypted natively so the plaintext never transits FCM. Falls back to a generic
      * body when the key is missing (channel not yet hydrated) or the ciphertext was too large to
      * inline (omitted server-side).
+     *
+     * An `@` OF ME IS TOLD, NOT INFERRED. The MLS path scans the decrypted text for `@[<myUserId>]`
+     * because the server cannot read it; a channel message carries a cleartext `mentionedUserIds`
+     * from the sender, so the server computes `mentioned` per recipient - the same fact it already
+     * uses to honour the `mentions` notification level. Reading it here is what puts a salon mention
+     * on [CHANNEL_MENTIONS] (IMPORTANCE_HIGH, bypass-DND) instead of the ordinary messages channel,
+     * and it is the only answer that still works when the ciphertext was too large to inline and
+     * there is no text to scan.
      */
     private fun handleChannelMessage(data: Map<String, String>) {
         val channelId   = data["channelId"] ?: ""
@@ -2795,6 +2803,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val ciphertext  = data["ciphertext"]?.takeIf { it.isNotEmpty() }
         val nonce       = data["nonce"]?.takeIf { it.isNotEmpty() }
         val senderId    = data["senderId"] ?: ""
+        val mentionsMe  = data["mentioned"] == "true"
         if (channelId.isEmpty()) {
             Log.e(TAG, "handleChannelMessage: channelId missing -> abort")
             return
@@ -2824,13 +2833,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
-        Log.d(TAG, "handleChannelMessage: showNotification channel=#$channelName body=${body.take(60)}")
+        Log.d(TAG, "handleChannelMessage: showNotification channel=#$channelName body=${body.take(60)} mentionsMe=$mentionsMe")
         showNotification(
             senderName = "#$channelName",
             groupName  = "",
             body       = body,
             largeIcon  = largeIcon,
             groupId    = conversationId,
+            channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
         )
     }
 
