@@ -1960,13 +1960,24 @@ export class ChannelService {
       `[CHANNEL_PUSH] channel=${channel.id} message=${message.id} recipients=${recipients.length}`
     );
 
+    // The community NAME, resolved here because nothing downstream can: `workspaceId` is a uuid and
+    // no native surface holds a workspace mirror the way `channel_keys.json` mirrors the keys.
+    const workspace = await this.workspaceRepo.findOne({ where: { id: channel.workspaceId } });
+    if (!workspace) {
+      // A channel whose workspace row is gone is a data-integrity fault, not a normal path. The
+      // notification degrades to the salon alone rather than being dropped, and this line is the
+      // only thing that says the community was lost rather than never asked for.
+      this.logger.error(
+        `[CHANNEL_PUSH] workspace=${channel.workspaceId} not found for channel=${channel.id} - title degrades to the salon alone`
+      );
+    }
+    const workspaceName = workspace?.name ?? '';
+
     // EVERY FIELD HERE IS READ BY A CLIENT. Three others used to travel with it and were read by
     // none of the three (measured 2026-08-15), so they were dropped rather than left to look like a
     // contract:
-    //  - `workspaceId` is a uuid, and no native surface can turn it into a community name: there is
-    //    no workspace mirror the way `channel_keys.json` mirrors the keys. Putting the community in
-    //    the notification title needs `workspaceName` in this payload plus a title-format decision,
-    //    which is a different change from re-adding an id nobody can render.
+    //  - `workspaceId` was a uuid nobody could render; `workspaceName` replaces it because it is
+    //    what the title actually needs.
     //  - `messageId` / `createdAt` cannot repeat what the MLS path does with them. That path writes
     //    `fcm_message_cache.ndjson` so a background-decrypted message is already in the local store
     //    at open; a channel message is DELIBERATELY never persisted locally (`useMessaging` skips
@@ -1977,15 +1988,17 @@ export class ChannelService {
       type: 'channel',
       channelId: channel.id,
       channelName: channel.name,
+      workspaceName,
       keyVersion: String(message.keyVersion ?? channel.keyVersion),
       ciphertext: inlineCiphertext,
       nonce: input.nonce,
       senderId: input.senderId,
     };
 
+    const title = this.buildChannelPushTitle(workspaceName, channel.name);
     await Promise.all(
       recipients.map((member) =>
-        this.sendInternalPush(member.userId, channel.name, {
+        this.sendInternalPush(member.userId, title, {
           ...data,
           mentioned: mentioned.has(member.userId.trim().toLowerCase()) ? 'true' : 'false',
         })
@@ -2015,6 +2028,21 @@ export class ChannelService {
       workspaceId: channel.workspaceId,
       senderId: userId,
     });
+  }
+
+  /**
+   * The title of a salon notification: `<Communaute> - #<salon>`.
+   *
+   * FOUR SURFACES SPELL THIS FORMAT, one per process that can put the banner on a screen: this one
+   * (the APNs alert title, which is what an iPhone shows when the Notification Service Extension
+   * cannot run), the Kotlin FCM service, that extension, and the app-alive `canari_push.mm`. No
+   * compiler spans them, so `channelPushFields.test.ts` asserts the separator on all four.
+   *
+   * The community DEGRADES away rather than erroring: an unnamed workspace still yields `#<salon>`,
+   * which is exactly what the title was before this field existed.
+   */
+  private buildChannelPushTitle(workspaceName: string, channelName: string): string {
+    return workspaceName ? `${workspaceName} - #${channelName}` : `#${channelName}`;
   }
 
   /**

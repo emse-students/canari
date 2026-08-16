@@ -94,7 +94,9 @@ describe('channel push payload contract (social-service writer vs the three nati
   const DISPATCH_KEY = 'type';
 
   const literal = functionBody(fanOutBody, /const data: Record<string, string> = \{/, /\n {4}\};/);
-  const sentKeys = extractKeys(literal, /^\s{6}(\w+):/gm);
+  // `[:,]` so a shorthand property (`workspaceName,`) counts as a sent key exactly like an explicit
+  // one - the wire cannot tell the two apart, and neither may this test.
+  const sentKeys = extractKeys(literal, /^\s{6}(\w+)[:,]/gm);
 
   it('the fan-out sends exactly the keys a client reads, and no more', () => {
     // Spelled out rather than derived: a field added here without a reader is the defect this
@@ -107,6 +109,7 @@ describe('channel push payload contract (social-service writer vs the three nati
       'nonce',
       'senderId',
       'type',
+      'workspaceName',
     ]);
     // `mentioned` is not in the shared literal: it is computed per recipient and spread in at the
     // send, which is the whole point - it is the only field whose value differs between recipients.
@@ -134,6 +137,17 @@ describe('channel push payload contract (social-service writer vs the three nati
     for (const key of read) {
       expect({ key, sent: sent.has(key) }).toEqual({ key, sent: true });
     }
+  });
+
+  it('the salon title names its community on all four surfaces that compose it', () => {
+    // `<Communaute> - #<salon>`, decided 2026-08-16: a salon name alone is ambiguous, two
+    // communities may both have a `#general`. FOUR processes can put this banner on a screen and
+    // each spells the format itself - the server's copy is the APNs alert title, which is what an
+    // iPhone shows when the extension cannot run, so it has to agree with the three that render it.
+    expect(serviceSource).toContain('`${workspaceName} - #${channelName}`');
+    expect(kotlinSource).toContain('"$workspaceName - #$channelName"');
+    expect(swiftHandler).toContain('"\\(workspaceName) - #\\(channelName)"');
+    expect(objcHandler).toContain('@"%@ - #%@"');
   });
 
   it('a mention routes to the higher tier on all three, from the server flag not a text scan', () => {

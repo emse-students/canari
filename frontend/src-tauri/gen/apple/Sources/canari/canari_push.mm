@@ -2614,6 +2614,10 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
                            [(NSString *)data[@"channelName"] length] > 0)
                               ? data[@"channelName"]
                               : @"Salon";
+  NSString *workspaceName = ([data[@"workspaceName"] isKindOfClass:[NSString class]] &&
+                             [(NSString *)data[@"workspaceName"] length] > 0)
+                                ? data[@"workspaceName"]
+                                : @"";
   NSString *keyVersion =
       [data[@"keyVersion"] isKindOfClass:[NSString class]] ? data[@"keyVersion"] : @"";
   NSString *ciphertext =
@@ -2668,9 +2672,15 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       body = CanariBuildChannelFallbackText(channelName);
     }
 
-    NSString *displayName = [NSString stringWithFormat:@"#%@", channelName];
+    // `<Communaute> - #<salon>`: a salon name alone is ambiguous, two communities may both have a
+    // `#general`. Degrades to the salon alone when the server could not name the workspace. The
+    // same format is spelled by the social-service alert title, the Kotlin service and the iOS
+    // extension; `channelPushFields.test.ts` holds the four together.
+    NSString *displayName = workspaceName.length > 0
+                                ? [NSString stringWithFormat:@"%@ - #%@", workspaceName, channelName]
+                                : [NSString stringWithFormat:@"#%@", channelName];
     dispatch_async(dispatch_get_main_queue(), ^{
-      // groupName empty + senderName "#<channel>" -> title is "#<channel>"; avatar from senderId.
+      // groupName empty + senderName as the title -> the banner shows it as-is; avatar from senderId.
       // No media thumbnail for channels (WP-XP-3 is MLS DM/group only) -> pass nil.
       CanariShowMessageNotification(displayName, @"", body, conversationId, senderId, nil, mentionsMe);
     });

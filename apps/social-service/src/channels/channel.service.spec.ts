@@ -1,4 +1,4 @@
-import { ForbiddenException, BadRequestException } from '@nestjs/common';
+import { ForbiddenException, BadRequestException, Logger } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
@@ -771,7 +771,8 @@ describe('ChannelService security hardening', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
     try {
       // The service caches INTERNAL_SECRET at construction time, so build it after setting the env.
-      const { service, memberRepo } = makeService();
+      const { service, memberRepo, workspaceRepo } = makeService();
+      workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', name: 'Campagne de test' });
       const channel = {
         id: 'ch1',
         workspaceId: 'ws1',
@@ -800,7 +801,14 @@ describe('ChannelService security hardening', () => {
       );
 
       const sent = fetchMock.mock.calls
-        .map((call) => JSON.parse(call[1].body) as { userId: string; data: Record<string, string> })
+        .map(
+          (call) =>
+            JSON.parse(call[1].body) as {
+              userId: string;
+              title: string;
+              data: Record<string, string>;
+            }
+        )
         .sort((a, b) => a.userId.localeCompare(b.userId));
       expect(sent.map((s) => s.userId)).toEqual(['u2', 'u5']);
 
@@ -821,8 +829,64 @@ describe('ChannelService security hardening', () => {
         'nonce',
         'senderId',
         'type',
+        'workspaceName',
       ]);
+
+      // The community is named on the wire because no client can turn a workspace uuid into one,
+      // and the title this endpoint carries is the APNs alert - what an iPhone shows when the
+      // Notification Service Extension cannot run, so it has to read like what the extension writes.
+      expect(sent[0].data.workspaceName).toBe('Campagne de test');
+      expect(sent[0].title).toBe('Campagne de test - #general');
     } finally {
+      process.env.INTERNAL_SECRET = prevSecret;
+      global.fetch = prevFetch;
+    }
+  });
+
+  it('a channel whose workspace row is gone still notifies, loudly and without the community', async () => {
+    const prevSecret = process.env.INTERNAL_SECRET;
+    const prevFetch = global.fetch;
+    process.env.INTERNAL_SECRET = 'test-secret';
+    const fetchMock = jest.fn((_url: string, _init: { body: string }) =>
+      Promise.resolve({ ok: true } as Response)
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const logError = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      const { service, memberRepo, workspaceRepo } = makeService();
+      // A channel always has a workspace, so a missing row is a data-integrity fault. The push must
+      // still go out - degraded to `#<salon>`, exactly the title it had before this field existed -
+      // and the log has to ACCUSE, or the community would just quietly stop appearing.
+      workspaceRepo.findOne.mockResolvedValue(null);
+      memberRepo.find.mockResolvedValue([{ userId: 'u2', roleIds: [], notifLevels: {} }]);
+
+      await (
+        service as unknown as {
+          notifyChannelRecipients: (c: unknown, m: unknown, i: unknown) => Promise<void>;
+        }
+      ).notifyChannelRecipients(
+        {
+          id: 'ch1',
+          workspaceId: 'ws1',
+          name: 'general',
+          isPrivate: false,
+          allowedRoles: [] as string[],
+          allowedUsers: [] as string[],
+          keyVersion: 1,
+        },
+        { id: 'm1', keyVersion: 1, createdAt: new Date() },
+        { senderId: 'u1', ciphertext: 'c', nonce: 'n' }
+      );
+
+      const sent = JSON.parse(fetchMock.mock.calls[0][1].body) as {
+        title: string;
+        data: Record<string, string>;
+      };
+      expect(sent.title).toBe('#general');
+      expect(sent.data.workspaceName).toBe('');
+      expect(logError).toHaveBeenCalledWith(expect.stringContaining('[CHANNEL_PUSH] workspace=ws1'));
+    } finally {
+      logError.mockRestore();
       process.env.INTERNAL_SECRET = prevSecret;
       global.fetch = prevFetch;
     }

@@ -252,13 +252,13 @@ push carries the ciphertext inline; the Android native layer decrypts it locally
 mirrored to `channel_keys.json` (so plaintext never transits FCM). See the frontend chat module for
 the vault mirror and the per-channel level selector.
 
-**The payload is exactly what a client reads: `type, channelId, channelName, keyVersion, ciphertext,
-nonce, senderId` plus a per-recipient `mentioned`.** Three more fields (`workspaceId`, `messageId`,
-`createdAt`) travelled with it until 2026-08-16 and were read by none of the three native handlers -
-dropped rather than left looking like a contract. `workspaceId` is a uuid no native surface can turn
-into a community name (there is no workspace mirror the way `channel_keys.json` mirrors the keys), so
-putting the community in the notification title needs a `workspaceName` **plus** a title-format
-decision, not an id nobody can render. `messageId` / `createdAt` cannot repeat what the MLS path does
+**The payload is exactly what a client reads: `type, channelId, channelName, workspaceName,
+keyVersion, ciphertext, nonce, senderId` plus a per-recipient `mentioned`.** Three more fields
+(`workspaceId`, `messageId`, `createdAt`) travelled with it until 2026-08-16 and were read by none of
+the three native handlers - dropped rather than left looking like a contract. `workspaceId` was a
+uuid no native surface can turn into a community name (there is no workspace mirror the way
+`channel_keys.json` mirrors the keys); `workspaceName` replaced it because it is what the title
+actually needs. `messageId` / `createdAt` cannot repeat what the MLS path does
 with them: that path writes `fcm_message_cache.ndjson` so a background-decrypted message is already
 in the store at open, whereas a channel message is DELIBERATELY never persisted locally
 (`useMessaging` skips the DB save for a `channel_` conversation - channels are server-authoritative
@@ -266,6 +266,18 @@ and refetched over HTTP), so the cache has nowhere to inject. Fewer bytes also b
 the same ~4 KB FCM cap the inlined ciphertext competes for (over 3000 chars it is omitted and the
 notification degrades to the generic body). The whole contract is pinned in both directions by
 `frontend/src/lib/mobile/channelPushFields.test.ts`, which reads the four source files.
+
+**The title of a salon notification is `<Communaute> - #<salon>`** (decided 2026-08-16). A salon name
+alone is ambiguous - two communities may both have a `#general` - and `workspaceName` is resolved
+server-side because nothing downstream can: the payload once carried the workspace uuid and no client
+holds a workspace mirror. FOUR processes can put this banner on a screen and each spells the format
+itself: `ChannelService.buildChannelPushTitle` (the APNs alert title, which is what an iPhone shows
+when the extension cannot run), `CanariFirebaseMessagingService.buildChannelPushTitle`, the iOS
+Notification Service Extension and `canari_push.mm`. No compiler spans the four, so
+`channelPushFields.test.ts` asserts the separator on all of them. A workspace row that cannot be
+found degrades the title to `#<salon>` alone and logs `[CHANNEL_PUSH] workspace=<id> not found` at
+ERROR - the community disappearing quietly would be indistinguishable from never having been asked
+for.
 
 **`mentioned` is the one fact only the server holds**, and all three clients read it since
 2026-08-16: Android posts on `canari_mentions` (IMPORTANCE_HIGH, bypass-DND), both iOS paths set

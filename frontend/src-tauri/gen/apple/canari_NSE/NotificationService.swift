@@ -646,6 +646,7 @@ class NotificationService: UNNotificationServiceExtension {
   ) {
     let channelId = Self.string(userInfo["channelId"]) ?? ""
     let channelName = Self.nonEmpty(Self.string(userInfo["channelName"])) ?? "Salon"
+    let workspaceName = Self.nonEmpty(Self.string(userInfo["workspaceName"])) ?? ""
     let keyVersion = Self.string(userInfo["keyVersion"]) ?? ""
     let ciphertext = Self.string(userInfo["ciphertext"]) ?? ""
     let nonce = Self.string(userInfo["nonce"]) ?? ""
@@ -677,7 +678,11 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     let ctx = loadPushContext()
-    content.title = "#\(channelName)"
+    // `<Communaute> - #<salon>`: a salon name alone is ambiguous, two communities may both have a
+    // `#general`. Degrades to the salon alone when the server could not name the workspace. The
+    // same format is spelled by the social-service alert title, the Kotlin service and
+    // `canari_push.mm`; `channelPushFields.test.ts` holds the four together.
+    content.title = workspaceName.isEmpty ? "#\(channelName)" : "\(workspaceName) - #\(channelName)"
     content.body =
       body ?? Self.localizedFormat("notif.channel.message", channelName, locale: ctx?.locale)
     content.threadIdentifier = "channel_\(channelId)"

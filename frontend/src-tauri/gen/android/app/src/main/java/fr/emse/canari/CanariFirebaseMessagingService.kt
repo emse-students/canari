@@ -2799,6 +2799,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     private fun handleChannelMessage(data: Map<String, String>) {
         val channelId   = data["channelId"] ?: ""
         val channelName = data["channelName"]?.takeIf { it.isNotEmpty() } ?: "Salon"
+        val workspaceName = data["workspaceName"]?.takeIf { it.isNotEmpty() } ?: ""
         val keyVersion  = data["keyVersion"] ?: ""
         val ciphertext  = data["ciphertext"]?.takeIf { it.isNotEmpty() }
         val nonce       = data["nonce"]?.takeIf { it.isNotEmpty() }
@@ -2833,9 +2834,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
-        Log.d(TAG, "handleChannelMessage: showNotification channel=#$channelName body=${body.take(60)} mentionsMe=$mentionsMe")
+        val title = buildChannelPushTitle(workspaceName, channelName)
+        Log.d(TAG, "handleChannelMessage: showNotification title=$title body=${body.take(60)} mentionsMe=$mentionsMe")
         showNotification(
-            senderName = "#$channelName",
+            // `senderName` IS the title here: with `groupName` empty, MessagingStyle sets no
+            // conversation title and the Person's name is what the banner shows. A salon has no
+            // human sender to name anyway - the server sends only `senderId`, for the avatar.
+            senderName = title,
             groupName  = "",
             body       = body,
             largeIcon  = largeIcon,
@@ -2861,6 +2866,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             null
         }
     }
+
+    /**
+     * Title of a salon notification: `<Communaute> - #<salon>`.
+     *
+     * The community is named because a salon name alone is ambiguous across communities - two of
+     * them may both have a `#general`. It DEGRADES to `#<salon>` when the server could not name the
+     * workspace, which is what the title was before `workspaceName` travelled.
+     * Three other surfaces spell the same format (the social-service APNs alert title, the iOS
+     * extension, `canari_push.mm`); `channelPushFields.test.ts` holds the four together.
+     */
+    private fun buildChannelPushTitle(workspaceName: String, channelName: String): String =
+        if (workspaceName.isNotEmpty()) "$workspaceName - #$channelName" else "#$channelName"
 
     /** Generic channel notification body used when the message cannot be decrypted. */
     private fun buildChannelFallbackText(channelName: String): String =

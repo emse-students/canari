@@ -588,13 +588,14 @@ NSE-posted notification never carries. All three are fixed and pinned:
 [durable-rules](durable-rules.md), `internal.controller.push.spec.ts` and the second half of
 `channelPushFields.test.ts`.
 
-**What is left of this entry is one scheduled change and one measurement.**
+**THE TITLE IS DONE TOO (2026-08-16): `<Communaute> - #<salon>`**, the user's decision, taken after
+the correction that the data was NOT already in the payload - `workspaceId` was a uuid and no native
+surface can turn one into a name. `workspaceName` now travels in its place and FOUR surfaces compose
+the format, the server's copy being the APNs alert title an iPhone falls back to. Contract and the
+degraded case on [social-service](services/social-service.md#channel-push-notifications).
 
-- **The title becomes `<Communaute> - #<salon>`** - the user's decision of 2026-08-16, taken after
-  the correction that **the data is NOT already in the payload**: `workspaceId` was a uuid and no
-  native surface can turn one into a name (there is no workspace mirror the way `channel_keys.json`
-  mirrors the keys). So it needs `workspaceName` on the wire plus the render on all three handlers.
-  Scheduled in `CLAUDE.md`, not here.
+**What is left of this entry is one measurement.**
+
 - **The phone still owes the positive check** (above): a 404 that stopped is not a banner that
   appeared. NOTIF's first measurement, and it now also has to show the mention landing on the right
   tier on each platform - **and, on iOS, that anything lands at all**, which nothing has ever shown.
