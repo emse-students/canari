@@ -235,6 +235,14 @@ Two lessons, and the second is rule 7 again from the other side:
   strip up, `main` at the same offset for three consecutive reads - not for a duration. It lives in
   `chat.mjs`, so every check that clicks inherits it rather than each learning the trap alone.
 
+**A HELPER THAT COMPUTES ITS OWN COORDINATES INHERITS NONE OF THAT**, and the omission is invisible
+until it misses. FWD ran 4 passes of 5 because `clickBubbleAction` grew its own dispatch instead of
+going through `realClick` - so it had no hit test, no recorder and no parking, clicked blind, and a
+miss surfaced ~15 s later as a missing dialog, indistinguishable from an application defect. Routed
+through the shared primitive, the same failure now names itself at the click: `"Transférer" action
+moved before the click: nothing clickable at the point`. **A second implementation of a shared
+primitive is a second place for this rule to be un-learnt** - extend the primitive instead.
+
 **THE PHONE'S SOFT KEYBOARD MAKES COORDINATES LIE, SO A CONTROL REACHED AFTER A FIELD HAS FOCUS CANNOT BE RESOLVED BY GEOMETRY**
 
 Arming MUT-18 - the first check in this campaign to drive a message's controls on the phone - cost
@@ -380,6 +388,16 @@ caught by a green gate:
   boot that had in fact finished 29 s earlier. Nothing failed; the check simply measured its own
   wait and printed it as the application's number. Race the landings and let the answer say which
   one happened.
+- **A precondition the product cannot reach is not a precondition, it is a fabrication.** MUT-15
+  built its "device that lost a pin" by dropping the pin record and restoring
+  `history_last_stream_id` / `history_seen_cipher` to the instant before the frame, so the replay
+  re-offered a ciphertext this device's MLS ratchet had already consumed. Forward secrecy spends a
+  generation's secret at the first successful decrypt: that state exists nowhere in production, and
+  the check spent five passes reading MLS's correct refusal as a product defect. The rewind is gone -
+  the device is cut with `setOffline` BEFORE the peer pins, which is how a device really comes to
+  lack a pin, and the absence is read back before the recovery is polled. The tell is generic: when
+  a setup writes storage the application owns, name the sequence of user actions that produces that
+  state, and if there is none the check is measuring its own construction.
 
 #### 8. WHEN THE BREAK IS NOT INVERTIBLE, THE TEARDOWN RESTORES A PROPERTY, NEVER A SNAPSHOT - and a cleanup that only runs on the happy path is not a cleanup
 

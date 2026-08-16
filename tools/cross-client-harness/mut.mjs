@@ -1642,100 +1642,64 @@ async function mut14() {
   return dmOk && chOk;
 }
 
-// ── MUT-15: a DM pin is RECOVERED by a device that lost it - was the documented hole [DM] ───────
-
-/**
- * The two localStorage keys that decide whether a replay re-reads a frame, for one group.
- *
- * Named by SUFFIX because their full names embed the user id, which nothing in this rig may spell.
- * They are snapshotted before the pin and restored after it, which rewinds this device's position
- * in the shared log by EXACTLY the frames the pin produced - a scalpel where deleting them would
- * re-walk ninety days of a conversation holding thousands of messages.
- */
-async function historyCursorSnapshot(cx, groupId) {
-  const raw = await evaluate(
-    cx,
-    `JSON.stringify((function () {
-      var out = {};
-      for (var i = 0; i < localStorage.length; i++) {
-        var k = localStorage.key(i);
-        if (!k) continue;
-        if ((k.indexOf('history_last_stream_id:') === 0 || k.indexOf('history_seen_cipher:') === 0)
-            && k.indexOf(':' + ${JSON.stringify(groupId)}) !== -1) {
-          out[k] = localStorage.getItem(k);
-        }
-      }
-      return out;
-    })())`
-  );
-  return JSON.parse(raw);
-}
-
-async function restoreHistoryCursor(cx, snapshot) {
-  await evaluate(cx, `(function () {
-    var snap = ${JSON.stringify(snapshot)};
-    for (var k in snap) localStorage.setItem(k, snap[k]);
-  })()`);
-  return Object.keys(snapshot).length;
-}
+// ── MUT-15: a DM pin reaches a device that was OFFLINE when it was placed [DM] ─────────────────
 
 async function mut15() {
   const [a, b, w] = await openDmPair();
+  // `a` is the client cut below, so only ITS window is narrowed by the outage - see observe().
+  const cut = { W1: ignoringOfflineCut };
+  const marker = mark('MUT15');
   try {
-    const marker = mark('MUT15');
     await sendText(a, marker);
     await awaitMessage(b, marker, 25000);
 
+    // THE DEVICE THAT MISSES THE PIN IS CUT, NOT REWOUND. The first version of this check dropped
+    // `a`'s pin record and restored its `history_last_stream_id` / `history_seen_cipher` snapshot,
+    // to make the replay re-read the frame. That state is UNREACHABLE in production: MLS forward
+    // secrecy spends a generation's secret at the first successful decrypt, so a device whose
+    // ratchet has consumed the frame cannot decrypt it again whatever localStorage says. The check
+    // was therefore asking MLS to do the one thing it exists to refuse, and reading the refusal as
+    // a product defect. A device that genuinely lacks a pin is one that was NOT THERE when the
+    // frame was written - which is an outage, and is what this now builds.
+    await setOffline(a, true);
+
     // THE PIN IS PLACED BY THE PEER, and that is not a detail. MLS gives a device no echo of its
-    // OWN frames, so a device replaying the shared log reaches its own `pin` frame and is told
-    // `own-message` - it can never recover a pin it placed itself from the log. Only a peer's
-    // bundle can do that, and no trigger in this rig asks for one. Pinning from `b` makes `a` a
-    // RECEIVER of the frame, which is the half a browser here can actually measure.
-    const before = await pinStoreSnapshot(a);
-    const cursorBefore = await historyCursorSnapshot(a, '');
+    // OWN frames, so a device can never recover a pin it placed itself from the log; pinning from
+    // `b` makes `a` a RECEIVER of the frame, which is the half a browser here can measure.
     await clickPinIcon(b, marker);
-    // The pin has to have REACHED `a` before its local record of it is taken away, or the check
-    // measures a frame still in flight rather than one that was received and then lost.
-    await pollFor(async () => (await pinState(a, marker)) === 'pinned', 15000, 'a to see the pin');
-    const after = await pinStoreSnapshot(a);
-    const key = diffPinKey(before, after);
-    const groupId = key.replace('canari_pins_', '');
 
-    // Now make `a` a device that has the history but not the pin: drop its pin record, and rewind
-    // its stream cursor and seen-ciphertext set to the instant before the frame arrived. Restoring
-    // a snapshot rather than deleting the keys is what keeps the rewind to one frame.
-    await restorePinKey(a, key, before[key]);
-    const cursorKeys = await restoreHistoryCursor(
-      a,
-      Object.fromEntries(Object.entries(cursorBefore).filter(([k]) => k.endsWith(`:${groupId}`)))
-    );
+    // THE PRECONDITION, ASSERTED AND NOT ASSUMED. Without this read the poll below is satisfied by
+    // a pin that crossed BEFORE the cut, and the check passes while having exercised no recovery
+    // at all - the shape that made TYPE-4 meaningless for five runs (testing-methodology, rule 7).
+    await sleep(2500);
+    const stateWhileOffline = await pinState(a, marker);
 
-    // A full navigation, not a client-side re-select: `pinStore`'s module-level `pins` Map would
-    // otherwise keep serving the in-memory value whatever localStorage now says.
-    await openDM(a, PEER_NAME);
-    const recovered = await pollFor(
+    await setOffline(a, false);
+    const recoveredMs = await pollFor(
       async () => (await pinState(a, marker)) === 'pinned',
-      25000,
-      'a to recover the pin from the log'
-    ).then(() => true, () => false);
-    const stateAfterReload = await pinState(a, marker);
+      30000,
+      'the pin to reach a once it is back'
+    ).then((ms) => ms, () => null);
 
-    const unpinFailure = await ensureUnpinned(b, marker);
-
-    // This row was FAIL 5/5 by design until 2026-08-16 - it existed to hold a hole open. The fix
-    // carries pin state both ways (the frames, replayed in log order, and the pinned set on every
-    // `history_bundle`), so the honest verdict is now the opposite one. What it still does NOT
-    // cover: the bundle half, which needs a genuinely fresh enrolment - see device-verification L.
-    return await finish('MUT-15/dm', recovered ? 'PASS' : 'FAIL', w, {
-      stateAfterReload,
-      cursorKeysRewound: cursorKeys,
-      unpinFailure,
-      covers: 'the replay half - `pin` frames re-read from the shared log after the cursor was rewound by one frame',
-      doesNotCover: 'the history_bundle half (mergePinEntries), which needs a real fresh device',
-    });
+    const ok = stateWhileOffline !== 'pinned' && recoveredMs !== null;
+    return await finish(
+      'MUT-15/dm',
+      ok ? 'PASS' : 'FAIL',
+      w,
+      {
+        stateWhileOffline,
+        recoveredMs,
+        unpinFailure: await ensureUnpinned(b, marker),
+        covers: 'a device that was absent when the pin was placed converges once it is back',
+        doesNotCover:
+          'the archive-replay and history_bundle halves - both need the frame to have left the server queue (retention) or a real fresh enrolment, see device-verification L',
+      },
+      cut
+    );
   } catch (e) {
-    return await finish('MUT-15/dm', 'ERROR', w, { error: e.message });
+    return await finish('MUT-15/dm', 'ERROR', w, { error: e.message }, cut);
   } finally {
+    await setOffline(a, false).catch(() => {});
     closeAll(a, b);
   }
 }
@@ -1757,9 +1721,11 @@ async function mut16() {
     const after = await pinStoreSnapshot(a);
     const key = diffPinKey(before, after);
 
-    // Same simulated-fresh-device technique as MUT-15, but this time the contrast is the point:
-    // `MainChatPage.svelte`'s `$effect` calls `channelService.listPinnedMessageIds` + `setPinnedSet`
-    // (which REPLACES the set, not merges) every time a channel is opened.
+    // A channel pin is SERVER state, so dropping the local record and re-opening is a legitimate
+    // fresh-device simulation here where the same trick is not one for a DM (see MUT-15): nothing
+    // has to be decrypted twice. `MainChatPage.svelte`'s `$effect` calls
+    // `channelService.listPinnedMessageIds` + `setPinnedSet` (which REPLACES the set, not merges)
+    // every time a channel is opened, and that is what this reads back.
     await restorePinKey(a, key, before[key]);
     [a] = await Promise.all([openChannel(a, VENUE.community, VENUE.channel)]).then(() => [a]);
     await until(a, `${paneExpr()}.innerText.indexOf(${JSON.stringify(marker)}) !== -1`, 15000);
@@ -1769,7 +1735,8 @@ async function mut16() {
     return await finish('MUT-16/channel', ok ? 'PASS' : 'FAIL', w, {
       stateAfterFreshLoad,
       unpinFailure: await ensureUnpinned(a, marker),
-      contrastNote: 'compare against MUT-15/dm: same simulated-fresh-device technique, opposite result',
+      contrastNote:
+        'compare against MUT-15/dm: a channel pin is re-hydrated from the server on every open, a DM pin has to travel end to end',
     });
   } catch (e) {
     return await finish('MUT-16/channel', 'ERROR', w, { error: e.message });

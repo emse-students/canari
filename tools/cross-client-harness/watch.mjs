@@ -23,6 +23,12 @@ const BENIGN = [
   // It stays visible in the capture: only the `unexplained` bucket is what this list empties.
   /^\[QUEUE\] mailbox barrier for ".*" waited \d+ms behind/,
   /^\[OUTBOX\] (Queued|Flushing|[0-9a-f]{8}… sent)/,
+  // A DELETE THAT CAUGHT ITS MESSAGE STILL IN THE QUEUE (2026-08-16, MUT-19's fix). This is the
+  // cancellation succeeding: the frame never left, so no peer has it and no `delete_message` event
+  // is owed. Deliberately NOT written as a `^\[OUTBOX\] \S+ withdrawn` prefix - the sibling branch
+  // one `if` above it in `outbox.ts` fires when the send was already in flight, means the opposite
+  // (the peers DO have it), and sits in `NOTABLE`. A prefix rule would silence that one too.
+  /^\[OUTBOX\] [0-9a-f]{8}… withdrawn from the queue before it was ever sent$/,
   /^\[MLS\] (Disk writes deferred|Bulk ingest done|Encrypted state checkpoint persisted)/,
   // A resume finding a socket that BOTH answers agree is alive - a tab hidden and shown again, which
   // every check that touches visibility produces. The disagreeing spelling is in `NOTABLE`, and the
@@ -278,6 +284,13 @@ const NOTABLE = [
   // expected - so it is reported and does not break `clean`. It must never be filed as routine: an
   // outbox that stays non-empty is exactly how a message is lost without anything else complaining.
   /^\[OUTBOX\] \d+ entr(y|ies) still queued/,
+  // THE DELETE THAT ARRIVED ONE INSTANT TOO LATE - the sibling of the `BENIGN` withdrawal line. The
+  // entry was already in flight, so the peers will have the text and the delete has to travel as a
+  // `delete_message` event instead. NOTABLE rather than benign because it is the race MUT-19 exists
+  // to bound: the cancellation and the broadcast are two different mechanisms, and which one ran
+  // decides what the peer sees. It does not break `clean` - losing that race is a legitimate
+  // outcome, correctly handled - but a run must never report it as the cancellation.
+  /^\[OUTBOX\] [0-9a-f]{8}… withdrawn while it was already being sent/,
   // THE APP DECLARING A LOSS, which is a different claim from the frame that failed to open. The
   // `[MLS] LOST frame` line is `SEVERE` and breaks `clean` on its own; this one is the decision that
   // followed it, and it is kept visible because a reconciliation with no lost frame above it would
