@@ -34,7 +34,10 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
 
     expect(result).toEqual({ id: 'req-uuid-1', url: 'https://lydia-app.com/pay/1' });
 
-    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+    // Asserted through `mock.calls` rather than `expect(mockedAxios.post)`: handing the method
+    // itself to a matcher detaches it from its receiver, which is what `unbound-method` warns
+    // about, and the call list is the thing being asserted anyway.
+    expect(mockedAxios.post.mock.calls).toHaveLength(1);
     const [url, body, config] = mockedAxios.post.mock.calls[0];
     expect(url).toBe('https://homologation.lydia-app.com/api/request/do.json');
     expect(config).toMatchObject({
