@@ -286,6 +286,20 @@ channel's notification (`cancelConversationNotification("channel_<uuid>")`); the
 ignores it (foreground guard). This mirrors the MLS DM/group behaviour, where a self read-receipt
 push clears the conversation's notification on the user's other devices.
 
+**The cancel keys on the notification's THREAD, not on an identifier we chose.** A conversation's
+notification has two possible posters and they do not agree on an identifier: the in-app path
+(`CanariShowLocalNotification`) uses `canari-<stableId>`, while the NSE — the only path that runs
+when the app is killed, which is exactly when a read elsewhere needs cleaning up — posts under an
+identifier the system assigned. Removing by `canari-<stableId>` therefore matched nothing on a
+killed iPhone, and the badge was then recomputed from a set still containing the notification. Both
+posters do set `threadIdentifier` to the conversation (`groupId`, or `channel_<uuid>`), so
+`CanariCancelConversationNotification` enumerates the delivered notifications and removes by thread,
+then writes the badge from what remains — computed from the array already in hand, since
+`removeDeliveredNotificationsWithIdentifiers:` has no completion handler to wait on. Fixed
+2026-08-16, together with the missing `apns` block that had kept the frame from arriving at all
+(see [chat-delivery](chat-delivery.md)). Android is unaffected: it has one poster, and its
+`groupId → notifId` map is written by that poster.
+
 ### Forms (`/api/forms`)
 
 | Method | Path | Description |

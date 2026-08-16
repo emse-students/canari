@@ -865,6 +865,14 @@ The three that generalise beyond it:
   service that is briefly down. If a call is allowed to fail silently, nothing about its own logs
   will ever tell you it is not merely unlucky - the only instrument that finds this class is the
   CALLEE's log read over a window in which the path is known to have run.
+- **A SECOND COPY OF A SEND IS A SECOND CONTRACT, AND ONLY ONE OF THEM WILL BE MAINTAINED.**
+  `POST /internal/push/notify` carried its own `getMessaging().send()` loop - the same one as
+  `MessagingService.sendPushToUser` minus the `apns` block - so every push it carried (every salon
+  message, post, form reminder and cross-device read frame) was a data-only FCM message: never
+  surfaced by iOS, never handed to the NSE, dropped by every iPhone while the endpoint answered
+  `sent`. The correct block existed, was documented, and was unit-tested field by field; **none of
+  that reached the caller that did not call it.** A shared payload builder is not a shared path -
+  test the message that actually leaves the process, through the real caller.
 - **A convention applied in two places out of three is the worst state a convention can be in**, and
   the two correct ones are what make the third invisible: `payment/social-internal-client.ts` and the
   media call both spelt the prefix, so every reading of "how do we call another service here"
@@ -1000,6 +1008,14 @@ page. The five to carry, plus one status line:
   contended lock. Any predicate that can FAIL TO LOOK needs a third value, and `UNKNOWN` must reach
   no recovery at all: a catch-up answers an epoch gap and a race answers a pending join, and
   nothing has diagnosed either.
+- **WHAT REMOVES A NOTIFICATION MUST KEY ON WHAT THE POSTER WROTE - AND ON IOS THERE ARE TWO
+  POSTERS.** The in-app path posts under `canari-<stableId>`, the NSE under an identifier the system
+  assigned; `CanariCancelConversationNotification` removed only the first, so on a KILLED iPhone -
+  the only state where the NSE posts, and exactly the state a read on another device has to clean up
+  - it matched nothing and the banner stayed. `threadIdentifier` is the conversation on both paths,
+  so enumerate the delivered notifications and remove by thread. Then write the badge from the array
+  already in hand: `removeDeliveredNotificationsWithIdentifiers:` has no completion handler, so
+  re-reading the centre right after it counts what you just deleted, sometimes.
 - A Play-signed install and the GitHub-signed APK cannot update each other, and switching sides
   needs an uninstall that wipes `mls.bin` - so the update target is a RUNTIME fact, never a constant.
 - `minClientVersion` is the ONLY thing that interrupts a user now; raising it before the store

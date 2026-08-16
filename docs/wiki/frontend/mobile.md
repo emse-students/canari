@@ -404,6 +404,14 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
 
+**It also never sees a silent frame, so it can never cancel anything.** The extension runs on
+`mutable-content: 1` ALERT pushes only; a `content-available: 1` background push goes to the app
+(`canari_push.mm` `CanariHandleFcmData`). So `channel_read` — the frame that clears a salon's
+notification after it was read on another device — is the app's to handle, and listing it in the
+extension's switch (as it was until 2026-08-16) is a branch that cannot execute. The removal itself
+must key on `threadIdentifier`, since the identifier differs between the two posters — see
+[social-service](../services/social-service.md) "Cross-device read dismissal".
+
 ### CallKit (VoIP pushes)
 
 When the app is killed, incoming calls use CallKit via direct APNs VoIP pushes:

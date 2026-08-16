@@ -130,6 +130,13 @@ calls too. **Le Cercle caches nothing** - a merge request and Aurel's decision, 
 Table, the three findings the work turned up and what a fifth project should copy are in
 [backlog](docs/wiki/backlog.md). **Decided: four aligned copies, not a shared client.**
 
+**WP-NOTIF-TITLE-1 (P3) - DECIDED, NOT YET WRITTEN.** The user chose `<Communaute> - #<salon>` for a
+salon notification's title on 2026-08-16. It is a server change plus three handlers: `workspaceName`
+has to travel in the channel push (`workspaceId` was a uuid and no native surface can turn one into a
+name), then be rendered by the Kotlin service, the NSE and `canari_push.mm`. The contract test
+`channelPushFields.test.ts` pins the key set in both directions, so the field must be added on all
+four sides in one commit. Reasoning in [backlog](docs/wiki/backlog.md).
+
 **WP-STRANDED-1 IS ATTRIBUTED AND FIXED AT ITS CAUSE (2026-08-16), VERIFICATION OWED.** The four
 sender-only rows were WITHDRAWN messages: `deleteMessage` knew it had withdrawn rather than
 broadcast and returned `void`, so the caller tombstoned either way and the sender kept a durable row

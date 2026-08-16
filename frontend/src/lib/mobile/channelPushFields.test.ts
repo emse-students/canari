@@ -35,6 +35,10 @@ const NOTIF_SERVICE_SWIFT = resolve(
   '../../../src-tauri/gen/apple/canari_NSE/NotificationService.swift'
 );
 const CANARI_PUSH_MM = resolve(here, '../../../src-tauri/gen/apple/Sources/canari/canari_push.mm');
+const PUSH_PAYLOAD_TS = resolve(
+  here,
+  '../../../../apps/chat-delivery-service/src/services/push-payload.ts'
+);
 
 /** Unique, sorted capture group 1 of every match of `regex` in `source`. */
 function extractKeys(source: string, regex: RegExp): string[] {
@@ -143,5 +147,77 @@ describe('channel push payload contract (social-service writer vs the three nati
     expect(kotlinHandler).not.toContain('@[$');
     expect(swiftHandler).not.toContain('@[\\(');
     expect(objcHandler).not.toContain('@[%@]');
+  });
+});
+
+/**
+ * Which iOS PROCESS a push reaches is decided on the server, and neither side can see the other.
+ *
+ * `buildInternalApnsRequest` sends a silent frame as `content-available: 1` /
+ * `apns-push-type: background`. A background push is delivered to the APP; the Notification Service
+ * Extension runs on `mutable-content: 1` ALERT pushes and on nothing else. So a silent type listed
+ * in the extension's switch is a branch that cannot execute, and one missing from the app's
+ * dispatcher is a frame nobody acts on - which is what `channel_read` was: named in the extension,
+ * where it never arrived, so a killed iPhone kept showing a salon banner for a message already read
+ * on another device.
+ */
+describe('silent push frames are handled by the app, never by the extension', () => {
+  const payloadSource = readFileSync(PUSH_PAYLOAD_TS, 'utf8');
+  const swiftSource = readFileSync(NOTIF_SERVICE_SWIFT, 'utf8');
+  const objcSource = readFileSync(CANARI_PUSH_MM, 'utf8');
+
+  /** The `type` values buildInternalApnsRequest turns into a background push. */
+  const silentTypes = extractKeys(
+    functionBody(payloadSource, /const isSilent =/, /\n {2}\/\//),
+    /data\.type === '(\w+)'/g
+  );
+
+  /** Every `case` label of the extension's top-level type switch. */
+  const nseCases = extractKeys(
+    functionBody(swiftSource, /switch type \{/, /\n {4}default:/),
+    /"(\w+)"/g
+  );
+
+  it('extracted both lists, so nothing below can pass by being empty', () => {
+    expect(silentTypes).toEqual(['channel_read']);
+    expect(nseCases).toContain('channel');
+    expect(nseCases).toContain('social');
+    expect(nseCases).toContain('form_reminder');
+  });
+
+  it('no silent type is claimed by the extension, which can never receive one', () => {
+    for (const type of silentTypes) {
+      expect({ type, claimedByNSE: nseCases.includes(type) }).toEqual({
+        type,
+        claimedByNSE: false,
+      });
+    }
+  });
+
+  it('every silent type is acted on by the app dispatcher, the only process that gets it', () => {
+    const dispatcher = functionBody(
+      objcSource,
+      /static void CanariHandleFcmData\(/,
+      /\nvoid CanariPushCancelMessageNotifications\(/
+    );
+    for (const type of silentTypes) {
+      expect({ type, handled: dispatcher.includes(`isEqualToString:@"${type}"`) }).toEqual({
+        type,
+        handled: true,
+      });
+    }
+  });
+
+  it('the cancel keys on the thread, the only key both posting paths agree on', () => {
+    // The in-app path posts `canari-<stableId>`; the extension posts under an identifier the system
+    // assigned. Removing by our own identifier therefore matched nothing on a killed iPhone - the
+    // exact case a read elsewhere has to clean up. `threadIdentifier` is the conversation on both.
+    const cancel = functionBody(
+      objcSource,
+      /static void CanariCancelConversationNotification\(/,
+      /\nstatic NSData \*_Nullable CanariHttpRequest\(/
+    );
+    expect(cancel).toContain('threadIdentifier');
+    expect(cancel).toContain('getDeliveredNotificationsWithCompletionHandler');
   });
 });

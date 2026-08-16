@@ -12,8 +12,6 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { getApps } from 'firebase-admin/app';
-import { getMessaging } from 'firebase-admin/messaging';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { PushToken } from '../entities/push-token.entity';
@@ -27,6 +25,7 @@ import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
+import { MessagingService } from '../services/messaging.service';
 
 /**
  * Internal-only endpoints - called by other services via Docker-internal networking.
@@ -60,7 +59,8 @@ export class InternalController {
     @InjectRepository(GroupInvite)
     private readonly groupInviteRepo: Repository<GroupInvite>,
     @Inject('REDIS_CLIENT')
-    private readonly redis: Redis
+    private readonly redis: Redis,
+    private readonly messagingService: MessagingService
   ) {}
 
   /**
@@ -95,6 +95,22 @@ export class InternalController {
     return resolveGroupInvitePreview(this.groupInviteRepo, this.groupRepo, token);
   }
 
+  /**
+   * The one entry point every other service uses to push to a user (community channel messages
+   * and their silent `channel_read` frames from `channel.service.ts`, posts and form reminders
+   * from `push.service.ts`).
+   *
+   * IT DELEGATES RATHER THAN SENDING. It used to hold its own `getMessaging().send()` loop -
+   * token lookup, invalid-token cleanup and all - which was the same send as
+   * {@link MessagingService.sendPushToUser} MINUS the `apns` block. That difference is not a
+   * detail: FCM turns a message with no `apns` block into a data-only push, which iOS never
+   * surfaces and which never triggers the Notification Service Extension. So EVERY push this
+   * endpoint carried - every salon message, every post, every form reminder, every cross-device
+   * read frame - was silently dropped on the floor by every iPhone, while the same payload
+   * notified Android correctly and the endpoint reported `sent`.
+   *
+   * Two copies of a send are two contracts, and only one of them was maintained.
+   */
   @Post('push/notify')
   async notifyUser(
     @Headers('x-internal-secret') headerSecret: string,
@@ -108,46 +124,19 @@ export class InternalController {
   ) {
     this.assertInternalSecret(headerSecret);
 
-    if (getApps().length === 0) {
-      this.logger.warn('[INTERNAL_PUSH] Firebase not initialized - skipping');
+    const { userId, title, body: notifBody, data = {} } = body;
+    if (!userId || !title) {
+      this.logger.warn(
+        `[INTERNAL_PUSH] refused: userId=${userId ? 'set' : 'missing'} title=${title ? 'set' : 'missing'}`
+      );
       return { sent: 0, failed: 0 };
     }
 
-    const { userId, title, body: notifBody, data = {} } = body;
-    if (!userId || !title) return { sent: 0, failed: 0 };
-
-    const tokens = await this.pushTokenRepo.find({ where: { userId } });
-    let sent = 0;
-    let failed = 0;
-
-    for (const pt of tokens) {
-      try {
-        // Data-only -> onMessageReceived() fires even in the background.
-        // Kotlin reads data["type"] to pick the channel (canari_social / canari_forms)
-        // and build the deepLink (deepLink, postId, or formId depending on type).
-        await getMessaging().send({
-          token: pt.token,
-          data: { ...data, title, body: notifBody },
-          android: { priority: 'high' },
-        });
-        sent++;
-      } catch (e) {
-        failed++;
-        const code = typeof e === 'object' && e && 'code' in e ? String((e as any).code) : '';
-        if (
-          code === 'messaging/invalid-registration-token' ||
-          code === 'messaging/registration-token-not-registered'
-        ) {
-          await this.pushTokenRepo.delete({ id: pt.id }).catch(() => {});
-        }
-        this.logger.warn(
-          `[INTERNAL_PUSH] Failed user=${userId} device=${pt.deviceId}: ${String(e)}`
-        );
-      }
-    }
-
-    this.logger.log(`[INTERNAL_PUSH] user=${userId} sent=${sent} failed=${failed}`);
-    return { sent, failed };
+    const result = await this.messagingService.sendPushToUser(userId, title, notifBody, data);
+    this.logger.log(
+      `[INTERNAL_PUSH] type=${data.type ?? 'none'} user=${userId} sent=${result.sent} failed=${result.failed}`
+    );
+    return result;
   }
 
   /**

@@ -2337,9 +2337,13 @@ export class MessagingService {
   }
 
   /**
-   * Sends an FCM notification to all registered devices of a given user.
-   * Used for side-channel social signals (reactions, mentions) where the
-   * server never sees the MLS plaintext.
+   * Sends a non-MLS push to every registered device of a user - the side-channel signals where the
+   * server never sees the MLS plaintext: reactions, community channel messages and their silent
+   * `channel_read` frames, posts, form reminders.
+   *
+   * THE ONLY IMPLEMENTATION. `InternalController.notifyUser` used to carry a second copy of this
+   * loop without the `apns` block below, which cost every iPhone every community notification -
+   * see that method's docstring. Anything that needs to push to a user calls this.
    *
    * Returns { sent, failed } - failure is non-fatal for the caller.
    */
@@ -2349,7 +2353,12 @@ export class MessagingService {
     body: string,
     data: Record<string, string>
   ): Promise<{ sent: number; failed: number }> {
-    if (getApps().length === 0) return { sent: 0, failed: 0 };
+    if (getApps().length === 0) {
+      // Not a quiet no-op: with Firebase uninitialised NOTHING notifies, on any platform, and the
+      // caller's own log would still read as a success.
+      this.logger.warn('[SOCIAL_PUSH] Firebase not initialized - nothing sent');
+      return { sent: 0, failed: 0 };
+    }
 
     const traceId = this.makeTraceId('social-push');
     const pushTokens = await this.pushTokenRepo.find({ where: { userId } });

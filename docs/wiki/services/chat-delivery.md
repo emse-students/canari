@@ -499,6 +499,25 @@ APNs** for iOS tokens, using the APNs `.p8` auth key uploaded in the Firebase co
 `content-available: 1`, mirroring the Android data-only push. iOS clients register their
 **FCM** token (not a raw APNs device token) via `/api/mls/push/register` with `platform: "ios"`.
 
+**One send, two payload builders.** Every push leaving this service goes through
+`MessagingService` and carries an `apns` block: `buildApnsRequest` shapes the MLS one,
+`buildInternalApnsRequest` the non-MLS one (community channel messages and their silent
+`channel_read` frames, posts, form reminders — everything arriving from social-service on
+`POST /api/internal/push/notify`). That endpoint **delegates to `sendPushToUser` and sends nothing
+itself**: it used to hold a second copy of the send loop, identical minus the `apns` block, and FCM
+turns a message with no `apns` block into a data-only push — never surfaced by iOS, never handed to
+the NSE. Every salon message, post, form reminder and cross-device read frame was therefore dropped
+by every iPhone while the endpoint answered `sent` (fixed 2026-08-16; `internal.controller.push.spec.ts`
+asserts the block on the message that actually reaches FCM, because `push-payload.spec.ts` had
+covered the builder field by field and none of it applied to a caller that never called it).
+
+**Which iOS process a push reaches is decided here.** `mutable-content: 1` (alert) runs the
+Notification Service Extension; `content-available: 1` (background) goes to the app
+(`canari_push.mm` `CanariHandleFcmData`) and never to the extension. So a silent type — today only
+`channel_read` — is acted on by the app alone, and listing one in the NSE's switch is a branch that
+cannot execute. `frontend/src/lib/mobile/channelPushFields.test.ts` pins both directions across the
+seam.
+
 **Client config & build:** the Firebase client config files are gitignored and injected by CI
 from secrets — `GOOGLE_SERVICES_JSON` (Android → `google-services.json`) and
 `GOOGLE_SERVICE_INFO_PLIST` (iOS → `canari_iOS/GoogleService-Info.plist`). The iOS Firebase

@@ -92,9 +92,15 @@ class NotificationService: UNNotificationServiceExtension {
       // clients; here it is replaced by one in the phone's own language.
       applyReactionContent(userInfo: userInfo, content: content)
       finish()
-    case "social", "form_reminder", "channel_read":
-      // Not encrypted (or a silent control frame): the payload already carries the
-      // final title/body, so leave the alert untouched and deliver as-is.
+    case "social", "form_reminder":
+      // Not encrypted: the payload already carries the final title/body, so leave the alert
+      // untouched and deliver as-is.
+      //
+      // `channel_read` used to be listed here too, and could never arrive: the extension runs on
+      // `mutable-content: 1` ALERT pushes only, and buildInternalApnsRequest sends every silent
+      // frame as `content-available: 1` / `apns-push-type: background`. A background push goes to
+      // the app (canari_push.mm `CanariHandleFcmData`, which clears the channel's notification);
+      // it never reaches this process. Listing it here read as "handled" and was a dead branch.
       finish()
     default:
       handleMlsMessage(userInfo: userInfo, content: content)

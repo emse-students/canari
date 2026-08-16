@@ -507,10 +507,10 @@ of it is compiled by CI and by nothing else, and none of it has run:
   sitting: it is additive and guarded, so it can go in whole whenever. Same shape as the
   web/mobile avatar entry above.
 
-Already filed elsewhere and not repeated here: the iOS NSE treats `channel_read` as a pass-through
-while Android cancels (see the channel-push entry below), and seven Android notification strings are
-still French literals in `.kt` (see the entry above) - iOS having a table now makes Android the side
-that is behind on its own mechanism.
+Already filed elsewhere and not repeated here: seven Android notification strings are still French
+literals in `.kt` (see the entry above) - iOS having a table now makes Android the side that is
+behind on its own mechanism. The iOS `channel_read` gap named here previously is CLOSED, and was not
+what it looked like - see the channel-push entry below.
 
 ### P2 - the notification strings are French literals in native code, and iOS has no table to put them in
 
@@ -575,19 +575,29 @@ each, and the contract itself, are on
 have caught the whole class is `frontend/src/lib/mobile/channelPushFields.test.ts`, and its rule is
 in [durable-rules](durable-rules.md#contracts-the-compiler-does-not-check).
 
-**What is left of this entry is one product decision and two measurements.**
+**THE iOS HALF IS CLOSED TOO (2026-08-16), AND IT WAS TWO DEFECTS, NEITHER THE ONE THIS ENTRY
+NAMED.** The bullet used to read "the NSE treats `channel_read` as a pass-through". It cannot: the
+extension runs on ALERT pushes only and a silent frame is a background push, so that `case` had
+never once executed. Underneath it, `POST /internal/push/notify` was sending data-only with **no
+`apns` block at all** - a second copy of `MessagingService.sendPushToUser` missing exactly that -
+so **no community push had ever reached an iPhone**, message or read frame, while the endpoint
+answered `sent`. And once the frame does arrive, the cancel keyed on `canari-<stableId>`, which the
+NSE-posted notification never carries. All three are fixed and pinned:
+[chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm),
+[social-service](services/social-service.md), two rules in
+[durable-rules](durable-rules.md), `internal.controller.push.spec.ts` and the second half of
+`channelPushFields.test.ts`.
 
-- **The notification title is `#<salon>` alone - no community name, no community logo.** That is the
-  format question the user raised for NOTIF, and the correction worth carrying: **the data is NOT
-  already in the payload.** `workspaceId` was a uuid, and no native surface can turn one into a name
-  (there is no workspace mirror the way `channel_keys.json` mirrors the keys). Rendering the
-  community needs a `workspaceName` in the payload - a server change - *plus* the format decision.
-- **A killed iOS app shows a banner for a salon already read on another device**: the NSE treats
-  `channel_read` as a pass-through delivery while Android and the iOS in-app path both cancel. The
-  exact thing `channel_read` exists to prevent.
+**What is left of this entry is one scheduled change and one measurement.**
+
+- **The title becomes `<Communaute> - #<salon>`** - the user's decision of 2026-08-16, taken after
+  the correction that **the data is NOT already in the payload**: `workspaceId` was a uuid and no
+  native surface can turn one into a name (there is no workspace mirror the way `channel_keys.json`
+  mirrors the keys). So it needs `workspaceName` on the wire plus the render on all three handlers.
+  Scheduled in `CLAUDE.md`, not here.
 - **The phone still owes the positive check** (above): a 404 that stopped is not a banner that
   appeared. NOTIF's first measurement, and it now also has to show the mention landing on the right
-  tier on each platform.
+  tier on each platform - **and, on iOS, that anything lands at all**, which nothing has ever shown.
 
 ---
 
