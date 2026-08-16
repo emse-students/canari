@@ -73,7 +73,11 @@ function loadRetryCipherCounts(userId: string, groupId: string): Map<string, num
   try {
     const raw = JSON.parse(localStorage.getItem(retryCipherKey(userId, groupId)) ?? '[]');
     return new Map(Array.isArray(raw) ? raw : []);
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[HISTORY] Retry counters for ${groupId.slice(0, 8)} are unreadable, restarting from zero - ` +
+        `a permanently undecryptable frame gets ${MAX_HISTORY_DECRYPT_RETRIES} more refetches: ${String(err)}`
+    );
     return new Map();
   }
 }
@@ -90,8 +94,11 @@ function saveRetryCipherCounts(userId: string, groupId: string, counts: Map<stri
     } else {
       localStorage.setItem(retryCipherKey(userId, groupId), JSON.stringify(bounded));
     }
-  } catch {
-    /* quota exceeded - graceful degradation */
+  } catch (err) {
+    console.warn(
+      `[HISTORY] Retry counters for ${groupId.slice(0, 8)} were not persisted (${bounded.length} ` +
+        `entries) - the ladder restarts at zero on the next replay: ${String(err)}`
+    );
   }
 }
 
@@ -108,8 +115,11 @@ function loadLastStreamId(userId: string, groupId: string): string | undefined {
 function saveLastStreamId(userId: string, groupId: string, streamId: string): void {
   try {
     localStorage.setItem(lastStreamIdKey(userId, groupId), streamId);
-  } catch {
-    /* quota exceeded - graceful degradation */
+  } catch (err) {
+    console.warn(
+      `[HISTORY] Stream cursor ${streamId} for ${groupId.slice(0, 8)} was not persisted - the next ` +
+        `replay refetches from the previous cursor: ${String(err)}`
+    );
   }
 }
 
@@ -133,7 +143,11 @@ function loadSeenCipherHashes(userId: string, groupId: string): Set<string> {
   let hydrated: Set<string>;
   try {
     hydrated = new Set(JSON.parse(localStorage.getItem(cacheKey) ?? '[]'));
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[HISTORY] The seen-ciphertext set for ${groupId.slice(0, 8)} is unreadable, starting empty - ` +
+        `every archived frame is replayed as new until it is rebuilt: ${String(err)}`
+    );
     hydrated = new Set();
   }
   seenCache.set(cacheKey, hydrated);
@@ -148,8 +162,11 @@ function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<strin
   const bounded = arr.length > MAX_HASHES ? arr.slice(arr.length - MAX_HASHES) : arr;
   try {
     localStorage.setItem(seenHistoryKey(userId, groupId), JSON.stringify(bounded));
-  } catch {
-    /* quota exceeded - graceful degradation */
+  } catch (err) {
+    console.warn(
+      `[HISTORY] The seen-ciphertext set for ${groupId.slice(0, 8)} was not persisted ` +
+        `(${bounded.length} entries) - this replay is repeated in full next time: ${String(err)}`
+    );
   }
 }
 
@@ -359,13 +376,19 @@ export async function replayConversationHistory(params: {
         if (storedMsgs.length === 0) {
           try {
             localStorage.removeItem(lastStreamIdKey(userId, id));
-          } catch {
-            /* ignore */
+          } catch (err) {
+            console.warn(
+              `[HISTORY] The stale cursor for ${id.slice(0, 8)} could not be cleared - this run ` +
+                `refetches from the start anyway, the next one will not: ${String(err)}`
+            );
           }
           afterStreamId = undefined;
         }
-      } catch {
-        /* if DB check fails, proceed with existing cursor */
+      } catch (err) {
+        console.warn(
+          `[HISTORY] Could not read the store for ${id.slice(0, 8)} to check the cursor against - ` +
+            `proceeding with ${cursorBeforeDbCheck}, which points past a wiped store if it is one: ${String(err)}`
+        );
       }
     }
     let fetchCursor = afterStreamId;
@@ -819,8 +842,12 @@ export async function replayConversationHistory(params: {
         for (const m of await storage.getMessages(id, deviceKeyB64)) {
           existingById.set(m.id, m);
         }
-      } catch {
-        // Non-blocking: if the read fails we proceed without preservation (best-effort).
+      } catch (err) {
+        console.warn(
+          `[HISTORY] Could not read the stored rows for ${id.slice(0, 8)} before the batch write - ` +
+            `an isDeleted or isEdited flag set by an event already seen may be overwritten with the ` +
+            `original content: ${String(err)}`
+        );
       }
 
       const toStore: StoredMessage[] = pendingMessages.map((pm) => {
@@ -926,8 +953,12 @@ export async function replayConversationHistory(params: {
         if (toUpdate.length > 0) {
           await storage!.saveMessages(toUpdate, deviceKeyB64);
         }
-      } catch {
-        // Non-blocking
+      } catch (err) {
+        console.warn(
+          `[HISTORY] The post-save mutation pass failed for ${id.slice(0, 8)} - ` +
+            `${reactionUpdates.size} reaction, ${deletedMessages.size} delete and ` +
+            `${editedMessages.size} edit update(s) replayed from the archive were not stored: ${String(err)}`
+        );
       }
     }
 

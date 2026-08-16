@@ -640,6 +640,25 @@ patch cannot move a row to; and the FCM-preview upgrade replaces a placeholder w
 Both now write back every field the in-memory message still carries, so neither erases anything
 either.
 
+### Everything the replay swallows, it logs
+
+The twin of the outbox rule ([chat](../frontend/modules/chat.md#everything-the-outbox-swallows-it-logs)).
+`replayHistory` is best-effort at every step that is not the decrypt itself - a localStorage quota or
+a store read that fails must not abandon a page of decrypted messages - and that makes silence the
+default failure mode of exactly the state the false-loss work depends on. Every one of those branches
+carries a `[HISTORY]` warning naming what was lost, since 2026-08-16:
+
+| Branch | What silence there costs |
+|---|---|
+| Retry counters unreadable / not persisted | The ladder restarts at zero, so a permanently undecryptable frame buys six more refetches per run |
+| Seen-ciphertext set unreadable | Every archived frame is replayed as new - the shape a false loss has |
+| Seen-ciphertext set not persisted | The same replay is repeated in full next time |
+| Stream cursor not persisted | The next replay refetches from the previous cursor |
+| Stale cursor not cleared | This run refetches from the start, the next one does not |
+| Store unreadable for the cursor check | Proceeds on a cursor that points past a wiped store |
+| Store unreadable before the batch write | An `isDeleted` / `isEdited` flag set by an already-seen event is overwritten with the original body |
+| The post-save mutation pass | Replayed reactions, deletes and edits are not stored, and it says how many of each |
+
 ---
 
 ## What disappears
