@@ -110,7 +110,18 @@ record('MSG-5', gated.verdict, {
     notable: o.notable.slice(0, 6),
     unexplained: o.unexplained.slice(0, 6),
   })),
-  phoneLogTail: phone.slice(-8),
+  // The phone's NATIVE half, summarised - it is in the gate above, so what belongs in the record is
+  // what a reader needs to act on. Not `phone.slice(-8)`: that was the last eight RAW logcat lines,
+  // which on a healthy run are eight arbitrary debug lines and on a bad one are whatever happened to
+  // come last. The classifier already knows which lines are findings.
+  phoneNative: {
+    clean: phone.clean,
+    severe: phone.severe,
+    errors: phone.errors,
+    unexplained: phone.unexplained.slice(0, 6),
+    notable: phone.notable.slice(0, 6),
+    linesSeen: phone.linesSeen,
+  },
   log: `logs/msg5-${marker}.json`,
 });
 w1.close();

@@ -359,6 +359,40 @@ SKIP said A1 was off adb; SESSION STATE had said the opposite for weeks, and the
 the whole time. The real obstacle was a missing helper, which nobody went looking for because the
 written reason pointed at a cable.
 
+**AND THE TAB IS PART OF THE DEVICE'S IDENTITY, WHICH `find` DOES NOT KNOW.** `client(port, match)`
+resolved a client with `targets.find(url.includes(match))` - the FIRST tab whose URL matched, which
+is a position, not an identity, and the browsers offer no guarantee about that order. With one app
+tab open it is exact; with two it is a coin toss that never announces itself.
+
+Measured 2026-08-16: **W2 was carrying seven `canari-emse.fr` tabs**, and had been for the whole MSG
+re-run. A send-and-receive probe attached to one of them, read **6 console lines** from it, and
+watched the profile's MLS snapshot counter advance **17 times** in tabs it could not see. W1, on one
+tab, was exact throughout - which is the control that makes this the instrument and not the app.
+
+A second tab of the app is **not a variant of the device, it is another device wearing its name**:
+same profile, same login, same IndexedDB, its own gateway socket and its own in-memory counters.
+Two questions the campaign had already filed as application findings dissolve on that fact:
+
+- **`MSG-9` INVALID, "the receiver never went offline at the gateway"** - `cutHard` closes one tab's
+  socket and the user stays present through the other six. The check was right to refuse.
+- **Two MSG verdicts PASS-DIRTY on `[MLS] Skipping stale MLS state write (vN <= stored vM)`** - the
+  write-if-newer guard in `hex.ts` doing exactly its job against seven MLS clients sharing one
+  IndexedDB key, each with its own `_snapshotSeq`. **Nothing is lost when it fires** (the freshest
+  snapshot is the one already stored) and on a single-tab client it cannot fire at all: a clean boot
+  takes exactly ONE tagged snapshot, measured 48583 -> 48584, zero skips. So it earns **no
+  forgiveness rule** - if it is ever seen again on an unambiguous browser, that is a finding.
+
+The fix is at the seam and not at the ninety-six call sites: `client()` **refuses an ambiguous
+browser**, naming the count and the paths, and `{ allowMany: true }` is the opt-in for a check that
+opened a sibling on purpose. `onetab.mjs` is the repair, and `--dry` exits non-zero so a preflight
+cannot ignore it.
+
+The origin is worth keeping too, because it is a rule about scratch code: the tabs came from a
+one-shot probe that spawned `chrome.exe` itself instead of going through `startBrowser`, whose
+docstring already says a second process on a live `--user-data-dir` **hands its URL to the running
+instance as a tab**. A throwaway probe that bypasses the shared layer does not just risk being
+wrong - it can leave the rig in a state that costs a whole phase.
+
 #### 6. A MATCHER TESTS ONE SPELLING - and one written from the success wording can only ever report success
 
 Both are the same failure of a matcher: it was written from what the author expected to see, so the outcomes it cannot spell become silence, and silence reads as health.

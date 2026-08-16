@@ -78,10 +78,28 @@ const PANE_TEXT = `(function () {
  * focusing a SIBLING TAB still works, and those checks keep their meaning.
  *
  * Pass `{ focus: false }` where the unfocused state is the thing under test.
+ *
+ * AND IT REFUSES AN AMBIGUOUS BROWSER, because `find` returning the first of several matches is a
+ * silent wrong-tab pick and the check that follows measures a client nobody chose. Measured
+ * 2026-08-16: W2 had SEVEN app tabs left over from the TAB probes, and a send-and-receive probe read
+ * six console lines from the tab it happened to attach to while the profile's snapshot counter
+ * advanced seventeen times in another. Two consequences, both of which had already been filed as
+ * application questions: `MSG-9` read INVALID because cutting one tab's network leaves the user
+ * present at the gateway through the other six, and two verdicts were PASS-DIRTY on
+ * `[MLS] Skipping stale MLS state write`, which is the write-if-newer guard doing its job against
+ * seven MLS clients sharing one IndexedDB - the multi-tab class, manufactured by the rig itself.
+ *
+ * `{ allowMany: true }` is for a check that opens a sibling ON PURPOSE and knows which it wants.
  */
-export async function client(port, match = null, { focus = true } = {}) {
+export async function client(port, match = null, { focus = true, allowMany = false } = {}) {
   const targets = await listTargets(port);
-  const t = match ? targets.find((x) => x.url.includes(match)) : targets[0];
+  const hits = match ? targets.filter((x) => x.url.includes(match)) : targets;
+  if (match && !allowMany && hits.length > 1)
+    throw new Error(
+      `${hits.length} tabs on ${port} match ${match}, so no tab can be chosen: ${hits.map((x) => new URL(x.url).pathname).join(' | ')}. ` +
+        'Close the extras (node onetab.mjs) or pass { allowMany: true } if the sibling is deliberate.'
+    );
+  const t = hits[0];
   if (!t) throw new Error(`no target on ${port} matching ${match}; have ${targets.map((x) => x.url).join(' | ')}`);
   const cx = connect(t.webSocketDebuggerUrl);
   await cx.ready;

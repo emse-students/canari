@@ -19,7 +19,33 @@
  * app perfectly healthy. `background()` therefore turns it OFF for the duration and back on after,
  * which is invisible to every caller and fixes the whole TAB phase in one place.
  */
-import { evaluate } from './cdp.mjs';
+import { evaluate, listTargets } from './cdp.mjs';
+import { SITE } from './names.mjs';
+
+/**
+ * Closes every app tab but the front one, and every blank, so the browser has ONE identity.
+ *
+ * A second tab of the app is not a variant of the device - it is another device wearing its name:
+ * same profile, same login, same IndexedDB, its own gateway socket and its own in-memory counters.
+ * `client()` resolves a client by the first URL that matches, which is a position among the tabs, so
+ * an ambiguous browser hands every check an answer about a client nobody chose. See rule 5 of
+ * `docs/wiki/testing-methodology.md` for the run this cost.
+ *
+ * `/json/list` is ordered most-recently-activated first, so index 0 is the tab in front - the one a
+ * user would call theirs. Which tab holds the app's own leader Web Lock is not visible from here and
+ * does not need to be: closing one releases it and another takes it.
+ *
+ * @returns the number of tabs closed.
+ */
+export async function closeExtraAppTabs(port) {
+  const targets = await listTargets(port);
+  const doomed = [
+    ...targets.filter((t) => String(t.url).includes(SITE)).slice(1),
+    ...targets.filter((t) => String(t.url).startsWith('about:blank')),
+  ];
+  for (const t of doomed) await fetch(`http://127.0.0.1:${port}/json/close/${t.id}`).catch(() => {});
+  return doomed.length;
+}
 
 /** Focus emulation pins a page `visible`; toggle it around anything that needs a real hide. */
 async function setFocusEmulation(cx, enabled) {

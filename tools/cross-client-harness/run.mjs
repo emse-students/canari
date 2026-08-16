@@ -35,6 +35,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { PHASES } from './checks.mjs';
 import { srvReport, srvSummary } from './srvlog.mjs';
 import { OVERLAYS, clearOverlays, client, evaluate } from './chat.mjs';
+import { closeExtraAppTabs } from './tabs.mjs';
 import { ORIGIN, PORTS } from './names.mjs';
 import { all } from './results.mjs';
 
@@ -255,6 +256,15 @@ const SUBJECTS = new Set();
 async function preflight(devices, { quiet = false } = {}) {
   const problems = [];
   for (const d of devices) {
+    // ONE APP TAB, AND BEFORE ANY PROBE. Every read below resolves a client by its position among
+    // the browser's tabs, so an extra tab is not noise - it is a second device wearing this one's
+    // name, and the preflight would report on whichever one happened to be in front. A1 has one page
+    // by construction. Rule 5 of `docs/wiki/testing-methodology.md` carries the run this cost.
+    if (d !== 'A1') {
+      const extra = await closeExtraAppTabs(PORTS[d]).catch(() => 0);
+      if (extra) console.log(`  fix  ${d.padEnd(3)} ${extra} extra tab(s) closed - a second app tab is a second MLS client`);
+    }
+
     let s;
     try {
       s = await readiness(d);
