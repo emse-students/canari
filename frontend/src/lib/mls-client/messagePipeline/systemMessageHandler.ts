@@ -29,7 +29,7 @@ import {
   watermarkAfterReading,
   watermarkFor,
 } from '$lib/utils/chat/readState';
-import { applyPin } from '$lib/stores/pinStore.svelte';
+import { applyPin, seedPinnedSet } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
 
@@ -721,6 +721,14 @@ export async function handleSystemEvent(
           });
           await saveConversation?.(convoKey).catch(() => {});
         }
+      }
+
+      // The pinned set rides beside them, adopted only by a device that holds none of its own -
+      // see `seedPinnedSet`. Reported because nothing else would show where the pins came from.
+      if (seedPinnedSet(convoKey, data.pins)) {
+        log(
+          `[HISTORY_BUNDLE] Adopted ${(data.pins as string[]).length} pinned message(s) for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
+        );
       }
 
       if (msgs.length > 0) {

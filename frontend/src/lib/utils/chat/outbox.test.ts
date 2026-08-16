@@ -7,6 +7,7 @@ const isTabLeaderMock = vi.hoisted(() => vi.fn(() => true));
 const tabOutboxMock = vi.hoisted(() => ({
   requestLeaderOutboxFlush: vi.fn(),
   publishOutboxEntrySent: vi.fn(),
+  publishOutboxEntryCancelled: vi.fn(),
   subscribeTabOutboxEvents: vi.fn(() => () => {}),
 }));
 // Only the leadership answer is overridden: this module is pulled in transitively by the session
@@ -25,6 +26,7 @@ import { toMirrorEntry } from './outboxMirror';
 import { MediaKind } from '$lib/proto/codec';
 import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$lib/db/outboxCodec';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import type { TabOutboxEvent } from '$lib/mls-client/tabMessageSync';
 import type { OutboxEntry } from '$lib/db';
 import type { Conversation } from '$lib/types';
 
@@ -576,5 +578,113 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
     await outbox.flush();
 
     expect(tabOutboxMock.publishOutboxEntrySent).toHaveBeenCalledWith('m1', undefined);
+  });
+});
+
+/**
+ * MUT-19. Deleting a message that never left the outbox used to SEND it, then delete it: the two
+ * legs were ordinary queue entries side by side, flushed in order, so the peer rendered the text
+ * and only then received the tombstone. What is asserted here is the ABSENCE of the send, which no
+ * assertion on the settled state can make - the tombstone wins everywhere either way, which is
+ * exactly why this went unseen.
+ */
+describe('outbox cancellation', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.publishOutboxEntryCancelled.mockClear();
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(() => () => {});
+  });
+
+  it('withdraws a queued message so no later flush can send it', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    connectivity.notifyServerUnreachable();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    expect(await outbox.cancelPending('m1')).toBe(true);
+    expect(storage._map.size).toBe(0);
+
+    // The condition holding the queue clears: the exact moment the defect used to fire.
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('tells the other tabs, whose snapshot of the queue predates the cancellation', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    await outbox.cancelPending('m1');
+
+    expect(tabOutboxMock.publishOutboxEntryCancelled).toHaveBeenCalledWith('m1');
+  });
+
+  it('answers false for a message no longer queued, so the delete travels as an event', async () => {
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage: makeStorage([]) }));
+
+    expect(await outbox.cancelPending('gone')).toBe(false);
+  });
+
+  it('does not claim a cancellation for the entry that is already on the wire', async () => {
+    let release!: () => void;
+    const onTheWire = new Promise<void>((r) => {
+      release = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({ send: () => onTheWire });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+
+    // The frame is gone. Answering `true` here would lose the delete outright: the caller would
+    // skip the `delete_message` event and the peer would keep a message the user deleted.
+    expect(await outbox.cancelPending('m1')).toBe(false);
+
+    release();
+    await outboxIdle();
+  });
+
+  it('drops an entry cancelled after the running flush read its snapshot', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 200)]);
+    let outbox: ReturnType<typeof createOutbox> | null = null;
+    const mlsService = makeMls({
+      // The user deletes m2 while m1 is being sent - the loop is already holding both.
+      send: (async (_group: string, _proto: Uint8Array, id: string) => {
+        if (id === 'm1') await outbox!.cancelPending('m2');
+      }) as any,
+    });
+    outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(mlsService.sendMessage.mock.calls[0][2]).toBe('m1');
+    expect(storage._map.size).toBe(0);
+  });
+
+  it('honours a cancellation from another tab, in the leader that is draining', async () => {
+    let onTabEvent!: (e: TabOutboxEvent) => void;
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(((h: (e: TabOutboxEvent) => void) => {
+      onTabEvent = h;
+      return () => {};
+    }) as any);
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    connectivity.notifyServerUnreachable();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    // A follower withdrew it. The leader is the tab that would send it, and every other arm of
+    // this subscriber returns early in the leader - which is why this one is placed above them.
+    onTabEvent({ type: 'outbox_entry_cancelled', messageId: 'm1' });
+
+    connectivity.notifyServerReachable();
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
   });
 });

@@ -32,9 +32,14 @@ const MESSAGE_EVENT_TYPES = new Set<string>(['message_added', 'messages_batch'])
  */
 export type TabOutboxEvent =
   | { type: 'outbox_flush_request' }
-  | { type: 'outbox_entry_sent'; messageId: string; content?: string };
+  | { type: 'outbox_entry_sent'; messageId: string; content?: string }
+  | { type: 'outbox_entry_cancelled'; messageId: string };
 
-const OUTBOX_EVENT_TYPES = new Set<string>(['outbox_flush_request', 'outbox_entry_sent']);
+const OUTBOX_EVENT_TYPES = new Set<string>([
+  'outbox_flush_request',
+  'outbox_entry_sent',
+  'outbox_entry_cancelled',
+]);
 
 let messageChannel: BroadcastChannel | null = null;
 let messageHandler: ((event: TabMessageEvent) => void) | null = null;
@@ -92,6 +97,24 @@ export function publishOutboxEntrySent(messageId: string, content?: string): voi
     type: 'outbox_entry_sent',
     messageId,
     ...(content ? { content } : {}),
+  } satisfies TabOutboxEvent);
+}
+
+/**
+ * From ANY tab: tells every other tab that a queued entry has been withdrawn and must not be sent.
+ *
+ * The row is deleted from the shared IndexedDB queue at the same time, which is what makes the
+ * cancellation survive a reload and is enough for any flush that has not started. This event covers
+ * the one window that deletion cannot: a leader already walking a snapshot of the queue it read
+ * BEFORE the cancellation, which would otherwise send a message the user has withdrawn.
+ *
+ * Unlike the other two, this is not leader-gated - a cancellation originates wherever the user
+ * pressed delete, and the tab that needs to hear it is precisely the one that is not this one.
+ */
+export function publishOutboxEntryCancelled(messageId: string): void {
+  ensureChannel()?.postMessage({
+    type: 'outbox_entry_cancelled',
+    messageId,
   } satisfies TabOutboxEvent);
 }
 

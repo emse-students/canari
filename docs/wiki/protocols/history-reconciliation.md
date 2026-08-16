@@ -332,10 +332,10 @@ load-bearing and each is pinned by a test:
 - **content is excluded**, or a purged deletion would look like a difference for ever between two
   devices that agree completely - and so are the sender and the timestamp, which no exchange
   repairs;
-- **read state and the floor are excluded**, deliberately. Both merge as `max`, both ride on every
-  bundle, and both converge through the shared log the reconciliation drains BEFORE comparing.
-  Including them would let the most frequently changing thing in a conversation trigger a digest
-  exchange that repairs messages nobody was missing.
+- **read state, the floor and the pinned set are excluded**, deliberately. All three ride on every
+  bundle and converge through the shared log the reconciliation drains BEFORE comparing. Including
+  them would let the most frequently changing thing in a conversation trigger a digest exchange that
+  repairs messages nobody was missing.
 
 **The boundary had to be quantised for the key to be comparable at all.** A key is computed over
 `[since, now]`, and an unrounded `since` slides continuously: two devices deriving it a second apart
@@ -409,6 +409,19 @@ This holds only while **every merged field is monotone**:
 | reaction | last-write-wins per `(user, emoji)` on its own timestamp | yes |
 | read state | watermark, `max` | yes |
 | conversation floor | `max` | yes |
+| pinned set | seeded when the receiver holds none; never merged | n/a - see below |
+
+**The pinned set is the one field that is NOT merged, and that is deliberate.** A pin has no clock:
+the bundle states what the ANSWERING device holds and there is nothing to order that against what
+the receiver holds, so a union would let a peer that has not yet seen an `unpin` resurrect a pin the
+receiver has just taken back, and a replacement would make the outcome depend on which answer landed
+last. `seedPinnedSet` therefore adopts an arriving set only into an EMPTY one - the single case with
+nothing to lose, and exactly the case the gap was about. Everything after that comes from the
+`pin`/`unpin` frames themselves, which the replay now applies in log order like the live path does.
+**Both halves are needed and neither is redundant**: the frames converge a device that is following
+along, and the set covers the frame that has aged out of the server's window while the pin it
+created has not. That is what made this a hole rather than a policy - a channel pin came back on a
+fresh device, because the server re-serves it, and a DM pin did not (MUT-15).
 
 Two of these are corrections, not restatements of today's behaviour - see
 [Defects this work must fix](#defects-this-work-must-fix), D3 and D5. Pruning is **not** monotone,

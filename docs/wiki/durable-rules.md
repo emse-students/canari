@@ -227,6 +227,20 @@ The queue, its barrier, the token rules and the native mirror are on those two p
 carry in the head:
 
 - The outbox is best-effort at every step, so every swallowed branch logs - that is all a loss leaves.
+- **AN OPERATION ON A QUEUED OBJECT MUST CONSULT THE QUEUE, NEVER QUEUE A SECOND OPERATION BESIDE
+  IT.** Two entries side by side encode an assumption - that the outcome the user asked for is
+  reachable by ORDERING - and for a withdrawal it never is: deleting a message composed offline sent
+  it and then took it back, because the text was still in front of the tombstone whatever order they
+  went in. Ask the queue instead; it is the only thing that knows whether the frame is still here,
+  and it answers before either path is taken rather than letting the caller learn it by watching a
+  send happen. And the answer must be honest about the entry INSIDE its send: claiming a
+  cancellation there loses the delete outright, where admitting it costs one event nobody minds
+  (MUT-19).
+- **A CANCELLATION IS ONLY AS DETERMINISTIC AS THE NARROWEST WINDOW IT CLOSES.** Deleting the
+  durable row stops every FUTURE flush and nothing else - the flush already running walks a snapshot
+  read before the user acted, and another tab walks its own. Three facts, one per window, or the fix
+  works on a quiet client and not on a busy one. The native mirror is a fourth copy of that queue:
+  leave a withdrawn entry in it and Android delivers from the background what was cancelled here.
 - **A PAGE IS A UNIT OF TRANSFER, SO BOUND IT IN THE UNIT THAT DECIDES HOW LONG THE TRANSFER TAKES.**
   Rows do not: 500 frames carrying media was 12 MB, the client aborted on its own deadline having
   received nothing, ACKed nothing, and met the same 12 MB every time - a closed loop no retry
@@ -453,6 +467,23 @@ carry in the head:
   permanent one. And do NOT mark from the Android background decrypt: it loads a throwaway state and
   never writes `mls.bin` back, so the foreground really does read that frame again.
   [history-reconciliation](protocols/history-reconciliation.md).
+- **STATE THAT OUTLIVES THE EVENT THAT CREATED IT MUST TRAVEL AS STATE, NOT ONLY AS THAT EVENT.** A
+  `pin` frame ages out of the server's retention window; the pin does not. So a device replaying
+  every frame it is ENTITLED to could still never learn that a message is pinned, and a DM pin did
+  not survive a fresh device while a channel pin did - because the server re-serves the channel one
+  (MUT-15). The same shape as `editedAt`, which had to be carried beside `isEdited` for exactly this
+  reason. Carry both halves: the events converge a device that is following along, the set covers
+  what predates its window - and neither is redundant. **The set is SEEDED, never merged**: a pinned
+  set has no clock to order it against the receiver's, so a union lets a peer that has not seen the
+  `unpin` resurrect a pin, and a replacement makes the outcome depend on which answer landed last.
+  An empty set is the one case with nothing to lose, and it is exactly the case the gap is about.
+  [history-reconciliation](protocols/history-reconciliation.md).
+- **AN EVENT FALLING THROUGH A HANDLER CHAIN UNHANDLED IS AN ACCIDENT UNTIL IT IS NAMED.** `pin` and
+  `unpin` reached `applyReplaySystemEvent` and matched no branch, silently, for as long as the
+  replay path has existed - beside a `REPLAY_IGNORED_EVENTS` set that exists precisely so that
+  ignoring an event has to be a DECISION. A chain whose last arm is an implicit no-op cannot tell
+  "we thought about this" from "nobody did". List what is deliberately dropped; then a gap is a
+  missing name rather than a missing line.
 - **"EVERY OTHER PATH" MEANS BOTH DIRECTIONS - ENUMERATE THE CONSUMERS, THEN CHECK EACH PAIR.** The
   rule above was implemented one way round and read as done: live delivery told the replay, the
   replay told nobody. It recorded its position as a STREAM ID, which is precisely the identifier the

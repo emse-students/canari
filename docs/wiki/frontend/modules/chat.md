@@ -414,6 +414,38 @@ it correctly.
 and logs on failure - the control event is already durable in the outbox, so a failed write costs
 a stale local row, never a lost mutation for the group.
 
+#### A delete is a CANCELLATION until the frame has left (MUT-19)
+
+`delete_message` is the only mutation whose target may still be sitting in the queue beside it, and
+that is not a variation on the rule above but its opposite. Both legs were ordinary outbox entries,
+so deleting a message composed offline **sent it and then withdrew it**: the peer received the text,
+rendered it, and only then received the tombstone. Ordering the two entries could not have fixed
+that - the text still goes out - and neither could a delay, which would only move the window.
+
+`deleteMessage` therefore asks the outbox first. `cancelPending` answers the one question only the
+queue can answer - *is the frame still on this device* - and returns it as a boolean the caller acts
+on, rather than letting the caller learn it by watching a send happen. `true` drops the row and
+sends nothing at all; `false` means the peers have it and the `delete_message` event travels, which
+is the case that event exists for.
+
+Three things make the cancellation deterministic rather than probable, and each closes a window the
+others cannot:
+
+- **the durable row** is deleted, which stops every FUTURE flush and survives a reload;
+- **an in-memory `cancelled` set** stops the flush that is ALREADY running, whose loop is walking a
+  snapshot of the queue read before the user pressed delete;
+- **`outbox_entry_cancelled`** carries the same fact to the other tabs - not leader-gated, unlike
+  every other event on that channel, because a cancellation originates wherever the user pressed
+  delete while the tab that would send it is the leader.
+
+`inFlight` is what makes the answer honest rather than optimistic: the id inside `sendMessage` right
+now cannot be withdrawn, so `cancelPending` returns `false` for it and the delete travels as an
+event. Claiming a cancellation there would lose the delete outright - the caller would skip the
+event, and the peer would keep a message the user deleted.
+
+The mirror is refreshed on the way out. Leaving a withdrawn entry in it lets the native background
+sender deliver from Android what was cancelled here, which is the same defect one layer down.
+
 #### The same rule applies to the message itself, and a UI buffer broke it (WP-ECHO-1)
 
 `addMessageToChat` is the single writer for the sender's own copy, for the same reason: no echo. It

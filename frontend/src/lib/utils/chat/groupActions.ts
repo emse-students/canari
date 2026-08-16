@@ -5,6 +5,7 @@ import type { IStorage, StoredMessage } from '$lib/db';
 import type { ReadWatermarks } from '$lib/types';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
+import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
@@ -506,6 +507,9 @@ function bundleFrame(
         // repeat. Sending them once would make their delivery depend on which chunk survived.
         ...(state?.readWatermarks ? { readWatermarks: state.readWatermarks } : {}),
         ...(state?.historyFloor ? { floor: state.historyFloor } : {}),
+        // Restated by every chunk like the two above, and for the same reason: sending it once
+        // would make it depend on which chunk survived. Adopted only by a device holding none.
+        ...(state?.pins?.length ? { pins: state.pins } : {}),
       })
     )
   );
@@ -515,6 +519,15 @@ function bundleFrame(
 type ConversationHistoryState = {
   readWatermarks?: ReadWatermarks;
   historyFloor?: number;
+  /**
+   * The pinned message ids, as a set rather than the events that built it.
+   *
+   * A pin is CONVERSATION state, like the watermarks beside it, and it belongs here for the same
+   * reason the edit time does on a message: the `pin` frame that created it ages out of the
+   * server's retention window while the pin itself does not, so a device that arrives later can
+   * replay every frame it is entitled to and still never learn the message is pinned.
+   */
+  pins?: string[];
 };
 
 /**
@@ -532,7 +545,14 @@ async function storedConversationState(
     // a single call and quadratic in `reconcileAllGroups` - one whole-table read per group, on every
     // connection, even when the state key itself was cached and read nothing.
     const row = await storage.getConversation(groupId);
-    return { readWatermarks: row?.readWatermarks, historyFloor: row?.historyFloor };
+    // The pinned set is not on the row: it is device-local state keyed by the same group id, which
+    // is precisely why it needed carrying at all.
+    const pins = pinnedMessageIds(groupId);
+    return {
+      readWatermarks: row?.readWatermarks,
+      historyFloor: row?.historyFloor,
+      ...(pins.length > 0 ? { pins } : {}),
+    };
   } catch (e) {
     // The empty state is deliberate (see the docstring) but it must not be SILENT: an unreadable row
     // and a conversation with no floor produce the same answer here, and the caller then asks over a

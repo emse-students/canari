@@ -14,25 +14,28 @@
  * channel (REST transport, `ChannelService.ts` / `useChannelWorkspaces.svelte.ts`). They look the
  * same on screen and are NOT the same code, which is exactly what MUT-6 vs MUT-8 and MUT-15 vs
  * MUT-16 exist to prove: a DM delete is a client-side tombstone with no server enforcement at all,
- * a channel delete is a server-authoritative hard row delete; a DM pin is localStorage-only with no
- * replay, a channel pin is re-hydrated from the server on every open. Getting that wrong in either
- * direction is the whole risk this phase is checking for.
+ * a channel delete is a server-authoritative hard row delete; a DM pin travels in the conversation's
+ * own history, a channel pin is re-hydrated from the server on every open. Getting that wrong in
+ * either direction is the whole risk this phase is checking for.
  *
  * READ OFF THE SOURCE, not guessed (the numbers and code paths are the whole check):
  *   - `MessageBubbleToolbar.svelte`: edit needs `isOwn && !hasMedia`; delete needs `isOwn ||
  *     canModerate`; `canModerate` (`MainChatPage.svelte` `canModerateSelectedChannel`) is
  *     `isSelectedChannel && ...` - i.e. ALWAYS false in a DM or group, by construction.
- *   - `useMessaging.svelte.ts` `handleDeleteMessage`/`handleEditMessage`: the ONLY ownership check
- *     in the whole DM path, and it runs on the SENDING device before broadcasting. The RECEIVING
- *     handler, `systemMessageHandler.ts` (`event === 'delete_message'` / `'edit_message'`), applies
- *     the mutation to whatever `data.messageId` names with NO check that `senderNorm` is the
- *     original author. Ownership is a courtesy the well-behaved client extends to itself; nothing
- *     downstream re-checks it. MUT-10 investigates this precisely.
+ *   - `useMessaging.svelte.ts` `handleDeleteMessage`/`handleEditMessage` check ownership on the
+ *     SENDING device, which decides what to put on the wire and is therefore not a check at all.
+ *     Both RECEIVING handlers re-check it against the identity MLS authenticated for the frame -
+ *     `mutationIsAuthorised` (`systemMessageHandler.ts`) live, `replayMutationIsAuthorised`
+ *     (`historySystemEvents.ts`) on replay. MUT-10 is what found that the second one was missing.
  *   - `pinStore.svelte.ts` + `historySystemEvents.ts`/`systemMessageHandler.ts`: a DM/group pin is
- *     an MLS system event applied into a per-conversation `localStorage` set; the history-bundle
- *     merge (`systemMessageHandler.ts` `history_bundle`) never touches it. A channel pin is
- *     fetched fresh from the server (`MainChatPage.svelte` `listPinnedMessageIds` -> `setPinnedSet`,
- *     which REPLACES the set) every time the channel is opened.
+ *     an MLS system event applied into a per-conversation `localStorage` set keyed by GROUP ID, and
+ *     it travels two ways - the `pin`/`unpin` frames, replayed in log order, and the pinned set
+ *     carried on every `history_bundle` and adopted only into an EMPTY set (`seedPinnedSet`). A
+ *     channel pin is fetched fresh from the server (`MainChatPage.svelte` `listPinnedMessageIds`
+ *     -> `setPinnedSet`, which REPLACES the set) every time the channel is opened.
+ *   - `messaging.ts` `deleteMessage` -> `cancelOutboxMessage`: a delete is a CANCELLATION while the
+ *     message is still queued, and only becomes a `delete_message` broadcast once the frame has
+ *     left the device. MUT-19 is what found that it used to be only the second of those.
  *   - `useConversations.svelte.ts` `loadChannelHistory`: wipes the local channel message cache
  *     (`storage.deleteMessagesForConversation`) and REPLACES it wholesale from a fresh
  *     `channelService.listMessages` fetch whenever the 5-minute cache is stale or invalidated - and
@@ -774,6 +777,23 @@ function diffPinKey(before, after) {
     throw new Error(`expected exactly one changed pin key, got ${JSON.stringify(hits)}`);
   }
   return hits[0];
+}
+
+/**
+ * Polls a HARNESS-side predicate until it holds, returning the elapsed ms or throwing.
+ *
+ * `until` (cdp.mjs) evaluates a predicate inside the page, which several of the reads here cannot
+ * be expressed as - `pinState` is three queries and a decision. Waiting on the CONDITION rather
+ * than on a fixed delay is the rule either way: a sleep is wrong when it is short and wasteful when
+ * it is long, and the message here can take a reconnect to arrive.
+ */
+async function pollFor(fn, timeoutMs, what, stepMs = 250) {
+  const t0 = Date.now();
+  for (;;) {
+    if (await fn()) return Date.now() - t0;
+    if (Date.now() - t0 >= timeoutMs) throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
+    await sleep(stepMs);
+  }
 }
 
 async function restorePinKey(cx, key, beforeValue) {
@@ -1622,7 +1642,42 @@ async function mut14() {
   return dmOk && chOk;
 }
 
-// ── MUT-15: a DM pin does NOT survive on a fresh device - documented hole, EXPECTED to fail [DM] ─
+// ── MUT-15: a DM pin is RECOVERED by a device that lost it - was the documented hole [DM] ───────
+
+/**
+ * The two localStorage keys that decide whether a replay re-reads a frame, for one group.
+ *
+ * Named by SUFFIX because their full names embed the user id, which nothing in this rig may spell.
+ * They are snapshotted before the pin and restored after it, which rewinds this device's position
+ * in the shared log by EXACTLY the frames the pin produced - a scalpel where deleting them would
+ * re-walk ninety days of a conversation holding thousands of messages.
+ */
+async function historyCursorSnapshot(cx, groupId) {
+  const raw = await evaluate(
+    cx,
+    `JSON.stringify((function () {
+      var out = {};
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (!k) continue;
+        if ((k.indexOf('history_last_stream_id:') === 0 || k.indexOf('history_seen_cipher:') === 0)
+            && k.indexOf(':' + ${JSON.stringify(groupId)}) !== -1) {
+          out[k] = localStorage.getItem(k);
+        }
+      }
+      return out;
+    })())`
+  );
+  return JSON.parse(raw);
+}
+
+async function restoreHistoryCursor(cx, snapshot) {
+  await evaluate(cx, `(function () {
+    var snap = ${JSON.stringify(snapshot)};
+    for (var k in snap) localStorage.setItem(k, snap[k]);
+  })()`);
+  return Object.keys(snapshot).length;
+}
 
 async function mut15() {
   const [a, b, w] = await openDmPair();
@@ -1631,50 +1686,53 @@ async function mut15() {
     await sendText(a, marker);
     await awaitMessage(b, marker, 25000);
 
+    // THE PIN IS PLACED BY THE PEER, and that is not a detail. MLS gives a device no echo of its
+    // OWN frames, so a device replaying the shared log reaches its own `pin` frame and is told
+    // `own-message` - it can never recover a pin it placed itself from the log. Only a peer's
+    // bundle can do that, and no trigger in this rig asks for one. Pinning from `b` makes `a` a
+    // RECEIVER of the frame, which is the half a browser here can actually measure.
     const before = await pinStoreSnapshot(a);
-    await clickPinIcon(a, marker);
-    await sleep(400);
+    const cursorBefore = await historyCursorSnapshot(a, '');
+    await clickPinIcon(b, marker);
+    // The pin has to have REACHED `a` before its local record of it is taken away, or the check
+    // measures a frame still in flight rather than one that was received and then lost.
+    await pollFor(async () => (await pinState(a, marker)) === 'pinned', 15000, 'a to see the pin');
     const after = await pinStoreSnapshot(a);
     const key = diffPinKey(before, after);
+    const groupId = key.replace('canari_pins_', '');
 
-    // Simulate "fresh device" for exactly this one pin, and nothing else this account has pinned
-    // anywhere - restore the key to its pre-test value (delete it if it did not exist before)
-    // rather than wiping ALL `canari_pins_*` keys, which would also discard this account's real
-    // pins in every OTHER conversation. See pinStore.svelte.ts: no history-bundle merge and no
-    // server list ever repopulate a DM's pin set, so this is a faithful, minimal simulation.
+    // Now make `a` a device that has the history but not the pin: drop its pin record, and rewind
+    // its stream cursor and seen-ciphertext set to the instant before the frame arrived. Restoring
+    // a snapshot rather than deleting the keys is what keeps the rewind to one frame.
     await restorePinKey(a, key, before[key]);
+    const cursorKeys = await restoreHistoryCursor(
+      a,
+      Object.fromEntries(Object.entries(cursorBefore).filter(([k]) => k.endsWith(`:${groupId}`)))
+    );
 
-    // A full navigation (not a client-side re-select) is required to drop the module-level `pins`
-    // Map in pinStore.svelte.ts, which otherwise keeps serving the in-memory value regardless of
-    // what localStorage now says.
+    // A full navigation, not a client-side re-select: `pinStore`'s module-level `pins` Map would
+    // otherwise keep serving the in-memory value whatever localStorage now says.
     await openDM(a, PEER_NAME);
-    const stateAfterFreshLoad = await pinState(a, marker);
+    const recovered = await pollFor(
+      async () => (await pinState(a, marker)) === 'pinned',
+      25000,
+      'a to recover the pin from the log'
+    ).then(() => true, () => false);
+    const stateAfterReload = await pinState(a, marker);
 
-    // This assertion is EXPECTED to fail: there is no durable source for a DM pin, so a device that
-    // never saw the live 'pin' system event has no way to learn about it. Recorded as FAIL because
-    // that is the honest verdict on "does the pin survive" - `documentedHole: true` is what keeps
-    // it from reading as a surprise on the dashboard.
-    const survived = stateAfterFreshLoad === 'pinned';
-
-    // Cleanup: b still correctly shows it pinned (it was online throughout), so unpin FROM b - a's
-    // wiped-then-reloaded client is online now too and will receive the live 'unpin' event, which
-    // converges both sides correctly regardless of a's stale local read above.
     const unpinFailure = await ensureUnpinned(b, marker);
 
-    // FAIL IS THE HONEST WORD AND IT STAYS. The pin genuinely does not survive, so this row is red
-    // on every pass and the MUT phase cannot exit 0 while the hole stands. Renaming it to something
-    // green because the hole is KNOWN would make the dashboard say the opposite of what the
-    // application does, which is the one thing no verdict here may do.
-    await finish('MUT-15/dm', survived ? 'PASS' : 'FAIL', w, {
-      stateAfterFreshLoad,
-      documentedHole: !survived,
-      // Non-null means this check LEFT A PIN on the production conversation. It does not change the
-      // verdict - the subject is durability, not tidiness - but it must never again be invisible.
+    // This row was FAIL 5/5 by design until 2026-08-16 - it existed to hold a hole open. The fix
+    // carries pin state both ways (the frames, replayed in log order, and the pinned set on every
+    // `history_bundle`), so the honest verdict is now the opposite one. What it still does NOT
+    // cover: the bundle half, which needs a genuinely fresh enrolment - see device-verification L.
+    return await finish('MUT-15/dm', recovered ? 'PASS' : 'FAIL', w, {
+      stateAfterReload,
+      cursorKeysRewound: cursorKeys,
       unpinFailure,
-      reason: 'pinStore.svelte.ts is localStorage-only; history_bundle merge (systemMessageHandler.ts) never touches pin state, so a device with no local record of a pin has no way to recover it',
+      covers: 'the replay half - `pin` frames re-read from the shared log after the cursor was rewound by one frame',
+      doesNotCover: 'the history_bundle half (seedPinnedSet), which needs a real fresh device',
     });
-
-    return !survived; // "ok" for the tally means "reproduced the known hole", not "pin survived"
   } catch (e) {
     return await finish('MUT-15/dm', 'ERROR', w, { error: e.message });
   } finally {
@@ -1947,9 +2005,10 @@ async function mut19() {
     const peerSawItWhileSenderOffline = (await countMessage(b, marker).catch(() => 0)) > 0;
 
     // Still offline: `handleDeleteMessage` is a pure local Svelte action, independent of
-    // connectivity - and `enqueueControlEvent`/`deleteMessage` only capture the delete_message
-    // event into the SAME durable outbox, they do not touch or cancel the original text's entry
-    // (no such cancellation code exists in outbox.ts/messaging.ts - confirmed by reading both).
+    // connectivity. Since 2026-08-16 `deleteMessage` asks the outbox FIRST - `cancelPending` drops
+    // the queued entry and answers whether the frame is still on this device - and enqueues the
+    // `delete_message` event only when it is not. Offline, with the entry never flushed, the
+    // withdrawal is the path taken and NOTHING should reach the wire.
     await deleteBubble(a, marker);
     await sleep(500);
 
@@ -1968,21 +2027,19 @@ async function mut19() {
     }
     finalHasOriginal = (await countMessage(b, marker).catch(() => 0)) > 0;
 
-    // THE VERDICT IS THE DURABLE OUTCOME, AND `everSawOriginal` IS EVIDENCE, NOT THE ASSERTION.
+    // `everSawOriginal` IS THE ASSERTION AGAIN, AND THAT IS THE POINT OF THE FIX.
     //
-    // It used to be `ok = !everSawOriginal`, which made the row a coin toss: the two legs of the
-    // operation - the text and the `delete_message` that chases it - both sit in the same outbox and
-    // are flushed back to back the instant the radio returns, so whether the peer paints the original
-    // for one frame before the tombstone lands depends on scheduling this check does not control.
-    // Measured twice within an hour on the same bundle: `false` (PASS), then `true` (FAIL), with no
-    // code in between. A verdict that flaps says nothing about the app and buries what it found.
+    // It was demoted to evidence while the defect stood, because the row was a coin toss: the text
+    // and the `delete_message` chasing it sat in the same outbox and flushed back to back, so
+    // whether the peer painted the original for one frame before the tombstone landed was
+    // scheduling this check does not control - measured `false` then `true` within an hour on the
+    // same bundle, with no code in between. A verdict that flaps says nothing about the app.
     //
-    // What the app actually guarantees is the settled state, and that IS asserted: the peer must not
-    // be left holding the original. The transient is real, undesirable and NOT a hole this check may
-    // silently absorb, so it is named in the note and filed as its own backlog entry - deleting a
-    // message that has not left the outbox should DROP its pending entry, not send it and then
-    // tombstone it.
-    const ok = !finalHasOriginal;
+    // There is no race left to lose: the queued entry is WITHDRAWN, so nothing is sent and there is
+    // nothing to take back. A single sighting of the original text now means the withdrawal did not
+    // hold, which is a defect and not a scheduling accident - so it is red. The settled state stays
+    // asserted beside it: the two together separate "never sent" from "sent and then repaired".
+    const ok = !everSawOriginal && !finalHasOriginal;
     return await finish(
       'MUT-19/dm',
       ok ? 'PASS' : 'FAIL',
@@ -1993,8 +2050,8 @@ async function mut19() {
         everSawOriginal,
         finalHasOriginal,
         note: everSawOriginal
-          ? 'settled correctly, BUT the original text was visible to the peer in transit - the delete_message event chased the send rather than cancelling it (no outbox-cancellation path exists; filed in backlog.md)'
-          : 'settled correctly, and the peer never saw the original text at all - this run won the race, it is not a guarantee',
+          ? 'THE WITHDRAWAL DID NOT HOLD: the peer saw the original text, so the queued entry reached the wire despite being deleted before the radio returned'
+          : 'the message was withdrawn from the queue and never sent - the peer saw neither the text nor a tombstone for it',
       },
       cut
     );
@@ -2102,8 +2159,10 @@ async function mut21() {
         ? undefined
         : 'REGRESSION: the strip has left the pane again - see the fix in MessageBubbleToolbar.svelte, which anchors it above the bubble on its outer edge precisely so bubble width cannot push it out',
     });
-    // Like MUT-15: `ok` means "the documented hole was reproduced", not "the app is right".
-    return true;
+    // The strip is FIXED (`8e55aca8`), so this row is an ordinary regression guard: it reports its
+    // own verdict. It used to return `true` unconditionally, from the days when it held a hole
+    // open - which would have hidden the strip escaping the pane again behind a green tally.
+    return ok;
   } catch (e) {
     return await finish('MUT-21/dm', 'ERROR', w, { error: e.message });
   } finally {
@@ -2145,5 +2204,5 @@ for (const [n, fn] of Object.entries(CHECKS)) {
     results.push([n, false]);
   }
 }
-console.log(`\nMUT: ${results.filter(([, ok]) => ok).length}/${results.length} checks reported ok (MUT-15's ok means "reproduced the documented hole", not "pin survived")`);
+console.log(`\nMUT: ${results.filter(([, ok]) => ok).length}/${results.length} checks reported ok`);
 process.exit(0);

@@ -1,7 +1,7 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { ChatMessage, Conversation } from '$lib/types';
 import type { OutboxEntry } from '$lib/db';
-import { enqueueOutboxMessage } from './outbox';
+import { cancelOutboxMessage, enqueueOutboxMessage } from './outbox';
 import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import {
@@ -245,8 +245,23 @@ export async function editMessage(
   );
 }
 
-/** Captures a "delete_message" system event in the durable outbox so all peers remove the message from their local history. */
+/**
+ * Deletes a message: by WITHDRAWING it if it has not left this device, otherwise by broadcasting a
+ * `delete_message` system event so peers that already have it remove it from their history.
+ *
+ * WHY THE WITHDRAWAL COMES FIRST. Both legs used to be ordinary outbox entries side by side, so
+ * deleting a message composed offline SENT it and then took it back: the peer received the text,
+ * rendered it, and only then received the tombstone. **The user deleted something that had never
+ * been sent, and it was sent anyway.** Ordering the two entries could not fix that - the text still
+ * goes out - so the queued entry is dropped instead, and the event is enqueued only when there is
+ * nothing left to drop, which is precisely the case the event exists for.
+ *
+ * The two outcomes are one question answered where it is KNOWN rather than learnt by failing: only
+ * the outbox can say whether the frame is still on this device, and it answers before either path
+ * is taken.
+ */
 export async function deleteMessage(messageId: string, deps: MessageActionDeps): Promise<void> {
+  if (await cancelOutboxMessage(messageId)) return;
   await enqueueControlEvent(
     deps.conversation.id,
     encodeAppMessage(mkSystem('delete_message', JSON.stringify({ messageId })))

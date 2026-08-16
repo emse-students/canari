@@ -6,6 +6,7 @@ import type {
   ReadWatermarks,
 } from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
+import { applyPin, seedPinnedSet } from '$lib/stores/pinStore.svelte';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
@@ -63,6 +64,13 @@ export interface ReplaySystemEventCtx {
   contactName: string;
   /** Local user id, used to tell an invitation we SENT from one we received. */
   userId: string;
+  /**
+   * The group id, which is what pin state is keyed by everywhere else.
+   *
+   * Not the same thing as `contactName`: that is the conversation MAP key, and a pinned set written
+   * under it would be filed where no reader looks.
+   */
+  conversationId: string;
   getConversation: (contactName: string) => Conversation | undefined;
   setConversation: (contactName: string, next: Conversation) => void;
   messageReactions: Map<string, MessageReaction[]>;
@@ -128,6 +136,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     msg,
     contactName,
     userId,
+    conversationId,
     getConversation,
     setConversation,
     messageReactions,
@@ -284,6 +293,16 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         editedAt,
         by: senderNorm,
       });
+    } else if (
+      (parsed.system.event === 'pin' || parsed.system.event === 'unpin') &&
+      data.messageId
+    ) {
+      // Applied in log order, exactly as the live path does. This replay is a FORWARD catch-up that
+      // ends at the head of the stream, so the last pin frame it sees is the last one there is -
+      // and a set add/delete is idempotent for a device that already applied it live. Scrollback,
+      // which reaches BACKWARDS, does not come through here: it is answered with bundles, whose
+      // pinned set is a snapshot and is seeded rather than replayed.
+      applyPin(conversationId, String(data.messageId), parsed.system.event === 'pin');
     } else if (parsed.system.event === 'remove_reaction' && data.messageId && data.emoji) {
       // LEGACY FRAME, replay side. Taking a reaction back now travels as a `ReactionMsg` with
       // `removed` set; this only ever sees log entries written before that change. Dated with the
@@ -313,6 +332,14 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // The floor rides on the same frames, for the same reason and with the same merge.
       const mergedFloor = mergeHistoryFloor(historyFloorUpdate.at, data.floor);
       if (mergedFloor !== null) historyFloorUpdate.at = mergedFloor;
+      // And so does the pinned set, adopted only by a device holding none - see `seedPinnedSet`.
+      // Unlike the two above it is applied here rather than accumulated: it is not a merge, so
+      // there is nothing for the end of the page to decide.
+      if (seedPinnedSet(conversationId, data.pins)) {
+        console.debug(
+          `[HISTORY_REPLAY] Adopted ${data.pins.length} pinned message(s) for ${conversationId.slice(0, 8)}…`
+        );
+      }
       if (Array.isArray(bundleData) && bundleData.length > 0) {
         const existingIds = new Set(
           (getConversation(contactName)?.messages ?? []).map((m) => m.id)

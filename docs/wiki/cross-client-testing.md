@@ -363,11 +363,11 @@ state for a thing seen three times and explained none.
 | MUT-12 | **Both.** The 15-distinct-emoji cap, on both transports | `W1 W2` | `PASS` 5/5 both venues (4/5 channel) - caps at 15, refuses the 16th |
 | MUT-13 | **Both.** A reaction pushes a notification to the message author only, never to the reactor | `W1 W2` | `PASS` 5/5 both venues - author notified in ~157 ms, reactor 0 over a window sized from that |
 | MUT-14 | **Both.** Pin and unpin, seen on the OTHER device | `+A1` | `PASS` 5/5 both venues - 313-329 ms each way |
-| MUT-15 | **DM.** A pin does not survive on a fresh device - localStorage-only, no history replay | `+A1` | `FAIL` 5/5, **as expected** - reproduces the hole every time; `pinStore` is localStorage-only and no history path carries pin state |
+| MUT-15 | **DM.** A pin is recovered by a device that lost it | `+A1` | `FAIL` 5/5 on `25376b86`, **the hole it was written to hold open**; **FIXED 2026-08-16, RE-RUN OWED** - it now asserts recovery and must PASS. Rewritten with the fix, see below |
 | MUT-16 | **Channel.** A pin DOES survive, because it is re-hydrated from the server | `+A1` | `PASS` 5/5 - the contrast that makes MUT-15 a hole rather than a design |
 | MUT-17 | **DM.** Edit, then delete, then react to the deleted message | `W1 W2` | `PASS` 5/5 - no picker and no quick strip on a tombstone |
 | MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `PASS` 5/5 - **converges in 22-44 ms**, W1 winning each time; 2 passes dirty on A1's exception below |
-| MUT-19 | **DM.** Delete a message that is still in the outbox, unsent | `W1 W2` | `PASS` 5/5 - asserts the SETTLED state; the transient leak it found is a P2 in the backlog |
+| MUT-19 | **DM.** Delete a message that is still in the outbox, unsent | `W1 W2` | `PASS` 5/5 on the SETTLED state; the transient leak it found is **FIXED 2026-08-16, RE-RUN OWED** - the queued entry is withdrawn, so `everSawOriginal` must now be `false` on every pass rather than sometimes |
 | MUT-20 | **DM.** Mutate a message older than the 90-day server retention window | `W1 W2` | `SKIPPED` 5/5 - **unarmable until 2026-11-09**, no message this harness made is old enough |
 | MUT-21 | **DM.** The hover action bar stays inside the message pane and takes its own clicks | `W1 W2` | `PASS` 5/5 - reachable, nothing on top of it; the width complaint it was written for is a P3 in the backlog |
 
@@ -390,6 +390,22 @@ state for a thing seen three times and explained none.
   sliding render window and does not render what lands below it while the pane is scrolled up, so
   "not delivered", "late" and "below the window" were one observation. `awaitMessage` and
   `bubbleCentre` now report `fromBottomPx`, which decides between them on the next sighting.
+
+**Two rows were rewritten with the fixes they earned, and the rewrite is the point** (2026-08-16):
+
+- **MUT-19 asserts `everSawOriginal` again.** It had been demoted to evidence because the row was a
+  coin toss - the text and the `delete_message` chasing it flushed back to back, so whether the peer
+  painted the original for a frame was scheduling. With the queued entry WITHDRAWN there is no race
+  left to lose, so a single sighting is a defect rather than an accident, and the check says so.
+- **MUT-15 measures a repair instead of holding a hole open, and it had to change WHICH DEVICE PINS
+  to do it.** MLS gives a device no echo of its own frames, so a device replaying the shared log
+  reaches its own `pin` frame and is told `own-message`: **it can never recover a pin it placed
+  itself from the log** - only a peer's bundle can, and nothing in this rig triggers one. The pin is
+  therefore placed by the peer, which makes the device under test a RECEIVER of the frame. It then
+  drops its pin record AND rewinds its stream cursor and seen-ciphertext set to a snapshot taken
+  seconds earlier - one frame, not ninety days - and reloads. **What it still does not cover is the
+  `history_bundle` half**, which needs a genuine fresh enrolment; that belongs with check L of
+  [device-verification](device-verification.md). Unit tests cover both halves.
 
 ## 5 - SEARCH - finding a message
 
@@ -782,8 +798,9 @@ channel description or topic. Channel reordering (only communities reorder). A c
 An endpoint to revoke an invite link, though the `revoked` column exists. Any MLS involvement in
 community membership.
 
-**Three of these are gaps rather than decisions**, and they get a check that is expected to fail
-rather than a shrug: a DM pin never reaches a fresh device (MUT-15); a reply quote keeps showing the
+**Three of these were gaps rather than decisions**, and they got a check that is expected to fail
+rather than a shrug. The first is now FIXED - a DM pin travels with its conversation's history since
+2026-08-16, and MUT-15 asserts the recovery instead of the hole. The two that stand: a reply quote keeps showing the
 snapshotted preview of a parent that has since been deleted, and jumping to it lands on the
 tombstone; and `recordCallMissed` is invoked with the LOCAL user's id on the caller's own device, so
 the caller sees "appel manque de <themselves>" while the callee who never answered gets no missed

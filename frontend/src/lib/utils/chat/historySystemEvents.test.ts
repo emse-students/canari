@@ -1,6 +1,7 @@
 import { canari } from '$lib/proto/canari.js';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import { applyReplaySystemEvent, type HistoryRow } from './historySystemEvents';
+import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
 
 /**
  * The replay handlers for mutations, exercised for the first time.
@@ -14,6 +15,8 @@ import { applyReplaySystemEvent, type HistoryRow } from './historySystemEvents';
 const OWNER = 'user-a';
 const OTHER = 'user-b';
 const CONVO = 'g1';
+/** The GROUP id, which pin state is keyed by - deliberately not the conversation map key. */
+const GROUP = 'group-1';
 
 function message(id: string, senderId: string, content = 'hello'): ChatMessage {
   return {
@@ -49,7 +52,10 @@ function row(senderId: string): HistoryRow {
 async function replay(
   parsed: canari.AppMessage,
   sender: string,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  // The pin store caches one set per conversation for the life of the module, so a test that wants
+  // a device with no pin state has to ask under a name no earlier test has written.
+  groupId: string = GROUP
 ): Promise<{
   convo: Conversation;
   deletedMessages: Map<string, { by: string }>;
@@ -73,6 +79,7 @@ async function replay(
     msg: row(sender),
     contactName: CONVO,
     userId: OWNER,
+    conversationId: groupId,
     getConversation: () => convo,
     setConversation: (_name, next) => {
       convo = next;
@@ -266,5 +273,55 @@ describe('the shared history floor', () => {
     );
 
     expect(result.historyFloorUpdate.at).toBe(0);
+  });
+});
+
+/**
+ * MUT-15: a pin did not survive on a fresh device.
+ *
+ * `pin`/`unpin` fell through this chain unhandled - not ignored on purpose, which the set at the
+ * top of the module exists to make an explicit decision, just absent. The events are durable in the
+ * shared log and the live path has always applied them; only the replay never did.
+ */
+describe('replaying a pin', () => {
+  it('pins from the log, and unpins from it', async () => {
+    const g = 'group-pin-unpin';
+    await replay(systemEvent('pin', { messageId: 'm1' }), OTHER, [message('m1', OTHER)], g);
+    expect(pinnedMessageIds(g)).toEqual(['m1']);
+
+    await replay(systemEvent('unpin', { messageId: 'm1' }), OTHER, [message('m1', OTHER)], g);
+    expect(pinnedMessageIds(g)).toEqual([]);
+  });
+
+  it('keys the pin by the GROUP, not by the conversation map key', async () => {
+    const g = 'group-pin-key';
+    await replay(systemEvent('pin', { messageId: 'm1' }), OTHER, [message('m1', OTHER)], g);
+
+    // Filed under the map key it would be written where no reader looks: every other call site -
+    // the toolbar, the live handler, the bundle builder - keys pin state by the group id.
+    expect(pinnedMessageIds(CONVO)).toEqual([]);
+    expect(pinnedMessageIds(g)).toEqual(['m1']);
+  });
+
+  it("adopts a bundle's pinned set on a device that holds none", async () => {
+    const g = 'group-pin-seed';
+    await replay(systemEvent('history_bundle', { messages: [], pins: ['m1', 'm2'] }), OTHER, [], g);
+
+    // The frame that pinned it may be older than the server's retention window while the pin is
+    // not, so replaying the log alone can never be enough on a conversation of any age.
+    expect(pinnedMessageIds(g).sort()).toEqual(['m1', 'm2']);
+  });
+
+  it('never lets a bundle overwrite pin state this device already has', async () => {
+    const g = 'group-pin-noclobber';
+    await replay(systemEvent('pin', { messageId: 'm1' }), OTHER, [message('m1', OTHER)], g);
+    await replay(systemEvent('unpin', { messageId: 'm1' }), OTHER, [message('m1', OTHER)], g);
+    await replay(systemEvent('pin', { messageId: 'm9' }), OTHER, [message('m9', OTHER)], g);
+
+    // A peer that has not seen the unpin answers with its own snapshot. Adopting it would
+    // resurrect a pin this device took back, and there is no clock to order the two.
+    await replay(systemEvent('history_bundle', { messages: [], pins: ['m1'] }), OTHER, [], g);
+
+    expect(pinnedMessageIds(g)).toEqual(['m9']);
   });
 });

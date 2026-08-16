@@ -180,6 +180,37 @@ in `CHANGELOG.md`, the shim and its **2026-11-13** removal date in
   and both got the same sentence. Mechanism on
   [history-reconciliation](docs/wiki/protocols/history-reconciliation.md), two rules in
   [durable-rules](docs/wiki/durable-rules.md).
+- **AND THE GUARD WAS REFUSING SIX CALLERS IT SHOULD HAVE WAITED FOR - fixed 2026-08-16
+  (`2c73d184`), RE-RUNS OWED.** Only the session a caller is INSIDE can fail to release;
+  `catchUpDepth > 0` refused every other one, so **MUT caught `connection sync` AND `outbox flush`
+  dropped together on 2 passes of 5** (98 ms and 213 ms after an unrelated group's replay), the flush
+  then sending "at a possibly stale epoch" - its own call site names the consequence. The
+  discriminator is a parameter now (`catchUpGroupId` = *the group whose session this stack could be
+  inside*, NOT the group the call is about); a same-group session is still refused, because the group
+  is a proxy for "inside" and a wrong wait costs the client where a wrong refusal costs a guarantee
+  the ledger still catches. **The day it spent as prose caught nothing** - matched with
+  `caller.includes(groupId)` while no call site spells one, so `NESTED` could not print in the field
+  at all: rule 24 of [testing-methodology](docs/wiki/testing-methodology.md). The wait is now LOGGED
+  (`debug`, benign in `watch.mjs`), because otherwise the fix's only evidence is the absence of a
+  line that fired on 2 runs in 5.
+- **AND MUT'S TWO REMAINING FINDINGS ARE BOTH FIXED - 2026-08-16, RE-RUN OWED, and BOTH CHECKS WERE
+  REWRITTEN WITH THEM.** MUT-19: a delete is a CANCELLATION while the message is still queued
+  (`deleteMessage` -> `cancelOutboxMessage`), and only a `delete_message` broadcast once the frame
+  has left - ordering the two entries could never have fixed it, the text still goes out. Three
+  facts close three windows (durable row / the running flush's snapshot / the other tabs, plus the
+  native mirror), and `inFlight` keeps the answer honest: the entry inside its send cannot be
+  withdrawn, and claiming otherwise would lose the delete outright. MUT-19 asserts `everSawOriginal`
+  again, because there is no race left to lose. MUT-15: pin state now travels BOTH ways - the
+  `pin`/`unpin` frames replayed in log order, and the pinned set on every `history_bundle`, adopted
+  only into an EMPTY set (`seedPinnedSet`), since a pinned set has no clock to merge by. **The check
+  had to change which device pins**: MLS gives no echo of your own frames, so a device can never
+  recover a pin it placed ITSELF from the log. It now rewinds the stream cursor by one frame rather
+  than ninety days. The bundle half is unit-tested and NOT covered on a client - that needs a real
+  fresh enrolment (device-verification L). Mechanisms on
+  [chat](docs/wiki/frontend/modules/chat.md) and
+  [history-reconciliation](docs/wiki/protocols/history-reconciliation.md), four rules in
+  [durable-rules](docs/wiki/durable-rules.md). **MUT-10 was already fixed** (`f924932b`) - an
+  inventory said otherwise, wrongly.
 - **MSG-6/7 was `BLOCKED` 5 of 5 and the phone was fine - rule 18 of
   [testing-methodology](docs/wiki/testing-methodology.md).** The in-run preflight repairs a client
   parked on `/communities` with a full navigation, then sampled gateway presence ONCE, with no

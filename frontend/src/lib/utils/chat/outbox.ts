@@ -15,6 +15,7 @@ import { getIsTabLeader } from '$lib/mls-client/tabLeader';
 import {
   requestLeaderOutboxFlush,
   publishOutboxEntrySent,
+  publishOutboxEntryCancelled,
   subscribeTabOutboxEvents,
 } from '$lib/mls-client/tabMessageSync';
 
@@ -100,6 +101,16 @@ export interface OutboxDeps {
 export interface OutboxController {
   /** Persist a queued message and schedule a flush. */
   enqueue: (entry: OutboxEntry) => Promise<void>;
+  /**
+   * Withdraw a queued message that has not left this device yet.
+   *
+   * Returns whether the message is GUARANTEED never to have been sent, which is the discriminator
+   * the caller needs and cannot compute itself: `false` means either that nothing was queued under
+   * that id (it went out on an earlier flush) or that this very entry is inside its send right now.
+   * Both of those are "the peers have it", and both are answered by a `delete_message` event; only
+   * `true` means there is nothing out there to tell anyone about.
+   */
+  cancelPending: (messageId: string) => Promise<boolean>;
   /** Drain the outbox. Gated on tab leadership here, not by the caller. Coalesces concurrent calls. */
   flush: () => Promise<void>;
   /** Mark already-loaded messages whose id is still queued as `pending` (reload / history load). */
@@ -122,6 +133,24 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   let flushing = false;
   let rerun = false;
   let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Ids withdrawn by `cancelPending` that a flush already running may still be holding.
+   *
+   * The durable row is deleted by the cancellation itself, which is what stops every FUTURE flush -
+   * this set stops the CURRENT one, whose loop is walking a snapshot of the queue read before the
+   * user pressed delete. Entries leave it as they are dropped, and it is bounded by the queue.
+   */
+  const cancelled = new Set<string>();
+
+  /**
+   * The id inside `mlsService.sendMessage` right now, or null.
+   *
+   * A cancellation is only a cancellation if it arrives before the frame does; past this point the
+   * peers are getting the message whatever the queue says, and saying so is what lets the caller
+   * fall back to a `delete_message` event instead of silently losing the delete.
+   */
+  let inFlight: string | null = null;
 
   /**
    * Read the queue. A failure here is indistinguishable from an empty queue to every caller, so
@@ -184,6 +213,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       if (!getIsTabLeader()) return;
       log('[OUTBOX] Flush requested by a follower tab.');
       runFlush();
+      return;
+    }
+    // Not leader-gated, and deliberately ahead of the one that is: the tab that must forget a
+    // withdrawn entry is whichever one is draining, which is exactly the leader.
+    if (event.type === 'outbox_entry_cancelled') {
+      cancelled.add(event.messageId);
+      log(
+        `[OUTBOX] ${event.messageId.slice(0, 8)}… cancelled by another tab - it will not be sent.`
+      );
       return;
     }
     if (getIsTabLeader()) return;
@@ -305,6 +343,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
   /** Flush a single entry. Returns the outcome so the loop can schedule backoff/chaining. */
   async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
+    // Withdrawn after this flush read its snapshot of the queue. The row is already gone, so this
+    // is the only thing standing between a message the user deleted and the wire.
+    if (cancelled.has(entry.id)) {
+      cancelled.delete(entry.id);
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… cancelled before it was sent - dropped, not delivered`
+      );
+      return 'skip';
+    }
+
     if (entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… skipped, backing off for ${entry.nextAttemptAt - Date.now()}ms (attempt ${entry.attempts})`
@@ -366,7 +414,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         proto = buildOutboxProto(entry) ?? new Uint8Array(0);
       }
 
-      await mlsService.sendMessage(terminalId, proto, entry.id, deliveryForOutboxEntry(entry));
+      inFlight = entry.id;
+      try {
+        await mlsService.sendMessage(terminalId, proto, entry.id, deliveryForOutboxEntry(entry));
+      } finally {
+        inFlight = null;
+      }
       // Swap the placeholder for the uploaded media before persisting the sent copy.
       if (mediaContent) updateMessageContent(entry.id, mediaContent);
       await persistSent(terminalId, entry.id);
@@ -527,6 +580,41 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       runFlush();
     },
 
+    async cancelPending(messageId: string): Promise<boolean> {
+      if (!storage) return false;
+      const queued = (await readQueue('cancel')).find((e) => e.id === messageId);
+      if (!queued) return false;
+
+      // Three things, and the order between them does not matter because none can undo another:
+      // the durable row (every future flush), this tab's snapshot (a flush already walking), and
+      // the other tabs' snapshots (a leader draining on our behalf).
+      cancelled.add(messageId);
+      publishOutboxEntryCancelled(messageId);
+      await storage
+        .deleteOutboxEntry(messageId)
+        // A row that survives is a message that will be sent after the user deleted it, which is
+        // the whole defect - so this is reported rather than swallowed, and the caller is told the
+        // cancellation did not hold so the `delete_message` event goes out instead.
+        .catch((e) => {
+          log(`[OUTBOX] ${messageId.slice(0, 8)}… cancel could not delete the row: ${String(e)}`);
+          cancelled.delete(messageId);
+        });
+      if (!cancelled.has(messageId)) return false;
+      // The mirror is the native background sender's own copy of the queue: leaving the entry in it
+      // sends the message from Android after it was withdrawn here.
+      await refreshMirror();
+
+      if (inFlight === messageId) {
+        log(
+          `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn while it was already being sent - the peers` +
+            ' will have it, so the delete has to travel as an event'
+        );
+        return false;
+      }
+      log(`[OUTBOX] ${messageId.slice(0, 8)}… withdrawn from the queue before it was ever sent`);
+      return true;
+    },
+
     flush(): Promise<void> {
       return runFlush();
     },
@@ -585,6 +673,14 @@ export function flushOutbox(): void {
 /** Enqueue a message on the active controller (no-op when none). */
 export function enqueueOutboxMessage(entry: OutboxEntry): Promise<void> {
   return active ? active.enqueue(entry) : Promise.resolve();
+}
+
+/**
+ * Withdraw a queued message on the active controller. `false` when there is no controller, which
+ * reads as "not cancelled" - the safe answer, since it sends the delete as an event instead.
+ */
+export function cancelOutboxMessage(messageId: string): Promise<boolean> {
+  return active ? active.cancelPending(messageId) : Promise.resolve(false);
 }
 
 /** Mark loaded messages still queued as `pending` (no-op when none). */

@@ -667,6 +667,7 @@ export async function replayConversationHistory(params: {
               msg,
               contactName,
               userId,
+              conversationId: id,
               getConversation,
               setConversation,
               messageReactions,
