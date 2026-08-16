@@ -219,7 +219,7 @@ reported `INCONCLUSIVE`, which is what a check must do when it fails to reproduc
 And the console capture MISSED the repair's log line on the passing run, because a reload that does
 not raise the PIN gate initialises before a session can re-attach: the verdict rests on the durable
 counters instead, read on either side of the reload. Both lessons are in
-[testing-methodology](../testing-methodology.md) under rule 10.
+[testing-methodology](../testing-methodology.md) under rule 4.
 
 **NATIVE: TAKEN, 2026-08-14.** The window there is 1.7 s rather than 60 ms, so it is far easier to
 enter: a 300 ms reload found **2** unpersisted frames, the repair reported burning 2, the next frame
@@ -238,7 +238,7 @@ window narrower than itself**, and the window on web is now ~58 ms, so `--delay 
 for ever, and an INCONCLUSIVE that never resolves is indistinguishable from a repair with nothing to
 do. The reload is now GATED on the premise instead: send without awaiting the composer's own 100 ms
 post-condition, poll `emitted - persisted`, and reload the instant it is positive. The window opened
-on the FIRST send on both platforms. This is rule 15 - a precondition the client agrees with beats
+on the FIRST send on both platforms. This is rule 7 - a precondition the client agrees with beats
 one the check hopes for.
 
 The background handoff is ordered for the same reason: on `hidden` the checkpoint is flushed

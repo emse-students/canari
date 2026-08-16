@@ -190,7 +190,7 @@ in `CHANGELOG.md`, the shim and its **2026-11-13** removal date in
   is a proxy for "inside" and a wrong wait costs the client where a wrong refusal costs a guarantee
   the ledger still catches. **The day it spent as prose caught nothing** - matched with
   `caller.includes(groupId)` while no call site spells one, so `NESTED` could not print in the field
-  at all: rule 24 of [testing-methodology](docs/wiki/testing-methodology.md). The wait is now LOGGED
+  at all: rule 15 of [testing-methodology](docs/wiki/testing-methodology.md). The wait is now LOGGED
   (`debug`, benign in `watch.mjs`), because otherwise the fix's only evidence is the absence of a
   line that fired on 2 runs in 5.
 - **AND MUT'S TWO REMAINING FINDINGS ARE BOTH FIXED - 2026-08-16, RE-RUN OWED, and BOTH CHECKS WERE
@@ -214,7 +214,7 @@ in `CHANGELOG.md`, the shim and its **2026-11-13** removal date in
   [history-reconciliation](docs/wiki/protocols/history-reconciliation.md), four rules in
   [durable-rules](docs/wiki/durable-rules.md). **MUT-10 was already fixed** (`f924932b`) - an
   inventory said otherwise, wrongly.
-- **MSG-6/7 was `BLOCKED` 5 of 5 and the phone was fine - rule 18 of
+- **MSG-6/7 was `BLOCKED` 5 of 5 and the phone was fine - rule 9 of
   [testing-methodology](docs/wiki/testing-methodology.md).** The in-run preflight repairs a client
   parked on `/communities` with a full navigation, then sampled gateway presence ONCE, with no
   deadline, while every other repair there has one. Measured: A1 back **10 832 ms** later WITHOUT
@@ -358,7 +358,7 @@ not design a staging environment before that conversation.**
 `PASS`, TYPE 25 / 25** (2026-08-15), every server window clean, on top of the earlier `8a3edbdd` and
 `e62c21f1` series. MSG's two questions are both answered: `MSG-6/7` **runs** on all five passes where
 it was `BLOCKED` 5/5, and the mailbox-barrier line is absent everywhere. **Two instrument faults came
-out of it and are rules 19 and 20 of [testing-methodology](docs/wiki/testing-methodology.md), not
+out of it and are rules 6 and 16 of [testing-methodology](docs/wiki/testing-methodology.md), not
 state** - a live filter that matched `server clean` and not `SERVER NOT CLEAN`, so it reported only
 the good windows; and `openChannel`, which waited 15 s for a state that two opposite causes both
 produce, with both `watch` windows opened AFTER the setup, so its one failure carried no console at
@@ -367,7 +367,7 @@ unattributed, not explained** - it has not recurred in 50 further verdicts. Two 
 newly classified (a secret scan -> `notable`, `app-ads.txt` -> benign) and the SSR printing 404s
 through `console.error` is a P3 on [backlog](docs/wiki/backlog.md). Durations and per-pass detail are
 on the dashboard; **do not copy the tables here.**
-The instrument faults behind the EARLIER series are rules 15 and 16 of
+The instrument faults behind the EARLIER series are rules 7 and 5 of
 [testing-methodology](docs/wiki/testing-methodology.md) and must not be re-derived: a check that
 never established its precondition (TYPE-4 cut the peer with a setting already measured inert), a
 phase file that computed five verdicts while reading no console, and a click that could not say what

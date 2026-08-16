@@ -52,7 +52,7 @@
  *
  * OBSERVATION IS PART OF EVERY CHECK HERE, and it was not until 2026-08-15. This file computed
  * twenty verdicts while reading no console line at all - the same fault READ shipped eight PASSes
- * under (rule 14 of testing-methodology). Both clients are now watched from BEFORE the setup
+ * under (rule 13 of testing-methodology). Both clients are now watched from BEFORE the setup
  * navigates, and every outcome, including each `catch`, goes through `finish` -> `gate`, so a dirty
  * window turns a PASS into `PASS-DIRTY` and records WHICH client said what. The three checks that
  * cut a client on purpose (MUT-4, MUT-7, MUT-19) narrow that client's window with

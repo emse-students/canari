@@ -16,11 +16,13 @@ over a filtered copy of its own evidence.
 
 ---
 
-## The twenty-four rules
+## The rules
 
-Ordered by how expensive it is to break them.
+Grouped by what they protect, and ordered inside each group by how expensive they are to break.
 
-### 1. A verdict must never be computed over a projection of its own evidence
+### What a verdict may rest on
+
+#### 1. A verdict must never be computed over a projection of its own evidence
 
 `heal-web.mjs` filtered the console through a **display** regex, then ran its matchers over the
 **filtered** text. A line the matcher accepts but the filter drops is invisible, so the check
@@ -38,7 +40,9 @@ never moved emitted nothing and scored as `FAIL` on the run that proved the fix.
 perfect and the verdict inverted it. **When the record is transitions, the verdict must be stated in
 transitions** - "zero changes after ready", never "one distinct value after ready".
 
-### 2. Every action asserts its own post-condition
+#### 2. Every action asserts its own post-condition - and the post-condition is the RIGHT state, not a changed one
+
+The two halves are one rule because they fail together: a check that cannot prove its action took effect will happily accept any effect at all.
 
 An action that cannot prove it took effect still yields a verdict, and **that verdict is fiction**.
 The campaign produced this one five separate times:
@@ -53,7 +57,7 @@ The campaign produced this one five separate times:
 - A zoom button never clicked, because the guessed `aria-label` did not exist - the check still
   asserted "something changed" and passed.
 
-### 3. "Did the state change" is almost never the assertion. "Did it change into the RIGHT state" is
+**"Did the state change" is almost never the assertion. "Did it change into the RIGHT state" is**
 
 The corollary of the last item above. A pinch check asserted that the scroll position moved; it
 moved, and the page had zoomed about the wrong point, which is the entire defect the check existed
@@ -63,7 +67,7 @@ to catch.
 anything**, and set its tolerance from those two measurements rather than from taste. A check that
 has never been seen to fail is not a check.
 
-### 4. Assume a green check is wrong until its evidence says otherwise - and a FAIL too
+#### 3. Assume a green check is wrong until its evidence says otherwise - and a FAIL too
 
 A FAIL is not evidence about the application until the fixture and the selector have been ruled out.
 Two examples on opposite sides:
@@ -77,110 +81,7 @@ Two examples on opposite sides:
 **A locator failure does not bias the verdict in a predictable direction**, which is why it cannot
 be discounted as "conservative".
 
-### 5. A locator is a guess unless it is disambiguated - and a DEVICE is a locator
-
-Name an element from the **component source**, never from what the markup ought to be. Scope any
-selector shared by two surfaces: `.chat-composer-editor` also exists on the social feed, so every
-use is scoped to `.chat-composer-footer .chat-composer-editor`.
-
-The device half is the same rule one level up: with two adb transports attached (USB and TCP), every
-`adb` call needs `-s <serial>`, and the serial is **resolved** from `adb devices` rather than
-hard-coded. `/json/list` is not creation order, so a CDP target must be identified by what it
-contains, not by its index.
-
-An `aria-label` must never outrank visible text, and a document-wide text match hits the first
-hidden row.
-
-**A reader scoped to a surface answers `0` when that surface is absent, and `0` is exactly what a
-lost message looks like.** `countMessage` reads the message pane; the phone is single-pane, so it
-shows the conversation LIST after a reload and after a fresh launch, and there is no pane to read.
-Two probes came back `0` on 2026-08-13 and were one step from being written up as lost messages -
-both were on screen throughout, one of them visible in the list's own preview line. Any reader of a
-conversation must therefore ESTABLISH the conversation first (`ensureConversation`, which is a no-op
-when it is already open) rather than assume the client stayed where the last step left it. The same
-single-pane fact breaks the writer: `openConversation` hunts a sidebar that no longer exists once a
-conversation is open, so it fails on the phone precisely when the target is already correct.
-
-### 6. A matcher tests one SPELLING; the absence of an entire VOCABULARY is evidence about the app
-
-When a mechanism leaves no trace, a **stale matcher is the right first suspicion** and it is cheap
-to rule out: grep the log for every word the mechanism could have used, not for the one string the
-check happens to look for. Only once the whole vocabulary is absent does the silence say something
-about the application.
-
-Its mirror image: two lines that **no longer exist in the codebase** appearing in a run means the
-client is on an old build. Check the deploy before believing anything else that run says.
-
-### 7. A check that puts the app through a transition must restore every precondition that transition destroys
-
-A kill, a reboot, a radio cycle and an `install -r` **all re-lock the PIN**. A precondition
-discovered by one check belongs to every check sharing the transition, so it goes in the shared
-setup, not in the check that found it.
-
-**And the rule applies to the SETUP ITSELF, where it is easiest to miss.** A repair is a transition,
-so one repair can produce exactly the state another repair exists to fix - which makes a fixed
-sequence of one-shot repairs wrong however well each one is written. `run.mjs`'s preflight repaired
-`unknown` (a client on a route where the PIN gate never mounts) and then `LOCKED`, once each in that
-order; unlocking leaves the client wherever it already was, so a freshly launched phone went
-`LOCKED -> unlock -> unknown on /posts` and the preflight refused a client that was one step from
-ready and healthy throughout. The repairs now **iterate** to a fixed point, bounded on PASSES.
-
-The bound is not the interesting half - the report is. An exhausted bound prints the TRAIL, because
-`LOCKED -> unknown -> LOCKED` (a client re-locking on every navigation) and `unknown -> unknown` (one
-that never moves) end in states whose last value cannot tell them apart, and they want opposite
-fixes.
-
-**AND THE SETUP IS A PRECONDITION OF EVERY SCRIPT, NOT AN OPENING CEREMONY.** The preflight ran once,
-before the first job, and the eleven scripts after it started from whatever the previous one left
-behind - so the result of a phase depended on the ORDER and on the leftovers, and a green run proved
-nothing about the next one. That is the exact opposite of what a phase is for: a phase exists to be
-**re-run after a change to show the system is still healthy**, and a phase that cannot be replayed
-from a defined state cannot show anything.
-
-It cost a real diagnosis on 2026-08-14. MSG-5 left the "Ajouter un canal" dialog open; MSG-1b,
-MSG-6/7, MSG-9 and MSG-10 then all died inside `ensureChat`, each pointing at an application that was
-working perfectly - four checks accusing the wrong component, which is worse than four checks not
-running. Note what the existing signals said about that client: reachable, unlocked, on `/chat`, full
-sidebar. **An overlay is invisible to every readiness probe and swallows the first click**, so it is
-now part of what "ready" means, repaired loudly like the others. And a job whose clients cannot be
-brought to a known state is reported BLOCKED rather than run: it never executed, so it has no verdict
-at all, and saying so is the difference between "the app misbehaved" and "the question was not
-askable".
-
-### 8. When a check's BREAK is not invertible, the teardown restores a PROPERTY, never a snapshot
-
-Rewinding a sender cannot be undone by restoring any state: while the fork was live, the peer
-consumed generations off it, so **no snapshot is both legitimate and ahead of the peer**. Restoring
-one re-creates the very break.
-
-Ask what the next run actually needs - "can this device still deliver?" - and assert that invariant
-on every exit path (`ensureDeliverable`). A teardown that only runs on the happy path is not a
-teardown.
-
-### 9. DATE THE BUILD BEFORE BELIEVING ANYTHING IT SAYS - and the build's own log strings are the date
-
-A1 was measured for hours on 2026-08-11 against a **debug** APK several commits stale, and nothing in
-the check said so. The fingerprint was in the evidence the whole time: the phone printed
-`[QUEUE] STUCK: messageCallback has not settled after 60s`, a string `93244a7b` had **deleted** that
-same day when it replaced the single-step watchdog with `guarded`. One `git log -S` on a line the
-device logged dated the build in seconds - which is the general method, because a log string is
-version-stamped evidence a running process hands you for free, while `versionName` is a constant
-somebody edits at release time and had read `0.13.1` on both.
-
-Two consequences, and the second is the expensive one:
-
-- **A debug build is not the app.** WP-ANR-1's own note measures debug at ~10x release on the same
-  fixture, so a TIMING verdict from a debug APK is not a weak result, it is an answer to a different
-  question. Behavioural verdicts survive the distinction; performance verdicts do not.
-- **Check the SIGNATURE before planning an install, not after.** `dumpsys package | grep pkgFlags`
-  says `DEBUGGABLE` outright, and a debug-keystore install and a release-signed APK cannot replace
-  one another - `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, and the only way across is an uninstall that
-  wipes `mls.bin`. Discovering that at the install step means the whole preceding setup was arranged
-  for a step that could never run.
-
-Same family as rule 1: `versionName` is a projection, the running code is the evidence.
-
-### 10. THE ABSENCE OF A FAILURE IS NOT EVIDENCE OF SUCCESS - prove the path was EXERCISED
+#### 4. THE ABSENCE OF A FAILURE IS NOT EVIDENCE OF SUCCESS - prove the path was EXERCISED
 
 A check for "the push-authenticated fetch no longer 403s" counted zero rejections and wanted to call
 it PASS. But the process had cached both avatars hours earlier, so it never made a request: the
@@ -199,7 +100,7 @@ A matcher written as `/(avatar cached\|from cache)/` therefore reports success f
 that proves nothing. Read the source at the log site before trusting a string that merely sounds
 right; and to force the path, remove what makes it skippable - here
 `adb shell run-as fr.emse.canari rm files/avatar_*.jpg`, which works because the build is
-DEBUGGABLE, one of the few things a debug build is BETTER for (rule 9).
+DEBUGGABLE, one of the few things a debug build is BETTER for (rule 17).
 
 **THE CHEAPEST POSITIVE CONTROL IS A CLIENT STILL RUNNING THE OLD BUILD, AND THE MIXED FLEET HANDS
 IT OVER FREE.** `synboot.mjs` reported zero banner appearances on both web clients after WP-BANNER-1,
@@ -240,7 +141,7 @@ can be read on either side of the reload at leisure: deficit before, deficit aft
 mechanism leaves both a log and a state, the state is the witness** - the log is how a human finds it,
 not how a check proves it.
 
-#### The sharpest instance: a run that printed PASS while the branch never ran
+##### The sharpest instance: a run that printed PASS while the branch never ran
 
 WP-ECHO-1's device check sends its own message "during a drain" and asserts it survives a reload.
 Version 2 printed `PASS - every message sent during a drain survived the reload`, on seven real sends
@@ -268,7 +169,7 @@ The general form: when a check must act inside a window it does not control, fin
 opens the window, and find a line that can only be emitted by the branch under test. Without the
 first the check cannot aim; without the second it cannot tell you it hit.
 
-#### The corollary for a PERFORMANCE verdict: fast and skipped look identical on a clock
+##### The corollary for a PERFORMANCE verdict: fast and skipped look identical on a clock
 
 WP-ANR-1's check measures a duration - `onReceive` to `drainPendingOutbox: done` - against the 60 s
 the OS gives a `goAsync()` receiver. It came back at **2 331 ms** where the defect measured 58.6 s,
@@ -283,7 +184,266 @@ for the whole process. That triple is the `O(|mls.bin| + N)` shape observed rath
 and the keystore-load count is the one that would have caught a regression back to the per-message
 entry point, because that regression is fast per call and only the *number* of loads betrays it.
 
-### 11. FORGIVING AN EVENT MEANS TAKING IT OUT OF THE GATE, NEVER OUT OF THE RECORD
+### Reaching the thing under test
+
+#### 5. RESOLVE A TARGET BY IDENTITY, NEVER BY GEOMETRY - and the DEVICE is part of the identity
+
+A selector, a coordinate and an adb serial are the same question asked at three scales: WHICH one. Geometry answers it only until something moves.
+
+Name an element from the **component source**, never from what the markup ought to be. Scope any
+selector shared by two surfaces: `.chat-composer-editor` also exists on the social feed, so every
+use is scoped to `.chat-composer-footer .chat-composer-editor`.
+
+The device half is the same rule one level up: with two adb transports attached (USB and TCP), every
+`adb` call needs `-s <serial>`, and the serial is **resolved** from `adb devices` rather than
+hard-coded. `/json/list` is not creation order, so a CDP target must be identified by what it
+contains, not by its index.
+
+An `aria-label` must never outrank visible text, and a document-wide text match hits the first
+hidden row.
+
+**A reader scoped to a surface answers `0` when that surface is absent, and `0` is exactly what a
+lost message looks like.** `countMessage` reads the message pane; the phone is single-pane, so it
+shows the conversation LIST after a reload and after a fresh launch, and there is no pane to read.
+Two probes came back `0` on 2026-08-13 and were one step from being written up as lost messages -
+both were on screen throughout, one of them visible in the list's own preview line. Any reader of a
+conversation must therefore ESTABLISH the conversation first (`ensureConversation`, which is a no-op
+when it is already open) rather than assume the client stayed where the last step left it. The same
+single-pane fact breaks the writer: `openConversation` hunts a sidebar that no longer exists once a
+conversation is open, so it fails on the phone precisely when the target is already correct.
+
+**A CLICK IS PROVEN BY THE EVENT, NEVER BY THE GEOMETRY AROUND IT**
+
+TYPE-5 failed roughly one run in ten with the create-channel modal on screen, at coordinates
+`stableCentreOf` had verified belonged to the `general` row moments earlier. Both readings were
+honest and both were useless: a hit test **before** the dispatch and a screen read **after** it
+describe moments the click did not happen, and neither can tell a click that landed on the wrong
+element from a right element that did nothing.
+
+The witness is the event. `realClick` now arms a capture-phase listener before dispatching and
+returns what actually received the click, which named the culprit on the first occurrence:
+`{"tag":"BUTTON","text":"Ajouter un canal"}` at the row's own centre. The cause was an application
+defect - a status banner in the layout flow appearing at ~480 ms and vanishing at ~2 286 ms, moving
+everything 29 px between the hit test and the dispatch - and no amount of re-proving the geometry
+would have found it, because the geometry was correct every time it was read.
+
+Two lessons, and the second is rule 7 again from the other side:
+
+- **Verify the effect you asked for, not the conditions you asked under.** A coordinate that
+  hit-tests correctly is a precondition, not a result.
+- **Then establish the precondition properly**: `awaitAppSettled` waits for a STATE - no status
+  strip up, `main` at the same offset for three consecutive reads - not for a duration. It lives in
+  `chat.mjs`, so every check that clicks inherits it rather than each learning the trap alone.
+
+**THE PHONE'S SOFT KEYBOARD MAKES COORDINATES LIE, SO A CONTROL REACHED AFTER A FIELD HAS FOCUS CANNOT BE RESOLVED BY GEOMETRY**
+
+Arming MUT-18 - the first check in this campaign to drive a message's controls on the phone - cost
+three runs, and only the first was about the thing being tested.
+
+1. `realClick` on the edit form's Save: the click landed somewhere, the form never closed.
+2. `activate` instead - the fix `fireComposer` already carries for the composer: `no element to
+   activate: text=Enregistrer`, about a button a probe measured a minute later at 77x26 with its
+   label spelt exactly that way.
+
+Both are the same cause. Focusing the textarea opens Android's soft keyboard, which shrinks the
+**visual** viewport while the **layout** viewport `getBoundingClientRect` reports keeps its height.
+`RESOLVE`'s last filter is a hit test at the element's centre, and a hit test is a coordinate test:
+it rejects a control that is plainly on screen, so `activate` reports an absence rather than a
+mis-click. `realClick` does not even get that far.
+
+`saveOpenEdit` clicks the button inside the form, by DOM. **Skipping the hit test is safe there and
+would not be in general**: only one message can be in edit mode at a time, so the form is unique on
+the page and there is no second candidate - which is the only thing the hit test defends against.
+State the uniqueness argument at every site that skips it, or this rule quietly stops holding.
+
+**It became the desktop path too, and not for symmetry.** Left on `realClick`, the browser then
+failed MUT-2 with `no stable element for selector: text=Enregistrer` having passed the same step
+minutes earlier - `stableCentreOf` samples the geometry twice and the edit form animates in, so the
+check was racing a CSS transition to buy a hit test it did not need. The phone's constraint turned
+out to name a flake the desktop had been carrying quietly: **when a coordinate buys nothing, it still
+costs a race.**
+
+Corollary: **an obstacle attributed to the environment gets checked before it is believed.** MUT-18's
+SKIP said A1 was off adb; SESSION STATE had said the opposite for weeks, and the phone was reachable
+the whole time. The real obstacle was a missing helper, which nobody went looking for because the
+written reason pointed at a cable.
+
+#### 6. A MATCHER TESTS ONE SPELLING - and one written from the success wording can only ever report success
+
+Both are the same failure of a matcher: it was written from what the author expected to see, so the outcomes it cannot spell become silence, and silence reads as health.
+
+When a mechanism leaves no trace, a **stale matcher is the right first suspicion** and it is cheap
+to rule out: grep the log for every word the mechanism could have used, not for the one string the
+check happens to look for. Only once the whole vocabulary is absent does the silence say something
+about the application.
+
+Its mirror image: two lines that **no longer exist in the codebase** appearing in a run means the
+client is on an old build. Check the deploy before believing anything else that run says.
+
+**A WATCH THAT MATCHES THE SUCCESS WORDING REPORTS ONLY SUCCESS - and silence then reads as health**
+
+The MSG x5 of 2026-08-15 was followed by a live filter over the runner's output, alternating on
+`server (clean|NOT)`. The runner prints `  server clean` when a window is clean and
+`  SERVER NOT CLEAN - run srvlog.mjs --since ...` when it is not. The alternation is
+**case-sensitive**, so it matched every clean window and **none** of the dirty ones: five passes were
+reported, four of them said `server clean`, and the fifth said nothing at all. The pass-2 window -
+`frontend-ssr NOT CLEAN, unexplained=9` - reached the reader only because the full output was read
+by hand afterwards.
+
+The failure is not the regex. It is that **the observer was written from the shape of the outcome it
+expected**, and the two outcomes of this runner do not share a spelling: one is lower case, the other
+is upper case with a remediation clause appended. A filter derived from the happy path cannot report
+the other one, and its silence is indistinguishable from "nothing happened yet".
+
+Applies to any live watch, not just this one: **enumerate the terminal states first, then write the
+pattern over all of them.** If you cannot enumerate them, widen rather than narrow - noise costs a
+read, a missed failure costs the finding. And the cheapest check on any such filter is to ask what it
+would have emitted had the thing being watched crashed at that instant; if the answer is "nothing",
+it is not a monitor.
+
+### The state a check needs, before and after
+
+#### 7. A CHECK ESTABLISHES ITS OWN PRECONDITION, and what establishes it belongs in the shared layer
+
+One rule from two directions: a transition destroys preconditions other checks depend on, and a check that assumes one it never established is measuring the previous check's leftovers.
+
+A kill, a reboot, a radio cycle and an `install -r` **all re-lock the PIN**. A precondition
+discovered by one check belongs to every check sharing the transition, so it goes in the shared
+setup, not in the check that found it.
+
+**And the rule applies to the SETUP ITSELF, where it is easiest to miss.** A repair is a transition,
+so one repair can produce exactly the state another repair exists to fix - which makes a fixed
+sequence of one-shot repairs wrong however well each one is written. `run.mjs`'s preflight repaired
+`unknown` (a client on a route where the PIN gate never mounts) and then `LOCKED`, once each in that
+order; unlocking leaves the client wherever it already was, so a freshly launched phone went
+`LOCKED -> unlock -> unknown on /posts` and the preflight refused a client that was one step from
+ready and healthy throughout. The repairs now **iterate** to a fixed point, bounded on PASSES.
+
+The bound is not the interesting half - the report is. An exhausted bound prints the TRAIL, because
+`LOCKED -> unknown -> LOCKED` (a client re-locking on every navigation) and `unknown -> unknown` (one
+that never moves) end in states whose last value cannot tell them apart, and they want opposite
+fixes.
+
+**AND THE SETUP IS A PRECONDITION OF EVERY SCRIPT, NOT AN OPENING CEREMONY.** The preflight ran once,
+before the first job, and the eleven scripts after it started from whatever the previous one left
+behind - so the result of a phase depended on the ORDER and on the leftovers, and a green run proved
+nothing about the next one. That is the exact opposite of what a phase is for: a phase exists to be
+**re-run after a change to show the system is still healthy**, and a phase that cannot be replayed
+from a defined state cannot show anything.
+
+It cost a real diagnosis on 2026-08-14. MSG-5 left the "Ajouter un canal" dialog open; MSG-1b,
+MSG-6/7, MSG-9 and MSG-10 then all died inside `ensureChat`, each pointing at an application that was
+working perfectly - four checks accusing the wrong component, which is worse than four checks not
+running. Note what the existing signals said about that client: reachable, unlocked, on `/chat`, full
+sidebar. **An overlay is invisible to every readiness probe and swallows the first click**, so it is
+now part of what "ready" means, repaired loudly like the others. And a job whose clients cannot be
+brought to a known state is reported BLOCKED rather than run: it never executed, so it has no verdict
+at all, and saying so is the difference between "the app misbehaved" and "the question was not
+askable".
+
+**A CHECK MUST ESTABLISH ITS PRECONDITION, AND WHAT ESTABLISHES IT BELONGS IN THE SHARED LAYER**
+
+TYPE-4 asks that an **offline** peer sees no typing indicator and gets none replayed when it returns.
+It set `Network.emulateNetworkConditions({offline: true})` on the peer, waited, and asserted the
+indicator was empty. It failed, and the failure was entirely its own: that setting fails NEW requests
+and leaves an ESTABLISHED WebSocket open, so the peer was never offline, took the frame live exactly
+as it should have, and the check reported a delivery defect it had manufactured.
+
+The precondition was never established, only intended - so **the one outcome the check could not
+produce was the true one**. An assertion of the form "while X, not Y" is worth nothing until X is a
+fact the system under test agrees with. Here that fact is the gateway's presence key: `cutHard`
+closes the socket as a dropped connection would, `awaitOffline` waits for the key to go, and a peer
+that never goes offline makes the verdict **INVALID**, never `FAIL` - the difference between "the app
+is wrong" and "I did not manage to ask".
+
+**The sharper half is that none of this was new.** `msg9.mjs` had measured the same trap on
+2026-08-13 - sixty seconds of "offline" with the presence key refreshed the whole way through - and
+written it up in its own header, where no other check could reach it. A fact that costs a diagnosis
+to learn belongs in the shared layer the moment it is learnt; left in the file that paid for it, the
+next check pays again. `cut()` vs `cutHard()` is now the seam that carries it.
+
+Two smaller instrument faults came out of the same phase, both worth naming because neither is
+caught by a green gate:
+
+- **`type.mjs` computed five verdicts and read no console at all.** The campaign's rule that
+  observation is part of a check was stated globally and simply not implemented in one phase file, so
+  every TYPE pass asserted that an indicator appeared and said nothing about what the two pages
+  logged while it did. A rule enforced by remembering to write it is not enforced.
+- **A syntax check is not a runtime check.** A comment inside an evaluated template literal quoted an
+  identifier in backticks; the backticks closed the literal, leaving `template / identifier`, which
+  is valid JavaScript. `node --check` passed and every run threw `ReferenceError` at the division.
+  Proving a harness edit means RUNNING it, exactly as proving a native build means running it.
+- **A precondition with TWO legitimate landings may not be written as one of them.** `synboot.mjs`
+  waited for the PIN modal after a reload, because that is what a reload usually lands on. With
+  "Rester connecte" ticked the vault device key path restores the client with no modal at all, so the
+  wait burned its whole 30 s deadline and the next line then reported the app **ready in 2 ms** - a
+  boot that had in fact finished 29 s earlier. Nothing failed; the check simply measured its own
+  wait and printed it as the application's number. Race the landings and let the answer say which
+  one happened.
+
+#### 8. WHEN THE BREAK IS NOT INVERTIBLE, THE TEARDOWN RESTORES A PROPERTY, NEVER A SNAPSHOT - and a cleanup that only runs on the happy path is not a cleanup
+
+The fixture and the teardown are the same object seen from its two ends, and both fail the same way: on the paths where the check did not reach its own last line.
+
+Rewinding a sender cannot be undone by restoring any state: while the fork was live, the peer
+consumed generations off it, so **no snapshot is both legitimate and ahead of the peer**. Restoring
+one re-creates the very break.
+
+Ask what the next run actually needs - "can this device still deliver?" - and assert that invariant
+on every exit path (`ensureDeliverable`). A teardown that only runs on the happy path is not a
+teardown.
+
+**A CHECK'S FIXTURE MUST EXIST BEFORE THE SURFACE THAT READS IT - and a cleanup that only runs on the happy path is not a cleanup**
+
+MUT-12 seeds `canari_recent_emojis` so the emoji picker offers fifteen distinct emoji to react with.
+It seeded straight after `sendText`, under a comment asserting the picker reads localStorage on its
+own first open. **It does not.** `MessageBubble.svelte` renders `MessageEmojiPicker` unconditionally
+and only flips its `visible` prop, so that component's `onMount` runs when the **bubble** renders -
+which is the instant `sendText` returns. A seed written afterwards could never reach the row the
+check is about.
+
+What it produced is the part worth remembering. `MUT-12/dm` threw on its first picker emoji, every
+single run. `MUT-12/channel` **PASSED** - because the DM leg threw *before* its own cleanup line and
+left the seed in localStorage, where the channel leg's bubble picked it up on mount. One leg was
+failing honestly and the other was passing on the first leg's litter, which is strictly worse: on a
+fresh profile both fail, and the green row said the opposite. The fix is two lines and two rules: the
+fixture goes in **before** the surface exists, and the cleanup goes in a `finally`.
+
+The third lesson is about the sentence. `clickReactionEmoji` threw `no quick-reaction 🎉 on the row`,
+which is the same sentence for *the picker never opened* and for *the picker opened with the wrong
+list* - and those want opposite fixes (rule 16's shape again). `offeredEmojis` now names what the row
+**does** offer, so the next failure of this kind is one line to read.
+
+#### 9. A CHECK THAT REPAIRS THE CLIENT MUST WAIT FOR ITS OWN REPAIR - a single sample right after it measures the instrument
+
+`run.mjs`'s in-run preflight repairs a client parked on `/communities` - where the PIN gate does not
+mount, so readiness reads `unknown` - by sending it to `/chat` with a full document navigation. Every
+other repair in that loop then waits on a DEADLINE (`settle`, 3-20 s). The gateway-presence check did
+not: one `presence.mjs` sample, taken immediately, and a non-zero exit blocked the phase.
+
+**MSG-6/7 was `BLOCKED` on five passes out of five** on a phone that was working perfectly. Measured
+directly by parking A1 and polling:
+
+| after the navigation | gateway |
+| --- | --- |
+| 4 879 ms | OFFLINE |
+| 7 828 ms | OFFLINE |
+| **10 832 ms** | **ONLINE**, still on `/communities` |
+
+The route was never the problem - the page it sits on is irrelevant, the reconnect cost is
+everything. A document navigation destroys the socket with the document, so the read that follows
+answers about the harness's own action. It now polls to a 25 s deadline and prints only the last
+attempt: a client already connected answers on the first sample and pays nothing, and a client
+genuinely absent still fails - the diagnostic value is untouched.
+
+The general form, and the reason this is not rule 7 again: rule 7 is about a precondition the check
+never ESTABLISHED. Here the precondition was established, correctly, by the check itself - and then
+read before the system had finished responding to it. **Anything you did to the client is a
+transition; give it the same deadline you would give the application's own.**
+
+### Watching, and what a window means
+
+#### 10. FORGIVING AN EVENT MEANS TAKING IT OUT OF THE GATE, NEVER OUT OF THE RECORD
 
 A classifier exists to decide what breaks `clean`. It is not entitled to decide what is *kept*, and
 the two get conflated the moment a bucket is emptied rather than moved.
@@ -307,7 +467,7 @@ So: two fields, not one. `wsEventsDuringCut` beside a `wsEvents` that the gate m
 question a capture will be asked is rarely the question it was written for**, which is the whole
 argument for keeping the raw sequence next to the verdict.
 
-### 12. A CAP IS NOT A COUNT, AND A SUMMARY AS LONG AS ITS SOURCE IS UNREAD
+#### 11. A CAP IS NOT A COUNT, AND A SUMMARY AS LONG AS ITS SOURCE IS UNREAD
 
 Two ways a triage list lies about its own size, both met on 2026-08-14 within an hour of each other.
 
@@ -330,7 +490,7 @@ the id rule, so `web-<id>-suffix` had already stopped looking like a device by t
 looked for one. Neither has a symptom on a live window; both are pinned in `srvclassify-selftest.mjs`
 now, next to the assertion that genuinely different sentences must still *not* collapse.
 
-### 13. AN INSTRUMENT'S OWN LIMIT ARRIVES WEARING THE SYSTEM'S FAULT - and it bites the busiest subject first
+#### 12. AN INSTRUMENT'S OWN LIMIT ARRIVES WEARING THE SYSTEM'S FAULT - and it bites the busiest subject first
 
 `chat-delivery-service` reported `unreachable: spawnSync … ENOBUFS`, which reads as a broken tunnel
 or a dead container. It was neither: Node's default `maxBuffer` is 1 MB, and that service writes
@@ -346,7 +506,7 @@ What saved this from being silent is that `srvReport` files an unreadable servic
 and breaks `clean`, rather than returning `[]`. **An unreachable service is not a quiet one**, and
 the substitution of one for the other is the single failure this harness exists to refuse.
 
-### 14. AN OBSERVATION WINDOW MUST KNOW WHETHER ITS SUBJECT WAS REPLACED DURING IT
+#### 13. AN OBSERVATION WINDOW MUST KNOW WHETHER ITS SUBJECT WAS REPLACED DURING IT
 
 The gateway logged five `Connection reset without closing handshake` errors inside three
 milliseconds, across four different users. Nothing a client does explains that. The container
@@ -365,7 +525,7 @@ the fix under test deployed at 12:45:20, **after all of them**. `webstate.mjs` t
 still on `__sveltekit_1prkb1y` against a served `__sveltekit_1ywe1to`. Re-running without reloading
 would have measured the old bundle a fourth time and called it a verification.
 
-#### The same rule pointed at the CLIENT - where the replacer is the check itself
+##### The same rule pointed at the CLIENT - where the replacer is the check itself
 
 READ was the first phase whose runner classified console lines at all, and on the run that wired it
 in, READ-1, READ-2 and READ-4 each came back `PASS-DIRTY` on exactly one `Network.webSocketClosed`,
@@ -406,74 +566,11 @@ navigates second - the inverse of what it did when it was written. A window that
 window blind to the boot it skipped, and the boot is where a startup defect lives.
 
 An application "fix" fell out of this, shipped, and was **reverted the next day as inert** - the
-story is rule 17. The harness rule above is unaffected either way: it attributes a close to a counted
+story is rule 14. The harness rule above is unaffected either way: it attributes a close to a counted
 document replacement, and a document being replaced still closes its socket however politely it does
 so. **`ignoringNavigation` is what actually removed this dirt**, and it was the whole of the fix.
 
-### 15. A CHECK MUST ESTABLISH ITS PRECONDITION, AND WHAT ESTABLISHES IT BELONGS IN THE SHARED LAYER
-
-TYPE-4 asks that an **offline** peer sees no typing indicator and gets none replayed when it returns.
-It set `Network.emulateNetworkConditions({offline: true})` on the peer, waited, and asserted the
-indicator was empty. It failed, and the failure was entirely its own: that setting fails NEW requests
-and leaves an ESTABLISHED WebSocket open, so the peer was never offline, took the frame live exactly
-as it should have, and the check reported a delivery defect it had manufactured.
-
-The precondition was never established, only intended - so **the one outcome the check could not
-produce was the true one**. An assertion of the form "while X, not Y" is worth nothing until X is a
-fact the system under test agrees with. Here that fact is the gateway's presence key: `cutHard`
-closes the socket as a dropped connection would, `awaitOffline` waits for the key to go, and a peer
-that never goes offline makes the verdict **INVALID**, never `FAIL` - the difference between "the app
-is wrong" and "I did not manage to ask".
-
-**The sharper half is that none of this was new.** `msg9.mjs` had measured the same trap on
-2026-08-13 - sixty seconds of "offline" with the presence key refreshed the whole way through - and
-written it up in its own header, where no other check could reach it. A fact that costs a diagnosis
-to learn belongs in the shared layer the moment it is learnt; left in the file that paid for it, the
-next check pays again. `cut()` vs `cutHard()` is now the seam that carries it.
-
-Two smaller instrument faults came out of the same phase, both worth naming because neither is
-caught by a green gate:
-
-- **`type.mjs` computed five verdicts and read no console at all.** The campaign's rule that
-  observation is part of a check was stated globally and simply not implemented in one phase file, so
-  every TYPE pass asserted that an indicator appeared and said nothing about what the two pages
-  logged while it did. A rule enforced by remembering to write it is not enforced.
-- **A syntax check is not a runtime check.** A comment inside an evaluated template literal quoted an
-  identifier in backticks; the backticks closed the literal, leaving `template / identifier`, which
-  is valid JavaScript. `node --check` passed and every run threw `ReferenceError` at the division.
-  Proving a harness edit means RUNNING it, exactly as proving a native build means running it.
-- **A precondition with TWO legitimate landings may not be written as one of them.** `synboot.mjs`
-  waited for the PIN modal after a reload, because that is what a reload usually lands on. With
-  "Rester connecte" ticked the vault device key path restores the client with no modal at all, so the
-  wait burned its whole 30 s deadline and the next line then reported the app **ready in 2 ms** - a
-  boot that had in fact finished 29 s earlier. Nothing failed; the check simply measured its own
-  wait and printed it as the application's number. Race the landings and let the answer say which
-  one happened.
-
-### 16. A CLICK IS PROVEN BY THE EVENT, NEVER BY THE GEOMETRY AROUND IT
-
-TYPE-5 failed roughly one run in ten with the create-channel modal on screen, at coordinates
-`stableCentreOf` had verified belonged to the `general` row moments earlier. Both readings were
-honest and both were useless: a hit test **before** the dispatch and a screen read **after** it
-describe moments the click did not happen, and neither can tell a click that landed on the wrong
-element from a right element that did nothing.
-
-The witness is the event. `realClick` now arms a capture-phase listener before dispatching and
-returns what actually received the click, which named the culprit on the first occurrence:
-`{"tag":"BUTTON","text":"Ajouter un canal"}` at the row's own centre. The cause was an application
-defect - a status banner in the layout flow appearing at ~480 ms and vanishing at ~2 286 ms, moving
-everything 29 px between the hit test and the dispatch - and no amount of re-proving the geometry
-would have found it, because the geometry was correct every time it was read.
-
-Two lessons, and the second is rule 15 again from the other side:
-
-- **Verify the effect you asked for, not the conditions you asked under.** A coordinate that
-  hit-tests correctly is a precondition, not a result.
-- **Then establish the precondition properly**: `awaitAppSettled` waits for a STATE - no status
-  strip up, `main` at the same offset for three consecutive reads - not for a duration. It lives in
-  `chat.mjs`, so every check that clicks inherits it rather than each learning the trap alone.
-
-### 17. A FIX MUST NAME THE OBSERVER WHOSE SIGNAL IT IMPROVES, AND THAT OBSERVER MUST BE ABLE TO SEE IT
+#### 14. A FIX MUST NAME THE OBSERVER WHOSE SIGNAL IT IMPROVES, AND THAT OBSERVER MUST BE ABLE TO SEE IT
 
 Rule 14 found that every `goto` closes its own socket and reports `1006`. The harness fix was right.
 The APPLICATION fix that shipped beside it - `closeForUnload`, closing with `1001 - going away` so a
@@ -505,7 +602,7 @@ Two corollaries, both paid for on the same day:
   happened to have the change. **Run the negative control before believing the positive one.**
 - **A NAVIGATION DOES NOT PICK UP A DEPLOY; ONLY A CACHE-BUSTING RELOAD DOES.** W2 served the old
   entry chunk across three `Page.navigate` calls made after a successful deploy. Any check re-run
-  "on the new build" without `Page.reload {ignoreCache:true}` is measuring the old one - rule 9 with
+  "on the new build" without `Page.reload {ignoreCache:true}` is measuring the old one - rule 17 with
   a sharper edge. `bundle-id.mjs` reads the loaded chunk hashes off the resource timeline and answers
   it directly; a fingerprint that comes back EMPTY compares equal to itself and will happily report
   "unchanged" for ever, which is how the first attempt at this reported `INCONCLUSIVE` for a reason
@@ -513,141 +610,40 @@ Two corollaries, both paid for on the same day:
 
 ---
 
-### 18. A CHECK THAT REPAIRS THE CLIENT MUST WAIT FOR ITS OWN REPAIR - a single sample right after it measures the instrument
+#### 15. A DISCRIMINATOR CARRIED IN A LABEL DISCRIMINATES NOTHING - check it against the values that will actually reach it
 
-`run.mjs`'s in-run preflight repairs a client parked on `/communities` - where the PIN gate does not
-mount, so readiness reads `unknown` - by sending it to `/chat` with a full document navigation. Every
-other repair in that loop then waits on a DEADLINE (`settle`, 3-20 s). The gateway-presence check did
-not: one `presence.mjs` sample, taken immediately, and a non-zero exit blocked the phase.
+A report that separates two causes is only worth what its separator is worth, and a separator matched
+out of prose is worth nothing until someone proves it fires.
 
-**MSG-6/7 was `BLOCKED` on five passes out of five** on a phone that was working perfectly. Measured
-directly by parking A1 and polling:
+The mailbox barrier refuses a caller while a catch-up session is open, and the two situations it
+covers are opposite: the caller is INSIDE that session (a deadlock, fix the call site's order) or
+beside somebody else's (not a deadlock at all - it should wait). On 2026-08-15 the refusal was taught
+to say which, by matching the caller's label against the open group ids -
+`caller.includes(s.groupId)`, "the caller carries its group by convention `<site>:<groupId>`".
 
-| after the navigation | gateway |
-| --- | --- |
-| 4 879 ms | OFFLINE |
-| 7 828 ms | OFFLINE |
-| **10 832 ms** | **ONLINE**, still on `/communities` |
+**No call site carries one.** All seven pass a bare literal (`'history ask'`, `'outbox flush'`, …),
+and only the unit tests ever passed `'history ask:g-abc'` - which is exactly why the tests were green.
+So `NESTED` could not be printed in the field at all, every real occurrence read `CONCURRENT`,
+and the one sighting on prod the next day (MUT-2, 2026-08-16) read as the benign case by
+construction. Had the deadlock recurred, it would have reported itself as "nothing to fix".
 
-The route was never the problem - the page it sits on is irrelevant, the reconnect cost is
-everything. A document navigation destroys the socket with the document, so the read that follows
-answers about the harness's own action. It now polls to a 25 s deadline and prints only the last
-attempt: a client already connected answers on the first sample and pays nothing, and a client
-genuinely absent still fails - the diagnostic value is untouched.
+Three things this pins, none specific to that barrier:
 
-The general form, and the reason this is not rule 15 again: rule 15 is about a precondition the check
-never ESTABLISHED. Here the precondition was established, correctly, by the check itself - and then
-read before the system had finished responding to it. **Anything you did to the client is a
-transition; give it the same deadline you would give the application's own.**
+- **A convention that the code does not enforce is a comment.** `<site>:<groupId>` was documented in
+  the same commit that failed to implement it at a single call site.
+- **Test the discriminator against the population it will run on**, which is one grep for the call
+  sites - the same move as rule 6's watch that matched only the success wording, and the same as the
+  fleet-wide `GROUP BY` before believing a predicate.
+- **Then carry it as a parameter.** `waitForMessageQueueIdle(caller, catchUpGroupId)` cannot be
+  called without deciding, and a value the compiler demands cannot be forgotten at six sites out of
+  seven. Same rule as the project's `Never branch on an error MESSAGE`: classify where the fact is
+  known, as a type, not where it is being read back out of a sentence.
 
-### 19. A WATCH THAT MATCHES THE SUCCESS WORDING REPORTS ONLY SUCCESS - and silence then reads as health
+### Time
 
-The MSG x5 of 2026-08-15 was followed by a live filter over the runner's output, alternating on
-`server (clean|NOT)`. The runner prints `  server clean` when a window is clean and
-`  SERVER NOT CLEAN - run srvlog.mjs --since ...` when it is not. The alternation is
-**case-sensitive**, so it matched every clean window and **none** of the dirty ones: five passes were
-reported, four of them said `server clean`, and the fifth said nothing at all. The pass-2 window -
-`frontend-ssr NOT CLEAN, unexplained=9` - reached the reader only because the full output was read
-by hand afterwards.
+#### 16. WAIT FOR THE EVENT, NEVER FOR A DELAY - and a wait that can end two ways must assert the state between them
 
-The failure is not the regex. It is that **the observer was written from the shape of the outcome it
-expected**, and the two outcomes of this runner do not share a spelling: one is lower case, the other
-is upper case with a remediation clause appended. A filter derived from the happy path cannot report
-the other one, and its silence is indistinguishable from "nothing happened yet".
-
-Applies to any live watch, not just this one: **enumerate the terminal states first, then write the
-pattern over all of them.** If you cannot enumerate them, widen rather than narrow - noise costs a
-read, a missed failure costs the finding. And the cheapest check on any such filter is to ask what it
-would have emitted had the thing being watched crashed at that instant; if the answer is "nothing",
-it is not a monitor.
-
-### 20. A WAIT THAT CAN END TWO WAYS MUST ASSERT THE STATE BETWEEN THEM - and the SETUP that reaches it is part of the check
-
-`openChannel` clicked a channel row and waited fifteen seconds for the composer. On pass 4 of 5 of
-the TYPE x5 of 2026-08-15 the composer never came, and the report - a good one, carrying the
-coordinates, the element that RECEIVED the click, and the screen at both instants - could still only
-say that. Two causes end in exactly that state and their fixes are opposite:
-
-- the click was received and never HANDLED, or
-- it was handled and the chat area rendered nothing. `ChatArea` renders **nothing at all** - header,
-  message list and composer - while its conversation is missing from the store, so a selected channel
-  with no entry looks identical to a click that never landed.
-
-A channel selection changes no url either (it is a state assignment), so the address bar cannot
-witness it, and fifteen seconds of waiting produce one bit where two are needed. The check now
-asserts the intermediate state first - the row becoming `aria-current` - and reports which of the two
-sentences applies. **The attribute already existed** for the screen reader, which is the recurring
-shape: the affordance that makes a state announceable is the same one that makes it assertable, and
-where it is missing, adding it serves both readers.
-
-**And the evidence was absent for a second, independent reason: the setup ran outside the observation
-window.** Both `watch` calls opened *after* `openChannel`, so the throw carried one sentence and not a
-single console line from either client - on a rig whose whole premise is that observation is part of
-every check. A setup that fails IS the check failing. Watch first; `report` already forgives the
-navigation the setup performs, by counting `Page.frameNavigated` itself. And a setup failure must
-drain those reports into its own record, or the file's top-level handler writes a poorer row over it
-and the richer one is the copy nobody finds.
-
-Corollary worth stating on its own: **a re-run is not a recovery.** The next four passes were green,
-which recovered nothing - it destroyed the only window in which the fault was visible.
-
----
-
-### 21. A CHECK'S FIXTURE MUST EXIST BEFORE THE SURFACE THAT READS IT - and a cleanup that only runs on the happy path is not a cleanup
-
-MUT-12 seeds `canari_recent_emojis` so the emoji picker offers fifteen distinct emoji to react with.
-It seeded straight after `sendText`, under a comment asserting the picker reads localStorage on its
-own first open. **It does not.** `MessageBubble.svelte` renders `MessageEmojiPicker` unconditionally
-and only flips its `visible` prop, so that component's `onMount` runs when the **bubble** renders -
-which is the instant `sendText` returns. A seed written afterwards could never reach the row the
-check is about.
-
-What it produced is the part worth remembering. `MUT-12/dm` threw on its first picker emoji, every
-single run. `MUT-12/channel` **PASSED** - because the DM leg threw *before* its own cleanup line and
-left the seed in localStorage, where the channel leg's bubble picked it up on mount. One leg was
-failing honestly and the other was passing on the first leg's litter, which is strictly worse: on a
-fresh profile both fail, and the green row said the opposite. The fix is two lines and two rules: the
-fixture goes in **before** the surface exists, and the cleanup goes in a `finally`.
-
-The third lesson is about the sentence. `clickReactionEmoji` threw `no quick-reaction 🎉 on the row`,
-which is the same sentence for *the picker never opened* and for *the picker opened with the wrong
-list* - and those want opposite fixes (rule 20's shape again). `offeredEmojis` now names what the row
-**does** offer, so the next failure of this kind is one line to read.
-
-### 22. THE PHONE'S SOFT KEYBOARD MAKES COORDINATES LIE, SO A CONTROL REACHED AFTER A FIELD HAS FOCUS CANNOT BE RESOLVED BY GEOMETRY
-
-Arming MUT-18 - the first check in this campaign to drive a message's controls on the phone - cost
-three runs, and only the first was about the thing being tested.
-
-1. `realClick` on the edit form's Save: the click landed somewhere, the form never closed.
-2. `activate` instead - the fix `fireComposer` already carries for the composer: `no element to
-   activate: text=Enregistrer`, about a button a probe measured a minute later at 77x26 with its
-   label spelt exactly that way.
-
-Both are the same cause. Focusing the textarea opens Android's soft keyboard, which shrinks the
-**visual** viewport while the **layout** viewport `getBoundingClientRect` reports keeps its height.
-`RESOLVE`'s last filter is a hit test at the element's centre, and a hit test is a coordinate test:
-it rejects a control that is plainly on screen, so `activate` reports an absence rather than a
-mis-click. `realClick` does not even get that far.
-
-`saveOpenEdit` clicks the button inside the form, by DOM. **Skipping the hit test is safe there and
-would not be in general**: only one message can be in edit mode at a time, so the form is unique on
-the page and there is no second candidate - which is the only thing the hit test defends against.
-State the uniqueness argument at every site that skips it, or rule 16 quietly stops holding.
-
-**It became the desktop path too, and not for symmetry.** Left on `realClick`, the browser then
-failed MUT-2 with `no stable element for selector: text=Enregistrer` having passed the same step
-minutes earlier - `stableCentreOf` samples the geometry twice and the edit form animates in, so the
-check was racing a CSS transition to buy a hit test it did not need. The phone's constraint turned
-out to name a flake the desktop had been carrying quietly: **when a coordinate buys nothing, it still
-costs a race.**
-
-Corollary: **an obstacle attributed to the environment gets checked before it is believed.** MUT-18's
-SKIP said A1 was off adb; SESSION STATE had said the opposite for weeks, and the phone was reachable
-the whole time. The real obstacle was a missing helper, which nobody went looking for because the
-written reason pointed at a cable.
-
-### 23. WAIT FOR THE EVENT, NEVER FOR A DELAY - and when only an absence can be waited out, take the bound from the measurement
+A delay and an ambiguous wait are the same defect at two moments: the first cannot aim at the event, the second cannot say which event it caught.
 
 A fixed delay has two defects and one of them always lands. **Too short**, it makes "it never
 happened" and "it has not happened yet" the same observation - MUT-11 flapped on `sleep(300)` while
@@ -679,6 +675,110 @@ Two delays are legitimate and must say so where they sit: one that **is** the be
 (`longPressBubble` holds 700 ms against the app's own 420 ms threshold), and one that paces a poll.
 
 ---
+
+**A WAIT THAT CAN END TWO WAYS MUST ASSERT THE STATE BETWEEN THEM - and the SETUP that reaches it is part of the check**
+
+`openChannel` clicked a channel row and waited fifteen seconds for the composer. On pass 4 of 5 of
+the TYPE x5 of 2026-08-15 the composer never came, and the report - a good one, carrying the
+coordinates, the element that RECEIVED the click, and the screen at both instants - could still only
+say that. Two causes end in exactly that state and their fixes are opposite:
+
+- the click was received and never HANDLED, or
+- it was handled and the chat area rendered nothing. `ChatArea` renders **nothing at all** - header,
+  message list and composer - while its conversation is missing from the store, so a selected channel
+  with no entry looks identical to a click that never landed.
+
+A channel selection changes no url either (it is a state assignment), so the address bar cannot
+witness it, and fifteen seconds of waiting produce one bit where two are needed. The check now
+asserts the intermediate state first - the row becoming `aria-current` - and reports which of the two
+sentences applies. **The attribute already existed** for the screen reader, which is the recurring
+shape: the affordance that makes a state announceable is the same one that makes it assertable, and
+where it is missing, adding it serves both readers.
+
+**And the evidence was absent for a second, independent reason: the setup ran outside the observation
+window.** Both `watch` calls opened *after* `openChannel`, so the throw carried one sentence and not a
+single console line from either client - on a rig whose whole premise is that observation is part of
+every check. A setup that fails IS the check failing. Watch first; `report` already forgives the
+navigation the setup performs, by counting `Page.frameNavigated` itself. And a setup failure must
+drain those reports into its own record, or the file's top-level handler writes a poorer row over it
+and the richer one is the copy nobody finds.
+
+Corollary worth stating on its own: **a re-run is not a recovery.** The next four passes were green,
+which recovered nothing - it destroyed the only window in which the fault was visible.
+
+---
+
+### The build under the check
+
+#### 17. DATE THE BUILD BEFORE BELIEVING ANYTHING IT SAYS - and the build's own log strings are the date
+
+A1 was measured for hours on 2026-08-11 against a **debug** APK several commits stale, and nothing in
+the check said so. The fingerprint was in the evidence the whole time: the phone printed
+`[QUEUE] STUCK: messageCallback has not settled after 60s`, a string `93244a7b` had **deleted** that
+same day when it replaced the single-step watchdog with `guarded`. One `git log -S` on a line the
+device logged dated the build in seconds - which is the general method, because a log string is
+version-stamped evidence a running process hands you for free, while `versionName` is a constant
+somebody edits at release time and had read `0.13.1` on both.
+
+Two consequences, and the second is the expensive one:
+
+- **A debug build is not the app.** WP-ANR-1's own note measures debug at ~10x release on the same
+  fixture, so a TIMING verdict from a debug APK is not a weak result, it is an answer to a different
+  question. Behavioural verdicts survive the distinction; performance verdicts do not.
+- **Check the SIGNATURE before planning an install, not after.** `dumpsys package | grep pkgFlags`
+  says `DEBUGGABLE` outright, and a debug-keystore install and a release-signed APK cannot replace
+  one another - `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, and the only way across is an uninstall that
+  wipes `mls.bin`. Discovering that at the install step means the whole preceding setup was arranged
+  for a step that could never run.
+
+Same family as rule 1: `versionName` is a projection, the running code is the evidence.
+
+### The check itself, over time
+
+#### 18. A CHECK IS A CLAIM ABOUT A MECHANISM, AND IT ROTS WHEN THE MECHANISM MOVES
+
+A check is written against the mechanism as it stands. Fix the mechanism and the check does not become stale quietly - it starts asserting the opposite of the product, in a colour nobody rereads.
+
+Two rows here were built to fail on purpose, and both went green-side-up on 2026-08-16 when the
+defects they described were fixed. Left alone, each would have asserted the opposite of the product.
+
+**MUT-19 had been DEMOTED and had to be promoted back.** Deleting a message still in the outbox sent
+it and then withdrew it, and whether the peer painted the original for one frame was scheduling the
+check does not control - measured `false` then `true` within an hour on the same bundle. So the
+assertion was moved off `everSawOriginal` and onto the settled state, correctly: a verdict that flaps
+says nothing. But the demotion was a property of the DEFECT, not of the check. With the queued entry
+withdrawn there is no race left to lose, so a single sighting is now a defect rather than an
+accident, and the assertion goes back where it was. **A check softened to survive a defect carries a
+debt that comes due with the fix.**
+
+**MUT-21 was worse: it returned `true` unconditionally**, a leftover from the same era, so the hover
+bar could have escaped the message pane again behind a green tally. A row that reports `FAIL` and
+tallies `ok` is not a compromise, it is a check that has been switched off in one place and left
+looking alive in another.
+
+**A SIMULATION IS ONLY FAITHFUL TO THE MECHANISM IT REWINDS - name what it cannot reach**
+
+MUT-15 simulated a fresh device by wiping one `localStorage` key and reloading. That was faithful
+while pin state had no other source; the moment it gained one it stopped being a simulation of
+anything, because **the device's position in the shared log was still at the head** - it re-read no
+frame, so it could not recover anything from the log by construction.
+
+Fixing that turned up a second, sharper constraint: **MLS gives a device no echo of its own frames**,
+so a device replaying the log reaches its own `pin` frame and is told `own-message`. A device can
+never recover from the log a pin it placed ITSELF. The check therefore had to change *which device
+pins* - the peer places it, the device under test receives it - before any amount of rewinding could
+help.
+
+The rewind that works is a snapshot: capture the stream cursor and the seen-ciphertext set before the
+frame, restore them after. That moves the device back by ONE frame, where deleting the keys would
+have re-walked ninety days of a conversation holding thousands of messages on a production account.
+
+And what it still cannot reach is written into the check's own record (`doesNotCover`): the
+`history_bundle` half needs a genuine fresh enrolment, which belongs to
+[device-verification](device-verification.md). **A check that names its own blind spot is worth more
+than one that quietly implies it has none.**
+
+Ordered by how expensive it is to break them.
 
 ## Observation is part of the check, not a debugging step
 
@@ -713,76 +813,6 @@ recovery: it destroys the evidence it was meant to recover.** Each check listing
 how they drift apart from the definition of `clean`, so they are listed once, next to it: `dirtOf()`
 returns every clean-breaking bucket that is non-empty, and checks record that.
 
-### 24. A DISCRIMINATOR CARRIED IN A LABEL DISCRIMINATES NOTHING - check it against the values that will actually reach it
-
-A report that separates two causes is only worth what its separator is worth, and a separator matched
-out of prose is worth nothing until someone proves it fires.
-
-The mailbox barrier refuses a caller while a catch-up session is open, and the two situations it
-covers are opposite: the caller is INSIDE that session (a deadlock, fix the call site's order) or
-beside somebody else's (not a deadlock at all - it should wait). On 2026-08-15 the refusal was taught
-to say which, by matching the caller's label against the open group ids -
-`caller.includes(s.groupId)`, "the caller carries its group by convention `<site>:<groupId>`".
-
-**No call site carries one.** All seven pass a bare literal (`'history ask'`, `'outbox flush'`, …),
-and only the unit tests ever passed `'history ask:g-abc'` - which is exactly why the tests were green.
-So `NESTED` could not be printed in the field at all, every real occurrence read `CONCURRENT`,
-and the one sighting on prod the next day (MUT-2, 2026-08-16) read as the benign case by
-construction. Had the deadlock recurred, it would have reported itself as "nothing to fix".
-
-Three things this pins, none specific to that barrier:
-
-- **A convention that the code does not enforce is a comment.** `<site>:<groupId>` was documented in
-  the same commit that failed to implement it at a single call site.
-- **Test the discriminator against the population it will run on**, which is one grep for the call
-  sites - the same move as rule 19's watch that matched only the success wording, and the same as the
-  fleet-wide `GROUP BY` before believing a predicate.
-- **Then carry it as a parameter.** `waitForMessageQueueIdle(caller, catchUpGroupId)` cannot be
-  called without deciding, and a value the compiler demands cannot be forgotten at six sites out of
-  seven. Same rule as the project's `Never branch on an error MESSAGE`: classify where the fact is
-  known, as a type, not where it is being read back out of a sentence.
-
-### 25. A CHECK THAT HELD A HOLE OPEN MUST BE REWRITTEN THE DAY THE HOLE CLOSES, OR IT LIES IN THE OTHER DIRECTION
-
-Two rows here were built to fail on purpose, and both went green-side-up on 2026-08-16 when the
-defects they described were fixed. Left alone, each would have asserted the opposite of the product.
-
-**MUT-19 had been DEMOTED and had to be promoted back.** Deleting a message still in the outbox sent
-it and then withdrew it, and whether the peer painted the original for one frame was scheduling the
-check does not control - measured `false` then `true` within an hour on the same bundle. So the
-assertion was moved off `everSawOriginal` and onto the settled state, correctly: a verdict that flaps
-says nothing. But the demotion was a property of the DEFECT, not of the check. With the queued entry
-withdrawn there is no race left to lose, so a single sighting is now a defect rather than an
-accident, and the assertion goes back where it was. **A check softened to survive a defect carries a
-debt that comes due with the fix.**
-
-**MUT-21 was worse: it returned `true` unconditionally**, a leftover from the same era, so the hover
-bar could have escaped the message pane again behind a green tally. A row that reports `FAIL` and
-tallies `ok` is not a compromise, it is a check that has been switched off in one place and left
-looking alive in another.
-
-### 26. A SIMULATION IS ONLY FAITHFUL TO THE MECHANISM IT REWINDS - name what it cannot reach
-
-MUT-15 simulated a fresh device by wiping one `localStorage` key and reloading. That was faithful
-while pin state had no other source; the moment it gained one it stopped being a simulation of
-anything, because **the device's position in the shared log was still at the head** - it re-read no
-frame, so it could not recover anything from the log by construction.
-
-Fixing that turned up a second, sharper constraint: **MLS gives a device no echo of its own frames**,
-so a device replaying the log reaches its own `pin` frame and is told `own-message`. A device can
-never recover from the log a pin it placed ITSELF. The check therefore had to change *which device
-pins* - the peer places it, the device under test receives it - before any amount of rewinding could
-help.
-
-The rewind that works is a snapshot: capture the stream cursor and the seen-ciphertext set before the
-frame, restore them after. That moves the device back by ONE frame, where deleting the keys would
-have re-walked ninety days of a conversation holding thousands of messages on a production account.
-
-And what it still cannot reach is written into the check's own record (`doesNotCover`): the
-`history_bundle` half needs a genuine fresh enrolment, which belongs to
-[device-verification](device-verification.md). **A check that names its own blind spot is worth more
-than one that quietly implies it has none.**
-
 ### The bar is "expected", not "no failure" - and it applies to the server too
 
 Set by the user on 2026-08-13, and it raises everything above: *"je veux que tout soit explique et que
@@ -805,7 +835,7 @@ sentences for triage. Its buckets have one addition the client's classifier does
 `expectedErrors`, for errors that are real, named and not defects - `WebSocket protocol error:
 Connection reset without closing handshake` is the gateway describing a *client* that vanished
 without a close frame, which every reload this campaign performs produces. Forgiven from the gate,
-kept in the record, per rule 11.
+kept in the record, per rule 10.
 
 The first fully classified window, 2026-08-14 12:22-12:45Z: **8 534 lines across seven services, zero
 unexplained**, five notable shapes. Two of those five were open questions rather than noise -

@@ -16,7 +16,7 @@
  * WHY THE CUT IS A `cutHard`. `emulateNetworkConditions` fails new requests and leaves an
  * ESTABLISHED WebSocket completely alone, so a client "taken offline" that way never notices and
  * never retries - the check would then measure a silence it caused itself (testing-methodology
- * rule 15). `armCut` patches the socket constructor across a reload; `cutHard` puts offline on
+ * rule 7). `armCut` patches the socket constructor across a reload; `cutHard` puts offline on
  * FIRST and only then closes, so the reconnect fired the instant the socket dies cannot succeed.
  *
  * The reload `armCut` performs is not incidental here: it is what guarantees the tab is running the

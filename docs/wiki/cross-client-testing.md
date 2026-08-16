@@ -276,7 +276,7 @@ web, mobile and server. Shown/cleared are the spreads across those passes. Re-ru
 **RE-RUN x5 ON `25376b86` (2026-08-15) - 24 of 25, then 25 of 25 after the instrument was fixed.**
 `TYPE-5` threw on pass 4 of the first series: `openChannel` clicked the `general` row, the click was
 RECEIVED by that row, and no composer ever appeared. It could not be attributed, for two reasons that
-are now rule 20 of [testing-methodology](testing-methodology.md) - the check waited fifteen seconds
+are now rule 16 of [testing-methodology](testing-methodology.md) - the check waited fifteen seconds
 for one state that two opposite causes both produce, and both `watch` windows opened *after* the
 setup, so the throw carried no console line from either client. `openChannel` now asserts the row
 becoming `aria-current` first (the attribute the screen-reader work had already added) and names
@@ -342,7 +342,7 @@ owner-peer DM and once in `Campagne de test`, with the two results recorded sepa
 
 **RUN 5x ON `25376b86`, 2026-08-16 (09:10-09:40Z): 19 of the 21 checks PASS on every pass.**
 **RE-RUN OWED on `25530d13`**: MUT-15 and MUT-19 were both fixed and both checks rewritten with the
-fix ([testing-methodology](testing-methodology.md), rules 25 and 26), and the mailbox-barrier fix
+fix ([testing-methodology](testing-methodology.md), rule 18), and the mailbox-barrier fix
 (`2c73d184`) touches the pipeline every row here measures.
 
 | Id | What it asks | Needs | State |

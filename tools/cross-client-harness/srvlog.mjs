@@ -370,7 +370,7 @@ for (const service of SERVICES) {
    * printing the whole Node socket object - `at internalConnectMultiple`, `Symbol(kCapture): false`,
    * three hundred lines of `},`. Every one of those counted as its own unexplained line, so a single
    * unreachable avatar host made the service's entire window unreadable and would have hidden a real
-   * line anywhere inside it. That is rule 12 from the other end: a count that is not a count.
+   * line anywhere inside it. That is rule 11 from the other end: a count that is not a count.
    *
    * A DUMP RUNS UNTIL THE NEXT RECORD STARTS - it is not a set of shapes to enumerate. Listing the
    * shapes was the first attempt and it failed for a reason worth keeping: one `at ...` frame in
@@ -386,7 +386,7 @@ for (const service of SERVICES) {
    * CAPPED AND REPORTED, because absorbing without a bound is how a rule meant to stop noise starts
    * hiding signal: a service whose format is not recognised here would otherwise lose the remainder
    * of its window to its first error. `dumpLinesCollapsed` goes in the result so the collapse is
-   * never silent - rule 12 applies to what an instrument removes as much as to what it truncates.
+   * never silent - rule 11 applies to what an instrument removes as much as to what it truncates.
    */
   const RECORD_START = /^\s*(\[Nest\]|\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}|\[[A-Z][A-Z_0-9]*\]|\[?(INFO|WARN|WARNING|ERROR|ERRO|DEBUG|TRACE|FATAL)\b)/;
   const MAX_DUMP = 2000;

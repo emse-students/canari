@@ -1169,7 +1169,7 @@ export async function hoverBubble(cx, textMatch) {
  * READ-2 and READ-9 were hardcoded `SKIPPED` with the reason "A1 is unreachable this session
  * (dropped off USB)" - a claim about the environment that was true when it was typed and asserted,
  * never checked, on every run afterwards. Two checks were then skipped for a condition that had
- * stopped holding, which is rule 15 pointing the other way: a precondition may not be ASSUMED
+ * stopped holding, which is rule 7 pointing the other way: a precondition may not be ASSUMED
  * ABSENT any more than it may be assumed present.
  *
  * The account identity matters as much as the reachability. Any check about "a second device of the

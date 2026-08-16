@@ -159,7 +159,7 @@ const unreadHasCount = (name) =>
  * used it as the wait that gates one anyway. It returns at the FIRST non-empty badge, which during
  * a burst of arriving messages is reliably a partial count: the check stopped at 4 ms, read 2, and
  * failed against an expected 3 that was still in flight. Waiting for "changed" and asserting
- * "changed to the right value" is rule 3, and the two must be the same predicate.
+ * "changed to the right value" is rule 2, and the two must be the same predicate.
  */
 const unreadAtLeast = (name, n) =>
   `(function () { var v = ${unreadBadgeExpr(name)}; if (v === null || v === '') return false; return (v === '99+' ? 100 : parseInt(v, 10) || 0) >= ${n}; })()`;
@@ -183,7 +183,7 @@ const hasStatus = (cls) =>
  *
  * Only ONE message ever carries the anchor (`isReadReceiptAnchor`, the last read own message), so
  * the question that discriminates is not whether it exists but WHICH message it sits on. Comparing
- * that against this check's own marker is rule 3: "did it change into the RIGHT state".
+ * that against this check's own marker is rule 2: "did it change into the RIGHT state".
  */
 const readAnchorText = `(function () {
   var p = ${PANE};
@@ -623,7 +623,7 @@ async function read8() {
   // A REAL DISCONNECTION, NOT `emulateNetworkConditions` ALONE. That setting fails NEW requests and
   // leaves the ESTABLISHED WebSocket untouched, so W1 kept taking the "offline" messages live and
   // the premise of this check - a device that was away while they were sent - was never established
-  // (rule 15, the same trap that made TYPE-4 report a delivery defect it had manufactured).
+  // (rule 7, the same trap that made TYPE-4 report a delivery defect it had manufactured).
   //
   // `armCut` RELOADS to patch the socket constructor, so it has to come before the baseline: a
   // count read on the pre-reload page describes a sidebar that no longer exists.

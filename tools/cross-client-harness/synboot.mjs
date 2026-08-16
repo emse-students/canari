@@ -5,7 +5,7 @@
  * `synwatch.mjs` samples an idle page and `synopen.mjs` samples a channel open. Neither covers the
  * window the fix was actually about. The deleted banner fired on `isMessagingInitializing`, which is
  * true on EVERY startup with no messages at all - so the claim owed is about the boot sequence, and
- * a check that never enters that window cannot refute or confirm it (testing-methodology rule 15).
+ * a check that never enters that window cannot refute or confirm it (testing-methodology rule 7).
  *
  * The window here is the whole of it: reload -> PIN modal -> unlock -> app ready -> messaging init
  * -> settle. The PIN is entered by spawning `pin.mjs`, so no secret is read, printed, or passed as

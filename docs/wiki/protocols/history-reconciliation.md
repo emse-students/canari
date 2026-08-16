@@ -1194,7 +1194,7 @@ refused even when the caller does not own it: the group is a proxy for "inside",
 asymmetry is deliberate - a wrong refusal costs a guarantee the shared-fingerprint ledger still
 catches, a wrong wait costs the client until it is reloaded.
 
-**The day it spent as prose is the lesson**, and it is rule 24 of
+**The day it spent as prose is the lesson**, and it is rule 15 of
 [testing-methodology](../testing-methodology.md): the label was matched against the open group ids
 with `caller.includes(...)`, and **not one of the seven call sites spells a group id**, so `NESTED`
 could not be printed in the field at all. Every real occurrence read `CONCURRENT` - including the
