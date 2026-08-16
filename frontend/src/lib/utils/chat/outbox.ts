@@ -11,7 +11,11 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { getIsTabLeader } from '$lib/mls-client/tabLeader';
+import {
+  getIsTabLeader,
+  getTabLeadership,
+  whenTabLeadershipDecided,
+} from '$lib/mls-client/tabLeader';
 import {
   requestLeaderOutboxFlush,
   publishOutboxEntrySent,
@@ -488,6 +492,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
   async function runFlush(): Promise<void> {
     if (!storage) return;
+    // LEADERSHIP HAS THREE STATES AND THIS USED TO READ TWO. `getIsTabLeader()` answers false while
+    // the election is still running, and the follower branch below took that as "another tab will
+    // do it" - on a single-tab client, a broadcast to nobody. It then returned before
+    // `scheduleBackoff`, which would have armed nothing anyway: a never-attempted entry has no
+    // `nextAttemptAt`. So a message enqueued inside the boot gap waited for an unrelated wake-up
+    // (WP-OUTBOX-2, observed twice, no message lost).
+    //
+    // Awaiting the decision is the fix, and it is not a retry: the election always terminates, so
+    // this resolves rather than expires. The wait is logged with what it cost, because a gap nobody
+    // can see is how this defect survived two sightings.
+    if (getTabLeadership() === 'undecided') {
+      const waitedFrom = Date.now();
+      log('[OUTBOX] Flush deferred - tab leadership undecided; waiting for the election.');
+      const side = await whenTabLeadershipDecided();
+      log(`[OUTBOX] Leadership decided as ${side} after ${Date.now() - waitedFrom} ms.`);
+    }
     // Encryption belongs to the leader tab, and to it alone. Both tabs of one account hold their
     // own MLS client loaded from a single snapshot, so a send from the tab whose in-memory ratchet
     // is behind is encrypted at a generation the peer has already consumed: the peer logs

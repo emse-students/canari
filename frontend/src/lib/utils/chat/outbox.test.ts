@@ -4,6 +4,15 @@ import { SvelteMap } from 'svelte/reactivity';
 // otherwise. The cross-tab channel is stubbed too: what matters is which side is asked to act,
 // not that a BroadcastChannel exists under happy-dom.
 const isTabLeaderMock = vi.hoisted(() => vi.fn(() => true));
+// Leadership has THREE states (WP-OUTBOX-2). By default the two answers agree, so every case
+// written before this existed keeps its meaning; the boot-gap case below drives them apart on
+// purpose - `undecided` with a promise it resolves by hand.
+const leadershipMock = vi.hoisted(() =>
+  vi.fn((): 'undecided' | 'leader' | 'follower' => (isTabLeaderMock() ? 'leader' : 'follower'))
+);
+const decidedMock = vi.hoisted(() => ({
+  promise: Promise.resolve('leader') as Promise<'leader' | 'follower'>,
+}));
 const tabOutboxMock = vi.hoisted(() => ({
   requestLeaderOutboxFlush: vi.fn(),
   publishOutboxEntrySent: vi.fn(),
@@ -15,6 +24,8 @@ const tabOutboxMock = vi.hoisted(() => ({
 vi.mock('$lib/mls-client/tabLeader', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/mls-client/tabLeader')>()),
   getIsTabLeader: () => isTabLeaderMock(),
+  getTabLeadership: () => leadershipMock(),
+  whenTabLeadershipDecided: () => decidedMock.promise,
 }));
 vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/mls-client/tabMessageSync')>()),
@@ -578,6 +589,90 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
     await outbox.flush();
 
     expect(tabOutboxMock.publishOutboxEntrySent).toHaveBeenCalledWith('m1', undefined);
+  });
+});
+
+/**
+ * WP-OUTBOX-2 - the boot gap, sent into ON PURPOSE.
+ *
+ * `getIsTabLeader()` answers false while the election is still running, and the flush read that as
+ * "another tab will do it": it broadcast a drain request to a leader that, on a single-tab client,
+ * does not exist, and returned before scheduling anything - a never-attempted entry has no
+ * `nextAttemptAt`, so the backoff would have armed nothing either. The message then waited for an
+ * unrelated wake-up (a reconnect, a visibility change, the next enqueue). Seen twice on production,
+ * neither time losing a message; nothing had ever sent inside the gap deliberately.
+ *
+ * The two assertions are the two halves of the defect: nothing is delegated while the answer is
+ * unknown, and the entry goes out on the DECISION itself - no second trigger, no timer.
+ */
+describe('outbox flusher - an undecided leadership is not a follower (WP-OUTBOX-2)', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.requestLeaderOutboxFlush.mockClear();
+  });
+
+  afterEach(() => {
+    leadershipMock.mockImplementation(() => (isTabLeaderMock() ? 'leader' : 'follower'));
+    decidedMock.promise = Promise.resolve('leader');
+  });
+
+  it('waits for the election instead of delegating to a leader that may not exist', async () => {
+    let decide!: (side: 'leader' | 'follower') => void;
+    decidedMock.promise = new Promise((r) => {
+      decide = r;
+    });
+    leadershipMock.mockImplementation(() => 'undecided');
+
+    const storage = makeStorage();
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    // Enqueued INSIDE the gap - `enqueue` runs the flush that used to be the one skipped.
+    const flushed = outbox.enqueue(textEntry('m1', 'g1', 100));
+    await Promise.resolve();
+
+    // Nothing may be delegated on a question nobody has answered yet.
+    expect(tabOutboxMock.requestLeaderOutboxFlush).not.toHaveBeenCalled();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    // ...and the message is durable meanwhile, which is what makes the wait safe.
+    expect(storage._map.has('m1')).toBe(true);
+
+    // The election resolving is the ONLY thing that happens next. `enqueue` starts its flush
+    // without awaiting it - deliberately, a send must not block the composer - so the assertion
+    // waits on the OUTCOME rather than on the call that started it.
+    leadershipMock.mockImplementation(() => 'leader');
+    decide('leader');
+    await flushed;
+    await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
+
+    expect(storage._map.size).toBe(0);
+    expect(tabOutboxMock.requestLeaderOutboxFlush).not.toHaveBeenCalled();
+  });
+
+  it('delegates once the election says follower, which is the only time that is true', async () => {
+    let decide!: (side: 'leader' | 'follower') => void;
+    decidedMock.promise = new Promise((r) => {
+      decide = r;
+    });
+    leadershipMock.mockImplementation(() => 'undecided');
+
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    const flushed = outbox.flush();
+    await Promise.resolve();
+    expect(tabOutboxMock.requestLeaderOutboxFlush).not.toHaveBeenCalled();
+
+    isTabLeaderMock.mockReturnValue(false);
+    leadershipMock.mockImplementation(() => 'follower');
+    decide('follower');
+    await flushed;
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalledTimes(1);
+    expect(storage._map.get('m1')!.attempts).toBe(0);
   });
 });
 

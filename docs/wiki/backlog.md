@@ -362,7 +362,29 @@ bounds the backlog of a device that simply never returns.
 
 ## Protocol and delivery
 
-### P2 - an unresolved tab leadership is read as "another tab is the leader", and the skipped flush reschedules nothing
+### P2 - FIXED 2026-08-16 - an unresolved tab leadership was read as "another tab is the leader", and the skipped flush rescheduled nothing
+
+**Leadership has three states now** (`tabLeader.ts`): `undecided | leader | follower`, with
+`getTabLeadership()` for the state and `whenTabLeadershipDecided()` for the answer. `runFlush` awaits
+the decision instead of treating "undecided" as someone else's job, and `getIsTabLeader()` is
+deliberately unchanged - `undecided` still reads as "do not write", which is right for every caller
+that gates a WRITE and wrong only for the one that was delegating.
+
+**No timer, and the wait terminates by construction**: every branch of `initTabLeadershipAsync`
+decides, including the two that decide synchronously (Tauri, no `BroadcastChannel`). The deferral is
+logged with what it cost - `[OUTBOX] Flush deferred ...` then `Leadership decided as <side> after
+<n> ms` - because a gap nobody can see is how this survived two sightings.
+
+**The check that was owed exists**, in `outbox.test.ts`: a message enqueued INSIDE the gap, asserting
+both halves - nothing is delegated while the answer is unknown, and the entry goes out on the
+decision itself, with no second trigger. Its twin asserts that a decided `follower` still delegates,
+which is the only time that was ever true.
+
+What remains of the original entry, kept because it is the reasoning, not the fix:
+
+---
+
+#### The original finding, 2026-08-15
 
 `[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.` Seen first on
 **A1** after a reload (`burn.mjs`, 2026-08-15), then on **W1** - a single-tab Chrome profile - seven

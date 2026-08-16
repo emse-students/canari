@@ -130,14 +130,6 @@ calls too. **Le Cercle caches nothing** - a merge request and Aurel's decision, 
 Table, the three findings the work turned up and what a fifth project should copy are in
 [backlog](docs/wiki/backlog.md). **Decided: four aligned copies, not a shared client.**
 
-**WP-OUTBOX-2 (P2) - an undecided tab leadership is read as "another tab is the leader".**
-`isTabLeader` starts `false` and is only set once the Web Lock resolves, so during boot `runFlush`
-reads that as *someone else will do it* and returns before `scheduleBackoff` - which would not have
-armed anything anyway, a never-attempted entry having no `nextAttemptAt`. A message enqueued inside
-the boot gap waits for an unrelated wake-up. **Observed twice, neither lost a message.** The fix is a
-state, not a retry: leadership has three states and the code models two. Mechanism and discriminator
-in [backlog](docs/wiki/backlog.md). Owed with it: a check that sends INSIDE the gap on purpose.
-
 **WP-STRANDED-1 IS ATTRIBUTED AND FIXED AT ITS CAUSE (2026-08-16), VERIFICATION OWED.** The four
 sender-only rows were WITHDRAWN messages: `deleteMessage` knew it had withdrawn rather than
 broadcast and returned `void`, so the caller tombstoned either way and the sender kept a durable row
