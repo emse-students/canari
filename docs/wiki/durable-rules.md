@@ -1155,6 +1155,19 @@ drift. One thing it cannot say from inside: a duplicate migration NUMBER is loud
 (`exit(1)` before applying anything) - but only once both branches have merged, so check the highest
 number on `main` before naming a file.
 
+## Presence, in the gateway -> [chat-gateway](services/chat-gateway.md#presence)
+
+- **The presence key is per DEVICE and every event that removes it is per CONNECTION.** Two tabs are
+  one device. Any path deleting `user:online:{userId}:{deviceId}` must discount the connection it
+  acts for and check for survivors - `AppState::remove_session` / `has_other_sessions` are the only
+  two forms of that question, and a third call site writing its own is the bug this section exists
+  for. Fixed 2026-08-16: the explicit `{"type":"disconnect"}` frame deleted unconditionally while
+  `ConnectionGuard::drop`, running a moment later, correctly declined to - so the guard written to
+  protect the key was what stopped it being restored.
+- **A connection is identified by its `conn_id`, never by `is_closed()`.** An aborted send task still
+  reports `false` until the runtime drops its receiver. `is_closed()` is only good enough for pruning
+  senders alongside an authoritative removal by id.
+
 ## Sessions, in every app -> [sessions](sessions.md)
 
 Settled 2026-08-04 by WP-SESS-1 and WP-SESS-2, SHIPPED in all four apps. The whole model and every

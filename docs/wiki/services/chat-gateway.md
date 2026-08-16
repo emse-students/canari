@@ -31,14 +31,28 @@ Shared across all handlers as `Arc<AppState>`:
 
 ```rust
 pub struct AppState {
-    // "userId:deviceId" -> list of mpsc senders (multiple tabs = multiple senders)
-    pub connected_users: Arc<RwLock<HashMap<String, Vec<mpsc::Sender<String>>>>>,
-    pub redis: Client,
+    // "userId:deviceId" -> live senders keyed by conn_id (multiple tabs = multiple entries)
+    pub connected_users: Arc<Mutex<HashMap<String, HashMap<u64, mpsc::Sender<String>>>>>,
+    pub next_conn_id: AtomicU64,
+    pub redis_client: Client,
     pub jwt_secret: String,
 }
 ```
 
-A `ConnectionGuard` is created per WebSocket connection. Its `Drop` impl removes the sender from `connected_users` and deletes the Redis presence key.
+Each connection is assigned a unique `conn_id` from `next_conn_id` at registration, so a
+connection can be removed by identity rather than by `is_closed()` - which has a race with an
+aborted send task whose receiver the runtime has not dropped yet.
+
+Two `AppState` methods own the whole "may I delete the presence key" decision, and are the only
+readers of that invariant:
+
+| Method | Question | Caller |
+|---|---|---|
+| `remove_session(conn_key, conn_id)` | unregister this connection; does another live session remain? | `ConnectionGuard::drop` |
+| `has_other_sessions(conn_key, conn_id)` | without unregistering, does another live session remain? | `handle_disconnect` |
+
+A `ConnectionGuard` is created per WebSocket connection. Its `Drop` impl calls `remove_session` and
+deletes the Redis presence key only when nothing else holds it.
 
 ## WebSocket authentication
 
@@ -121,7 +135,30 @@ Subscribes to the `post.created` topic (group `chat-gateway-broadcast`). On each
 
 ## Presence
 
-Presence keys are stored in Redis as `user:online:{userId}:{deviceId}` with a 20-second TTL, refreshed on each WebSocket Pong. When a connection closes cleanly, the key is deleted. When delivery fails for a device and all senders are gone, the gateway proactively deletes the presence key so `chat-delivery-service` stops routing via pub/sub.
+Presence keys are stored in Redis as `user:online:{userId}:{deviceId}` with a 20-second TTL, refreshed on each WebSocket Pong. When delivery fails for a device and all senders are gone, the gateway proactively deletes the presence key so `chat-delivery-service` stops routing via pub/sub.
+
+### The key is per DEVICE, the event is per CONNECTION
+
+Two tabs of one browser share a `deviceId`, so they share one presence key while holding two
+connections. Every path that deletes the key must therefore discount the connection it is acting
+for and check whether any other one survives - the key answers "is this DEVICE online", never "is
+this CONNECTION leaving".
+
+Two paths delete it, and both ask that question through `AppState`:
+
+- `ConnectionGuard::drop` - runs on every exit path, including cancellation and panic. Calls
+  `remove_session`; on `true` it logs `[presence] Skipping DEL for {conn_key} - another session is
+  still active` and returns.
+- `handle_disconnect` - the app's own `{"type":"disconnect"}` frame, sent at `beforeunload` so
+  peers see the user offline without waiting out the TTL. The sending connection is still
+  registered at that moment, so it calls `has_other_sessions` and logs `[presence] Explicit
+  disconnect from {conn_key} (conn_id=N) - skipping DEL, another session is still active`.
+
+Until 2026-08-16 the second path deleted unconditionally, so a tab navigating away marked the whole
+device offline; `drop` then ran, saw the survivor, and took the skip branch, so the guard written to
+protect the key was exactly what stopped it being restored. Peers read the user offline until the
+surviving socket's next `refresh_presence`. The decision is covered by five unit tests in
+`state.rs` that need neither Redis nor a socket.
 
 ## CORS
 

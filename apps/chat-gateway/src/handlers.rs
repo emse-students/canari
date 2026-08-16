@@ -59,25 +59,9 @@ impl Drop for ConnectionGuard {
     fn drop(&mut self) {
         // Remove this specific connection by its unique ID, then check whether
         // any other live sessions remain for the same conn_key (e.g. other tabs
-        // or a fast reconnect).  This avoids the race where `is_closed()` still
-        // returns false for an aborted send_task whose receiver hasn't been
-        // dropped yet by the async runtime.
-        let still_connected = {
-            let mut map = self.state.connected_users.lock().unwrap();
-            if let Some(senders) = map.get_mut(&self.conn_key) {
-                senders.remove(&self.conn_id);
-                // Also prune any other stale senders while the lock is held.
-                senders.retain(|_, s| !s.is_closed());
-                if senders.is_empty() {
-                    map.remove(&self.conn_key);
-                    false
-                } else {
-                    true // another session is alive - keep the presence key
-                }
-            } else {
-                false
-            }
-        };
+        // or a fast reconnect).  `AppState::remove_session` owns that decision so
+        // the explicit-disconnect path asks exactly the same question.
+        let still_connected = self.state.remove_session(&self.conn_key, self.conn_id);
 
         if still_connected {
             tracing::info!(
@@ -508,8 +492,10 @@ async fn handle_socket(
                             "disconnect" => {
                                 // Client is going offline intentionally - DEL presence
                                 // immediately so peers see them offline right away,
-                                // then close the connection cleanly.
-                                handle_disconnect(&state, &user_id, &device_id).await;
+                                // then close the connection cleanly.  conn_id lets the
+                                // handler discount this connection and keep the key when
+                                // another tab of the same device is still connected.
+                                handle_disconnect(&state, &user_id, &device_id, conn_id).await;
                                 break;
                             }
                             "welcome_request" => {

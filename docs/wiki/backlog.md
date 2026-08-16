@@ -426,33 +426,6 @@ or `[TAB] Promoted to leader`, none of which is classified, so all three still b
 Known, reproduced by hand, never turned into a Work Package because it needs a layout decision rather
 than a patch: the message composer is overlapped by the soft keyboard on some Android keyboards.
 
-### P2 - one tab leaving marks the whole DEVICE offline, and the guard that should restore it prevents it
-
-Found 2026-08-15 reading the gateway while refuting an unrelated fix; **not yet reproduced against a
-running client**, which is what this owes before it becomes a Work Package.
-
-Presence is keyed `user:online:{userId}:{deviceId}` - **per device, not per connection** - and two
-tabs of the same browser share one `deviceId`. Two paths delete it and they disagree:
-
-- `ConnectionGuard::drop` (`chat-gateway/src/handlers.rs`) removes THIS connection from
-  `connected_users`, and if another session for the same key is still alive it logs
-  `[presence] Skipping DEL ... another session is still active` and keeps the key. Correct.
-- `handle_disconnect` (`chat-gateway/src/ws_dispatch.rs`), reached from the app's own
-  `{"type":"disconnect"}` frame at `beforeunload`, **DELs unconditionally** - no multi-session check.
-
-So a tab navigating away wipes the presence of every other tab on the same device, and `drop` then
-runs, sees the survivor, and takes the "skip" branch - so the key is not restored by the very guard
-written to protect it. Peers read the user offline until the surviving socket's next
-`refresh_presence`, which rides the ping (bounded by the 15 s interval - **the exact bound is
-unconfirmed and is part of the reproduction**).
-
-Shape to note, because it is one of ours: **a column is only evidence for the question it was written
-to answer.** The key answers "is this DEVICE online"; the delete is triggered by "is this CONNECTION
-leaving". The fix is the same multi-session check `drop` already has, not a TTL and not a retry.
-
-Related but distinct from [WP-OUTBOX-2](../../CLAUDE.md) - both are multi-tab, neither causes the
-other.
-
 ### P2 - the inbound drain has no watchdog
 
 The outbound side gained one; the inbound drain can still stall with nothing to notice it. Filed

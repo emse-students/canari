@@ -73,15 +73,34 @@ impl WsFrame {
 /// Handle an explicit client disconnect frame.
 ///
 /// Immediately removes the `user:online:{userId}:{deviceId}` Redis presence key
-/// so peers see the user as offline without waiting for the TTL to expire.
-/// The caller should break out of the recv loop after this returns.
+/// so peers see the user as offline without waiting for the TTL to expire -
+/// **but only when this is the device's last live connection**. The key answers
+/// "is this DEVICE online" while the frame reports "this CONNECTION is leaving",
+/// and two tabs of one browser share a `deviceId`, so an unconditional delete
+/// here marks a device offline that is still connected.
+///
+/// `conn_id` identifies the connection sending the frame; it is still registered
+/// at this point and must be discounted. The caller should break out of the recv
+/// loop after this returns, which drops `ConnectionGuard` and unregisters it.
 pub async fn handle_disconnect(
     state: &std::sync::Arc<crate::state::AppState>,
     user_id: &str,
     device_id: &str,
+    conn_id: u64,
 ) {
     use redis::AsyncCommands;
-    let redis_key = format!("user:online:{}:{}", user_id, device_id);
+    let conn_key = format!("{}:{}", user_id, device_id);
+    let redis_key = format!("user:online:{}", conn_key);
+
+    if state.has_other_sessions(&conn_key, conn_id) {
+        tracing::info!(
+            "[presence] Explicit disconnect from {} (conn_id={}) - skipping DEL, another session is still active",
+            conn_key,
+            conn_id
+        );
+        return;
+    }
+
     tracing::info!(
         "[presence] Explicit disconnect from {}:{} - removing presence key immediately",
         user_id,
