@@ -569,9 +569,18 @@ export async function ensureChat(cx) {
 /**
  * Opens a DM by peer name, from a full load of `/chat`.
  *
- * The full load is not laziness: on the build under test the DM rows show "Utilisateur inconnu"
- * after any client-side navigation (fixed in ace0596a, not yet deployed), so there is no name to
- * click. Only a load resolves them. Checks that care about the navigation itself must not use this.
+ * THE REASON FOR THE FULL LOAD IS REFUTED, AND THE LOAD IS STILL HERE ON PURPOSE. It was written
+ * when the DM rows showed "Utilisateur inconnu" after any client-side navigation (fixed in
+ * `ace0596a`), so only a load resolved the names. Measured on the deployed build, 2026-08-16, both
+ * journeys on both browsers: `unknown=0` immediately and throughout - W1 with 10 rows, W2 with 2,
+ * client-side and full load alike. There is nothing left for the load to work around, and it costs a
+ * gateway socket and ~2 s on every check that opens a DM.
+ *
+ * It is NOT dropped yet only because doing so changes the navigation shape of nearly every check,
+ * and the phases owed right now are verifying an application fix. One variable at a time: drop it
+ * once those re-runs are taken, then re-run them again against the new shape.
+ *
+ * Checks that care about the navigation itself must not use this.
  */
 export async function openDM(cx, name) {
   await goto(cx, '/chat');
