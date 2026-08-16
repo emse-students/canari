@@ -6,9 +6,13 @@ import { fileURLToPath } from 'node:url';
  * Native string-resource guardrail, both platforms.
  *
  * Neither half of this is checked by anything else: the two native projects are verified by
- * COMPILING, and a resource file compiles whatever it says. iOS was already doing the right thing
- * with `.lproj` when this was written; Android was not, and the second describe block is here so
- * that stays true rather than being re-verified by hand.
+ * COMPILING, and a resource file compiles whatever it says.
+ *
+ * WHAT THE iOS BLOCK DOES NOT CHECK, and it matters: it holds the four `.strings` files against
+ * EACH OTHER, so a sentence that never entered a table is invisible to it. Six of them were found
+ * in the Swift and ObjC sources the day after this file was written - see the backlog entry "six
+ * French literals on iOS that no `.lproj` declares". Reading a green run here as "iOS is done" is
+ * exactly the mistake that produced them.
  *
  * Three things can drift on the Android side and NOTHING else reports them:
  *   - a `R.string.x` that no `strings.xml` declares. The Android build catches this one, but only
