@@ -124,6 +124,11 @@ const BENIGN_CASES = [
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=true`,
   `${NEST}[MembersController] [GET_USER_MEMBERS] group=00000000-0000-4000-8000-000000000001 count=5`,
   '[3] GET /favicon.ico',
+  // Both spellings of the Apple convention - the rule covers them with one optional group, so both
+  // need a fixture or half of it is never exercised.
+  `${NEST}[InvitationsController] [PENDING][pending-0a1b2c3d] No active membership for 00000000-0000-4000-8000-000000000001:web-a-b`,
+  '[404] GET /apple-touch-icon.png',
+  '[404] GET /apple-touch-icon-precomposed.png',
 ];
 for (const l of BENIGN_CASES) {
   const ok = matches(BENIGN_RULES, l) && !matches(NOTABLE_RULES, l);

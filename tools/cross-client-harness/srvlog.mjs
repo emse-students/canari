@@ -104,6 +104,13 @@ const BENIGN = [
   /\[MessagingService\] \[MSG_FETCH\]\[fetch-msg-[0-9a-f]+\] (START|DONE)/,
   /\[DevicesController\] \[REGISTER_DEVICE\]\[[^\]]+\] (START|DONE)/,
   /\[InvitationsController\] \[PENDING\]\[[^\]]+\] (START|DONE)/,
+  // THE MIDDLE BRANCH OF THE SAME ENDPOINT, and the fourth near-miss on an existing rule in a row.
+  // The pattern above covers `START` and `DONE`; `invitations.controller.ts:249` returns EARLY when
+  // the asking device holds no ACTIVE membership in any group, and that early return logs its own
+  // line and never reaches `DONE`. Read at the source rather than from its wording: it is the
+  // bootstrap of a device that has enrolled but has not yet joined anything, `[]` is the correct
+  // answer, and a rule anchored on the two happy-path words could never have covered it.
+  /\[InvitationsController\] \[PENDING\]\[[^\]]+\] No active membership for /,
   // A media upload succeeding. The blob is opaque to the server by construction (the client holds
   // the CEK), so the size is all it can report and there is nothing else to say about it.
   /\[MediaController\] Stored encrypted blob:/,
@@ -141,6 +148,20 @@ const BENIGN = [
   // A BROWSER FETCHING THE TAB ICON. Spelt out per path for the same reason as the sitemap guesses
   // above: a general `GET /...` rule would forgive a request for a route that matters.
   /^\[\d+\] GET \/favicon\.ico$/,
+  // AN iOS DEVICE ASKING FOR THE HOME-SCREEN ICON, and this one is NOT the same as the crawler 404s
+  // above - it is classified here AND filed as a defect, because the two are different questions.
+  //
+  // Measured 2026-08-16: `/apple-touch-icon.png`, `/apple-touch-icon-precomposed.png` AND
+  // `/favicon.ico` all answer 404, and `frontend/static/` holds only `favicon.png` / `favicon.svg`.
+  // `app.html` declares the two it has and no `apple-touch-icon` at all, so Safari falls back to the
+  // convention path, finds nothing, and an "add to home screen" gets a page screenshot instead of an
+  // icon. Unlike `/sitemap_index.xml` or `/app-ads.txt`, which name things Canari has no business
+  // owning, this is a request for something a mobile-first app SHOULD serve.
+  //
+  // BENIGN is right for the WINDOW - the server answering 404 to a path it does not have is correct
+  // behaviour and not a server defect - and the missing asset is a P3 on the backlog. Silencing it
+  // here WITHOUT filing it there is the move this comment exists to prevent.
+  /^\[\d+\] GET \/apple-touch-icon(-precomposed)?\.png$/,
   // The sitemap being built to answer a request for `/sitemap.xml`. Worth one note: the occurrence
   // that first raised this line was the HARNESS - a `curl` run to check whether that route existed
   // at all, while classifying the 404 above. The instrument shows up in the record it is reading,
