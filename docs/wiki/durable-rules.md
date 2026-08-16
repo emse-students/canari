@@ -822,6 +822,15 @@ The three that generalise beyond it:
   FIRST failure, the suppression window answering `null` afterwards: one event, two renderings,
   chosen by how recently it had happened. **Rendering a placeholder is the caller's decision**; the
   resolver's job ends at the fact.
+- **A CALL WITH NO DEADLINE CANNOT FAIL, WHICH IS WORSE THAN FAILING.** `fetch` has no default
+  timeout anywhere; an upstream that accepts the connection and then says nothing holds it, and the
+  work behind it, for as long as it likes. There is no error to catch and no fallback to reach, so
+  every degradation written for that call - all of which trigger on a THROW - is dead code, and the
+  page simply never finishes. It is the opposite failure from the one that gets measured (an
+  unreachable host fails fast and gets amplified), and the two live on the same call site. **The
+  budget belongs to the repository, not to the call**: one constant, every outbound path, or the
+  next call written is the one that has none. Sky and Portail-etu each had four such calls
+  (2026-08-16).
 
 ## Service-to-service calls -> [api-surface](protocols/api-surface.md#internal-cross-service-calls)
 
@@ -1092,6 +1101,13 @@ that decide whether you believe a run:
   `.env.example` and was still absent from `docker exec ... env` on prod (WP-SAFELINK-1) because
   this third step was skipped; the endpoint answered 200 with a wrong, silently-fail-open verdict
   the whole time, not an error - `docker exec <container> env | grep FOO` is the only way to catch it.
+- **A TEST FILE NOBODY EXECUTES READS AS COVERAGE ON EVERY REVIEW.** Sky's `tests/api.test.ts` was
+  neither passing nor failing for months - the vitest `include` only ever looked under `src/` - and
+  it had rotted meanwhile: a mock missing an export the route calls, and an env assignment placed
+  after a hoisted import, so every case would have answered 500 had it ever run. Nothing announces
+  this; a green suite says only that the files it FOUND passed. When a suite lives outside the
+  pattern's roots, or a runner's `include`/`testMatch` is edited, check the file COUNT, not the
+  colour.
 - A generated file the repo COMMITS needs both halves or neither: the bump must patch it, and
   `.gitignore` must really keep it - a later `*.lock` silently overrode the `!` written above it,
   and a lock nothing bumps is corrected by whatever unrelated commit next runs cargo.

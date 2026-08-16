@@ -225,13 +225,14 @@ reading, since a guard on the button would hide that crash rather than fix it.
 
 ## Outbound connectivity
 
-### P2 - four projects proxy one avatar endpoint, and two of them still have no timeout
+### P2 - four projects proxy one avatar endpoint, and one of them still caches nothing
 
-**CANARI'S HALF SHIPPED ON 2026-08-16 AND IS NOT PART OF THIS ENTRY ANY MORE** - the contract, the
+**THREE OF THE FOUR ARE DONE AND DEPLOYED (2026-08-16): Canari, Sky, Portail-etu.** The contract, the
 three outcomes and the caching rule are on [core-service](services/core-service.md#the-avatar-proxy),
 the story is in `CHANGELOG.md`, the rule is in [durable-rules](durable-rules.md). What is left here
-is the other three, and the reason this entry outlives the fix: **nobody chose the spread**, so it
-will happen again on the next shared solution (see the cross-repo entry below).
+is **Le Cercle**, which is a merge request and Aurel's decision, and the reason this entry outlives
+the fix: **nobody chose the spread**, so it will happen again on the next shared solution (see the
+cross-repo entry below).
 
 **THE IPv6 DIAGNOSIS THAT USED TO BE HERE IS REFUTED. Measured 2026-08-15 from inside the
 containers, and it was wrong.** It said the host has no IPv6 route while DNS hands out AAAA, so every
@@ -261,21 +262,33 @@ with `x-api-key`, each having written its own failure handling:
 | project | timeout | caches a miss | on failure |
 | --- | --- | --- | --- |
 | Canari (`core-service/users/avatar.service.ts`) | 4 000 ms, stated | **yes** - 10 min absence, 1 h image, bounded | 404 for an absence, 502 `no-store` for a non-answer; `warn` for a blip, `error` only for a refused key |
-| Le Cercle (`lib/server/migallery/index.ts`) | `AbortSignal.timeout(4000)`, justified | no | `null` -> initials, one log line separating *no key* / *legitimate 404* / *unreachable* |
-| Sky (`routes/api/avatar/[id]/+server.ts`) | **none at all** | no | generated initials SVG, `no-store` |
-| Portail-etu (`routes/api/users/[userId]/avatar/+server.ts`) | **none at all** | yes - the shape Canari copied | 404 `no-store` for a non-answer, 502 for a transport failure |
+| Le Cercle (`lib/server/migallery/index.ts`) | `AbortSignal.timeout(4000)`, justified | **no** | `null` -> initials, one log line separating *no key* / *legitimate 404* / *unreachable* |
+| Sky (`routes/api/avatar/[id]/+server.ts`) | 4 000 ms, `OUTBOUND_BUDGET_MS`, shared by all 4 of its outbound calls | no | initials SVG `no-store`; a 404 is silent, a refused key or an unreachable gallery is an `error` |
+| Portail-etu (`routes/api/users/[userId]/avatar/+server.ts`) | 4 000 ms, `OUTBOUND_BUDGET_MS`, shared with both Canari-API calls | yes - the shape Canari copied | 404 cached for a real absence, 502 `no-store` for every claim about MiGallery |
 
-**What each still owes**, and none of it is Canari's:
+**Sky and Portail-etu shipped on 2026-08-16** (`424f439` / `6bede6a`, both deployed and verified
+answering). Each got the budget it lacked - `fetch` has no default deadline, and that is the opposite
+risk from the one measured here: an unreachable upstream fails fast and gets amplified by a missing
+cache, while an upstream with no deadline *cannot fail at all*, which is worse, because every caller
+degrades on a throw. Each also stopped blurring the distinction the status carries: a refused key
+answered 404 on the portal, i.e. the portal asserting the member has no face; a plain 404 was logged
+at `error` on both, on every faceless card. Both now log only what accuses. Three findings came out
+of the work and are worth keeping:
 
-- **Sky and Portail-etu have no timeout at all.** One `AbortSignal.timeout(4000)` each, with the
-  budget stated rather than implied. This is the opposite risk from the one that was measured: a
-  request with no deadline cannot degrade, it can only hang. Each is a separate repo and a separate
-  deploy.
-- **Le Cercle caches nothing**, so it re-asks the gallery for a known-absent photo on every render,
-  which is the amplification Canari's cache exists to remove. It is **Aurel's repository**: this
-  travels as a merge request or not at all - never a commit on his `main`.
-- Sky logs its API key's presence at `console.debug` on module load. Harmless, and worth removing
-  with the timeout since the file is being touched anyway.
+- **Sky's `tests/api.test.ts` had never run once** - the vitest `include` only looked under `src/`.
+  Neither passing nor failing, invisible, and rotted (a mock missing an export the route calls, an
+  env assignment after a hoisted import). *A test file nobody executes reads as coverage on every
+  review.* Both roots are in the pattern now.
+- **Sky's proxy narrated every request** - the key's presence at load, the fetch, the DB hit, the
+  success, the miss. A map of N stars wrote several N lines and buried the two that mean something.
+- The budget belongs to the REPO, not the call site: one constant each (`src/lib/server/outbound.ts`,
+  `src/lib/outbound.ts`) now covers the Canari public API and Authentik too, which had the same
+  defect and were never part of this entry.
+
+**What is left, and it is not ours to commit:** **Le Cercle caches nothing**, so it re-asks the
+gallery for a known-absent photo on every render - the amplification Canari's cache exists to remove.
+It is **Aurel's repository**: this travels as a merge request or not at all, never a commit on his
+`main`.
 
 The log-volume half was already fixed before this: the handler used to pass the whole axios error to
 the Nest logger, printing `util.inspect` of the TLS socket - about 500 lines per occurrence, 5 581
@@ -659,18 +672,20 @@ the tracked state, not only the document describing it.
 ### P2 - converge the five projects on the best version of each shared solution
 
 **The avatar proxy is the sample, not the subject.** Four projects fetch the same MiGallery endpoint
-and four different failure behaviours were written for it (see the P2 in *Outbound connectivity*):
-Le Cercle has a stated timeout budget, a `null` return and a log line that separates *no key* /
-*legitimate 404* / *unreachable*; Sky has no timeout at all; Canari alone answers **502 and logs an
-error** where the others degrade to initials silently. **Nobody chose that spread** - each was
-written once, in isolation, and the best version never travelled. That is a process outcome, so it
-will keep happening, and the avatar case is only the one a server log happened to expose.
+and four different failure behaviours were written for it, each in isolation - one had no deadline at
+all, one dressed a refused key as "this member has no face", one narrated every request, and only one
+cached. **Nobody chose that spread**, and the best version never travelled. Three of the four are
+aligned now (see the P2 in *Outbound connectivity*), which settles the contract but not the process:
+alignment took one person reading four repositories in one sitting, and nothing makes the fourth
+follow or the next shared solution converge. The avatar case is only the one a server log exposed.
 
 **What this asks for is an inventory first, not a refactor.** The list below is what is ACTUALLY
 established today; everything else is a guess until someone looks, and a guessed inventory is how the
 IPv6 diagnosis got written down:
 
 - **verified** - the avatar proxy, four implementations, table in the *Outbound connectivity* P2;
+  three now aligned, and each of the three keeps its budget in ONE constant per repo, which is the
+  shape a fifth project should copy;
 - **known partial** - tolerant search (done in Sky, owed in Canari and MiGallery), and the i18n /
   wiki / English-comments normalisation (done in Canari, partial elsewhere) - both already tracked;
 - **to inventory** - outbound HTTP handling in general (timeout, retry, what a failure degrades to),
@@ -685,7 +700,8 @@ already proves: **an optional decoration that cannot be fetched degrades, it doe
 
 Sequenced after WP-AVATAR-1 deliberately: that one settles the contract on a case where all four
 behaviours are known and measured, and this generalises it. Doing them in the other order would
-generalise from a shape nobody has validated once.
+generalise from a shape nobody has validated once. **That prerequisite is now met** - the contract is
+written and implemented three times, so what remains here is the process question, not the design.
 
 ### P2 - measure EGRESS over time, because two unrelated upstreams stalled in one window
 

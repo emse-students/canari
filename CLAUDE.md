@@ -120,13 +120,14 @@ scheduled is [backlog](docs/wiki/backlog.md) - file it there, never here.
 
 ### CANARI - what is open
 
-**WP-AVATAR-1 (P2) - CANARI'S HALF SHIPPED 2026-08-16; TWO REPOS OWE A TIMEOUT.** The contract is
-now written and implemented once: **only an ANSWER may be cached**, an optional decoration degrades
-rather than errors, and the LOG tells the causes apart, never the status code. Canari's three
-outcomes, its 4 s budget and the client half are on
-[core-service](docs/wiki/services/core-service.md#the-avatar-proxy). **Sky and Portail-etu still have
-no timeout at all** - one `AbortSignal.timeout(4000)` each, their own repo and their own deploy - and
-**Le Cercle caches nothing**, which is a merge request and Aurel's decision, never a commit. Table in
+**WP-AVATAR-1 (P2) - THREE OF THE FOUR SHIPPED AND DEPLOYED 2026-08-16; ONLY LE CERCLE IS LEFT.**
+The contract is written and implemented three times: **only an ANSWER may be cached**, an optional
+decoration degrades rather than errors, and the LOG tells the causes apart, never the status code.
+Canari's three outcomes, its 4 s budget and the client half are on
+[core-service](docs/wiki/services/core-service.md#the-avatar-proxy); Sky (`424f439`) and Portail-etu
+(`6bede6a`) each hold the budget in ONE constant per repo, covering their Canari-API and Authentik
+calls too. **Le Cercle caches nothing** - a merge request and Aurel's decision, never a commit.
+Table, the three findings the work turned up and what a fifth project should copy are in
 [backlog](docs/wiki/backlog.md). **Decided: four aligned copies, not a shared client.**
 
 **WP-OUTBOX-2 (P2) - an undecided tab leadership is read as "another tab is the leader".**
