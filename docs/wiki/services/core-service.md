@@ -103,7 +103,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 |---|---|---|---|
 | GET | `/api/users/search?q=...` | JWT | Search users by id/displayName for autocomplete |
 | GET | `/api/users/directory` | JWT | Paginated directory with filters (promo, formation, association) |
-| GET | `/api/users/:id/avatar` | JWT | Fetch user avatar from external service |
+| GET | `/api/users/:id/avatar` | JWT | Proxy the user's MiGallery photo ([three outcomes](#the-avatar-proxy)) |
 | POST | `/api/users` | global admin | Create user manually |
 | GET | `/api/users/me/notes` | JWT | Get caller's notepad ciphertext (+ `legacyNotes` once, pre-encryption) |
 | PUT | `/api/users/me/notes` | JWT | Store caller's notepad ciphertext; clears the legacy plaintext |
@@ -113,6 +113,43 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | DELETE | `/api/users/me` | JWT | Permanently delete account and all data across services |
 | GET | `/api/users/admin/list` | global admin | List all users with admin status |
 | PATCH | `/api/users/:id/admin` | global admin | Set/clear admin flag (cannot self-revoke) |
+
+#### The avatar proxy
+
+`avatar.service.ts` fetches `gallery.mitv.fr/api/users/<id>/avatar` with `x-api-key` and answers one
+of **three** outcomes. The distinction exists for one reason: **only an ANSWER may be cached.**
+
+| outcome | when | response | cached |
+| --- | --- | --- | --- |
+| `image` | upstream 200 | the bytes, upstream `Content-Type` | 1 h in process, 24 h in the browser |
+| `absent` | upstream **404** - this user has no photo | `404`, no body | 10 min in process, 10 min in the browser |
+| `unavailable` | timeout, transport failure, upstream 5xx/429, our key refused, or no key configured | `502`, no body, `Cache-Control: no-store` | never, at any layer |
+
+- **The budget is 4 000 ms**, the number Le Cercle justified for the same endpoint. The four proxies
+  of this one URL state the same budget rather than each inventing one.
+- **An absence is the common case, not the edge one** (the campaign's two accounts measure 40/40
+  upstream 404s), and it used to be re-asked on every render of every face, for ever. That is the
+  amplification that turns one transient network fault into a burst of 502s instead of one line -
+  measured on the portal as 479 recorded 502s from a single outbound failure.
+- **`unavailable` is never disguised as a 404.** A 404 says "this user has no photo", which we do not
+  know; and being cached, the lie would outlive the outage. This is the link-preview defect
+  ([backlog](../backlog.md)) in another service, and it is refused here by construction.
+- **An upstream 401/403 never reaches the browser as a 401.** This service's credentials are not the
+  user's, and a 401 crossing that boundary is how an unrelated upstream fault becomes a logout. It is
+  the one cause logged at `error` - a human must rotate a key - while a transient blip is a `warn`.
+- **No response carries a body except the image.** A JSON error body on a request an `<img>` made is
+  what produced three console lines per benign miss: `404`, then `ERR_BLOCKED_BY_ORB` (Chrome
+  refusing a JSON body to an image destination), then `ERR_ABORTED`.
+
+The client half is `frontend/src/lib/utils/userAvatarCache.ts`, and it answers a KIND rather than a
+nullable URL: `blob` (bytes held locally), `direct` (nothing cached, let the element fetch it), or
+`none` (the server answered and there is nothing to draw). `none` is what stops the second request -
+the element used to be handed back the same URL and ask the server again for the answer just given.
+`direct` is what keeps the native clients working, where the API is a different origin and `fetch`
+can be refused while an `<img>` is not.
+
+`chat-delivery-service` re-exposes the same image at `/api/mls/push/avatar/:targetUserId` for the
+Android background service, and forwards core's status unchanged.
 
 #### Name search (search + directory)
 

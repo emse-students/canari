@@ -120,15 +120,14 @@ scheduled is [backlog](docs/wiki/backlog.md) - file it there, never here.
 
 ### CANARI - what is open
 
-**WP-AVATAR-1 (P2) - one avatar endpoint, four proxies, four failure behaviours.** Canari, Sky, Le
-Cercle and Portail-etu each fetch `gallery.mitv.fr/api/users/<id>/avatar` with `x-api-key` and each
-invented its own failure handling. **Le Cercle's is the one to copy**
-(`lib/server/migallery/index.ts`): a stated budget, a `null` return, one log line separating *no key
-configured* / *legitimate 404* / *unreachable*. **Canari is the outlier** - the only one turning a
-transient blip into a 502 and a `logger.error`, which is why only its logs are noisy. Sky is the
-opposite risk: no timeout at all. Comparison table and every refuting measurement are in
-[backlog](docs/wiki/backlog.md). **Decided: four aligned copies, not a shared client.** Still to
-decide: whether Canari degrades to initials rather than 502.
+**WP-AVATAR-1 (P2) - CANARI'S HALF SHIPPED 2026-08-16; TWO REPOS OWE A TIMEOUT.** The contract is
+now written and implemented once: **only an ANSWER may be cached**, an optional decoration degrades
+rather than errors, and the LOG tells the causes apart, never the status code. Canari's three
+outcomes, its 4 s budget and the client half are on
+[core-service](docs/wiki/services/core-service.md#the-avatar-proxy). **Sky and Portail-etu still have
+no timeout at all** - one `AbortSignal.timeout(4000)` each, their own repo and their own deploy - and
+**Le Cercle caches nothing**, which is a merge request and Aurel's decision, never a commit. Table in
+[backlog](docs/wiki/backlog.md). **Decided: four aligned copies, not a shared client.**
 
 **WP-OUTBOX-2 (P2) - an undecided tab leadership is read as "another tab is the leader".**
 `isTabLeader` starts `false` and is only set once the Web Lock resolves, so during boot `runFlush`
@@ -199,11 +198,23 @@ copy.**
 SETUP-4's 2FA, the one step no tool here can answer. Outside the work tree a credential CANNOT be
 committed and `git clean -xdf` cannot reach a profile.
 
-**Owed now:** `recon.mjs` on both pairs (`--rightUrl tauri.localhost` for the phone), then TYPE, READ
-and FWD re-run on the current build, then MUT (MUT-15 and MUT-19 were rewritten with their fixes),
-then the phases that have never run. **A1's APK predates the current bundle** - `frontendDist` is
-`../build`, so the phone serves what is inside its APK and a deploy never reaches it. That is a real
-mixed-fleet state, not an oversight; say which branch each A1 row read.
+**THE CAMPAIGN IS PAUSED ON PURPOSE UNTIL EVERY WORK PACKAGE IS CLOSED** - the user's decision of
+2026-08-16: *"On peut faire tous les WP en attente avant de relancer la campagne de test. Je veux une
+campagne clean, et s'il est necessaire de realiser l'integralite des WP de claude.md, du backlog et
+tout le reste pour ca, faisons le."* A MUT x5 was stopped mid-run at 45/105 for this reason: every
+fix below redeploys prod, and a run straddling a deploy has to be re-attributed. **Nothing measured
+before the last WP lands is a campaign result.** What the stopped run did establish, and is worth
+keeping: MUT-17 now reads `smileOnDeletedPresent: false` (the backlog's deleted-message picker entry
+may already be fixed - confirm before deleting it), MUT-20 is unarmable until a campaign message
+reaches 90 days (earliest 2026-11-09), and MUT-18 is dirty on A1 with an
+`Uncaught TypeError ... 'runCallback'` at `(no url):1:28` that is not yet attributed to the harness
+or to the app.
+
+**Owed once the WPs are closed:** `recon.mjs` on both pairs (`--rightUrl tauri.localhost` for the
+phone), then MUT, TYPE, READ and FWD several clean passes on the final build, then the phases that
+have never run. **A1's APK predates the current bundle** - `frontendDist` is `../build`, so the phone
+serves what is inside its APK and a deploy never reaches it. That is a real mixed-fleet state, not an
+oversight; say which branch each A1 row read.
 
 **Prod IS the test server** and commit+push are authorised so it picks changes up.
 `dev.canari-emse.fr` is a proxied CNAME to the same tunnel, NOT a second environment. The user will

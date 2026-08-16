@@ -196,7 +196,13 @@ reading, since a guard on the button would hide that crash rather than fix it.
 
 ## Outbound connectivity
 
-### P2 - four projects proxy one avatar endpoint, and only Canari calls a transient blip an error
+### P2 - four projects proxy one avatar endpoint, and two of them still have no timeout
+
+**CANARI'S HALF SHIPPED ON 2026-08-16 AND IS NOT PART OF THIS ENTRY ANY MORE** - the contract, the
+three outcomes and the caching rule are on [core-service](services/core-service.md#the-avatar-proxy),
+the story is in `CHANGELOG.md`, the rule is in [durable-rules](durable-rules.md). What is left here
+is the other three, and the reason this entry outlives the fix: **nobody chose the spread**, so it
+will happen again on the next shared solution (see the cross-repo entry below).
 
 **THE IPv6 DIAGNOSIS THAT USED TO BE HERE IS REFUTED. Measured 2026-08-15 from inside the
 containers, and it was wrong.** It said the host has no IPv6 route while DNS hands out AAAA, so every
@@ -223,24 +229,30 @@ not, because the tax is 12 ms.
 **What IS real, and is the actual finding.** Four projects fetch `gallery.mitv.fr/api/users/<id>/avatar`
 with `x-api-key`, each having written its own failure handling:
 
-| project | timeout | on failure |
-| --- | --- | --- |
-| Le Cercle (`lib/server/migallery/index.ts`) | `AbortSignal.timeout(4000)`, justified in a comment | `null` -> initials, one log line that separates *no key* / *legitimate 404* / *unreachable* |
-| Canari (`core-service/users/avatar.service.ts`) | axios `timeout: 5000` | **502 + `logger.error`** |
-| Sky (`routes/api/avatar/[id]/+server.ts`) | **none at all** | generated initials SVG |
-| Portail-etu (`routes/api/users/[userId]/avatar/+server.ts`) | its own `GALLERY_API_URL` | separate again |
+| project | timeout | caches a miss | on failure |
+| --- | --- | --- | --- |
+| Canari (`core-service/users/avatar.service.ts`) | 4 000 ms, stated | **yes** - 10 min absence, 1 h image, bounded | 404 for an absence, 502 `no-store` for a non-answer; `warn` for a blip, `error` only for a refused key |
+| Le Cercle (`lib/server/migallery/index.ts`) | `AbortSignal.timeout(4000)`, justified | no | `null` -> initials, one log line separating *no key* / *legitimate 404* / *unreachable* |
+| Sky (`routes/api/avatar/[id]/+server.ts`) | **none at all** | no | generated initials SVG, `no-store` |
+| Portail-etu (`routes/api/users/[userId]/avatar/+server.ts`) | **none at all** | yes - the shape Canari copied | 404 `no-store` for a non-answer, 502 for a transport failure |
 
-Canari is the only one that turns a transient upstream blip into an ERROR rather than degrading, and
-that is the whole reason only its logs are noisy - the other three reach the same user-visible
-outcome (initials) silently. **Le Cercle's is the version to copy**: a stated budget, a null return,
-and a log line whose wording tells the three causes apart. Sky's missing timeout is the opposite
-risk and is worth fixing on its own.
+**What each still owes**, and none of it is Canari's:
 
-The log-volume half is already fixed: the handler used to pass the whole axios error to the Nest
-logger, printing `util.inspect` of the TLS socket - about 500 lines per occurrence, 5 581 lines from
-eleven incidents, enough to make the service's whole window unreadable. It now also names the user
-and the destination, which makes the line partitionable by subject; it was not, which is why those
-errors could never be attributed to a campaign account or to a stranger.
+- **Sky and Portail-etu have no timeout at all.** One `AbortSignal.timeout(4000)` each, with the
+  budget stated rather than implied. This is the opposite risk from the one that was measured: a
+  request with no deadline cannot degrade, it can only hang. Each is a separate repo and a separate
+  deploy.
+- **Le Cercle caches nothing**, so it re-asks the gallery for a known-absent photo on every render,
+  which is the amplification Canari's cache exists to remove. It is **Aurel's repository**: this
+  travels as a merge request or not at all - never a commit on his `main`.
+- Sky logs its API key's presence at `console.debug` on module load. Harmless, and worth removing
+  with the timeout since the file is being touched anyway.
+
+The log-volume half was already fixed before this: the handler used to pass the whole axios error to
+the Nest logger, printing `util.inspect` of the TLS socket - about 500 lines per occurrence, 5 581
+lines from eleven incidents, enough to make the service's whole window unreadable. It now names the
+user and the destination, which makes the line partitionable by subject; it was not, which is why
+those errors could never be attributed to a campaign account or to a stranger.
 
 ## Interface
 

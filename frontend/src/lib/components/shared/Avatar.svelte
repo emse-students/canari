@@ -4,6 +4,7 @@
   import {
     releaseUserAvatarDisplayUrl,
     resolveUserAvatarDisplayUrl,
+    type AvatarDisplay,
   } from '$lib/utils/userAvatarCache';
 
   interface Props {
@@ -35,11 +36,11 @@
 
   let imageFailed = $state(false);
   let imageLoaded = $state(false);
-  let displaySrc = $state<string | null>(null);
+  /** Null until the cache has answered. NOTHING IS REQUESTED BEFORE THAT - see the effect below. */
+  let display = $state<AvatarDisplay | null>(null);
   let triedDirectFallback = $state(false);
   let displayLabel = $state('');
   let resolveToken = 0;
-  let lastResolvedUserId = $state('');
   const initials = $derived(getInitials(displayLabel));
 
   $effect(() => {
@@ -56,25 +57,22 @@
     });
   });
 
-  $effect(() => {
-    if (lastResolvedUserId !== userId) {
-      lastResolvedUserId = userId;
-      imageFailed = false;
-      imageLoaded = false;
-      triedDirectFallback = false;
-    }
-  });
-
+  // ONE EFFECT, AND IT OWNS EVERY PIECE OF PER-URL STATE. A second effect used to reset the same
+  // flags when `userId` changed, which is the same event by another name - `avatarSrc` derives from
+  // `userId` and from nothing else - so the two raced to reset each other on every switch.
   $effect(() => {
     const httpUrl = avatarSrc;
+    display = null;
     imageFailed = false;
+    imageLoaded = false;
     triedDirectFallback = false;
     let cancelled = false;
     void resolveUserAvatarDisplayUrl(httpUrl).then((resolved) => {
-      if (!cancelled) {
-        displaySrc = resolved;
-        if (resolved?.startsWith('blob:')) imageLoaded = true;
-      }
+      if (cancelled) return;
+      display = resolved;
+      // Bytes already held locally: there is no round trip to wait for, so the initials placeholder
+      // is not shown for one frame before an image that is already here.
+      if (resolved.kind === 'blob') imageLoaded = true;
     });
     return () => {
       cancelled = true;
@@ -96,9 +94,9 @@
   const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'rounded-2xl');
 </script>
 
-{#if imageFailed}
+{#if imageFailed || display?.kind === 'none'}
   <div
-    class="{shapeClasses} shadow-sm ring-1 ring-white/20 flex-shrink-0 select-none {sizeClasses} bg-cn-dark text-cn-yellow flex items-center justify-center font-bold overflow-hidden"
+    class="{shapeClasses} shadow-sm ring-1 ring-white/20 shrink-0 select-none {sizeClasses} bg-cn-dark text-cn-yellow flex items-center justify-center font-bold overflow-hidden"
     title={displayLabel}
     aria-label={`Avatar de ${displayLabel}`}
   >
@@ -106,7 +104,7 @@
   </div>
 {:else}
   <div
-    class="{shapeClasses} shadow-sm ring-1 ring-white/20 flex-shrink-0 {sizeClasses} relative overflow-hidden"
+    class="{shapeClasses} shadow-sm ring-1 ring-white/20 shrink-0 {sizeClasses} relative overflow-hidden"
     title={displayLabel}
     aria-label={`Avatar de ${displayLabel}`}
   >
@@ -119,23 +117,31 @@
         {initials}
       </div>
     {/if}
-    <img
-      src={displaySrc ?? avatarSrc}
-      alt={`Avatar de ${displayLabel}`}
-      class="w-full h-full object-cover select-none transition-opacity duration-150 {imageLoaded
-        ? 'opacity-100'
-        : 'opacity-0'}"
-      onload={() => {
-        imageLoaded = true;
-      }}
-      onerror={() => {
-        if (!triedDirectFallback && displaySrc && displaySrc !== avatarSrc) {
-          triedDirectFallback = true;
-          displaySrc = avatarSrc;
-          return;
-        }
-        imageFailed = true;
-      }}
-    />
+    <!-- `none` is already excluded by the branch above, so this only waits for the answer. -->
+    {#if display}
+      <!-- THE ELEMENT IS NOT RENDERED BEFORE THE CACHE HAS ANSWERED. It used to be created with
+           the HTTP URL straight away and re-pointed at the blob afterwards, so every avatar cost a
+           network request the cache existed to avoid. -->
+      <img
+        src={display.url}
+        alt={`Avatar de ${displayLabel}`}
+        class="w-full h-full object-cover select-none transition-opacity duration-150 {imageLoaded
+          ? 'opacity-100'
+          : 'opacity-0'}"
+        onload={() => {
+          imageLoaded = true;
+        }}
+        onerror={() => {
+          // A blob that will not decode is a damaged cache entry, not an answer about this avatar,
+          // so the network is worth asking once. Anything else is a refusal already established.
+          if (!triedDirectFallback && display?.kind === 'blob') {
+            triedDirectFallback = true;
+            display = { kind: 'direct', url: avatarSrc };
+            return;
+          }
+          imageFailed = true;
+        }}
+      />
+    {/if}
   </div>
 {/if}

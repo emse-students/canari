@@ -53,16 +53,42 @@ export class UsersController {
   /**
    * Get user avatar from external service.
    * Usage: GET /users/{id}/avatar
+   *
+   * THREE OUTCOMES, THREE ANSWERS, AND THE CACHING IS THE POINT OF THE DISTINCTION:
+   *
+   * - the image, cached for a day, as before;
+   * - `absent` - the upstream says this user has no photo - is a real ANSWER and is cached briefly,
+   *   which is what stops a browser re-asking for the same missing face on every single render;
+   * - `unavailable` is not an answer about the avatar, so it is a **502 marked `no-store`**: the
+   *   next request tries again, and nothing downstream remembers a passing outage. Answering 404
+   *   here would be a lie that gets cached, which is the defect this endpoint was fixed of.
+   *
+   * EVERY RESPONSE IS BODYLESS EXCEPT THE IMAGE. A JSON error body on a request an `<img>` made is
+   * what produced THREE console lines for one benign miss - 404, then `ERR_BLOCKED_BY_ORB` (Chrome
+   * refusing to hand a JSON body to an image destination), then `ERR_ABORTED` - all naming the same
+   * URL, and all in the window a test run has to read.
    */
   @Get(':id/avatar')
   async getAvatar(@Param('id') userId: string, @Res() res: Response) {
-    const avatarBuffer = await this.avatarService.fetchUserAvatar(userId);
+    const outcome = await this.avatarService.fetchUserAvatar(userId);
+
+    if (outcome.kind === 'absent') {
+      res.set({ 'Cache-Control': 'public, max-age=600' });
+      res.status(404).end();
+      return;
+    }
+    if (outcome.kind === 'unavailable') {
+      res.set({ 'Cache-Control': 'no-store' });
+      res.status(502).end();
+      return;
+    }
+
     res.set({
-      'Content-Type': 'image/jpeg',
-      'Content-Length': avatarBuffer.length,
+      'Content-Type': outcome.contentType,
+      'Content-Length': outcome.body.length,
       'Cache-Control': 'public, max-age=86400',
     });
-    res.send(avatarBuffer);
+    res.send(outcome.body);
   }
 
   /** Creates a new user from the provided DTO. Restricted to global admins (OIDC flow uses findOrCreateFromOidc internally). */

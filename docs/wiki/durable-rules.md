@@ -792,6 +792,24 @@ The three that generalise beyond it:
   flagged match, never for "clean") still needs an explicit, own TTL - inventing a number rather
   than caching it forever or not at all.
 
+- **ONLY AN ANSWER MAY BE CACHED.** "The upstream says there is none" and "I could not reach the
+  upstream" reach the same screen and must never reach the same cache: the second is not a fact about
+  the subject, so storing it makes a passing outage stick for a whole TTL, and dressing it as the
+  first (a 404 for a timeout) makes it a lie that outlives the incident. Canari's avatar proxy and
+  the link-preview endpoint are the same defect twice, in opposite directions - one cached a refusal
+  it invented, the other cached nothing at all
+  ([core-service](services/core-service.md#the-avatar-proxy)).
+- **AN OPTIONAL DECORATION THAT CANNOT BE FETCHED DEGRADES, IT DOES NOT ERROR** - and the LOG is
+  where the causes are told apart, never the status code. A blip is a `warn`; a credential of ours
+  being refused is an `error`, because only one of them needs a human.
+- **A CACHE THAT ONLY REMEMBERS SUCCESSES AMPLIFIES EVERY FAILURE.** The absent case is usually the
+  common one (40/40 accounts here have no photo), so a miss that is not remembered is a request
+  repeated for ever, per render, per viewer - which is what turns ONE transient network fault into a
+  burst of failures rather than a line. Measured twice: 479 recorded 502s from one outbound failure
+  on the portal, and two requests per faceless avatar per mount on the web client.
+- **OUR CREDENTIALS ARE NOT THE USER'S, SO OUR UPSTREAM'S 401 MUST NOT BECOME THEIRS.** A proxy that
+  forwards an upstream 401 hands the browser the one status the standing rule lets log a user out.
+
 ## Service-to-service calls -> [api-surface](protocols/api-surface.md#internal-cross-service-calls)
 
 - **An internal call carries the callee's global prefix, or it is a 404 nobody reads.** Every Nest

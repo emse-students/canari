@@ -220,6 +220,10 @@ export class PushController {
         { signal: AbortSignal.timeout(4_000) }
       );
       if (!upstream.ok) {
+        // Core answers 404 for "this user has no photo" and 502 for "the gallery could not be
+        // reached"; both are forwarded as they are, because the caller's fallback (Android draws
+        // initials) is the same either way and the DISTINCTION is already made in core's log.
+        // Only the status travels - never a body, which no native reader parses.
         res.status(upstream.status).send();
         return;
       }
@@ -231,7 +235,14 @@ export class PushController {
           'Cache-Control': 'public, max-age=3600',
         })
         .send(buffer);
-    } catch {
+    } catch (e) {
+      // A SWALLOWED BRANCH LOGS. This one used to answer 503 in silence, so a notification showing
+      // initials on every phone could not be told apart from a user who simply has no photo - and
+      // core-service is on the other side of an internal hop, which is a failure this service is
+      // the only one placed to see.
+      this.logger.warn(
+        `[PUSH_AVATAR] core-service unreachable for ${targetUserId}: ${e instanceof Error ? `${e.name} ${e.message}` : String(e)}`
+      );
       res.status(503).send();
     }
   }
