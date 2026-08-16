@@ -582,6 +582,17 @@ answer: it compares, sends a `history_bundle` filtered by id for what the reques
 a bundle asks for nothing, so the exchange cannot re-enter itself - the WP-RETRANSMIT-1 lesson,
 applied by construction.
 
+**Leg 4 is a statement about the ANSWERER, not about the messages.** `history_coverage
+{from, to, since, coveredFrom}` closes the exchange when - and only when - the responder's own
+history begins later than the `since` it was asked for. It is the fourth reconciliation trigger: a
+phone keeping five years asking a browser keeping ninety days gets a clipped answer every time by
+construction, and without this frame that is indistinguishable from "the conversation has no more
+past". The asker then elects again, EXCLUDING every member that has stated a coverage, and stops
+when the server reports `no_peer_online` with a positive `excludedOnline` - every reachable member
+has answered. The walk removes one member per step and the proof is delivered rather than inferred,
+which is what makes it terminate without a clock. Full reasoning in
+[history-reconciliation](../../protocols/history-reconciliation.md#the-fourth-trigger-an-answer-that-does-not-reach-far-enough-back).
+
 **Every ask states its own window and the answer is clipped to it.** `since` rides on all three
 probe kinds and on the pull. Four rules hold the whole thing together and none may be undone: it is
 STATED by the asker and never recomputed by the answerer (the window slides, so two devices deriving

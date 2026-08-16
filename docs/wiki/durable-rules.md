@@ -456,6 +456,25 @@ carry in the head:
   there is the drain waiting on itself. It is a BARRIER (`waitUntilIdle` resolves on the drain loop
   ending) and never a delay.
   [history-reconciliation](protocols/history-reconciliation.md).
+- **AN ANSWER MUST STATE THE RANGE IT VOUCHES FOR, OR A DEVICE THAT SIMPLY KEEPS LESS IS
+  INDISTINGUISHABLE FROM A CONVERSATION WITH NO PAST.** A browser keeps 90 days and a phone 5 years
+  BY DESIGN, so a clipped answer is the normal case, not a fault - and the asker sees only an
+  absence, which is evidence of nothing. Believing it means losing years silently; re-asking on it
+  never terminates, because the same peer is elected and only a counter or a clock could stop it.
+  The answerer already knows where its own memory begins (`history_coverage.coveredFrom`), so it
+  says so - and only when that is ABOVE the `since` it was asked for, or silence stops meaning "I
+  cover you" and the fast path costs two frames instead of one. **It is sent even when the two state
+  keys MATCH: agreement is not completeness**, two devices can hold the same set over the compared
+  window and both be missing everything below it. **The walk that follows terminates on a delivered
+  fact, never on a count**: each election EXCLUDES the members already heard from, so one member
+  leaves the reachable set per step, and the server answers `no_peer_online` with a positive
+  `excludedOnline` when there is nobody left - the proof. Three things keep it sound: a stated
+  coverage is a FACT for the session (a retention window only slides forward), so no chase lifecycle
+  is needed; an ORDINARY reconciliation must never carry an exclusion, because it is about CONTENT
+  and a short-memoried peer still holds every new message; and a server that re-elects an excluded
+  member must stop the walk LOUDLY, since a step that adds nobody is the one shape that would not
+  terminate.
+  [history-reconciliation](protocols/history-reconciliation.md#the-fourth-trigger-an-answer-that-does-not-reach-far-enough-back).
 - **A FRAME READ BY ONE PATH MUST BE MARKED READ FOR EVERY OTHER PATH, OR EACH DEVICE REPORTS ITS OWN
   TRAFFIC AS LOSS.** Live delivery and the queue drain decrypt frames the shared archive also holds,
   and neither moved this device's position in that archive. The replay then walked the same row,

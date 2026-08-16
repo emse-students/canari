@@ -7,6 +7,7 @@ import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
   sendFullHistoryBundle,
   sendHistoryBundleForIds,
+  sendHistoryCoverage,
   sendHistoryDigestRequest,
   sendHistoryPull,
   sendHistoryRangeBundle,
@@ -1060,6 +1061,25 @@ export async function handleHistoryRequest(params: {
     return;
   }
 
+  /**
+   * States where OUR completeness begins, when the asker asked from below it - and says nothing
+   * otherwise.
+   *
+   * Called at every point this device actually ANSWERS, and at none of the points where it stays
+   * silent so another member takes over: silence means "ask somebody else", and a coverage line
+   * attached to it would tell the asker we answered when we did not. Awaited so it lands after
+   * whatever the answer was, which is what makes it read as the end of one.
+   */
+  const stateOurCoverage = async (since: number): Promise<void> => {
+    const coveredFrom = await historyRangeStartFor(groupId, storage);
+    if (coveredFrom <= since) return;
+    await sendHistoryCoverage(
+      groupId,
+      { from: selfIdentity, to: requesterIdentity, since, coveredFrom },
+      deps
+    );
+  };
+
   if (probe.kind === 'range') {
     await sendHistoryRangeBundle(groupId, deps, {
       to: requesterIdentity,
@@ -1067,6 +1087,7 @@ export async function handleHistoryRequest(params: {
       limit: probe.limit,
       since: probe.since,
     }).catch((e) => log(`[HISTORY_RANGE] Answer failed for ${short}...: ${String(e)}`));
+    await stateOurCoverage(probe.since);
     return;
   }
 
@@ -1084,6 +1105,12 @@ export async function handleHistoryRequest(params: {
       log(
         `[HISTORY_REQ] ${short}... same state as ${requesterIdentity} (${ourKey}) - nothing to do`
       );
+      // AGREEMENT IS NOT COMPLETENESS, and this is the one case where nothing else would say so. Two
+      // devices can hold exactly the same messages over the asker's window and both be missing the
+      // years below OUR window - the key is computed over what each store holds, so it agrees
+      // happily. Stating our coverage here is what lets the asker go and ask a member with a longer
+      // memory instead of reading a match as "I am complete".
+      await stateOurCoverage(probe.since);
       return;
     }
 
@@ -1149,4 +1176,9 @@ export async function handleHistoryRequest(params: {
   log(
     `[HISTORY_REQ] ${short}... diff with ${requesterIdentity}: ${idsToSend.length} to send, ${idsToPull.length + diff.pullPrefixes.length} to pull${isEmptyHistoryDiff(diff) ? ' (identical stores)' : ''}`
   );
+
+  // Last, after everything this device had to give. The diff above names what we hold and it does
+  // not, which says nothing about the range below OUR window - a device that pruned to ninety days
+  // has an honest, complete answer for the last ninety days and none at all before that.
+  await stateOurCoverage(since);
 }

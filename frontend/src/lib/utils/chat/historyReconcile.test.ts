@@ -14,6 +14,8 @@ import {
   retryDeferredReconciliations,
   deferredReconciliations,
   forgetGroupReconciliation,
+  noteCoverageShortfall,
+  statedCoverage,
   resetHistoryReconciliation,
   setHistoryProbeSender,
   connectionSweepDecision,
@@ -35,7 +37,7 @@ const OTHER = 'g2';
  * about the mailbox, and one that is opens the gate itself.
  */
 function service(
-  outcome: { noPeerOnline?: boolean } | Error = {},
+  outcome: { noPeerOnline?: boolean; target?: string; excludedOnline?: number } | Error = {},
   waitForMessageQueueIdle = vi.fn().mockResolvedValue(undefined)
 ) {
   return {
@@ -557,5 +559,153 @@ describe('the one-shot audit', () => {
     expect(groupsOwingAudit('other-user', DEVICE, LOCAL)).toEqual(LOCAL);
     resetAuditRecord(USER, 'other-device');
     resetAuditRecord('other-user', DEVICE);
+  });
+});
+
+/**
+ * The fourth trigger: an answer that does not reach as far back as the ask.
+ *
+ * Every case here is about TERMINATION, because that is the only hard part. A phone keeping five
+ * years and a browser keeping ninety days produce a clipped answer on every single reconciliation,
+ * by construction - so "ask again" has to stop on a fact, and these pin which fact.
+ */
+describe('noteCoverageShortfall', () => {
+  const DAY = 86_400_000;
+  const NOW = 1_700_000_000_000;
+  /** What this device asked from, and what a peer's coverage is measured against. */
+  const SINCE = NOW - 5 * 365 * DAY;
+  /** A browser's answer: complete for ninety days, and not one hour before that. */
+  const NINETY_DAYS = NOW - 90 * DAY;
+
+  const W1 = 'u1:browser';
+  const W2 = 'u2:phone';
+
+  it('elects again, EXCLUDING the member that said it cannot cover the range', async () => {
+    const mls = service({ target: W2 });
+
+    await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
+
+    expect(mls.sendHistoryRequest).toHaveBeenCalledWith(GROUP, { exclude: [W1] });
+    expect(probe).toHaveBeenCalledWith(GROUP);
+  });
+
+  it('records the claim but chases nothing when the peer DOES cover what we asked', async () => {
+    // Coverage at or below our window is the answer we wanted. It is still recorded - the claim is
+    // a fact about that member - but there is nothing left to look for.
+    const mls = service();
+
+    await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: SINCE }, log);
+
+    expect(mls.sendHistoryRequest).not.toHaveBeenCalled();
+    expect(statedCoverage(GROUP)).toEqual([[W1, SINCE]]);
+  });
+
+  it('STOPS on the proof: no peer online, and every online one already answered', async () => {
+    // This is the terminator. `excludedOnline > 0` is the server saying "everybody reachable has
+    // already told you" - a fact it alone holds, delivered rather than waited out.
+    const mls = service({ noPeerOnline: true, excludedOnline: 2 });
+
+    await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
+
+    expect(probe).not.toHaveBeenCalled();
+    // NOT deferred: no edge would ever discharge it, because nothing about those members will
+    // change. The next connection compares again from scratch.
+    expect(deferredGroups()).toEqual([]);
+  });
+
+  it('defers instead when nobody was online at all - a different fact, same status', async () => {
+    const mls = service({ noPeerOnline: true, excludedOnline: 0 });
+
+    await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
+
+    expect(deferredReconciliations()).toEqual([[GROUP, 'no-peer-online']]);
+  });
+
+  it('walks each member at most once, so the exclusion set only grows', async () => {
+    const mls = service();
+    mls.sendHistoryRequest
+      .mockResolvedValueOnce({ target: W2 })
+      .mockResolvedValueOnce({ noPeerOnline: true, excludedOnline: 2 });
+
+    await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
+    await noteCoverageShortfall(mls, GROUP, W2, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
+
+    expect(mls.sendHistoryRequest.mock.calls.map(([, opts]) => opts.exclude)).toEqual([
+      [W1],
+      [W1, W2],
+    ]);
+  });
+
+  it('stops loudly when the server elects a member it was asked to skip', async () => {
+    // An older build mid-rollout ignores `exclude`. Left alone it is the one shape that would not
+    // terminate: a step that re-draws a member already in the set advances nothing.
+    const mls = service({ target: W1 });
+
+    await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
+
+    expect(probe).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join('\n')).toContain('which we asked it to skip');
+  });
+
+  it('releases the coalescing window, so the ask it answers cannot suppress the next step', async () => {
+    // The window collapses a BURST of triggers into one ask. Once that ask has been answered it has
+    // done its job, and holding it would swallow the very step this edge exists to take.
+    const mls = service({ target: W2 });
+    await reconcileGroup(mls, GROUP, log);
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(1);
+
+    await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
+
+    expect(mls.sendHistoryRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('never lets an ORDINARY reconciliation carry an exclusion', async () => {
+    // The claims are about COVERAGE. An ordinary reconciliation is about CONTENT, and a member with
+    // a short memory still receives every new message - excluding it there would skip a real repair.
+    const mls = service({ target: W2 });
+    await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
+    mls.sendHistoryRequest.mockClear();
+
+    await reconcileGroup(mls, GROUP, log, Date.now() + 60_000);
+
+    expect(mls.sendHistoryRequest).toHaveBeenCalledWith(GROUP, { exclude: [] });
+  });
+
+  it('re-elects a member whose claim no longer falls short - our window can have moved', async () => {
+    // A claim is measured against the window it was given, and ours slides: either side of midnight
+    // is enough. Excluding on "has spoken" rather than on "cannot help" would skip exactly the
+    // member the walk is looking for.
+    const mls = service({ target: W2 });
+    await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
+    mls.sendHistoryRequest.mockClear();
+
+    // A second answer, compared against a window that now opens ABOVE what W1 said it holds - so W1
+    // is no longer short of us and must be electable again.
+    await noteCoverageShortfall(
+      mls,
+      GROUP,
+      W2,
+      { since: NINETY_DAYS + DAY, coveredFrom: NOW },
+      log
+    );
+
+    expect(mls.sendHistoryRequest).toHaveBeenCalledWith(GROUP, { exclude: [W2] });
+  });
+
+  it('forgets the claims with the conversation they describe', async () => {
+    const mls = service({ target: W2 });
+    await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
+    expect(statedCoverage(GROUP)).toHaveLength(1);
+
+    forgetGroupReconciliation(GROUP);
+
+    expect(statedCoverage(GROUP)).toEqual([]);
+  });
+
+  it('keeps the claims of one conversation out of another', async () => {
+    const mls = service({ target: W2 });
+    await noteCoverageShortfall(mls, GROUP, W1, { since: SINCE, coveredFrom: NINETY_DAYS }, log);
+
+    expect(statedCoverage(OTHER)).toEqual([]);
   });
 });

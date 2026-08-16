@@ -814,6 +814,44 @@ export async function sendHistoryDigestRequest(
 }
 
 /**
+ * Tells the asker where this device's completeness BEGINS, when that is later than the instant it
+ * asked from.
+ *
+ * **This is the fact that makes "the answer was shorter than I asked for" decidable.** A phone
+ * asking from five years back and a browser keeping ninety days will produce a clipped answer every
+ * single time, by construction and not by fault. Without this frame the asker sees only an absence,
+ * and an absence cannot be told apart from "the conversation has no more history" - so it either
+ * believes itself complete, or re-asks the same peer for ever. Neither terminates on anything.
+ *
+ * The responder KNOWS its own window. Making the asker discover it by failing is exactly the shape
+ * the durable rule forbids, so the discriminator is carried from where it is already known.
+ *
+ * **Sent LAST and only when narrower.** Last, because MLS orders one sender's frames: everything the
+ * responder could give has already been sent when this lands, so it reads as *"that is all, and I am
+ * complete only from here"*. Only when narrower, because silence must keep meaning *"I cover what
+ * you asked"* - two devices of the same platform are the common case and must still cost one frame.
+ */
+export async function sendHistoryCoverage(
+  groupId: string,
+  answer: { from: string; to: string; since: number; coveredFrom: number },
+  { mlsService, log }: HistorySendDeps
+): Promise<void> {
+  const bytes = encodeAppMessage(mkSystem('history_coverage', JSON.stringify({ ...answer })));
+  try {
+    await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
+    log(
+      `[HISTORY_COVERAGE] Told ${answer.to} we are complete only from ${new Date(answer.coveredFrom).toISOString()} in ${groupId.slice(0, 8)}…`
+    );
+  } catch (e) {
+    // Losing this leaves the asker believing the answer covered its window - which is the state this
+    // frame exists to end - so it is never swallowed silently.
+    log(
+      `[HISTORY_COVERAGE] Could not state our coverage to ${answer.to} for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`
+    );
+  }
+}
+
+/**
  * Asks the elected responder for a bounded slice of history OLDER than anything this device holds -
  * the scrollback, driven by a reader rather than by a connection.
  *

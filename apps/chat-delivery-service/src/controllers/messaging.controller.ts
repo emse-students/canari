@@ -137,7 +137,13 @@ export class MessagingController {
   async notifyHistoryRequest(
     @Headers('x-user-id') authUserId: string | undefined,
     @Body()
-    body: { groupId: string; requesterUserId: string; requesterDeviceId: string }
+    body: {
+      groupId: string;
+      requesterUserId: string;
+      requesterDeviceId: string;
+      /** Member keys (`userId:deviceId`) already heard from - see `NotifyHistoryRequestBody`. */
+      exclude?: string[];
+    }
   ) {
     return this.messagingService.notifyHistoryRequest(authUserId, body);
   }

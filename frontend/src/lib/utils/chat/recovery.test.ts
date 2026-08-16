@@ -78,7 +78,9 @@ describe('requestReAdd', () => {
     // External join lands at the current epoch without the peer-driven history bundle, so the
     // group is reconciled. Nothing durable records that: the comparison is cheap enough to re-run
     // on the next connection, and a note written here could not be discharged from anywhere.
-    expect(deps.mlsService.sendHistoryRequest).toHaveBeenCalledWith('g1');
+    // No exclusion: this is an ordinary trigger, and only a coverage chase has a reason to skip a
+    // member it has already heard from.
+    expect(deps.mlsService.sendHistoryRequest).toHaveBeenCalledWith('g1', { exclude: [] });
     expect(probeSender).toHaveBeenCalledWith('g1');
     // Not-ready marker cleared on success.
     expect(localStorage.getItem('mls_not_ready_since:user-a:g1')).toBeNull();

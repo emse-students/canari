@@ -142,12 +142,6 @@ methodology rule 20 in [testing-methodology](docs/wiki/testing-methodology.md).
 **Owed: MUT-19 on the deployed bundle, then delete the five residue rows on W1 by id** (an allowlist
 of exactly those five, each proven MUT-19's) so `recon.mjs` reads `RECONCILED` again.
 
-**The fourth reconciliation trigger** the user approved - *"sonder aussi quand la reponse recue est
-plus courte que la fenetre demandee"*. NOT implemented; trace and design input in
-[history-reconciliation](docs/wiki/protocols/history-reconciliation.md). **The hard part is
-TERMINATION**: a phone (5 y) asking a browser (90 d) gets a clipped answer by construction every
-time, so a naive re-ask is unbounded. Terminate on a proof - every current member has answered.
-
 **The device verification ladder.** Everything native is verified by COMPILING, which proves nothing
 about running; the owed list is [device-verification](docs/wiki/device-verification.md). Android
 passed on v0.11.7; **iOS has never run one check on hardware**. Owed on both: H (deep link into the

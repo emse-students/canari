@@ -149,6 +149,30 @@ export interface NotifyWelcomeRequestBody {
   requesterDeviceId: string;
 }
 
+/**
+ * The most members one history election may be asked to skip.
+ *
+ * A chase excludes exactly one member per step, so this bounds nothing a real conversation does -
+ * it bounds what a malformed or hostile client can make the server hold and compare per request.
+ */
+const MAX_HISTORY_EXCLUSIONS = 128;
+
+export interface NotifyHistoryRequestBody extends NotifyWelcomeRequestBody {
+  /**
+   * Member keys (`userId:deviceId`) this requester has already heard from, and does not want elected
+   * again.
+   *
+   * It exists so a requester chasing a gap can walk its members instead of re-drawing the same one:
+   * a device whose window is narrower than the range asked for says so, and the next election skips
+   * it. **The set only ever grows within one chase, which is what bounds it** - see
+   * `historyReconcile.ts`.
+   *
+   * The server reads it as an opaque set of keys. It never learns why a member was excluded, and it
+   * is not an authorisation boundary: excluding a member only removes it from THIS election.
+   */
+  exclude?: string[];
+}
+
 /** One group cursor for batch history fetch. */
 export interface HistoryBatchRequestItem {
   groupId: string;
@@ -1476,13 +1500,32 @@ export class MessagingService {
    */
   async notifyHistoryRequest(
     authUserIdRaw: string | undefined,
-    body: NotifyWelcomeRequestBody
-  ): Promise<{ status: string; target?: string }> {
+    body: NotifyHistoryRequestBody
+  ): Promise<{ status: string; target?: string; excludedOnline?: number }> {
     const traceId = this.makeTraceId('history-req');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
     this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'HISTORY_REQ');
+
+    // Members this requester has already heard from. Compared case-insensitively because the client
+    // builds the key from its MLS identity (`digestIdentity`, which lower-cases the user) while the
+    // membership set is stored as it was written - two spellings of one fact, and a mismatch here
+    // would silently re-elect the member the requester just excluded.
+    const rawExclude = (Array.isArray(body.exclude) ? body.exclude : []).filter(
+      (k): k is string => typeof k === 'string' && k.includes(':') && k.length <= 128
+    );
+    if (rawExclude.length > MAX_HISTORY_EXCLUSIONS) {
+      // A chase excludes at most one member per step, so a list longer than any group's membership
+      // is a client fault rather than a big conversation. Truncating silently would turn it into a
+      // member elected twice and a chase that looks like it terminated on a proof it never had.
+      this.logger.warn(
+        `[HISTORY_REQ][${traceId}] exclude list truncated ${rawExclude.length} -> ${MAX_HISTORY_EXCLUSIONS} group=${groupId} requester=${requesterUserId}:${requesterDeviceId}`
+      );
+    }
+    const excluded = new Set(
+      rawExclude.slice(0, MAX_HISTORY_EXCLUSIONS).map((k) => k.toLowerCase())
+    );
 
     let members: string[] = await this.redis.smembers(`group:members:${groupId}`);
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
@@ -1517,11 +1560,23 @@ export class MessagingService {
       [members[i], members[j]] = [members[j], members[i]];
     }
 
+    // How many members were ONLINE and skipped only because the requester had already heard from
+    // them. It is the whole point of the exclusion list: `no_peer_online` with a positive count
+    // means *every reachable member has answered you*, which is the requester's termination proof,
+    // and `no_peer_online` with zero means *nobody was there*, which is a different fact answered by
+    // a different edge. A count rather than a second status, so the two are told apart by evidence
+    // and not by prose.
+    let excludedOnline = 0;
+
     for (const member of members) {
       if (member === senderKey) continue;
       const [memberUserId, memberDeviceId] = member.split(':');
       if (!memberUserId || !memberDeviceId) continue;
       const isOnline = await this.redis.exists(`user:online:${memberUserId}:${memberDeviceId}`);
+      if (isOnline && excluded.has(member.toLowerCase())) {
+        excludedOnline++;
+        continue;
+      }
       if (isOnline) {
         await this.redis.publish(
           'chat:messages',
@@ -1544,9 +1599,9 @@ export class MessagingService {
       }
     }
     this.logger.log(
-      `[HISTORY_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey}`
+      `[HISTORY_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} excludedOnline=${excludedOnline}`
     );
-    return { status: 'no_peer_online' };
+    return { status: 'no_peer_online', excludedOnline };
   }
 
   /**

@@ -110,7 +110,7 @@ describe('MessagingService - notifyHistoryRequest', () => {
 
     const res = await service.notifyHistoryRequest('reqU', body);
 
-    expect(res).toEqual({ status: 'no_peer_online' });
+    expect(res).toEqual({ status: 'no_peer_online', excludedOnline: 0 });
     expect(redis.publish).not.toHaveBeenCalled();
   });
 
@@ -120,7 +120,7 @@ describe('MessagingService - notifyHistoryRequest', () => {
 
     const res = await service.notifyHistoryRequest('reqU', body);
 
-    expect(res).toEqual({ status: 'no_peer_online' });
+    expect(res).toEqual({ status: 'no_peer_online', excludedOnline: 0 });
     expect(redis.publish).not.toHaveBeenCalled();
   });
 
@@ -141,6 +141,54 @@ describe('MessagingService - notifyHistoryRequest', () => {
     const res = await service.notifyHistoryRequest(undefined, body);
 
     expect(res).toEqual({ status: 'forwarded', target: 'ua:da' });
+  });
+
+  it('elects a member the requester has not heard from yet', async () => {
+    redis.smembers.mockResolvedValue(['ua:da', 'ub:db']);
+    redis.exists.mockResolvedValue(1);
+
+    const res = await service.notifyHistoryRequest('reqU', { ...body, exclude: ['ua:da'] });
+
+    expect(res).toEqual({ status: 'forwarded', target: 'ub:db' });
+  });
+
+  it('matches an exclusion case-insensitively, because the client keys it off its MLS identity', async () => {
+    // `digestIdentity` lower-cases the user half; the membership set holds it as it was written. Two
+    // spellings of one fact - and a mismatch would re-elect exactly the member just excluded.
+    redis.smembers.mockResolvedValue(['UA:da']);
+    redis.exists.mockResolvedValue(1);
+
+    const res = await service.notifyHistoryRequest('reqU', { ...body, exclude: ['ua:da'] });
+
+    expect(res).toEqual({ status: 'no_peer_online', excludedOnline: 1 });
+    expect(redis.publish).not.toHaveBeenCalled();
+  });
+
+  it('counts the online members it skipped - that count IS the requester termination proof', async () => {
+    // `no_peer_online, excludedOnline > 0` says "every reachable member has answered you", which
+    // ends a chase. `excludedOnline === 0` says "nobody was there", which is answered by a different
+    // edge. Same status, two facts, told apart by evidence rather than by prose.
+    redis.smembers.mockResolvedValue(['ua:da', 'ub:db']);
+    redis.exists.mockResolvedValue(1);
+
+    const res = await service.notifyHistoryRequest('reqU', {
+      ...body,
+      exclude: ['ua:da', 'ub:db'],
+    });
+
+    expect(res).toEqual({ status: 'no_peer_online', excludedOnline: 2 });
+    expect(redis.publish).not.toHaveBeenCalled();
+  });
+
+  it('does not count an OFFLINE excluded member as answered', async () => {
+    // The count means "reachable and already heard from". Counting an offline member would let a
+    // chase claim a proof it never had, and stop one election short of the member that could help.
+    redis.smembers.mockResolvedValue(['ua:da']);
+    redis.exists.mockResolvedValue(0);
+
+    const res = await service.notifyHistoryRequest('reqU', { ...body, exclude: ['ua:da'] });
+
+    expect(res).toEqual({ status: 'no_peer_online', excludedOnline: 0 });
   });
 
   it('randomizes the responder so retries rotate past a frozen-online peer', async () => {

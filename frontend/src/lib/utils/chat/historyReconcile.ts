@@ -33,6 +33,9 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
  *
  * - **the triggers**, which are all state EDGES - a connection, a fresh join, a frame that could not
  *   be decrypted, a peer coming back online. The next edge IS the retry, so there is no retry;
+ * - **one further edge raised by an ANSWER rather than by this device**: a peer that says its own
+ *   history does not reach as far back as we asked. See {@link noteCoverageShortfall}, which is the
+ *   only walk here and the only one that needed a termination proof;
  * - **a coalescing window**, so a replay that fails on forty frames of one group asks once;
  * - **the mailbox barrier**: no ask leaves while this device still has inbound frames to apply.
  *   Reconciliation is meant to be EXCEPTIONAL, and a device that compares itself against a peer
@@ -91,6 +94,22 @@ type DeferredReason =
 
 /** Groups whose reconciliation could not be attempted, with what is blocking it. */
 const deferred = new Map<string, DeferredReason>();
+
+/**
+ * What each member has told us about where its OWN completeness begins, per group.
+ *
+ * **A fact, not a chase state, and that is what keeps it from needing a lifecycle.** A device states
+ * its coverage as the later of the shared floor and its own retention window, and a retention window
+ * only ever slides FORWARD - so a member that says "I am complete from ninety days ago" can never
+ * later cover more of the past. The claim is therefore sound for as long as the session lasts, and
+ * nothing has to decide when to forget it or whether a chase is still open.
+ *
+ * It is read at exactly one moment: building the exclusion list for the next election of a coverage
+ * chase. It is deliberately NOT consulted by an ordinary reconciliation - that one is about CONTENT,
+ * and a member with a short memory still receives every new message and is a perfectly good peer to
+ * compare the recent past against.
+ */
+const coverageStated = new Map<string, Map<string, number>>();
 
 /**
  * Sends this device's state key for a group, resolving `true` when it went out.
@@ -376,7 +395,12 @@ export async function reconcileGroup(
   mlsService: Pick<IMlsService, 'sendHistoryRequest' | 'waitForMessageQueueIdle'>,
   groupId: string,
   log: (msg: string) => void,
-  now: number = Date.now()
+  now: number = Date.now(),
+  /**
+   * Members not to elect, because they have already told us their coverage. Empty for every
+   * ordinary trigger - only a coverage chase walks the membership, and only it has a reason to.
+   */
+  exclude: readonly string[] = []
 ): Promise<boolean> {
   const short = groupId.slice(0, 8);
   if (recentlyAsked(groupId, now)) return false;
@@ -420,7 +444,7 @@ export async function reconcileGroup(
   // the election is an MLS frame every member decrypts, for an exchange that was never started.
   let outcome;
   try {
-    outcome = await mlsService.sendHistoryRequest(groupId);
+    outcome = await mlsService.sendHistoryRequest(groupId, { exclude: [...exclude] });
   } catch (e) {
     // A THROW MEANS IT NEVER LEFT THE DEVICE - offline, DNS, TLS, a 502 from the proxy, an abort.
     // None of them is an answer about anybody else, so nothing is recorded about the peers.
@@ -432,11 +456,35 @@ export async function reconcileGroup(
   }
 
   if (outcome?.noPeerOnline) {
+    asked.delete(groupId);
+    if (outcome.excludedOnline > 0) {
+      // THE TERMINATION PROOF, and the reason this walk cannot run away. Every member that was
+      // reachable has already stated its coverage, so there is nobody left who could close the gap -
+      // and that is a fact the server delivered, not a duration we waited out. It is NOT a deferral:
+      // no edge would discharge it, because nothing about those members is going to change. The next
+      // connection compares again from scratch, which is where a member with a longer memory gets
+      // its chance.
+      log(
+        `[HISTORY_RECONCILE] every reachable member (${outcome.excludedOnline}) has stated its coverage for ${short}… - nothing more to ask`
+      );
+      return false;
+    }
     // The server elects the responder, so it already knows there was none. Remembered only so the
     // peer-online edge can pick it up - it is not evidence that anything is missing.
-    asked.delete(groupId);
     deferred.set(groupId, 'no-peer-online');
     log(`[HISTORY_RECONCILE] no member online for ${short}… - will ask when one returns`);
+    return false;
+  }
+
+  if (exclude.length > 0 && outcome?.target && excludes(exclude, outcome.target)) {
+    // THE SERVER ELECTED SOMEBODY WE ASKED IT TO SKIP, which can only mean it does not honour the
+    // exclusion - an older build, mid-rollout. Left alone this is the one shape that would not
+    // terminate: the walk advances by adding one member per step, and a step that re-draws a member
+    // already in the set adds nothing. So it stops here, loudly, rather than looping politely.
+    asked.delete(groupId);
+    log(
+      `[HISTORY_COVERAGE] election for ${short}… returned ${outcome.target}, which we asked it to skip - the coverage walk stops here`
+    );
     return false;
   }
 
@@ -456,6 +504,82 @@ export async function reconcileGroup(
   deferred.delete(groupId);
   log(`[HISTORY_RECONCILE] asked ${short}… whether we hold the same history`);
   return true;
+}
+
+/** Whether `member` is in `exclude`, comparing the two spellings one identity has. */
+function excludes(exclude: readonly string[], member: string): boolean {
+  const wanted = member.toLowerCase();
+  return exclude.some((k) => k.toLowerCase() === wanted);
+}
+
+/**
+ * A peer answered, and told us its own history does not reach as far back as we asked - so we ask
+ * SOMEBODY ELSE, and we stop when there is nobody else to ask.
+ *
+ * **THE FOURTH TRIGGER.** The other three are things this device notices about itself; this one is
+ * the only edge raised by an ANSWER. It exists because a clipped answer is the normal case rather
+ * than a fault: a phone keeping five years and a browser keeping ninety days will produce one every
+ * single time they reconcile, and until now the phone had no way to tell that apart from "the
+ * conversation simply has no more history".
+ *
+ * **WHY IT TERMINATES**, which is the whole difficulty and the reason it was specified before it was
+ * built. A naive re-ask is unbounded: the same peer is elected, gives the same clipped answer, and
+ * the only thing that could ever stop it is a counter or a clock. Two facts replace both:
+ *
+ *  - the answer STATES where the answerer's completeness begins, so "shorter than I asked for" is a
+ *    comparison of two numbers rather than a guess made from an absence;
+ *  - the next election EXCLUDES every member that has stated one, so each step of the walk removes
+ *    exactly one member from the reachable set. The set is finite and only ever shrinks, and the
+ *    server says when it is empty - `no_peer_online` with a positive `excludedOnline`. That is the
+ *    proof, and it is delivered rather than inferred.
+ *
+ * So the walk visits each member at most once and ends on a fact. Nothing here is scheduled, nothing
+ * is retried, and being wrong about any of it costs elections, never a message.
+ *
+ * A member whose coverage turns out to be adequate simply says nothing - silence is what "I cover
+ * what you asked" means - so the walk ends there too, with no state to unwind.
+ */
+export async function noteCoverageShortfall(
+  mlsService: Pick<IMlsService, 'sendHistoryRequest' | 'waitForMessageQueueIdle'>,
+  groupId: string,
+  from: string,
+  coverage: { since: number; coveredFrom: number },
+  log: (msg: string) => void
+): Promise<void> {
+  const short = groupId.slice(0, 8);
+  const stated = coverageStated.get(groupId) ?? new Map<string, number>();
+  stated.set(from.toLowerCase(), coverage.coveredFrom);
+  coverageStated.set(groupId, stated);
+
+  if (coverage.coveredFrom <= coverage.since) {
+    // It covers what we want after all - our window may have moved since the ask (either side of
+    // midnight is enough). Recorded, not chased.
+    return;
+  }
+
+  const gapDays = Math.round((coverage.coveredFrom - coverage.since) / 86_400_000);
+  log(
+    `[HISTORY_COVERAGE] ${from} covers ${short}… only from ${new Date(coverage.coveredFrom).toISOString()} - ${gapDays} d short of what we asked, looking for another member`
+  );
+
+  // THE ASK THIS ANSWERS IS OVER, so the window that collapses a burst of triggers into one ask has
+  // done its job and must not now suppress the next step of the walk. Releasing it here is the same
+  // move every other "this ask produced no probe" path already makes, for the same reason.
+  asked.delete(groupId);
+
+  // ONLY THE MEMBERS THAT FELL SHORT OF *THIS* ASK. A member states its coverage against the window
+  // it was given, and ours can have moved since - either side of midnight is enough - so a claim
+  // recorded as a shortfall an hour ago may cover us now. Excluding on "has spoken" rather than on
+  // "cannot help" would skip exactly the member the walk is looking for.
+  const shortOfUs = [...stated]
+    .filter(([, from]) => from > coverage.since)
+    .map(([member]) => member);
+  await reconcileGroup(mlsService, groupId, log, Date.now(), shortOfUs);
+}
+
+/** What each member has stated about its coverage of a group. Exposed for tests and diagnostics. */
+export function statedCoverage(groupId: string): Array<[string, number]> {
+  return [...(coverageStated.get(groupId) ?? new Map())];
 }
 
 /**
@@ -573,10 +697,12 @@ export function deferredReconciliations(): Array<[string, DeferredReason]> {
 export function forgetGroupReconciliation(groupId: string): void {
   asked.delete(groupId);
   deferred.delete(groupId);
+  coverageStated.delete(groupId);
 }
 
 /** Drops everything (session teardown, logout, test cleanup). */
 export function resetHistoryReconciliation(): void {
   asked.clear();
   deferred.clear();
+  coverageStated.clear();
 }

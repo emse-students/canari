@@ -11,12 +11,14 @@ const {
   sendHistoryPull,
   sendHistoryDigestRequest,
   sendHistoryRangeBundle,
+  sendHistoryCoverage,
 } = vi.hoisted(() => ({
   sendFullHistoryBundle: vi.fn().mockResolvedValue(undefined),
   sendHistoryBundleForIds: vi.fn().mockResolvedValue(undefined),
   sendHistoryPull: vi.fn().mockResolvedValue(undefined),
   sendHistoryDigestRequest: vi.fn().mockResolvedValue(undefined),
   sendHistoryRangeBundle: vi.fn().mockResolvedValue(undefined),
+  sendHistoryCoverage: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/groupActions')>();
@@ -27,6 +29,7 @@ vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => {
     sendHistoryPull,
     sendHistoryDigestRequest,
     sendHistoryRangeBundle,
+    sendHistoryCoverage,
   };
 });
 
@@ -127,7 +130,14 @@ function baseParams(overrides: Record<string, unknown> = {}) {
   } as Parameters<typeof handleHistoryRequest>[0];
 }
 
-/** Nothing at all left this device. The fast path's whole assertion. */
+/**
+ * No history moved and no exchange continued. The fast path's whole assertion.
+ *
+ * `sendHistoryCoverage` is deliberately NOT part of it: it moves nothing and asks for nothing, it
+ * only states where this device's own memory begins. Most cases below state `since = 0` - "I name no
+ * window" - which every device is narrower than, so folding it in here would turn one assertion
+ * about the exchange into an assertion about the fixture's dates. It has its own block instead.
+ */
 function expectSilence(): void {
   expect(sendFullHistoryBundle).not.toHaveBeenCalled();
   expect(sendHistoryBundleForIds).not.toHaveBeenCalled();
@@ -146,6 +156,7 @@ beforeEach(() => {
   sendHistoryPull.mockClear();
   sendHistoryDigestRequest.mockClear();
   sendHistoryRangeBundle.mockClear();
+  sendHistoryCoverage.mockClear();
 });
 
 describe('handleHistoryRequest - guards', () => {
@@ -462,5 +473,134 @@ describe('handleHistoryRequest - scrollback', () => {
     // A scrollback is not a reconciliation: it compares nothing and asks for nothing back.
     expect(sendHistoryDigestRequest).not.toHaveBeenCalled();
     expect(sendHistoryPull).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What a responder says about its OWN memory - the fact the fourth trigger is built on.
+ *
+ * The asker cannot see this from anywhere else. A device that keeps ninety days answering a device
+ * that keeps five years produces a short answer every single time, and a short answer is
+ * indistinguishable from "the conversation has no more past" unless somebody states which it is.
+ * The responder is the only party that knows, so it is the party that says.
+ */
+describe('handleHistoryRequest - stating our coverage', () => {
+  /** A floor well above any device window, so `max(floor, window)` is decided by the floor alone. */
+  const FLOOR = at('2026-06-01T00:00:00Z');
+  const BELOW_FLOOR = at('2020-01-01T00:00:00Z');
+
+  it('states where our history begins when the asker asked from below it', async () => {
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'digest',
+      digest: await buildHistoryDigest([]),
+      since: BELOW_FLOOR,
+    });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith([], FLOOR) }));
+
+    expect(sendHistoryCoverage).toHaveBeenCalledWith(
+      GROUP,
+      { from: SELF, to: REQUESTER, since: BELOW_FLOOR, coveredFrom: FLOOR },
+      expect.anything()
+    );
+  });
+
+  it('says nothing when the exchange died before we ever answered', async () => {
+    // The keys differed, we asked the requester to describe itself, and no digest came. Nothing
+    // left this device, so there is no answer for a coverage line to be the end of - and the asker
+    // is plainly not listening.
+    noteProbeReceived(GROUP, REQUESTER, { kind: 'state', key: 'ffff', since: BELOW_FLOOR });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith([], FLOOR) }));
+
+    expect(sendHistoryDigestRequest).toHaveBeenCalled();
+    expect(sendHistoryCoverage).not.toHaveBeenCalled();
+  });
+
+  it('says NOTHING when it covers everything that was asked for', async () => {
+    // Silence has to keep meaning "I cover your window", or the fast path costs two frames instead
+    // of one for the case that matters most - two devices of the same platform, agreeing.
+    const rows = [{ id: 'm1', timestamp: at('2026-07-01T00:00:00Z') }];
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'state',
+      key: await historyStateKey(rows.map(rowOf), FLOOR),
+      since: FLOOR,
+    });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith(rows, FLOOR) }));
+
+    expect(sendHistoryCoverage).not.toHaveBeenCalled();
+  });
+
+  it('states it even when the two stores AGREE - agreement is not completeness', async () => {
+    // Both devices can hold exactly the same messages over the asker's window and both be missing
+    // the years below ours. The key is computed from what each store holds, so it matches happily,
+    // and this is the only signal that would send the asker to a member with a longer memory.
+    const rows = [{ id: 'm1', timestamp: at('2026-07-01T00:00:00Z') }];
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'state',
+      key: await historyStateKey(rows.map(rowOf), BELOW_FLOOR),
+      since: BELOW_FLOOR,
+    });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith(rows, FLOOR) }));
+
+    expectSilence();
+    expect(sendHistoryCoverage).toHaveBeenCalled();
+  });
+
+  it('states it LAST, after everything it had to give', async () => {
+    // MLS orders one sender's frames, so arriving last is what makes it read as "that is all".
+    const order: string[] = [];
+    sendHistoryBundleForIds.mockImplementation(async () => void order.push('bundle'));
+    sendHistoryCoverage.mockImplementation(async () => void order.push('coverage'));
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'digest',
+      digest: await buildHistoryDigest([]),
+      since: BELOW_FLOOR,
+    });
+
+    await handleHistoryRequest(
+      baseParams({
+        storage: storageWith([{ id: 'only-ours', timestamp: at('2026-07-01T00:00:00Z') }], FLOOR),
+      })
+    );
+
+    expect(order).toEqual(['bundle', 'coverage']);
+    sendHistoryBundleForIds.mockResolvedValue(undefined);
+    sendHistoryCoverage.mockResolvedValue(undefined);
+  });
+
+  it('states it after a scrollback answer too - the same fact bounds that ask as well', async () => {
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'range',
+      before: at('2026-08-01T00:00:00Z'),
+      limit: 50,
+      since: BELOW_FLOOR,
+    });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith([], FLOOR) }));
+
+    expect(sendHistoryCoverage).toHaveBeenCalledWith(
+      GROUP,
+      expect.objectContaining({ coveredFrom: FLOOR }),
+      expect.anything()
+    );
+  });
+
+  it('says nothing when our store could not be read - that silence means "ask somebody else"', async () => {
+    // A failed read proves nothing about this group, and a coverage line attached to it would tell
+    // the asker we answered when we did not - ending its walk one member early.
+    noteProbeReceived(GROUP, REQUESTER, { kind: 'state', key: 'ffff', since: BELOW_FLOOR });
+
+    await handleHistoryRequest(baseParams({ storage: storageWith('broken', FLOOR) }));
+
+    expectSilence();
+    expect(sendHistoryCoverage).not.toHaveBeenCalled();
+  });
+
+  it('says nothing when no probe ever arrived - there was no ask to answer', async () => {
+    await handleHistoryRequest(baseParams({ storage: storageWith([], FLOOR) }));
+    expect(sendHistoryCoverage).not.toHaveBeenCalled();
   });
 });

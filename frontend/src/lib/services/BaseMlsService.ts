@@ -1071,14 +1071,28 @@ export abstract class BaseMlsService implements IMlsService {
    * `noPeerOnline` reports that answer. It is true ONLY on an explicit `no_peer_online` - a request
    * that failed to reach the server, or answered something unparseable, proves nothing about who is
    * reachable, and concluding "nobody" from it would abandon a reconciliation on a dropped packet.
+   *
+   * `exclude` names the members we have already heard from, so a requester chasing a coverage gap
+   * walks its members instead of re-drawing the one that already told us it cannot help.
    */
-  async sendHistoryRequest(groupId: string): Promise<HistoryRequestOutcome> {
+  async sendHistoryRequest(
+    groupId: string,
+    opts: { exclude?: string[] } = {}
+  ): Promise<HistoryRequestOutcome> {
     const answer = await this.delivery.deliveryPost('history-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
+      ...(opts.exclude?.length ? { exclude: opts.exclude } : {}),
     });
-    return { noPeerOnline: answer?.status === 'no_peer_online' };
+    const excludedOnline = Number(answer?.excludedOnline);
+    return {
+      noPeerOnline: answer?.status === 'no_peer_online',
+      target: typeof answer?.target === 'string' ? answer.target : undefined,
+      // A server too old to count says nothing, and 0 is what "nothing was skipped" means - which is
+      // also the reading that makes a chase keep looking rather than claim a proof it was not given.
+      excludedOnline: Number.isFinite(excludedOnline) && excludedOnline > 0 ? excludedOnline : 0,
+    };
   }
 
   /** Delivers a Welcome message to the target user/device. */

@@ -15,8 +15,9 @@ import { digestIdentity, noteProbeReceived } from '$lib/utils/chat/historyDigest
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { mergeHistoryFloor, parseHistorySince } from '$lib/utils/chat/historyWindow';
 import { parseHistoryStateKey } from '$lib/utils/chat/historyStateKey';
-import { answerAfterMailboxDrained } from '$lib/utils/chat/historyReconcile';
+import { answerAfterMailboxDrained, noteCoverageShortfall } from '$lib/utils/chat/historyReconcile';
 import {
+  historyRangeStartFor,
   readHistoryEntries,
   sendHistoryBundleForIds,
   sendHistoryDigest,
@@ -98,8 +99,8 @@ const HISTORY_RANGE_MAX = 200;
  * means the only thing a member can misreport is which of its OWN devices it is - which costs a
  * mis-addressed bundle its owner can already read, never another member's history.
  *
- * One function because all four legs of the exchange establish identity the same way, and a check
- * copied four times is a check that will exist in three places after the next edit.
+ * One function because every leg of the exchange establishes identity the same way, and a check
+ * copied five times is a check that will exist in four places after the next edit.
  */
 function probeSender(
   data: any,
@@ -251,6 +252,40 @@ export async function handleSystemEvent(
     });
     log(
       `[HISTORY_RANGE] ${senderNorm} wants up to ${limit} message(s) before ${new Date(before).toISOString()} in ${convoKey.slice(0, 8)}…`
+    );
+    return true;
+  }
+
+  // A peer has finished answering us and is stating where its OWN history begins - which it only
+  // does when that is later than the instant we asked from. THE FOURTH TRIGGER: this is the one edge
+  // raised by an answer rather than by something this device noticed about itself, and it is what
+  // tells a clipped answer apart from a conversation that simply has no more past.
+  if (event === 'history_coverage') {
+    const me = digestIdentity(userId, mlsService.getDeviceId());
+    if (String(data?.to ?? '').toLowerCase() !== me.toLowerCase()) return true;
+    const from = probeSender(data, senderNorm, log, 'HISTORY_COVERAGE');
+    if (!from) return true;
+    const coveredFrom = Number(data?.coveredFrom);
+    if (!Number.isFinite(coveredFrom) || coveredFrom <= 0) {
+      log(`[HISTORY_COVERAGE] Unusable coverage from ${senderNorm} for ${convoKey.slice(0, 8)}…`);
+      return true;
+    }
+
+    // OUR OWN WINDOW, not the `since` the peer echoed back. The question this answers is "does that
+    // peer cover what THIS device wants", and only this device is entitled to say what that is - the
+    // echo is what the peer compared against, which is one round trip old and, either side of
+    // midnight, a different day.
+    const since = await historyRangeStartFor(convoKey, storage);
+    void noteCoverageShortfall(
+      mlsService,
+      convoKey,
+      from,
+      { since, coveredFrom: Math.floor(coveredFrom) },
+      log
+    ).catch((e) =>
+      log(
+        `[HISTORY_COVERAGE] Chase failed for ${convoKey.slice(0, 8)}…: ${String(e).slice(0, 120)}`
+      )
     );
     return true;
   }

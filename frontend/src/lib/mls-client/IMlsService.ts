@@ -89,7 +89,20 @@ export type GroupMeta = {
  * and "we could not find out", which is why the field names the negative - the caller may act on a
  * definite NO and must never read silence as one.
  */
-export type HistoryRequestOutcome = { noPeerOnline: boolean };
+export type HistoryRequestOutcome = {
+  noPeerOnline: boolean;
+  /** The member key (`userId:deviceId`) the server elected, when it elected one. */
+  target?: string;
+  /**
+   * How many members were online and skipped ONLY because we had already heard from them.
+   *
+   * Read together with `noPeerOnline`, and never on its own: `noPeerOnline` with a positive count
+   * means *every reachable member has answered you*, which is what ends a coverage chase. The same
+   * status with zero means *nobody was there*, which a different edge answers. One status, two
+   * facts, separated by evidence rather than by prose. Zero when the server said nothing.
+   */
+  excludedOnline: number;
+};
 
 export interface IMlsService {
   /** Initialises the MLS identity for the given user, decrypting stored state with the device key. */
@@ -587,8 +600,14 @@ export interface IMlsService {
    * Ask the server to elect ONE online member to reconcile a conversation's history with us. The
    * ask itself travels inside MLS (a state key, a digest or a range); this only decides who answers.
    * Best-effort, online-only.
+   *
+   * `exclude` lists member keys already heard from, so a coverage chase walks its members instead of
+   * re-drawing the one that just said it cannot cover the range - see `historyReconcile.ts`.
    */
-  sendHistoryRequest(groupId: string): Promise<HistoryRequestOutcome>;
+  sendHistoryRequest(
+    groupId: string,
+    opts?: { exclude?: string[] }
+  ): Promise<HistoryRequestOutcome>;
 
   /**
    * Register a callback invoked when this device is the member elected to answer a history_request.

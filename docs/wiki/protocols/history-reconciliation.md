@@ -306,10 +306,13 @@ On connect, in this order - the order is load-bearing:
 > that zero. The shared-fingerprint ledger still covers it, which is what it was written for; what
 > changed is that it is no longer the mechanism that makes ordinary traffic work.
 >
-> The head has a second use, not yet taken: it is a **stable, shared upper bound**, which is the
-> terminator the fourth trigger (probe when the answer is shorter than the window asked for) was
-> missing. A requester that says "I walked to H" states a fact both sides can compare against,
-> where "I think something is missing near the end" cannot terminate without a clock.
+> The head was expected to have a second use - a **stable, shared upper bound** to give the fourth
+> trigger the terminator it lacked. **It was the right principle at the wrong end**, and saying so is
+> worth more than deleting it: "I walked to H" is a fact both sides can compare against, where "I
+> think something is missing near the end" cannot terminate without a clock. But the shortness the
+> fourth trigger measures is at the BOTTOM, not the top - the two sides already agree on the top,
+> because step 3 drains both mailboxes before either compares anything. What the answer had to state
+> was where the ANSWERER's memory begins. See [the fourth trigger](#the-fourth-trigger-an-answer-that-does-not-reach-far-enough-back).
 
 The state key covers **the id set and the mutation state** - not ids alone. Two devices agreeing on
 which messages exist can still disagree on which are deleted, and both would call themselves
@@ -392,6 +395,64 @@ The resulting flow, which is today's with one probe in front of it:
 
 One round trip is added to the case that differs and one whole digest is removed from the case that
 does not - which is the common one, and the only one paid on every connect of every device.
+
+### The fourth trigger: an answer that does not reach far enough back
+
+**SHIPPED 2026-08-16.** The other three triggers are things a device notices about ITSELF - a
+connection, a fresh join, a frame it could not decrypt. This one is raised by an ANSWER, and it
+exists because of the deliberate inequality above: a phone keeping five years asking a browser
+keeping ninety days gets a clipped answer **every single time, by construction and not by fault**.
+
+The phone could not tell that apart from *"this conversation has no more past"*. Both look like an
+absence, and an absence is not evidence of anything. So it either believed itself complete - losing
+years silently - or re-asked, and a re-ask on that evidence never terminates: the same peer is
+elected, gives the same clipped answer, and only a counter or a clock could ever stop it.
+
+**Two facts replace both, and neither is a duration.**
+
+**1. The answer STATES where the answerer's memory begins.** `history_coverage` carries
+`coveredFrom` - the answerer's own `max(floor, deviceWindowStart)` - and is sent **only when that is
+later than the `since` it was asked for**. Silence therefore keeps meaning *"I cover what you asked"*,
+so two devices of the same platform still exchange exactly one frame. It is sent **last**, after any
+bundle, because MLS orders one sender's frames: arriving last is what makes it read as *"that is
+all, and I am complete only from here"*.
+
+It is stated rather than discovered because the answerer already knows it. Handing a peer an
+operation certain to come back short, in order to classify the shortness, is the work the design
+owes - the discriminator travels from where it is known.
+
+**And it is sent even when the two state keys MATCH**, which is the case nothing else would have
+caught: two devices can hold exactly the same messages over the asker's window and both be missing
+the years below the answerer's. The key is computed from what each store holds, so it agrees
+happily. **Agreement is not completeness.**
+
+**2. The next election EXCLUDES every member that has stated one.** `POST /api/mls/history-request`
+takes `exclude` - member keys already heard from - and each step of the walk therefore removes
+exactly one member from the reachable set. The set is finite and only shrinks, so the walk visits
+each member at most once.
+
+**The termination proof is delivered, not inferred.** The server answers `no_peer_online` with
+`excludedOnline`, a COUNT of the members that were online and skipped only because we had already
+heard from them. A positive count means *every reachable member has answered you* - the proof - and
+the walk ends. Zero means *nobody was there*, which is a different fact answered by a different edge
+(the peer-online retry). One status, two facts, separated by evidence rather than by prose.
+
+Three properties keep it honest:
+
+- **the claims are facts, not chase state.** A retention window only slides FORWARD, so a member
+  that says "I am complete from ninety days ago" can never later cover more of the past. The claim
+  is sound for the whole session, and nothing has to decide when a walk is "open" or "closed";
+- **an ordinary reconciliation never carries an exclusion.** Those claims are about COVERAGE; an
+  ordinary comparison is about CONTENT, and a member with a short memory still receives every new
+  message. Excluding it there would skip a real repair;
+- **a server that ignores `exclude` stops the walk, loudly.** Mid-rollout an older build re-elects
+  the member we asked it to skip, and a step that re-draws a member already in the set advances
+  nothing - the one shape that would not terminate. The client compares the elected `target` against
+  its own exclusion list and stops with a line that accuses.
+
+Nothing here is scheduled and nothing is retried. Being wrong about any of it costs elections, never
+a message. When the walk ends without closing the gap, the gap is simply not remembered: the next
+connection compares again from scratch, which is where a member with a longer memory gets its turn.
 
 ### Why it converges, and why a third device needs nothing extra
 
