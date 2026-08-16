@@ -116,6 +116,13 @@ Decided with the user, not to be re-litigated.
   SETUP-8's archive plus the fact that a full re-enrolment is always possible; it costs the 2FA.
 - **The `+user` rows are BATCHED to the end**, not asked for as they arise. **The phone otherwise is
   free** - reboots, radio cycles, forced doze and `install -r` need no warning.
+- **NOTHING NAVIGATES THE PHONE ANY MORE, AND THE ONE EXCEPTION SAYS SO.** `goto` refuses A1 unless
+  the caller passes `{ relaunch: 'why' }`, because replacing the document re-locks the PIN *and*
+  breaks Tauri's in-flight IPC callbacks - which is what MUT-18's `runCallback` dirt was
+  (methodology rule 21). `openChannel` is the last holder of that opt-in: there is no click path to
+  `/communities` on the phone yet, so a phone verdict inside a CHANNEL check that goes dirty on a PIN
+  modal or a `runCallback` exception is the RIG, not the app. Writing that click path removes the
+  last A1 reload from the campaign.
 - **The phone runs the assets bundled into its APK.** A wire-protocol change reaches the browsers the
   moment CD is green and reaches A1 only through a new build. Either state the fleet is mixed and say
   which branch each A1 row is reading, or rebuild before the device rungs - never report an A1 verdict

@@ -206,10 +206,14 @@ tout le reste pour ca, faisons le."* A MUT x5 was stopped mid-run at 45/105 for 
 fix below redeploys prod, and a run straddling a deploy has to be re-attributed. **Nothing measured
 before the last WP lands is a campaign result.** What the stopped run did establish, and is worth
 keeping: MUT-17 now reads `smileOnDeletedPresent: false` (the backlog's deleted-message picker entry
-may already be fixed - confirm before deleting it), MUT-20 is unarmable until a campaign message
-reaches 90 days (earliest 2026-11-09), and MUT-18 is dirty on A1 with an
-`Uncaught TypeError ... 'runCallback'` at `(no url):1:28` that is not yet attributed to the harness
-or to the app.
+may already be fixed - confirm before deleting it), and MUT-20 is unarmable until a campaign message
+reaches 90 days (earliest 2026-11-09). **MUT-18's `runCallback` dirt is ATTRIBUTED and fixed: it was
+the RIG** - `openDM` navigated A1, which replaces the document under Tauri's in-flight IPC, and
+`goto` had said "DO NOT USE ON A1" in prose that three call sites ignored. It refuses now; rule 21 in
+[testing-methodology](docs/wiki/testing-methodology.md). **Owed, and it needs the phone, which was
+unplugged when this was written:** one `mut.mjs --only 18` on A1 to confirm the click path reaches
+the conversation and the three exceptions are gone. The guard itself is proven (it refuses A1 and
+leaves the browsers on `Page.navigate` unchanged).
 
 **Owed once the WPs are closed:** `recon.mjs` on both pairs (`--rightUrl tauri.localhost` for the
 phone), then MUT, TYPE, READ and FWD several clean passes on the final build, then the phases that

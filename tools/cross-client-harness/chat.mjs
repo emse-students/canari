@@ -8,6 +8,8 @@
  * See docs/wiki/cross-client-testing.md section 9 (evidence rule).
  */
 import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, evaluate, listTargets, pressKey, realClick, stablePoint, until } from './cdp.mjs';
+// For the device check in `goto`: the phone is the one client a reload costs something on.
+import { PORTS } from './names.mjs';
 
 // SCOPED TO THE CHAT, and that scoping is the whole point.
 //
@@ -124,11 +126,31 @@ export async function client(port, match = null, { focus = true, allowMany = fal
  * (see DURABLE RULES: `/c/<groupId>` is not a route), so section navigation is by URL but
  * conversation selection is by click.
  *
- * DO NOT USE ON A1. A reload of the Tauri webview re-locks the encryption PIN, so the check then
- * waits on a modal it never expected; the run does not fail, it HANGS, and prints nothing. Use
- * `ensureChat` there - which is also the more faithful path, since a real user clicks.
+ * A1 IS REFUSED, because "DO NOT USE ON A1" was written here as prose and three call sites did it
+ * anyway. A reload of the Tauri webview costs two things, and only the first was known:
+ *
+ * - it re-locks the encryption PIN, so the check waits on a modal it never expected - the run does
+ *   not fail, it HANGS, and prints nothing;
+ * - it replaces the document under Tauri's own IPC. Every command that returns an error, and every
+ *   scalar response, is delivered by the Rust side EVALUATING
+ *   `window.__TAURI_INTERNALS__.runCallback(...)` into the page (`format_raw_js`, tauri 2.11). A
+ *   response issued before the navigation lands in the new document, whose init script has not run
+ *   yet, and reading `.runCallback` off an undefined object throws - which is MUT-18's
+ *   `Cannot read properties of undefined (reading 'runCallback')` at `(no url):1:28`, column 28
+ *   being exactly where `runCallback` sits in that string. Three sightings, 2026-08-16, dirt the
+ *   harness manufactured and then reported as the application's.
+ *
+ * Use `ensureChat` instead - which is also the more faithful path, since a real user clicks. Where a
+ * relaunch IS the subject, say so: `goto(cx, path, { relaunch: 'why' })` keeps it, and makes every
+ * surviving A1 reload greppable by that word.
  */
-export async function goto(cx, path) {
+export async function goto(cx, path, { relaunch = null } = {}) {
+  if (cx.port === PORTS.A1 && !relaunch)
+    throw new Error(
+      `goto('${path}') on A1 reloads the Tauri webview: it re-locks the PIN and breaks Tauri's ` +
+        'IPC callbacks into the old document. Use ensureChat/openConversation, or pass ' +
+        "{ relaunch: 'why this check needs a reload' } if that is the subject."
+    );
   const before = cx.events.length;
   await cx.send('Page.navigate', { url: `${await origin(cx)}${path}` });
   await until(cx, `document.readyState === 'complete'`, 20000);
@@ -581,9 +603,16 @@ export async function ensureChat(cx) {
  * once those re-runs are taken, then re-run them again against the new shape.
  *
  * Checks that care about the navigation itself must not use this.
+ *
+ * ON A1 IT IS ALREADY GONE. The phone reaches the list the way its user does, because a reload there
+ * re-locks the PIN and breaks Tauri's in-flight IPC callbacks (see `goto`). That is the same removal
+ * this comment defers for the browsers, taken early on the one client where the load is not merely
+ * wasteful but harmful - and it leaves the browser checks' navigation shape untouched, so no
+ * measurement taken on W1/W2 has to be re-baselined.
  */
 export async function openDM(cx, name) {
-  await goto(cx, '/chat');
+  if (cx.port === PORTS.A1) await ensureChat(cx);
+  else await goto(cx, '/chat');
   return openConversation(cx, name);
 }
 
@@ -667,7 +696,13 @@ export async function openChannel(cx, community = 'Campagne de test', channel = 
       )
     );
 
-  await goto(cx, '/communities');
+  // A1 reloads here, DECLARED rather than accidental: there is no click path to `/communities` from
+  // an arbitrary screen on the phone the way `ensureChat` gives one to `/chat`, so this is the only
+  // way in until one is written. It costs what `goto` documents - a PIN re-lock and, if a command is
+  // in flight, a `runCallback` exception into the fresh document - so a phone verdict that goes dirty
+  // on either of those inside a channel check is the RIG, not the app. Writing that click path is
+  // what removes the last A1 reload from the campaign.
+  await goto(cx, '/communities', { relaunch: 'no click path to /communities on the phone yet' });
   await awaitListed(cx, `!!${RESOLVE}('text=${community}')`, 20000, 'the community', cx.port);
   // SETTLE BEFORE EVERY CLICK, not once at the top: the community click itself starts work that can
   // raise a strip again, so the state has to be re-established rather than assumed to persist.

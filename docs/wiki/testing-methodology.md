@@ -979,6 +979,28 @@ as a defect must ASSERT that state itself. MUT-19 now reads the sender's store, 
 dropped row and a tombstone are indistinguishable - the discriminator is at rest, and only a check
 that goes to look can carry it.
 
+#### 21. A RULE THE HARNESS WRITES IN PROSE IS A RULE THE HARNESS WILL BREAK - the seam that can refuse is where it belongs
+
+`goto()` had carried **"DO NOT USE ON A1"** in its own doc comment for weeks, with the reason spelt
+out. Three call sites did it anyway - `openDM`, `openChannel`, and NOTIF-7 deliberately - because a
+comment is read once, by whoever is writing that function, and never again by the caller two files
+away.
+
+**What it cost was a defect attributed to the application.** MUT-18 went PASS-DIRTY on A1 with
+`Uncaught TypeError: Cannot read properties of undefined (reading 'runCallback')` at `(no url):1:28`,
+three times, and it sat in SESSION STATE as *not yet attributed to the harness or to the app*. It is
+the harness, and the column number proves it: Tauri delivers every command error and every scalar
+response by having Rust EVALUATE `window.__TAURI_INTERNALS__.runCallback(...)` into the page
+(`format_raw_js`, tauri 2.11), and character 28 of that string is exactly where `runCallback` is read
+off `window.__TAURI_INTERNALS__`. So the object was undefined - the document had been replaced under
+an in-flight IPC call, by the harness's own `Page.navigate`. No script URL, because the script was
+evaluated from outside the page: the frame said so all along, once `watch.mjs` started printing it.
+
+The fix is not a fourth comment. `goto` now **refuses** A1 unless the caller passes
+`{ relaunch: 'why' }`, `openDM` takes the click path there, and the one remaining reload declares
+itself in a word that can be grepped. A rule that can be enforced at a seam belongs at that seam;
+prose is what you write when it cannot be.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

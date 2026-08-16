@@ -112,7 +112,10 @@ await ensureChat(a1).catch(() => null);
 await sleep(3_000);
 
 stage('parking A1 on the FEED, so a default route cannot fake the verdict');
-await goto(a1, '/posts');
+// The reload is DECLARED (see `goto`): parking the phone off `/chat` is the precondition this check
+// is built on, and it happens before the notification window opens, so the PIN re-lock is handled by
+// the unlock above and no command is in flight to lose its `runCallback`.
+await goto(a1, '/posts', { relaunch: 'the phone must be parked off /chat before the window opens' });
 await sleep(4_000);
 out.beforeUrl = await evaluate(a1, 'location.href');
 stage(`A1 before: ${out.beforeUrl}`);
