@@ -1500,9 +1500,21 @@ async function mut13Body(a, b, w, idSuffix) {
   // a reacts to THEIR OWN message: nobody must be told.
   const beforeSelf = notifyPosts(a).length;
   await clickReactionEmoji(a, marker, '👍');
-  // An absence cannot be polled for, only waited out - so this one sleep stays, and it is sized on
-  // the channel leg's longer path rather than on the DM's.
-  await sleep(6000);
+
+  // AN ABSENCE CAN ONLY BE BOUNDED - BUT THE BOUND COMES FROM THE MEASUREMENT, NOT FROM A GUESS.
+  //
+  // This was `sleep(6000)`, a number sized on nothing: too small and a slow POST would pass as
+  // silence, too large and every run pays six seconds to observe nothing. The same run has just
+  // measured how long this exact request takes when it IS made (`reactorMs`, typically ~155 ms), so
+  // that is the honest bound - generously multiplied, with a floor for the case where the reactor
+  // leg itself was suspiciously fast. And the wait ENDS EARLY on the event it is watching for: a
+  // notify POST appearing is a failure, and there is nothing to wait for once it has appeared.
+  const silenceWindowMs = Math.max(1500, (reactorMs ?? 500) * 6);
+  const selfDeadline = Date.now() + silenceWindowMs;
+  while (Date.now() < selfDeadline) {
+    if (notifyPosts(a).length > beforeSelf) break; // the failure, seen the moment it happens
+    await sleep(100);
+  }
   const selfHits = notifyPosts(a).length - beforeSelf;
 
   const ok = reactorMs !== null && selfHits === 0;
@@ -1514,6 +1526,9 @@ async function mut13Body(a, b, w, idSuffix) {
   return await finish(`MUT-13/${idSuffix}`, ok ? 'PASS' : 'FAIL', w, {
     reactorNotifyMs: reactorMs,
     selfReactFiredNotify: selfHits,
+    // The window the silence was observed over, derived from this run's own measurement of the same
+    // request. A reader can judge whether the absence means anything; a bare `0` could not be judged.
+    silenceWindowMs,
     note:
       'this verifies only the CLIENT-SIDE precondition (messaging.ts addReaction and ' +
       'useChannelWorkspaces toggleChannelReaction: POST /api/mls/notify-reaction iff the author is ' +
@@ -1859,26 +1874,36 @@ async function mut18() {
       editBubbleMobile(a1, row, fromA1),
     ]);
 
-    // Both edits are MLS system events on the same group, so convergence is a round trip, not a
-    // repaint: polled to a deadline rather than slept at.
-    const settled = await until(
-      w1,
-      `(function () {
-        var r = document.getElementById(${JSON.stringify(row.slice(1))});
-        return !!r && (r.innerText.indexOf(${JSON.stringify(fromW1)}) !== -1 || r.innerText.indexOf(${JSON.stringify(fromA1)}) !== -1);
-      })()`,
-      15000
-    ).catch(() => null);
-
-    await sleep(3000); // let a LATER-arriving edit overwrite an earlier one before reading all three
-    const [bw1, ba1, bw2] = await Promise.all([
-      bubbleBody(w1, row),
-      bubbleBody(a1, row),
-      bubbleBody(w2, row),
-    ]);
-
-    const texts = [bw1, ba1, bw2].map((b) => (b ? b.text : null));
-    const converged = texts.every((t) => t !== null && t === texts[0]);
+    // CONVERGENCE IS THE EVENT, so it is what is waited for - there is no interval to guess at.
+    //
+    // This was a 15 s wait for either edit to appear on W1 followed by `sleep(3000)` to give a
+    // later-arriving edit room to overwrite an earlier one. Both halves were wrong in the two ways a
+    // fixed delay always is: 3 s is a guess that can be short (a slow peer diverges and the check
+    // calls it converged) and is wasted every time it is long, which is nearly always - the observed
+    // spread is under half a second. The condition below is exactly what the verdict asserts, so
+    // reaching it IS the finish line and the deadline only bounds the failure.
+    let bw1 = null;
+    let ba1 = null;
+    let bw2 = null;
+    let texts = [];
+    let converged = false;
+    const settledAt = Date.now();
+    const CONVERGENCE_DEADLINE_MS = 20000;
+    for (;;) {
+      [bw1, ba1, bw2] = await Promise.all([
+        bubbleBody(w1, row),
+        bubbleBody(a1, row),
+        bubbleBody(w2, row),
+      ]);
+      texts = [bw1, ba1, bw2].map((b) => (b ? b.text : null));
+      converged =
+        texts.every((t) => t !== null && t === texts[0]) &&
+        (texts[0].includes(fromW1) || texts[0].includes(fromA1));
+      if (converged || Date.now() - settledAt > CONVERGENCE_DEADLINE_MS) break;
+      await sleep(200);
+    }
+    const settled = converged ? Date.now() - settledAt : null;
+    converged = texts.every((t) => t !== null && t === texts[0]);
     const winnerIsAnEdit =
       converged && (texts[0].includes(fromW1) || texts[0].includes(fromA1));
 
@@ -1893,6 +1918,7 @@ async function mut18() {
       w1EditError: w1Edit.status === 'rejected' ? String(w1Edit.reason?.message || w1Edit.reason) : null,
       a1EditError: a1Edit.status === 'rejected' ? String(a1Edit.reason?.message || a1Edit.reason) : null,
       winner: converged ? (texts[0].includes(fromW1) ? 'W1' : texts[0].includes(fromA1) ? 'A1' : 'neither') : null,
+      convergedInMs: settled,
       bodies: { W1: bw1, A1: ba1, W2: bw2 },
       note:
         'the verdict is CONVERGENCE, not which edit won: both devices hold the same account and ' +

@@ -16,7 +16,7 @@ over a filtered copy of its own evidence.
 
 ---
 
-## The twenty-two rules
+## The twenty-three rules
 
 Ordered by how expensive it is to break them.
 
@@ -646,6 +646,37 @@ Corollary: **an obstacle attributed to the environment gets checked before it is
 SKIP said A1 was off adb; SESSION STATE had said the opposite for weeks, and the phone was reachable
 the whole time. The real obstacle was a missing helper, which nobody went looking for because the
 written reason pointed at a cable.
+
+### 23. WAIT FOR THE EVENT, NEVER FOR A DELAY - and when only an absence can be waited out, take the bound from the measurement
+
+A fixed delay has two defects and one of them always lands. **Too short**, it makes "it never
+happened" and "it has not happened yet" the same observation - MUT-11 flapped on `sleep(300)` while
+the peer's real spread was 157-1453 ms. **Too long**, it charges every run for time in which
+everything has already finished, and that cost is paid for ever.
+
+Polling fixes only the first. The condition to wait for is almost always the one the verdict already
+asserts, and reaching it IS the finish line:
+
+- MUT-18 waited 15 s for an edit to appear and then slept 3 s for a later edit to overwrite it.
+  Rewritten to wait for **convergence itself** - all three clients showing the same body, and that
+  body being one of the two edits - it reports `convergedInMs: 22`. The guess was **136x** the
+  measurement, on every run, and could still have been too short for a slow peer.
+- MUT-12's `reactAndConfirm` and MUT-11's `awaitBadges` are the same move applied to a badge.
+
+**An absence is the one thing that cannot be waited for, only waited out** - and even there, nothing
+justifies a constant. Take the bound from the same run's measurement of the thing whose absence is
+being asserted, and end early on the event that would refute it:
+
+- MUT-13 proves a self-reaction notifies nobody. It slept 6 s; it now watches for `silenceWindowMs =
+  max(1500, 6 x reactorNotifyMs)`, where `reactorNotifyMs` is what the *positive* leg of the same
+  check just measured (~156 ms), and it breaks the instant a notify POST appears, because that POST
+  is the failure. **The window is recorded in the row**: a bare `0` cannot be judged, `0 over 1500 ms
+  when the same request took 156 ms` can.
+- NOTIF-9 proves one message raises one notification. Same rewrite: `max(8 s, 2 x notifiedInMs)`
+  instead of a flat `sleep(20_000)`, ending the moment a second notification appears.
+
+Two delays are legitimate and must say so where they sit: one that **is** the behaviour under test
+(`longPressBubble` holds 700 ms against the app's own 420 ms threshold), and one that paces a poll.
 
 ---
 

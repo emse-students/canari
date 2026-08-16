@@ -174,8 +174,19 @@ if (which === '4') {
   out.notifiedInMs = await phone.awaitNotification(m, 60_000);
   // Settle: a duplicate raised by a second path arrives AFTER the first, so counting immediately
   // would report 1 for a phone that shows 2 a moment later.
-  stage(`notified after ${out.notifiedInMs}ms; settling 20s before counting the shade`);
-  await sleep(20_000);
+  //
+  // THE WINDOW IS DERIVED FROM THE MEASUREMENT, NOT GUESSED, AND IT ENDS ON THE EVENT. It was a flat
+  // `sleep(20_000)`: unjustifiable in both directions - a second path slower than 20 s would have
+  // passed as "no duplicate", and every run that behaves correctly pays the full twenty seconds to
+  // observe nothing. The first path's own latency is the only honest scale for the second, and the
+  // duplicate is the FAILURE, so seeing one is the moment to stop rather than to keep waiting.
+  out.settleWindowMs = Math.max(8_000, (out.notifiedInMs ?? 4_000) * 2);
+  stage(`notified after ${out.notifiedInMs}ms; watching the shade for up to ${out.settleWindowMs}ms`);
+  const settleDeadline = Date.now() + out.settleWindowMs;
+  while (Date.now() < settleDeadline) {
+    if (shadeHits(m) > 1) break; // the duplicate this exists to catch, seen as it happens
+    await sleep(1_000);
+  }
   out.shadeCount = shadeHits(m);
   out.shade = phone.notifications().map((n) => `${n.title} | ${n.body}`.slice(0, 120));
 
