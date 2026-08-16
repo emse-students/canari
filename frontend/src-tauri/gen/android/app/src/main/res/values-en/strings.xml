@@ -1,4 +1,30 @@
 <resources>
+    <!-- `app_name` and `main_activity_title` are deliberately absent: they are the brand, identical
+         in every language, and `androidStrings.test.ts` allowlists exactly those two. -->
+    <string name="notif_channel_messages_name">Canari messages</string>
+    <string name="notif_channel_messages_desc">Notifications for messages received through Canari</string>
+    <string name="notif_channel_social_name">Canari social activity</string>
+    <string name="notif_channel_social_desc">Reactions and comments on your posts</string>
+    <string name="notif_channel_forms_name">Form reminders</string>
+    <string name="notif_channel_forms_desc">Reminders before a form opens</string>
+    <string name="notif_channel_calls_name">Canari calls</string>
+    <string name="notif_channel_calls_desc">Incoming calls (ringtone)</string>
+    <string name="notif_channel_mentions_name">Canari mentions</string>
+    <string name="notif_channel_mentions_desc">Messages that mention you (@)</string>
+
+    <string name="notif_sync_blocked_title">Canari - Sync pending</string>
+    <string name="notif_sync_blocked_body">Open the app to receive your encrypted messages.</string>
+    <string name="notif_sync_running_body">Syncing messages...</string>
+
+    <string name="notif_outbox_pending_body">You may have messages waiting to be sent - open the app to send them.</string>
+
+    <string name="notif_sender_self">Me</string>
+    <string name="notif_channel_unnamed">Channel</string>
+
+    <string name="notif_channel_new_message">New message in #%1$s</string>
+    <string name="notif_new_message_from">New message from %1$s</string>
+    <string name="notif_new_message_generic">You received an encrypted message</string>
+
     <string name="notif_reaction_body">reacted %1$s to your message</string>
     <string name="notif_action_reply">Reply</string>
     <string name="notif_action_mark_read">Mark as read</string>

@@ -529,6 +529,46 @@ path ran.
 
 MessagingStyle takes two `Person`s and **both** need an icon. The sender's comes from `fetchAvatar(senderId)`; ours comes from `fetchAvatar(loadUserId())` - Android attributes the inline reply to the self `Person` while the reply is in flight, so an iconless self is a blank face on the only message in that thread the user actually wrote. `MlsContextLoader.loadUserId` reads just the `userId` field of `push_context.json`, deliberately not `loadPushContext`, whose expensive half is a Keystore round trip this caller has no use for. iOS shows a single attachment image rather than a thread, so it has no self `Person` and nothing to fix there.
 
+#### The language a notification speaks
+
+**Not the phone's.** The Français/English toggle in Canari's settings and the device language are
+two different settings, and only one of them is the user telling THIS app what to speak. The choice
+is mirrored into `push_context.json` by the WebView while the app is open - a background process
+cannot ask the WebView, which is precisely why it is written down - and every native surface reads
+it from there:
+
+| Platform | Table | Resolver |
+| --- | --- | --- |
+| Android | `res/values/strings.xml` (French, default) + `res/values-en/strings.xml` | `appLocaleContext(context)` in `AppLocale.kt` |
+| iOS app | `canari_iOS/{fr,en}.lproj/Localizable.strings` | `CanariLocalized()` in `canari_push.mm` |
+| iOS NSE | `canari_NSE/{fr,en}.lproj/Localizable.strings` | `NotificationService.localized()` |
+
+The appex has its OWN copy because an app extension is a separate bundle and `Bundle.main` there is
+the appex - that duplication is the platform's, not a choice, and it is what Android does not have
+to do with `res/values`.
+
+`appLocaleContext` returns a `Context` whose resources resolve in the app's language, so the rule on
+Android is mechanical: **the receiver decides the language, not the call.** `res.getString(...)`
+where `res` came from `appLocaleContext`; a bare `getString(...)` is the Service, which is the OS
+locale, and is wrong for exactly the users whose two settings disagree - invisibly, for everyone
+else. It reads `push_context.json` once per call, so it is resolved once per notification and passed
+down. `R.string.app_name` is exempt: the brand is the same word in every language and lives only in
+the default resources.
+
+**A notification channel's name and description are written ONCE, at creation.** Android keeps the
+strings the channel was given, and re-creating an existing channel changes nothing - so a user who
+switches language afterwards keeps the wording of the day they installed. Deleting and re-creating
+the channel would fix the wording and discard the sound and importance THEY chose, which is the
+larger harm. `ensureChannels(context, manager)` therefore takes a `Context` and does its best at
+creation time; there is no repair after it.
+
+Both halves are pinned by `frontend/src/lib/mobile/nativeStrings.test.ts`, because nothing else can
+see across a `.kt` and an `.xml`: every `R.string.x` is declared, `values/` and `values-en/` carry
+the same keys (bar the brand), the format arguments match, no key is dead, no accented literal
+survives in Kotlin, and every `getString` goes through the app locale. The iOS half of that file
+holds the four `.lproj` files to the same shape - a key present in one language and not the other
+ships the KEY ITSELF as the notification body, since both resolvers pass `value: key`.
+
 #### Background MLS decrypt ladder
 
 Both Android and the iOS NSE run the same ladder when an encrypted MLS message push arrives:

@@ -680,6 +680,15 @@ prompt fields are all on those pages. What must not be forgotten between them:
   follow-up fix - a `showConfirm(...)` message and its custom button label were shipped as raw
   French literals (WP-SAFELINK-1), copying the shape of that store's own ~21 other call sites,
   none of which are Paraglide either; that existing pattern is not a precedent to extend.
+- **A LANGUAGE SETTING BELONGS TO THE APP, NOT TO THE PHONE - AND THE RECEIVER IS WHAT PICKS IT.**
+  Paraglide covers the bundle and nothing else, so each native surface needs its own table AND its
+  own resolver: `appLocaleContext(context)` on Android, `CanariLocalized` / `localized` on iOS, all
+  three reading `locale` from `push_context.json`. A bare `context.getString(...)` compiles, runs,
+  and answers the OS language - wrong only for the users whose two settings disagree, and invisible
+  to everyone testing on a French phone. Once a table exists, the failure moves: a key added to
+  `values/` and forgotten in `values-en/` falls back SILENTLY to French with a green build, and on
+  iOS the same omission ships the KEY ITSELF as the body. Neither is visible to a compiler, so both
+  are pinned by `nativeStrings.test.ts`. See [mobile](frontend/mobile.md#the-language-a-notification-speaks).
 - **A RULE THAT SAYS "REMEMBER TO RUN X FIRST" IS A MISSING DEPENDENCY, NOT A RULE.** This entry
   used to say: re-run `bun run paraglide:compile` before `bun run test` after any build - **an
   Android or iOS build counts**, because `beforeBuildCommand` is `bun run build`, and it leaves

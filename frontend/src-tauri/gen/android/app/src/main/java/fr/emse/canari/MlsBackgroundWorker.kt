@@ -35,7 +35,8 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
         /** Shows a notification inviting the user to open the app to unblock the sync. */
         private fun showWorkerFailureNotification(ctx: Context) {
             val manager = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            CanariApplication.ensureChannels(manager)
+            CanariApplication.ensureChannels(ctx, manager)
+            val res = appLocaleContext(ctx)
             val launchIntent = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName) ?: return
             val pi = PendingIntent.getActivity(
                 ctx, 0, launchIntent,
@@ -43,8 +44,8 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             )
             val notif = NotificationCompat.Builder(ctx, CanariFirebaseMessagingService.CHANNEL_MESSAGES)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("Canari - Synchronisation en attente")
-                .setContentText("Ouvrez l'app pour recevoir vos messages chiffrés.")
+                .setContentTitle(res.getString(R.string.notif_sync_blocked_title))
+                .setContentText(res.getString(R.string.notif_sync_blocked_body))
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setContentIntent(pi)
@@ -62,12 +63,13 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
      * if Android decides to promote the worker to a ForegroundService (rare in practice).
      */
     override fun getForegroundInfo(): ForegroundInfo {
+        val res = appLocaleContext(applicationContext)
         val notification = NotificationCompat.Builder(
             applicationContext, CanariFirebaseMessagingService.CHANNEL_MESSAGES
         )
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Canari")
-            .setContentText("Synchronisation des messages…")
+            .setContentTitle(res.getString(R.string.app_name))
+            .setContentText(res.getString(R.string.notif_sync_running_body))
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()

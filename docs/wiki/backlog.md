@@ -507,49 +507,30 @@ of it is compiled by CI and by nothing else, and none of it has run:
   sitting: it is additive and guarded, so it can go in whole whenever. Same shape as the
   web/mobile avatar entry above.
 
-Already filed elsewhere and not repeated here: seven Android notification strings are still French
-literals in `.kt` (see the entry above) - iOS having a table now makes Android the side that is
-behind on its own mechanism. The iOS `channel_read` gap named here previously is CLOSED, and was not
-what it looked like - see the channel-push entry below.
+The Android literals named here previously are CLOSED (2026-08-17): the two platforms now use the
+same mechanism, and the entry below keeps only the half neither of them can fix. The iOS
+`channel_read` gap named here previously is CLOSED too, and was not what it looked like - see the
+channel-push entry below.
 
-### P2 - the notification strings are French literals in native code, and iOS has no table to put them in
+### P2 - a server-composed notification body is French for everyone, and cannot be otherwise
 
 Measured 2026-08-15 while reworking the reaction push. **Paraglide reaches neither the native
-clients nor the services** - it compiles into the web bundle, and the FCM handler, the iOS
-extension and NestJS have no access to it. So the rule "user-visible strings use Paraglide" has no
-enforcement mechanism at all outside the bundle, and the three layers have each answered
-differently.
+clients nor the services** - it compiles into the web bundle, and the FCM handler, the iOS extension
+and NestJS have no access to it. So the rule "user-visible strings use Paraglide" has no enforcement
+mechanism at all outside the bundle, and the three layers each answered differently.
 
-**Android has the mechanism and uses it for six strings.** `res/values/strings.xml` (French,
-default) and `res/values-en/strings.xml` exist, and `R.string` covers the two quick-action labels
-and the four call labels. Seven other user-visible strings are French literals in `.kt`:
-`MlsBackgroundWorker.kt:47`; `CanariApplication.kt:238`, `:248`, `:251` - the notification channel
-NAMES and DESCRIPTIONS, which are visible in the Android settings screen, not just in a banner;
-`CanariFirebaseMessagingService.kt:836`, `:1962`, `:2746`. Each is a one-line move into the two
-files that already exist.
+**BOTH CLIENTS ARE DONE** - iOS on 2026-08-15, Android on 2026-08-17. Each has a two-language table
+read through the locale the user chose INSIDE Canari, and `nativeStrings.test.ts` holds the four
+resource files to the same key sets. Mechanism on
+[mobile](frontend/mobile.md#the-language-a-notification-speaks); do not re-derive it here.
 
-**iOS has no string table.** `fr.lproj` / `en.lproj` carry `InfoPlist.strings` only - there is no
-`Localizable.strings`, so everything the NSE and `canari_push.mm` compose (`"Nouveau message dans
-#<channel>"` and its siblings) is a hardcoded French literal with no mechanism to be anything else.
-Creating the table is the prerequisite for the rest.
-
-**The services cannot be fixed where they are wrong.** `chat-delivery-service` and `social-service`
-compose French sentences for pushes and do not know the recipient's language - no header carries
-it and no column stores it. The MESSAGE push path already answers this correctly by sending
-`body: ''` and letting the device compose after decrypting, which is the only layer that knows the
-locale. Any server-composed body is therefore a design smell, not just an untranslated string, and
-the fix is to move the composition rather than to translate it in place.
-
-**RESOLVED ON THE iOS HALF, 2026-08-15, WRITTEN BLIND AND VERIFIED BY NOTHING.** The table exists on
-both targets and the five sentences above now come from it - see the parity entry below for what was
-built and how the language is resolved. **What remains of this entry is Android**, which is now the
-side behind on its own mechanism: the seven `.kt` literals listed above are still literals, and
-`CanariApplication.kt`'s channel names and descriptions are visible in the Android settings screen,
-not just in a banner. Each is a one-line move into two files that have existed all along.
-
-The paragraph about the services stands unchanged and is the load-bearing half: a server-composed
-body is a design smell, not an untranslated string, and the fix is to move the composition to the
-only layer that knows the recipient's language.
+**What is left is the services, and it is not a translation problem.** `chat-delivery-service` and
+`social-service` compose French sentences for pushes and do not know the recipient's language - no
+header carries it and no column stores it. The MESSAGE push path already answers this correctly by
+sending `body: ''` and letting the device compose after decrypting, which is the only layer that
+knows the locale. Any server-composed body is therefore a design smell, not just an untranslated
+string, and the fix is to MOVE THE COMPOSITION rather than to translate it in place - which is also
+why storing a `locale` column server-side would be the wrong repair.
 
 ### P2 - what is left on the channel notification: the title format, and the banner iOS never cancels
 

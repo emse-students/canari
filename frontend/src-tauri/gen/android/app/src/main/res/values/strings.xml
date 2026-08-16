@@ -1,6 +1,40 @@
 <resources>
     <string name="app_name">Canari</string>
     <string name="main_activity_title">Canari</string>
+
+    <!-- Notification channels, as Android lists them in the app's notification settings. The name
+         is a heading and the description the line under it, so both are read by the user. -->
+    <string name="notif_channel_messages_name">Messages Canari</string>
+    <string name="notif_channel_messages_desc">Notifications de messages reçus via Canari</string>
+    <string name="notif_channel_social_name">Activité sociale Canari</string>
+    <string name="notif_channel_social_desc">Réactions et commentaires sur vos publications</string>
+    <string name="notif_channel_forms_name">Rappels de formulaires</string>
+    <string name="notif_channel_forms_desc">Rappels avant l\'ouverture des formulaires</string>
+    <string name="notif_channel_calls_name">Appels Canari</string>
+    <string name="notif_channel_calls_desc">Appels entrants (sonnerie)</string>
+    <string name="notif_channel_mentions_name">Mentions Canari</string>
+    <string name="notif_channel_mentions_desc">Messages qui vous mentionnent (@)</string>
+
+    <!-- Background sync (MlsBackgroundWorker): the first pair says the sync gave up and needs the
+         app opened, the second is the ongoing notification while it runs. -->
+    <string name="notif_sync_blocked_title">Canari - Synchronisation en attente</string>
+    <string name="notif_sync_blocked_body">Ouvrez l\'app pour recevoir vos messages chiffrés.</string>
+    <string name="notif_sync_running_body">Synchronisation des messages...</string>
+
+    <!-- The outbox nudge: sends are still queued and the app is closed. -->
+    <string name="notif_outbox_pending_body">Vous avez peut-être des messages en attente, ouvrez l\'application pour les envoyer.</string>
+
+    <!-- MessagingStyle names the user's own messages with this. -->
+    <string name="notif_sender_self">Moi</string>
+    <!-- A channel push whose `channelName` did not travel. -->
+    <string name="notif_channel_unnamed">Salon</string>
+
+    <!-- Bodies shown when the ciphertext could not be decrypted here: something arrived, and that
+         is all this device can honestly say. %1$s is the salon, resp. the sender. -->
+    <string name="notif_channel_new_message">Nouveau message dans #%1$s</string>
+    <string name="notif_new_message_from">Nouveau message de %1$s</string>
+    <string name="notif_new_message_generic">Vous avez reçu un message chiffré</string>
+
     <!-- Rendered under the reactor's name in the conversation's notification, so it reads
          "Claire: a réagi 😂 à votre message". %1$s is the emoji. -->
     <string name="notif_reaction_body">a réagi %1$s à votre message</string>

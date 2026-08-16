@@ -119,7 +119,7 @@ class CanariApplication : Application() {
 
     private fun createNotificationChannels() {
         val manager = getSystemService(NotificationManager::class.java) ?: return
-        ensureChannels(manager)
+        ensureChannels(this, manager)
     }
 
     /**
@@ -222,8 +222,16 @@ class CanariApplication : Application() {
          *                      bypass-DND requested - the user can confirm it in channel settings)
          *  - canari_mentions : messages that @-mention the user (WP-XP-5: IMPORTANCE_HIGH,
          *                      bypass-DND requested)
+         *
+         * A channel's name and description are WRITTEN ONCE, at creation: Android keeps the strings
+         * it was given and re-creating an existing channel changes nothing. A user who switches the
+         * app's language therefore keeps the wording of the day they installed, until the channel is
+         * deleted - which would also discard the sound and importance THEY chose. Naming the channel
+         * in the wrong language is the smaller harm, and it is the reason [context] is threaded here
+         * rather than the strings being read from the system locale.
          */
-        internal fun ensureChannels(manager: NotificationManager) {
+        internal fun ensureChannels(context: Context, manager: NotificationManager) {
+            val res = appLocaleContext(context)
             if (manager.getNotificationChannel(CanariFirebaseMessagingService.CHANNEL_MESSAGES) == null) {
                 val audioAttrs = AudioAttributes.Builder()
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -232,10 +240,10 @@ class CanariApplication : Application() {
                 manager.createNotificationChannel(
                     NotificationChannel(
                         CanariFirebaseMessagingService.CHANNEL_MESSAGES,
-                        "Messages Canari",
+                        res.getString(R.string.notif_channel_messages_name),
                         NotificationManager.IMPORTANCE_HIGH
                     ).apply {
-                        description = "Notifications de messages reçus via Canari"
+                        description = res.getString(R.string.notif_channel_messages_desc)
                         enableVibration(true)
                         setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), audioAttrs)
                     }
@@ -245,10 +253,10 @@ class CanariApplication : Application() {
                 manager.createNotificationChannel(
                     NotificationChannel(
                         CanariFirebaseMessagingService.CHANNEL_SOCIAL,
-                        "Activité sociale Canari",
+                        res.getString(R.string.notif_channel_social_name),
                         NotificationManager.IMPORTANCE_DEFAULT
                     ).apply {
-                        description = "Réactions et commentaires sur vos publications"
+                        description = res.getString(R.string.notif_channel_social_desc)
                         enableVibration(false)
                         setSound(null, null)
                     }
@@ -258,10 +266,10 @@ class CanariApplication : Application() {
                 manager.createNotificationChannel(
                     NotificationChannel(
                         CanariFirebaseMessagingService.CHANNEL_FORMS,
-                        "Rappels de formulaires",
+                        res.getString(R.string.notif_channel_forms_name),
                         NotificationManager.IMPORTANCE_DEFAULT
                     ).apply {
-                        description = "Rappels avant l'ouverture des formulaires"
+                        description = res.getString(R.string.notif_channel_forms_desc)
                         enableVibration(false)
                         setSound(null, null)
                     }
@@ -278,10 +286,10 @@ class CanariApplication : Application() {
                 manager.createNotificationChannel(
                     NotificationChannel(
                         CanariFirebaseMessagingService.CHANNEL_CALLS,
-                        "Appels Canari",
+                        res.getString(R.string.notif_channel_calls_name),
                         NotificationManager.IMPORTANCE_HIGH
                     ).apply {
-                        description = "Appels entrants (sonnerie)"
+                        description = res.getString(R.string.notif_channel_calls_desc)
                         enableVibration(true)
                         vibrationPattern = longArrayOf(0, 800, 400, 800, 400, 800)
                         setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), ringAttrs)
@@ -297,10 +305,10 @@ class CanariApplication : Application() {
                 manager.createNotificationChannel(
                     NotificationChannel(
                         CanariFirebaseMessagingService.CHANNEL_MENTIONS,
-                        "Mentions Canari",
+                        res.getString(R.string.notif_channel_mentions_name),
                         NotificationManager.IMPORTANCE_HIGH
                     ).apply {
-                        description = "Messages qui vous mentionnent (@)"
+                        description = res.getString(R.string.notif_channel_mentions_desc)
                         enableVibration(true)
                         setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION), audioAttrs)
                         setBypassDnd(true)

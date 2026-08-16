@@ -393,7 +393,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return
             }
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            CanariApplication.ensureChannels(manager)
+            CanariApplication.ensureChannels(context, manager)
+            val res = appLocaleContext(context)
             val notifId = callNotifId(callId)
 
             // Answer = deep link into the conversation with an accept marker: the frontend
@@ -418,9 +419,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
-            val title = callerName.ifEmpty { "Canari" }
+            val title = callerName.ifEmpty { res.getString(R.string.app_name) }
             val body = buildString {
-                append(context.getString(if (hasVideo) R.string.notif_incoming_video_call else R.string.notif_incoming_call))
+                append(res.getString(if (hasVideo) R.string.notif_incoming_video_call else R.string.notif_incoming_call))
                 if (groupName.isNotEmpty()) append(" - ").append(groupName)
             }
             val person = Person.Builder().setName(title).setImportant(true).build()
@@ -446,14 +447,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     .addAction(
                         NotificationCompat.Action.Builder(
                             R.drawable.ic_notification,
-                            context.getString(R.string.notif_action_decline_call),
+                            res.getString(R.string.notif_action_decline_call),
                             declinePending
                         ).build()
                     )
                     .addAction(
                         NotificationCompat.Action.Builder(
                             R.drawable.ic_notification,
-                            context.getString(R.string.notif_action_answer_call),
+                            res.getString(R.string.notif_action_answer_call),
                             answerPending
                         ).build()
                     )
@@ -816,14 +817,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * Static variant of [showPendingSyncNotification] callable from workers/receivers
-         * that don't have a Service context. WP-XP-8: [OutboxRetryWorker] calls this
-         * after a failed drain retry so the user sees the nudge without waiting for the
-         * 3-attempt threshold.
+         * Soft notification inviting the user to open the app to flush the outbox (safety net of
+         * the background send). Stable ID + messages channel: it clears itself when the app opens
+         * (cancelAllMessageNotifications in MainActivity.onResume), for this reason or another.
+         *
+         * THE ONLY COPY. It takes an explicit [context] rather than the Service-as-Context, so
+         * workers and receivers that have no Service - [OutboxRetryWorker] calls it after a failed
+         * drain retry, without waiting for the 3-attempt threshold - and the service itself both
+         * reach the same body. It used to exist twice, verbatim, which is two chances to update the
+         * wording and one certainty of forgetting.
          */
         internal fun showPendingSyncNotification(context: Context) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            CanariApplication.ensureChannels(manager)
+            CanariApplication.ensureChannels(context, manager)
+            val res = appLocaleContext(context)
             val tapIntent = Intent(context, MainActivity::class.java).apply {
                 action = Intent.ACTION_MAIN
                 addCategory(Intent.CATEGORY_LAUNCHER)
@@ -833,10 +840,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 context, PENDING_SYNC_NOTIF_ID, tapIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            val body = "Vous avez peut-être des messages en attente, ouvrez l'application pour les envoyer."
+            val body = res.getString(R.string.notif_outbox_pending_body)
             val notif = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
                 .setSmallIcon(R.drawable.ic_notification)
-                .setContentTitle("Canari")
+                .setContentTitle(res.getString(R.string.app_name))
                 .setContentText(body)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
                 .setAutoCancel(true)
@@ -1117,7 +1124,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // Social notifications and form reminders: no MLS decryption
         if (msgType == "social" || msgType == "form_reminder") {
-            val title    = data["title"]  ?: "Canari"
+            val title    = data["title"]  ?: getString(R.string.app_name)
             val body     = data["body"]   ?: ""
             // explicit deepLink (message reactions) > deepLink built from postId/formId
             val postId   = data["postId"] ?: ""
@@ -1290,7 +1297,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         enqueueWorkerIfHealthy(workRequest)
                         Log.w(TAG, "Decryption failed -> MlsBackgroundWorker enqueued")
                     }
-                    buildFallbackText(senderName).also { Log.w(TAG, "Fallback notification: $it") }
+                    buildFallbackText(appLocaleContext(this), senderName)
+                        .also { Log.w(TAG, "Fallback notification: $it") }
                 }
 
             if (silent) {
@@ -1959,40 +1967,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     private fun maybeNotifyPendingSync(remaining: Int) {
         if (remaining <= 0) return
         if (MainActivity.isInForeground) return
-        showPendingSyncNotification()
+        showPendingSyncNotification(this)
         // WP-XP-8: schedule automatic background retry via WorkManager
         OutboxRetryWorker.enqueueIfHealthy(this)
-    }
-
-    /**
-     * Soft notification inviting the user to open the app to flush the outbox (safety net of the
-     * background send). Stable ID + messages channel: it clears itself when the app opens
-     * (cancelAllMessageNotifications in MainActivity.onResume), for this reason or another.
-     */
-    private fun showPendingSyncNotification() {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        ensureNotificationChannels(manager)
-        val tapIntent = Intent(this, MainActivity::class.java).apply {
-            action = Intent.ACTION_MAIN
-            addCategory(Intent.CATEGORY_LAUNCHER)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            this, PENDING_SYNC_NOTIF_ID, tapIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val body = "Vous avez peut-être des messages en attente, ouvrez l'application pour les envoyer."
-        val notif = NotificationCompat.Builder(this, CHANNEL_MESSAGES)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Canari")
-            .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setContentIntent(pendingIntent)
-            .build()
-        manager.notify(PENDING_SYNC_NOTIF_ID, notif)
-        Log.d(TAG, "showPendingSyncNotification: nudge shown (id=$PENDING_SYNC_NOTIF_ID)")
     }
 
     /** Parses the JSON returned by nativeDecryptMessageWithKey and returns a structured DecryptedMessage. */
@@ -2526,6 +2503,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureNotificationChannels(manager)
+        val res = appLocaleContext(this)
 
         val isGroup = groupName.isNotEmpty() && groupName != senderName
 
@@ -2546,7 +2524,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // replacing each other. We rebuild the style from the active notification (if present),
         // bounding the history to MAX_NOTIF_MESSAGES to avoid unbounded growth.
         val senderPerson = Person.Builder()
-            .setName(senderName.ifEmpty { "Canari" })
+            .setName(senderName.ifEmpty { res.getString(R.string.app_name) })
             .setIcon(IconCompat.createWithBitmap(largeIcon))
             .build()
         // Our own Person carries our avatar too: Android attributes the inline reply to it while
@@ -2555,7 +2533,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // costs one request a day at most, and an unresolvable avatar simply stays iconless.
         val selfAvatar = MlsContextLoader.loadUserId(this)?.let { fetchAvatar(it) }
         val selfPerson = Person.Builder()
-            .setName("Moi")
+            .setName(res.getString(R.string.notif_sender_self))
             .apply { selfAvatar?.let { setIcon(IconCompat.createWithBitmap(it)) } }
             .build()
 
@@ -2609,8 +2587,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
         // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
         if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-            notifBuilder.addAction(buildReplyAction(groupId, notifId))
-            notifBuilder.addAction(buildMarkReadAction(groupId, notifId))
+            notifBuilder.addAction(buildReplyAction(res, groupId, notifId))
+            notifBuilder.addAction(buildMarkReadAction(res, groupId, notifId))
         }
 
         val notif = notifBuilder.build()
@@ -2629,9 +2607,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * typed text into the intent extras when the system delivers the broadcast, which
      * `FLAG_IMMUTABLE` would silently drop.
      */
-    private fun buildReplyAction(groupId: String, notifId: Int): NotificationCompat.Action {
+    private fun buildReplyAction(res: Context, groupId: String, notifId: Int): NotificationCompat.Action {
         val remoteInput = RemoteInput.Builder(KEY_TEXT_REPLY)
-            .setLabel(getString(R.string.notif_action_reply))
+            .setLabel(res.getString(R.string.notif_action_reply))
             .build()
         val intent = Intent(this, CanariNotificationActionReceiver::class.java).apply {
             action = ACTION_QUICK_REPLY
@@ -2642,12 +2620,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
         )
         return NotificationCompat.Action.Builder(
-            R.drawable.ic_notification, getString(R.string.notif_action_reply), pendingIntent
+            R.drawable.ic_notification, res.getString(R.string.notif_action_reply), pendingIntent
         ).addRemoteInput(remoteInput).setAllowGeneratedReplies(true).build()
     }
 
     /** Builds the "Marquer comme lu" action, routed to [CanariNotificationActionReceiver]. */
-    private fun buildMarkReadAction(groupId: String, notifId: Int): NotificationCompat.Action {
+    private fun buildMarkReadAction(res: Context, groupId: String, notifId: Int): NotificationCompat.Action {
         val intent = Intent(this, CanariNotificationActionReceiver::class.java).apply {
             action = ACTION_MARK_READ
             putExtra(EXTRA_GROUP_ID, groupId)
@@ -2659,7 +2637,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Action.Builder(
-            R.drawable.ic_notification, getString(R.string.notif_action_mark_read), pendingIntent
+            R.drawable.ic_notification, res.getString(R.string.notif_action_mark_read), pendingIntent
         ).build()
     }
 
@@ -2693,32 +2671,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     // --- Reaction push -----------------------------------------------------------
-
-    /**
-     * A Context whose resources resolve in the language CHOSEN IN THE APP.
-     *
-     * Every string this service shows is user-facing and must follow the Français/English toggle in
-     * Canari's settings, not the phone's system language - they are two different settings and only
-     * one of them is the user telling THIS app what to speak. The choice is mirrored into
-     * `push_context.json` by the WebView while the app is open; it is unavailable here otherwise,
-     * which is precisely why it is written down.
-     *
-     * Falls back to `this` - i.e. the OS locale - when nothing has been mirrored yet, which is the
-     * state of every device that has not opened the app since this shipped. That is a degraded
-     * answer rather than a wrong one, and it corrects itself at the next login.
-     */
-    private fun appLocaleContext(): Context {
-        val tag = MlsContextLoader.loadPushContext(this)?.locale?.takeIf { it.isNotBlank() }
-            ?: return this
-        return try {
-            val config = android.content.res.Configuration(resources.configuration)
-            config.setLocale(java.util.Locale.forLanguageTag(tag))
-            createConfigurationContext(config)
-        } catch (e: Exception) {
-            Log.w(TAG, "appLocaleContext: cannot apply locale '$tag' - falling back to the system one: ${e.message}")
-            this
-        }
-    }
 
     /**
      * Draws a reaction to one of MY messages into that conversation's own notification.
@@ -2755,7 +2707,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val groupId = data["groupId"] ?: ""
         val emoji = data["emoji"] ?: ""
         val actorId = data["senderId"] ?: ""
-        val actorName = data["title"] ?: "Canari"
+        val actorName = data["title"] ?: getString(R.string.app_name)
 
         if (groupId.isEmpty()) {
             // Without it there is no conversation to attach to and no stable id to reuse, so the
@@ -2771,7 +2723,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         showNotification(
             senderName = actorName,
             groupName = "",
-            body = appLocaleContext().getString(R.string.notif_reaction_body, emoji),
+            body = appLocaleContext(this).getString(R.string.notif_reaction_body, emoji),
             largeIcon = largeIcon,
             groupId = groupId,
             channel = CHANNEL_MESSAGES,
@@ -2797,8 +2749,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * there is no text to scan.
      */
     private fun handleChannelMessage(data: Map<String, String>) {
+        val res         = appLocaleContext(this)
         val channelId   = data["channelId"] ?: ""
-        val channelName = data["channelName"]?.takeIf { it.isNotEmpty() } ?: "Salon"
+        val channelName = data["channelName"]?.takeIf { it.isNotEmpty() }
+            ?: res.getString(R.string.notif_channel_unnamed)
         val workspaceName = data["workspaceName"]?.takeIf { it.isNotEmpty() } ?: ""
         val keyVersion  = data["keyVersion"] ?: ""
         val ciphertext  = data["ciphertext"]?.takeIf { it.isNotEmpty() }
@@ -2818,18 +2772,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val json = JSONObject(nativeDecryptChannelMessage(keyB64, nonce, ciphertext))
                 if (json.optBoolean("ok", false)) {
                     json.optString("text").takeIf { it.isNotEmpty() }?.take(200)
-                        ?: buildChannelFallbackText(channelName)
+                        ?: buildChannelFallbackText(res, channelName)
                 } else {
                     Log.w(TAG, "handleChannelMessage: decrypt ok=false channel=$channelId")
-                    buildChannelFallbackText(channelName)
+                    buildChannelFallbackText(res, channelName)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "handleChannelMessage: decrypt exception: ${e.message}")
-                buildChannelFallbackText(channelName)
+                buildChannelFallbackText(res, channelName)
             }
         } else {
             Log.d(TAG, "handleChannelMessage: no key/ciphertext → generic notification channel=$channelId")
-            buildChannelFallbackText(channelName)
+            buildChannelFallbackText(res, channelName)
         }
 
         val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
@@ -2880,14 +2834,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (workspaceName.isNotEmpty()) "$workspaceName - #$channelName" else "#$channelName"
 
     /** Generic channel notification body used when the message cannot be decrypted. */
-    private fun buildChannelFallbackText(channelName: String): String =
-        "Nouveau message dans #$channelName"
+    private fun buildChannelFallbackText(res: Context, channelName: String): String =
+        res.getString(R.string.notif_channel_new_message, channelName)
 
     /** Fallback text used when MLS decryption fails (group not yet initialized). */
-    private fun buildFallbackText(senderName: String): String =
-        if (senderName.isNotEmpty()) "Nouveau message de $senderName"
-        else "Vous avez reçu un message chiffré"
+    private fun buildFallbackText(res: Context, senderName: String): String =
+        if (senderName.isNotEmpty()) res.getString(R.string.notif_new_message_from, senderName)
+        else res.getString(R.string.notif_new_message_generic)
 
     private fun ensureNotificationChannels(manager: NotificationManager) =
-        CanariApplication.ensureChannels(manager)
+        CanariApplication.ensureChannels(this, manager)
 }
