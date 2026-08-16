@@ -109,14 +109,27 @@ const webSnapshot = async (cx) =>
           if (id) convos[id] = { lifecycle: c.lifecycle || 'active', name: String(c.name || '').slice(0, 24) };
         }
         const ids = {};
+        const at = {};
         for (const m of await getAll('messages')) {
           const k = String(m.conversationId || '');
-          if (k) (ids[k] = ids[k] || []).push(String(m.id));
+          if (!k) continue;
+          (ids[k] = ids[k] || []).push(String(m.id));
+          // THE ONLY PLAINTEXT DISCRIMINATOR A ROW HAS. A message row is id, conversationId,
+          // timestamp, iv, cipherText and nothing else - sender, status and type live inside the
+          // ciphertext - so the age of a differing row is the single fact this instrument can offer
+          // about WHICH difference it found. It separates "the same four stale rows" from "four new
+          // ones", and without it every later run re-derives that by hand.
+          //
+          // NO BACKTICKS IN THIS COMMENT, and that is not style: it is inside an evaluated template
+          // literal, so a quoted identifier would close the literal and leave valid JavaScript that
+          // throws at runtime. Rule 6 of the methodology, re-learnt here on 2026-08-16.
+          if (m.timestamp) at[String(m.id)] = Number(m.timestamp);
         }
         db.close();
         return JSON.stringify({
           convos: convos,
           ids: ids,
+          at: at,
           // THE TAURI CLIENTS DO NOT KEEP THEIR MESSAGES HERE. A1 carries a CanariDB_* database that
           // is present, openable, correctly shaped and PERMANENTLY EMPTY - a vestige of the shared
           // web code path - while the real store is SQLite behind Tauri. Read through this snapshot
@@ -197,13 +210,29 @@ for (const id of new Set([...Object.keys(L.convos), ...Object.keys(R.convos)])) 
   }
   const A = new Set(L.ids[id] || []);
   const B = new Set(R.ids[id] || []);
-  shared.push({
+  const onlyA = [...A].filter((x) => !B.has(x));
+  const onlyB = [...B].filter((x) => !A.has(x));
+  const row = {
     convo: id.slice(0, 8),
     [sides[0].label]: A.size,
     [sides[1].label]: B.size,
-    [`only${sides[0].label}`]: [...A].filter((x) => !B.has(x)).length,
-    [`only${sides[1].label}`]: [...B].filter((x) => !A.has(x)).length,
-  });
+    [`only${sides[0].label}`]: onlyA.length,
+    [`only${sides[1].label}`]: onlyB.length,
+  };
+  // WHEN it differs, never WHICH. Ids stay on this machine; an age does not identify anybody and is
+  // the difference between a finding and a number. A native side supplies no `at` map, so the field
+  // is absent rather than zero - "not measured" and "brand new" must not share a spelling.
+  const ages = (list, snap) => {
+    const ts = list.map((x) => (snap.at || {})[x]).filter((t) => typeof t === 'number' && t > 0);
+    if (!ts.length) return undefined;
+    const mins = (t) => Math.round((Date.now() - t) / 60000);
+    return { newestMinOld: mins(Math.max(...ts)), oldestMinOld: mins(Math.min(...ts)), dated: ts.length };
+  };
+  const ageA = onlyA.length ? ages(onlyA, L) : undefined;
+  const ageB = onlyB.length ? ages(onlyB, R) : undefined;
+  if (ageA) row[`only${sides[0].label}Age`] = ageA;
+  if (ageB) row[`only${sides[1].label}Age`] = ageB;
+  shared.push(row);
 }
 
 const differing = shared.filter(

@@ -308,6 +308,51 @@ bounds the backlog of a device that simply never returns.
 
 ## Protocol and delivery
 
+### P2 - four messages are stranded on the sender: no peer has them, the server never had them, and the outbox is empty
+
+Found by `recon.mjs` on 2026-08-16, which is the only instrument that can see this class.
+
+**What is established, by measurement.** In the owner-peer DM, W1 holds **6 220** message rows while
+W2 holds **6 216** - four rows W1 has and W2 does not, and **zero the other way**. The owner's own
+phone was then asked the same question and holds **6 216** too, lacking the same four: this is
+therefore not a receiver-side loss on one peer, it is **one device holding rows no other device has**.
+W2 was reloaded onto the current bundle, which drives a full replay and a history reconciliation, and
+re-measured: still 6 216. **So the server does not have them either** - a reconciliation can only
+deliver what the server holds. W1's `outbox` store is **empty**, so nothing is left that would ever
+send them. The four are dated 2026-08-16 **09:45, 10:05, 10:15 and 11:14 UTC** - irregularly spaced
+across 90 minutes, not a burst.
+
+**What is NOT established, and must not be guessed.** *What those four rows are.* A message row is
+`id`, `conversationId`, `timestamp`, `iv`, `cipherText` and nothing else - sender, status and type
+live inside the ciphertext by design - so nothing at rest says whether these are user messages, a
+system event, or a check's deliberate residue. The rendered pane would say, and reading it failed:
+the scroll-back loaded 60 bubbles of a 6 220-message conversation, which is the same window-onto-the
+-history trap that `recon.mjs` itself was rewritten to escape.
+
+**The suspicion, filed as a suspicion.** The window sits just after MUT's x5 run (09:10-09:40Z) and
+during the MUT-15/MUT-19 fix work. MUT-19 *deliberately* strands a message: it sends with the radio
+cut, then deletes, and the fix makes that delete a **withdrawal** of the queued entry. If the local
+row survives a withdrawal, the check manufactures exactly this shape - which would make it debris
+rather than a defect, and would also mean **`recon.mjs` reports `LOSS` for ever after any MUT run**.
+That is a real problem either way and it is why this is filed rather than dismissed. The spacing
+argues against it (MUT-19 ran five times in a 30-minute window; these are spread over 90 minutes,
+outside it), so it is not the answer yet.
+
+**Why it matters even before attribution.** The user-visible shape is the same in both readings: four
+messages sit in a thread, rendered, with no failure indicator, that nobody else ever received and
+that nothing will retry. That is the WP-LOSS-1 class seen from the sender's side, and no check in
+this campaign currently asks the question - `recon.mjs` found it as a by-product.
+
+**Owed, in order.** Identify the four (a decrypting read that does not depend on scrolling the pane -
+the app decrypts on render, so jumping to a message by id is the route, not paging). Then either
+attribute them to a check and give that check a teardown, or open a Work Package with the send path
+named. **Do not delete them**: they are the only specimen, and a destructive cleanup gated on nothing
+is the thing this codebase has a rule against.
+
+**`recon.mjs` now dates its difference** (`onlyW1Age: {newestMinOld, oldestMinOld, dated}`). Ids stay
+on this machine - an age identifies nobody - and it is what separates "the same four stale rows" from
+"four new ones", which every future run would otherwise re-derive by hand.
+
 ### P2 - an unresolved tab leadership is read as "another tab is the leader", and the skipped flush reschedules nothing
 
 `[OUTBOX] Flush skipped - follower tab; asking the leader to drain the shared queue.` Seen first on

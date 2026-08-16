@@ -138,6 +138,17 @@ the boot gap waits for an unrelated wake-up. **Observed twice, neither lost a me
 state, not a retry: leadership has three states and the code models two. Mechanism and discriminator
 in [backlog](docs/wiki/backlog.md). Owed with it: a check that sends INSIDE the gap on purpose.
 
+**WP-STRANDED-1 (P2) - four messages exist only on the sender.** `recon.mjs`, 2026-08-16: the DM reads
+W1 **6 220** / W2 **6 216**, four rows one-sided; **the owner's own phone holds 6 216 too**, so it is
+not a receiver-side loss; W2 reloaded and reconciled still reads 6 216, so **the server never had
+them**; W1's outbox is **empty**, so nothing will ever send them. Dated 09:45, 10:05, 10:15 and 11:14
+UTC, irregularly spaced. **What they ARE is unknown and must not be guessed** - a row at rest is
+`id, conversationId, timestamp, iv, cipherText`, and reading the pane failed (60 bubbles loaded of
+6 220). Suspicion, filed as one: MUT-19 strands a message on purpose, and if its local row survives
+the withdrawal then `recon.mjs` reports `LOSS` for ever after any MUT run. Full measurement and what
+is owed are in [backlog](docs/wiki/backlog.md). **Do not delete the four** - they are the only
+specimen.
+
 **The fourth reconciliation trigger** the user approved - *"sonder aussi quand la reponse recue est
 plus courte que la fenetre demandee"*. NOT implemented; trace and design input in
 [history-reconciliation](docs/wiki/protocols/history-reconciliation.md). **The hard part is
