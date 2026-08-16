@@ -833,8 +833,27 @@ reports it as a bare `TypeError: fetch failed` and the handler answered a generi
 | | TTL | why |
 |---|---|---|
 | preview, success | 6 h | Open Graph tags change on the scale of an edit, not of a render |
-| preview, failure | 10 min | a site that was merely down is retried the same day, not written off |
+| preview, refused (400) | 10 min | the site ANSWERED something unusable - a 404, a non-HTML body, a page over 1 MB, a redirect to a private address. A fact about this URL, and re-downloading the page to rediscover it is what the cache exists to stop |
+| preview, **unreachable (502)** | **never** | not a fact about the URL at all |
 | proxied image | 6 h | and only when the body is <= 256 KB - a favicon is asked for constantly and costs a kilobyte, a full-size `og:image` would evict a hundred of them to save one request |
+
+**ONLY AN ANSWER MAY BE CACHED, AND ONLY AN ANSWER MAY BE A 400.** Both halves were wrong until
+2026-08-16 and they compounded: a Wikipedia connect timeout was stored as a refusal and replayed as
+`400` - *your request was malformed* - to every reader for ten minutes, for a page that answered
+normally six minutes later (`cache hit ... ok=true`, same log). The distinction is carried by a TYPE,
+`UpstreamUnreachableError`, thrown where the failure happens rather than recovered from a message at
+the top: every outbound call inside `resolveLinkPreview` goes through its `reachOr` wrapper, so
+"the site said something unusable" and "the site said nothing" cannot be confused by the handler.
+An unexpected error - a parser fault, a bug in this file - is neither cached nor blamed on the
+caller: it is a `500`, logged at `error`.
+
+**One budget, and every mechanism that can enforce it agrees.** `OUTBOUND_BUDGET_MS` (4 000 ms) arms
+the endpoint's `AbortController` for the whole operation - redirect chain and oEmbed follow-up - AND
+the dispatcher's `connect.timeout`, `headersTimeout` and `bodyTimeout` for each individual leg.
+There used to be two: the stated 4 s abort, and undici's untouched 10 s defaults, which is the one
+that actually fired (`ConnectTimeoutError ... timeout: 10000ms`). A stated budget that is not the one
+that fires is a comment, not a rule. `fetchYouTubeOEmbed` was outside both - no signal reached it at
+all, on the FIRST outbound request the preview path makes - and it now takes the same signal.
 
 The endpoint answers cached entries with a matching `Cache-Control: public, max-age=`, which is the
 only way to stop the browser asking at all. Before this, every render of every message re-downloaded

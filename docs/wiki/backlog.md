@@ -687,7 +687,31 @@ Sequenced after WP-AVATAR-1 deliberately: that one settles the contract on a cas
 behaviours are known and measured, and this generalises it. Doing them in the other order would
 generalise from a shape nobody has validated once.
 
-### P2 - a link preview that could not be REACHED is reported as a bad request, and remembered as one
+### P2 - measure EGRESS over time, because two unrelated upstreams stalled in one window
+
+**FIXED 2026-08-16, AND WHAT REMAINS IS THE MEASUREMENT.** The three defects below are closed:
+`UpstreamUnreachableError` classifies at the throw, so an unreachable host is a **502 `no-store`**
+and is never remembered, while an answer about the URL stays a cacheable 400; and `OUTBOUND_BUDGET_MS`
+is now the single budget, set on the `AbortController` AND on the undici dispatcher
+(`connect.timeout`, `headersTimeout`, `bodyTimeout`), so the stated budget is the one that fires.
+Two things surfaced while doing it, both fixed with it: `fetchYouTubeOEmbed` carried **no deadline at
+all** - no signal was passed, so the endpoint's budget did not reach the FIRST outbound request it
+makes - and its doc comment claimed it returned null "if the API call fails", which it never did.
+Pinned by `security.controller.link-preview.spec.ts`, whose second assertion is the load-bearing one:
+the same URL asked twice must ASK twice when the first attempt could not reach anybody.
+
+**What is still owed, and it is not a code change.** Within one three-minute window on 2026-08-15,
+two unrelated upstreams timed out from two different containers (`chat-delivery-service` ->
+Wikipedia at 14:37:02, `core-service` -> gallery at 14:39:58 - WP-AVATAR-1's signature to the
+character). That is not evidence about either upstream, and it is the second time this shape has
+been mistaken for one: the IPv6 reading was refuted by measuring the components, which all came back
+healthy. **Measure EGRESS over time rather than the endpoints again** - the component probes already
+say each is fine at the moment it is asked, so what is left to establish is whether these stalls are
+CORRELATED, and a one-shot probe cannot answer that by construction.
+
+---
+
+#### The original finding, 2026-08-15 - a link preview that could not be REACHED is reported as a bad request, and remembered as one
 
 Same family as WP-AVATAR-1, found the same way - by a check going PASS-DIRTY rather than by anyone
 looking. `msg6.mjs` posts a Wikipedia link; on 2026-08-15 at 14:37:02 the browser got

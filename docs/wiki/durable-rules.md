@@ -778,6 +778,12 @@ page. The four that generalise:
 The link-preview pipeline, the SSRF guard, the favicon cascade and the undici seam are on that page.
 The three that generalise beyond it:
 
+- **A STATED BUDGET THAT IS NOT THE ONE THAT FIRES IS A COMMENT, NOT A RULE.** The link preview armed
+  an `AbortController` at 4 s while its undici dispatcher kept the library's own 10 s defaults, and
+  the error recorded on prod was undici's - so nobody could say which deadline the system actually
+  had. Set every mechanism that can enforce it from ONE constant, and check the layer underneath has
+  no default of its own. The same read found an outbound call carrying no deadline at all, because
+  the signal was simply never passed to it.
 - An `<img src>` at a third party inside an E2E conversation tells that host who read and when.
   Proxying it is not a nicety - and the proxy is also the only thing checking the bytes are an image.
 - `new URL(href, base)` RESOLVES hostile input rather than throwing - `javascript:` and `data:`

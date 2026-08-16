@@ -7,6 +7,8 @@ import {
   Param,
   Res,
   BadRequestException,
+  BadGatewayException,
+  InternalServerErrorException,
   ForbiddenException,
   UseGuards,
   Headers,
@@ -33,6 +35,8 @@ import {
   mergeOEmbedIntoPayload,
   ssrfSafeFetch,
   errorCause,
+  OUTBOUND_BUDGET_MS,
+  UpstreamUnreachableError,
   type LinkPreviewPayload,
   type SsrfSafeResponse,
 } from '../utils/url-guard';
@@ -377,8 +381,10 @@ export class SecurityController {
       return cached.payload;
     }
 
+    // The whole operation, redirect chain and oEmbed follow-up included. Each individual leg is
+    // bounded by the same number on the dispatcher, so the two mechanisms cannot disagree.
     const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort(), 4000);
+    const timeout = setTimeout(() => abortController.abort(), OUTBOUND_BUDGET_MS);
 
     try {
       const payload = await this.resolveLinkPreview(targetUrl, abortController.signal);
@@ -386,18 +392,39 @@ export class SecurityController {
       res.setHeader('Cache-Control', `public, max-age=${Math.floor(PREVIEW_TTL_MS / 1000)}`);
       return payload;
     } catch (error) {
-      // A refusal is cached too, for a tenth of the time: without it every
-      // render of a message pointing at a dead host pays the full timeout.
-      const message = error instanceof BadRequestException ? error.message : 'Link preview failed';
-      SecurityController.previewCache.set(cacheKey, { ok: false, message }, PREVIEW_FAILURE_TTL_MS);
+      // ONLY AN ANSWER MAY BE CACHED, AND ONLY AN ANSWER MAY BE A 400.
+      //
+      // The site answering something unusable - a 404, a non-HTML body, a page too large, a
+      // redirect to a private address - is a fact about this URL. It is worth remembering for a
+      // tenth of the success TTL, because without it every render of a message pointing at a dead
+      // host pays the full budget again.
+      if (error instanceof BadRequestException) {
+        SecurityController.previewCache.set(
+          cacheKey,
+          { ok: false, message: error.message },
+          PREVIEW_FAILURE_TTL_MS
+        );
+        throw error;
+      }
 
-      if (error instanceof BadRequestException) throw error;
-      // The client only ever sees "Link preview failed", so without this line a
-      // transport-level break (a dispatcher the runtime rejects, a DNS failure)
-      // is indistinguishable from a site that simply refused us.
-      const cause = errorCause(error) ?? error;
-      this.logger.warn(`[LINK_PREVIEW] ${targetUrl.hostname} failed: ${String(cause)}`);
-      throw new BadRequestException(message);
+      // Not reaching the host is not a fact about the URL. Measured on 2026-08-15: one Wikipedia
+      // connect timeout was stored as a refusal and replayed as `400` to every reader for ten
+      // minutes, for a page that answered normally six minutes later - `cache hit ... ok=true` in
+      // the same log. Nothing is stored, the next request tries again, and the status says which
+      // side failed instead of blaming the request.
+      if (error instanceof UpstreamUnreachableError) {
+        this.logger.warn(`[LINK_PREVIEW] ${error.message}`);
+        res.setHeader('Cache-Control', 'no-store');
+        throw new BadGatewayException('Link preview upstream unreachable');
+      }
+
+      // Anything else is OURS - a parser fault, a bug in this file. It is neither cached nor
+      // reported as the caller's mistake, and it is logged at a level that says so.
+      this.logger.error(
+        `[LINK_PREVIEW] ${targetUrl.hostname} raised an unexpected error: ${String(errorCause(error) ?? error)}`
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      throw new InternalServerErrorException('Link preview failed');
     } finally {
       clearTimeout(timeout);
     }
@@ -444,14 +471,27 @@ export class SecurityController {
     targetUrl: URL,
     signal: AbortSignal
   ): Promise<LinkPreviewPayload> {
+    // CLASSIFIED AT THE THROW, NOT BY ITS MESSAGE. Every outbound call in this method goes through
+    // `reachOr`, so the endpoint above can tell "the site said something unusable" from "the site
+    // said nothing" by TYPE - the two differ in whether the answer may be remembered, and no
+    // wording can carry that distinction to a caller.
+    const reachOr = async <T>(what: () => Promise<T>): Promise<T> => {
+      try {
+        return await what();
+      } catch (error) {
+        if (error instanceof BadRequestException) throw error;
+        throw new UpstreamUnreachableError(targetUrl.hostname, error);
+      }
+    };
+
     // The YouTube short-circuit stays ahead of the generic oEmbed discovery
     // below: it needs no HTML fetch at all, so it is strictly cheaper.
-    const youtubePayload = await fetchYouTubeOEmbed(targetUrl);
+    const youtubePayload = await reachOr(() => fetchYouTubeOEmbed(targetUrl, signal));
     if (youtubePayload) {
       return youtubePayload;
     }
 
-    const galleryPayload = await fetchMiGalleryPreview(targetUrl);
+    const galleryPayload = await reachOr(() => fetchMiGalleryPreview(targetUrl));
     if (galleryPayload) {
       return galleryPayload;
     }
@@ -473,15 +513,17 @@ export class SecurityController {
       // ssrfSafeFetch pins the connection to a re-validated, public-only IP at
       // connect time (defends against DNS-rebinding between the check above and
       // this fetch). It must stay undici's own fetch - see its doc comment.
-      response = await ssrfSafeFetch(fetchUrl, {
-        method: 'GET',
-        redirect: 'manual', // prevent automatic redirects
-        signal,
-        headers: {
-          'user-agent': 'CanariLinkPreview/1.0',
-          accept: 'text/html,application/xhtml+xml',
-        },
-      });
+      response = await reachOr(() =>
+        ssrfSafeFetch(fetchUrl, {
+          method: 'GET',
+          redirect: 'manual', // prevent automatic redirects
+          signal,
+          headers: {
+            'user-agent': 'CanariLinkPreview/1.0',
+            accept: 'text/html,application/xhtml+xml',
+          },
+        })
+      );
 
       // Manually handle redirects.
       if (response.status >= 300 && response.status <= 399) {
@@ -498,6 +540,9 @@ export class SecurityController {
     if (!response || !response.ok) {
       throw new BadRequestException('Unable to fetch URL');
     }
+    // Bound to a const so the narrowing survives into the closure below - `response` is a `let`
+    // written inside the loop, and TypeScript rightly refuses to carry a narrowing across that.
+    const page = response;
 
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.toLowerCase().includes('text/html')) {
@@ -509,7 +554,9 @@ export class SecurityController {
       throw new BadRequestException('Page is too large to preview');
     }
 
-    const html = (await response.text()).slice(0, 220_000);
+    // Reading the body can still fail on the wire (a socket that dies mid-transfer, the body
+    // deadline elapsing), and that is the same class as never having connected.
+    const html = (await reachOr(() => page.text())).slice(0, 220_000);
     const payload = buildLinkPreviewPayload(html, targetUrl);
 
     // Follow the page's own oEmbed endpoint when it declares one. It is the

@@ -196,13 +196,50 @@ export function ssrfSafeLookup(
 }
 
 /**
+ * ONE BUDGET FOR EVERY OUTBOUND PREVIEW FETCH, AND EVERY MECHANISM THAT CAN ENFORCE IT AGREES.
+ *
+ * There used to be two. The endpoint armed an `AbortController` at 4 000 ms while this dispatcher
+ * left undici's own defaults in place, and the error recorded on 2026-08-15 was undici's:
+ * `ConnectTimeoutError ... timeout: 10000ms`. So the STATED budget was not the one that fired, which
+ * makes the stated one a comment rather than a rule - and nobody could say which of the two the
+ * system actually had. Both are now set from here: the abort bounds the whole operation (the
+ * redirect chain plus the oEmbed follow-up), and these bound each individual leg of it.
+ */
+export const OUTBOUND_BUDGET_MS = 4000;
+
+/**
  * Shared undici dispatcher for outbound link-preview fetches. Pins every
  * connection to a validated, public-only resolved address via
  * {@link ssrfSafeLookup}. Pass it as the `dispatcher` of a global `fetch` call.
  */
 export const ssrfSafeDispatcher = new Agent({
-  connect: { lookup: ssrfSafeLookup },
+  connect: { lookup: ssrfSafeLookup, timeout: OUTBOUND_BUDGET_MS },
+  headersTimeout: OUTBOUND_BUDGET_MS,
+  bodyTimeout: OUTBOUND_BUDGET_MS,
 });
+
+/**
+ * The upstream said NOTHING - a connect timeout, a DNS failure, an abort, a socket that died.
+ *
+ * IT IS A TYPE BECAUSE THE CALLER'S DECISION DEPENDS ON IT and no wording can carry that: a site
+ * that answered something unusable is an ANSWER about the URL and may be remembered, while "I could
+ * not reach it" is not an answer about the URL at all - remembering that one replays a passing
+ * outage to every reader for the whole of a TTL, and reporting it as a 400 tells the client its
+ * request was malformed when the request was fine.
+ */
+export class UpstreamUnreachableError extends Error {
+  /**
+   * Named `reason` rather than `cause`: this service targets ES2021, where `Error.cause` is not
+   * declared, which is the same reason {@link errorCause} exists.
+   */
+  constructor(
+    readonly host: string,
+    readonly reason: unknown
+  ) {
+    super(`${host} unreachable: ${String(errorCause(reason) ?? reason)}`);
+    this.name = 'UpstreamUnreachableError';
+  }
+}
 
 /** The response type of {@link ssrfSafeFetch} - undici's `Response`, not the global one. */
 export type SsrfSafeResponse = UndiciResponse;
@@ -654,10 +691,17 @@ export function isYouTubeHost(hostname: string): boolean {
 
 /**
  * Fetches a link-preview payload for a YouTube URL via the YouTube oEmbed API.
- * Returns `null` if `targetUrl` is not a YouTube URL or the API call fails.
+ * Returns `null` if `targetUrl` is not a YouTube URL, or if YouTube ANSWERS that it has nothing to
+ * say about it. It does NOT swallow a transport failure - the doc comment used to claim it returned
+ * null when "the API call fails", which was never true and hid the fact that this call carried no
+ * deadline at all: no signal was passed, so the endpoint's budget did not reach the FIRST outbound
+ * request it makes. The caller classifies what comes out of here like any other unreachable host.
  * The returned object has the same shape as `buildLinkPreviewPayload`.
  */
-export async function fetchYouTubeOEmbed(targetUrl: URL): Promise<{
+export async function fetchYouTubeOEmbed(
+  targetUrl: URL,
+  signal?: AbortSignal
+): Promise<{
   url: string;
   title: string;
   description: string;
@@ -672,6 +716,7 @@ export async function fetchYouTubeOEmbed(targetUrl: URL): Promise<{
 
   const response = await fetch(oembed.toString(), {
     method: 'GET',
+    signal,
     headers: {
       'user-agent': 'CanariLinkPreview/1.0',
       accept: 'application/json',
