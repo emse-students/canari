@@ -446,6 +446,28 @@ event, and the peer would keep a message the user deleted.
 The mirror is refreshed on the way out. Leaving a withdrawn entry in it lets the native background
 sender deliver from Android what was cancelled here, which is the same defect one layer down.
 
+##### And the sender's own row must go with it (fixed 2026-08-16)
+
+The first version of this fix stopped one line short. `deleteMessage` knew which of the two branches
+it had taken and returned `void`, so `handleDeleteMessage` did the same thing either way: mark
+`isDeleted`, persist the patch, keep the row. **A withdrawn message therefore left a durable
+tombstone on the sender for something no other device had ever received** - the peers have no row to
+mark, the server never held a frame, and nothing will ever produce one.
+
+The outcome is now a type (`DeleteOutcome = 'withdrawn' | 'broadcast'`) carried out to the caller,
+which is the same rule as `cancelPending`'s boolean one level up: the fact is KNOWN where the
+decision is made and must not be re-derived, or lost, above it. On `withdrawn` the row is dropped
+from memory and from the store (`IStorage.deleteMessage`, which invalidates the conversation's cached
+history-state key like every other message write); on `broadcast` the tombstone stays, because it has
+to survive a reload and stand for something the peers really do hold.
+
+**It was found as four "lost" messages, not as a UI complaint.** `recon.mjs` compares device stores
+id by id, and a row only one device holds is exactly what it reports as a loss - so every MUT-19 run
+manufactured one, permanently. The attribution was a causal test rather than an argument: one
+`mut.mjs --only 19`, one new row (measured 2026-08-16, four became five). MUT-19 now asserts the
+sender's store as well as the peer's pane, because a tombstone and a dropped row look identical on
+screen and differ only at rest. See [cross-client-testing](../../cross-client-testing.md).
+
 #### The same rule applies to the message itself, and a UI buffer broke it (WP-ECHO-1)
 
 `addMessageToChat` is the single writer for the sender's own copy, for the same reason: no echo. It

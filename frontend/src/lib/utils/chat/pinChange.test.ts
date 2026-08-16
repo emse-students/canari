@@ -14,6 +14,7 @@ function makeEncryptedStorage(): IStorage & { rows: EncryptedMessageRow[] } {
     getConversation: vi.fn().mockResolvedValue(null),
     deleteConversation: vi.fn().mockResolvedValue(undefined),
     deleteMessagesForConversation: vi.fn().mockResolvedValue(undefined),
+    deleteMessage: vi.fn().mockResolvedValue(undefined),
     saveMessage: vi.fn(),
     saveMessages: vi.fn(async (msgs: StoredMessage[], deviceKeyB64: string) => {
       for (const msg of msgs) {

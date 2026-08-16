@@ -323,6 +323,12 @@ export class SqliteStorage implements IStorage {
 
   // -- Messages ------------------------------------------------------------
 
+  /** Remove one message row by primary key; a missing row deletes nothing and is not an error. */
+  async deleteMessage(id: string, conversationId: string): Promise<void> {
+    invalidateHistoryStateKey(conversationId);
+    await this.db.execute('DELETE FROM messages WHERE id = $1', [id]);
+  }
+
   /** Encrypt and persist a single message; delegates to saveMessages. */
   async saveMessage(msg: StoredMessage, deviceKeyB64: string): Promise<void> {
     return this.saveMessages([msg], deviceKeyB64);

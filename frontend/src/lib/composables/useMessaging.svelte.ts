@@ -963,6 +963,29 @@ export function useMessaging() {
     }
   }
 
+  /**
+   * Drops a message row from the encrypted store.
+   *
+   * Only for a message WITHDRAWN before it was sent: a deletion the peers know about keeps its row,
+   * because the tombstone has to survive a reload. Best-effort like `persistLocalMutation`, and for
+   * the same reason - but the cost of a failure is the opposite one, a row that comes back on the
+   * next load and that no peer can ever match.
+   */
+  async function forgetLocalMessage(
+    messageId: string,
+    conversationId: string,
+    ctx: MessagingContext
+  ): Promise<void> {
+    if (!ctx.storage) return;
+    try {
+      await ctx.storage.deleteMessage(messageId, conversationId);
+    } catch (e) {
+      ctx.log(
+        `[DB] Failed to drop withdrawn message ${messageId}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
   /** Sends a "delete_message" MLS system message and marks the message as deleted in the local conversation state. Only the original sender can delete their own message. */
   async function handleDeleteMessage(messageId: string, ctx: MessagingContext) {
     if (!ctx.selectedContact) return;
@@ -973,12 +996,26 @@ export function useMessaging() {
     const target = convo.messages.find((m) => m.id === messageId);
     if (!target || !isOwnMessage(target.senderId, ctx.userId)) return;
 
-    await deleteMessage(messageId, {
+    const outcome = await deleteMessage(messageId, {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
       deviceKeyB64: ctx.deviceKeyB64,
       conversation: convo,
     });
+
+    // A withdrawal is not a deletion the peers have to be told about - it is a message that never
+    // existed anywhere but here, so the row goes, rather than becoming a tombstone standing for
+    // nothing. Measured before the fix: every withdrawal left a row no other device held, which
+    // `recon.mjs` reports as a loss on the sender for ever.
+    if (outcome === 'withdrawn') {
+      ctx.conversations.set(ctx.selectedContact, {
+        ...convo,
+        messages: convo.messages.filter((m) => m.id !== messageId),
+      });
+      await forgetLocalMessage(messageId, convo.id, ctx);
+      return;
+    }
+
     const msgs = [...convo.messages];
     const idx = msgs.findIndex((m) => m.id === messageId);
     if (idx !== -1) {

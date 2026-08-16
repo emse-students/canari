@@ -2057,6 +2057,19 @@ async function mut19() {
     const renderedLocally = await evaluate(a, `${paneExpr()}.innerText.indexOf(${JSON.stringify(marker)}) !== -1`);
     const peerSawItWhileSenderOffline = (await countMessage(b, marker).catch(() => 0)) > 0;
 
+    // THE MESSAGE ID, TAKEN WHILE THE BUBBLE STILL CARRIES THE MARKER. The sender-side half of this
+    // check cannot be read from the pane: a tombstone replaces the text, so the marker is absent
+    // whether the row was dropped or kept, and the pane answers the same in both. The id is the only
+    // handle that survives the deletion, and it has to be taken BEFORE it.
+    const localId = await evaluate(
+      a,
+      `(function () {
+         for (const el of document.querySelectorAll('[id^="msg-"]'))
+           if ((el.innerText || '').indexOf(${JSON.stringify(marker)}) !== -1) return el.id.slice(4);
+         return '';
+       })()`
+    );
+
     // Still offline: `handleDeleteMessage` is a pure local Svelte action, independent of
     // connectivity. Since 2026-08-16 `deleteMessage` asks the outbox FIRST - `cancelPending` drops
     // the queued entry and answers whether the frame is still on this device - and enqueues the
@@ -2080,6 +2093,30 @@ async function mut19() {
     }
     finalHasOriginal = (await countMessage(b, marker).catch(() => 0)) > 0;
 
+    // AND THE SENDER MUST NOT KEEP A ROW EITHER. Withdrawing left a tombstone behind until
+    // 2026-08-16: `deleteMessage` knew it had withdrawn and returned nothing, so the caller wrote
+    // `isDeleted` in both cases and the sender kept a durable row for a message no other device had
+    // ever received. `recon.mjs` reads exactly that as a loss, and did - four of them, every one
+    // manufactured by this check. The store is asked, not the pane, because the pane cannot tell a
+    // dropped row from a tombstone.
+    const senderKeptRow = localId
+      ? await evaluate(
+          a,
+          `(async function () {
+             const open = (n) => new Promise((res) => { const r = indexedDB.open(n); r.onsuccess = () => res(r.result); r.onerror = () => res(null); setTimeout(() => res(null), 4000); });
+             const d = (await indexedDB.databases()).filter((x) => x.name.indexOf('CanariDB_') === 0 && x.name.indexOf('Mls') === -1)[0];
+             if (!d) return 'no-store';
+             const db = await open(d.name);
+             if (!db || !db.objectStoreNames.contains('messages')) return 'no-store';
+             return await new Promise((res) => {
+               const rq = db.transaction('messages', 'readonly').objectStore('messages').get(${JSON.stringify(localId)});
+               rq.onsuccess = () => res(rq.result ? 'kept' : 'gone');
+               rq.onerror = () => res('unreadable');
+             });
+           })()`
+        )
+      : 'unknown';
+
     // `everSawOriginal` IS THE ASSERTION AGAIN, AND THAT IS THE POINT OF THE FIX.
     //
     // It was demoted to evidence while the defect stood, because the row was a coin toss: the text
@@ -2092,7 +2129,9 @@ async function mut19() {
     // nothing to take back. A single sighting of the original text now means the withdrawal did not
     // hold, which is a defect and not a scheduling accident - so it is red. The settled state stays
     // asserted beside it: the two together separate "never sent" from "sent and then repaired".
-    const ok = !everSawOriginal && !finalHasOriginal;
+    // `unknown` is not a pass: it means the id could not be taken, so the sender-side half was never
+    // asked. A check that cannot establish its own precondition says so rather than reporting green.
+    const ok = !everSawOriginal && !finalHasOriginal && senderKeptRow === 'gone';
     return await finish(
       'MUT-19/dm',
       ok ? 'PASS' : 'FAIL',
@@ -2102,9 +2141,12 @@ async function mut19() {
         peerSawItWhileSenderOffline,
         everSawOriginal,
         finalHasOriginal,
+        senderKeptRow,
         note: everSawOriginal
           ? 'THE WITHDRAWAL DID NOT HOLD: the peer saw the original text, so the queued entry reached the wire despite being deleted before the radio returned'
-          : 'the message was withdrawn from the queue and never sent - the peer saw neither the text nor a tombstone for it',
+          : senderKeptRow === 'gone'
+            ? 'the message was withdrawn from the queue and never sent - no peer saw it, and the sender kept no row for it'
+            : `the peer is clean but the SENDER still holds the row (${senderKeptRow}) - a message no other device has, which reconciliation reports as a loss`,
       },
       cut
     );

@@ -42,21 +42,26 @@ describe('deleteMessage', () => {
   it('withdraws a message still queued, and broadcasts NOTHING about it', async () => {
     outboxMock.cancelOutboxMessage.mockResolvedValueOnce(true);
 
-    await deleteMessage('m1', deps);
+    const outcome = await deleteMessage('m1', deps);
 
     expect(outboxMock.cancelOutboxMessage).toHaveBeenCalledWith('m1');
     // The peers never had it. A `delete_message` here is the defect: the flusher would send the
     // text first, so the peer renders a message the user deleted before it hears it is gone.
     expect(outboxMock.enqueueOutboxMessage).not.toHaveBeenCalled();
+    // And the caller is TOLD, because its local write differs: a withdrawn message is dropped
+    // outright, where a broadcast one keeps its row as a tombstone. Returning nothing is what made
+    // the caller tombstone both, leaving the sender a row no peer could ever match.
+    expect(outcome).toBe('withdrawn');
   });
 
   it('broadcasts delete_message once the frame has left this device', async () => {
     outboxMock.cancelOutboxMessage.mockResolvedValueOnce(false);
 
-    await deleteMessage('m1', deps);
+    const outcome = await deleteMessage('m1', deps);
 
     expect(outboxMock.enqueueOutboxMessage).toHaveBeenCalledTimes(1);
     expect(systemEventOf(outboxMock.enqueueOutboxMessage.mock.calls[0])).toBe('delete_message');
+    expect(outcome).toBe('broadcast');
   });
 
   it('asks the queue BEFORE enqueuing, never the other way round', async () => {

@@ -281,6 +281,18 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  /** Remove one message row by primary key; absent rows resolve without error, as IDB's delete does. */
+  async deleteMessage(id: string, conversationId: string): Promise<void> {
+    const db = this.ensureDb();
+    invalidateHistoryStateKey(conversationId);
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('messages', 'readwrite');
+      tx.objectStore('messages').delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   private deleteMessagesInTransaction(tx: IDBTransaction, conversationId: string): void {
     invalidateHistoryStateKey(conversationId);
     const index = tx.objectStore('messages').index('byConversation');

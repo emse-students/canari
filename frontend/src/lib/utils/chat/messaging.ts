@@ -246,6 +246,14 @@ export async function editMessage(
 }
 
 /**
+ * What a delete actually did, which decides what the caller writes locally.
+ *
+ * `withdrawn` - the frame never left this device, so no peer has it and none ever will.
+ * `broadcast` - the frame is out there and a `delete_message` event is on its way after it.
+ */
+export type DeleteOutcome = 'withdrawn' | 'broadcast';
+
+/**
  * Deletes a message: by WITHDRAWING it if it has not left this device, otherwise by broadcasting a
  * `delete_message` system event so peers that already have it remove it from their history.
  *
@@ -259,13 +267,22 @@ export async function editMessage(
  * The two outcomes are one question answered where it is KNOWN rather than learnt by failing: only
  * the outbox can say whether the frame is still on this device, and it answers before either path
  * is taken.
+ *
+ * WHICH OUTCOME IT WAS IS RETURNED, because the caller's local write differs between them and it
+ * cannot recompute the answer afterwards. It used to be dropped here, so the caller tombstoned in
+ * both cases - and a withdrawn message left a "deleted message" row on the sender for something no
+ * peer had ever received, which every reconciliation then read as a row the peers had LOST.
  */
-export async function deleteMessage(messageId: string, deps: MessageActionDeps): Promise<void> {
-  if (await cancelOutboxMessage(messageId)) return;
+export async function deleteMessage(
+  messageId: string,
+  deps: MessageActionDeps
+): Promise<DeleteOutcome> {
+  if (await cancelOutboxMessage(messageId)) return 'withdrawn';
   await enqueueControlEvent(
     deps.conversation.id,
     encodeAppMessage(mkSystem('delete_message', JSON.stringify({ messageId })))
   );
+  return 'broadcast';
 }
 
 /**

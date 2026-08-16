@@ -236,6 +236,14 @@ carry in the head:
   send happen. And the answer must be honest about the entry INSIDE its send: claiming a
   cancellation there loses the delete outright, where admitting it costs one event nobody minds
   (MUT-19).
+- **A BRANCH THE CALLEE TOOK IS A FACT THE CALLER NEEDS - RETURN IT, OR IT WRITES THE SAME THING
+  BOTH TIMES.** `deleteMessage` asked the queue, learnt whether the frame had left, and returned
+  `void`; the caller therefore tombstoned in both cases, so a WITHDRAWN message left a durable
+  "deleted" row on the sender for something no peer had ever received and nothing could ever
+  reconcile. The consulting is only half the fix - a discriminator that stops one frame above the
+  decision it exists for has been thrown away, not carried. Make it a TYPE (`DeleteOutcome`), not a
+  boolean the next reader has to re-interpret. Found as four phantom losses by `recon.mjs`, and
+  ATTRIBUTED by a causal test - one run of the check, one new row - never by argument from the dates.
 - **A CANCELLATION IS ONLY AS DETERMINISTIC AS THE NARROWEST WINDOW IT CLOSES.** Deleting the
   durable row stops every FUTURE flush and nothing else - the flush already running walks a snapshot
   read before the user acted, and another tab walks its own. Three facts, one per window, or the fix

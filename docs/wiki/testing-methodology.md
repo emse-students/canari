@@ -955,6 +955,30 @@ profile both fail, and the green row said the opposite.
 is easier to interpret once the one below it holds, not because a rung needs the previous one's
 leftovers.
 
+#### 20. RESIDUE A CHECK LEAVES IS A CLAIM ABOUT THE APP BEFORE IT IS A CLAIM ABOUT THE CHECK - and it is settled by re-running the check, not by reasoning about the dates
+
+`recon.mjs` reported four messages one device held and no other did: the shape of a real loss, on
+production, on the sender's side. The tempting reading was debris - MUT-19 deliberately strands a
+message, so "the harness made them" would have closed the entry and bought a teardown. The dates
+argued AGAINST it (the four were spread over 90 minutes, MUT-19's five runs fitted in 30), and that
+argument was worth nothing in both directions: it could neither convict nor acquit.
+
+**The causal test settles in one run what the timeline cannot settle at all.** One
+`mut.mjs --only 19`, one re-measure: four became five, at the minute of the run. Attribution, not
+inference - and it costs less than the reasoning it replaces.
+
+Then the part that matters more: **the residue was the defect.** The check was doing exactly what a
+user does, and the row it left behind was the application's own durable answer to it - a tombstone
+for a message no peer had ever received. Writing a teardown would have deleted the evidence of a
+live bug and made the instrument permanently blind to that whole class. So the order is fixed: find
+out WHY the state is there, and only then decide whether anything should clean it up. A teardown is
+correct only for state the check creates that the application would never have created itself.
+
+The corollary for the instrument: a check that can leave the app in a state another instrument reads
+as a defect must ASSERT that state itself. MUT-19 now reads the sender's store, because on screen a
+dropped row and a tombstone are indistinguishable - the discriminator is at rest, and only a check
+that goes to look can carry it.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.

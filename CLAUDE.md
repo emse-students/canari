@@ -138,16 +138,17 @@ the boot gap waits for an unrelated wake-up. **Observed twice, neither lost a me
 state, not a retry: leadership has three states and the code models two. Mechanism and discriminator
 in [backlog](docs/wiki/backlog.md). Owed with it: a check that sends INSIDE the gap on purpose.
 
-**WP-STRANDED-1 (P2) - four messages exist only on the sender.** `recon.mjs`, 2026-08-16: the DM reads
-W1 **6 220** / W2 **6 216**, four rows one-sided; **the owner's own phone holds 6 216 too**, so it is
-not a receiver-side loss; W2 reloaded and reconciled still reads 6 216, so **the server never had
-them**; W1's outbox is **empty**, so nothing will ever send them. Dated 09:45, 10:05, 10:15 and 11:14
-UTC, irregularly spaced. **What they ARE is unknown and must not be guessed** - a row at rest is
-`id, conversationId, timestamp, iv, cipherText`, and reading the pane failed (60 bubbles loaded of
-6 220). Suspicion, filed as one: MUT-19 strands a message on purpose, and if its local row survives
-the withdrawal then `recon.mjs` reports `LOSS` for ever after any MUT run. Full measurement and what
-is owed are in [backlog](docs/wiki/backlog.md). **Do not delete the four** - they are the only
-specimen.
+**WP-STRANDED-1 IS ATTRIBUTED AND FIXED AT ITS CAUSE (2026-08-16), VERIFICATION OWED.** The four
+sender-only rows were WITHDRAWN messages: `deleteMessage` knew it had withdrawn rather than
+broadcast and returned `void`, so the caller tombstoned either way and the sender kept a durable row
+no peer ever had. **Attributed by a causal test, not by the dates** - one `mut.mjs --only 19`, four
+became five. The outcome is a type now (`DeleteOutcome`), `IStorage.deleteMessage` drops the row on
+`withdrawn`, and MUT-19 asserts the sender's STORE (`senderKeptRow`), because a tombstone and a
+dropped row are identical on screen. Mechanism on
+[chat](docs/wiki/frontend/modules/chat.md), rule in [durable-rules](docs/wiki/durable-rules.md),
+methodology rule 20 in [testing-methodology](docs/wiki/testing-methodology.md).
+**Owed: MUT-19 on the deployed bundle, then delete the five residue rows on W1 by id** (an allowlist
+of exactly those five, each proven MUT-19's) so `recon.mjs` reads `RECONCILED` again.
 
 **The fourth reconciliation trigger** the user approved - *"sonder aussi quand la reponse recue est
 plus courte que la fenetre demandee"*. NOT implemented; trace and design input in

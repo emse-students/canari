@@ -225,6 +225,18 @@ export interface IStorage {
    * a handler using it erases every field it did not itself carry. See `mergeStoredMessage`.
    */
   updateMessage(id: string, patch: StoredMessagePatch, deviceKeyB64: string): Promise<void>;
+  /**
+   * Remove one message row outright. No-op when the row is absent.
+   *
+   * NOT the way to record a deletion the peers know about - that is `updateMessage` with
+   * `isDeleted`, which keeps the row so the tombstone survives a reload. This is for a message no
+   * other device ever had: one withdrawn from the outbox before it was sent. There is nothing for a
+   * tombstone to stand for, and the row left behind is one no peer can ever match.
+   *
+   * `conversationId` is taken rather than looked up because the caller already knows it and the
+   * cached history-state key is per-conversation.
+   */
+  deleteMessage(id: string, conversationId: string): Promise<void>;
   /** Decrypt and return all messages for a conversation, sorted oldest-first. */
   getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]>;
   /** Return the most recent `limit` messages, optionally those strictly before `beforeTimestamp`. */
