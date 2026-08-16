@@ -30,6 +30,13 @@ import { SITE } from '$lib/seo/site';
 const SEO_MARKER = '<!--canari-seo-->';
 const STATIC_TITLE = `<title>${SITE.defaultTitle}</title>`;
 
+/**
+ * SvelteKit reads the error hook from this file, and only from this file. The implementation lives
+ * in `$lib/server/handleError` so it can be unit-tested without the SEO imports above - and the
+ * `$env/dynamic/private` under them - having to resolve.
+ */
+export { handleError } from '$lib/server/handleError';
+
 export const handle: Handle = async ({ event, resolve }) => {
   const pathname = event.url.pathname;
 

@@ -753,7 +753,7 @@ healthy. **Before either fix, measure EGRESS over time rather than the endpoints
 component probes already say each is fine at the moment it is asked, so what is left to establish is
 whether these stalls are correlated, and a one-shot probe cannot answer that by construction.
 
-### P3 - the SSR reports an unmatched route as a server error, in red, on stderr
+### P3 - FIXED 2026-08-16 - the SSR reported an unmatched route as a server error, in red, on stderr
 
 Found while classifying the pass-2 server window of the MSG x5 of 2026-08-15, which went `NOT CLEAN`
 on nine lines that turned out to be an internet scanner probing for secrets (`/.env`, `/.git/HEAD`,
@@ -773,11 +773,19 @@ scanners is a reader who will skim past the 500 that matters. Fix is one export 
 `handleError` that logs 4xx at warn (or info) with the method and path, and 5xx at error with the
 stack - which also gives the classifier a level to sort on instead of a path shape.
 
-Deliberately not done mid-campaign: it redeploys the SSR, and every client-side disconnection in a
-window that straddles a deploy has to be re-attributed. `srvlog.mjs` classifies the scan as
-`notable` in the meantime - reported on every run, gating none - and the two paths a general rule
-would have wrongly forgiven (`/service-worker.js`, `/chat`) are pinned in
+**Fixed by `$lib/server/handleError.ts`, exported from `hooks.server.ts`.** A 4xx is a `console.warn`
+with no stack and no colour; a 5xx is a `console.error` carrying its stack. **The first line keeps
+SvelteKit's exact `[<status>] <METHOD> <path>` shape on purpose** - `srvlog.mjs` classifies the
+server window by it, path by path, each rule carrying its own justification, and a new wording would
+have silently un-classified every one of them. So no classifier rule changed, and the two paths a
+general rule would wrongly forgive (`/service-worker.js`, `/chat`) stay pinned in
 `srvclassify-selftest.mjs`.
+
+Two things travelled with it. `handleError` lives in `$lib/server/` rather than in `hooks.server.ts`
+so it can be unit-tested without `$env/dynamic/private` having to resolve. And `hooks.server.ts` had
+been claiming in its own doc comment that `hooks.server.test.ts` pinned the two `app.html` markers it
+substitutes - **that file did not exist**; a renamed marker would have turned the whole SSR head into
+a no-op that still runs, still logs nothing and still serves a page. It exists now, and pins both.
 
 ### P3 - SEO for Sky, MiGallery and Portail-etu
 
