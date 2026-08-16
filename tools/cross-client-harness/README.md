@@ -5,8 +5,9 @@ Chrome profiles and an Android device. It exists because a whole class of Canari
 a unit test and to a single client - a message the sender shows as delivered and the receiver never
 stores, a tab that stops receiving while looking healthy, a notification that is not dismissed on the
 other device. Every defect it found is written up in
-[cross-client-testing](../../docs/wiki/cross-client-testing.md), which is also the campaign's live
-dashboard; this file is about the rig itself.
+[cross-client-testing](../../docs/wiki/cross-client-testing.md), the campaign's live board; its
+design is [cross-client-campaign](../../docs/wiki/cross-client-campaign.md). This file is about the
+rig itself.
 
 It is **not** a CI suite and must never become one. It drives PRODUCTION with two real accounts, it
 needs a phone plugged in, and several checks take minutes. It is an audit instrument: pick it up when
@@ -154,7 +155,70 @@ hole with an assertion rather than a habit:
 
 `scratch/` is gitignored and is where one-shot probes go. Before it existed they accumulated beside
 the real checks until **285 of 362 files were residue** and nobody could tell an instrument from a
-leftover.
+leftover. **One-shot probes are not kept**, so a `.mjs` named in a historical write-up on the wiki -
+`webstate.mjs`, `unloadframe.mjs`, `falseloss*.mjs`, `check-loss-a1.mjs`, `trace-arrival.mjs`,
+`probe-csp-blob.mjs` - is a probe that answered its question and was removed. The measurement stands;
+the file is gone, which is why every write-up states the technique in full.
+
+### recon.mjs measures the store, not the screen
+
+The reconciliation is the campaign's only instrument for the silent-loss class. Until 2026-08-11 it
+read campaign markers out of the rendered message pane, and every problem that design had came from
+one fact: **the pane is a window onto the history, not the history.** It had to scroll; scrolling
+pages 50 rows at a time; so it needed a time window to stay honest, a coverage proof, and about a
+minute per side. Run against a 1 804-message DM it read **60 rows** and printed `reconciled: true` -
+its marker pattern had drifted and matched nothing, it called an empty difference over an empty set a
+reconciliation, and its scroll loop assigned `scrollTop` without dispatching an event, so at the top
+it assigned 0 to 0 and concluded it had reached the beginning of history after four steps.
+
+It reads both clients' IndexedDB now. Rows are ciphertext at rest but `id` and `conversationId` are
+plaintext, so the two stores compare exactly without decrypting anything: **1 804 = 1 804, shared
+1 804, zero either side, in 0.58 s** against roughly two minutes for a windowed answer covering 3 % of
+the conversation. It works on a conversation of any size because it never looks at a window. What it
+cannot say is that a message *decrypted*, only that both clients hold it - rendering and decryption
+are asserted per check, by the marker each one sends.
+
+Four properties worth keeping:
+
+- **Membership comes from the `conversations` store, not from the message rows.** Keyed off messages
+  alone, a conversation a client is in but has received *nothing* for has no rows, so it looks like a
+  conversation the client is not in - and a total loss, the worst case, would be the one case that
+  reconciled silently.
+- **A conversation `removed` on either side is expected to diverge**, and is reported apart rather
+  than as a difference. That is what deleting it means.
+- **`VACUOUS` is a third verdict, not a flag on a boolean**, and it exits non-zero.
+- **It REFUSES to read a Tauri client rather than answer wrongly.** A1 carries a `CanariDB_*` database
+  that is present, openable, correctly shaped and **permanently empty** - a vestige of the shared web
+  code path - while its real store is SQLite behind Tauri. Read through it, a healthy phone showing
+  nine conversations reports zero of everything. It answers `WRONG STORE`, names the runtime, and
+  reports how many conversations the client is showing. **The phone needs `--rightUrl
+  tauri.localhost`**, because its WebView serves from there and not from the domain.
+
+### The other instruments, and what each was wrong about first
+
+- **`reload.mjs`** is the other half of `bundle-id.mjs`: it detects staleness AND repairs it, then
+  re-asserts the build id rather than assuming the reload took.
+- **`unlock.mjs`** resolves which account owns which port from `test-accounts.json`, navigates to a
+  route where the gate actually MOUNTS, and spawns `pin.mjs` - so the recurring "you forgot the PIN"
+  costs one idempotent command, and no real first name is typed into a shell line.
+- **`onetab.mjs`** closes every app tab but the front one. A second tab is a second MLS client on that
+  profile, and `client()` resolves by position among the tabs; `run.mjs` runs the same repair before
+  every job.
+- **`awaiting.mjs` was OBSOLETE and is deleted** - the durable awaiting-history registry it read no
+  longer exists, so a re-run would find an empty store on every client and report health it cannot
+  observe. It is worth remembering for two faults that apply to any probe: it looked for evidence in a
+  `_reason` companion key when the registry stored `{since, reason}` as the JSON *value*, so it
+  reported every marker on every client as legacy - a unanimous answer contradicting a measurement
+  taken the day before, which is what a vacuous probe always looks like; and it returned `[]` rather
+  than `null` when it could not read a store, which is "a failed read is not an empty store" broken
+  inside the instrument that exists to enforce it. The observable is now the LOG line
+  (`[HISTORY_RECONCILE] … group(s) asked`), not a stored key.
+- **The group fixture is `newgroup.mjs` + `invite.mjs`**, shared by the DEL, GRP and HEAL rigs. The
+  two halves are needed apart: creating a group is what HEAL-W2 needs, while the ADD is separately the
+  campaign's only cheap, deterministic epoch generator.
+- **Continuous sampling replaces any two-sample arrival check**, and it is a property of the checks
+  themselves rather than of a standalone probe: `watch.mjs` observes throughout, and a check that
+  measures an arrival samples the receiver rather than looking twice.
 
 ## Operating it
 

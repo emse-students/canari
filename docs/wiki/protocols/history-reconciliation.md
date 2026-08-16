@@ -16,7 +16,7 @@ below was taken with the product owner on that date and is recorded, with what i
 > **Green gates are all that has been established.** Not one line of it has run on a device or in a
 > browser: the frontend suite passes and `svelte-check` reports nothing, which proves it compiles and
 > that its units behave, and says nothing about a real conversation between two real devices. The
-> [cross-client campaign](../cross-client-testing.md) is what would, and it is owed from MSG-1 on this
+> [cross-client campaign](../cross-client-campaign.md) is what would, and it is owed from MSG-1 on this
 > build.
 
 ---

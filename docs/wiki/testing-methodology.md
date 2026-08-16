@@ -926,6 +926,35 @@ than one that quietly implies it has none.**
 
 Ordered by how expensive it is to break them.
 
+#### 19. A SCRIPT OWNS A FEW CHECKS, AND EVERY CHECK IS INDEPENDENT - the two halves of one rule
+
+Standing instruction from the user, and it governs every phase: *"C'est bien de faire des scripts pour
+un nombre limité de tests à la fois plutôt que pour tous les tests de la phase"*, and *"Un test doit
+être indépendant. S'il est indépendant, il pourra aussi être fait les uns à la suite des autres"*.
+
+**The granularity half.** A file that owns a whole phase fails as one unit. One throw in check three
+takes checks four to twelve with it, and they had nothing to do with the failure - which is how a
+phase reports one defect and eleven silences. The campaign has paid this twice in one week: three
+scripts exiting non-zero having recorded nothing at all, and a run where a single `armComposer` throw
+cost every verdict downstream of it in the same file.
+
+**The independence half is what makes the granularity possible**, and it is the stronger claim. A
+check establishes its own precondition, asserts nothing another check had to arrange, and leaves the
+clients in a state the next one can start from. The test of it is not "does the phase pass" - it is
+**does this check pass ALONE, and does it pass in any position**. MSG-8b passing standalone while
+failing inside its phase is exactly the reading that is only available when checks are independent;
+without it the failure is a property of the file and cannot be attributed at all.
+
+Two corollaries the campaign already learnt the expensive way, now stated as consequences of this
+rule rather than as separate lessons: a check that leaves an overlay, a backgrounded page or an extra
+tab behind has broken the independence of every check after it (rules 7 and 8), and a check that
+passes on the previous check's litter is strictly worse than one that fails honestly - on a fresh
+profile both fail, and the green row said the opposite.
+
+**Sequence is then a convenience, never a requirement.** The ladder's order exists because each rung
+is easier to interpret once the one below it holds, not because a rung needs the previous one's
+leftovers.
+
 ## Observation is part of the check, not a debugging step
 
 Decided 2026-08-06, after two shipped bugs came out of the logs of **passing** checks.
