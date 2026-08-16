@@ -1150,6 +1150,41 @@ all seven call sites (`archive replay`, `history ask`, `history answer`, `histor
 `outbox flush`, `connection sync`, `media send`) and both refusals quote it. Attributing this one
 without it cost a read of every call site.
 
+###### And the guard was refusing six callers it should have WAITED for - fixed 2026-08-16
+
+The label was the whole fix for the report and NO fix at all for the behaviour, which is the more
+expensive half. `catchUpDepth > 0` refused **every** caller, and only one of them is a deadlock.
+
+- **The caller is inside the session it would be waiting on.** The stack that would close that session
+  is the one blocked here, so nothing can ever release it. Refuse, and say so - this is the W2 wedge
+  of 2026-08-15 and the `reconcileGroup` sighting above.
+- **The session belongs to somebody else.** The global mutex blocks the drain either way, but by a
+  stack that finishes on its own. **The barrier resolves - later.** Waiting longer is precisely what
+  the caller asked for; refusing hands it the one outcome it was written to prevent.
+
+The second case is not hypothetical and did not stay unobserved for long: **MUT-2, 2026-08-16, on
+prod.** A replay opened a session on `642f389a…`; 98 ms later `connection sync` and 99 ms later
+`outbox flush` were both refused, neither being about that group. `outbox flush` then proceeded to
+send - the comment at that call site names the consequence exactly, *"sending at a possibly stale
+epoch"*, the silent-loss race the barrier exists to close. One connection edge, both halves of the
+ordering guarantee dropped, and the only trace was the diagnostic line added the day before.
+
+**The discriminator is now a parameter**, `waitForMessageQueueIdle(caller, catchUpGroupId)`, and it is
+NOT "which group this call is about" - it is *"the group whose session this stack could be running
+inside"*. `archive replay` passes its group and `history ask` passes `groupId`; the other five pass
+`null`, each being a connection edge, a click, or a leg already deferred past the drain by
+`answerAfterMailboxDrained`, none of which can be inside a session. A same-group session is still
+refused even when the caller does not own it: the group is a proxy for "inside", not a proof, and the
+asymmetry is deliberate - a wrong refusal costs a guarantee the shared-fingerprint ledger still
+catches, a wrong wait costs the client until it is reloaded.
+
+**The day it spent as prose is the lesson**, and it is rule 24 of
+[testing-methodology](../testing-methodology.md): the label was matched against the open group ids
+with `caller.includes(...)`, and **not one of the seven call sites spells a group id**, so `NESTED`
+could not be printed in the field at all. Every real occurrence read `CONCURRENT` - including the
+nesting the guard exists for, which would have read as "nothing to fix". A distinction carried in a
+string is a distinction nobody makes.
+
 ---
 
 ## Open questions

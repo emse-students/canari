@@ -356,7 +356,9 @@ export function answerAfterMailboxDrained(
   answer: () => Promise<unknown>
 ): void {
   void (async () => {
-    await mlsService.waitForMessageQueueIdle('history answer').catch(() => {});
+    // `null`: the point of this wrapper is that the leg runs OUTSIDE the drain that scheduled it,
+    // owning nothing - so anybody else's session closes without it and waiting always terminates.
+    await mlsService.waitForMessageQueueIdle('history answer', null).catch(() => {});
     await answer();
   })();
 }
@@ -411,7 +413,7 @@ export async function reconcileGroup(
   // AFTER the coalescing reservation above, deliberately: a burst of forty failing frames must
   // produce one waiter, not forty. And it is a BARRIER, never a delay - `waitUntilIdle` resolves on
   // the drain loop ending, so it states a fact about the queue rather than guessing at a duration.
-  await mlsService.waitForMessageQueueIdle('history ask').catch(() => {});
+  await mlsService.waitForMessageQueueIdle('history ask', groupId).catch(() => {});
 
   // ASK THE SERVER FIRST. It elects the responder and answers `no_peer_online` immediately when
   // there is none, so electing first is what keeps the probe conditional: a state key sent before

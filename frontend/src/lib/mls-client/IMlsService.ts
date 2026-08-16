@@ -375,8 +375,18 @@ export interface IMlsService {
    * resolve, and taken before the inbound pipeline exists it fills a queue nothing can drain. Both
    * are reported as errors, and an error that cannot say who earned it sends its reader through
    * every call site by hand - which is exactly what one `SKIPPED` line on W1 cost on 2026-08-15.
+   *
+   * `catchUpGroupId` IS THE ONE FACT THAT SEPARATES A DEADLOCK FROM A WAIT, and it is required for
+   * the same reason: it is known at the call site and nowhere else. It is NOT "which group this call
+   * is about" - it is "the group whose catch-up session this stack could be running INSIDE". Only
+   * that session can fail to release, because the stack that would close it is the one waiting here;
+   * anybody else's closes on its own and this barrier merely waits longer, which is all the caller
+   * ever asked for.
+   *
+   * Pass `null` when the call site cannot be inside a session at all - a connection edge, a
+   * visibility change, a click, or a leg deferred past the drain - and a group id when it can.
    */
-  waitForMessageQueueIdle(caller: string): Promise<void>;
+  waitForMessageQueueIdle(caller: string, catchUpGroupId: string | null): Promise<void>;
   /**
    * Tells the service the local conversation store is now authoritative.
    *

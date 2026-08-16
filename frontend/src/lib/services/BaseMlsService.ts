@@ -399,12 +399,12 @@ export abstract class BaseMlsService implements IMlsService {
   /**
    * The catch-up sessions currently open, in the order they opened.
    *
-   * A LIST RATHER THAN A DEPTH, and the difference is the whole point of {@link waitForMessageQueueIdle}'s
-   * refusal being readable. A count says "somebody has one open", which is true of two situations
-   * whose fixes are opposite: a caller that opened one ITSELF and then waited for its own mailbox
-   * (a deadlock - fix the ORDER, take the barrier first), and a caller that merely ran BESIDE
-   * somebody else's session (no deadlock at all - it would only have waited). The refusal line used
-   * to say the same sentence for both and send its reader through seven call sites by hand.
+   * A LIST RATHER THAN A DEPTH, and the difference is what {@link waitForMessageQueueIdle} BRANCHES
+   * on. A count says "somebody has one open", which is true of two situations whose handling is
+   * opposite: a caller that opened one ITSELF and then waited for its own mailbox (a deadlock -
+   * refuse it and name it), and a caller that merely ran BESIDE somebody else's session (not a
+   * deadlock at all - wait, which is all the caller ever asked for). The guard used to refuse both,
+   * so a routine connection edge lost the ordering guarantee it had taken the barrier to get.
    *
    * The group id is the discriminator, and it is already known at both openers - so it is carried
    * from there rather than re-derived: a barrier whose caller names the same group as an open
@@ -527,7 +527,7 @@ export abstract class BaseMlsService implements IMlsService {
    * The evidence for "empty" is a COMPLETED pull plus a socket still open (see
    * {@link mailboxEmptiedByAPull}), never a duration.
    */
-  async waitForMessageQueueIdle(caller: string): Promise<void> {
+  async waitForMessageQueueIdle(caller: string, catchUpGroupId: string | null): Promise<void> {
     /**
      * FROM INSIDE A CATCH-UP THIS BARRIER CANNOT RESOLVE, SO IT ACCUSES INSTEAD OF HANGING.
      *
@@ -548,32 +548,47 @@ export abstract class BaseMlsService implements IMlsService {
      * (`answerAfterMailboxDrained`), which is the shape to copy when a call site cannot know whether
      * it runs inside one.
      *
-     * `catchUpDepth` IS A GLOBAL, so this also catches a caller that merely runs BESIDE someone
-     * else's session - which would not deadlock, only wait - and refuses it too. That is why the
-     * line names its caller: the depth cannot say whose session it is, and the two are fixed in
-     * different places. The one occurrence measured so far was neither ambiguous nor concurrent -
-     * `reconcileGroup` raised from inside a replay, above the `finish` that closes it - and it is
-     * fixed at the call site, where the fact was already known.
+     * ONLY THE SESSION THIS STACK IS INSIDE IS A DEADLOCK, AND `catchUpGroupId` IS WHAT SAYS SO. A
+     * session open elsewhere takes the same global mutex, so the drain is blocked there too - but it
+     * is blocked by a stack that will release it on its own, and this barrier then merely waits
+     * longer. Waiting is what the caller asked for; refusing is not.
+     *
+     * That distinction was carried in PROSE for a day and carried nothing: the caller string was
+     * matched against the open group ids by substring, and not one of the seven call sites spells a
+     * group id, so `NESTED` could not be printed in the field at all. Every real occurrence read
+     * `CONCURRENT` - including the nesting this guard exists for - and the first one measured said
+     * so on prod (MUT-2, 2026-08-16: "connection sync" and "outbox flush", 98 ms after a replay
+     * opened a session on a group neither of them was about). The discriminator is a PARAMETER now,
+     * passed from the call sites that already know it.
+     *
+     * `null` means the call site cannot be inside a session at all ("connection sync", "outbox
+     * flush", "media send", and the legs deferred past the drain): each is raised by a connection
+     * edge, a visibility change, a click or a microtask that owns nothing, so none can be the nested
+     * case. A future call site that passes `null` from inside one would hang here rather than be
+     * told - which is why the parameter is required rather than optional, and why this sentence
+     * exists.
+     *
+     * A caller that names a group it does NOT own a session on is refused too, and that is the one
+     * deliberate imprecision: the group is a proxy for "inside", not a proof of it. Refusing costs a
+     * guarantee the ledger can still catch afterwards; waiting on a session that will never close
+     * costs the client until it is reloaded, and that one shipped (W2, 2026-08-15).
      */
-    if (this.catchUpDepth > 0) {
+    const nestedSession =
+      catchUpGroupId !== null
+        ? this.openCatchUps.find((s) => s.groupId === catchUpGroupId)
+        : undefined;
+    if (nestedSession) {
       const now = Date.now();
       const open = this.openCatchUps
         .map((s) => `${s.groupId} (${now - s.openedAt}ms ago)`)
         .join(', ');
-      // NESTED OR CONCURRENT, SAID OUT LOUD. The two are fixed in different places - the first by
-      // moving the barrier above the session, the second not at all - and the reader should not have
-      // to walk the call sites to tell them apart. The caller string carries its group by
-      // convention (`<site>:<groupId>`), so a substring match is enough and costs nothing when the
-      // caller does not carry one: it then reads as concurrent, which is the safer of the two to
-      // guess wrong about, and the session list is printed either way.
-      const nested = this.openCatchUps.some((s) => caller.includes(s.groupId));
       console.error(
-        `[QUEUE] mailbox barrier awaited by "${caller}" while ${this.catchUpDepth} catch-up session(s)` +
-          ` are open [${open}] - ${
-            nested
-              ? 'NESTED: the caller opened one itself, so this can never resolve (the drain needs the MLS mutex that session holds). Take the barrier BEFORE opening the session, or defer past the drain instead of awaiting it.'
-              : 'CONCURRENT: the open session belongs to another group, so this would have waited rather than deadlocked - but the barrier still cannot state emptiness while a drain is blocked, so it is refused.'
-          } It was SKIPPED and the caller is proceeding against a mailbox that may not be empty.`
+        `[QUEUE] mailbox barrier awaited by "${caller}" for group ${catchUpGroupId} while a catch-up session` +
+          ` on that same group has been open for ${now - nestedSession.openedAt}ms [${open}] - this can` +
+          ' never resolve: the drain needs the MLS mutex that session holds for its whole life. Take the' +
+          ' barrier BEFORE opening the session, or defer past the drain instead of awaiting it' +
+          ' (`answerAfterMailboxDrained`). It was SKIPPED and the caller is proceeding against a mailbox' +
+          ' that may not be empty.'
       );
       return;
     }

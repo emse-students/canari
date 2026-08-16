@@ -137,7 +137,7 @@ describe('waitForMessageQueueIdle', () => {
     await Promise.resolve();
 
     let idle = false;
-    const barrier = svc.waitForMessageQueueIdle('a test').then(() => {
+    const barrier = svc.waitForMessageQueueIdle('a test', null).then(() => {
       idle = true;
     });
     // Several turns: the scheduler resolves immediately, so a barrier that only consulted it would
@@ -160,15 +160,15 @@ describe('waitForMessageQueueIdle', () => {
    * the pull that is RUNNING is not the same question as whether the mailbox is empty.
    */
   it('pulls when nothing else has, rather than calling an un-pulled mailbox empty', async () => {
-    await svc.waitForMessageQueueIdle('a test');
+    await svc.waitForMessageQueueIdle('a test', null);
 
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
     expect(waitUntilIdle).toHaveBeenCalled();
   });
 
   it('does not pull twice when a completed pull already emptied it', async () => {
-    await svc.waitForMessageQueueIdle('a test');
-    await svc.waitForMessageQueueIdle('a test');
+    await svc.waitForMessageQueueIdle('a test', null);
+    await svc.waitForMessageQueueIdle('a test', null);
 
     // Otherwise the bootstrap restore, which replays every conversation, spends one request per
     // conversation to be told the same nothing.
@@ -176,10 +176,10 @@ describe('waitForMessageQueueIdle', () => {
   });
 
   it('pulls again once the socket has dropped, because frames queue while a device is unreachable', async () => {
-    await svc.waitForMessageQueueIdle('a test');
+    await svc.waitForMessageQueueIdle('a test', null);
     withSocket(false);
 
-    await svc.waitForMessageQueueIdle('a test');
+    await svc.waitForMessageQueueIdle('a test', null);
 
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
   });
@@ -190,7 +190,7 @@ describe('waitForMessageQueueIdle', () => {
     // `fetchPendingMessages` swallows the failure (the backlog stays on the server for the next
     // reconnect), so the barrier must not inherit a rejection - nor stay pending for ever.
     await svc.fetchPendingMessages();
-    await expect(svc.waitForMessageQueueIdle('a test')).resolves.toBeUndefined();
+    await expect(svc.waitForMessageQueueIdle('a test', null)).resolves.toBeUndefined();
   });
 
   /**
@@ -211,35 +211,34 @@ describe('waitForMessageQueueIdle', () => {
     catchUp.beginCatchUp('g-abc');
 
     // Resolving is the point: a promise that never settles here is exactly the defect.
-    await expect(svc.waitForMessageQueueIdle('history ask:g-abc')).resolves.toBeUndefined();
+    await expect(svc.waitForMessageQueueIdle('history ask', 'g-abc')).resolves.toBeUndefined();
     expect(pullPendingMessagesJson).not.toHaveBeenCalled();
     expect(waitUntilIdle).not.toHaveBeenCalled();
     expect(complaint).toHaveBeenCalledOnce();
     // NAMING THE CALLER IS PART OF THE REPORT, not decoration: the one occurrence on prod took a
     // read of all six call sites to attribute.
-    expect(String(complaint.mock.calls[0]?.[0])).toContain('history ask:g-abc');
-    // AND WHICH OF THE TWO SITUATIONS IT IS. The caller names the same group as the open session, so
-    // it opened one itself: NESTED, which is the deadlock, and its fix is the call site's ORDER.
-    expect(String(complaint.mock.calls[0]?.[0])).toContain('NESTED');
+    expect(String(complaint.mock.calls[0]?.[0])).toContain('history ask');
     expect(String(complaint.mock.calls[0]?.[0])).toContain('g-abc');
 
     // And it is the SESSION that is refused, not the device: once closed, the barrier works again.
     catchUp.endCatchUp('g-abc');
-    await svc.waitForMessageQueueIdle('a test');
+    await svc.waitForMessageQueueIdle('a test', null);
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
     complaint.mockRestore();
   });
 
   /**
-   * THE OTHER SITUATION, WHICH IS NOT A DEADLOCK AND MUST NOT READ AS ONE.
+   * THE OTHER SITUATION, WHICH IS NOT A DEADLOCK AND MUST NOT BE TREATED AS ONE.
    *
-   * A caller that merely runs BESIDE somebody else's session would have waited, not hung - and its
-   * fix is nothing at all, where the nested case's fix is to move the barrier above the session.
-   * The refusal used to print one sentence for both, which is the shape rule 20 of
-   * testing-methodology names: a report that cannot separate the causes it covers sends its reader
-   * to the wrong fix.
+   * A caller running BESIDE somebody else's session is blocked by the same global mutex, but by a
+   * stack that releases it on its own - so the barrier merely takes longer, which is all the caller
+   * ever asked for. Refusing it instead means a routine connection edge silently loses the ordering
+   * guarantee it took the barrier to get: measured on prod on 2026-08-16, where "connection sync"
+   * and "outbox flush" were both refused 98 ms after an unrelated group opened a replay, and the
+   * flush then went on to send at a possibly stale epoch - the one thing that barrier exists to
+   * prevent.
    */
-  it('says CONCURRENT when the open session belongs to another group', async () => {
+  it('waits out a catch-up it is not inside, instead of skipping the guarantee', async () => {
     const catchUp = svc as unknown as {
       beginCatchUp(groupId: string): void;
       endCatchUp(groupId: string): void;
@@ -247,11 +246,35 @@ describe('waitForMessageQueueIdle', () => {
     const complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     catchUp.beginCatchUp('g-other');
 
-    await expect(svc.waitForMessageQueueIdle('outbox flush:g-mine')).resolves.toBeUndefined();
-    const line = String(complaint.mock.calls[0]?.[0]);
-    expect(line).toContain('CONCURRENT');
-    expect(line).not.toContain('NESTED');
-    expect(line).toContain('g-other'); // the session that is open, named
+    await expect(svc.waitForMessageQueueIdle('outbox flush', null)).resolves.toBeUndefined();
+
+    // THE WHOLE BARRIER RAN, which is the difference: a skip returns before both of these.
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
+    expect(waitUntilIdle).toHaveBeenCalled();
+    // And it is not a defect, so it does not accuse anybody of one.
+    expect(complaint).not.toHaveBeenCalled();
+
+    catchUp.endCatchUp('g-other');
+    complaint.mockRestore();
+  });
+
+  /**
+   * The same, for a caller that DOES name a group: naming one is not what earns the refusal, being
+   * inside that group's session is. Without this, passing the group id could read as "opt in to
+   * being refused" and the per-group call sites would drift back to `null` to avoid it.
+   */
+  it('serves a caller whose group is not the one with a session open', async () => {
+    const catchUp = svc as unknown as {
+      beginCatchUp(groupId: string): void;
+      endCatchUp(groupId: string): void;
+    };
+    const complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    catchUp.beginCatchUp('g-other');
+
+    await expect(svc.waitForMessageQueueIdle('history ask', 'g-mine')).resolves.toBeUndefined();
+
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
+    expect(complaint).not.toHaveBeenCalled();
 
     catchUp.endCatchUp('g-other');
     complaint.mockRestore();
@@ -273,7 +296,7 @@ describe('waitForMessageQueueIdle', () => {
     poke(svc, { messageCallback: undefined });
     const complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    await expect(svc.waitForMessageQueueIdle('archive replay')).resolves.toBeUndefined();
+    await expect(svc.waitForMessageQueueIdle('archive replay', 'g-abc')).resolves.toBeUndefined();
 
     // Pulling is the harm here, not just the waiting: it is the pull that fills a queue nothing can
     // empty, so the refusal has to come BEFORE it.
@@ -288,7 +311,7 @@ describe('waitForMessageQueueIdle', () => {
     pullPendingMessagesJson.mockRejectedValueOnce(new Error('offline'));
 
     await svc.fetchPendingMessages();
-    await svc.waitForMessageQueueIdle('a test');
+    await svc.waitForMessageQueueIdle('a test', null);
 
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
   });

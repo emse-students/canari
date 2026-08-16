@@ -501,7 +501,7 @@ export async function replayConversationHistory(params: {
      */
     pendingPrimedPage ??= await mlsService.fetchHistory(id, fetchCursor, undefined, undefined);
     walkHead = pendingPrimedPage.head;
-    await mlsService.waitForMessageQueueIdle('archive replay').catch(() => {});
+    await mlsService.waitForMessageQueueIdle('archive replay', id).catch(() => {});
 
     // Paged decrypt session: the ratchet advances worker-side across pages and is committed
     // to the live client once by session.finish() (run in the outer `finally`, always).

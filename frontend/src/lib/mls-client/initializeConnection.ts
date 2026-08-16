@@ -236,7 +236,8 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   // ones fire from wherever they are raised - so the barrier now lives inside `reconcileGroup`,
   // where every trigger present and future must pass. What is left of this line is what it also
   // always did: the device invitations below are read from a store the drain is still writing.
-  await mlsService.waitForMessageQueueIdle('connection sync').catch(() => {});
+  // `null`: this is the connection edge itself, about every group and inside no decrypt session.
+  await mlsService.waitForMessageQueueIdle('connection sync', null).catch(() => {});
 
   processDeviceInvitationsLocally().catch(() => {});
 

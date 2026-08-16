@@ -676,7 +676,8 @@ export function useMessaging() {
       // costs nothing when there is no drain to wait for.
       await ctx
         .ensureMls()
-        .waitForMessageQueueIdle('media send')
+        // `null`: a click on the send button, never a stack inside a decrypt session.
+        .waitForMessageQueueIdle('media send', null)
         .catch((e) => ctx.log(`[SEND] queue-idle barrier failed, sending anyway: ${String(e)}`));
       const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
       if (!stillMember || convo.lifecycle !== 'active') {

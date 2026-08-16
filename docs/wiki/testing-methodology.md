@@ -16,7 +16,7 @@ over a filtered copy of its own evidence.
 
 ---
 
-## The twenty-three rules
+## The twenty-four rules
 
 Ordered by how expensive it is to break them.
 
@@ -712,6 +712,35 @@ and stays that way. **A result you cannot read is a result you cannot believe, a
 recovery: it destroys the evidence it was meant to recover.** Each check listing buckets by hand is
 how they drift apart from the definition of `clean`, so they are listed once, next to it: `dirtOf()`
 returns every clean-breaking bucket that is non-empty, and checks record that.
+
+### 24. A DISCRIMINATOR CARRIED IN A LABEL DISCRIMINATES NOTHING - check it against the values that will actually reach it
+
+A report that separates two causes is only worth what its separator is worth, and a separator matched
+out of prose is worth nothing until someone proves it fires.
+
+The mailbox barrier refuses a caller while a catch-up session is open, and the two situations it
+covers are opposite: the caller is INSIDE that session (a deadlock, fix the call site's order) or
+beside somebody else's (not a deadlock at all - it should wait). On 2026-08-15 the refusal was taught
+to say which, by matching the caller's label against the open group ids -
+`caller.includes(s.groupId)`, "the caller carries its group by convention `<site>:<groupId>`".
+
+**No call site carries one.** All seven pass a bare literal (`'history ask'`, `'outbox flush'`, …),
+and only the unit tests ever passed `'history ask:g-abc'` - which is exactly why the tests were green.
+So `NESTED` could not be printed in the field at all, every real occurrence read `CONCURRENT`,
+and the one sighting on prod the next day (MUT-2, 2026-08-16) read as the benign case by
+construction. Had the deadlock recurred, it would have reported itself as "nothing to fix".
+
+Three things this pins, none specific to that barrier:
+
+- **A convention that the code does not enforce is a comment.** `<site>:<groupId>` was documented in
+  the same commit that failed to implement it at a single call site.
+- **Test the discriminator against the population it will run on**, which is one grep for the call
+  sites - the same move as rule 19's watch that matched only the success wording, and the same as the
+  fleet-wide `GROUP BY` before believing a predicate.
+- **Then carry it as a parameter.** `waitForMessageQueueIdle(caller, catchUpGroupId)` cannot be
+  called without deciding, and a value the compiler demands cannot be forgotten at six sites out of
+  seven. Same rule as the project's `Never branch on an error MESSAGE`: classify where the fact is
+  known, as a type, not where it is being read back out of a sentence.
 
 ### The bar is "expected", not "no failure" - and it applies to the server too
 

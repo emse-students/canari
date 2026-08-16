@@ -1050,7 +1050,9 @@ export async function handleHistoryRequest(params: {
   const electedAt = Date.now();
 
   // Answer from a settled store, not from one still being written - see the note above.
-  await mlsService.waitForMessageQueueIdle('history request answer').catch(() => {});
+  // `null`: this leg is already deferred past the drain by `answerAfterMailboxDrained` and owns no
+  // catch-up session, so a session open on this group belongs to somebody else and will close.
+  await mlsService.waitForMessageQueueIdle('history request answer', null).catch(() => {});
 
   let probe = await awaitProbe(groupId, requesterIdentity, probeWaitMs, electedAt);
   if (!probe) {
