@@ -831,8 +831,60 @@ export async function markers(cx, prefix) {
 }
 
 /** Wait until a message whose text contains `marker` is rendered; returns the elapsed ms. */
-export function awaitMessage(cx, marker, timeoutMs = 20000) {
-  return until(cx, `${PANE_TEXT}.indexOf(${JSON.stringify(marker)}) !== -1`, timeoutMs, 50);
+export async function awaitMessage(cx, marker, timeoutMs = 20000) {
+  try {
+    return await until(cx, `${PANE_TEXT}.indexOf(${JSON.stringify(marker)}) !== -1`, timeoutMs, 50);
+  } catch {
+    // A BARE TIMEOUT NAMES ONLY THE EXPRESSION THAT FAILED, which is the one thing already known.
+    // MUT-9 and MUT-12 both died on the channel in pass 3 of the 2026-08-16 run and neither said
+    // whether the message was missing, late, or simply BELOW the render window - `ChatArea` keeps a
+    // sliding window and a pane scrolled up genuinely does not render what arrives under it
+    // (`hiddenBelowCount`). Those are three different defects, one of which is not a defect at all.
+    throw new Error(
+      `${marker} never appeared in ${timeoutMs}ms - ${JSON.stringify(await paneState(cx, marker))}`
+    );
+  }
+}
+
+/**
+ * What the message pane looked like at the moment a miss was declared.
+ *
+ * `fromBottomPx` IS THE DISCRIMINATOR the earlier misses lacked: at 0 the pane is at the bottom and
+ * an absent marker is a real absence, while a large value means the app is showing older messages
+ * and is expected to render nothing new - a precondition the CHECK owes, not a delivery fault.
+ * The scroller is found by taking the deepest-overflowing descendant rather than by class name, so
+ * a styling change cannot silently turn this into `null`.
+ */
+export async function paneState(cx, marker) {
+  const raw = await evaluate(
+    cx,
+    `JSON.stringify((function () {
+      var c = document.querySelector('${COMPOSER}');
+      var pane = c ? c.closest('section') : null;
+      if (!pane) return { hasPane: false };
+      var ps = [].slice.call(pane.querySelectorAll('p'));
+      var sc = null;
+      [].slice.call(pane.querySelectorAll('*')).forEach(function (d) {
+        var over = d.scrollHeight - d.clientHeight;
+        if (over > 40 && (!sc || over > sc.scrollHeight - sc.clientHeight)) sc = d;
+      });
+      return {
+        hasPane: true,
+        renderedParagraphs: ps.length,
+        inPane: pane.innerText.indexOf(${JSON.stringify(marker)}) !== -1,
+        inBody: document.body.innerText.indexOf(${JSON.stringify(marker)}) !== -1,
+        lastRendered: ps.slice(-3).map(function (e) { return (e.textContent || '').slice(0, 40); }),
+        scroll: sc
+          ? {
+              fromBottomPx: Math.round(sc.scrollHeight - sc.clientHeight - sc.scrollTop),
+              heightPx: sc.scrollHeight,
+              viewPx: sc.clientHeight
+            }
+          : null
+      };
+    })())`
+  ).catch(() => null);
+  return raw && raw !== 'null' ? JSON.parse(raw) : { unreadable: true };
 }
 
 /** How many times `marker` appears in the open conversation - the duplicate check. */
@@ -1093,7 +1145,12 @@ export async function bubbleCentre(cx, textMatch) {
         : seen.inBodyText
           ? 'the text is on the page but outside the message pane - wrong conversation open?'
           : `absent from the page; the pane has ${seen.renderedParagraphs} rendered paragraph(s)`;
-    throw new Error(`no bubble matching ${textMatch} - ${why} - ${JSON.stringify(seen)}`);
+    // The scroll position decides between "not delivered" and "delivered below the render window",
+    // and it is read HERE rather than left to whoever reads the log a day later.
+    const where = await paneState(cx, textMatch);
+    throw new Error(
+      `no bubble matching ${textMatch} - ${why} - ${JSON.stringify(seen)} - pane ${JSON.stringify(where.scroll)}`
+    );
   }
   return seen;
 }

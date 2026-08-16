@@ -435,9 +435,25 @@ export async function report(w) {
       case 'Network.webSocketClosed':
         ws.push({ mono: p.timestamp, text: `${e.method} ${JSON.stringify(p).slice(0, 140)}` });
         break;
-      case 'Runtime.exceptionThrown':
-        exceptions.push(String(p.exceptionDetails?.exception?.description || p.exceptionDetails?.text).slice(0, 300));
+      case 'Runtime.exceptionThrown': {
+        // WHERE IT WAS THROWN IS PART OF THE REPORT. `description` carries a stack only when the
+        // thrown value is an Error with one; an exception raised from a script the native side
+        // evaluated has neither, and A1's `Cannot read properties of undefined (reading
+        // 'runCallback')` (MUT-18, 2026-08-16) was therefore three sightings of a line that could
+        // not be attributed to any script at all. The frame says whether it is the app's bundle or
+        // something injected into the page, which is the whole question.
+        const d = p.exceptionDetails ?? {};
+        const frame = d.stackTrace?.callFrames?.[0];
+        const where = frame
+          ? `${frame.functionName || '(anonymous)'} @ ${frame.url || '(no url)'}:${frame.lineNumber + 1}:${frame.columnNumber + 1}`
+          : d.url
+            ? `${d.url}:${(d.lineNumber ?? 0) + 1}:${(d.columnNumber ?? 0) + 1}`
+            : 'no script frame - evaluated into the page from outside it';
+        exceptions.push(
+          `${String(d.exception?.description || d.text).slice(0, 300)} [${where}]`
+        );
         break;
+      }
       case 'Runtime.consoleAPICalled':
         console_.push({ at: p.timestamp, level: p.type, text: p.args.map((a) => a.value ?? a.description ?? '').join(' ').slice(0, 300) });
         break;

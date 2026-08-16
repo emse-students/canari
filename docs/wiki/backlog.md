@@ -346,6 +346,28 @@ behind the fix that shipped is in
 [history-reconciliation](protocols/history-reconciliation.md) and the constants carry their own
 justification in `apps/chat-delivery-service/src/retention.constants.ts`.
 
+### P3 - two survivors of "never branch on an error MESSAGE", found by sweeping for the shape
+
+Both were found on 2026-08-16 by grepping for the pattern behind the mailbox-barrier defect fixed
+that day (a distinction carried in a string). Neither is known to have misfired; they are filed
+because the rule is standing and the sweep is cheap to act on, not because either has an incident.
+
+**`backup.ts:182` branches on a FRENCH SENTENCE it threw itself four lines earlier.**
+`decryptBackup` throws `'Les sauvegardes v1 ne sont plus supportées...'` from INSIDE its own `try`,
+and the `catch` then does `e.message.startsWith('Les sauvegardes v1')` to let that one back out while
+converting everything else to `'Clé de chiffrement incorrecte ou données corrompues.'`. The branch
+exists only to undo an over-broad `catch`, so the fix is structural and smaller than the branch:
+raise the version check ABOVE the `try`, where nothing can catch it. Two things travel with it - those
+sentences are raw French literals where the rule is Paraglide, and a localized string would break the
+`startsWith` the moment anyone translated it, which is the failure mode this shape always has.
+
+**`channelCrypto.ts:126-130` classifies a decrypt failure by five substrings** (`'No key for
+epoch'`, `'Missing key for epoch'`, `'Sync required'`, `'Stale or invalid keyVersion'`, `'keyVersion
+is required for channel messages'`) to decide whether a channel message is retryable. This is the
+same defect `DecryptErrorKind::OwnMessage` was created to remove on the MLS path - classify at the
+THROW, as a type - and the same fix applies: the thrower knows which of the five it is, and each
+added wording since has been someone noticing a sixth by hand.
+
 ### P2 - deleting a message that never left the outbox SENDS it, then deletes it
 
 Found by MUT-19 on 2026-08-16. Compose a message while offline, delete it before the radio returns,
