@@ -340,12 +340,10 @@ The four things a user does to a message that already exists. All four are MLS s
 or a group and REST calls in a channel, so **every row whose cell says both runs twice**, once in the
 owner-peer DM and once in `Campagne de test`, with the two results recorded separately.
 
-**RUN 5x ON `25376b86`, 2026-08-16 (09:10-09:40Z): 19 of the 21 checks PASS on every pass.** The two
-that do not are constants, not results - MUT-15 reproduces a documented hole every time (that is what
-it is for) and MUT-20 cannot be armed until a campaign marker turns 90 days old, which is
-**2026-11-09** at the earliest. Three intermittents came out of it, in the notes below the table; two
-of them were unattributable when they happened and are now instrumented, which is the only honest
-state for a thing seen three times and explained none.
+**RUN 5x ON `25376b86`, 2026-08-16 (09:10-09:40Z): 19 of the 21 checks PASS on every pass.**
+**RE-RUN OWED on `25530d13`**: MUT-15 and MUT-19 were both fixed and both checks rewritten with the
+fix ([testing-methodology](testing-methodology.md), rules 25 and 26), and the mailbox-barrier fix
+(`2c73d184`) touches the pipeline every row here measures.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
@@ -363,49 +361,13 @@ state for a thing seen three times and explained none.
 | MUT-12 | **Both.** The 15-distinct-emoji cap, on both transports | `W1 W2` | `PASS` 5/5 both venues (4/5 channel) - caps at 15, refuses the 16th |
 | MUT-13 | **Both.** A reaction pushes a notification to the message author only, never to the reactor | `W1 W2` | `PASS` 5/5 both venues - author notified in ~157 ms, reactor 0 over a window sized from that |
 | MUT-14 | **Both.** Pin and unpin, seen on the OTHER device | `+A1` | `PASS` 5/5 both venues - 313-329 ms each way |
-| MUT-15 | **DM.** A pin is recovered by a device that lost it | `+A1` | `FAIL` 5/5 on `25376b86`, **the hole it was written to hold open**; **FIXED 2026-08-16, RE-RUN OWED** - it now asserts recovery and must PASS. Rewritten with the fix, see below |
+| MUT-15 | **DM.** A pin is recovered by a device that lost it | `+A1` | `FAIL` 5/5 on `25376b86`; **fixed and check rewritten 2026-08-16, RE-RUN OWED** - asserts recovery now, covers the replay half only |
 | MUT-16 | **Channel.** A pin DOES survive, because it is re-hydrated from the server | `+A1` | `PASS` 5/5 - the contrast that makes MUT-15 a hole rather than a design |
 | MUT-17 | **DM.** Edit, then delete, then react to the deleted message | `W1 W2` | `PASS` 5/5 - no picker and no quick strip on a tombstone |
 | MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `PASS` 5/5 - **converges in 22-44 ms**, W1 winning each time; 2 passes dirty on A1's exception below |
-| MUT-19 | **DM.** Delete a message that is still in the outbox, unsent | `W1 W2` | `PASS` 5/5 on the SETTLED state; the transient leak it found is **FIXED 2026-08-16, RE-RUN OWED** - the queued entry is withdrawn, so `everSawOriginal` must now be `false` on every pass rather than sometimes |
+| MUT-19 | **DM.** Delete a message that is still in the outbox, unsent | `W1 W2` | `PASS` 5/5 on the settled state; **fixed and check rewritten 2026-08-16, RE-RUN OWED** - asserts `everSawOriginal` again |
 | MUT-20 | **DM.** Mutate a message older than the 90-day server retention window | `W1 W2` | `SKIPPED` 5/5 - **unarmable until 2026-11-09**, no message this harness made is old enough |
 | MUT-21 | **DM.** The hover action bar stays inside the message pane and takes its own clicks | `W1 W2` | `PASS` 5/5 - reachable, nothing on top of it; the width complaint it was written for is a P3 in the backlog |
-
-**The three intermittents, none of which changed a verdict:**
-
-- **The mailbox barrier was refused twice, on 2 passes of 5** - `connection sync` and `outbox flush`
-  together, 98 ms and 213 ms after an unrelated group opened a replay. **That is a defect and it is
-  fixed** (`2c73d184`): only the session a caller is INSIDE can fail to release, and the guard was
-  refusing every other one, so a routine reconnect dropped the ordering guarantee and the flush went
-  on to send at a possibly stale epoch. Mechanism on
-  [history-reconciliation](protocols/history-reconciliation.md). **These rows therefore owe a re-run
-  on the fixed bundle**, since the fix touches the pipeline they measure.
-- **A1 threw `Cannot read properties of undefined (reading 'runCallback')` 3 times over 2 passes**,
-  always during MUT-18, never on a browser. `runCallback` appears nowhere in this codebase - it is
-  Tauri's own IPC - and the exception carried no stack, so it could be tied to no script at all.
-  `watch.mjs` now records the frame with every exception, which separates the app's bundle from
-  something evaluated into the page from outside it. **Unattributed, and named as unattributed.**
-- **Pass 3 lost both channel legs** (MUT-9, MUT-12) to a bare `until()` timeout in a pane reporting
-  200 rendered paragraphs, while the following pass passed the same checks. `ChatArea` keeps a
-  sliding render window and does not render what lands below it while the pane is scrolled up, so
-  "not delivered", "late" and "below the window" were one observation. `awaitMessage` and
-  `bubbleCentre` now report `fromBottomPx`, which decides between them on the next sighting.
-
-**Two rows were rewritten with the fixes they earned, and the rewrite is the point** (2026-08-16):
-
-- **MUT-19 asserts `everSawOriginal` again.** It had been demoted to evidence because the row was a
-  coin toss - the text and the `delete_message` chasing it flushed back to back, so whether the peer
-  painted the original for a frame was scheduling. With the queued entry WITHDRAWN there is no race
-  left to lose, so a single sighting is a defect rather than an accident, and the check says so.
-- **MUT-15 measures a repair instead of holding a hole open, and it had to change WHICH DEVICE PINS
-  to do it.** MLS gives a device no echo of its own frames, so a device replaying the shared log
-  reaches its own `pin` frame and is told `own-message`: **it can never recover a pin it placed
-  itself from the log** - only a peer's bundle can, and nothing in this rig triggers one. The pin is
-  therefore placed by the peer, which makes the device under test a RECEIVER of the frame. It then
-  drops its pin record AND rewinds its stream cursor and seen-ciphertext set to a snapshot taken
-  seconds earlier - one frame, not ninety days - and reloads. **What it still does not cover is the
-  `history_bundle` half**, which needs a genuine fresh enrolment; that belongs with check L of
-  [device-verification](device-verification.md). Unit tests cover both halves.
 
 ## 5 - SEARCH - finding a message
 

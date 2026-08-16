@@ -268,15 +268,24 @@ export async function deleteMessage(messageId: string, deps: MessageActionDeps):
   );
 }
 
-/** Captures a "pin"/"unpin" system event in the durable outbox so all members share the pinned-messages set. */
+/**
+ * Captures a "pin"/"unpin" system event in the durable outbox so all members converge.
+ *
+ * `at` is the sender's clock for this message's pin state, and both legs carry it for the same
+ * reason a reaction's two legs do: the merge on the far side keeps the larger one, so an undated
+ * leg could never be ordered against a dated one. It is the CALLER's `at`, not one taken here - the
+ * optimistic local apply and the broadcast must state the same instant, or the sender's own device
+ * disagrees with every peer about when it acted.
+ */
 export async function setMessagePinned(
   messageId: string,
   pinned: boolean,
+  at: number,
   deps: MessageActionDeps
 ): Promise<void> {
   await enqueueControlEvent(
     deps.conversation.id,
-    encodeAppMessage(mkSystem(pinned ? 'pin' : 'unpin', JSON.stringify({ messageId })))
+    encodeAppMessage(mkSystem(pinned ? 'pin' : 'unpin', JSON.stringify({ messageId, at })))
   );
 }
 

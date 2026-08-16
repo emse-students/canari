@@ -37,6 +37,28 @@ past the rollout, on top of the usual `minClientVersion` gate.
 rather than by the sender's clock. Only distinguishable if a placement and its removal were sent
 within the same delivery, which cannot happen - the outbox serialises them.
 
+### `pin`/`unpin` with no `at`, and a pinned set stored as a bare array - since 2026-08-16
+
+**Site:** `systemMessageHandler.ts` (live) and `historySystemEvents.ts` (replay), the `pin`/`unpin`
+branches; `mergePinEntries` and `parseStored` in `pinStore.svelte.ts`.
+**Shim:** three readings of the same missing clock. An undated frame arriving LIVE is dated on
+receipt - later than anything held, which is the right answer for a frame arriving now and the only
+one available. An undated frame REPLAYED is dated by its position in the shared log
+(`parseServerTimestampMs`), the best clock a replay has. A `pins` array of bare id strings - the
+shape shipped for one commit on 2026-08-16, and the shape of every `canari_pins_*` entry written
+before it - is read at `at: 0`, so any dated statement about the same message beats it.
+**Replacement:** the frame carries `at` on both legs, exactly as a reaction's two legs do, and the
+register is a last-write-wins entry per message with dated tombstones for the unpins.
+**On removal:** delete the three `Number(data.at) ||` fallbacks, the `typeof raw === 'string'` arm
+of `mergePinEntries`, and the `Array.isArray(parsed)` arm of `parseStored`.
+**Same shape as the two around it:** the shared history stream still HOLDS undated `pin` frames, so
+these branches decode data at rest rather than humouring a live peer. Retire them when the retention
+window has elapsed past the rollout, on top of the `minClientVersion` gate.
+**Cost of keeping it:** an undated pin loses every tie against a dated one, so a device that pinned
+on an old client and a device that unpinned on a new one converge on unpinned even if the pin came
+second. The user can always pin again; the reverse - a resurrected pin nobody can explain - is the
+outcome the dating exists to prevent.
+
 ### `read_receipt` naming message ids - since v0.14
 
 **Site:** `systemMessageHandler.ts` (live) and `historySystemEvents.ts` (replay), the `read_receipt`

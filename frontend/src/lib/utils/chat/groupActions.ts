@@ -5,7 +5,7 @@ import type { IStorage, StoredMessage } from '$lib/db';
 import type { ReadWatermarks } from '$lib/types';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
-import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
+import { pinEntries } from '$lib/stores/pinStore.svelte';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
@@ -508,7 +508,8 @@ function bundleFrame(
         ...(state?.readWatermarks ? { readWatermarks: state.readWatermarks } : {}),
         ...(state?.historyFloor ? { floor: state.historyFloor } : {}),
         // Restated by every chunk like the two above, and for the same reason: sending it once
-        // would make it depend on which chunk survived. Adopted only by a device holding none.
+        // would make it depend on which chunk survived. Merged per entry on `at`, so repeating it
+        // is free in exactly the way a `max` is.
         ...(state?.pins?.length ? { pins: state.pins } : {}),
       })
     )
@@ -520,14 +521,18 @@ type ConversationHistoryState = {
   readWatermarks?: ReadWatermarks;
   historyFloor?: number;
   /**
-   * The pinned message ids, as a set rather than the events that built it.
+   * The pin register - every message this conversation has pinned OR unpinned, with its date.
    *
    * A pin is CONVERSATION state, like the watermarks beside it, and it belongs here for the same
    * reason the edit time does on a message: the `pin` frame that created it ages out of the
    * server's retention window while the pin itself does not, so a device that arrives later can
    * replay every frame it is entitled to and still never learn the message is pinned.
+   *
+   * **The unpins travel too, and that is what makes the merge symmetric.** Sending only what is
+   * currently pinned would let a device holding a stale pin keep it for ever: the answerer's
+   * `unpin` is precisely the entry its snapshot omits, so there would be nothing to beat it with.
    */
-  pins?: string[];
+  pins?: Array<{ id: string; pinned: boolean; at: number }>;
 };
 
 /**
@@ -545,9 +550,9 @@ async function storedConversationState(
     // a single call and quadratic in `reconcileAllGroups` - one whole-table read per group, on every
     // connection, even when the state key itself was cached and read nothing.
     const row = await storage.getConversation(groupId);
-    // The pinned set is not on the row: it is device-local state keyed by the same group id, which
-    // is precisely why it needed carrying at all.
-    const pins = pinnedMessageIds(groupId);
+    // The pin register is not on the row: it is device-local state keyed by the same group id,
+    // which is precisely why it needed carrying at all.
+    const pins = pinEntries(groupId);
     return {
       readWatermarks: row?.readWatermarks,
       historyFloor: row?.historyFloor,

@@ -1022,8 +1022,11 @@ export function useMessaging() {
     const convo = ctx.conversations.get(ctx.selectedContact);
     if (!convo) return;
     const next = !isMessagePinned(convo.id, messageId);
-    applyPin(convo.id, messageId, next);
-    await setMessagePinned(messageId, next, {
+    // One instant for both halves - see setMessagePinned. Taking it twice would date the local
+    // apply and the broadcast differently, for the same act.
+    const at = Date.now();
+    applyPin(convo.id, messageId, next, at);
+    await setMessagePinned(messageId, next, at, {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
       deviceKeyB64: ctx.deviceKeyB64,

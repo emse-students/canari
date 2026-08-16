@@ -332,7 +332,7 @@ load-bearing and each is pinned by a test:
 - **content is excluded**, or a purged deletion would look like a difference for ever between two
   devices that agree completely - and so are the sender and the timestamp, which no exchange
   repairs;
-- **read state, the floor and the pinned set are excluded**, deliberately. All three ride on every
+- **read state, the floor and the pin register are excluded**, deliberately. All three ride on every
   bundle and converge through the shared log the reconciliation drains BEFORE comparing. Including
   them would let the most frequently changing thing in a conversation trigger a digest exchange that
   repairs messages nobody was missing.
@@ -409,19 +409,22 @@ This holds only while **every merged field is monotone**:
 | reaction | last-write-wins per `(user, emoji)` on its own timestamp | yes |
 | read state | watermark, `max` | yes |
 | conversation floor | `max` | yes |
-| pinned set | seeded when the receiver holds none; never merged | n/a - see below |
+| pin state | last-write-wins per message on its own `at` | yes |
 
-**The pinned set is the one field that is NOT merged, and that is deliberate.** A pin has no clock:
-the bundle states what the ANSWERING device holds and there is nothing to order that against what
-the receiver holds, so a union would let a peer that has not yet seen an `unpin` resurrect a pin the
-receiver has just taken back, and a replacement would make the outcome depend on which answer landed
-last. `seedPinnedSet` therefore adopts an arriving set only into an EMPTY one - the single case with
-nothing to lose, and exactly the case the gap was about. Everything after that comes from the
-`pin`/`unpin` frames themselves, which the replay now applies in log order like the live path does.
-**Both halves are needed and neither is redundant**: the frames converge a device that is following
-along, and the set covers the frame that has aged out of the server's window while the pin it
-created has not. That is what made this a hole rather than a policy - a channel pin came back on a
-fresh device, because the server re-serves it, and a DM pin did not (MUT-15).
+**The pin was the one mutation carrying no clock, and that is what made it hard.** Every other one
+here dates itself - a reaction dates each `(user, emoji)` pair, an edit dates itself, a deletion is
+absorbing - while `pin`/`unpin` carried only a message id. With no date there is no merge: a union
+lets a peer that has not seen the `unpin` resurrect a pin, and a replacement makes the outcome
+depend on which answer landed last. So the frame now carries `at`, both legs, exactly as a
+reaction's two legs do, and an `unpin` is a dated TOMBSTONE rather than a removal. The register
+travels with its tombstones for the symmetric reason: a snapshot of what is merely pinned omits the
+answerer's `unpin`, which is precisely the entry a stale peer needs in order to lose.
+
+**Both carriers are needed and neither is redundant**: the frames converge a device that is
+following along, and the register covers the frame that has aged out of the server's window while
+the pin it created has not. That is what made this a hole rather than a policy - a channel pin came
+back on a fresh device, because the server re-serves it, and a DM pin did not (MUT-15). Bounded at
+500 entries per conversation, oldest first, because a tombstone is never discharged by anything.
 
 Two of these are corrections, not restatements of today's behaviour - see
 [Defects this work must fix](#defects-this-work-must-fix), D3 and D5. Pruning is **not** monotone,

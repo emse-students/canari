@@ -29,7 +29,7 @@ import {
   watermarkAfterReading,
   watermarkFor,
 } from '$lib/utils/chat/readState';
-import { applyPin, seedPinnedSet } from '$lib/stores/pinStore.svelte';
+import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
 
@@ -723,11 +723,13 @@ export async function handleSystemEvent(
         }
       }
 
-      // The pinned set rides beside them, adopted only by a device that holds none of its own -
-      // see `seedPinnedSet`. Reported because nothing else would show where the pins came from.
-      if (seedPinnedSet(convoKey, data.pins)) {
+      // The pin register rides beside them, merged entry by entry on the same `at` the frames
+      // carry. Reported only when something actually moved - a bundle restating what we already
+      // hold is the common case and says nothing.
+      const pinsMerged = mergePinEntries(convoKey, data.pins);
+      if (pinsMerged > 0) {
         log(
-          `[HISTORY_BUNDLE] Adopted ${(data.pins as string[]).length} pinned message(s) for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
+          `[HISTORY_BUNDLE] ${pinsMerged} pin state(s) converged for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
         );
       }
 
@@ -894,7 +896,10 @@ export async function handleSystemEvent(
   }
 
   if ((event === 'pin' || event === 'unpin') && data.messageId) {
-    applyPin(convoKey, String(data.messageId), event === 'pin');
+    // `at` is the sender's clock, and the merge needs it. A frame from a client too old to send one
+    // is dated on receipt: later than anything we hold, which is the right answer for a frame
+    // arriving live, and the only one available. See `docs/wiki/legacy-compatibility.md`.
+    applyPin(convoKey, String(data.messageId), event === 'pin', Number(data.at) || Date.now());
     return true;
   }
 

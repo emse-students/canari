@@ -472,12 +472,21 @@ carry in the head:
   every frame it is ENTITLED to could still never learn that a message is pinned, and a DM pin did
   not survive a fresh device while a channel pin did - because the server re-serves the channel one
   (MUT-15). The same shape as `editedAt`, which had to be carried beside `isEdited` for exactly this
-  reason. Carry both halves: the events converge a device that is following along, the set covers
-  what predates its window - and neither is redundant. **The set is SEEDED, never merged**: a pinned
-  set has no clock to order it against the receiver's, so a union lets a peer that has not seen the
-  `unpin` resurrect a pin, and a replacement makes the outcome depend on which answer landed last.
-  An empty set is the one case with nothing to lose, and it is exactly the case the gap is about.
+  reason. Carry both halves: the events converge a device that is following along, the register
+  covers what predates its window - and neither is redundant.
   [history-reconciliation](protocols/history-reconciliation.md).
+- **A MUTATION THAT CARRIES NO CLOCK CANNOT BE MERGED, AND EVERY WORKAROUND FOR THAT IS A
+  WORKAROUND.** `pin`/`unpin` carried a message id and nothing else, alone among the mutations here -
+  a reaction dates each `(user, emoji)` pair, an edit dates itself, a deletion is absorbing. The
+  first fix was "adopt a peer's set only into an EMPTY one", which is sound and is still a patch: it
+  buys convergence for a fresh device by refusing it to every other one. **Date the frame instead**,
+  on BOTH legs, and the special case disappears - larger `at` wins, an `unpin` becomes a dated
+  tombstone rather than a removal, and any two devices can merge. Two corollaries that are easy to
+  miss: **a tie needs a rule** (equal `at` resolves to unpinned, because "keep what I had" depends
+  on arrival order and is therefore not a rule), and **the tombstones must TRAVEL** - a snapshot of
+  what is merely pinned omits the answerer's `unpin`, which is exactly the entry a stale peer needs
+  in order to lose. Undated frames from older clients are read at `at: 0` on replay and at receipt
+  time when live; both are in [legacy-compatibility](legacy-compatibility.md).
 - **AN EVENT FALLING THROUGH A HANDLER CHAIN UNHANDLED IS AN ACCIDENT UNTIL IT IS NAMED.** `pin` and
   `unpin` reached `applyReplaySystemEvent` and matched no branch, silently, for as long as the
   replay path has existed - beside a `REPLAY_IGNORED_EVENTS` set that exists precisely so that

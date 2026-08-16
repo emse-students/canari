@@ -83,7 +83,10 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const data = event.data || {};
     const channelId = String(data.channelId || '');
     const messageId = String(data.messageId || '');
-    if (channelId && messageId) applyPin(`channel_${channelId}`, messageId, !!data.pinned);
+    // Stamped on receipt: a channel pin is server-authoritative and arrives in the server's own
+    // order, so there is nothing to merge it against - the date only has to beat what we hold.
+    if (channelId && messageId)
+      applyPin(`channel_${channelId}`, messageId, !!data.pinned, Date.now());
     return;
   }
 

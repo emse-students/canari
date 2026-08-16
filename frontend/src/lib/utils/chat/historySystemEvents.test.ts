@@ -286,16 +286,31 @@ describe('the shared history floor', () => {
 describe('replaying a pin', () => {
   it('pins from the log, and unpins from it', async () => {
     const g = 'group-pin-unpin';
-    await replay(systemEvent('pin', { messageId: 'm1' }), OTHER, [message('m1', OTHER)], g);
+    await replay(
+      systemEvent('pin', { messageId: 'm1', at: 100 }),
+      OTHER,
+      [message('m1', OTHER)],
+      g
+    );
     expect(pinnedMessageIds(g)).toEqual(['m1']);
 
-    await replay(systemEvent('unpin', { messageId: 'm1' }), OTHER, [message('m1', OTHER)], g);
+    await replay(
+      systemEvent('unpin', { messageId: 'm1', at: 200 }),
+      OTHER,
+      [message('m1', OTHER)],
+      g
+    );
     expect(pinnedMessageIds(g)).toEqual([]);
   });
 
   it('keys the pin by the GROUP, not by the conversation map key', async () => {
     const g = 'group-pin-key';
-    await replay(systemEvent('pin', { messageId: 'm1' }), OTHER, [message('m1', OTHER)], g);
+    await replay(
+      systemEvent('pin', { messageId: 'm1', at: 100 }),
+      OTHER,
+      [message('m1', OTHER)],
+      g
+    );
 
     // Filed under the map key it would be written where no reader looks: every other call site -
     // the toolbar, the live handler, the bundle builder - keys pin state by the group id.
@@ -303,25 +318,86 @@ describe('replaying a pin', () => {
     expect(pinnedMessageIds(g)).toEqual(['m1']);
   });
 
-  it("adopts a bundle's pinned set on a device that holds none", async () => {
+  it('cannot undo a newer pin state by replaying an older frame', async () => {
+    const g = 'group-pin-older';
+    await replay(
+      systemEvent('unpin', { messageId: 'm1', at: 500 }),
+      OTHER,
+      [message('m1', OTHER)],
+      g
+    );
+
+    // The scrollback reaches BACKWARDS, so an older frame can be read after a newer one has
+    // already been applied. Without a date on the frame this silently re-pinned it.
+    await replay(
+      systemEvent('pin', { messageId: 'm1', at: 100 }),
+      OTHER,
+      [message('m1', OTHER)],
+      g
+    );
+
+    expect(pinnedMessageIds(g)).toEqual([]);
+  });
+
+  it("takes a bundle's pin register on a device that holds none", async () => {
     const g = 'group-pin-seed';
-    await replay(systemEvent('history_bundle', { messages: [], pins: ['m1', 'm2'] }), OTHER, [], g);
+    const pins = [
+      { id: 'm1', pinned: true, at: 10 },
+      { id: 'm2', pinned: true, at: 20 },
+    ];
+    await replay(systemEvent('history_bundle', { messages: [], pins }), OTHER, [], g);
 
     // The frame that pinned it may be older than the server's retention window while the pin is
     // not, so replaying the log alone can never be enough on a conversation of any age.
     expect(pinnedMessageIds(g).sort()).toEqual(['m1', 'm2']);
   });
 
-  it('never lets a bundle overwrite pin state this device already has', async () => {
+  it('lets an older bundle lose to a newer unpin, and never resurrects a pin', async () => {
     const g = 'group-pin-noclobber';
-    await replay(systemEvent('pin', { messageId: 'm1' }), OTHER, [message('m1', OTHER)], g);
-    await replay(systemEvent('unpin', { messageId: 'm1' }), OTHER, [message('m1', OTHER)], g);
-    await replay(systemEvent('pin', { messageId: 'm9' }), OTHER, [message('m9', OTHER)], g);
+    await replay(
+      systemEvent('pin', { messageId: 'm1', at: 100 }),
+      OTHER,
+      [message('m1', OTHER)],
+      g
+    );
+    await replay(
+      systemEvent('unpin', { messageId: 'm1', at: 300 }),
+      OTHER,
+      [message('m1', OTHER)],
+      g
+    );
 
-    // A peer that has not seen the unpin answers with its own snapshot. Adopting it would
-    // resurrect a pin this device took back, and there is no clock to order the two.
-    await replay(systemEvent('history_bundle', { messages: [], pins: ['m1'] }), OTHER, [], g);
+    // A peer that has not seen the unpin answers with its own register, still holding the pin at
+    // its original instant. It is older, so it loses - which is the whole reason pin state is
+    // dated rather than merged as a set.
+    await replay(
+      systemEvent('history_bundle', { messages: [], pins: [{ id: 'm1', pinned: true, at: 100 }] }),
+      OTHER,
+      [],
+      g
+    );
 
-    expect(pinnedMessageIds(g)).toEqual(['m9']);
+    expect(pinnedMessageIds(g)).toEqual([]);
+  });
+
+  it('lets a bundle carry an unpin THIS device never saw', async () => {
+    const g = 'group-pin-newer-unpin';
+    await replay(
+      systemEvent('pin', { messageId: 'm1', at: 100 }),
+      OTHER,
+      [message('m1', OTHER)],
+      g
+    );
+
+    // The symmetric case, and the reason the register travels with its tombstones: a snapshot of
+    // what is merely PINNED would omit this entry, leaving the stale pin nothing to lose to.
+    await replay(
+      systemEvent('history_bundle', { messages: [], pins: [{ id: 'm1', pinned: false, at: 400 }] }),
+      OTHER,
+      [],
+      g
+    );
+
+    expect(pinnedMessageIds(g)).toEqual([]);
   });
 });

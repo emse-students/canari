@@ -28,11 +28,11 @@
  *     `mutationIsAuthorised` (`systemMessageHandler.ts`) live, `replayMutationIsAuthorised`
  *     (`historySystemEvents.ts`) on replay. MUT-10 is what found that the second one was missing.
  *   - `pinStore.svelte.ts` + `historySystemEvents.ts`/`systemMessageHandler.ts`: a DM/group pin is
- *     an MLS system event applied into a per-conversation `localStorage` set keyed by GROUP ID, and
- *     it travels two ways - the `pin`/`unpin` frames, replayed in log order, and the pinned set
- *     carried on every `history_bundle` and adopted only into an EMPTY set (`seedPinnedSet`). A
- *     channel pin is fetched fresh from the server (`MainChatPage.svelte` `listPinnedMessageIds`
- *     -> `setPinnedSet`, which REPLACES the set) every time the channel is opened.
+ *     an MLS system event carrying `at`, applied into a per-conversation last-write-wins register
+ *     keyed by GROUP ID, where an `unpin` is a dated tombstone rather than a removal. It travels two
+ *     ways - the frames themselves, and the whole register on every `history_bundle`, merged per
+ *     message on `at`. A channel pin is fetched fresh from the server (`MainChatPage.svelte`
+ *     `listPinnedMessageIds` -> `setPinnedSet`, which REPLACES the set) on every channel open.
  *   - `messaging.ts` `deleteMessage` -> `cancelOutboxMessage`: a delete is a CANCELLATION while the
  *     message is still queued, and only becomes a `delete_message` broadcast once the frame has
  *     left the device. MUT-19 is what found that it used to be only the second of those.
@@ -1731,7 +1731,7 @@ async function mut15() {
       cursorKeysRewound: cursorKeys,
       unpinFailure,
       covers: 'the replay half - `pin` frames re-read from the shared log after the cursor was rewound by one frame',
-      doesNotCover: 'the history_bundle half (seedPinnedSet), which needs a real fresh device',
+      doesNotCover: 'the history_bundle half (mergePinEntries), which needs a real fresh device',
     });
   } catch (e) {
     return await finish('MUT-15/dm', 'ERROR', w, { error: e.message });

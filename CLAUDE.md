@@ -200,9 +200,12 @@ in `CHANGELOG.md`, the shim and its **2026-11-13** removal date in
   facts close three windows (durable row / the running flush's snapshot / the other tabs, plus the
   native mirror), and `inFlight` keeps the answer honest: the entry inside its send cannot be
   withdrawn, and claiming otherwise would lose the delete outright. MUT-19 asserts `everSawOriginal`
-  again, because there is no race left to lose. MUT-15: pin state now travels BOTH ways - the
-  `pin`/`unpin` frames replayed in log order, and the pinned set on every `history_bundle`, adopted
-  only into an EMPTY set (`seedPinnedSet`), since a pinned set has no clock to merge by. **The check
+  again, because there is no race left to lose. MUT-15: **the pin was the only mutation carrying no
+  clock** - a reaction dates each `(user, emoji)` pair, an edit dates itself, a deletion is
+  absorbing - so it now carries `at` on both legs like a reaction does, an `unpin` is a dated
+  tombstone rather than a removal, and the register travels on every `history_bundle` AND replays
+  from the frames. The first attempt was "adopt a peer's set only into an empty one", which the user
+  refuted on the spot: it buys a fresh device convergence by refusing it to everyone else. **The check
   had to change which device pins**: MLS gives no echo of your own frames, so a device can never
   recover a pin it placed ITSELF from the log. It now rewinds the stream cursor by one frame rather
   than ninety days. The bundle half is unit-tested and NOT covered on a client - that needs a real

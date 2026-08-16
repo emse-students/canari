@@ -713,9 +713,11 @@
     if (!convo) return;
     if (isSelectedChannel) {
       const next = !isMessagePinned(convo.id, messageId);
-      applyPin(convo.id, messageId, next);
+      applyPin(convo.id, messageId, next, Date.now());
       void channelService.setMessagePinned(convo.id, messageId, next).catch(() => {
-        applyPin(convo.id, messageId, !next); // revert if the server rejects
+        // Revert if the server rejects. A LATER instant, or the revert would not supersede the
+        // optimistic apply it exists to undo.
+        applyPin(convo.id, messageId, !next, Date.now());
       });
     } else {
       void messaging.handleTogglePin(messageId, msgCtx());

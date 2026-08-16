@@ -742,6 +742,47 @@ Three things this pins, none specific to that barrier:
   seven. Same rule as the project's `Never branch on an error MESSAGE`: classify where the fact is
   known, as a type, not where it is being read back out of a sentence.
 
+### 25. A CHECK THAT HELD A HOLE OPEN MUST BE REWRITTEN THE DAY THE HOLE CLOSES, OR IT LIES IN THE OTHER DIRECTION
+
+Two rows here were built to fail on purpose, and both went green-side-up on 2026-08-16 when the
+defects they described were fixed. Left alone, each would have asserted the opposite of the product.
+
+**MUT-19 had been DEMOTED and had to be promoted back.** Deleting a message still in the outbox sent
+it and then withdrew it, and whether the peer painted the original for one frame was scheduling the
+check does not control - measured `false` then `true` within an hour on the same bundle. So the
+assertion was moved off `everSawOriginal` and onto the settled state, correctly: a verdict that flaps
+says nothing. But the demotion was a property of the DEFECT, not of the check. With the queued entry
+withdrawn there is no race left to lose, so a single sighting is now a defect rather than an
+accident, and the assertion goes back where it was. **A check softened to survive a defect carries a
+debt that comes due with the fix.**
+
+**MUT-21 was worse: it returned `true` unconditionally**, a leftover from the same era, so the hover
+bar could have escaped the message pane again behind a green tally. A row that reports `FAIL` and
+tallies `ok` is not a compromise, it is a check that has been switched off in one place and left
+looking alive in another.
+
+### 26. A SIMULATION IS ONLY FAITHFUL TO THE MECHANISM IT REWINDS - name what it cannot reach
+
+MUT-15 simulated a fresh device by wiping one `localStorage` key and reloading. That was faithful
+while pin state had no other source; the moment it gained one it stopped being a simulation of
+anything, because **the device's position in the shared log was still at the head** - it re-read no
+frame, so it could not recover anything from the log by construction.
+
+Fixing that turned up a second, sharper constraint: **MLS gives a device no echo of its own frames**,
+so a device replaying the log reaches its own `pin` frame and is told `own-message`. A device can
+never recover from the log a pin it placed ITSELF. The check therefore had to change *which device
+pins* - the peer places it, the device under test receives it - before any amount of rewinding could
+help.
+
+The rewind that works is a snapshot: capture the stream cursor and the seen-ciphertext set before the
+frame, restore them after. That moves the device back by ONE frame, where deleting the keys would
+have re-walked ninety days of a conversation holding thousands of messages on a production account.
+
+And what it still cannot reach is written into the check's own record (`doesNotCover`): the
+`history_bundle` half needs a genuine fresh enrolment, which belongs to
+[device-verification](device-verification.md). **A check that names its own blind spot is worth more
+than one that quietly implies it has none.**
+
 ### The bar is "expected", not "no failure" - and it applies to the server too
 
 Set by the user on 2026-08-13, and it raises everything above: *"je veux que tout soit explique et que
