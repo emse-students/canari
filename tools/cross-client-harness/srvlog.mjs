@@ -260,6 +260,34 @@ const NOTABLE = [
   // `[404] GET /*.js` would forgive `/service-worker.js`, which SvelteKit really would own if one
   // were ever added - and the bucket that would catch that must not be the bucket that hides it.
   /^\[404\] (GET|HEAD) \/(\.[\w.-]+(\/[\w./-]*)?|(service-account|credentials)\.json|app\.js|bundle\.js|static\/js\/main\.js)$/,
+  // THE SAME SCANNER FAMILY, PROBING FOR A CMS THIS SITE DOES NOT RUN - one sweep, 11 paths, four
+  // stacks. Measured during the TYPE run of 2026-08-16, every one of them `404`:
+  //
+  //     Joomla     /administrator/, /administrator/manifests/files/joomla.xml,
+  //                /language/en-GB/en-GB.xml, /media/system/js/core.js
+  //     WordPress  /wp-login.php, /wp-admin/, /wp-includes/js/wp-emoji.js
+  //     Laravel    /_ignition/health-check          (the CVE-2021-3129 RCE probe)
+  //     Next.js    /_next/static/, /_next/webpack-hmr
+  //     control    /zzx9q7_not_exist_8123x/         (a random path, to fingerprint the 404 itself)
+  //
+  // NOTABLE for its neighbour's reason: "was this host scanned during the run" is worth reading even
+  // when "did anything answer" is no. And the answer must keep being checked - the rule is written
+  // so a NON-404 on any of these paths does NOT match it and lands in `unexplained`, which is where
+  // a Joomla admin panel answering 200 on a SvelteKit host belongs.
+  //
+  // KEYED ON THE STACK, NOT ON THE ELEVEN PATHS SEEN. Spelling them out one by one is what the
+  // sitemap rules do, and it is right there because those are stable conventions; a scanner's path
+  // list is not, so the next sweep would land in `unexplained` and every run would need the same
+  // triage again. This is safe for the reason the secret-scan rule is safe: the application CANNOT
+  // own these prefixes. Canari is SvelteKit - it has no `/wp-*`, no `/administrator/`, no
+  // `/_next/` (that is Next.js; SvelteKit's is `/_app/`), and no `/_ignition/`.
+  //
+  // THE CONTROL PATH IS DELIBERATELY LEFT OUT. `/zzx9q7_not_exist_8123x/` is random by construction,
+  // so no rule can name it - and it should not be named: a 404 on an unrecognised path is precisely
+  // what `unexplained` is for, and this file's own sitemap rules say why a blanket `[404] GET` may
+  // never exist. Ten of the eleven are classified; the eleventh costs one glance and keeps the
+  // bucket honest.
+  /^\[404\] (GET|HEAD) \/(wp-[\w./-]*|administrator(\/[\w./-]*)?|_next\/[\w./-]*|_ignition\/[\w./-]*|media\/system\/[\w./-]*|language\/[\w-]+\/[\w.-]+)$/,
   // A SERVICE STARTING INSIDE THE WINDOW - which means the window straddles a deploy, and every
   // client-side disconnection in it has an explanation that is not the application's fault. Never
   // benign: a run that does not know it was redeployed under itself will attribute the fallout to

@@ -154,12 +154,32 @@ const NOTABLE_CASES = [
   '[404] GET /service-account.json',
   '[404] GET /bundle.js',
   '[404] GET /static/js/main.js',
+  // THE CMS SWEEP, verbatim from the TYPE run of 2026-08-16 - four stacks in one burst, all 404.
+  // One fixture per stack, because the rule is one alternation and a stack with no fixture is a
+  // branch that can rot.
+  '[404] GET /administrator/manifests/files/joomla.xml',
+  '[404] HEAD /wp-login.php',
+  '[404] HEAD /_ignition/health-check',
+  '[404] HEAD /_next/webpack-hmr',
+  '[404] GET /media/system/js/core.js',
+  '[404] GET /language/en-GB/en-GB.xml',
 ];
 for (const l of NOTABLE_CASES) {
   const ok = matches(NOTABLE_RULES, l);
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} notable      ${l.slice(-72)}`);
 }
+
+// A SCANNER PATH THAT ANSWERED IS NOT A SCANNER PATH THAT 404ed, and the rule's whole safety
+// argument rests on that. `/administrator/` returning 200 on a SvelteKit host would mean something
+// is serving a Joomla admin panel from this domain - the single most serious thing this family of
+// lines could ever say - so it must fall through to `unexplained` rather than be forgiven as "the
+// usual scan". Asserted here because the comment on the rule claims it, and a claim in a comment is
+// not a property of the code.
+const servedScan = '[200] GET /administrator/';
+const scanOk = !matches(NOTABLE_RULES, servedScan) && !matches(BENIGN_RULES, servedScan);
+if (!scanOk) failures++;
+console.log(`${scanOk ? 'ok  ' : 'FAIL'} unexplained a scanner path that ANSWERED is not the 404 that ignored it`);
 
 // THE ONE THAT MUST NOT BE FORGIVEN BY THE PATTERN THAT FORGIVES ITS SIBLING.
 const failedPush = `${NEST}[InternalController] [INTERNAL_PUSH] user=aaaaaaaaaaaaaaaa sent=0 failed=2`;
