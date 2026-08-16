@@ -57,7 +57,7 @@ const gate = (): { promise: Promise<void>; open: () => void } => {
 describe('waitForCatchUpIdle', () => {
   /** `beginCatchUp`/`endCatchUp` are protected: they are the class's own seam, not a public API. */
   const sessions = (svc: BaseMlsService) =>
-    svc as unknown as { beginCatchUp(): void; endCatchUp(): void };
+    svc as unknown as { beginCatchUp(groupId: string): void; endCatchUp(groupId: string): void };
 
   it('lets a send through when no catch-up is open', async () => {
     await expect(makeService().waitForCatchUpIdle()).resolves.toBeUndefined();
@@ -65,7 +65,7 @@ describe('waitForCatchUpIdle', () => {
 
   it('holds a send for as long as a catch-up is open', async () => {
     const svc = makeService();
-    sessions(svc).beginCatchUp();
+    sessions(svc).beginCatchUp('g-1');
 
     let through = false;
     const send = svc.waitForCatchUpIdle().then(() => {
@@ -75,15 +75,15 @@ describe('waitForCatchUpIdle', () => {
     await Promise.resolve();
     expect(through).toBe(false);
 
-    sessions(svc).endCatchUp();
+    sessions(svc).endCatchUp('g-1');
     await send;
     expect(through).toBe(true);
   });
 
   it('needs EVERY open catch-up to close - a depth, not a flag', async () => {
     const svc = makeService();
-    sessions(svc).beginCatchUp();
-    sessions(svc).beginCatchUp();
+    sessions(svc).beginCatchUp('g-1');
+    sessions(svc).beginCatchUp('g-2');
 
     let through = false;
     const send = svc.waitForCatchUpIdle().then(() => {
@@ -92,12 +92,12 @@ describe('waitForCatchUpIdle', () => {
 
     // Nothing guarantees a single session at a time, and a flag would open the gate here - with a
     // second catch-up still running and its swap still to come.
-    sessions(svc).endCatchUp();
+    sessions(svc).endCatchUp('g-1');
     await Promise.resolve();
     await Promise.resolve();
     expect(through).toBe(false);
 
-    sessions(svc).endCatchUp();
+    sessions(svc).endCatchUp('g-2');
     await send;
     expect(through).toBe(true);
   });
@@ -203,24 +203,57 @@ describe('waitForMessageQueueIdle', () => {
    * stated rather than discovered.
    */
   it('refuses, loudly, to be awaited from inside a catch-up instead of never resolving', async () => {
-    const catchUp = svc as unknown as { beginCatchUp(): void; endCatchUp(): void };
+    const catchUp = svc as unknown as {
+      beginCatchUp(groupId: string): void;
+      endCatchUp(groupId: string): void;
+    };
     const complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    catchUp.beginCatchUp();
+    catchUp.beginCatchUp('g-abc');
 
     // Resolving is the point: a promise that never settles here is exactly the defect.
-    await expect(svc.waitForMessageQueueIdle('history ask')).resolves.toBeUndefined();
+    await expect(svc.waitForMessageQueueIdle('history ask:g-abc')).resolves.toBeUndefined();
     expect(pullPendingMessagesJson).not.toHaveBeenCalled();
     expect(waitUntilIdle).not.toHaveBeenCalled();
     expect(complaint).toHaveBeenCalledOnce();
-    // NAMING THE CALLER IS PART OF THE REPORT, not decoration: `catchUpDepth` is a global, so the
-    // line cannot say whose session is open, and the fix is at the call site either way. The one
-    // occurrence on prod took a read of all six call sites to attribute.
-    expect(String(complaint.mock.calls[0]?.[0])).toContain('history ask');
+    // NAMING THE CALLER IS PART OF THE REPORT, not decoration: the one occurrence on prod took a
+    // read of all six call sites to attribute.
+    expect(String(complaint.mock.calls[0]?.[0])).toContain('history ask:g-abc');
+    // AND WHICH OF THE TWO SITUATIONS IT IS. The caller names the same group as the open session, so
+    // it opened one itself: NESTED, which is the deadlock, and its fix is the call site's ORDER.
+    expect(String(complaint.mock.calls[0]?.[0])).toContain('NESTED');
+    expect(String(complaint.mock.calls[0]?.[0])).toContain('g-abc');
 
     // And it is the SESSION that is refused, not the device: once closed, the barrier works again.
-    catchUp.endCatchUp();
+    catchUp.endCatchUp('g-abc');
     await svc.waitForMessageQueueIdle('a test');
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
+    complaint.mockRestore();
+  });
+
+  /**
+   * THE OTHER SITUATION, WHICH IS NOT A DEADLOCK AND MUST NOT READ AS ONE.
+   *
+   * A caller that merely runs BESIDE somebody else's session would have waited, not hung - and its
+   * fix is nothing at all, where the nested case's fix is to move the barrier above the session.
+   * The refusal used to print one sentence for both, which is the shape rule 20 of
+   * testing-methodology names: a report that cannot separate the causes it covers sends its reader
+   * to the wrong fix.
+   */
+  it('says CONCURRENT when the open session belongs to another group', async () => {
+    const catchUp = svc as unknown as {
+      beginCatchUp(groupId: string): void;
+      endCatchUp(groupId: string): void;
+    };
+    const complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    catchUp.beginCatchUp('g-other');
+
+    await expect(svc.waitForMessageQueueIdle('outbox flush:g-mine')).resolves.toBeUndefined();
+    const line = String(complaint.mock.calls[0]?.[0]);
+    expect(line).toContain('CONCURRENT');
+    expect(line).not.toContain('NESTED');
+    expect(line).toContain('g-other'); // the session that is open, named
+
+    catchUp.endCatchUp('g-other');
     complaint.mockRestore();
   });
 

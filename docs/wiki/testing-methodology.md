@@ -16,7 +16,7 @@ over a filtered copy of its own evidence.
 
 ---
 
-## The twenty rules
+## The twenty-two rules
 
 Ordered by how expensive it is to break them.
 
@@ -590,6 +590,62 @@ and the richer one is the copy nobody finds.
 
 Corollary worth stating on its own: **a re-run is not a recovery.** The next four passes were green,
 which recovered nothing - it destroyed the only window in which the fault was visible.
+
+---
+
+### 21. A CHECK'S FIXTURE MUST EXIST BEFORE THE SURFACE THAT READS IT - and a cleanup that only runs on the happy path is not a cleanup
+
+MUT-12 seeds `canari_recent_emojis` so the emoji picker offers fifteen distinct emoji to react with.
+It seeded straight after `sendText`, under a comment asserting the picker reads localStorage on its
+own first open. **It does not.** `MessageBubble.svelte` renders `MessageEmojiPicker` unconditionally
+and only flips its `visible` prop, so that component's `onMount` runs when the **bubble** renders -
+which is the instant `sendText` returns. A seed written afterwards could never reach the row the
+check is about.
+
+What it produced is the part worth remembering. `MUT-12/dm` threw on its first picker emoji, every
+single run. `MUT-12/channel` **PASSED** - because the DM leg threw *before* its own cleanup line and
+left the seed in localStorage, where the channel leg's bubble picked it up on mount. One leg was
+failing honestly and the other was passing on the first leg's litter, which is strictly worse: on a
+fresh profile both fail, and the green row said the opposite. The fix is two lines and two rules: the
+fixture goes in **before** the surface exists, and the cleanup goes in a `finally`.
+
+The third lesson is about the sentence. `clickReactionEmoji` threw `no quick-reaction 🎉 on the row`,
+which is the same sentence for *the picker never opened* and for *the picker opened with the wrong
+list* - and those want opposite fixes (rule 20's shape again). `offeredEmojis` now names what the row
+**does** offer, so the next failure of this kind is one line to read.
+
+### 22. THE PHONE'S SOFT KEYBOARD MAKES COORDINATES LIE, SO A CONTROL REACHED AFTER A FIELD HAS FOCUS CANNOT BE RESOLVED BY GEOMETRY
+
+Arming MUT-18 - the first check in this campaign to drive a message's controls on the phone - cost
+three runs, and only the first was about the thing being tested.
+
+1. `realClick` on the edit form's Save: the click landed somewhere, the form never closed.
+2. `activate` instead - the fix `fireComposer` already carries for the composer: `no element to
+   activate: text=Enregistrer`, about a button a probe measured a minute later at 77x26 with its
+   label spelt exactly that way.
+
+Both are the same cause. Focusing the textarea opens Android's soft keyboard, which shrinks the
+**visual** viewport while the **layout** viewport `getBoundingClientRect` reports keeps its height.
+`RESOLVE`'s last filter is a hit test at the element's centre, and a hit test is a coordinate test:
+it rejects a control that is plainly on screen, so `activate` reports an absence rather than a
+mis-click. `realClick` does not even get that far.
+
+`saveOpenEdit` clicks the button inside the form, by DOM. **Skipping the hit test is safe there and
+would not be in general**: only one message can be in edit mode at a time, so the form is unique on
+the page and there is no second candidate - which is the only thing the hit test defends against.
+State the uniqueness argument at every site that skips it, or rule 16 quietly stops holding.
+
+**It became the desktop path too, and not for symmetry.** Left on `realClick`, the browser then
+failed MUT-2 with `no stable element for selector: text=Enregistrer` having passed the same step
+minutes earlier - `stableCentreOf` samples the geometry twice and the edit form animates in, so the
+check was racing a CSS transition to buy a hit test it did not need. The phone's constraint turned
+out to name a flake the desktop had been carrying quietly: **when a coordinate buys nothing, it still
+costs a race.**
+
+Corollary: **an obstacle attributed to the environment gets checked before it is believed.** MUT-18's
+SKIP said A1 was off adb; SESSION STATE had said the opposite for weeks, and the phone was reachable
+the whole time. The real obstacle was a missing helper, which nobody went looking for because the
+written reason pointed at a cable.
 
 ---
 

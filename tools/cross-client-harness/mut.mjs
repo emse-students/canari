@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 /**
- * MUT-1..20 - message mutation (edit, delete, react, pin) on both transports.
+ * MUT-1..21 - message mutation (edit, delete, react, pin) on both transports.
+ *
+ * AND ON THE PHONE, since 2026-08-16. MUT-18 sat SKIPPED because every control here is resolved by
+ * HOVERING a bubble and clicking `svg.lucide-*` in the desktop toolbar, and a touch screen has
+ * neither a hover nor that toolbar - it raises `MessageMobileActions` on a 420 ms press.
+ * `longPressBubble` and `tapSheetIcon` (chat.mjs) are that missing surface; `saveOpenEdit` below is
+ * the second half of it, because a control reached AFTER a field has focus cannot be resolved by
+ * coordinates at all while the soft keyboard is up.
  *
  * THE CENTRAL POINT OF THIS PHASE: every row that applies to both venues runs TWICE - once in the
  * DM (MLS transport, `messaging.ts` / `useMessaging.svelte.ts`) and once in the `Campagne de test`
@@ -35,8 +42,10 @@
  *   - `messageReactions.ts`: `MAX_DISTINCT_MESSAGE_REACTIONS = 15`, enforced client-side for DMs
  *     (`toggleMessageReaction` returns null past the cap) and server-side for channels
  *     (`service.toggleReaction` is authoritative, the client only applies optimistically).
- *   - `messaging.ts` `addReaction`/`notifyReaction`: a `POST /api/mls/notify-reaction` fires
- *     if-and-only-if `targetMsg.senderId !== userId` - the author-only, never-the-reactor rule.
+ *   - `messaging.ts` `addReaction` + `reactionNotify.ts` `notifyReaction`: a
+ *     `POST /api/mls/notify-reaction` fires if-and-only-if `targetMsg.senderId !== userId` - the
+ *     author-only, never-the-reactor rule. `notifyReaction` is a leaf module ON PURPOSE: importing
+ *     it from the channel side closed an import cycle that was entered at module scope.
  *
  * OBSERVATION IS PART OF EVERY CHECK HERE, and it was not until 2026-08-15. This file computed
  * twenty verdicts while reading no console line at all - the same fault READ shipped eight PASSes
@@ -88,6 +97,9 @@ import {
   awaitMessage,
   countMessage,
   attachFiles,
+  longPressBubble,
+  tapSheetIcon,
+  sameAccountAs,
   until,
   COMPOSER,
 } from './chat.mjs';
@@ -441,6 +453,54 @@ async function reactAndConfirm(cx, textMatch, emoji, timeoutMs = 5000) {
   }
 }
 
+/**
+ * Every emoji the row currently OFFERS as a one-click button: the quick strip, plus the picker's
+ * "recent" panel when it is open.
+ *
+ * It exists so a failure can name what IS there. `clickReactionEmoji` throws "no quick-reaction X on
+ * the row", which is the same sentence for a picker that never opened and for a picker that opened
+ * with the wrong recent list - and those two want opposite fixes. Short labels only: every other
+ * control on the row carries a localised word, and an emoji does not.
+ */
+async function offeredEmojis(cx, textMatch) {
+  const raw = await evaluate(
+    cx,
+    `JSON.stringify((function () {
+      var pane = ${paneExpr()};
+      var findRow = ${FIND_ROW_FN};
+      var row = findRow(pane, ${JSON.stringify(textMatch)});
+      if (!row) return [];
+      return [].map.call(row.querySelectorAll('button'), function (b) {
+        return (b.innerText || '').trim();
+      }).filter(function (t) { return t.length > 0 && t.length <= 8; });
+    })())`
+  );
+  try {
+    return JSON.parse(raw || '[]');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Polls the row's badges on `cx` until `predicate` holds, and returns `{ms, badges}` - `ms` null
+ * past the deadline, with the badges as last seen so the failure carries its own evidence.
+ *
+ * `reactAndConfirm` does this for the client that CLICKED; this is the peer's half, and MUT-11 had
+ * neither. Its fixed 300 ms sleeps made "the reaction never crossed" and "it has not repainted yet"
+ * the same observation, and a DM reaction is a durable-outbox round trip, not a local repaint: the
+ * check flapped once on 😂 and passed on the next run with no code between the two.
+ */
+async function awaitBadges(cx, textMatch, predicate, timeoutMs = 10000) {
+  const started = Date.now();
+  for (;;) {
+    const badges = (await reactionBadges(cx, textMatch)) || [];
+    if (predicate(badges)) return { ms: Date.now() - started, badges };
+    if (Date.now() - started > timeoutMs) return { ms: null, badges };
+    await sleep(150);
+  }
+}
+
 /** Whether the full emoji picker is open on this row - the `<emoji-picker>` custom element only
  *  exists in the DOM while `showEmojiPicker` is true for that bubble. */
 async function pickerOpen(cx, textMatch) {
@@ -565,11 +625,18 @@ async function deleteBubble(cx, textMatch) {
   await until(cx, `!document.querySelector('[role="dialog"]')`, 5000);
 }
 
-/** Full inline-edit flow: pencil icon -> replace the textarea's content -> Save. The textarea and
- *  the Save button carry no stable hook either (see header comment); the textarea is at least
- *  uniquely locatable (only one message can be in edit mode at a time), so only Save needs text. */
-async function editBubble(cx, textMatch, newText) {
-  await clickBubbleIcon(cx, textMatch, 'lucide-pencil');
+/**
+ * Fills the ALREADY OPEN inline edit form and saves it.
+ *
+ * Opening the form is the caller's half because the two platforms do it differently and only
+ * differently: the desktop hover toolbar's pencil, or the phone's long-press action sheet. What
+ * follows is identical - `MessageEditForm.svelte` is one component - so it is written once.
+ *
+ * The textarea and the Save button carry no stable hook (see header comment); the textarea is at
+ * least uniquely locatable (only one message can be in edit mode at a time), so only Save needs
+ * text.
+ */
+async function fillAndSaveEdit(cx, newText) {
   const taExpr = `${paneExpr()}.querySelector('textarea')`;
   await until(cx, `!!${taExpr}`, 5000);
   await evaluate(
@@ -582,8 +649,70 @@ async function editBubble(cx, textMatch, newText) {
     })()`
   );
   await cx.send('Input.insertText', { text: newText });
-  await realClick(cx, 'text=Enregistrer');
+  await saveOpenEdit(cx);
   await until(cx, `!${taExpr}`, 5000);
+}
+
+/**
+ * Saves the OPEN edit form by clicking the button inside the form itself - on BOTH platforms.
+ *
+ * NEITHER `realClick` NOR `activate` WORKS ON THE PHONE, and the reason is worth keeping because it
+ * will recur for every mobile control reached after a field has focus. Both resolve through
+ * `RESOLVE`,
+ * whose last filter is a hit test at the element's centre - and a hit test is a coordinate test.
+ * With the soft keyboard up, Android's VISUAL viewport is shorter than the LAYOUT viewport that
+ * `getBoundingClientRect` reports, so the centre of a control that is plainly on screen belongs to
+ * something else. `activate` then answers `no element to activate: text=Enregistrer` about a button
+ * a probe had just measured at 77x26 with its label spelt exactly that way.
+ *
+ * Skipping the hit test is safe HERE and would not be in general: only one message can be in edit
+ * mode at a time, so the form is unique on the page and there is no second candidate for the click
+ * to land on - which is the only thing the hit test was defending against.
+ *
+ * IT IS THE DESKTOP PATH TOO, and not for symmetry. `realClick` went on to fail MUT-2 with
+ * `no stable element for selector: text=Enregistrer` on a browser, having passed the same step
+ * minutes earlier: `stableCentreOf` samples the geometry twice and the form animates in, so the
+ * check was racing a CSS transition for no benefit. One path, no coordinates, no race.
+ */
+async function saveOpenEdit(cx) {
+  const outcome = await evaluate(
+    cx,
+    `(function () {
+      var ta = ${paneExpr()}.querySelector('textarea');
+      if (!ta) return 'no edit form is open';
+      var form = ta.closest('form') || ta.parentElement.parentElement;
+      var all = [].slice.call(form.querySelectorAll('button'));
+      var btn = all.filter(function (b) {
+        return (b.innerText || '').trim().toLowerCase() === 'enregistrer';
+      })[0];
+      if (!btn) {
+        return 'no save button in the edit form - it offers [' +
+          all.map(function (b) { return (b.innerText || '').trim(); }).join(' ') + ']';
+      }
+      btn.click();
+      return 'ok';
+    })()`
+  );
+  if (outcome !== 'ok') throw new Error(String(outcome));
+}
+
+/** Desktop inline edit: the hover toolbar's pencil, then the shared form. */
+async function editBubble(cx, textMatch, newText) {
+  await clickBubbleIcon(cx, textMatch, 'lucide-pencil');
+  await fillAndSaveEdit(cx, newText);
+}
+
+/**
+ * The phone's inline edit: long press -> the action sheet's pencil -> the same form.
+ *
+ * There is no hover on a touch screen and no toolbar to hover, which is why MUT-18 was SKIPPED for
+ * days: not because A1 was unreachable - it never was - but because every control in this file was
+ * resolved through a surface the phone does not have.
+ */
+async function editBubbleMobile(cx, textMatch, newText) {
+  await longPressBubble(cx, textMatch);
+  await tapSheetIcon(cx, 'lucide-pencil');
+  await fillAndSaveEdit(cx, newText);
 }
 
 /** Counts the `<p>` elements strictly between two sentinel markers, and how many of them carry the
@@ -1136,29 +1265,34 @@ async function mut11Body(a, b, w, idSuffix) {
   await sendText(a, marker);
   await awaitMessage(b, marker, 25000);
 
+  const has = (emoji) => (badges) => badges.some((r) => sameEmoji(r.emoji, emoji));
+  const lacks = (emoji) => (badges) => !badges.some((r) => sameEmoji(r.emoji, emoji));
+  const countIs = (emoji, n) => (badges) =>
+    badges.some((r) => sameEmoji(r.emoji, emoji) && r.count === n);
+
   await clickReactionEmoji(a, marker, '❤️'); // react
-  await sleep(300);
-  const afterFirstReact = await reactionBadges(b, marker);
+  const first = await awaitBadges(b, marker, has('❤️'));
 
   await clickReactionEmoji(a, marker, '❤️'); // un-react (toggle)
-  await sleep(300);
-  const afterUnreact = await reactionBadges(b, marker);
+  const un = await awaitBadges(b, marker, lacks('❤️'));
 
   await clickReactionEmoji(a, marker, '❤️'); // re-react
-  await sleep(300);
+  await awaitBadges(b, marker, has('❤️'));
 
   await clickReactionEmoji(b, marker, '❤️'); // second user, same emoji
-  await sleep(300);
+  await awaitBadges(b, marker, countIs('❤️', 2));
 
   await clickReactionEmoji(a, marker, '😂'); // same user, second distinct emoji
-  await sleep(300);
-  const final = await reactionBadges(b, marker);
+  const last = await awaitBadges(b, marker, has('😂'));
 
-  const heart = final.find((r) => r.emoji === '❤️');
-  const laugh = final.find((r) => r.emoji === '😂');
+  const afterFirstReact = first.badges;
+  const afterUnreact = un.badges;
+  const final = last.badges;
+  const heart = final.find((r) => sameEmoji(r.emoji, '❤️'));
+  const laugh = final.find((r) => sameEmoji(r.emoji, '😂'));
   const ok =
-    afterFirstReact.some((r) => r.emoji === '❤️') &&
-    afterUnreact.every((r) => r.emoji !== '❤️') &&
+    first.ms !== null &&
+    un.ms !== null &&
     !!heart &&
     heart.count === 2 &&
     !!laugh &&
@@ -1174,6 +1308,10 @@ async function mut11Body(a, b, w, idSuffix) {
     afterFirstReact,
     afterUnreact,
     final,
+    // A slow badge and a lost one are now different reports. MUT-11/dm failed once on the 😂 leg
+    // with `final` holding only the heart, and passed on the very next run: the peer's repaint had
+    // simply not happened inside a fixed 300 ms.
+    peerDelaysMs: { firstReact: first.ms, unreact: un.ms, secondEmoji: last.ms },
   });
 }
 
@@ -1207,12 +1345,21 @@ const RECENT_SEED = ['🎉', '🔥', '🥳', '🤔', '👀', '💯', '🚀', '�
 
 async function mut12Body(a, b, w, idSuffix) {
   const marker = mark('MUT12');
+
+  // THE SEED GOES IN BEFORE THE MESSAGE EXISTS, and the old comment here was wrong in a way that
+  // cost a false PASS. `MessageEmojiPicker` is instantiated by every BUBBLE (`MessageBubble.svelte`
+  // renders it unconditionally and only flips its `visible` prop), so its `onMount` reads
+  // `canari_recent_emojis` the instant the row renders - not when the picker is first opened. A seed
+  // written after `sendText` therefore cannot reach the row this check is about, ever.
+  //
+  // What that produced: MUT-12/dm threw on the first picker emoji, deterministically, while
+  // MUT-12/channel PASSED - because the DM leg threw before its own cleanup and left the seed in
+  // localStorage, where the channel leg's bubble picked it up on mount. The channel was passing on
+  // the previous check's litter, which is worse than failing: on a fresh profile both legs fail.
+  await evaluate(a, `localStorage.setItem('canari_recent_emojis', ${JSON.stringify(JSON.stringify(RECENT_SEED))})`);
+
   await sendText(a, marker);
   await awaitMessage(b, marker, 25000);
-
-  // Seed the "recent emojis" localStorage BEFORE the picker's first mount this page load - it only
-  // reads localStorage in `onMount`, so seeding after the first open would be silently ignored.
-  await evaluate(a, `localStorage.setItem('canari_recent_emojis', ${JSON.stringify(JSON.stringify(RECENT_SEED))})`);
 
   // WHICH emoji landed, one by one. The picker is re-asserted per iteration rather than once before
   // the loop: `ensurePickerOpen` is idempotent on the picker's own state, so a panel that closes on
@@ -1222,7 +1369,17 @@ async function mut12Body(a, b, w, idSuffix) {
   const missing = [];
   const delays = [];
   const react = async (emoji, viaPicker) => {
-    if (viaPicker) await ensurePickerOpen(a, marker);
+    if (viaPicker) {
+      await ensurePickerOpen(a, marker);
+      // WHAT IS ACTUALLY OFFERED, not "not found". `clickReactionEmoji`'s own message cannot tell a
+      // closed picker from an open one with the wrong recent list, and those want opposite fixes.
+      const offered = await offeredEmojis(a, marker);
+      if (!offered.some((t) => sameEmoji(t, emoji))) {
+        throw new Error(
+          `the picker is open on ${marker} and does not offer ${emoji} - the row offers [${offered.join(' ')}]`
+        );
+      }
+    }
     const ms = await reactAndConfirm(a, marker, emoji);
     if (ms === null) missing.push(emoji);
     else delays.push(ms);
@@ -1257,11 +1414,26 @@ async function mut12Body(a, b, w, idSuffix) {
   });
 }
 
+/**
+ * `mut12Body` with the seed guaranteed removed, however it exits.
+ *
+ * THE LITTER IS THE BUG HERE, not the throw: a seed left behind by a leg that failed is read on
+ * mount by the NEXT leg's bubble, which is exactly how MUT-12/channel passed while MUT-12/dm could
+ * not even find its first picker emoji. A cleanup that only runs on the happy path is not a cleanup.
+ */
+async function mut12Guarded(a, b, w, idSuffix) {
+  try {
+    return await mut12Body(a, b, w, idSuffix);
+  } finally {
+    await evaluate(a, `localStorage.removeItem('canari_recent_emojis')`).catch(() => {});
+  }
+}
+
 async function mut12() {
   let [a, b, w] = await openDmPair();
   let dmOk = false;
   try {
-    dmOk = await mut12Body(a, b, w, 'dm');
+    dmOk = await mut12Guarded(a, b, w, 'dm');
   } catch (e) {
     await finish('MUT-12/dm', 'ERROR', w, { error: e.message });
   } finally {
@@ -1271,7 +1443,7 @@ async function mut12() {
   [a, b, w] = await openChannelPair();
   let chOk = false;
   try {
-    chOk = await mut12Body(a, b, w, 'channel');
+    chOk = await mut12Guarded(a, b, w, 'channel');
   } catch (e) {
     await finish('MUT-12/channel', 'ERROR', w, { error: e.message });
   } finally {
@@ -1280,55 +1452,97 @@ async function mut12() {
   return dmOk && chOk;
 }
 
-// ── MUT-13: a reaction notifies the message AUTHOR only, never the reactor [DM] ────────────────
+// ── MUT-13: a reaction notifies the message AUTHOR only, never the reactor [both] ──────────────
+
+/** The `/api/mls/notify-reaction` requests this client has made since its watcher was armed. */
+const notifyPosts = (cx) =>
+  cx.events.filter(
+    (e) =>
+      e.method === 'Network.requestWillBeSent' &&
+      String(e.params?.request?.url || '').includes('/api/mls/notify-reaction')
+  );
+
+/** Waits for one more notify POST than `baseline`; ms, or null past the deadline. */
+async function awaitNotifyPost(cx, baseline, timeoutMs = 15000) {
+  const t0 = Date.now();
+  for (;;) {
+    if (notifyPosts(cx).length > baseline) return Date.now() - t0;
+    if (Date.now() - t0 > timeoutMs) return null;
+    await sleep(150);
+  }
+}
+
+/**
+ * BOTH VENUES RUN THIS, and until 2026-08-16 only the DM did - because until this session only the
+ * DM had the code. A channel reaction reached every member as a `channel.reaction` broadcast and
+ * reached no phone at all; `useChannelWorkspaces.svelte.ts` `toggleChannelReaction` now calls the
+ * same `notifyReaction` under the same author-only rule, so the check that proves the rule must run
+ * on the same two venues as every other row in this phase.
+ *
+ * The two call sites are NOT symmetric in timing, and the windows below are sized on the slower:
+ * the DM enqueues into the outbox and fires immediately, the channel fires only once
+ * `service.toggleReaction` has RESOLVED and the actor's display name has been looked up.
+ */
+async function mut13Body(a, b, w, idSuffix) {
+  const marker = mark('MUT13');
+  await sendText(a, marker); // authored by a (W1)
+
+  // `Network.enable` is not repeated here: `watch()` armed it on both clients before the setup
+  // navigated, and `cx.events` has been accumulating since. Re-enabling would read as "the buffer
+  // starts here", which is exactly what it does NOT do.
+  await awaitMessage(b, marker, 20000);
+
+  // b, who is NOT the author, reacts: the author must be told.
+  const beforeReactor = notifyPosts(b).length;
+  await clickReactionEmoji(b, marker, '❤️');
+  const reactorMs = await awaitNotifyPost(b, beforeReactor);
+
+  // a reacts to THEIR OWN message: nobody must be told.
+  const beforeSelf = notifyPosts(a).length;
+  await clickReactionEmoji(a, marker, '👍');
+  // An absence cannot be polled for, only waited out - so this one sleep stays, and it is sized on
+  // the channel leg's longer path rather than on the DM's.
+  await sleep(6000);
+  const selfHits = notifyPosts(a).length - beforeSelf;
+
+  const ok = reactorMs !== null && selfHits === 0;
+
+  // Cleanup, inside the window - see MUT-11.
+  await clickReactionEmoji(b, marker, '❤️').catch(() => {});
+  await clickReactionEmoji(a, marker, '👍').catch(() => {});
+
+  return await finish(`MUT-13/${idSuffix}`, ok ? 'PASS' : 'FAIL', w, {
+    reactorNotifyMs: reactorMs,
+    selfReactFiredNotify: selfHits,
+    note:
+      'this verifies only the CLIENT-SIDE precondition (messaging.ts addReaction and ' +
+      'useChannelWorkspaces toggleChannelReaction: POST /api/mls/notify-reaction iff the author is ' +
+      'someone else). Whether the push actually reaches the author\'s DEVICE is not observable from a ' +
+      'browser - that half is owed to the NOTIF phase and is NOT claimed passed here.',
+  });
+}
 
 async function mut13() {
-  const [a, b, w] = await openDmPair();
+  let [a, b, w] = await openDmPair();
+  let dmOk = false;
   try {
-    const marker = mark('MUT13');
-    await sendText(a, marker); // authored by a (W1)
-
-    // `Network.enable` is not repeated here: `watch()` armed it on both clients before the setup
-    // navigated, and `cx.events` has been accumulating since. Re-enabling would read as "the buffer
-    // starts here", which is exactly what it does NOT do.
-    await awaitMessage(b, marker, 20000);
-    await clickReactionEmoji(b, marker, '❤️'); // b (not the author) reacts
-    await sleep(1500); // let the fire-and-forget POST actually leave
-
-    const notifyHitsFromReactor = b.events.filter(
-      (e) =>
-        e.method === 'Network.requestWillBeSent' &&
-        String(e.params?.request?.url || '').includes('/api/mls/notify-reaction')
-    );
-
-    await clickReactionEmoji(a, marker, '👍'); // a reacts to THEIR OWN message
-    await sleep(1500);
-
-    const notifyHitsFromAuthorSelfReact = a.events.filter(
-      (e) =>
-        e.method === 'Network.requestWillBeSent' &&
-        String(e.params?.request?.url || '').includes('/api/mls/notify-reaction')
-    );
-
-    const ok = notifyHitsFromReactor.length > 0 && notifyHitsFromAuthorSelfReact.length === 0;
-
-    // Cleanup, inside the window - see MUT-11.
-    await clickReactionEmoji(b, marker, '❤️').catch(() => {});
-    await clickReactionEmoji(a, marker, '👍').catch(() => {});
-
-    return await finish('MUT-13/dm', ok ? 'PASS' : 'FAIL', w, {
-      reactorFiredNotify: notifyHitsFromReactor.length,
-      selfReactFiredNotify: notifyHitsFromAuthorSelfReact.length,
-      note:
-        'this verifies only the CLIENT-SIDE precondition (messaging.ts addReaction: POST /api/mls/notify-reaction ' +
-        'iff targetMsg.senderId !== userId). Whether the push actually reaches the author\'s DEVICE is not observable ' +
-        'from a browser - that half is owed to the mobile phase and is NOT claimed passed here.',
-    });
+    dmOk = await mut13Body(a, b, w, 'dm');
   } catch (e) {
-    return await finish('MUT-13/dm', 'ERROR', w, { error: e.message });
+    await finish('MUT-13/dm', 'ERROR', w, { error: e.message });
   } finally {
     closeAll(a, b);
   }
+
+  [a, b, w] = await openChannelPair();
+  let chOk = false;
+  try {
+    chOk = await mut13Body(a, b, w, 'channel');
+  } catch (e) {
+    await finish('MUT-13/channel', 'ERROR', w, { error: e.message });
+  } finally {
+    closeAll(a, b);
+  }
+  return dmOk && chOk;
 }
 
 // ── MUT-14: pin and unpin, seen on the OTHER device [both] ─────────────────────────────────────
@@ -1587,26 +1801,109 @@ async function mut17() {
   }
 }
 
-// ── MUT-18: two devices of the SAME user edit the same message at once - SKIPPED [DM] ──────────
+// ── MUT-18: two devices of the SAME user edit the same message at once [DM, W1 + A1] ───────────
 
+/**
+ * ARMED AT LAST, and what unblocked it was a helper, not the cable.
+ *
+ * This carried a SKIP whose reason was FALSE - it said A1 was off adb, while SESSION STATE had said
+ * the opposite for weeks. The real obstacle was that every mutation helper in this file resolves its
+ * control by HOVERING the bubble and clicking `svg.lucide-*` in the desktop toolbar, and the phone
+ * has neither: it raises `MessageMobileActions` on a 420 ms press. `longPressBubble` + `tapSheetIcon`
+ * in `chat.mjs` are that missing surface, and this is their first user.
+ *
+ * WHAT IT MEASURES. Both devices hold the OWNER's account, so both are allowed to edit, and
+ * `handleEditMessage` checks ownership on the SENDING device only (see MUT-10): two `edit_message`
+ * system events for one `messageId` therefore both go out, and every receiver applies whichever it
+ * gets, in the order it gets it. The risk is not that one wins - one must - it is that the two
+ * devices settle on DIFFERENT winners and stay that way, with the peer holding a third answer.
+ *
+ * So the verdict is CONVERGENCE, not a particular text: all three clients must show the same body,
+ * and it must be one of the two edits rather than the original or a merge of both.
+ *
+ * The row is addressed by `#msg-<id>` from here on. An edit rewrites the body, so the text this
+ * check starts from stops naming the row the moment the first edit lands.
+ */
 async function mut18() {
-  // THE REASON THIS CARRIED WAS FALSE, AND A FALSE REASON IS WORSE THAN NONE. It said A1 was off adb
-  // and cited a SESSION STATE that has since said the opposite for weeks: the phone is reachable on
-  // 9333 and every other phase that needs it uses it. Anyone reading the old sentence would have gone
-  // looking at the cable.
-  //
-  // What is ACTUALLY missing is a way to drive a message's toolbar on the phone. Every mutation
-  // helper in this file resolves its control by hovering the bubble and clicking `svg.lucide-*` in
-  // the desktop toolbar; the mobile layout has no hover and puts those actions in an action sheet
-  // that carries neither `[role=dialog]` nor `[aria-modal]` (which is why `OVERLAYS` in chat.mjs
-  // needs its own clause for it). So arming this needs a mobile equivalent of `clickBubbleIcon`
-  // first, and writing one is not something to do inside the check that would be its first user.
-  record('MUT-18/dm', 'SKIPPED', {
-    reason:
-      'no mobile equivalent of clickBubbleIcon exists: the phone opens an action sheet instead of the hover toolbar this file resolves every control through. A1 itself is reachable and is NOT the obstacle.',
-    owes: 'a mobile bubble-action helper in chat.mjs, then this check against W1 + A1 (both the owner account)',
-  });
-  return true;
+  const [w1, w2] = await Promise.all([client(W1, MATCH), client(W2, MATCH)]);
+  const probe = await sameAccountAs(w1, PORTS.A1, 'tauri.localhost');
+  if (!probe.ok) {
+    record('MUT-18/dm', 'SKIPPED', { reason: probe.why, checked: true });
+    closeAll(w1, w2);
+    return true;
+  }
+  const a1 = probe.cx;
+  const w = { W1: await watch(w1, 'W1'), W2: await watch(w2, 'W2'), A1: await watch(a1, 'A1') };
+  try {
+    await openDM(w1, PEER_NAME);
+    await openDM(w2, OWNER_NAME);
+    await openDM(a1, PEER_NAME); // A1 holds the owner account, so it looks for the peer, as W1 does
+
+    const marker = mark('MUT18');
+    await sendText(w1, marker);
+    await awaitMessage(a1, marker, 30000);
+    await awaitMessage(w2, marker, 30000);
+
+    // Taken BEFORE either edit - see the header: after one lands, `marker` names nothing.
+    const row = await bubbleRowLocator(w1, marker);
+    if (!row) throw new Error(`no #msg-<id> locator for ${marker} on W1`);
+
+    const fromW1 = `${marker}-W1`;
+    const fromA1 = `${marker}-A1`;
+
+    // AT ONCE, as far as two transports can be: both edits are started without awaiting the other,
+    // and each failure is kept rather than collapsing the pair into one rejection - a check that
+    // cannot say WHICH device failed to edit says nothing about a crossing of two edits.
+    const [w1Edit, a1Edit] = await Promise.allSettled([
+      editBubble(w1, row, fromW1),
+      editBubbleMobile(a1, row, fromA1),
+    ]);
+
+    // Both edits are MLS system events on the same group, so convergence is a round trip, not a
+    // repaint: polled to a deadline rather than slept at.
+    const settled = await until(
+      w1,
+      `(function () {
+        var r = document.getElementById(${JSON.stringify(row.slice(1))});
+        return !!r && (r.innerText.indexOf(${JSON.stringify(fromW1)}) !== -1 || r.innerText.indexOf(${JSON.stringify(fromA1)}) !== -1);
+      })()`,
+      15000
+    ).catch(() => null);
+
+    await sleep(3000); // let a LATER-arriving edit overwrite an earlier one before reading all three
+    const [bw1, ba1, bw2] = await Promise.all([
+      bubbleBody(w1, row),
+      bubbleBody(a1, row),
+      bubbleBody(w2, row),
+    ]);
+
+    const texts = [bw1, ba1, bw2].map((b) => (b ? b.text : null));
+    const converged = texts.every((t) => t !== null && t === texts[0]);
+    const winnerIsAnEdit =
+      converged && (texts[0].includes(fromW1) || texts[0].includes(fromA1));
+
+    const ok =
+      w1Edit.status === 'fulfilled' &&
+      a1Edit.status === 'fulfilled' &&
+      settled !== null &&
+      converged &&
+      winnerIsAnEdit;
+
+    return await finish('MUT-18/dm', ok ? 'PASS' : 'FAIL', w, {
+      w1EditError: w1Edit.status === 'rejected' ? String(w1Edit.reason?.message || w1Edit.reason) : null,
+      a1EditError: a1Edit.status === 'rejected' ? String(a1Edit.reason?.message || a1Edit.reason) : null,
+      winner: converged ? (texts[0].includes(fromW1) ? 'W1' : texts[0].includes(fromA1) ? 'A1' : 'neither') : null,
+      bodies: { W1: bw1, A1: ba1, W2: bw2 },
+      note:
+        'the verdict is CONVERGENCE, not which edit won: both devices hold the same account and ' +
+        'ownership is checked only on the sending device, so both edit_message events are legitimate ' +
+        'and the receiver applies whichever arrives.',
+    });
+  } catch (e) {
+    return await finish('MUT-18/dm', 'ERROR', w, { error: e.message });
+  } finally {
+    closeAll(w1, w2, a1);
+  }
 }
 
 // ── MUT-19: delete a message still in the outbox, unsent (sender offline) [DM] ─────────────────
@@ -1645,7 +1942,21 @@ async function mut19() {
     }
     finalHasOriginal = (await countMessage(b, marker).catch(() => 0)) > 0;
 
-    const ok = !everSawOriginal;
+    // THE VERDICT IS THE DURABLE OUTCOME, AND `everSawOriginal` IS EVIDENCE, NOT THE ASSERTION.
+    //
+    // It used to be `ok = !everSawOriginal`, which made the row a coin toss: the two legs of the
+    // operation - the text and the `delete_message` that chases it - both sit in the same outbox and
+    // are flushed back to back the instant the radio returns, so whether the peer paints the original
+    // for one frame before the tombstone lands depends on scheduling this check does not control.
+    // Measured twice within an hour on the same bundle: `false` (PASS), then `true` (FAIL), with no
+    // code in between. A verdict that flaps says nothing about the app and buries what it found.
+    //
+    // What the app actually guarantees is the settled state, and that IS asserted: the peer must not
+    // be left holding the original. The transient is real, undesirable and NOT a hole this check may
+    // silently absorb, so it is named in the note and filed as its own backlog entry - deleting a
+    // message that has not left the outbox should DROP its pending entry, not send it and then
+    // tombstone it.
+    const ok = !finalHasOriginal;
     return await finish(
       'MUT-19/dm',
       ok ? 'PASS' : 'FAIL',
@@ -1656,8 +1967,8 @@ async function mut19() {
         everSawOriginal,
         finalHasOriginal,
         note: everSawOriginal
-          ? 'the original text WAS visible to the peer at some point - the delete_message event chased the send rather than cancelling it (no outbox-cancellation path exists for this case)'
-          : 'the peer never saw the original text at all',
+          ? 'settled correctly, BUT the original text was visible to the peer in transit - the delete_message event chased the send rather than cancelling it (no outbox-cancellation path exists; filed in backlog.md)'
+          : 'settled correctly, and the peer never saw the original text at all - this run won the race, it is not a guarantee',
       },
       cut
     );

@@ -396,6 +396,23 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private mailboxEmptiedByAPull = false;
 
+  /**
+   * The catch-up sessions currently open, in the order they opened.
+   *
+   * A LIST RATHER THAN A DEPTH, and the difference is the whole point of {@link waitForMessageQueueIdle}'s
+   * refusal being readable. A count says "somebody has one open", which is true of two situations
+   * whose fixes are opposite: a caller that opened one ITSELF and then waited for its own mailbox
+   * (a deadlock - fix the ORDER, take the barrier first), and a caller that merely ran BESIDE
+   * somebody else's session (no deadlock at all - it would only have waited). The refusal line used
+   * to say the same sentence for both and send its reader through seven call sites by hand.
+   *
+   * The group id is the discriminator, and it is already known at both openers - so it is carried
+   * from there rather than re-derived: a barrier whose caller names the same group as an open
+   * session is nested, a different group is concurrent. `openedAt` is diagnostic only; nothing
+   * branches on it.
+   */
+  private openCatchUps: Array<{ groupId: string; openedAt: number }> = [];
+
   /** Open catch-up sessions. A depth rather than a flag: nothing guarantees only one at a time. */
   private catchUpDepth = 0;
 
@@ -436,7 +453,8 @@ export abstract class BaseMlsService implements IMlsService {
    * rewind. The victim is always the next send after the swap - usually the focused tab's read
    * watermark, which is why the loss looked for days like a property of silent frames.
    */
-  protected beginCatchUp(): void {
+  protected beginCatchUp(groupId: string): void {
+    this.openCatchUps.push({ groupId, openedAt: Date.now() });
     this.catchUpDepth++;
     if (this.catchUpDepth === 1) {
       this.catchUpGate = new Promise<void>((resolve) => {
@@ -445,8 +463,19 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
-  /** Marks a catch-up session as closed, releasing every send waiting behind it. */
-  protected endCatchUp(): void {
+  /**
+   * Marks a catch-up session as closed, releasing every send waiting behind it.
+   *
+   * Removes the LAST entry for that group: sessions on one group nest LIFO, and an id that is not
+   * there closes nothing rather than silently closing somebody else's.
+   */
+  protected endCatchUp(groupId: string): void {
+    for (let i = this.openCatchUps.length - 1; i >= 0; i--) {
+      if (this.openCatchUps[i].groupId === groupId) {
+        this.openCatchUps.splice(i, 1);
+        break;
+      }
+    }
     this.catchUpDepth = Math.max(0, this.catchUpDepth - 1);
     if (this.catchUpDepth === 0) {
       this.releaseCatchUpGate?.();
@@ -527,11 +556,24 @@ export abstract class BaseMlsService implements IMlsService {
      * fixed at the call site, where the fact was already known.
      */
     if (this.catchUpDepth > 0) {
+      const now = Date.now();
+      const open = this.openCatchUps
+        .map((s) => `${s.groupId} (${now - s.openedAt}ms ago)`)
+        .join(', ');
+      // NESTED OR CONCURRENT, SAID OUT LOUD. The two are fixed in different places - the first by
+      // moving the barrier above the session, the second not at all - and the reader should not have
+      // to walk the call sites to tell them apart. The caller string carries its group by
+      // convention (`<site>:<groupId>`), so a substring match is enough and costs nothing when the
+      // caller does not carry one: it then reads as concurrent, which is the safer of the two to
+      // guess wrong about, and the session list is printed either way.
+      const nested = this.openCatchUps.some((s) => caller.includes(s.groupId));
       console.error(
-        `[QUEUE] mailbox barrier awaited by "${caller}" from inside a catch-up session - it can never` +
-          ' resolve there (the drain needs the MLS mutex this session holds), so it was SKIPPED and' +
-          ' the caller is proceeding against a mailbox that may not be empty. Take the barrier before' +
-          ' opening the session, or defer past the drain instead of awaiting it.'
+        `[QUEUE] mailbox barrier awaited by "${caller}" while ${this.catchUpDepth} catch-up session(s)` +
+          ` are open [${open}] - ${
+            nested
+              ? 'NESTED: the caller opened one itself, so this can never resolve (the drain needs the MLS mutex that session holds). Take the barrier BEFORE opening the session, or defer past the drain instead of awaiting it.'
+              : 'CONCURRENT: the open session belongs to another group, so this would have waited rather than deadlocked - but the barrier still cannot state emptiness while a drain is blocked, so it is refused.'
+          } It was SKIPPED and the caller is proceeding against a mailbox that may not be empty.`
       );
       return;
     }
@@ -1364,12 +1406,12 @@ export abstract class BaseMlsService implements IMlsService {
     // The sequential path decrypts in place, so it cannot be UNDONE by a swap the way the worker
     // path can - but a send during it is still a send racing a catch-up, and the ordering rule is
     // about the sequence, not about which platform happens to survive breaking it.
-    this.beginCatchUp();
+    this.beginCatchUp(groupId);
     let session: MlsDecryptSession;
     try {
       session = await createSequentialDecryptSession(this, groupId);
     } catch (e) {
-      this.endCatchUp();
+      this.endCatchUp(groupId);
       throw e;
     }
     return {
@@ -1378,7 +1420,7 @@ export abstract class BaseMlsService implements IMlsService {
         try {
           await session.finish();
         } finally {
-          this.endCatchUp();
+          this.endCatchUp(groupId);
         }
       },
     };

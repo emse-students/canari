@@ -1107,6 +1107,142 @@ export async function hoverBubble(cx, textMatch) {
 }
 
 /**
+ * Is a second client reachable, and is it really the SAME account as `refCx`?
+ *
+ * READ-2 and READ-9 were hardcoded `SKIPPED` with the reason "A1 is unreachable this session
+ * (dropped off USB)" - a claim about the environment that was true when it was typed and asserted,
+ * never checked, on every run afterwards. Two checks were then skipped for a condition that had
+ * stopped holding, which is rule 15 pointing the other way: a precondition may not be ASSUMED
+ * ABSENT any more than it may be assumed present.
+ *
+ * The account identity matters as much as the reachability. Any check about "a second device of the
+ * SAME user" is vacuous against a phone logged into the other account, while still connecting
+ * perfectly. The user id is read from the page's own send-ledger key on both sides and compared
+ * here - never printed, never passed as an argument.
+ *
+ * It takes the port and the target match rather than reading them from `names.mjs`, so this module
+ * stays free of the campaign's identities: `chat.mjs` spells no name and no device.
+ *
+ * @returns {{ok: true, cx}} or {{ok: false, why: string}} - `why` is the SKIP's reason, verbatim.
+ */
+export async function sameAccountAs(refCx, otherPort, otherMatch, opts = {}) {
+  const UID = `(function () {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k && k.indexOf('mls_send_ledger_') === 0) return k.slice('mls_send_ledger_'.length);
+    }
+    return '';
+  })()`;
+  try {
+    const cx = await client(otherPort, otherMatch, opts);
+    const [mine, theirs] = [await evaluate(refCx, UID), await evaluate(cx, UID)];
+    if (!mine || !theirs) {
+      cx.close();
+      return { ok: false, why: 'could not read a user id from one of the two clients' };
+    }
+    if (mine !== theirs) {
+      cx.close();
+      return {
+        ok: false,
+        why: 'the second client is logged into a DIFFERENT account, so it is not a second device of this user',
+      };
+    }
+    return { ok: true, cx };
+  } catch (e) {
+    return { ok: false, why: `second client not reachable: ${String(e).slice(0, 120)}` };
+  }
+}
+
+/**
+ * The mobile action sheet's own stable hook - `MessageMobileActions.svelte`'s only element carrying
+ * it, and nothing else in the app does (`app.css` styles it, that is all). Deliberately not a
+ * localised label and not a Tailwind class: both have changed under this harness before.
+ */
+export const MOBILE_SHEET = '[data-keyboard-aware-actions]';
+
+/** Whether the mobile action sheet is up ANYWHERE - it is a single overlay, never one per row. */
+export const MOBILE_SHEET_OPEN = `!!document.querySelector('${'[data-keyboard-aware-actions]'}')`;
+
+/**
+ * Opens the MOBILE action sheet on a bubble, using the gesture that really opens it.
+ *
+ * THE PHONE HAS NO HOVER TOOLBAR, which is the whole reason MUT-18 sat SKIPPED: every control this
+ * harness resolves goes through the desktop action row, and the phone raises `MessageMobileActions`
+ * instead - a `fixed`, `md:hidden` overlay gated on the bubble's own `isMobile` prop. So this is
+ * A1-only by construction; a browser will never show the sheet however long it is pressed.
+ *
+ * IT IS A REAL TOUCH, NOT A SYNTHETIC `contextmenu`. The bubble does handle `contextmenu` and
+ * dispatching one would be three lines shorter - and would still pass with the long-press timer
+ * deleted, which is the one thing this gesture exists to exercise. Same rule as `clickAtPoint`: a
+ * dispatch is not an activation.
+ *
+ * The hold is 700 ms against `MessageBubble.svelte`'s 420 ms threshold. The margin covers the round
+ * trip, not luck - the post-condition is what decides, and it names the threshold it missed.
+ */
+export async function longPressBubble(cx, textMatch, holdMs = 700) {
+  const c = await bubbleCentre(cx, textMatch);
+  await cx.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: c.x, y: c.y, id: 1 }],
+  });
+  await new Promise((r) => setTimeout(r, holdMs));
+  // The finger must not MOVE: `handleSwipeReply` cancels the long press once the gesture turns
+  // horizontal, so there is deliberately no touchMove between the two events here.
+  await cx.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+
+  const opened = await until(cx, MOBILE_SHEET_OPEN, 3000, 100).catch(() => null);
+  if (opened === null) {
+    throw new Error(
+      `the long press on ${textMatch} did not open the mobile action sheet - held ${holdMs}ms against a 420ms threshold`
+    );
+  }
+  return c;
+}
+
+/**
+ * Taps a control in the OPEN mobile action sheet, by its lucide icon class, and says what took it.
+ *
+ * The sheet is one overlay for the whole page, so - unlike every desktop helper here - there is no
+ * row to scope to and none is needed: only one bubble can have raised it. Each item is gated
+ * individually (`!isDeleted`, `isOwn`, `canModerate`...), so an absent control is a real answer and
+ * is reported as one, with the icons that ARE offered.
+ */
+export async function tapSheetIcon(cx, iconClass) {
+  const point = await evaluate(
+    cx,
+    `JSON.stringify((function () {
+      var sheet = document.querySelector('${'[data-keyboard-aware-actions]'}');
+      if (!sheet) return { blocked: 'the mobile action sheet is not open' };
+      var svg = sheet.querySelector('svg.${iconClass}');
+      var btn = svg ? svg.closest('button') : null;
+      if (!btn) {
+        var offered = [].map.call(sheet.querySelectorAll('svg'), function (s) {
+          return String(s.getAttribute('class') || '').split(' ').filter(function (c) {
+            return c.indexOf('lucide-') === 0;
+          })[0] || '?';
+        });
+        return { blocked: 'the sheet offers no .${iconClass} - it offers [' + offered.join(' ') + ']' };
+      }
+      var r = btn.getBoundingClientRect();
+      if (r.width === 0) return { blocked: 'the .${iconClass} item has no box' };
+      var x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
+      var hit = document.elementFromPoint(x, y);
+      if (!hit || !btn.contains(hit)) {
+        return { blocked: 'the .${iconClass} item is not on top at its own centre' + (hit ? ' (' + hit.tagName + ' is)' : ' (nothing is there)') };
+      }
+      return { x: x, y: y };
+    })())`
+  );
+  const p = point && point !== 'null' ? JSON.parse(point) : { blocked: 'unreadable' };
+  if (p.blocked) throw new Error(p.blocked);
+  const { received } = await clickAtPoint(cx, p.x, p.y);
+  if (!received) {
+    throw new Error(`the .${iconClass} tap at ${p.x},${p.y} was dispatched and nothing received it`);
+  }
+  return { ...p, received };
+}
+
+/**
  * Clicks an action (Répondre, Transférer, Supprimer...) ON A GIVEN MESSAGE.
  *
  * NEVER use a bare `text=Répondre` for this. Every message row carries the whole action row in the

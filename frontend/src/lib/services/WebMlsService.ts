@@ -984,7 +984,7 @@ export class WebMlsService extends BaseMlsService {
     // Closes the gate every send waits on, and remembers where the live client stood. The gate is
     // the fix; the count below is the proof it held - if it ever differs at the swap, a send got
     // through and the state about to be installed would undo it.
-    this.beginCatchUp();
+    this.beginCatchUp(groupId);
     const mutationsAtSnapshot = this.liveMutations;
 
     let workerSession: Awaited<ReturnType<typeof createMlsCryptoWorkerSession>> | null;
@@ -1012,7 +1012,7 @@ export class WebMlsService extends BaseMlsService {
           } finally {
             // The sequential path mutates the live client in place: no snapshot, so no swap and no
             // rewind - nothing here can rewind a ratchet.
-            this.endCatchUp();
+            this.endCatchUp(groupId);
             release();
           }
         },
@@ -1054,7 +1054,7 @@ export class WebMlsService extends BaseMlsService {
           // (worker mode never mutates it). The conversation is retried on the next catch-up.
           console.warn('[MLS] decrypt session finalize failed, live client left at snapshot:', e);
         } finally {
-          this.endCatchUp();
+          this.endCatchUp(groupId);
           session.dispose();
           release();
         }

@@ -199,8 +199,9 @@ run.
 - **Never run an Android or iOS build next to anything else that builds the frontend.**
   `beforeBuildCommand` is `bun run build`, and two builds writing `build/` ship an app that cannot
   boot. `scripts/check-bundle-consistency.mjs` fails the build rather than letting it through.
-- `bun run test` fails with locale mismatches after an Android build; re-run
-  `bun run paraglide:compile` first.
+- An Android build leaves Paraglide resolving to English, which used to fail four locale-asserting
+  test files afterwards. `bun run test` now compiles Paraglide itself, so there is nothing to
+  remember - a rule that says "run X first" was a missing dependency, not a rule.
 
 ## Rules that make a result trustworthy
 

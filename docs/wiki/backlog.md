@@ -346,6 +346,33 @@ behind the fix that shipped is in
 [history-reconciliation](protocols/history-reconciliation.md) and the constants carry their own
 justification in `apps/chat-delivery-service/src/retention.constants.ts`.
 
+### P2 - deleting a message that never left the outbox SENDS it, then deletes it
+
+Found by MUT-19 on 2026-08-16. Compose a message while offline, delete it before the radio returns,
+come back online: the peer receives the text, renders it, and only then receives the
+`delete_message` that tombstones it. **The user deleted something that had not been sent, and it was
+sent anyway.**
+
+The mechanism is that both legs are ordinary outbox entries. `sendChatMessage` enqueues the text;
+`deleteMessage` -> `enqueueControlEvent` enqueues a `delete_message` system event **beside** it.
+Nothing in `outbox.ts` or `messaging.ts` cancels or removes an entry - confirmed by reading both -
+so the flusher delivers the pair in order the moment the group is sendable, and the delete chases
+the send down the wire.
+
+**The fix is a cancellation, not a delay**: `deleteMessage` should drop the pending outbox entry
+whose id is the message being deleted, and enqueue the `delete_message` event only when there is no
+such entry (i.e. the text has already gone out, which is the case the event exists for). Dropping a
+`pending` entry is safe by construction - a flushed entry is no longer pending - and it costs one
+lookup on a path that already opens the outbox.
+
+Two things not to get wrong when picking this up. **The transient is not always visible**: MUT-19
+measured `everSawOriginal` `false` then `true` within an hour on the same bundle, because the two
+entries flush back to back and whether the peer paints one frame between them is scheduling. So
+reproducing it needs repetition, and its ABSENCE proves nothing. And **the settled state is already
+correct** - the tombstone wins everywhere, `finalHasOriginal` is `false` on every run - which is why
+this is a P2 about what the recipient briefly sees, not a P1 about durable state. MUT-19 now asserts
+the settled state and records the transient, rather than flapping between PASS and FAIL on a race.
+
 ### P2 - the reaction notification is the same on both platforms, except on a KILLED iPhone
 
 The reaction rework shipped 2026-08-15 (`fbc8597b`) and closed the whole of the previous entry here -

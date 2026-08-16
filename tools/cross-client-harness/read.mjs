@@ -64,6 +64,7 @@ import {
   send,
   awaitMessage,
   countMessage,
+  sameAccountAs,
   until,
 } from './chat.mjs';
 import { armCut, cutHard } from './net.mjs';
@@ -287,40 +288,14 @@ async function read1() {
 /**
  * Is A1 reachable, and is it really the SAME account as W1?
  *
- * READ-2 and READ-9 were hardcoded `SKIPPED` with the reason "A1 is unreachable this session
- * (dropped off USB)" - a claim about the environment that was true when it was typed and asserted,
- * never checked, on every run afterwards. Two checks were then skipped for a condition that had
- * stopped holding, which is rule 15 pointing the other way: a precondition may not be ASSUMED
- * ABSENT any more than it may be assumed present.
- *
- * The account identity matters as much as the reachability. These two checks are about a second
- * device of the SAME user, so a phone logged into the other account would make them vacuous while
- * still connecting. The user id is read from the page's own send-ledger key on both sides and
- * compared here - never printed, never passed as an argument.
+ * The mechanism and the fault that produced it now live in `chat.mjs` `sameAccountAs` - MUT-18 needs
+ * the identical question about the identical pair, and two copies of "is this the same user" is the
+ * one duplication this campaign cannot afford: they would drift, and the check that drifted would go
+ * on passing. This wrapper only supplies the phone's port and origin.
  */
 async function a1SameAccountAs(w1) {
-  const UID = `(function () {
-    for (var i = 0; i < localStorage.length; i++) {
-      var k = localStorage.key(i);
-      if (k && k.indexOf('mls_send_ledger_') === 0) return k.slice('mls_send_ledger_'.length);
-    }
-    return '';
-  })()`;
-  try {
-    const a1 = await client(PORTS.A1, 'tauri.localhost');
-    const [mine, theirs] = [await evaluate(w1, UID), await evaluate(a1, UID)];
-    if (!mine || !theirs) {
-      a1.close();
-      return { ok: false, why: 'could not read a user id from one of the two clients' };
-    }
-    if (mine !== theirs) {
-      a1.close();
-      return { ok: false, why: 'A1 is logged into a DIFFERENT account than W1, so it is not a second device of this user' };
-    }
-    return { ok: true, a1 };
-  } catch (e) {
-    return { ok: false, why: `A1 not reachable: ${String(e).slice(0, 120)}` };
-  }
+  const probe = await sameAccountAs(w1, PORTS.A1, 'tauri.localhost');
+  return probe.ok ? { ok: true, a1: probe.cx } : probe;
 }
 
 // ─── READ-2: the SAME user's other device clears too ─────────────────────────────────────────────

@@ -50,11 +50,11 @@ abstract class SendSeamHarness extends BaseMlsService {
   }
 
   /** Opens a catch-up window from the test, as a real off-thread session does. */
-  openCatchUp(): void {
-    this.beginCatchUp();
+  openCatchUp(groupId = 'g-seam'): void {
+    this.beginCatchUp(groupId);
   }
-  closeCatchUp(): void {
-    this.endCatchUp();
+  closeCatchUp(groupId = 'g-seam'): void {
+    this.endCatchUp(groupId);
   }
 }
 
