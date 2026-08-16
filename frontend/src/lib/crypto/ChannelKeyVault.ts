@@ -1,4 +1,26 @@
 /**
+ * Thrown when the vault holds no key for the epoch a message needs.
+ *
+ * This is the ONLY local failure a bootstrap refresh can repair, so it is raised as a TYPE:
+ * `shouldRefreshChannelKey` recognises the class, never the sentence. A message read back out of
+ * `Error.message` is a distinction exactly one call site can make, and it breaks the day the
+ * sentence is reworded.
+ */
+export class ChannelKeyUnavailableError extends Error {
+  constructor(
+    /** The epoch whose key is missing. */
+    readonly epochId: number,
+    /** The epochs the vault does hold, kept for diagnosis. */
+    readonly availableEpochs: number[]
+  ) {
+    super(
+      `No channel key for epoch ${epochId}. Available: ${availableEpochs.join(', ') || 'none'}`
+    );
+    this.name = 'ChannelKeyUnavailableError';
+  }
+}
+
+/**
  * An AES-GCM key tied to a specific channel epoch.
  * Channel keys are rotated when new members join so older epochs remain readable
  * for decrypting historical messages but cannot be used for new ones.
@@ -57,25 +79,21 @@ export class ChannelKeyVault {
 
   /**
    * Returns the key for the current (highest) epoch.
-   * @throws If no key has been loaded yet.
+   * @throws {ChannelKeyUnavailableError} If no key has been loaded yet.
    */
   getCurrentKey(): SymmetricPayloadKey {
     const key = this.keys.get(this.currentEpoch);
-    if (!key) {
-      throw new Error(
-        `No key for epoch ${this.currentEpoch}. Available: ${[...this.keys.keys()].join(', ') || 'none'}`
-      );
-    }
+    if (!key) throw new ChannelKeyUnavailableError(this.currentEpoch, [...this.keys.keys()]);
     return key;
   }
 
   /**
    * Returns the key for a specific past or current epoch.
-   * @throws If the epoch key is not present (a sync/rotation is required).
+   * @throws {ChannelKeyUnavailableError} If the epoch key is not present (a sync/rotation is required).
    */
   getKeyForEpoch(epochId: number): SymmetricPayloadKey {
     const key = this.keys.get(epochId);
-    if (!key) throw new Error(`Missing key for epoch ${epochId}. Sync required.`);
+    if (!key) throw new ChannelKeyUnavailableError(epochId, [...this.keys.keys()]);
     return key;
   }
 }

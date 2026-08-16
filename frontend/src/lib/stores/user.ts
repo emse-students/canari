@@ -80,11 +80,25 @@ export function clearUserLocally(): void {
   setCurrentUserId(null);
 }
 
+/**
+ * Thrown when a profile endpoint answers with an error status.
+ *
+ * The status is carried as a field because callers act on it: `+layout.ts` redirects to the login
+ * page on a confirmed 404 and on nothing else. It used to read `(404)` back out of the sentence,
+ * which made the redirect depend on the wording of an error message.
+ */
+export class UserProfileFetchError extends Error {
+  constructor(readonly status: number) {
+    super(`Failed to fetch user profile (${status})`);
+    this.name = 'UserProfileFetchError';
+  }
+}
+
 /** Fetches the authenticated user's own profile from the core service. */
 export async function fetchMyProfile(): Promise<UserProfile> {
   const res = await apiFetch(`${coreUrl()}/api/users/me`);
   if (!res.ok) {
-    throw new Error(`Failed to fetch profile (${res.status})`);
+    throw new UserProfileFetchError(res.status);
   }
   return (await res.json()) as UserProfile;
 }
@@ -100,7 +114,7 @@ export function fetchUserProfile(userId: string): Promise<UserProfile> {
 
   const promise = apiFetch(`${coreUrl()}/api/users/${encodeURIComponent(userId)}`).then(
     async (res) => {
-      if (!res.ok) throw new Error(`Failed to fetch user (${res.status})`);
+      if (!res.ok) throw new UserProfileFetchError(res.status);
       return (await res.json()) as UserProfile;
     }
   );

@@ -131,9 +131,9 @@ export async function exportBackup(
 /**
  * Decrypt and restore a .canari backup file to the local DB.
  *
- * Supports both v1 (legacy PIN-based + salt, accepted for backward compat) and
- * v2 (device-key-based, no salt) backup formats. Legacy v1 decryption falls back
- * to `decrypt_with_pin` if `decrypt_with_key` fails.
+ * Accepts v2 (device-key-based, no salt) only. A v1 file is encrypted with the PIN, which is not
+ * available here, so it is refused outright - the doc used to promise a `decrypt_with_pin` fallback
+ * that no longer exists.
  *
  * @param fileData         Raw bytes of the backup file.
  * @param deviceKeyB64     Base64-encoded 32-byte device key (must match the key
@@ -158,57 +158,59 @@ export async function importBackup(
     fileData[1] !== MAGIC[1] ||
     fileData[2] !== MAGIC[2]
   ) {
-    throw new Error('Fichier de sauvegarde invalide ou corrompu.');
+    throw new Error('Invalid or corrupted backup file.');
   }
 
   const backupVersion = fileData[3];
   const encrypted = fileData.slice(4);
 
+  // A v1 file is encrypted with the PIN (Argon2id + salt prefix), not with the device key, so it
+  // cannot be opened here at all. The check sits ABOVE the try on purpose: raising it from inside
+  // meant the catch below swallowed it, and the only way back out was to recognise the sentence it
+  // had just thrown - a branch on prose that any rewording would have broken silently.
+  if (backupVersion < 2) {
+    throw new Error(
+      'Version 1 backups are no longer supported. Export again with a current build.'
+    );
+  }
+
   // Decrypt outer envelope
   const wasm = await import('$lib/wasm/mls_wasm.js');
   let decrypted: Uint8Array;
   try {
-    if (backupVersion >= 2) {
-      decrypted = wasm.decrypt_with_key(deviceKeyB64, encrypted);
-    } else {
-      // Legacy v1 format: encrypted with PIN (Argon2id + salt prefix).
-      // The deviceKeyB64 is NOT the PIN — fall back to legacy decrypt_with_pin
-      // which expects a PIN. We can't decrypt v1 without the PIN, so throw.
-      throw new Error(
-        'Les sauvegardes v1 ne sont plus supportées. Veuillez réexporter avec la nouvelle version.'
-      );
-    }
-  } catch (e) {
-    if (e instanceof Error && e.message.startsWith('Les sauvegardes v1')) throw e;
-    throw new Error('Clé de chiffrement incorrecte ou données corrompues.');
+    decrypted = wasm.decrypt_with_key(deviceKeyB64, encrypted);
+  } catch (err) {
+    // The underlying cause is replaced by a single verdict here, so it is logged before it is lost.
+    console.warn(`[BACKUP] Outer envelope decrypt failed: ${String(err)}`);
+    throw new Error('Wrong encryption key, or corrupted data.');
   }
 
   const backup: BackupData = JSON.parse(new TextDecoder().decode(decrypted));
 
   if (backup.version < 1) {
-    throw new Error(`Version de sauvegarde non supportée : ${backup.version}`);
+    throw new Error(`Unsupported backup version: ${backup.version}`);
   }
 
   // Validate backup structure
   if (!Array.isArray(backup.conversations)) {
-    throw new Error('Format de sauvegarde invalide : conversations manquantes');
+    throw new Error('Invalid backup format: conversations are missing.');
   }
   if (!Array.isArray(backup.messages)) {
-    throw new Error('Format de sauvegarde invalide : messages manquants');
+    throw new Error('Invalid backup format: messages are missing.');
   }
   if (backup.conversations.length > 10_000) {
-    throw new Error('Sauvegarde trop volumineuse : trop de conversations');
+    throw new Error('Backup too large: too many conversations.');
   }
   if (backup.messages.length > 500_000) {
-    throw new Error('Sauvegarde trop volumineuse : trop de messages');
+    throw new Error('Backup too large: too many messages.');
   }
   // M3: Validate string field sizes to prevent OOM on malformed backups.
   for (const conv of backup.conversations) {
     if (typeof conv.id !== 'string' || !conv.id.trim()) {
-      throw new Error('ID de conversation invalide dans la sauvegarde');
+      throw new Error('Invalid conversation id in the backup.');
     }
     if (typeof conv.name === 'string' && conv.name.length > 500) {
-      throw new Error(`Nom de conversation trop long (max 500 caractères) : ${conv.id}`);
+      throw new Error(`Conversation name too long (max 500 characters): ${conv.id}`);
     }
   }
 
@@ -229,13 +231,13 @@ export async function importBackup(
   // This prevents partial imports where conversations are inserted but messages fail.
   for (const msg of backup.messages) {
     if (typeof msg.id !== 'string' || !msg.id.trim()) {
-      throw new Error('Message avec ID invalide dans la sauvegarde');
+      throw new Error('Invalid message id in the backup.');
     }
     if (typeof msg.conversationId !== 'string') {
-      throw new Error(`Message sans conversationId : ${msg.id}`);
+      throw new Error(`Message without a conversationId: ${msg.id}`);
     }
     if (!Array.isArray(msg.iv) || !Array.isArray(msg.cipherText)) {
-      throw new Error(`Message avec données chiffrées invalides : ${msg.id}`);
+      throw new Error(`Message with invalid ciphertext fields: ${msg.id}`);
     }
   }
 

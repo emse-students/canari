@@ -32,6 +32,33 @@ Channels use server-assisted symmetric encryption (not MLS):
 4. Key rotation increments `keyVersion`; old ciphertexts remain decryptable.
 5. `channel_key_distributions` tracks which devices have received each key version.
 
+### An epoch that rotates under an open tab, and the codes that name it
+
+A tab holding epoch N and sending after a rotation to N+1 encrypts under a key the server no longer
+accepts. Nothing pushes a rotation into an in-flight send, so this is expected rather than a fault,
+and it is repaired by exactly one refresh and one retry. Every half of that decision is
+machine-readable:
+
+| Raised by | What it is | The client's answer |
+|---|---|---|
+| `ChannelKeyVault.getCurrentKey` / `getKeyForEpoch` | `ChannelKeyUnavailableError`, carrying `epochId` and the epochs the vault does hold | re-bootstrap, retry once |
+| `sendMessage`, keyVersion behind the channel | 403 with `code: 'STALE_CHANNEL_KEY_VERSION'` | re-bootstrap, retry once |
+| `sendMessage`, keyVersion absent | 400 with `code: 'CHANNEL_KEY_VERSION_REQUIRED'` | fail loudly, never retry |
+
+**The last row is deliberately not retryable.** `encryptMessage` either returns a keyVersion or
+throws, so this client cannot produce that refusal; the guard exists to refuse a *different* client,
+and retrying would re-send an identical body and hide it behind a pointless round trip.
+
+**The code is the contract, the sentence beside it is for humans** and may be reworded freely.
+Until 2026-08-16 the client read the sentences instead - five `includes()` on `Error.message`, one of
+which (`'Sync required'`) was only the tail of another - and `channelCrypto.test.ts` now pins that an
+untyped error carrying that exact prose is NOT retried. The client half is
+`ChannelApiError` (`ChannelService.ts`), which carries the status and the parsed `code` while leaving
+`message` as the raw body, the same shape `DEVICE_REVOKED` uses on
+[chat-delivery](chat-delivery.md). Both halves ship in the same deploy; a frontend newer than the
+social-service would see no `code` and simply stop retrying, which fails the send rather than
+corrupting anything.
+
 ## Storage and retention: a channel message costs one row, forever
 
 Two facts that decide every capacity question about communities, both verified against production:

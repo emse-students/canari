@@ -1,6 +1,5 @@
 /**
- * Fonctions de backup extraites de useChatSession :
- * exportBackupImpl, importBackupImpl.
+ * Backup functions extracted from useChatSession: exportBackupImpl, importBackupImpl.
  */
 import { exportUserBackup, importUserBackup } from '$lib/utils/chat/actions';
 import type { SessionContext } from './sessionTypes';
@@ -25,7 +24,9 @@ export async function exportBackupImpl(
       log,
     });
   } catch (e) {
-    log(`Erreur export : ${e}`);
+    // Nothing else reports this: the caller's log sink is the browser console, so a failed export
+    // leaves the user with a button that did nothing and this line as its only trace.
+    log(`[BACKUP] Export failed: ${e}`);
   } finally {
     setIsExporting(false);
   }
@@ -58,7 +59,9 @@ export async function importBackupImpl(
       reloadConversations,
     });
   } catch (e) {
-    log(`Erreur import : ${e}`);
+    // Same gap as the export above, and worse: an import that refuses the file looks identical to
+    // one that succeeded. See the backlog entry on reporting a backup failure to the user.
+    log(`[BACKUP] Import failed: ${e}`);
   } finally {
     setIsImporting(false);
   }

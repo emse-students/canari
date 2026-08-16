@@ -181,6 +181,43 @@ export interface ChannelMessageRow {
 
 import { apiFetch } from '$lib/utils/apiFetch';
 
+/**
+ * A refusal answered by the channels API.
+ *
+ * Carries the HTTP status and the server's stable `code` so callers classify by TYPE and by a
+ * machine-readable discriminator, never by the sentence in `message` - which stays the raw response
+ * body so existing consumers that surface it are unchanged. The `code` half is the same contract
+ * `DEVICE_REVOKED` uses on the delivery service.
+ */
+export class ChannelApiError extends Error {
+  constructor(
+    /** The HTTP status the server answered with. */
+    readonly status: number,
+    /** The server's stable error code, or null when the body carried none. */
+    readonly code: string | null,
+    message: string
+  ) {
+    super(message);
+    this.name = 'ChannelApiError';
+  }
+}
+
+/**
+ * Reads the stable `code` a Nest exception body carries.
+ * Returns null when the body is not JSON, or is JSON without a `code` - both meaning "this refusal
+ * has no machine-readable name", which callers must treat as unclassified rather than as a match.
+ */
+function readErrorCode(body: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (!parsed || typeof parsed !== 'object') return null;
+    const code = (parsed as { code?: unknown }).code;
+    return typeof code === 'string' && code ? code : null;
+  } catch {
+    return null;
+  }
+}
+
 export class ChannelService {
   private baseUrl: string;
 
@@ -210,11 +247,14 @@ export class ChannelService {
     if (!res.ok) {
       const text = await res.text();
       if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
-        throw new Error(
+        // An HTML body is nginx answering, not the service: there is no `code` to read.
+        throw new ChannelApiError(
+          res.status,
+          null,
           `API Error ${res.status}: Le service est injoignable (Bad Gateway). Veuillez réessayer plus tard.`
         );
       }
-      throw new Error(text || `API Error ${res.status}`);
+      throw new ChannelApiError(res.status, readErrorCode(text), text || `API Error ${res.status}`);
     }
   }
 

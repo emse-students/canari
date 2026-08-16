@@ -882,6 +882,26 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
   failed" meant `String.includes` at each consumer - and of four media surfaces exactly one did it:
   one rendered the raw token to the user in red, one drew a generic broken image, one spun for ever.
   The classification belongs at the THROW, as a type (`MediaPurgedError` + one `isMediaPurgedError`).
+- **WHEN THE THROW IS ON THE OTHER SIDE OF HTTP, THE TYPE IS A `code` IN THE BODY** - the same
+  discipline, one layer out. `shouldRefreshChannelKey` matched five substrings to decide whether to
+  refresh a channel key, two of them thrown locally and three sent by the social-service; the fix
+  types the local pair (`ChannelKeyUnavailableError`) and names the remote pair
+  (`STALE_CHANNEL_KEY_VERSION`, `CHANNEL_KEY_VERSION_REQUIRED`), read through a `ChannelApiError`
+  that carries status and code while leaving `message` untouched. Two things the sweep showed:
+  a list of substrings hides its own duplicates (`'Sync required'` was only the tail of
+  `'Missing key for epoch N. Sync required.'`, so five sentences were four throws), and it hides
+  which of them the client can even produce - `CHANNEL_KEY_VERSION_REQUIRED` was being retried
+  although this client cannot emit it.
+- **A `catch` THAT HAS TO RECOGNISE ITS OWN THROW IS TOO WIDE.** `importBackup` threw the v1 refusal
+  from inside its own `try` and then did `e.message.startsWith('Les sauvegardes v1')` to let it back
+  out. The branch was not a classification problem but a scope one: the version check belongs ABOVE
+  the `try`, where nothing can catch it, and the branch disappears rather than being typed. Look for
+  this shape wherever a `catch` converts everything to one verdict - the exception it makes for
+  itself is the tell.
+- **A STATUS PARSED BACK OUT OF A SENTENCE IS A STATUS THAT WAS DISCARDED.** `+layout.ts` logged a
+  user out on `String(error).includes('(404)')`, matching a number `fetchUserProfile` had formatted
+  into its own message a moment earlier. The status is the answer; carry it as a field
+  (`UserProfileFetchError.status`) rather than printing it and reading it back.
   Corollary for any audit: **one surface handling a case is not "the case is handled"** - enumerate
   the consumers of the seam, never just the ones that mention it.
 - **ENUMERATE THE WRITERS OF THE STATE, NOT THE CALLERS OF THE HELPER - AND THEN MAKE THE HELPER THE

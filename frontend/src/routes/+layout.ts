@@ -3,7 +3,7 @@
 // See: https://svelte.dev/docs/kit/single-page-apps
 
 import type { LoadEvent } from '@sveltejs/kit';
-import { currentUserId, fetchUserProfile } from '$lib/stores/user';
+import { currentUserId, fetchUserProfile, UserProfileFetchError } from '$lib/stores/user';
 import { refresh } from '$lib/stores/auth';
 import { goto } from '$app/navigation';
 import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
@@ -51,12 +51,18 @@ export const load = async (event: LoadEvent) => {
   try {
     await fetchUserProfile(userId);
   } catch (error) {
-    const message = String(error);
-    if (message.includes('(404)')) {
+    // A status code is an ANSWER; a transport failure is not. Only a 404 - the server stating that
+    // this user does not exist - may send the session to the login page, and it is read from the
+    // typed error rather than parsed back out of its sentence.
+    if (error instanceof UserProfileFetchError && error.status === 404) {
       return goto(
         `/login?returnTo=${encodeURIComponent(event.url.pathname + event.url.search + event.url.hash)}`,
         { replaceState: true }
       ).catch(() => {});
     }
+    // Anything else is deliberately survived - a captive portal or a cold mobile start must not
+    // log anyone out - but surviving it silently is how a permanently broken profile endpoint
+    // looks exactly like a healthy one.
+    console.warn(`[LAYOUT] Profile check did not answer, staying on the page: ${String(error)}`);
   }
 };

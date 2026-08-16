@@ -1,5 +1,6 @@
-import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+import { channelKeyManager, ChannelKeyUnavailableError } from '$lib/crypto/ChannelKeyVault';
 import {
+  ChannelApiError,
   ChannelService,
   type ChannelBootstrapDto,
   type ChannelMessageRow,
@@ -66,7 +67,16 @@ export async function decodeChannelMessageRow(
         }
       }
     }
-  } catch {
+  } catch (err) {
+    // The row is dropped from the rendered history with nothing else to show for it, so the reason
+    // it was unreadable is all the loss leaves behind.
+    console.warn(
+      `[CHANNEL] Message ${String(row.id)} of ${rawChannelId.slice(0, 8)} is unreadable and is not ` +
+        `rendered - ` +
+        (err instanceof ChannelKeyUnavailableError
+          ? `no key for epoch ${err.epochId} (vault holds ${err.availableEpochs.join(', ') || 'none'})`
+          : String(err))
+    );
     return null;
   }
   if (content === undefined) return null;
@@ -119,16 +129,21 @@ export async function hydrateChannelHistoryKeys(channelId: string): Promise<void
   }
 }
 
-/** Return true when an encryption error indicates the local channel key is stale and must be refreshed from the server before retrying. */
+/**
+ * True when a send failed because this tab's channel key is behind the server's epoch - the one
+ * failure a bootstrap refresh can repair.
+ *
+ * Classified by TYPE and by the server's stable code, never by prose: the vault raises
+ * {@link ChannelKeyUnavailableError} when it holds no key for the epoch at all, and the server
+ * answers `STALE_CHANNEL_KEY_VERSION` when the epoch rotated between encryption and delivery.
+ *
+ * `CHANNEL_KEY_VERSION_REQUIRED` is deliberately NOT in the set. `encryptMessage` either returns a
+ * keyVersion or throws, so this client cannot produce that refusal; retrying it would re-send an
+ * identical body and fail identically, hiding a broken caller behind a pointless round trip.
+ */
 function shouldRefreshChannelKey(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.includes('No key for epoch') ||
-    message.includes('Missing key for epoch') ||
-    message.includes('Sync required') ||
-    message.includes('Stale or invalid keyVersion') ||
-    message.includes('keyVersion is required for channel messages')
-  );
+  if (error instanceof ChannelKeyUnavailableError) return true;
+  return error instanceof ChannelApiError && error.code === 'STALE_CHANNEL_KEY_VERSION';
 }
 
 /**
@@ -196,6 +211,13 @@ export async function sendEncryptedChannelMessage(
       throw error;
     }
 
+    // One retry, and it is announced: reaching here means this tab encrypted under an epoch the
+    // server had already rotated away from. Rare and self-healing, but a rising rate means key
+    // rotations are not reaching connected tabs, which is a defect upstream of this catch.
+    console.warn(
+      `[CHANNEL] Key for ${rawChannelId.slice(0, 8)} was behind the server epoch - ` +
+        `re-bootstrapping and retrying the send once: ${String(error)}`
+    );
     await hydrateChannelBootstrap(rawChannelId);
     await attempt();
   }

@@ -1838,13 +1838,20 @@ export class ChannelService {
     if (!(await this.canWriteToChannel(channel, input.senderId))) {
       throw new ForbiddenException('Not allowed to post in this channel');
     }
+    // Both refusals carry a stable `code`: the client re-bootstraps its channel key and retries
+    // exactly once on STALE_CHANNEL_KEY_VERSION, and it decides that from the code, never from the
+    // sentence. Reword the sentence freely; renaming a code is a protocol change.
     if (input.keyVersion === undefined || input.keyVersion === null) {
-      throw new BadRequestException('keyVersion is required for channel messages');
+      throw new BadRequestException({
+        code: 'CHANNEL_KEY_VERSION_REQUIRED',
+        message: 'keyVersion is required for channel messages',
+      });
     }
     if (input.keyVersion !== channel.keyVersion) {
-      throw new ForbiddenException(
-        `Stale or invalid keyVersion (${input.keyVersion}) for channel epoch ${channel.keyVersion}`
-      );
+      throw new ForbiddenException({
+        code: 'STALE_CHANNEL_KEY_VERSION',
+        message: `Stale or invalid keyVersion (${input.keyVersion}) for channel epoch ${channel.keyVersion}`,
+      });
     }
 
     // A poll is just an encrypted message carrying a label-free descriptor: we
