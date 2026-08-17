@@ -118,6 +118,35 @@ Work is tracked as Work Packages by severity: **P1** (security, or a broken user
 (correctness), **P3** (hygiene). Delete a WP outright once it ships. Everything wanted but NOT
 scheduled is [backlog](docs/wiki/backlog.md) - file it there, never here.
 
+### CANARI - THE QUEUE, IN ORDER
+
+The user's decision of 2026-08-16 is that **every one of these lands before the campaign restarts**.
+Work them top-down; each is one item, and an item is not done until its code, its tests, its doc and
+its commit are in. The detail lives where the link says - **do not restate it here.**
+
+1. iOS: six French literals no `.lproj` declares, and the guardrail that catches a literal
+   duplicating an already-translated value ([backlog](docs/wiki/backlog.md)).
+2. iOS initials fallback when a notification's avatar cannot be fetched (same page).
+3. The inbound drain has no watchdog - design the TERMINATION PROOF first, the detection second.
+4. `BaseMlsService.fetchPendingMessages`: a progress deadline, not 10 s per page.
+5. **P1, user-reported. REPRODUCE FIRST:** a community whose last channel is left becomes
+   unmanageable - "leave the community" included.
+6. **REPRODUCE FIRST:** commenting a GIF on a post fails. Capture the failing request.
+7. One person, three different avatars across PC / phone / MiGallery. Establish the cache lifetime
+   before calling any of it a bug.
+8. `apple-touch-icon.png` + `favicon.ico` (three 404s on prod), and `user-select` on mobile.
+9. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
+   connection itself writes ([durable-rules](docs/wiki/durable-rules.md): a liveness clock).
+10. The composer sits behind the Android soft keyboard. A layout decision, not a patch.
+11. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
+12. Storage: a live occupancy measurement, and an alert that tells "media grew" from "the retention
+    changed" ([storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
+13. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
+    delete that entry if it does.
+14. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+    browsers.
+15. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
+
 ### CANARI - what is open
 
 **WP-AVATAR-1 (P2) - THREE OF THE FOUR SHIPPED AND DEPLOYED 2026-08-16; ONLY LE CERCLE IS LEFT.**
