@@ -124,9 +124,9 @@ The user's decision of 2026-08-16 is that **every one of these lands before the 
 Work them top-down; each is one item, and an item is not done until its code, its tests, its doc and
 its commit are in. The detail lives where the link says - **do not restate it here.**
 
-**THE PHONE IS UNPLUGGED (2026-08-17, the user).** Anything needing it - 2 (the device comparison),
-3's `user-select` half, 5 and 6 - goes ON HOLD if it is not back when its turn comes; do the rest of
-the item and say what is owed. Items 4 and 7..13 never needed it.
+**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Items 3's `user-select` half, 5,
+6 and 13 need it; keep `adb devices` answering before starting one. Item 2 is NOT unblocked by it:
+the report is a third party's, so the user's own phone proves nothing either way.
 
 1. **REPRODUCE FIRST:** commenting a GIF on a post fails. Capture the failing request. **Prod repro
    authorised 2026-08-17:** a throwaway post on the test accounts, cleaned up by SQL on an allowlist
