@@ -24,8 +24,25 @@ class FakeRepo {
     return Promise.resolve(row);
   }
 
-  findOne(options: { where: { id: string } }): Promise<AuthSession | null> {
-    return Promise.resolve(this.rows.find((r) => r.id === options.where.id) ?? null);
+  findOne(options: { where: { id: string; userId?: string } }): Promise<AuthSession | null> {
+    const { id, userId } = options.where;
+    return Promise.resolve(
+      this.rows.find((r) => r.id === id && (userId === undefined || r.userId === userId)) ?? null
+    );
+  }
+
+  update(
+    criteria: { id: string; userId?: string },
+    patch: Partial<AuthSession>
+  ): Promise<{ affected: number }> {
+    let affected = 0;
+    for (const row of this.rows) {
+      if (row.id !== criteria.id) continue;
+      if (criteria.userId !== undefined && row.userId !== criteria.userId) continue;
+      Object.assign(row, patch);
+      affected++;
+    }
+    return Promise.resolve({ affected });
   }
 
   find(options: { where: { userId: string } }): Promise<AuthSession[]> {
@@ -104,7 +121,11 @@ class FakeQueryBuilder {
 
   execute(): Promise<{ affected: number }> {
     if (this.mode === 'update') {
-      const { id, presented, now } = this.params as { id: string; presented: string; now: Date };
+      const { id, presented, now } = this.params as {
+        id: string;
+        presented: string;
+        now: Date;
+      };
       const row = this.repo.rows.find(
         (r) => r.id === id && r.tokenId === presented && r.expiresAt.getTime() > now.getTime()
       );
@@ -132,7 +153,10 @@ describe('AuthSessionsService', () => {
   describe('create', () => {
     it('opens a session with a distinct id and token id', async () => {
       const { service, repo } = makeService();
-      const a = await service.create('user-1', { userAgent: 'Firefox', ip: '10.0.0.1' });
+      const a = await service.create('user-1', {
+        userAgent: 'Firefox',
+        ip: '10.0.0.1',
+      });
       const b = await service.create('user-1');
 
       expect(a.sessionId).not.toBe(b.sessionId);
@@ -239,7 +263,10 @@ describe('AuthSessionsService', () => {
 
     it('records the client facts of the latest refresh', async () => {
       const { service, repo } = makeService();
-      const opened = await service.create('user-1', { userAgent: 'Firefox', ip: '10.0.0.1' });
+      const opened = await service.create('user-1', {
+        userAgent: 'Firefox',
+        ip: '10.0.0.1',
+      });
 
       await service.rotate(opened.sessionId, opened.tokenId, {
         userAgent: 'Chrome',
@@ -309,6 +336,63 @@ describe('AuthSessionsService', () => {
       repo.rows[0].expiresAt = new Date(Date.now() - 1000);
 
       await expect(service.listForUser('user-1')).resolves.toHaveLength(1);
+    });
+  });
+
+  describe('bindDevice', () => {
+    it('records the device on the caller own session, and reports it in the list', async () => {
+      const { service, repo } = makeService();
+      const opened = await service.create('user-1');
+
+      await expect(service.bindDevice('user-1', opened.sessionId, 'web-a-b')).resolves.toBe(true);
+      expect(repo.rows[0].deviceId).toBe('web-a-b');
+      await expect(service.listForUser('user-1')).resolves.toEqual([
+        expect.objectContaining({ deviceId: 'web-a-b' }),
+      ]);
+    });
+
+    it('never stamps a device onto another user session', async () => {
+      // The whole scope of the column: it is a label a client asserts about itself, so the only
+      // session it may reach is the one the caller is already authenticated on.
+      const { service, repo } = makeService();
+      const victim = await service.create('user-2');
+
+      await expect(service.bindDevice('user-1', victim.sessionId, 'web-a-b')).resolves.toBe(false);
+      expect(repo.rows[0].deviceId).toBeUndefined();
+    });
+
+    it('writes NOTHING when the session already names that device', async () => {
+      // An app restart re-states what the row already holds. A write per start would be one
+      // needless UPDATE per device per launch, on the busiest table in the service.
+      const { service, repo } = makeService();
+      const opened = await service.create('user-1');
+      await service.bindDevice('user-1', opened.sessionId, 'web-a-b');
+      const writes = jest.spyOn(repo, 'update');
+
+      await expect(service.bindDevice('user-1', opened.sessionId, 'web-a-b')).resolves.toBe(true);
+      expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('re-binds when the device really changed, because one browser can re-enrol', async () => {
+      const { service, repo } = makeService();
+      const opened = await service.create('user-1');
+      await service.bindDevice('user-1', opened.sessionId, 'web-a-b');
+
+      await expect(service.bindDevice('user-1', opened.sessionId, 'web-c-d')).resolves.toBe(true);
+      expect(repo.rows[0].deviceId).toBe('web-c-d');
+    });
+
+    it('refuses an empty or oversized identifier rather than truncating it', async () => {
+      // Truncating would store a PREFIX, which joins against the wrong device or against none -
+      // and reads on the panel as a device the user does not have.
+      const { service, repo } = makeService();
+      const opened = await service.create('user-1');
+
+      await expect(service.bindDevice('user-1', opened.sessionId, '   ')).resolves.toBe(false);
+      await expect(service.bindDevice('user-1', opened.sessionId, 'x'.repeat(129))).resolves.toBe(
+        false
+      );
+      expect(repo.rows[0].deviceId).toBeUndefined();
     });
   });
 

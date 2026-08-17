@@ -72,6 +72,28 @@ export class AuthSession {
   userAgent?: string | null;
 
   /**
+   * The MLS device this login belongs to, as the client's own stable identifier.
+   *
+   * The ONLY reason it exists is that a session and a device are two records of
+   * the same physical thing, held by two services, with nothing joining them -
+   * so the settings screen had two lists and the reader had to guess which row
+   * on one was which row on the other.
+   *
+   * NULLABLE, and that is a state rather than a gap. A session is opened by the
+   * OIDC callback, before the client has unlocked MLS and can say which device
+   * it is; and a holder who cannot unlock MLS at all - the stolen-cookie case
+   * this table exists for - never names one. A row with no device is therefore
+   * exactly the row worth looking at, and the panel shows it as its own entry
+   * instead of hiding it under a device.
+   *
+   * Never used for authorization: it is a label the client asserts about
+   * itself. Anything that has to be TRUE about a device is decided by the
+   * delivery service against its own records.
+   */
+  @Column({ type: 'varchar', length: 128, nullable: true })
+  deviceId?: string | null;
+
+  /**
    * Client IP of the last refresh. It exists so the owner can recognise a
    * session that is not theirs; it is never used for authorization, and it
    * disappears with the row (7 days idle at most).

@@ -6,8 +6,11 @@ import {
   Get,
   Head,
   HttpCode,
+  Logger,
+  NotFoundException,
   Param,
   Post,
+  Put,
   Req,
   Res,
   ServiceUnavailableException,
@@ -46,6 +49,13 @@ interface SessionDto {
   expiresAt: string;
   userAgent: string | null;
   lastIp: string | null;
+  /** MLS device this login belongs to, or null when the client never named one. */
+  deviceId: string | null;
+}
+
+/** Body of `PUT /auth/sessions/current/device`. */
+interface BindDeviceDto {
+  deviceId?: unknown;
 }
 
 const REFRESH_COOKIE = 'canari_refresh';
@@ -54,6 +64,7 @@ const REFRESH_MAX_AGE = SESSION_TTL_SECONDS; // 7 days in seconds - the cookie a
 /** Controller handling OIDC login, token refresh, logout, and nginx JWT verification. */
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
   private readonly jwtSecret: string;
   private readonly authentikBaseUrl: string;
   private readonly authentikClientId: string;
@@ -156,7 +167,10 @@ export class AuthController {
    * every request. The token is verified here instead, exactly as
    * `/api/auth/verify` does it.
    */
-  private requireAccessToken(req: Request): { userId: string; isAdmin: boolean } {
+  private requireAccessToken(req: Request): {
+    userId: string;
+    isAdmin: boolean;
+  } {
     const header = req.headers['authorization'];
     if (!header) throw new UnauthorizedException('Missing Authorization header');
     const parts = String(header).split(' ');
@@ -165,7 +179,9 @@ export class AuthController {
 
     let payload: { sub?: string; admin?: boolean; type?: string };
     try {
-      payload = jwt.verify(token, this.jwtSecret, { algorithms: ['HS256'] }) as typeof payload;
+      payload = jwt.verify(token, this.jwtSecret, {
+        algorithms: ['HS256'],
+      }) as typeof payload;
     } catch {
       throw new UnauthorizedException('Invalid or expired access token');
     }
@@ -382,30 +398,30 @@ export class AuthController {
     }
 
     const client = this.clientInfo(req);
-    let sessionId = payload.sid;
-    let nextTokenId: string;
+    const sessionId = payload.sid;
 
+    // A refresh token with no session is a token issued before WP-SESS-2. It used to be adopted
+    // into a fresh session so the release would not sign everyone out; that window was one refresh
+    // TTL wide and closed on 2026-08-12, so such a token is now expired by its own `exp` and cannot
+    // reach this line. The branch is gone rather than kept as insurance: it MINTED a session for a
+    // token nothing had verified against a row, which is precisely the property this table exists
+    // to remove.
     if (!sessionId || !payload.jti) {
-      // Adoption path for tokens issued before WP-SESS-2, which carry no session.
-      // Refusing them would sign every logged-in user out on the deploy; they are
-      // still signature-valid and unexpired, so they are worth exactly what they
-      // were worth yesterday - and no more, for at most one refresh TTL (7 days)
-      // after the release. Safe to delete after 2026-08-12.
-      const created = await this.authSessions.create(payload.sub, client);
-      sessionId = created.sessionId;
-      nextTokenId = created.tokenId;
-    } else {
-      const result = await this.authSessions.rotate(sessionId, payload.jti, client);
-      if (result.status === 'replayed' || result.status === 'unknown') {
-        this.clearRefreshCookie(req, res);
-        throw new UnauthorizedException(
-          result.status === 'replayed'
-            ? 'Refresh token reused - session revoked, please log in again'
-            : 'Session revoked or expired - please log in again'
-        );
-      }
-      nextTokenId = result.tokenId;
+      this.clearRefreshCookie(req, res);
+      this.logger.warn('Refresh token carries no session - refusing rather than adopting it');
+      throw new UnauthorizedException('Session revoked or expired - please log in again');
     }
+
+    const result = await this.authSessions.rotate(sessionId, payload.jti, client);
+    if (result.status === 'replayed' || result.status === 'unknown') {
+      this.clearRefreshCookie(req, res);
+      throw new UnauthorizedException(
+        result.status === 'replayed'
+          ? 'Refresh token reused - session revoked, please log in again'
+          : 'Session revoked or expired - please log in again'
+      );
+    }
+    const nextTokenId = result.tokenId;
 
     const access_token = jwt.sign({ sub: payload.sub, admin: isAdmin }, this.jwtSecret, {
       expiresIn: '1h',
@@ -454,8 +470,37 @@ export class AuthController {
         expiresAt: row.expiresAt.toISOString(),
         userAgent: row.userAgent,
         lastIp: row.lastIp,
+        deviceId: row.deviceId,
       })),
     };
+  }
+
+  /**
+   * Records which MLS device the calling session belongs to.
+   *
+   * This is the join between a login and a device, and it can only be written
+   * here: the session is opened by the OIDC callback, long before the client
+   * has unlocked MLS and knows its own device id. The client calls this once
+   * per app start, after unlock - deliberately NOT on the refresh path, which
+   * is the cold-start critical section and must not grow a round trip so a
+   * settings panel can draw one row instead of two.
+   *
+   * A 404 means the session behind the cookie is gone, which the client
+   * reports and does not retry: its next request is answered with a 401 anyway.
+   */
+  @Put('sessions/current/device')
+  @HttpCode(200)
+  async bindCurrentSessionDevice(
+    @Req() req: Request,
+    @Body() body: BindDeviceDto
+  ): Promise<{ bound: true }> {
+    const { userId } = this.requireAccessToken(req);
+    const sessionId = this.currentSessionId(req);
+    if (!sessionId) throw new UnauthorizedException('No session behind this request');
+    if (typeof body?.deviceId !== 'string') throw new BadRequestException('deviceId is required');
+    const bound = await this.authSessions.bindDevice(userId, sessionId, body.deviceId);
+    if (!bound) throw new NotFoundException('No live session to bind');
+    return { bound: true };
   }
 
   /**

@@ -136,11 +136,11 @@ export class AvatarService {
       // WARN, NOT ERROR: nothing failed for the user, who sees initials either way. It stays loud
       // enough to accuse - a fallback is a signal - and the rate is what says whether it matters,
       // which is why the line is partitionable by subject and destination.
-      const detail =
-        axios.isAxiosError(error) ?
-          `${error.code ?? `HTTP ${status ?? 'no status'}`} ${error.message}`
-        : error instanceof Error ? error.message
-        : String(error);
+      const detail = axios.isAxiosError(error)
+        ? `${error.code ?? `HTTP ${status ?? 'no status'}`} ${error.message}`
+        : error instanceof Error
+          ? error.message
+          : String(error);
       this.logger.warn(`Avatar unavailable for ${userId} from ${this.avatarApiUrl}: ${detail}`);
       return { kind: 'unavailable' };
     }

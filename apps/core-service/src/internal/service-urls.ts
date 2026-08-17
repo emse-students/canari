@@ -55,7 +55,9 @@ export function chatDeliveryUrl(path: string): string {
  */
 export function socialUrl(path: string): string {
   return join(
-    process.env.SOCIAL_URL || process.env.FORM_URL || process.env.FORM_SERVICE_URL ||
+    process.env.SOCIAL_URL ||
+      process.env.FORM_URL ||
+      process.env.FORM_SERVICE_URL ||
       'http://social-service:3014',
     path
   );

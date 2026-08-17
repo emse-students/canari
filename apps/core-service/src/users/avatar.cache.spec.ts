@@ -11,7 +11,9 @@ const image = (marker: string): AvatarAnswer => ({
  * THE CLOCK IS DRIVEN, NEVER WAITED FOR. Every expiry below is asserted by moving `clock` across
  * the boundary, so the suite has no sleep in it and cannot go flaky on a slow machine.
  */
-function makeCache(overrides: Partial<{ imageTtlMs: number; absentTtlMs: number; maxEntries: number }> = {}) {
+function makeCache(
+  overrides: Partial<{ imageTtlMs: number; absentTtlMs: number; maxEntries: number }> = {}
+) {
   let clock = 1_000;
   const cache = new AvatarCache({
     imageTtlMs: 60_000,

@@ -45,7 +45,12 @@ export interface SessionSummary {
   expiresAt: Date;
   userAgent: string | null;
   lastIp: string | null;
+  /** The MLS device this login belongs to, or null when the client never said. */
+  deviceId: string | null;
 }
+
+/** Longest device identifier the column accepts. Anything longer is a client bug, not a device. */
+const MAX_DEVICE_ID_LENGTH = 128;
 
 /**
  * Server-side store backing the refresh cookie.
@@ -96,7 +101,11 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
     });
     const saved = await this.sessions.save(row);
     this.logger.debug(`Session opened sid=${saved.id} user=${userId}`);
-    return { sessionId: saved.id, tokenId: saved.tokenId, expiresAt: saved.expiresAt };
+    return {
+      sessionId: saved.id,
+      tokenId: saved.tokenId,
+      expiresAt: saved.expiresAt,
+    };
   }
 
   /**
@@ -151,7 +160,11 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
       now.getTime() - row.rotatedAt.getTime() <= ROTATION_GRACE_SECONDS * 1000
     ) {
       this.logger.debug(`Concurrent refresh accepted sid=${sessionId} (grace window)`);
-      return { status: 'reissued', tokenId: row.tokenId, expiresAt: row.expiresAt };
+      return {
+        status: 'reissued',
+        tokenId: row.tokenId,
+        expiresAt: row.expiresAt,
+      };
     }
 
     // A `jti` that is neither current nor freshly rotated was already consumed:
@@ -173,6 +186,44 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
   async revokeOwned(userId: string, sessionId: string): Promise<boolean> {
     const res = await this.sessions.delete({ id: sessionId, userId });
     return (res.affected ?? 0) > 0;
+  }
+
+  /**
+   * Records which MLS device a live session belongs to.
+   *
+   * Called once per app start, after the client has unlocked MLS and can name
+   * its own device - never on the refresh path, which is the app's cold-start
+   * critical section and must not grow a round trip for a label.
+   *
+   * Scoped by `userId` as well as `sessionId` so a caller can only ever stamp
+   * its own session, and the write is CONDITIONAL on the value differing, so
+   * the ordinary case - an app restarting against a session that already knows
+   * its device - costs a read and no write at all.
+   *
+   * Returns false when no live session of that user has that id, which the
+   * caller reports rather than retries: the session is gone and the next
+   * request will be answered with a 401 anyway.
+   */
+  async bindDevice(userId: string, sessionId: string, deviceId: string): Promise<boolean> {
+    const trimmed = deviceId.trim();
+    if (!trimmed || trimmed.length > MAX_DEVICE_ID_LENGTH) {
+      this.logger.warn(
+        `Device binding refused sid=${sessionId} user=${userId}: unusable device id (${trimmed.length} chars)`
+      );
+      return false;
+    }
+    const row = await this.sessions.findOne({
+      where: { id: sessionId, userId },
+      select: { id: true, deviceId: true },
+    });
+    if (!row) {
+      this.logger.warn(`Device binding refused sid=${sessionId} user=${userId}: no such session`);
+      return false;
+    }
+    if (row.deviceId === trimmed) return true;
+    await this.sessions.update({ id: sessionId, userId }, { deviceId: trimmed });
+    this.logger.debug(`Session sid=${sessionId} bound to device ${trimmed}`);
+    return true;
   }
 
   /** Destroys every session of `userId` except `keepSessionId`. Returns how many died. */
@@ -205,13 +256,16 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
         expiresAt: row.expiresAt,
         userAgent: row.userAgent ?? null,
         lastIp: row.lastIp ?? null,
+        deviceId: row.deviceId ?? null,
       }));
   }
 
   /** Drops rows past their idle deadline. Idempotent, so concurrent replicas may both run it. */
   async deleteExpired(): Promise<number> {
     try {
-      const res = await this.sessions.delete({ expiresAt: LessThan(new Date()) });
+      const res = await this.sessions.delete({
+        expiresAt: LessThan(new Date()),
+      });
       const removed = res.affected ?? 0;
       if (removed > 0) this.logger.debug(`Swept ${removed} expired session(s)`);
       return removed;

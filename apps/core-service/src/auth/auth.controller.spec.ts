@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { AuthController } from './auth.controller';
@@ -68,7 +68,7 @@ describe('AuthController sessions', () => {
   let sessions: jest.Mocked<
     Pick<
       AuthSessionsService,
-      'create' | 'rotate' | 'revoke' | 'revokeOwned' | 'revokeOthers' | 'listForUser'
+      'create' | 'rotate' | 'revoke' | 'revokeOwned' | 'revokeOthers' | 'listForUser' | 'bindDevice'
     >
   >;
 
@@ -87,9 +87,12 @@ describe('AuthController sessions', () => {
       revokeOwned: jest.fn().mockResolvedValue(true),
       revokeOthers: jest.fn().mockResolvedValue(2),
       listForUser: jest.fn().mockResolvedValue([]),
+      bindDevice: jest.fn().mockResolvedValue(true),
     } as never;
 
-    const users = { findOne: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }) };
+    const users = {
+      findOne: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
+    };
     const platform = {
       getConfig: jest.fn().mockResolvedValue({}),
       isAccessBlockedByMaintenance: jest.fn().mockReturnValue(false),
@@ -143,7 +146,12 @@ describe('AuthController sessions', () => {
 
       const req = makeReq({
         cookies: {
-          canari_refresh: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-1', jti: 'old' }),
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-1',
+            jti: 'old',
+          }),
         },
       });
       const out = makeRes();
@@ -158,7 +166,12 @@ describe('AuthController sessions', () => {
 
       const req = makeReq({
         cookies: {
-          canari_refresh: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'gone', jti: 'x' }),
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'gone',
+            jti: 'x',
+          }),
         },
       });
       const out = makeRes();
@@ -167,22 +180,28 @@ describe('AuthController sessions', () => {
       expect(out.cleared).toContain('canari_refresh');
     });
 
-    it('adopts a pre-WP-SESS-2 token that carries no session', async () => {
+    it('REFUSES a pre-WP-SESS-2 token that carries no session, rather than adopting it', async () => {
+      // It used to be adopted into a fresh session, so the release that introduced the table would
+      // not sign everyone out. That window was one refresh TTL wide and closed on 2026-08-12, and
+      // the branch minted a session for a token nothing had checked against a row - the exact
+      // property the table exists to remove. A token with no `sid` is now expired by its own `exp`.
       const req = makeReq({
-        cookies: { canari_refresh: signRefresh({ sub: 'user-1', type: 'refresh' }) },
+        cookies: {
+          canari_refresh: signRefresh({ sub: 'user-1', type: 'refresh' }),
+        },
       });
       const out = makeRes();
 
-      await controller.refreshToken(req, out.res);
-
-      expect(sessions.create).toHaveBeenCalledWith('user-1', expect.anything());
+      await expect(controller.refreshToken(req, out.res)).rejects.toThrow(UnauthorizedException);
+      expect(sessions.create).not.toHaveBeenCalled();
       expect(sessions.rotate).not.toHaveBeenCalled();
-      const cookie = jwt.verify(out.cookies['canari_refresh'], JWT_SECRET) as { sid: string };
-      expect(cookie.sid).toBe('sid-new');
+      expect(out.cleared).toContain('canari_refresh');
     });
 
     it('refuses an access token presented as a refresh cookie', async () => {
-      const req = makeReq({ cookies: { canari_refresh: signAccess('user-1') } });
+      const req = makeReq({
+        cookies: { canari_refresh: signAccess('user-1') },
+      });
       const out = makeRes();
 
       await expect(controller.refreshToken(req, out.res)).rejects.toThrow(UnauthorizedException);
@@ -195,7 +214,12 @@ describe('AuthController sessions', () => {
     it('destroys the session named by the cookie, not just the cookie', async () => {
       const req = makeReq({
         cookies: {
-          canari_refresh: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-1', jti: 'j' }),
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-1',
+            jti: 'j',
+          }),
         },
       });
       const out = makeRes();
@@ -225,6 +249,7 @@ describe('AuthController sessions', () => {
           expiresAt: new Date(),
           userAgent: 'Firefox',
           lastIp: '10.0.0.1',
+          deviceId: 'web-a-b',
         },
         {
           id: 'sid-2',
@@ -233,13 +258,19 @@ describe('AuthController sessions', () => {
           expiresAt: new Date(),
           userAgent: null,
           lastIp: null,
+          deviceId: null,
         },
       ]);
 
       const req = makeReq({
         bearer: signAccess('user-1'),
         cookies: {
-          canari_refresh: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-2', jti: 'j' }),
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-2',
+            jti: 'j',
+          }),
         },
       });
 
@@ -248,9 +279,101 @@ describe('AuthController sessions', () => {
       expect(listed.map((s) => s.current)).toEqual([false, true]);
     });
 
+    it('binds the calling session to the device the client names', async () => {
+      sessions.bindDevice.mockResolvedValue(true);
+      const req = makeReq({
+        bearer: signAccess('user-1'),
+        cookies: {
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-2',
+            jti: 'j',
+          }),
+        },
+      });
+
+      await expect(
+        controller.bindCurrentSessionDevice(req, { deviceId: 'web-a-b' })
+      ).resolves.toEqual({
+        bound: true,
+      });
+      expect(sessions.bindDevice).toHaveBeenCalledWith('user-1', 'sid-2', 'web-a-b');
+    });
+
+    it('binds only the session the request came from, never one named in the body', async () => {
+      // The session id is read from the caller's own cookie and is not an input, so there is no
+      // shape of request that stamps a device onto somebody else's login.
+      sessions.bindDevice.mockResolvedValue(true);
+      const req = makeReq({
+        bearer: signAccess('user-1'),
+        cookies: {
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-mine',
+            jti: 'j',
+          }),
+        },
+      });
+
+      await controller.bindCurrentSessionDevice(req, {
+        deviceId: 'web-a-b',
+        sessionId: 'sid-victim',
+      } as { deviceId: unknown });
+
+      expect(sessions.bindDevice).toHaveBeenCalledWith('user-1', 'sid-mine', 'web-a-b');
+    });
+
+    it('refuses a binding with no device id, and one from an unauthenticated caller', async () => {
+      const authed = makeReq({
+        bearer: signAccess('user-1'),
+        cookies: {
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-2',
+            jti: 'j',
+          }),
+        },
+      });
+
+      await expect(controller.bindCurrentSessionDevice(authed, {})).rejects.toThrow(
+        BadRequestException
+      );
+      await expect(
+        controller.bindCurrentSessionDevice(makeReq(), { deviceId: 'web-a-b' })
+      ).rejects.toThrow(UnauthorizedException);
+      expect(sessions.bindDevice).not.toHaveBeenCalled();
+    });
+
+    it('reports a session that is already gone rather than recreating one', async () => {
+      sessions.bindDevice.mockResolvedValue(false);
+      const req = makeReq({
+        bearer: signAccess('user-1'),
+        cookies: {
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-2',
+            jti: 'j',
+          }),
+        },
+      });
+
+      await expect(
+        controller.bindCurrentSessionDevice(req, { deviceId: 'web-a-b' })
+      ).rejects.toThrow(NotFoundException);
+    });
+
     it('refuses a refresh token presented as a bearer access token', async () => {
       const req = makeReq({
-        bearer: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-1', jti: 'j' }),
+        bearer: signRefresh({
+          sub: 'user-1',
+          type: 'refresh',
+          sid: 'sid-1',
+          jti: 'j',
+        }),
       });
 
       await expect(controller.listSessions(req)).rejects.toThrow(UnauthorizedException);
@@ -276,7 +399,12 @@ describe('AuthController sessions', () => {
       const req = makeReq({
         bearer: signAccess('user-1'),
         cookies: {
-          canari_refresh: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-1', jti: 'j' }),
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-1',
+            jti: 'j',
+          }),
         },
       });
       const out = makeRes();
@@ -290,11 +418,18 @@ describe('AuthController sessions', () => {
       const req = makeReq({
         bearer: signAccess('user-1'),
         cookies: {
-          canari_refresh: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-1', jti: 'j' }),
+          canari_refresh: signRefresh({
+            sub: 'user-1',
+            type: 'refresh',
+            sid: 'sid-1',
+            jti: 'j',
+          }),
         },
       });
 
-      await expect(controller.revokeOtherSessions(req)).resolves.toEqual({ revoked: 2 });
+      await expect(controller.revokeOtherSessions(req)).resolves.toEqual({
+        revoked: 2,
+      });
       expect(sessions.revokeOthers).toHaveBeenCalledWith('user-1', 'sid-1');
     });
   });
@@ -302,7 +437,12 @@ describe('AuthController sessions', () => {
   describe('verify (nginx auth_request)', () => {
     it('does not authenticate a refresh token used as a bearer token', async () => {
       const req = makeReq({
-        bearer: signRefresh({ sub: 'user-1', type: 'refresh', sid: 'sid-1', jti: 'j' }),
+        bearer: signRefresh({
+          sub: 'user-1',
+          type: 'refresh',
+          sid: 'sid-1',
+          jti: 'j',
+        }),
       });
       const out = makeRes();
 
