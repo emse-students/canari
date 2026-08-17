@@ -521,6 +521,49 @@ fetch succeeds and is written, distinct from `fetchAvatar: from cache for ...`. 
 word apart is a trap worth knowing before reading any of this: only one of them proves the network
 path ran.
 
+### The window layout: the keyboard, and the orientation lock
+
+Both live in `MainActivity.onCreate`, both are in `gen/android` which `tauri android init` regenerates
+from a template, and neither is caught by a compile. `frontend/src/lib/mobile/androidWindowLayout.test.ts`
+reads the Kotlin and the resources as text for exactly that reason - it is the only gate either has.
+
+#### `android:windowSoftInputMode="adjustResize"` IS INERT, and the manifest still carries it
+
+Since Android 15 an edge-to-edge window is never resized for the IME. The attribute is not an error
+and not a warning; `dumpsys window` states the outcome plainly, printing `EDGE_TO_EDGE_ENFORCED`
+right next to the `adjust=resize` that was asked for. It is kept in the manifest because it still
+works below 15, and the listener below is a no-op there (the IME inset reads 0 once the window has
+already been resized).
+
+ONE cause wore two faces, which is why they were one item: the composer sat under the keyboard, and
+the page could be scrolled onto a white band. Nothing resized, so the WebView's own scroll-the-focused-
+field-into-view ran the document past the end of its content onto the Activity background - visible
+because `onWebViewCreate` makes the WebView transparent on purpose (that is the startup-flash fix).
+
+`applyKeyboardInsets()` sets an `OnApplyWindowInsetsListener` on `android.R.id.content` and pads it by
+the IME inset. **It also withdraws the navigation-bar inset while the keyboard is up, and that half is
+not cosmetic**: the web layer reserves a strip through `env(safe-area-inset-bottom)`, which is right
+when the bar is at the bottom of the app and wrong the moment the keyboard is - the bar is then behind
+the keyboard and the strip is an empty band the page can be scrolled by, revealing the reserved footer
+while hiding part of the header. "The keyboard is up" is known here and nowhere else, so the inset is
+zeroed on the way down rather than left for CSS to guess at. The status bar is deliberately untouched:
+it is still on screen. The early `if (ime == 0) return ... insets` is what gives the strip back.
+
+Verified on hardware 2026-08-17 (v0.14.0 debug build, Android 15): `IME inset: 988 -> content padding`
+in logcat with the composer focused, and the user confirmed the band is gone.
+
+#### Portrait is locked by a resource qualifier, not by the manifest
+
+`android:screenOrientation` takes ONE literal value, which cannot serve a phone and a tablet - so the
+decision is `R.bool.canari_lock_portrait`, `true` in `res/values/` and `false` in `res/values-sw600dp/`.
+`sw600dp` is the SHORTEST edge, measured once for the device, so the qualifier does not flip when the
+device is turned - which is the property that makes it usable for this at all. `orientation|screenSize`
+stay in the activity's `configChanges`: losing them would tear the WebView down on a tablet rotation,
+reloading MLS state and interrupting an in-flight send for a movement of the wrist.
+
+Negative control, run 2026-08-17: under a forced `user_rotation 1`, Settings reported `cur=2400x1080`
+while Canari stayed `cur=1080x2400`.
+
 ### Push notification handling
 
 `CanariFirebaseMessagingService.kt` — the single FCM handler:

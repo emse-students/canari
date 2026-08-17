@@ -936,7 +936,7 @@ export function logcatReport(lines, label = 'A1') {
   for (const raw of lines) {
     if (!raw || raw.startsWith('---------')) continue;
     // TWO FORMATS, because two producers. `logcatSince` takes adb's default (`threadtime`:
-    // `MM-DD hh:mm:ss.mmm PID TID L Tag: msg`) while the captures `test_adb.py` left on disk are
+    // `MM-DD hh:mm:ss.mmm PID TID L Tag: msg`) while the captures `verify-on-device.py` left on disk are
     // `brief` with a time column (`MM-DD hh:mm:ss.mmm L/Tag(PID): msg`). A parser that knew one of
     // them would classify a whole capture as `unparsed` and report it as a blind spot rather than a
     // population - which is how a measurement gets made against nothing.

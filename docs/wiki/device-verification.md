@@ -83,8 +83,8 @@ K would be meaningless on it.
   in another browser profile, both work.
 - **A log capture.** iOS: Console.app or the Xcode device console, filtered on the app and on
   `fr.emse.canari.push` for the notification extension. Android (check K only):
-  **`test_adb.py`** at the repo root - a tkinter GUI that builds, installs, and tails per-device
-  logcat with this runbook's tags already whitelisted.
+  **[`tools/android/verify-on-device.py`](../../tools/android/verify-on-device.py)** - a tkinter GUI
+  that builds, installs, and tails per-device logcat with this runbook's tags already whitelisted.
 - **Screen genuinely locked, app genuinely killed** for B. A backgrounded app is a different code
   path and passing it proves nothing about the one under test.
 
@@ -357,7 +357,7 @@ contract are unit-tested; three things are not, and cannot be.
    real compile of `recordInstallerPackage`. Nothing local exercises it.
 2. **The target follows the install source.** On a **Play-installed** build the blocking gate must
    offer the Play Store; on a **sideloaded CI APK** it must offer the APK. Capture the verdict line
-   with `test_adb.py`:
+   with `tools/android/verify-on-device.py`:
    `[appVersion] install source: ...`
    Both sides have to be seen - the two paths differ only in that one string.
 3. **The gate itself.** In `/admin/platform`, raise `minClientVersion` above the running version,

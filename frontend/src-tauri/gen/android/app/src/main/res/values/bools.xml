@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Portrait lock. True on anything narrower than 600dp - a phone, where a landscape chat is
+      a composer, a keyboard and one line of conversation. The values-sw600dp copy overrides it
+      to false: a tablet is a PC here and keeps its rotation.
+      Read by MainActivity, not by the manifest: android:screenOrientation takes a literal.
+    -->
+    <bool name="canari_lock_portrait">true</bool>
+</resources>

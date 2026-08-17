@@ -196,32 +196,6 @@ a check that changed verdict without a change to the code it measures is itself 
 
 ## Protocol and delivery
 
-### P3 - the composer sits behind the soft keyboard on Android, and the page scrolls onto a white band
-
-Known, reproduced by hand. Two symptoms, and reading them together is what makes this a layout
-decision rather than a patch:
-
-- the message composer is overlapped by the soft keyboard on some Android keyboards;
-- with the keyboard open, **the interface itself scrolls** - resting a finger on the text bar and
-  dragging moves the whole page off the conversation and onto an empty white band below it.
-
-**They are one defect.** The white band is the LAYOUT viewport keeping its full height while the
-VISUAL viewport shrank to make room for the keyboard: the page is still as tall as the screen was, so
-the part now hidden behind the keyboard is scrollable into view, and it holds nothing. The composer
-sits in that same overhang. Anything that pins the composer alone leaves the band.
-
-**Decided 2026-08-17: let the OS resize the view** - `adjustResize` on the activity plus
-`interactive-widget=resizes-content` in the viewport meta - rather than translate the composer from a
-`visualViewport` listener. The layout shrinks, so there is no overhang to scroll into and no event to
-chase; it is one setting rather than a correction applied after the fact, and it fixes the whole
-column instead of one element of it.
-
-**The check the user asked for, and it is a good one because it needs no coordinates**: with the
-keyboard open, **at least 5 messages must be visible in the conversation**, read off a screenshot.
-Fewer means a band survives between the list and the keyboard. Negative control is free - the current
-build fails it, so the check can be seen failing before it is believed
-([testing-methodology](testing-methodology.md), rule 2).
-
 ### P2 - a server-composed notification body is French for everyone, and cannot be otherwise
 
 **The whole CLIENT half is done** (Android and iOS, 2026-08-17): each platform has a two-language
@@ -310,17 +284,6 @@ reimplemented, so every purchase becomes its own interactive request. Do not re-
 The full provider mapping, the remaining open questions and the credentials still owed are in
 [`plans/stripe-to-lydia-migration.md`](../../plans/stripe-to-lydia-migration.md), which the wiki page
 [payments](frontend/modules/payments.md) already points at.
-
----
-
-## Tooling
-
-### P3 - move and rename `test_adb.py`
-
-It sits at the repository root and its name says what it uses rather than what it does - it captures
-device logs for the verification pass. It belongs with the harness documentation that references it
-([device-verification](device-verification.md)). A rename touches every doc that names it, so grep
-before moving.
 
 ---
 

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      600dp is the smallest width of a tablet, measured on the SHORTEST edge - so it does not
+      change when the device is turned, which is exactly what a rotation policy must not depend on.
+    -->
+    <bool name="canari_lock_portrait">false</bool>
+</resources>

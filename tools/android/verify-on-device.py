@@ -22,7 +22,11 @@ from typing import Optional
 
 # === DEFAULT CONFIGURATION ===
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_PROJECT_DIR = os.path.join(SCRIPT_DIR, "frontend")
+# Two levels up is the repository root: this file lives in tools/android/. Normalised because it
+# is shown in the UI and passed to subprocesses, where "tools/android/../../frontend" would work
+# but would read as a mistake in every log line that quotes it.
+REPO_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, os.pardir, os.pardir))
+DEFAULT_PROJECT_DIR = os.path.join(REPO_ROOT, "frontend")
 DEFAULT_PACKAGE_NAME = "fr.emse.canari"
 DEFAULT_ACTIVITY_NAME = f"{DEFAULT_PACKAGE_NAME}/.MainActivity"
 

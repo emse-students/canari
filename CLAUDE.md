@@ -125,29 +125,24 @@ The user's decision of 2026-08-16 is that **every one of these lands before the 
 Work them top-down; each is one item, and an item is not done until its code, its tests, its doc and
 its commit are in. The detail lives where the link says - **do not restate it here.**
 
-**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Items 1, 2 and 9 need it; keep
-`adb devices` answering before starting one.
+**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Item 6 needs it; keep
+`adb devices` answering before starting it.
 
-1. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
-   scrolling onto a white band. **Decided: the OS resizes the view**, never a JS offset; the check
-   is 5 messages visible with the keyboard open ([backlog](docs/wiki/backlog.md)).
-2. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
-3. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
-4. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
+1. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
    **Decided: NO alert**, the panel is the whole of it ([backlog](docs/wiki/backlog.md),
    [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
-5. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
+2. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
    secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
    has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says
    why ([docker](docs/wiki/infrastructure/docker.md)).
-6. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
+3. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
    it as a recovery source it is not. **Approved 2026-08-17** (a prod service change), volume
    included - the user's instruction is to delete what is stale, not to keep it for a window.
-7. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
+4. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
    delete that entry if it does.
-8. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+5. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
     browsers.
-9. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+6. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
     must end green, so every phase runs** - and the board says what that really costs: MSG is the
     ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
     **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
@@ -230,7 +225,7 @@ The six entries that stood here are decided. **Nothing tells the RECEIVER's user
 lost, and it stays that way** - not to be revisited. The two history gaps and the reason
 `history_request` is not durable are argued in
 [history-reconciliation](docs/wiki/protocols/history-reconciliation.md); the 30-day media window in
-[storage-forecast](docs/wiki/infrastructure/storage-forecast.md) §6. `mongo` is item 6; the
+[storage-forecast](docs/wiki/infrastructure/storage-forecast.md) §6. `mongo` is item 5; the
 SharedWorker MLS client is a POST-CAMPAIGN project in [backlog](docs/wiki/backlog.md).
 
 ### CANARI - the test campaign
