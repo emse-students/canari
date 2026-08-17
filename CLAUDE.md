@@ -124,42 +124,39 @@ The user's decision of 2026-08-16 is that **every one of these lands before the 
 Work them top-down; each is one item, and an item is not done until its code, its tests, its doc and
 its commit are in. The detail lives where the link says - **do not restate it here.**
 
-1. iOS initials fallback when a notification's avatar cannot be fetched
-   ([backlog](docs/wiki/backlog.md)). Android does it in three places - message, reaction, channel -
-   and the channel one draws the SALON's initial, not the sender's.
-2. The inbound drain has no watchdog - design the TERMINATION PROOF first, the detection second.
-3. `BaseMlsService.fetchPendingMessages`: a progress deadline, not 10 s per page.
-4. **P1, user-reported. REPRODUCE FIRST:** a community whose last channel is left becomes
+1. The inbound drain has no watchdog - design the TERMINATION PROOF first, the detection second.
+2. `BaseMlsService.fetchPendingMessages`: a progress deadline, not 10 s per page.
+3. **P1, user-reported. REPRODUCE FIRST:** a community whose last channel is left becomes
    unmanageable - "leave the community" included. **Prod repro authorised 2026-08-17:** a throwaway
    community on the test accounts, cleaned up by SQL on an allowlist of the exact ids.
-5. **REPRODUCE FIRST:** commenting a GIF on a post fails. Capture the failing request. Same
-   authorisation as 4.
-6. One person, three different avatars across PC / phone / MiGallery. Establish the cache lifetime
+4. **REPRODUCE FIRST:** commenting a GIF on a post fails. Capture the failing request. Same
+   authorisation as 3.
+5. One person, three different avatars across PC / phone / MiGallery. Establish the cache lifetime
    before calling any of it a bug.
-7. `apple-touch-icon.png` + `favicon.ico` (three 404s on prod), and `user-select` on mobile.
-8. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
+6. `apple-touch-icon.png` + `favicon.ico` (three 404s on prod), and `user-select` on mobile.
+7. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
    connection itself writes ([durable-rules](docs/wiki/durable-rules.md): a liveness clock).
    **Decided 2026-08-17:** deleting a device PURGES its queue, and the backlog of a device that
    never returns is BOUNDED - nothing obliges a user to delete anything.
-9. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
+8. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
    scrolling onto a white band. **Decided: the OS resizes the view**, never a JS offset; the check
    is 5 messages visible with the keyboard open ([backlog](docs/wiki/backlog.md)).
-10. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
-11. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
-12. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
+9. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
+10. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
+11. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
     **Decided: NO alert**, the panel is the whole of it ([backlog](docs/wiki/backlog.md),
     [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
-13. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
+12. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
     secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
     has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says
     why ([docker](docs/wiki/infrastructure/docker.md)).
-14. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
+13. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
     it as a recovery source it is not. **Approved 2026-08-17** (a prod service change).
-15. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
+14. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
     delete that entry if it does.
-16. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+15. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
     browsers.
-17. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+16. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
     must end green, so every phase runs** - and the board says what that really costs: MSG is the
     ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
     **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
