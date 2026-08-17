@@ -1062,6 +1062,17 @@ Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `m
 Push transports, the App Group, the NSE, the decrypt ladder and the update target are all on that
 page. The five to carry, plus one status line:
 
+- **A GATE INSIDE A COMPONENT'S OWN `onclick` IS DEAD CODE WHEREVER SOMETHING ELSE ALREADY OWNS THE
+  EVENT.** `AppLink`/`LinkPreviewCard` each gated their external link with a Safe Browsing check
+  inside their bubble-phase `onclick` (WP-SAFELINK-1) - correct on the web, and silently bypassed on
+  every Tauri build (Android, iOS, desktop), because `hooks.client.ts` had already installed a
+  document-level CAPTURE-phase listener for exactly this class of link, months earlier, that calls
+  `event.stopPropagation()` and opens the URL itself before the anchor's own handler ever runs. The
+  fix is not "also gate the interceptor" - it is to gate the ONE function both paths actually call to
+  open the URL (`openExternal`), so no future call site can forget the check by construction. Before
+  adding a click handler to fix or gate something, grep for existing `addEventListener(..., true)` on
+  `document`/`window`: capture fires before bubble, and `stopPropagation` there means your handler
+  never sees the event at all - not silently, but invisibly, since nothing throws.
 - An app extension has its OWN data container: a path that is right in the app process is silently
   wrong in the NSE, and the App Group is the only shared storage.
 - Background decrypt applies no commit, so a silent commit push leaves the next message unreadable -

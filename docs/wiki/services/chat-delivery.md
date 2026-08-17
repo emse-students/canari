@@ -921,11 +921,21 @@ correctness, which is what makes the choice reversible.
 #### Link safety is its own endpoint, deliberately not a field on the preview (WP-SAFELINK-1)
 
 `/api/mls/link-safety?url=` answers `{ unsafe: boolean }` from Google Safe Browsing's Lookup API
-(`utils/safe-browsing.ts`), gating navigation client-side: `AppLink` and `LinkPreviewCard` both
-call `checkLinkSafety`/`confirmUnsafeLinkIfNeeded` (`frontend/src/lib/utils/checkLinkSafety.ts`)
-and only show a confirmation (`showConfirm`, danger-styled) at the point of an actual click on a
-flagged link - never a badge decorating every rendered link, which would be alert fatigue for a
-check that is almost always going to say "fine".
+(`utils/safe-browsing.ts`), gating navigation client-side through `confirmUnsafeLinkIfNeeded`
+(`frontend/src/lib/utils/checkLinkSafety.ts`), which only shows a confirmation (`showConfirm`,
+danger-styled) at the point of an actual click on a flagged link - never a badge decorating every
+rendered link, which would be alert fatigue for a check that is almost always going to say "fine".
+
+**The gate lives in `openExternal()` (`frontend/src/lib/utils/openExternal.ts`), not in the two
+components that render a link.** It shipped there first (`AppLink`/`LinkPreviewCard` each gating
+their own bubble-phase `onclick`), which worked on the web and was silently dead on every Tauri
+build: a document-level CAPTURE-phase listener installed by `hooks.client.ts`, pre-existing since
+April for unrelated in-app-link routing, already intercepts and `stopPropagation()`s the same click
+before it reaches the anchor, and opens the URL through `openExternal` directly. Moving the check
+into `openExternal` itself - the one function every path to an actually-opened URL calls, including
+that interceptor and the conversation's shared-links tab (which had no check on any platform) -
+means no future caller can bypass it by forgetting to call `confirmUnsafeLinkIfNeeded` first. See
+[durable-rules](../durable-rules.md#mobile-and-native---frontendmobile).
 
 - **A separate endpoint from `getLinkPreview` on purpose.** The two checks have unrelated failure
   modes: a page with a broken `<title>` or a redirect loop makes `getLinkPreview` throw and return

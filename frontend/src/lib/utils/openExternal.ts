@@ -1,5 +1,6 @@
 import { inAppPathFromHref, isPublicAppUrl } from '$lib/utils/publicAppUrl';
 import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
+import { confirmUnsafeLinkIfNeeded } from '$lib/utils/checkLinkSafety';
 
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'webcal:']);
 
@@ -86,10 +87,21 @@ export function handleExternalLinkClick(event: MouseEvent): boolean {
 }
 
 /**
- * Open an external URL in the system browser on Tauri,
- * or in a new tab on the web.
+ * Open an external URL in the system browser on Tauri, or in a new tab on the web.
+ *
+ * This is the ONE place that actually opens an arbitrary (possibly attacker-supplied) URL, on
+ * every platform - the document-level capture listener below (`handleAppLinkClick`) and every
+ * link-rendering component (`AppLink`, `LinkPreviewCard`, the conversation's shared-links tab)
+ * all funnel here rather than opening a URL directly, specifically so the Safe Browsing gate
+ * (WP-SAFELINK-1) cannot be bypassed by a call site that forgets it. It WAS bypassed this way:
+ * `AppLink`/`LinkPreviewCard` gated their own `onclick`, but on Tauri that handler never ran -
+ * the capture-phase listener below already intercepted the click and called this function
+ * directly. Gating here instead covers every current and future caller uniformly.
  */
 export async function openExternal(url: string): Promise<void> {
+  const proceed = await confirmUnsafeLinkIfNeeded(url);
+  if (!proceed) return;
+
   if (isTauriRuntime()) {
     const { openUrl } = await import('@tauri-apps/plugin-opener');
     await openUrl(url);
@@ -99,8 +111,12 @@ export async function openExternal(url: string): Promise<void> {
 }
 
 /**
- * Navigate to an external URL.
- * On Tauri, opens in system browser. On web, redirects the page.
+ * Navigate to an external URL. On Tauri, opens in system browser. On web, redirects the page.
+ *
+ * Deliberately NOT safety-checked, unlike {@link openExternal}: every caller passes a URL our
+ * own backend generated (a Stripe/Lydia checkout, a MiGallery/associations redirect), never a
+ * URL taken from message or post content - there is nothing here for Safe Browsing to catch,
+ * and prompting a user before their own payment checkout would be a false alarm every time.
  */
 export async function navigateExternal(url: string): Promise<void> {
   if (isTauriRuntime()) {
