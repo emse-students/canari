@@ -1150,4 +1150,118 @@ describe('ChannelService security hardening', () => {
       ForbiddenException
     );
   });
+
+  // ── A channel-scoped action must not mutate workspace-scoped state ──────────
+  //
+  // Membership is stored PER WORKSPACE: a public channel is readable by every member of the
+  // community and has no per-user access row at all, while a private one restricts an existing
+  // member through `allowedUsers`. So the only thing a channel-scoped operation may touch is the
+  // channel. `leaveChannel` deleted the community membership row instead, which is how a user who
+  // left one channel ended up outside the community while their client still displayed it: the
+  // list is local until the next refetch, and every workspace-scoped call then answers 404 -
+  // "leave the community" included, which is what made it unmanageable rather than simply gone.
+
+  /**
+   * A member table that BEHAVES like one: `delete` removes rows and `findOne` stops finding them.
+   *
+   * These cases pin a write made by ONE operation and observed by ANOTHER, which a per-call mock
+   * cannot express - it answers every question independently of what the previous call did, so the
+   * defect disappears into the arrangement.
+   */
+  function seedMemberTable(
+    memberRepo: { findOne: jest.Mock; find: jest.Mock; delete: jest.Mock },
+    rows: Array<{ workspaceId: string; userId: string; roleIds: string[] }>
+  ) {
+    const matches = (row: (typeof rows)[number], where: Partial<(typeof rows)[number]>) =>
+      (where.workspaceId === undefined || row.workspaceId === where.workspaceId) &&
+      (where.userId === undefined || row.userId === where.userId);
+
+    memberRepo.findOne.mockImplementation(({ where }: { where: Partial<(typeof rows)[number]> }) =>
+      Promise.resolve(rows.find((r) => matches(r, where)) ?? null)
+    );
+    memberRepo.find.mockImplementation(({ where }: { where: Partial<(typeof rows)[number]> }) =>
+      Promise.resolve(rows.filter((r) => matches(r, where)))
+    );
+    memberRepo.delete.mockImplementation((where: Partial<(typeof rows)[number]>) => {
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (matches(rows[i], where)) rows.splice(i, 1);
+      }
+      return Promise.resolve({ affected: 1 });
+    });
+    return rows;
+  }
+
+  /** A community with one channel, one plain member, and just enough repo answers to act on it. */
+  function arrangeCommunityWithOneChannel(
+    repos: ReturnType<typeof makeService>,
+    { isPrivate }: { isPrivate: boolean }
+  ) {
+    const rows = seedMemberTable(repos.memberRepo, [
+      { workspaceId: 'ws1', userId: 'u1', roleIds: [] },
+      { workspaceId: 'ws1', userId: 'boss', roleIds: ['r-admin'] },
+    ]);
+    const channel = {
+      id: 'ch1',
+      workspaceId: 'ws1',
+      name: 'general',
+      isPrivate,
+      allowedUsers: isPrivate ? ['u1', 'boss'] : [],
+      allowedRoles: [],
+      keyVersion: 1,
+      masterSecret: null as string | null,
+    };
+    repos.channelRepo.findOne.mockResolvedValue(channel);
+    repos.channelRepo.save.mockImplementation((c: unknown) => Promise.resolve(c));
+    repos.workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', slug: 'ws1', archived: false });
+    repos.workspaceRepo.find.mockResolvedValue([{ id: 'ws1', slug: 'ws1', archived: false }]);
+    repos.roleRepo.find.mockResolvedValue([
+      { id: 'r-admin', name: 'Administrateur', priority: 10, permissions: ['workspace.manage'] },
+    ]);
+    return { rows, channel };
+  }
+
+  it('a member who left a public channel can still leave the community', async () => {
+    const repos = makeService();
+    arrangeCommunityWithOneChannel(repos, { isPrivate: false });
+
+    await repos.service.leaveChannel('ch1', { userId: 'u1' }).catch(() => undefined);
+
+    // The user-visible half of the report: the community is still on screen and the button that
+    // would get rid of it answers "Not a member of this workspace".
+    await expect(repos.service.leaveWorkspace('ws1', 'u1')).resolves.toEqual({ success: true });
+  });
+
+  it('leaving a public channel leaves the community roster untouched', async () => {
+    const repos = makeService();
+    const { rows } = arrangeCommunityWithOneChannel(repos, { isPrivate: false });
+
+    await repos.service.leaveChannel('ch1', { userId: 'u1' }).catch(() => undefined);
+
+    // A public channel has no per-member access to remove, so there is nothing here to delete.
+    expect(rows.map((r) => r.userId).sort()).toEqual(['boss', 'u1']);
+  });
+
+  it('refuses to leave a public channel rather than pretending it removed something', async () => {
+    const repos = makeService();
+    arrangeCommunityWithOneChannel(repos, { isPrivate: false });
+
+    // Answering `{ success: true }` would be a lie the next refetch exposes: the channel comes
+    // straight back. The refusal is what sends the caller to the operation that does exist.
+    await expect(repos.service.leaveChannel('ch1', { userId: 'u1' })).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+  });
+
+  it('leaving a private channel drops the access and keeps the community membership', async () => {
+    const repos = makeService();
+    const { rows, channel } = arrangeCommunityWithOneChannel(repos, { isPrivate: true });
+
+    await expect(repos.service.leaveChannel('ch1', { userId: 'u1' })).resolves.toEqual({
+      success: true,
+    });
+
+    expect(channel.allowedUsers).toEqual(['boss']);
+    expect(channel.keyVersion).toBe(2);
+    expect(rows.map((r) => r.userId).sort()).toEqual(['boss', 'u1']);
+  });
 });

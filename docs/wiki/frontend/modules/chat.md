@@ -428,6 +428,19 @@ A purged community goes through `dropCommunityLocally` in `ChatBackgroundService
 chat panel afterwards needs to know whether what was on screen belonged to the community that
 just vanished.
 
+### Leaving: a private channel, or the whole community - never a public channel
+
+`ChannelSettingsModal` offers "Quitter le salon" only when `selectedChannel.isPrivate`. A public
+channel is readable by every member of the community and keeps no per-member access, so there is
+nothing there to give up: the server answers `400`, and leaving is a community-level action
+(`SidebarCommunityAdminModal` -> `leaveCurrentWorkspace`). Hiding the button is convenience; the
+refusal is the gate. The scope rule behind it, and the defect that made it necessary, are on
+[social-service](../../services/social-service.md#a-channel-scoped-action-never-touches-community-membership-2026-08-17).
+
+`leaveCurrentChannel` mutates nothing local until the server has answered, so a refusal leaves the
+sidebar exactly as it was and surfaces as a toast - the divergence between "gone here" and "still
+there on the server" is what made the original defect invisible.
+
 ### Channel message identity
 
 A channel bubble is keyed by the **server row id**, everywhere. Live delivery

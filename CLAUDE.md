@@ -124,38 +124,40 @@ The user's decision of 2026-08-16 is that **every one of these lands before the 
 Work them top-down; each is one item, and an item is not done until its code, its tests, its doc and
 its commit are in. The detail lives where the link says - **do not restate it here.**
 
-1. `BaseMlsService.fetchPendingMessages`: a progress deadline, not 10 s per page.
-2. **P1, user-reported. REPRODUCE FIRST:** a community whose last channel is left becomes
-   unmanageable - "leave the community" included. **Prod repro authorised 2026-08-17:** a throwaway
-   community on the test accounts, cleaned up by SQL on an allowlist of the exact ids.
-3. **REPRODUCE FIRST:** commenting a GIF on a post fails. Capture the failing request. Same
-   authorisation as 2.
-4. One person, three different avatars across PC / phone / MiGallery. Establish the cache lifetime
-   before calling any of it a bug.
-5. `apple-touch-icon.png` + `favicon.ico` (three 404s on prod), and `user-select` on mobile.
-6. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
+**THE PHONE IS UNPLUGGED (2026-08-17, the user).** Anything needing it - 2 (the device comparison),
+3's `user-select` half, 5 and 6 - goes ON HOLD if it is not back when its turn comes; do the rest of
+the item and say what is owed. Items 4 and 7..13 never needed it.
+
+1. **REPRODUCE FIRST:** commenting a GIF on a post fails. Capture the failing request. **Prod repro
+   authorised 2026-08-17:** a throwaway post on the test accounts, cleaned up by SQL on an allowlist
+   of the exact ids.
+2. One person, three different avatars across PC / phone / MiGallery. **The user does NOT reproduce
+   it on their own devices - it is a third party's report**, so comparing their PC and phone proves
+   nothing: attack it by the cause, and establish the cache lifetime on each surface first.
+3. `apple-touch-icon.png` + `favicon.ico` (three 404s on prod), and `user-select` on mobile.
+4. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
    connection itself writes ([durable-rules](docs/wiki/durable-rules.md): a liveness clock).
    **Decided 2026-08-17:** deleting a device PURGES its queue, and the backlog of a device that
    never returns is BOUNDED - nothing obliges a user to delete anything.
-7. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
+5. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
    scrolling onto a white band. **Decided: the OS resizes the view**, never a JS offset; the check
    is 5 messages visible with the keyboard open ([backlog](docs/wiki/backlog.md)).
-8. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
-9. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
-10. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
-    **Decided: NO alert**, the panel is the whole of it ([backlog](docs/wiki/backlog.md),
-    [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
-11. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
-    secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
-    has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says
-    why ([docker](docs/wiki/infrastructure/docker.md)).
-12. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
+6. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
+7. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
+8. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
+   **Decided: NO alert**, the panel is the whole of it ([backlog](docs/wiki/backlog.md),
+   [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
+9. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
+   secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
+   has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says
+   why ([docker](docs/wiki/infrastructure/docker.md)).
+10. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
     it as a recovery source it is not. **Approved 2026-08-17** (a prod service change).
-13. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
+11. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
     delete that entry if it does.
-14. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+12. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
     browsers.
-15. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+13. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
     must end green, so every phase runs** - and the board says what that really costs: MSG is the
     ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
     **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
@@ -164,6 +166,14 @@ its commit are in. The detail lives where the link says - **do not restate it he
     [cross-client-testing](docs/wiki/cross-client-testing.md) - the only copy of the ladder's order.
 
 ### CANARI - what is open
+
+**OWED, AND ONLY A HUMAN CAN DO IT: six community memberships to grant back by hand.** Leaving a
+public channel used to delete the community membership row (fixed 2026-08-17). Prod holds one
+affected user, out of six communities they had written in, still a member of nine others. The
+identifying query, and why it yields CANDIDATES rather than proof, are on
+[social-service](docs/wiki/services/social-service.md#a-channel-scoped-action-never-touches-community-membership-2026-08-17)
+- a deliberate "leave the community" deletes the same row and leaves the same trace, so nothing can
+restore them automatically. **The user id stays out of this PUBLIC repo; re-run the query.**
 
 **WP-AVATAR-1 (P2) - THREE OF THE FOUR SHIPPED AND DEPLOYED 2026-08-16; ONLY LE CERCLE IS LEFT.**
 The contract is written and implemented three times: **only an ANSWER may be cached**, an optional

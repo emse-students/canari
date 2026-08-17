@@ -386,6 +386,11 @@ export class ChannelService {
     return res.json();
   }
 
+  /**
+   * Leaves a PRIVATE channel. A public channel is readable by every member of the community and
+   * holds no per-member access, so the server refuses it with a 400 - leaving is `leaveWorkspace`
+   * there, and the settings panel only offers this on a private channel.
+   */
   async leaveChannel(channelId: string) {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/leave`, {
@@ -423,16 +428,6 @@ export class ChannelService {
       `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(targetUserId)}`,
       { method: 'DELETE' }
     );
-    await this.handleError(res);
-    return res.json();
-  }
-
-  async kickMember(channelId: string, targetUserId: string) {
-    const cid = this.normalizeChannelId(channelId);
-    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/members/kick`, {
-      method: 'POST',
-      body: JSON.stringify({ targetUserId }),
-    });
     await this.handleError(res);
     return res.json();
   }

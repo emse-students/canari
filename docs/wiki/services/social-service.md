@@ -109,8 +109,7 @@ The numbers and what they imply are in
 | GET | `/api/channels/:channelId/messages` | List messages newest-first (`limit`≤200, `before` ISO cursor) |
 | POST | `/api/channels/:channelId/members/join` | Join channel |
 | POST | `/api/channels/:channelId/members/invite` | Invite user to channel |
-| POST | `/api/channels/:channelId/members/kick` | Kick member (role check) |
-| POST | `/api/channels/:channelId/members/leave` | Leave channel |
+| POST | `/api/channels/:channelId/members/leave` | Leave a **private** channel (drops the caller from `allowedUsers` and rotates the key). A public channel answers 400 - see "A channel-scoped action never touches community membership" |
 | GET | `/api/channels/:channelId/members` | Roster of THIS channel (private = `allowedUsers` + admins); `?scope=workspace` for the whole community |
 | DELETE | `/api/channels/workspaces/:workspaceId` | Delete a whole community for every member (MANAGE_WORKSPACE **only** - see "Deleting a community") |
 | DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS) |
@@ -396,7 +395,7 @@ The social-service publishes to `chat:channel_events`:
 | Event | Emitted by |
 |---|---|
 | `channel.member.joined` | join, invite accept, key distribution |
-| `channel.member.kicked` | `kickMember`, `kickFromWorkspace`, `leaveWorkspace` |
+| `channel.member.kicked` | `kickFromWorkspace`, `leaveWorkspace` |
 | `channel.member.removed` | `removeMemberFromChannel` |
 | `channel.key.rotated` | any membership change that invalidates the epoch key |
 | `channel.message.created` / `.deleted` | send, delete |
@@ -421,6 +420,40 @@ receiving one means nothing on its own, and two payload fields carry the entire 
 A community-wide removal (`kickFromWorkspace`) carries **no `channelId`**: that absence is what
 tells the client the whole workspace is gone. Client side: `removalOutcome` in
 `utils/chat/memberRemoval.ts` is the single place that reads these rules.
+
+### A channel-scoped action never touches community membership (2026-08-17)
+
+Access is stored at two different scopes, and they are not interchangeable:
+
+| Scope | Where it lives | Who it admits |
+|---|---|---|
+| Community | a `channel_members` row (`workspaceId` + `userId`) | the whole community, and **every public channel in it** |
+| Private channel | `channels.allowedUsers` | an existing community member, into that one channel |
+
+A public channel therefore has **no row naming any individual member**. Nothing about it can be
+given up, which means "leave this public channel" is not an operation this model can express, and
+`leaveChannel` answers `400` rather than pretending otherwise - a `{ success: true }` that removed
+nothing is a lie the next refetch exposes, since the channel comes straight back.
+
+It used to delete the community membership row instead, and that is the whole of a user-reported
+defect: **leaving one public channel put you outside the community while your client still showed
+it.** The list is local until the next refetch, so the community stayed on screen with its
+channels, and every workspace-scoped call then answered `NotFoundException: Not a member of this
+workspace` - "leave the community" included. Unmanageable rather than gone, which is why it read
+as a bug about the *last* channel: that is when the community becomes visibly empty, but any
+public channel did it.
+
+Measured on prod the day of the fix: **one user, ejected from six communities** they had written
+in, still a member of nine others. The query finds authors of channel messages with no membership
+row in that channel's workspace - candidates, never proof, because a deliberate
+"leave the community" deletes the same row and leaves the same trace. Nothing can restore them
+automatically for the same reason; they have to be re-invited.
+
+`removeMemberFromChannel` already had the rule right, and its docblock is the reference: for a
+public channel it only rotates the key, "the user is still a workspace member". The channel-scoped
+`kickMember` (`POST :channelId/members/kick`) carried the same defect and was **deleted** - it had
+no call site in any shipped client, and the two operations that do exist are correct at their own
+scope (`removeMemberFromChannel` for a channel, `kickFromWorkspace` for a community).
 
 ## Environment variables
 

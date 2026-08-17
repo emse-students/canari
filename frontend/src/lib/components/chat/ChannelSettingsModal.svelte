@@ -338,14 +338,19 @@
 
       <!-- Boutons de danger (Desktop uniquement, placés en bas) -->
       <div class="hidden md:flex md:flex-col mt-auto pt-6 gap-2">
-        <button
-          type="button"
-          onclick={handleLeaveChannel}
-          class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold text-orange-600 dark:text-orange-400 hover:bg-orange-500/10 transition-colors w-full outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
-        >
-          <LogOut size={18} strokeWidth={2.5} />
-          {m.chat_leave_channel_button()}
-        </button>
+        <!-- Only a private channel can be left: a public one is readable by every member of the
+             community, so there is no per-member access to give up. Leaving is a community-level
+             action there ("Quitter la communaute", in the community panel). -->
+        {#if selectedChannel?.isPrivate}
+          <button
+            type="button"
+            onclick={handleLeaveChannel}
+            class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold text-orange-600 dark:text-orange-400 hover:bg-orange-500/10 transition-colors w-full outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+          >
+            <LogOut size={18} strokeWidth={2.5} />
+            {m.chat_leave_channel_button()}
+          </button>
+        {/if}
         <button
           type="button"
           onclick={handleDeleteChannel}
@@ -443,14 +448,17 @@
             <h3 class="text-xs font-bold uppercase tracking-wider text-red-500 px-1 mb-2">
               {m.chat_danger_zone_label()}
             </h3>
-            <button
-              type="button"
-              onclick={handleLeaveChannel}
-              class="w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold text-orange-600 dark:text-orange-400 bg-orange-500/10 border border-orange-500/20 active:scale-[0.98] transition-all"
-            >
-              <LogOut size={18} strokeWidth={2.5} />
-              {m.chat_leave_channel_button()}
-            </button>
+            <!-- Private channels only - see the desktop block above. -->
+            {#if selectedChannel?.isPrivate}
+              <button
+                type="button"
+                onclick={handleLeaveChannel}
+                class="w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-xl text-sm font-bold text-orange-600 dark:text-orange-400 bg-orange-500/10 border border-orange-500/20 active:scale-[0.98] transition-all"
+              >
+                <LogOut size={18} strokeWidth={2.5} />
+                {m.chat_leave_channel_button()}
+              </button>
+            {/if}
             <button
               type="button"
               onclick={handleDeleteChannel}

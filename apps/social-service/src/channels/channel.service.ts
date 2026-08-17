@@ -34,7 +34,6 @@ import {
   CreateWorkspaceDto,
   ChannelJoinDto,
   ChannelLeaveDto,
-  ChannelKickDto,
   ChannelInviteDto,
   ChannelUpdateRoleDto,
   SendChannelMessageDto,
@@ -1386,7 +1385,18 @@ export class ChannelService {
     };
   }
 
-  /** Removes a user from a channel (or strips their private-channel roles) and rotates the key so the departing user's copy is invalidated. */
+  /**
+   * Removes the calling user from a PRIVATE channel and rotates its key so their copy is dead.
+   *
+   * Only a private channel can be left, because only a private channel holds per-user access
+   * (`allowedUsers`). A public one is readable by every member of the community and has no row
+   * naming the leaver, so there is nothing here to remove and the honest answer is a refusal:
+   * this used to delete their COMMUNITY membership instead, which put them outside a community
+   * their client still displayed - and every workspace-scoped call, "leave the community"
+   * included, then answered 404. Leaving a community is `leaveWorkspace`, and a channel-scoped
+   * operation may not stand in for it. See `removeMemberFromChannel` for the same rule applied to
+   * the admin-side removal.
+   */
   async leaveChannel(channelId: string, input: ChannelLeaveDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -1396,7 +1406,16 @@ export class ChannelService {
     });
     if (!member) throw new NotFoundException('Member not found');
 
-    // Rotate the key BEFORE removing the member so there is no window where the member
+    if (!channel.isPrivate) {
+      this.logger.debug(
+        `[CHANNEL] refused leave of public channel=${channelId} by=${input.userId.slice(0, 8)}`
+      );
+      throw new BadRequestException(
+        'A public channel is readable by every member of the community and cannot be left on its own. Leave the community instead.'
+      );
+    }
+
+    // Rotate the key BEFORE removing the access so there is no window where the member
     // is absent but the key hasn't been rotated - which would let them decrypt messages
     // sent with the still-valid old key during that gap.
     if (!channel.masterSecret) {
@@ -1404,13 +1423,9 @@ export class ChannelService {
     }
     channel.keyVersion += 1;
 
-    if (channel.isPrivate) {
-      const normalized = input.userId.trim().toLowerCase();
-      channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
-    } else {
-      await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.userId });
-    }
-    // Single save: atomically persists both the key rotation and the membership change.
+    const normalized = input.userId.trim().toLowerCase();
+    channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
+    // Single save: atomically persists both the key rotation and the access change.
     await this.channelRepo.save(channel);
 
     const newEpochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
@@ -1473,79 +1488,6 @@ export class ChannelService {
     );
     await this.updateDistributionStatus(distribution, 'key_acked', actorUserId);
     return { success: true, distributionId, status: 'key_acked' };
-  }
-
-  /** Removes a member from the workspace, broadcasts a kicked event, then rotates the channel key so the removed user can no longer decrypt new messages. */
-  async kickMember(channelId: string, input: ChannelKickDto) {
-    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException('Channel not found');
-
-    const adminMember = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId: input.actorUserId },
-    });
-    if (!adminMember) throw new ForbiddenException('Not a member of this workspace');
-
-    let hasPerm = false;
-    if (adminMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(adminMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.KICK_MEMBERS)
-      );
-    }
-
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL or KICK_MEMBERS permission');
-
-    await this.memberRepo.delete({ workspaceId: channel.workspaceId, userId: input.targetUserId });
-
-    if (channel.isPrivate) {
-      const normalized = input.targetUserId.trim().toLowerCase();
-      channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
-      await this.channelRepo.save(channel);
-    }
-
-    // Publish event to notify the kicked user and connected clients
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
-    // Also include the kicked user so they're notified
-    const notifyIds = [...new Set([...workspaceMemberIds, input.targetUserId])];
-    await this.redis.publishChannelEvent(
-      'channel.member.kicked',
-      {
-        channelId,
-        channelName: channel.name,
-        workspaceId: channel.workspaceId,
-        kickedUserId: input.targetUserId,
-        kickedBy: input.actorUserId,
-        // Tells the target whether they actually lost access: a public channel stays readable
-        // by every workspace member, so only a private one disappears from their sidebar.
-        isPrivate: channel.isPrivate,
-      },
-      notifyIds
-    );
-
-    // Rotate key so the kicked user's in-memory epoch keys are no longer valid
-    // for future messages. Backfill master secret if needed.
-    if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString('base64');
-    }
-    channel.keyVersion += 1;
-    await this.channelRepo.save(channel);
-
-    const newEpochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
-    // Only notify remaining members (not the kicked user) of the new key
-    await this.redis.publishChannelEvent(
-      'channel.key.rotated',
-      {
-        channelId,
-        newEpochBaseKey: newEpochKey.toString('base64'),
-        keyVersion: channel.keyVersion,
-      },
-      workspaceMemberIds
-    );
-
-    return { success: true };
   }
 
   /** Kicks a member from the workspace entirely (removes from all channels). Requires MANAGE_WORKSPACE, MANAGE_CHANNEL, or KICK_MEMBERS permission. */

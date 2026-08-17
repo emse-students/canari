@@ -84,8 +84,17 @@ The four traps worth seeing without opening one:
 ## Community channels -> [chat](frontend/modules/chat.md), [social-service](services/social-service.md)
 
 Deep links, system events, rosters and the channel/DM asymmetry are all on those two pages. The
-three that must be seen without opening one:
+four that must be seen without opening one:
 
+- **AN ACTION MAY ONLY MUTATE STATE AT ITS OWN SCOPE.** Membership is stored per COMMUNITY, so a
+  public channel - readable by every member - has no row naming anyone, and "leave this public
+  channel" is not an operation the model can express. `leaveChannel` deleted the community
+  membership row to fake one, which put a user outside a community their client still displayed:
+  the sidebar is local until the next refetch, so every workspace-scoped call then answered
+  `Not a member of this workspace` - "leave the community" included. **Unmanageable is worse than
+  gone**, and the wider rule is the one that made it invisible: an operation that cannot be
+  expressed must be REFUSED, never approximated with the neighbouring scope's write. A
+  `{ success: true }` that removed nothing is a lie the next refetch exposes.
 - Never return a `Channel` entity to a client: it carries `masterSecret`. Project fields explicitly.
 - `/c/<groupId>` and `/chat/<groupId>` are NOT routes; a conversation opens by publishing to `notifNav`.
 - "A refresh ran" and "the list is current" are two different facts; a loader that conflates them

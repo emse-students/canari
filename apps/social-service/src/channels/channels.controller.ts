@@ -18,7 +18,6 @@ import { ChannelService } from './channel.service';
 import {
   type ChannelJoinDto,
   type ChannelInviteDto,
-  type ChannelKickDto,
   type ChannelLeaveDto,
   type ChannelUpdateRoleDto,
   type CreateChannelDto,
@@ -190,20 +189,6 @@ export class ChannelsController {
     return this.service.leaveChannel(channelId, {
       ...body,
       userId: xUserId.trim().toLowerCase(),
-    });
-  }
-
-  /** Kicks a member from a channel; requires sufficient role on the calling user. */
-  @UseGuards(NginxAuthGuard)
-  @Post(':channelId/members/kick')
-  kick(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string,
-    @Body() body: ChannelKickDto
-  ) {
-    return this.service.kickMember(channelId, {
-      ...body,
-      actorUserId: xUserId.trim().toLowerCase(),
     });
   }
 

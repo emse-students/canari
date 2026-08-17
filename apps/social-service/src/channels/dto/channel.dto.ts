@@ -104,11 +104,6 @@ export interface MarkDistributionReceivedDto {
   keyVersion: number;
 }
 
-export interface ChannelKickDto {
-  targetUserId: string;
-  actorUserId: string;
-}
-
 export interface ChannelUpdateRoleDto {
   targetUserId: string;
   actorUserId: string;
