@@ -145,9 +145,16 @@
    * Every candidate goes through Canari's image proxy, which is what keeps that
    * last sentence true for the conventional paths too - they are derived here,
    * so nothing server-side would otherwise have rewritten them.
+   *
+   * Empty for a cover card: that branch shows the site's name and its cover, and
+   * no favicon anywhere. Probing one is a chain of outbound requests whose answer
+   * nothing reads - and whose failures are the `404` / `415` console lines a
+   * MiGallery album printed on every render.
    */
   const faviconChain = $derived(
-    faviconCandidates(parsed.href, externalPreview?.icon).map(proxiedPreviewImageUrl)
+    coverCard
+      ? []
+      : faviconCandidates(parsed.href, externalPreview?.icon).map(proxiedPreviewImageUrl)
   );
 
   /** The Open Graph image, likewise fetched through the proxy rather than from its host. */

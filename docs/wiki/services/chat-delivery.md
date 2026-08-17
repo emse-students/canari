@@ -852,7 +852,21 @@ parity row.
 | GET | `/api/mls/link-preview` | Fetch safe external URL preview |
 | GET | `/api/mls/link-preview/image?url=` | Proxy a preview's `og:image` or favicon |
 | GET | `/api/mls/link-safety?url=` | Google Safe Browsing verdict for a URL (WP-SAFELINK-1) |
-| GET | `/api/mls/gallery-cover/:albumId` | Proxy MiGallery album cover image |
+
+#### Who carries the MiGallery key, and who does not
+
+One rule, decided on 2026-08-17: **an image is public and needs no key, a metadata read does.**
+
+`fetchMiGalleryPreview` calls `/api/albums/:id/info` with `MIGALLERY_API_KEY`, because that
+endpoint stays gated for private albums - it is the only credentialed call to MiGallery in this
+service. Cover images are not: MiGallery serves `/cover` (square) and `/og-cover` (wide) publicly
+for every visibility, since an external site embeds one from an `<img>` tag, which carries no key.
+They go through the ordinary `/api/mls/link-preview/image` proxy like any other preview image -
+which is also the only path with the SSRF guard and the content-type check.
+
+A second, key-carrying `/api/mls/gallery-cover/:albumId` proxy existed until then, from when covers
+were gated. Deleting it is what makes the rule true rather than aspirational: with two doors to one
+site, which credential applied depended on which field of the payload the client happened to read.
 
 #### Link preview is a user-controlled server-side fetch (SSRF)
 

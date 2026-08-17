@@ -132,7 +132,6 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | POST | `/api/mls/security/pin-change` | Change PIN verifier |
 | POST | `/api/mls/security/pin-reset` | Reset PIN (purge devices) |
 | GET | `/api/mls/link-preview` | Fetch safe external URL preview |
-| GET | `/api/mls/gallery-cover/:albumId` | Proxy MiGallery album cover |
 
 ### Distributed locks
 
