@@ -14,6 +14,7 @@
  * the session offline for the next attempt.
  */
 import { getToken, SessionExpiredError } from '$lib/stores/auth';
+import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { startPushService } from '$lib/services/PushNotificationService';
 import { initializeConnection, getIsTabLeader } from '$lib/utils/chat/connection';
@@ -97,6 +98,14 @@ async function runPromotion(
       .then(() => cb.log('[PROMOTE] Push token registered.'))
       .catch((e) => cb.log(`[PROMOTE] Push registration failed (non-blocking): ${String(e)}`));
   }
+
+  // 2b. The session/device binding, skipped at login for the same reason push was: it needs a
+  //     token. Not cosmetic - a session that never binds is listed in the security settings as a
+  //     row with NO device, which is the shape reserved for a holder that could not unlock MLS.
+  //     Skipping it here would make an ordinary reconnect look like a stolen cookie.
+  void bindCurrentSessionDevice(ctx.getMyDeviceId()).catch((e) =>
+    cb.log(`[PROMOTE] Session/device binding failed (non-blocking): ${String(e)}`)
+  );
 
   // 3. The WebSocket and the post-connect reconciliation: the same sequence login runs, so the
   //    KeyPackages get published, `fetchPendingMessages` drains everything the server queued while

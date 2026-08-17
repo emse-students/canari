@@ -100,6 +100,33 @@ and the session lived. Visibility: revoking that session from another client's "
 panel and cold-starting the phone put it on `/login`, with `session dead -> logout` and
 `session expired on GET … - no anonymous retry` in its log.
 
+## One session per device, enforced where the device becomes KNOWN
+
+A session and a device are two records of one physical thing, held by two services. Canari joins them
+on `auth_sessions."deviceId"`, written once per app start by `PUT /auth/sessions/current/device`
+(2026-08-17). Two results came out of doing it, and both generalise.
+
+**The login endpoint cannot be the place that supersedes the old session.** It creates a row and
+overwrites the cookie, so the previous row is unreachable from that browser the instant the callback
+returns - and yet it stays valid for the full idle lifetime. The obvious fix, deleting the user's
+other sessions at login, is wrong: at that moment the only discriminator the server holds is the
+USER, which would also sign the phone and the desktop out. The discriminator that separates them
+arrives later, at unlock. So the decision moves to where the fact is known rather than the fact being
+guessed where the decision is convenient.
+
+**A second live session naming one device is unreachable BY CONSTRUCTION, so it can be destroyed
+without a heuristic.** A browser profile holds exactly one refresh cookie and one device identifier;
+so does an app install. Whatever else claims that device is either abandoned - cleared cookies, a
+reinstall, a login that never signed the old one out - or held by somebody else. Both readings end
+the same way, which is why `bindDevice` deletes them and logs it as a WARN rather than reporting a
+count nobody reads. Measured before the change: 47 users with a live session, 13 holding several,
+and 2 pairs sharing one user agent.
+
+**A null device is a state, not a gap.** A session is opened by the OIDC callback, before the client
+can name a device, and a holder who never unlocks MLS never names one at all - which is the shape a
+stolen cookie takes. The settings panel gives such a row its own entry instead of hiding it under a
+device it cannot claim.
+
 ## Keys
 
 - **An empty key can fail OPEN or CLOSED and you cannot guess which.** `crypto.createHmac('sha256','')`

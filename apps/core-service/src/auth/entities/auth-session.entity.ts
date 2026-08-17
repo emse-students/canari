@@ -86,6 +86,12 @@ export class AuthSession {
    * exactly the row worth looking at, and the panel shows it as its own entry
    * instead of hiding it under a device.
    *
+   * AT MOST ONE LIVE SESSION NAMES A GIVEN DEVICE, and that is enforced rather
+   * than hoped for: `AuthSessionsService.bindDevice` destroys any other session
+   * claiming the same one. A profile holds a single refresh cookie and a single
+   * device identifier, so a second live claim is unreachable from that device -
+   * abandoned, or held by someone else.
+   *
    * Never used for authorization: it is a label the client asserts about
    * itself. Anything that has to be TRUE about a device is decided by the
    * delivery service against its own records.

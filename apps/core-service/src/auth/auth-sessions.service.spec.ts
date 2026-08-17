@@ -12,6 +12,29 @@ import { AuthSession } from './entities/auth-session.entity';
  * What it cannot cover is the SQL itself (column quoting, the atomicity of the
  * conditional UPDATE); that is the database's job and is exercised in staging.
  */
+/** The only columns any hand-written WHERE in this service filters on. */
+interface SessionWhere {
+  id?: string;
+  userId?: string;
+  deviceId?: string;
+}
+
+const KNOWN_WHERE_KEYS = new Set(['id', 'userId', 'deviceId']);
+
+/**
+ * Applies one WHERE clause, and refuses any column the service is not supposed
+ * to filter on - so widening a query fails the suite instead of quietly working.
+ */
+function matchesWhere(row: AuthSession, clause: SessionWhere): boolean {
+  for (const key of Object.keys(clause)) {
+    if (!KNOWN_WHERE_KEYS.has(key)) throw new Error(`Unrecognised WHERE column: ${key}`);
+  }
+  if (clause.id !== undefined && row.id !== clause.id) return false;
+  if (clause.userId !== undefined && row.userId !== clause.userId) return false;
+  if (clause.deviceId !== undefined && row.deviceId !== clause.deviceId) return false;
+  return true;
+}
+
 class FakeRepo {
   rows: AuthSession[] = [];
 
@@ -45,18 +68,30 @@ class FakeRepo {
     return Promise.resolve({ affected });
   }
 
-  find(options: { where: { userId: string } }): Promise<AuthSession[]> {
-    return Promise.resolve(this.rows.filter((r) => r.userId === options.where.userId));
+  /**
+   * Supports both shapes the service issues: one clause, and the ARRAY form -
+   * an OR - that `bindDevice` uses to read its own row and every session already
+   * claiming the device in a single round trip. Matches are de-duplicated by
+   * identity, as the database would when a row satisfies both clauses.
+   */
+  find(options: { where: SessionWhere | SessionWhere[] }): Promise<AuthSession[]> {
+    const clauses = Array.isArray(options.where) ? options.where : [options.where];
+    const matched = this.rows.filter((r) => clauses.some((c) => matchesWhere(r, c)));
+    return Promise.resolve([...new Set(matched)]);
   }
 
   delete(criteria: {
-    id?: string;
+    id?: string | { value?: string[] };
     userId?: string;
     expiresAt?: { value?: Date };
   }): Promise<{ affected: number }> {
     const before = this.rows.length;
     this.rows = this.rows.filter((r) => {
-      if (criteria.id !== undefined && r.id !== criteria.id) return true;
+      // `In([...])` - TypeORM wraps the bound list in `.value`, as `LessThan` does its date.
+      if (criteria.id !== undefined) {
+        const ids = typeof criteria.id === 'string' ? [criteria.id] : (criteria.id.value ?? []);
+        if (!ids.includes(r.id)) return true;
+      }
       if (criteria.userId !== undefined && r.userId !== criteria.userId) return true;
       // LessThan(date) - TypeORM wraps the bound value in `.value`.
       if (criteria.expiresAt !== undefined) {
@@ -393,6 +428,48 @@ describe('AuthSessionsService', () => {
         false
       );
       expect(repo.rows[0].deviceId).toBeUndefined();
+    });
+
+    it('destroys the other session claiming the same device', async () => {
+      // A browser profile holds one cookie and one device id, so a second live session naming
+      // that device is unreachable from it: abandoned, or held by somebody else. Before this,
+      // such a credential stayed valid for seven idle days.
+      const { service, repo } = makeService();
+      const first = await service.create('user-1');
+      await service.bindDevice('user-1', first.sessionId, 'web-a-b');
+      const second = await service.create('user-1');
+
+      await expect(service.bindDevice('user-1', second.sessionId, 'web-a-b')).resolves.toBe(true);
+      expect(repo.rows.map((r) => r.id)).toEqual([second.sessionId]);
+      expect(repo.rows[0].deviceId).toBe('web-a-b');
+    });
+
+    it('purges a stray even when the caller session already names the device', async () => {
+      // The conditional write must not short-circuit the purge: a session bound long ago would
+      // otherwise never clean up a stray that appeared beside it, and the pair would live on.
+      const { service, repo } = makeService();
+      const mine = await service.create('user-1');
+      await service.bindDevice('user-1', mine.sessionId, 'web-a-b');
+      const stray = await service.create('user-1');
+      repo.rows[1].deviceId = 'web-a-b';
+      const writes = jest.spyOn(repo, 'update');
+
+      await expect(service.bindDevice('user-1', mine.sessionId, 'web-a-b')).resolves.toBe(true);
+      expect(repo.rows.map((r) => r.id)).toEqual([mine.sessionId]);
+      expect(repo.rows.map((r) => r.id)).not.toContain(stray.sessionId);
+      expect(writes).not.toHaveBeenCalled();
+    });
+
+    it('leaves another user session alone even when it names the same device string', async () => {
+      // Device ids are client-asserted labels, so two accounts CAN carry the same string. The
+      // purge is scoped by user; anything wider would let one account sign another one out.
+      const { service, repo } = makeService();
+      const mine = await service.create('user-1');
+      const theirs = await service.create('user-2');
+      repo.rows[1].deviceId = 'web-a-b';
+
+      await expect(service.bindDevice('user-1', mine.sessionId, 'web-a-b')).resolves.toBe(true);
+      expect(repo.rows.map((r) => r.id)).toEqual([mine.sessionId, theirs.sessionId]);
     });
   });
 

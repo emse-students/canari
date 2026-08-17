@@ -36,6 +36,15 @@ consequence is stated rather than hidden: revoking a session stops it renewing i
 but an access token already handed out keeps working until it expires (≤ 1 h). The settings UI says
 so in as many words.
 
+**The row also names the MLS device it belongs to** (`deviceId`, nullable), written once per app
+start after the client unlocks MLS — the first moment it can say which device it is. It is the only
+join between a login, which lives here, and a device, which lives in the delivery service; without it
+the security settings could list both and never say which row on one was which row on the other.
+Binding also enforces **at most one live session per device**: see
+[sessions](../sessions.md#one-session-per-device-enforced-where-the-device-becomes-known) for why a
+second claim is unreachable by construction, and why the login endpoint cannot be the place that
+supersedes it.
+
 The refresh JWT carries two new claims:
 
 | Claim | Meaning |
@@ -91,7 +100,8 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | POST | `/api/auth/oidc/callback` | none | Exchange Authentik auth code for JWT + refresh cookie; upsert local user |
 | POST | `/api/auth/refresh` | cookie | Rotate the session's `jti`, return a new access token; revokes the session on a replay |
 | POST | `/api/auth/logout` | cookie | Delete the session row, then clear the cookie |
-| GET | `/api/auth/sessions` | Bearer (+ cookie) | List the caller's live sessions, flagging the current one |
+| GET | `/api/auth/sessions` | Bearer (+ cookie) | List the caller's live sessions, flagging the current one and naming each one's device |
+| PUT | `/api/auth/sessions/current/device` | Bearer (+ cookie) | Bind the calling session to an MLS device, destroying any other session claiming it |
 | DELETE | `/api/auth/sessions` | Bearer (+ cookie) | Revoke every session except the current one |
 | DELETE | `/api/auth/sessions/:id` | Bearer | Revoke one of the caller's sessions (scoped to the caller) |
 | GET | `/api/auth/verify` | Bearer | Validate JWT for Nginx auth_request |
@@ -236,7 +246,7 @@ PostgreSQL (`auth_db`). Main tables:
 | Table | Key columns |
 |---|---|
 | `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `stripeCustomerId`, `admin`, `notesCiphertext`, `notesKey`, `notes` (legacy) |
-| `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp` |
+| `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp`, `deviceId` |
 | `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion` |
 
 `auth_sessions` rows are swept hourly, and any row past `expiresAt` is refused before it is swept —

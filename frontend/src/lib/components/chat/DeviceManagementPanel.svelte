@@ -1,13 +1,10 @@
 <script lang="ts">
-  import { SvelteMap } from 'svelte/reactivity';
   import {
     Monitor,
     Smartphone,
     Trash2,
     RefreshCw,
     TriangleAlert,
-    CheckCircle,
-    Clock,
     Loader,
     ShieldAlert,
     Edit2,
@@ -15,16 +12,16 @@
   } from '@lucide/svelte';
   import Modal from '../shared/Modal.svelte';
   import type { IMlsService } from '$lib/mls-client';
+  import {
+    describeUserAgent,
+    fetchAuthSessions,
+    revokeAuthSession,
+    type AuthSessionInfo,
+  } from '$lib/services/authSessions';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { exactDate, timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
-
-  interface DeviceMembership {
-    id: string;
-    userId: string;
-    deviceId: string;
-    groupId: string;
-    status: string;
-  }
 
   interface DeviceInfo {
     deviceId: string;
@@ -32,6 +29,36 @@
     deviceName?: string;
     deviceOs?: string;
     deviceAppVersion?: string;
+  }
+
+  /**
+   * One entry in the list. A device and a login are two records of the same
+   * physical thing, held by two services, so a row carries both - joined on the
+   * device id the session was stamped with at unlock.
+   *
+   * Either half can be missing, and each absence means something different:
+   *  - sessions empty: an enrolled device holding no live login. It can still
+   *    decrypt what it already has, so it is still worth deleting when lost.
+   *  - device null: a login that never named a device, or names one the server
+   *    no longer lists. That is the shape a stolen cookie takes, so it gets a
+   *    row of its own instead of being folded into a device it cannot claim.
+   *
+   * `sessions` is a list rather than a single value even though `bindDevice`
+   * enforces one live login per device: rows opened before that rule existed,
+   * and devices that have not unlocked since, are still legitimately plural.
+   */
+  interface PanelRow {
+    key: string;
+    device: DeviceInfo | null;
+    /** Live logins on this device, most recently used first. */
+    sessions: AuthSessionInfo[];
+    isCurrentDevice: boolean;
+    /**
+     * For a device-less row, the device id the login claimed but that the server
+     * did not list - null when it claimed none at all. The two are told apart
+     * because only the second means "never unlocked MLS".
+     */
+    unlistedDeviceId: string | null;
   }
 
   interface Props {
@@ -50,11 +77,21 @@
   let { open, userId, myDeviceId, mlsService, onClose }: Props = $props();
 
   let devices = $state<DeviceInfo[]>([]);
-  let memberships = new SvelteMap<string, DeviceMembership[]>();
+  let sessions = $state<AuthSessionInfo[]>([]);
+  /**
+   * Whether the login list is KNOWN. Devices and logins come from two services,
+   * so one can answer while the other does not - and a row must then say
+   * nothing about connections rather than render "no active connection", which
+   * would state as fact something this panel does not know.
+   */
+  let sessionsKnown = $state(false);
   let loading = $state(false);
   let error = $state('');
+  let sessionError = $state('');
   let editingDeviceId = $state<string | null>(null);
   let editingName = $state('');
+  /** Key of the row being deleted, so only its own control shows a spinner. */
+  let deleting = $state<string | null>(null);
 
   /**
    * Whether the device we are running on appears in the list the server returned.
@@ -68,11 +105,55 @@
    */
   const currentDeviceListed = $derived(devices.some((d) => d.deviceId === myDeviceId));
 
+  /**
+   * The joined list. Devices first, current one at the top, then whatever
+   * activity is most recent; logins with no device close the list because they
+   * are the ones the user is being asked to look at hardest.
+   */
+  const rows = $derived.by((): PanelRow[] => {
+    const listedIds = devices.map((d) => d.deviceId);
+    const deviceRows: PanelRow[] = devices.map((device) => ({
+      key: device.deviceId,
+      device,
+      sessions: sessions
+        .filter((s) => s.deviceId === device.deviceId)
+        .sort((a, b) => Date.parse(b.lastUsedAt) - Date.parse(a.lastUsedAt)),
+      isCurrentDevice: device.deviceId === myDeviceId,
+      unlistedDeviceId: null,
+    }));
+
+    // A login belongs to no row above when it named no device at all, or named
+    // one the server did not list. Stated as a predicate over the two lists
+    // rather than as a mark left behind by the loop: there is then no order in
+    // which the two can disagree.
+    const orphanRows: PanelRow[] = sessions
+      .filter((s) => s.deviceId === null || !listedIds.includes(s.deviceId))
+      .sort((a, b) => Date.parse(b.lastUsedAt) - Date.parse(a.lastUsedAt))
+      .map((s) => ({
+        key: `session:${s.id}`,
+        device: null,
+        sessions: [s],
+        isCurrentDevice: false,
+        unlistedDeviceId: s.deviceId,
+      }));
+
+    deviceRows.sort((a, b) => {
+      if (a.isCurrentDevice !== b.isCurrentDevice) return a.isCurrentDevice ? -1 : 1;
+      return lastActivity(b) - lastActivity(a);
+    });
+    return [...deviceRows, ...orphanRows];
+  });
+
   $effect(() => {
     if (open && userId) {
       void loadDeviceData();
     }
   });
+
+  /** Most recent login instant of a row, 0 when it holds none (such rows sort last). */
+  function lastActivity(row: PanelRow): number {
+    return row.sessions.length > 0 ? Date.parse(row.sessions[0].lastUsedAt) : 0;
+  }
 
   function getDeviceOsLabel(device: DeviceInfo): string {
     const os = (device.deviceOs || '').toLowerCase();
@@ -94,37 +175,73 @@
     return os === 'android' || os === 'ios';
   }
 
+  /** Whether a row is drawn with a phone icon, from the device or - failing that - its login. */
+  function rowIsMobile(row: PanelRow): boolean {
+    if (row.device) return isMobileOs(row.device);
+    return describeUserAgent(row.sessions[0]?.userAgent ?? null, '').kind === 'mobile';
+  }
+
+  /**
+   * The browser the most recent login came from, prefixed to the activity line.
+   *
+   * Empty for a device-less row, whose TITLE is already that same label - the
+   * user has to be able to answer "is one of these not me?", and giving them the
+   * same answer twice on one row does not help.
+   */
+  function sessionBrowserLabel(row: PanelRow): string {
+    if (!row.device) return '';
+    const ua = row.sessions[0]?.userAgent ?? null;
+    if (!ua) return '';
+    return describeUserAgent(ua, '').label;
+  }
+
+  /**
+   * Short form of a device id: enough to recognise a row and to match it against
+   * a log line, which a position in the list cannot do - the position changes
+   * whenever the list does. The full id stays available on hover.
+   */
+  function shortDeviceId(deviceId: string): string {
+    return deviceId.slice(0, 8);
+  }
+
+  /**
+   * Loads both halves of the list.
+   *
+   * The two calls hit different services and are awaited together rather than in
+   * sequence: a slow login list must not delay the devices, and a failure of
+   * either is reported as itself - the panel says which half is missing instead
+   * of showing one empty list for two different causes.
+   */
   async function loadDeviceData() {
     loading = true;
     error = '';
+    sessionError = '';
     try {
-      console.log('[DevicePanel] Loading devices for user:', userId);
-      const allDevices = await mlsService.fetchUserDevices(userId);
-      devices = allDevices;
-      console.log(`[DevicePanel] Found ${allDevices.length} device(s)`);
+      console.log('[DevicePanel] Loading devices and sessions for user:', userId);
+      const [deviceResult, sessionResult] = await Promise.allSettled([
+        mlsService.fetchUserDevices(userId),
+        fetchAuthSessions(),
+      ]);
+
+      if (sessionResult.status === 'fulfilled') {
+        sessions = sessionResult.value;
+        sessionsKnown = true;
+        console.log(`[DevicePanel] ${sessions.length} live session(s)`);
+      } else {
+        sessions = [];
+        sessionsKnown = false;
+        sessionError = m.settings_sessions_load_error();
+        console.error('[DevicePanel] Failed to load sessions', sessionResult.reason);
+      }
+
+      if (deviceResult.status === 'rejected') throw deviceResult.reason;
+      devices = deviceResult.value;
+      console.log(`[DevicePanel] Found ${devices.length} device(s)`);
       // Worth a loud line: this is the state in which every self-protection in this panel is
       // inert, and the cause is server-side (retention filter, unresolvable KeyPackage) so it
       // cannot be diagnosed from what the UI shows.
-      if (!allDevices.some((d) => d.deviceId === myDeviceId)) {
+      if (!devices.some((d) => d.deviceId === myDeviceId)) {
         console.warn(`[DevicePanel] Current device ${myDeviceId} is ABSENT from its own list`);
-      }
-
-      // Load memberships for each device
-      const newMemberships = new SvelteMap<string, DeviceMembership[]>();
-      for (const device of allDevices) {
-        try {
-          const m = await mlsService.getDeviceMemberships(userId, device.deviceId);
-          newMemberships.set(device.deviceId, m);
-          console.log(
-            `[DevicePanel] Device ${device.deviceId.slice(0, 8)}… has ${m.length} membership(s)`
-          );
-        } catch {
-          newMemberships.set(device.deviceId, []);
-        }
-      }
-      memberships.clear();
-      for (const [k, v] of newMemberships) {
-        memberships.set(k, v);
       }
     } catch (e) {
       console.error('[DevicePanel] Failed to load device data', e);
@@ -139,44 +256,104 @@
     return device.deviceName || getDeviceOsLabel(device);
   }
 
-  async function handleRemoveDevice(deviceId: string) {
-    if (deviceId === myDeviceId) return;
+  /** Title of a row: the device name, or the browser the login came from. */
+  function rowLabel(row: PanelRow): string {
+    if (row.device) return deviceLabel(row.device);
+    return describeUserAgent(
+      row.sessions[0]?.userAgent ?? null,
+      m.settings_sessions_unknown_device()
+    ).label;
+  }
+
+  /**
+   * Signs a row's logins out. Every session of the row dies: the row IS the
+   * device from the user's point of view, so leaving one alive would answer
+   * "remove this" with "some of it".
+   *
+   * Each revocation is its own try - one failing must not abandon the others -
+   * and the count of failures is returned so a partial result is reported as
+   * partial rather than as success.
+   */
+  async function revokeRowSessions(row: PanelRow): Promise<number> {
+    let failed = 0;
+    for (const s of row.sessions) {
+      try {
+        await revokeAuthSession(s.id);
+      } catch (e) {
+        failed++;
+        console.error(`[DevicePanel] Revoke failed for session ${s.id}`, e);
+      }
+    }
+    return failed;
+  }
+
+  /**
+   * The single destructive action of this panel: the row goes away, and whoever
+   * held it starts over.
+   *
+   * For a device it is deliberately both halves - the MLS device is revoked AND
+   * its logins are signed out - because a user removing a machine they no longer
+   * trust means one thing, not two, and shipping two buttons made them do half
+   * the job. The device is revoked FIRST: it is the irreversible half, and if a
+   * revocation then fails the surviving cookie can only reach the reset path,
+   * whereas the reverse order would leave a trusted device behind a completed
+   * sign-out. A device with no live login is still deletable, and a login with
+   * no device only has the sign-out half to perform.
+   */
+  async function handleRemoveRow(row: PanelRow) {
+    if (row.isCurrentDevice) return;
     // Never empty the account. Deleting the current device is already blocked above, so reaching
     // zero means we did not recognise ourselves in the list - and the deletion would then hit the
     // machine we are on. That is not recoverable by re-logging in: deleteDevice denylists the
-    // device against re-registration, on top of purging its memberships and queued messages.
-    if (devices.length <= 1) {
-      console.warn(`[DevicePanel] Refused to delete the last device ${deviceId.slice(0, 8)}…`);
+    // device against re-registration until it wipes itself back to a fresh install.
+    if (row.device && devices.length <= 1) {
+      console.warn(`[DevicePanel] Refused to delete the last device ${row.key.slice(0, 8)}…`);
       error = m.chat_device_last_one_error();
       return;
     }
-    // Deletion is irreversible for the revoked device: deleteDevice purges its
-    // KeyPackages, prekeys, push tokens, memberships and queued messages, so anything
-    // still in flight for it is lost. Confirm before firing, as kicking a member does.
-    const device = devices.find((d) => d.deviceId === deviceId);
+
     const confirmed = await showConfirm(
-      m.chat_delete_device_confirm({ name: device ? deviceLabel(device) : deviceId }),
+      row.device
+        ? m.chat_delete_device_confirm({ name: rowLabel(row) })
+        : m.chat_device_revoke_session_confirm(),
       { danger: true, confirmLabel: m.common_delete_button() }
     );
     if (!confirmed) {
-      console.log(`[DevicePanel] Deletion of ${deviceId.slice(0, 8)}… cancelled by user`);
+      console.log(`[DevicePanel] Removal of ${row.key} cancelled by user`);
       return;
     }
-    console.log(`[DevicePanel] Deleting device ${deviceId.slice(0, 8)}…`);
+
+    deleting = row.key;
     try {
-      const result = await mlsService.deleteDevice(userId, deviceId);
-      if (result.status !== 'device_deleted') {
-        error = m.chat_device_delete_auth_error();
-        return;
+      if (row.device) {
+        console.log(`[DevicePanel] Deleting device ${shortDeviceId(row.device.deviceId)}…`);
+        const result = await mlsService.deleteDevice(userId, row.device.deviceId);
+        if (result.status !== 'device_deleted') {
+          error = m.chat_device_delete_auth_error();
+          return;
+        }
+        console.log(
+          `[DevicePanel] Deleted device ${shortDeviceId(row.device.deviceId)}… (groups cleaned: ${result.groupsCleaned}, keyPackages: ${result.keyPackagesDeleted})`
+        );
       }
-      console.log(
-        `[DevicePanel] Deleted device ${deviceId.slice(0, 8)}… (groups cleaned: ${result.groupsCleaned}, keyPackages: ${result.keyPackagesDeleted})`
-      );
-      await loadDeviceData();
+      const failed = await revokeRowSessions(row);
+      if (failed > 0) {
+        // The device is gone but a credential for it survived: say so, because the two halves
+        // have different consequences and only one of them is visible in the list.
+        sessionError = m.settings_sessions_revoke_error();
+      } else {
+        showToast(
+          row.device ? m.chat_device_removed_toast() : m.settings_sessions_revoked_toast(),
+          'info'
+        );
+      }
     } catch (e) {
-      console.error('[DevicePanel] Failed to delete device', e);
-      error = m.chat_device_remove_error();
+      console.error('[DevicePanel] Failed to remove row', e);
+      error = row.device ? m.chat_device_remove_error() : m.settings_sessions_revoke_error();
+    } finally {
+      deleting = null;
     }
+    await loadDeviceData();
   }
 
   function startEditing(deviceId: string) {
@@ -204,31 +381,6 @@
       error = m.chat_device_rename_error();
     }
   }
-
-  function _statusLabel(status: string) {
-    switch (status) {
-      case 'welcome_received':
-        return 'ok';
-      case 'welcome_sent':
-        return 'sent';
-      case 'pending':
-        return 'pending';
-      default:
-        return 'unknown';
-    }
-  }
-
-  function getStaleGroups(deviceMemberships: DeviceMembership[]): DeviceMembership[] {
-    return deviceMemberships.filter((m) => m.status === 'pending');
-  }
-
-  function getMembershipStats(deviceMemberships: DeviceMembership[]) {
-    const total = deviceMemberships.length;
-    const active = deviceMemberships.filter((m) => m.status === 'welcome_received').length;
-    const pending = deviceMemberships.filter((m) => m.status === 'pending').length;
-    const inProgress = deviceMemberships.filter((m) => m.status === 'welcome_sent').length;
-    return { total, active, pending, inProgress };
-  }
 </script>
 
 <Modal {open} title={m.chat_device_management_title()} {onClose} maxWidth="max-w-xl">
@@ -250,6 +402,17 @@
         </div>
       {/if}
 
+      <!-- Separate from `error` on purpose: the logins come from another service, and a row with
+           no connection line has to be readable as "not known" rather than "none". -->
+      {#if sessionError}
+        <div
+          class="flex items-start gap-3 p-4 rounded-2xl bg-orange-500/10 border border-orange-500/20 text-orange-700 dark:text-orange-300 mb-4 shadow-inner"
+        >
+          <TriangleAlert size={20} class="shrink-0 mt-0.5" />
+          <p class="text-sm font-medium leading-relaxed">{sessionError}</p>
+        </div>
+      {/if}
+
       {#if devices.length > 0 && !currentDeviceListed}
         <div
           class="flex items-start gap-3 p-4 rounded-2xl bg-orange-500/10 border border-orange-500/20 text-orange-700 dark:text-orange-300 mb-4 shadow-inner"
@@ -262,34 +425,39 @@
       {/if}
 
       <div class="space-y-5 pb-2">
-        <div class="flex items-center justify-between">
-          <p class="text-[0.85rem] font-bold uppercase tracking-wider text-text-muted">
-            {m.chat_devices_count_label({ devices: devices.length })}
-          </p>
-        </div>
+        <p class="text-sm text-text-muted leading-relaxed">
+          {m.chat_devices_intro()}
+        </p>
+
+        <p class="text-[0.85rem] font-bold uppercase tracking-wider text-text-muted">
+          {m.chat_devices_count_label({ devices: devices.length })}
+        </p>
 
         <div class="space-y-4">
-          {#each devices as device, idx (device.deviceId)}
-            {@const isCurrentDevice = device.deviceId === myDeviceId}
-            {@const deviceMemberships = memberships.get(device.deviceId) ?? []}
-            {@const stats = getMembershipStats(deviceMemberships)}
-            {@const staleGroups = getStaleGroups(deviceMemberships)}
+          {#each rows as row (row.key)}
+            {@const latest = row.sessions[0]}
+            {@const browser = sessionBrowserLabel(row)}
 
             <div
-              class="rounded-[1.5rem] border p-4 sm:p-5 space-y-4 transition-all duration-300 hover:shadow-md
-                {isCurrentDevice
+              class="rounded-3xl border p-4 sm:p-5 transition-all duration-300 hover:shadow-md
+                {row.isCurrentDevice
                 ? 'border-amber-500/30 bg-amber-500/5 shadow-inner'
-                : 'border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 backdrop-blur-md'}"
+                : row.device === null
+                  ? 'border-orange-500/30 bg-orange-500/5'
+                  : 'border-black/5 dark:border-white/10 bg-white/40 dark:bg-black/20 backdrop-blur-md'}"
             >
-              <!-- Device header -->
               <div class="flex items-start sm:items-center gap-4">
                 <div
                   class="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-sm
-                  {isCurrentDevice
+                  {row.isCurrentDevice
                     ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
-                    : 'bg-white/80 dark:bg-white/10 text-text-muted'}"
+                    : row.device === null
+                      ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400'
+                      : 'bg-white/80 dark:bg-white/10 text-text-muted'}"
                 >
-                  {#if isMobileOs(device)}
+                  {#if row.device === null}
+                    <ShieldAlert size={24} strokeWidth={2} />
+                  {:else if rowIsMobile(row)}
                     <Smartphone size={24} strokeWidth={2} />
                   {:else}
                     <Monitor size={24} strokeWidth={2} />
@@ -297,7 +465,7 @@
                 </div>
 
                 <div class="flex-1 min-w-0 pt-0.5 sm:pt-0">
-                  {#if editingDeviceId === device.deviceId}
+                  {#if row.device && editingDeviceId === row.device.deviceId}
                     <div class="flex gap-2 items-center mb-2">
                       <input
                         type="text"
@@ -322,14 +490,16 @@
                   {:else}
                     <div class="flex flex-wrap items-center gap-2 mb-1">
                       <span class="font-bold text-[0.95rem] text-text-main truncate">
-                        {deviceLabel(device)}
+                        {rowLabel(row)}
                       </span>
-                      <span
-                        class="text-[0.65rem] px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 font-semibold text-text-muted uppercase tracking-wider"
-                      >
-                        {getDeviceOsLabel(device)}
-                      </span>
-                      {#if isCurrentDevice}
+                      {#if row.device}
+                        <span
+                          class="text-[0.65rem] px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 font-semibold text-text-muted uppercase tracking-wider"
+                        >
+                          {getDeviceOsLabel(row.device)}
+                        </span>
+                      {/if}
+                      {#if row.isCurrentDevice}
                         <span
                           class="text-[0.65rem] px-2 py-0.5 rounded-full bg-amber-500 text-cn-ink font-extrabold uppercase tracking-wider shadow-sm"
                         >
@@ -337,100 +507,111 @@
                         </span>
                       {/if}
                     </div>
-                    <div class="flex items-center gap-2">
+
+                    <!-- Connection lines, rendered ONLY when the login list answered, so an absent
+                         line never has to be read as "no connection". -->
+                    {#if sessionsKnown}
+                      {#if latest}
+                        <p
+                          class="text-xs font-medium text-text-muted"
+                          title={exactDate(latest.lastUsedAt)}
+                        >
+                          {#if browser}<span class="font-semibold">{browser}</span> -
+                          {/if}{m.settings_sessions_last_used({
+                            when: timeAgo(latest.lastUsedAt),
+                          })}{#if row.sessions.length > 1}<span class="opacity-70">
+                              - {m.chat_device_session_count({ count: row.sessions.length })}</span
+                            >{/if}
+                        </p>
+                        <p class="text-xs font-medium text-text-muted/70 mt-0.5">
+                          {m.settings_sessions_started({ when: exactDate(latest.createdAt) })}
+                        </p>
+                      {:else}
+                        <p class="text-xs font-medium text-text-muted/70">
+                          {m.chat_device_no_session()}
+                        </p>
+                      {/if}
+                    {/if}
+
+                    <div class="flex items-center gap-2 mt-1">
                       <div
                         class="text-[0.7rem] font-mono text-text-muted opacity-80 truncate flex-1"
-                        title={device.deviceId}
+                        title={row.device?.deviceId ?? row.unlistedDeviceId ?? ''}
                       >
-                        {m.chat_device_index_label({ index: idx + 1 })}
-                        {#if isMobileOs(device) && device.deviceAppVersion}
-                          <span class="ml-2 font-semibold"
-                            >{m.chat_device_version_label({
-                              device: device.deviceAppVersion ?? '',
-                            })}</span
-                          >
+                        {#if row.device}
+                          {shortDeviceId(row.device.deviceId)}
+                          {#if rowIsMobile(row) && row.device.deviceAppVersion}
+                            <span class="ml-2 font-semibold"
+                              >{m.chat_device_version_label({
+                                device: row.device.deviceAppVersion,
+                              })}</span
+                            >
+                          {/if}
+                        {:else if row.unlistedDeviceId}
+                          {shortDeviceId(row.unlistedDeviceId)}
                         {/if}
                       </div>
-                      <button
-                        onclick={() => startEditing(device.deviceId)}
-                        class="p-1.5 rounded-lg text-text-muted hover:text-amber-600 dark:hover:text-amber-400 hover:bg-black/5 dark:hover:bg-white/5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-                        title={m.chat_rename_device_title()}
-                        aria-label={m.chat_rename_device_label()}
-                      >
-                        <Edit2 size={14} strokeWidth={2} />
-                      </button>
+                      {#if row.device}
+                        <button
+                          onclick={() => row.device && startEditing(row.device.deviceId)}
+                          class="p-1.5 rounded-lg text-text-muted hover:text-amber-600 dark:hover:text-amber-400 hover:bg-black/5 dark:hover:bg-white/5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                          title={m.chat_rename_device_title()}
+                          aria-label={m.chat_rename_device_label()}
+                        >
+                          <Edit2 size={14} strokeWidth={2} />
+                        </button>
+                      {/if}
                     </div>
                   {/if}
                 </div>
 
-                {#if !isCurrentDevice}
+                <!-- One destructive control per row, and never on the machine we are running on. -->
+                {#if !row.isCurrentDevice}
                   <button
-                    onclick={() => void handleRemoveDevice(device.deviceId)}
-                    class="p-2.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-red-500/15 dark:hover:bg-red-500/20 text-text-muted hover:text-red-600 dark:hover:text-red-400 transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 shrink-0"
+                    onclick={() => void handleRemoveRow(row)}
+                    disabled={deleting !== null}
+                    class="shrink-0 p-2.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-red-500/15 dark:hover:bg-red-500/20 text-text-muted hover:text-red-600 dark:hover:text-red-400 transition-all outline-none focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 disabled:opacity-40"
                     title={m.chat_delete_device_title()}
                     aria-label={m.chat_delete_device_label()}
                   >
-                    <Trash2 size={18} strokeWidth={2.5} />
+                    {#if deleting === row.key}
+                      <Loader size={18} class="animate-spin" />
+                    {:else}
+                      <Trash2 size={18} strokeWidth={2.5} />
+                    {/if}
                   </button>
                 {/if}
               </div>
 
-              <!-- Membership stats (pills) -->
-              <div class="flex flex-wrap items-center gap-2 text-xs sm:pl-16">
-                {#if stats.active > 0}
-                  <span
-                    class="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1.5 rounded-xl font-medium"
-                  >
-                    <CheckCircle size={14} />
-                    {m.chat_device_active_count({ stats: stats.active })}
-                  </span>
-                {/if}
-                {#if stats.pending > 0}
-                  <span
-                    class="flex items-center gap-1.5 text-orange-600 dark:text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2.5 py-1.5 rounded-xl font-medium"
-                  >
-                    <Clock size={14} />
-                    {m.chat_device_pending_count({ stats: stats.pending })}
-                  </span>
-                {/if}
-                {#if stats.inProgress > 0}
-                  <span
-                    class="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1.5 rounded-xl font-medium"
-                  >
-                    <Loader size={14} class="animate-spin" />
-                    {m.chat_device_in_progress_count({ stats: stats.inProgress })}
-                  </span>
-                {/if}
-                {#if stats.total === 0}
-                  <span class="text-text-muted/70 italic px-1 font-medium"
-                    >{m.chat_no_synced_groups()}</span
-                  >
-                {/if}
-              </div>
-
-              <!-- Stale / pending groups alert -->
-              {#if staleGroups.length > 0 && !isCurrentDevice}
-                <div
-                  class="flex items-start gap-3 p-3.5 rounded-xl bg-orange-500/10 border border-orange-500/20 sm:ml-16 mt-2"
+              <!-- A login with no device: say why it is here rather than let it look like a bug. -->
+              {#if row.device === null}
+                <p
+                  class="text-xs text-orange-700 dark:text-orange-300 leading-relaxed font-medium mt-3 sm:pl-16"
                 >
-                  <TriangleAlert size={18} class="text-orange-500 mt-0.5 shrink-0" />
-                  <p
-                    class="text-xs text-orange-700 dark:text-orange-300 leading-relaxed font-medium"
-                  >
-                    {m.chat_device_stale_groups_warning({ staleGroups: staleGroups.length })}
-                  </p>
-                </div>
+                  {row.unlistedDeviceId
+                    ? m.chat_device_session_unlisted_note()
+                    : m.chat_device_session_orphan_note()}
+                </p>
               {/if}
             </div>
           {/each}
         </div>
 
-        {#if devices.length === 0}
+        {#if rows.length === 0}
           <div
-            class="text-center py-10 text-text-muted text-sm font-medium border border-dashed border-black/10 dark:border-white/10 rounded-[1.5rem] bg-black/5 dark:bg-white/5"
+            class="text-center py-10 text-text-muted text-sm font-medium border border-dashed border-black/10 dark:border-white/10 rounded-3xl bg-black/5 dark:bg-white/5"
           >
             {m.chat_no_devices_registered()}
           </div>
+        {/if}
+
+        <!-- Stated because it is surprising: an access token already handed out is verified
+             without a database round trip, so it keeps working until it expires. Hiding that
+             would make the deletion look like it did nothing. -->
+        {#if sessionsKnown}
+          <p class="text-xs text-text-muted/70 leading-relaxed">
+            {m.settings_sessions_delay_note()}
+          </p>
         {/if}
       </div>
     {/if}

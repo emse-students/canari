@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThan, Repository } from 'typeorm';
+import { In, LessThan, Repository } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { AuthSession } from './entities/auth-session.entity';
 
@@ -189,16 +189,26 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Records which MLS device a live session belongs to.
+   * Records which MLS device a live session belongs to, and makes that mapping
+   * one-to-one by destroying any other session claiming the same device.
    *
    * Called once per app start, after the client has unlocked MLS and can name
    * its own device - never on the refresh path, which is the app's cold-start
    * critical section and must not grow a round trip for a label.
    *
+   * THE PURGE IS NOT HOUSEKEEPING, IT CLOSES A HOLE. A browser profile holds
+   * exactly one refresh cookie and one device identifier, and so does an app
+   * install. A second LIVE session naming the same device is therefore, by
+   * construction, unreachable from that device: either its cookie was dropped
+   * without being revoked - cleared cookies, a reinstall, a login that never
+   * signed the old one out - and nobody holds it, or somebody else does. Both
+   * readings say the same thing, so the owner's next unlock ends it. Without
+   * this, such a credential stayed valid for seven idle days with no trace.
+   *
    * Scoped by `userId` as well as `sessionId` so a caller can only ever stamp
-   * its own session, and the write is CONDITIONAL on the value differing, so
-   * the ordinary case - an app restarting against a session that already knows
-   * its device - costs a read and no write at all.
+   * its own session. One read answers both questions, and the ordinary case -
+   * an app restarting against a session that already names its device, with no
+   * stray beside it - performs no write at all.
    *
    * Returns false when no live session of that user has that id, which the
    * caller reports rather than retries: the session is gone and the next
@@ -212,17 +222,34 @@ export class AuthSessionsService implements OnModuleInit, OnModuleDestroy {
       );
       return false;
     }
-    const row = await this.sessions.findOne({
-      where: { id: sessionId, userId },
+    // Our own row and every session already claiming this device, in one query.
+    const rows = await this.sessions.find({
+      where: [
+        { id: sessionId, userId },
+        { userId, deviceId: trimmed },
+      ],
       select: { id: true, deviceId: true },
     });
-    if (!row) {
+    const own = rows.find((row) => row.id === sessionId);
+    if (!own) {
       this.logger.warn(`Device binding refused sid=${sessionId} user=${userId}: no such session`);
       return false;
     }
-    if (row.deviceId === trimmed) return true;
-    await this.sessions.update({ id: sessionId, userId }, { deviceId: trimmed });
-    this.logger.debug(`Session sid=${sessionId} bound to device ${trimmed}`);
+
+    // Deleted by explicit id rather than by `deviceId`, so the statement cannot
+    // reach the session we are about to stamp with that very value.
+    const strays = rows.filter((row) => row.id !== sessionId).map((row) => row.id);
+    if (strays.length > 0) {
+      await this.sessions.delete({ id: In(strays) });
+      this.logger.warn(
+        `Revoked ${strays.length} unreachable session(s) claiming device ${trimmed} for user=${userId} - kept sid=${sessionId}`
+      );
+    }
+
+    if (own.deviceId !== trimmed) {
+      await this.sessions.update({ id: sessionId, userId }, { deviceId: trimmed });
+      this.logger.debug(`Session sid=${sessionId} bound to device ${trimmed}`);
+    }
     return true;
   }
 

@@ -125,44 +125,29 @@ The user's decision of 2026-08-16 is that **every one of these lands before the 
 Work them top-down; each is one item, and an item is not done until its code, its tests, its doc and
 its commit are in. The detail lives where the link says - **do not restate it here.**
 
-**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Items 1's `user-select` half, 3,
-4 and 11 need it; keep `adb devices` answering before starting one.
+**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Items 1, 2 and 9 need it; keep
+`adb devices` answering before starting one.
 
-1. Merge "Connexions actives" into "Gestion des appareils". **THE BACKEND HALF SHIPPED 2026-08-17**
-   (`f0f57993`) - the two panels were two SERVICES with no join key, and `auth_sessions.deviceId`
-   is now it, written once per app start by `PUT /auth/sessions/current/device`. The liveness
-   question is ANSWERED: no column on `key_package` measures a connection (the GC reads
-   `createdAt`, the upload instant), so the clock is the SESSION's `lastUsedAt`, written by the
-   refresh itself - the thing whose liveness it measures.
-   **Owed, all frontend:** call the new endpoint after MLS unlock (`sessionAuth.ts` ~line 455,
-   where `resolveDeviceId` already runs); add `deviceId` to `AuthSessionInfo`
-   (`$lib/services/authSessions.ts`); fold `SessionManagementPanel.svelte` INTO
-   `DeviceManagementPanel.svelte` - one row per device carrying name, last connection, browser
-   (`describeUserAgent`) and the id prefix, **no IP**; keep BOTH actions (revoke session, delete
-   device) and **keep a row for a session with no device** - that is exactly the stolen-cookie
-   case. Delete `SessionManagementPanel.svelte` and its entry in `SettingsSecuritySection.svelte`,
-   retire the `settings_sessions_*` keys that die with it, then i18n + tests + wiki.
-   **Decided 2026-08-17:** deleting a device PURGES its queue, and the backlog of a device that
-   never returns is BOUNDED - nothing obliges a user to delete anything.
-2. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
+1. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
    scrolling onto a white band. **Decided: the OS resizes the view**, never a JS offset; the check
    is 5 messages visible with the keyboard open ([backlog](docs/wiki/backlog.md)).
-3. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
-4. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
-5. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
+2. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
+3. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
+4. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
    **Decided: NO alert**, the panel is the whole of it ([backlog](docs/wiki/backlog.md),
    [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
-6. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
+5. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
    secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
    has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says
    why ([docker](docs/wiki/infrastructure/docker.md)).
-7. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
-   it as a recovery source it is not. **Approved 2026-08-17** (a prod service change).
-8. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
+6. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
+   it as a recovery source it is not. **Approved 2026-08-17** (a prod service change), volume
+   included - the user's instruction is to delete what is stale, not to keep it for a window.
+7. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
    delete that entry if it does.
-9. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+8. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
     browsers.
-10. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+9. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
     must end green, so every phase runs** - and the board says what that really costs: MSG is the
     ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
     **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
@@ -245,7 +230,7 @@ The six entries that stood here are decided. **Nothing tells the RECEIVER's user
 lost, and it stays that way** - not to be revisited. The two history gaps and the reason
 `history_request` is not durable are argued in
 [history-reconciliation](docs/wiki/protocols/history-reconciliation.md); the 30-day media window in
-[storage-forecast](docs/wiki/infrastructure/storage-forecast.md) §6. `mongo` is item 8; the
+[storage-forecast](docs/wiki/infrastructure/storage-forecast.md) §6. `mongo` is item 6; the
 SharedWorker MLS client is a POST-CAMPAIGN project in [backlog](docs/wiki/backlog.md).
 
 ### CANARI - the test campaign

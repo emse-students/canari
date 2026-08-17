@@ -172,36 +172,6 @@ is whether these stalls are CORRELATED, which a one-shot probe cannot answer by 
 
 ## Interface
 
-### P3 - merge "Connexions actives" into "Gestion des appareils"
-
-Two panels describe the same thing and neither is complete, so the user reads both to answer one
-question. **One panel**, one row per device, carrying:
-
-- a name that lets the reader recognise their own device - the current wording does not, and that is
-  the point of the merge rather than a detail of it;
-- the **last connection**, which is what "Connexions actives" was for;
-- the **browser / platform**, the other half of recognising a row;
-- the first characters of the device id, for debugging - a fallback for when the wording fails, not a
-  substitute for fixing it.
-
-**Drop the IP.** It is shown today and it answers nothing the reader asked: it does not identify a
-device (a phone changes it between wifi and mobile data, several devices behind one connection share
-it) and it is not actionable. Removing a column is part of the merge, not a separate task.
-
-**The trap is the last-connection column, and it has already been paid for once.** A liveness clock
-must be written by the thing whose liveness it measures: reusing a row's `updatedAt` once kept nine
-dead devices alive for ever, because every unrelated write refreshed it. Before displaying a
-timestamp, establish which column is written _by the connection_ - and if none is, the merge needs
-that column first. See [durable-rules](durable-rules.md).
-
-**Both halves of the delete question are decided (2026-08-17): deleting a device PURGES its queue, and
-the backlog of a device that never returns is BOUNDED.** The second is the one nobody triggers by hand
-- a user is under no obligation to delete anything, so a queue that only shrinks on an explicit delete
-grows for ever on exactly the devices that are worst at coming back. The bound is a question for the
-sweep that already deletes at `RETENTION_WINDOW_MS`, not a new mechanism. Measured 2026-08-13 on an
-abandoned device of a real account: 1383 undelivered rows in `queued_message`, still growing that day
-because the other members kept addressing it.
-
 ### P2 - a deleted message still offers the emoji picker, and using it throws
 
 Measured by MUT-17 on 2026-08-15. `MessageBubbleToolbar.svelte` gates the quick-reaction strip on

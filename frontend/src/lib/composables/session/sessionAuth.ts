@@ -19,6 +19,7 @@ import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
 import { LoginFailure, loginErrorCode } from './loginErrors';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
+import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
 import { m } from '$lib/paraglide/messages';
@@ -595,6 +596,21 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       void (async () => {
         await saveDeviceKey(deviceKeyB64);
       })();
+    }
+
+    // Stamp this session with the device that just unlocked. It is the ONLY
+    // join between a login (core-service) and a device (delivery service), and
+    // without it the security settings can list both but never say which row on
+    // one is which row on the other. Fire-and-forget: an unstamped session is
+    // fully functional, it simply shows as a row of its own - so a failure is
+    // reported and dropped rather than delaying a screen the user is waiting on.
+    // Skipped offline: there is no token yet, and promoteOfflineSession re-runs it.
+    if (!offlineSession) {
+      void bindCurrentSessionDevice(ctx.getMyDeviceId()).catch((e) =>
+        cb.log(
+          `[WARN] Session/device binding failed: ${e instanceof Error ? e.message : String(e)}`
+        )
+      );
     }
 
     // Check push health AFTER registration so pending_push_secret.txt is present

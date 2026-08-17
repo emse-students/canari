@@ -3,8 +3,13 @@
  *
  * A session here is a long-lived login - one browser, one phone, one desktop
  * app - and is NOT an MLS device: devices decide who can decrypt, sessions
- * decide who can obtain an access token. Revoking one leaves the other alone,
- * which is why the two lists live in separate panels.
+ * decide who can obtain an access token. Revoking one leaves the other alone.
+ *
+ * The two are shown as ONE list, joined on {@link AuthSessionInfo.deviceId},
+ * which is written by {@link bindCurrentSessionDevice} once per app start.
+ * Nothing else joins them - a session lives in core-service, a device in the
+ * delivery service - so before that write existed the settings screen had two
+ * lists and no way to say which row on one was which row on the other.
  */
 
 import { apiFetch } from '$lib/utils/apiFetch';
@@ -21,6 +26,16 @@ export interface AuthSessionInfo {
   expiresAt: string;
   userAgent: string | null;
   lastIp: string | null;
+  /**
+   * The MLS device this login belongs to, or null when it never said.
+   *
+   * Null is a state, not a gap: a session is opened by the OIDC callback,
+   * before MLS is unlocked and can name a device, and a holder who cannot
+   * unlock MLS at all - a stolen cookie - never names one. Such a row is
+   * therefore the one worth looking at, and the panel gives it its own entry
+   * rather than hiding it under a device.
+   */
+  deviceId: string | null;
 }
 
 /** What the UI needs to render a session row without re-parsing the User-Agent. */
@@ -63,6 +78,30 @@ export async function revokeAuthSession(id: string): Promise<boolean> {
   }
   const data = (await res.json()) as { ok: boolean };
   return data.ok;
+}
+
+/**
+ * Records which MLS device this session belongs to.
+ *
+ * Called ONCE per app start, right after MLS unlock - the first moment the
+ * client can name its own device. Deliberately not folded into the refresh
+ * call: that is the app's cold-start critical section, and under Tauri a
+ * custom header on it would add a CORS preflight to pay for a label.
+ *
+ * The server writes nothing when the session already names that device, so a
+ * restart against a stamped session costs a read and no write.
+ */
+export async function bindCurrentSessionDevice(deviceId: string): Promise<void> {
+  console.log(`[SESSIONS] Binding this session to device ${deviceId}`);
+  const res = await apiFetch(`${coreUrl()}/api/auth/sessions/current/device`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId }),
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to bind session to device (HTTP ${res.status})`);
+  }
 }
 
 /** Revokes every session except the current one. Returns how many died. */
