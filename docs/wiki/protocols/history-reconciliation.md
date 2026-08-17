@@ -454,6 +454,26 @@ Nothing here is scheduled and nothing is retried. Being wrong about any of it co
 a message. When the walk ends without closing the gap, the gap is simply not remembered: the next
 connection compares again from scratch, which is where a member with a longer memory gets its turn.
 
+### What that leaves open, and why it is left open (decided 2026-08-17)
+
+Two consequences follow from having no schedule, and both are accepted rather than overlooked:
+**a device that never connects is never repaired**, and **one whose peers are never online at the
+same moment waits for the first that is.** Neither is a defect to be fixed by a periodic
+solicitation - a broadcast on a timer is the exact mechanism this rework deleted (see the list of
+what was removed), and it repaired nothing while costing ~450 frames a minute.
+
+**And `history_request` is deliberately NOT durable the way `welcome_request` is.** The asymmetry is
+not an oversight, and it rests on three facts:
+
+- a stored request drained hours later has **no probe left to answer it** - the digest rendezvous
+  has a 60 s TTL, so what is replayed is an ask nobody is listening for;
+- the requester **must reconnect to read anything anyway**, and reconnecting compares from scratch,
+  which asks again by itself. A durable copy would only duplicate the trigger that already exists;
+- the two failures are not the same size: **a missing Welcome BLOCKS a group outright, a missing
+  history only degrades one.** Durability is worth its discharge condition for the first and not for
+  the second - and the discharge condition is precisely what could not be met the last time this
+  area carried a durable registry.
+
 ### Why it converges, and why a third device needs nothing extra
 
 Union merge is commutative, associative and idempotent, so repeated pairwise exchanges - any order,

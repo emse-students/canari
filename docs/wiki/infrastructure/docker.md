@@ -58,6 +58,28 @@ infra layer:
 - **Two volumes, not one.** `garage_meta` (small, LMDB) and `garage_data` (object bytes) replace
   the single `minio_data`. On the production host, the `minio` service was removed at the cutover
   and `minio_data` is kept, orphaned, as a 14-day rollback net (remove after 2026-08-28).
+
+#### The rename to Garage - decided 2026-08-17, and what it must NOT touch
+
+The names above are being retired: **every `MINIO_*` variable, volume, port name and secret becomes
+a `GARAGE_*` one**, in compose, scripts, CD and docs. The reason recorded for keeping them - "the
+app talks through the generic `minio` npm client" - is a fact about a THIRD-PARTY PACKAGE NAME and
+was never a reason our own variables had to carry it. Three boundaries, so the sweep does not
+overrun:
+
+- **the npm dependency stays `minio`.** It is what the package is called on the registry; renaming
+  an import is not ours to do, and `storage.service.ts` keeps talking S3 through it unchanged.
+- **a measurement dated before 2026-08-14 keeps its MinIO wording**, here and in
+  [storage-forecast](storage-forecast.md). Those numbers were taken on MinIO; rewriting them would
+  falsify a record rather than tidy it. Each says which backend it was measured on.
+- **the secrets are the risky half and go in this order**: read the live values off prod, set the
+  new GitHub secret names, deploy, verify the container answers with the new names in place, and
+  only THEN delete the old secrets. A deploy that half-renames a credential is an outage, and the
+  drift check that fingerprints the value inside the running container is what proves the cutover
+  rather than a green workflow.
+
+`minio_data` itself cannot go before **2026-08-28** - it is the rollback net, and the rename does
+not shorten that window.
 - **Health check.** MinIO's `/minio/health/live` has no Garage equivalent, and the Garage image
   ships no shell/curl to poll an HTTP endpoint anyway (distroless, only the `/garage` binary) -
   the healthcheck runs `/garage status` instead, which talks to the node over its own RPC socket.

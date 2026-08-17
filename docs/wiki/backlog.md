@@ -354,9 +354,14 @@ merge's own: one object, one state.
 
 **Establish what a delete is supposed to reclaim before designing the panel.** Measured 2026-08-13 on
 an abandoned device of a real account: 1383 undelivered rows in `queued_message`, still growing that
-day because the other members kept addressing it. So the questions the merge must answer are whether
-deleting purges that queue, and - separately, since nothing forces a user to delete anything - what
-bounds the backlog of a device that simply never returns.
+day because the other members kept addressing it.
+
+**Both halves are decided (2026-08-17): deleting a device PURGES its queue, and the backlog of a
+device that never returns is BOUNDED.** The second is the one nobody triggers by hand - a user is
+under no obligation to delete anything, so a queue that only shrinks on an explicit delete grows for
+ever on exactly the devices that are worst at coming back. The bound is a question for the sweep that
+already deletes at `RETENTION_WINDOW_MS`, not a new mechanism: what it must not do is measure
+liveness with a column somebody else writes, which is the trap this whole entry already carries.
 
 ---
 
@@ -421,10 +426,31 @@ never breaking an unrelated verdict. That does not forgive a genuine leadership 
 earlier note feared: such a failure also emits `[TAB] Another tab is active`, `[TAB] Race election`
 or `[TAB] Promoted to leader`, none of which is classified, so all three still break `clean`.
 
-### P3 - the composer sits behind the soft keyboard on Android
+### P3 - the composer sits behind the soft keyboard on Android, and the page scrolls onto a white band
 
-Known, reproduced by hand, never turned into a Work Package because it needs a layout decision rather
-than a patch: the message composer is overlapped by the soft keyboard on some Android keyboards.
+Known, reproduced by hand. Two symptoms, and reading them together is what makes this a layout
+decision rather than a patch:
+
+- the message composer is overlapped by the soft keyboard on some Android keyboards;
+- with the keyboard open, **the interface itself scrolls** - resting a finger on the text bar and
+  dragging moves the whole page off the conversation and onto an empty white band below it.
+
+**They are one defect.** The white band is the LAYOUT viewport keeping its full height while the
+VISUAL viewport shrank to make room for the keyboard: the page is still as tall as the screen was,
+so the part now hidden behind the keyboard is scrollable into view, and it holds nothing. The
+composer sits in that same overhang. Anything that pins the composer alone leaves the band.
+
+**Decided 2026-08-17: let the OS resize the view** - `adjustResize` on the activity plus
+`interactive-widget=resizes-content` in the viewport meta - rather than translate the composer from
+a `visualViewport` listener. The layout shrinks, so there is no overhang to scroll into and no event
+to chase; it is one setting rather than a correction applied after the fact, and it fixes the whole
+column instead of one element of it.
+
+**The check the user asked for, and it is a good one because it needs no coordinates**: with the
+keyboard open, **at least 5 messages must be visible in the conversation**, read off a screenshot.
+Fewer means a band survives between the list and the keyboard. Negative control is free - the
+current build fails it, so the check can be seen failing before it is believed
+([testing-methodology](testing-methodology.md), rule 2).
 
 ### P2 - the inbound drain has no watchdog
 
@@ -593,10 +619,21 @@ is where any measurement belongs.
 
 ### Server - can occupancy be monitored, and will it hold?
 
-The forecast exists on paper; what is missing is a live measurement and an alert. **A forecast with
-no report is discovered by hand, a day late.** Scope: what is actually growing (Postgres, Garage,
-Redis streams), at what rate, and what the report should carry so that it distinguishes "media grew"
-from "the stream retention changed".
+The forecast exists on paper; what is missing is a live measurement over TIME. `/admin/storage`
+already answers disk, `auth_db`, bucket size and object count, and Redis memory - but only as
+TOTALS, and only when somebody goes and looks. Scope: what is actually growing (Postgres, Garage,
+Redis streams), at what RATE, and a presentation that distinguishes "media grew" from "the retention
+stopped working" - two causes with the same symptom and opposite fixes. The second is not
+hypothetical: `purgeExpiredMedia` iterates the metadata index, so an object with no entry is
+invisible to it for ever, and 7 such objects (~11 MB) are already measured. §5.7's WP-GHOST-1 shape
+belongs on the same panel: a device holding memberships with no `key_package`, or more than a few
+hundred `queued_message` rows.
+
+**Decided 2026-08-17: the panel is the whole of it, there is NO alert.** The user's call. Worth
+stating what that costs rather than pretending it costs nothing - the standing rule is that a
+correct mechanism with no report is found by hand a day late, and a panel is a report only for
+whoever opens it. The slope is what makes it survivable: a number read once a month against a
+trend is enough to see a wall coming, where a bare total is not.
 
 ### Mobile - what happens when the device runs out of space?
 
@@ -808,6 +845,34 @@ It sits at the repository root and its name says what it uses rather than what i
 device logs for the verification pass. It belongs with the harness documentation that references it
 ([device-verification](device-verification.md)). A rename touches every doc that names it, so grep
 before moving.
+
+### One MLS client in a SharedWorker - POST-CAMPAIGN PROJECT, decided 2026-08-17
+
+**It would remove the multi-tab class outright**, and that class is not theoretical: W2 was measured
+carrying seven `canari-emse.fr` tabs, each a full MLS client with its own gateway socket and its own
+in-memory counters, sharing one IndexedDB key. Two campaign findings dissolved on that fact alone
+(see [testing-methodology](testing-methodology.md), rule 5), and the harness's answer - `client()`
+refusing an ambiguous browser, `onetab.mjs` repairing it - protects the INSTRUMENT and not the user.
+
+**Why it is not a queue item.** The cost is not the worker: it is the worker TRANSPORT, the startup
+sequence, the PIN unlock and the Safari/mobile fallback, all of which have to be redone. Doing it
+before the campaign would invalidate every verdict already taken, since the boot path is what half
+of them measure. So it is scheduled AFTER, as its own project, and the decision is recorded here so
+nobody re-argues it from scratch.
+
+### `dev.canari-emse.fr` becomes a real second environment - POST-CAMPAIGN, decided 2026-08-17
+
+Today it is a proxied CNAME onto the same tunnel as production - one environment wearing two names.
+The user wants trials to stop happening on prod, which is the right instinct: every reproduction in
+the current queue is authorised on prod only because there is nowhere else, and each one leaves
+debris on a shared server that real members use.
+
+**What has to be decided before any of it is built**, because a second environment is a second copy
+of every secret and every service: whether it gets its own database or a snapshot of prod's, its own
+object storage, its own push credentials (an FCM sender is per-project, so a shared one would send a
+test notification to a real phone), and whether its data is ever restored from prod - which would
+carry real people's ciphertext onto a machine with weaker rules. Scope that first; the tunnel and
+the DNS are the easy half, and they are already in hand.
 
 ### The campaign covers chat, and the app is not only chat
 

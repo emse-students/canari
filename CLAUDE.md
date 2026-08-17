@@ -124,28 +124,48 @@ The user's decision of 2026-08-16 is that **every one of these lands before the 
 Work them top-down; each is one item, and an item is not done until its code, its tests, its doc and
 its commit are in. The detail lives where the link says - **do not restate it here.**
 
-1. iOS: six French literals no `.lproj` declares, and the guardrail that catches a literal
-   duplicating an already-translated value ([backlog](docs/wiki/backlog.md)).
-2. iOS initials fallback when a notification's avatar cannot be fetched (same page).
-3. The inbound drain has no watchdog - design the TERMINATION PROOF first, the detection second.
-4. `BaseMlsService.fetchPendingMessages`: a progress deadline, not 10 s per page.
-5. **P1, user-reported. REPRODUCE FIRST:** a community whose last channel is left becomes
-   unmanageable - "leave the community" included.
-6. **REPRODUCE FIRST:** commenting a GIF on a post fails. Capture the failing request.
-7. One person, three different avatars across PC / phone / MiGallery. Establish the cache lifetime
+1. iOS initials fallback when a notification's avatar cannot be fetched
+   ([backlog](docs/wiki/backlog.md)). Android does it in three places - message, reaction, channel -
+   and the channel one draws the SALON's initial, not the sender's.
+2. The inbound drain has no watchdog - design the TERMINATION PROOF first, the detection second.
+3. `BaseMlsService.fetchPendingMessages`: a progress deadline, not 10 s per page.
+4. **P1, user-reported. REPRODUCE FIRST:** a community whose last channel is left becomes
+   unmanageable - "leave the community" included. **Prod repro authorised 2026-08-17:** a throwaway
+   community on the test accounts, cleaned up by SQL on an allowlist of the exact ids.
+5. **REPRODUCE FIRST:** commenting a GIF on a post fails. Capture the failing request. Same
+   authorisation as 4.
+6. One person, three different avatars across PC / phone / MiGallery. Establish the cache lifetime
    before calling any of it a bug.
-8. `apple-touch-icon.png` + `favicon.ico` (three 404s on prod), and `user-select` on mobile.
-9. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
+7. `apple-touch-icon.png` + `favicon.ico` (three 404s on prod), and `user-select` on mobile.
+8. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
    connection itself writes ([durable-rules](docs/wiki/durable-rules.md): a liveness clock).
-10. The composer sits behind the Android soft keyboard. A layout decision, not a patch.
+   **Decided 2026-08-17:** deleting a device PURGES its queue, and the backlog of a device that
+   never returns is BOUNDED - nothing obliges a user to delete anything.
+9. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
+   scrolling onto a white band. **Decided: the OS resizes the view**, never a JS offset; the check
+   is 5 messages visible with the keyboard open ([backlog](docs/wiki/backlog.md)).
+10. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
 11. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
-12. Storage: a live occupancy measurement, and an alert that tells "media grew" from "the retention
-    changed" ([storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
-13. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
+12. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
+    **Decided: NO alert**, the panel is the whole of it ([backlog](docs/wiki/backlog.md),
+    [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
+13. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
+    secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
+    has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says
+    why ([docker](docs/wiki/infrastructure/docker.md)).
+14. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
+    it as a recovery source it is not. **Approved 2026-08-17** (a prod service change).
+15. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
     delete that entry if it does.
-14. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+16. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
     browsers.
-15. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
+17. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+    must end green, so every phase runs** - and the board says what that really costs: MSG is the
+    ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
+    **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
+    written** and no server-side observer (`call-service` logs nothing), so it is a build, not a
+    run. Sequence and per-check state live on
+    [cross-client-testing](docs/wiki/cross-client-testing.md) - the only copy of the ladder's order.
 
 ### CANARI - what is open
 
@@ -188,14 +208,14 @@ out behind a button leading to the old version. Shipping order: publish to the s
 store serves it -> only THEN raise `minClientVersion`
 ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
 
-#### Known, and deliberately NOT a Work Package - do not "fix" these by reflex
+#### Settled 2026-08-17 - do not re-open any of these
 
-- **Nothing tells the RECEIVER's user that a message was lost.** A deliberate gap.
-- **A device only asks for history when something TELLS it to.** What remains of the gap: a device that never connects is never repaired, and one whose peers are never online at the same moment waits for the first that is. **Do not "fix" that with a periodic solicitation** - a broadcast on a timer is the exact shape this area was cleared of.
-- **`history_request` is deliberately NOT durable** the way `welcome_request` is: a stored request drained hours later has no probe (60 s rendezvous TTL), and the requester must reconnect to read anything anyway, which asks again by itself. A missing Welcome BLOCKS a group; missing history only degrades it.
-- **One MLS client in a SharedWorker**, shared by every tab, would remove the multi-tab class outright. Cost is why it is not the fix: the worker transport, startup, the PIN unlock and the Safari/mobile fallback all have to be redone.
-- **The `mongo` service in `docker-compose.prod.yml` is dead** - production holds no application database there and nothing carries a MongoDB connection string. A candidate for removal, not a fault; removing it is a prod service change and needs the user.
-- **A new device or a reinstall still sees no media older than 30 days.** That is what makes the storage forecast survivable, and it may not be what the user intends - a POLICY question ([storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
+The six entries that stood here are decided. **Nothing tells the RECEIVER's user that a message was
+lost, and it stays that way** - not to be revisited. The two history gaps and the reason
+`history_request` is not durable are argued in
+[history-reconciliation](docs/wiki/protocols/history-reconciliation.md); the 30-day media window in
+[storage-forecast](docs/wiki/infrastructure/storage-forecast.md) §6. `mongo` is item 14; the
+SharedWorker MLS client is a POST-CAMPAIGN project in [backlog](docs/wiki/backlog.md).
 
 ### CANARI - the test campaign
 
@@ -231,9 +251,9 @@ serves what is inside its APK and a deploy never reaches it. That is a real mixe
 oversight; say which branch each A1 row read.
 
 **Prod IS the test server** and commit+push are authorised so it picks changes up.
-`dev.canari-emse.fr` is a proxied CNAME to the same tunnel, NOT a second environment. The user will
-decide what to do with it AFTER the campaign - do not design a staging environment before that
-conversation.
+`dev.canari-emse.fr` is a proxied CNAME to the same tunnel, NOT a second environment. **Decided
+2026-08-17: it BECOMES a real second environment, after the campaign** - the user wants the trials
+off prod. Scope it in [backlog](docs/wiki/backlog.md); do not start it before the queue is empty.
 
 **LEON PUSHES TO CANARI's `main` TOO.** `git fetch` at the START of a session and again before any
 measurement. His commits are usually style/UI and land in files the campaign measures, so each owes a
