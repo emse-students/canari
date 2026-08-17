@@ -1,4 +1,5 @@
 import Security
+import UIKit
 import UserNotifications
 
 /// Canari Notification Service Extension.
@@ -56,6 +57,12 @@ class NotificationService: UNNotificationServiceExtension {
   /// Welcome push has finished joining the group, retry briefly before falling back.
   private static let welcomeRaceRetries = 3
   private static let welcomeRaceRetryDelayMs = 1_800
+
+  /// The initials disc drawn when no avatar can be fetched - see `initialsImageUrl`. Twins of
+  /// `kCanariInitialsSize` / `kCanariInitialsLetterRatio` in `canari_push.mm`, duplicated because
+  /// the appex is a separate bundle.
+  private static let kInitialsSize: CGFloat = 192
+  private static let kInitialsLetterRatio: CGFloat = 0.4
 
   /// Serializes NSE writes to `fcm_message_cache.ndjson`. The NSE runs in a separate
   /// process from the app, so it does not need to share the app's lock, but its own
@@ -120,8 +127,9 @@ class NotificationService: UNNotificationServiceExtension {
     let emoji = Self.string(userInfo["emoji"]) ?? ""
     let groupId = Self.string(userInfo["groupId"]) ?? ""
     let ctx = loadPushContext()
-    if let actor = Self.string(userInfo["title"]), !actor.isEmpty {
-      content.title = actor
+    let actorName = Self.nonEmpty(Self.string(userInfo["title"])) ?? ""
+    if !actorName.isEmpty {
+      content.title = actorName
     }
     content.body = Self.localizedFormat("notif.reaction.body", emoji, locale: ctx?.locale)
     if !groupId.isEmpty {
@@ -131,10 +139,14 @@ class NotificationService: UNNotificationServiceExtension {
     // THE PATH THAT RUNS WHEN THE APP IS KILLED, and it used to stop at the sentence - so a
     // reaction arriving on a phone with Canari closed showed a blank icon and left the app-icon
     // count one too high, while the in-app path (canari_push.mm) and Android both did neither.
+    var attachedFace = false
     if let ctx = ctx, let actorId = Self.nonEmpty(Self.string(userInfo["senderId"])),
       let avatarUrl = fetchAvatar(ctx: ctx, userId: actorId)
     {
-      _ = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
+      attachedFace = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
+    }
+    if !attachedFace {
+      attachInitials(content: content, name: actorName)
     }
     applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
   }
@@ -600,7 +612,12 @@ class NotificationService: UNNotificationServiceExtension {
     if !attached, let ctx = ctx, !senderId.isEmpty,
       let avatarUrl = fetchAvatar(ctx: ctx, userId: senderId)
     {
-      _ = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
+      attached = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
+    }
+    // Last resort, and it must stay last: iOS renders only the first attachment, so a letter
+    // replacing the picture the message is about would be a regression rather than a fallback.
+    if !attached {
+      attachInitials(content: content, name: senderName)
     }
     applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
     finish()
@@ -703,8 +720,14 @@ class NotificationService: UNNotificationServiceExtension {
     // The sender's face, exactly as the MLS path and both Android paths do it. Without this the
     // killed-app iPhone was the only surface showing a salon message with no avatar at all, while
     // the payload had carried `senderId` for it all along. No media thumbnail: WP-XP-3 is MLS-only.
+    var attachedFace = false
     if let ctx = ctx, !senderId.isEmpty, let avatarUrl = fetchAvatar(ctx: ctx, userId: senderId) {
-      _ = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
+      attachedFace = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
+    }
+    // The SALON's letter, not the composed title's - `<Communaute> - #<salon>` would draw the
+    // community, or a `#`. Android's channel path makes the same choice for the same reason.
+    if !attachedFace {
+      attachInitials(content: content, name: channelName)
     }
     applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
     finish()
@@ -918,6 +941,62 @@ class NotificationService: UNNotificationServiceExtension {
       NSLog("[CanariNSE] attachImage error: \(error.localizedDescription)")
       return false
     }
+  }
+
+  /// Attaches the initials disc for `name`, when nothing better could be attached.
+  ///
+  /// Deliberately silent about failure: an icon is decoration, and a notification with no image is
+  /// the state this whole helper exists to improve on - never a reason to lose the notification.
+  private func attachInitials(content: UNMutableNotificationContent, name: String) {
+    guard let url = Self.initialsImageUrl(name: name) else { return }
+    _ = attachImage(content: content, fileUrl: url, identifier: "avatar")
+    // `attachImage` copies into its own temp file because the OS consumes an attachment's URL, so
+    // ours has done its job and would otherwise sit in the container until the OS swept it.
+    try? FileManager.default.removeItem(at: url)
+  }
+
+  /// A `kInitialsSize` indigo disc carrying the first letter of `name`, written to a temp PNG.
+  ///
+  /// The appex is a separate bundle and shares no code with the app, so this is a deliberate copy
+  /// of `CanariInitialsImagePath` in `canari_push.mm` - same size, same colour, same ratio, so the
+  /// killed-app path and the in-app path cannot drift into two different-looking notifications.
+  /// Android's twin is `generateInitialsBitmap` at 96 px: an Android large icon is a small square,
+  /// an iOS attachment is rendered at banner size.
+  ///
+  /// The letter is a COMPOSED CHARACTER, so a name starting with an emoji or a combining accent is
+  /// not cut in half. Android takes the first UTF-16 unit and has that flaw.
+  private static func initialsImageUrl(name: String) -> URL? {
+    let letter = name.first.map { String($0).uppercased() } ?? "?"
+    let format = UIGraphicsImageRendererFormat.default()
+    format.scale = 1
+    format.opaque = false
+    let size = kInitialsSize
+    let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: format)
+    let image = renderer.image { _ in
+      UIColor(red: 0x63 / 255.0, green: 0x66 / 255.0, blue: 0xf1 / 255.0, alpha: 1.0).setFill()
+      UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: size, height: size)).fill()
+      let attrs: [NSAttributedString.Key: Any] = [
+        .font: UIFont.systemFont(ofSize: size * kInitialsLetterRatio, weight: .semibold),
+        .foregroundColor: UIColor.white,
+      ]
+      let textSize = letter.size(withAttributes: attrs)
+      letter.draw(
+        at: CGPoint(x: (size - textSize.width) / 2.0, y: (size - textSize.height) / 2.0),
+        withAttributes: attrs)
+    }
+    guard let png = image.pngData() else {
+      NSLog("[CanariNSE] initialsImage: PNG encoding failed - notification goes out without an icon")
+      return nil
+    }
+    let url = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("initials-\(UUID().uuidString).png")
+    do {
+      try png.write(to: url, options: .atomic)
+    } catch {
+      NSLog("[CanariNSE] initialsImage: write failed: \(error.localizedDescription)")
+      return nil
+    }
+    return url
   }
 
   /// Blocking HTTP request with a bearer PushSecret and a short timeout (the extension

@@ -496,47 +496,21 @@ dev-facing string is English. Inventing a surface for them is a UI decision, not
 whoever picks this up decides what the user actually sees (a toast naming the refusal, or a panel),
 and the sentences become Paraglide messages in the same change, never before it.
 
-### P2 - the reaction notification is the same on both platforms, except on a KILLED iPhone
+### QUESTION - does an iOS attachment CONSUME the avatar cache file it is handed?
 
-The reaction rework shipped 2026-08-15 (`fbc8597b`) and closed the whole of the previous entry here -
-the POSTS pipe, the undismissable id, the missing avatar, the notification that fired over an open
-chat, and the plaintext of the reacted-to message travelling to our server, Google and Apple. The
-story is in `CHANGELOG.md`. **What is at parity, do not re-derive it**: both platforms take the
-MESSAGE path, both use the stable per-conversation id and thread, both suppress themselves in the
-foreground, both drop reply and mark-as-read, and both compose the sentence in the app's OWN
-Français/English rather than the OS one, from `locale` in `push_context.json`. That mirror is the one
-part of this with a test - `frontend/src/lib/mobile/pushContextFields.test.ts` pins the field across
-the Rust writer and all three native readers.
+Found 2026-08-17 while writing the initials fallback, and it is a question rather than a defect
+because settling it needs an iPhone. `CanariShowLocalNotification` hands `attachmentPath` straight to
+`UNNotificationAttachment`, and for an avatar that path IS the durable cache file
+`avatar_<id>.jpg` that `CanariFetchAvatar` writes and later re-reads. The NSE does the opposite on
+purpose: its `attachImage` copies to a temp file first, carrying the comment *"an attachment URL is
+consumed/moved by the OS, so we never hand it a shared cache file directly"*.
 
-**Two of the three gaps were closed the same night, BLIND** - this machine is Windows, so every line
-of it is compiled by CI and by nothing else, and none of it has run:
-
-- The NSE - the path that runs when the app is KILLED - composed the sentence and stopped, so a
-  reaction on a closed iPhone showed a blank icon and left the app-icon count one too high, while
-  the in-app path and Android both did neither. It now fetches the actor's avatar and recomputes the
-  badge, through `fetchAvatar` / `attachImage` / `applyBadgeCount` - the same helpers
-  `applyMessageContent` uses.
-- **iOS has a `Localizable.strings` now**, on BOTH targets (`canari_iOS/*.lproj` and
-  `canari_NSE/*.lproj`, four files, wired as two `PBXVariantGroup`s into two Resources phases). The
-  appex is a separate bundle from the app, so the table is duplicated on purpose - that split is the
-  platform's. `CanariLocalized` / `NotificationService.localized` resolve it through the `.lproj`
-  named by `locale` in `push_context.json`, NOT `NSLocalizedString`, which answers for the OS - a
-  different setting from the one the user chose in Canari. Five keys, the five sentences that were
-  French literals: reaction, message-from, message-encrypted, channel-message, outbox-pending.
-
-**What is still NOT at parity:**
-
-- **No initials fallback on iOS.** When the avatar cannot be fetched Android draws
-  `generateInitialsBitmap(actorName)` - a 96 px indigo disc with the first letter; both iOS paths
-  show no image at all. It needs a bitmap rendered to a file for `UNNotificationAttachment`, in
-  ObjC and again in Swift, and it was the one piece judged not worth writing blind in the same
-  sitting: it is additive and guarded, so it can go in whole whenever. Same shape as the
-  web/mobile avatar entry above.
-
-The Android literals named here previously are CLOSED (2026-08-17): the two platforms now use the
-same mechanism, and the entry below keeps only the half neither of them can fix. The iOS
-`channel_read` gap named here previously is CLOSED too, and was not what it looked like - see the
-channel-push entry below.
+Both cannot be right. If the OS really moves the file, the app-process cache is emptied by its own
+first hit and every subsequent notification re-fetches - a silent, permanent cache miss that no log
+would name, since a re-fetch looks exactly like a first fetch. **What settles it is one device
+observation**: notify twice for the same person with the app alive, then look for `avatar_<id>.jpg`
+in the app container. If it is gone, the app path copies too, exactly as the extension does. The
+initials disc is unaffected either way - it writes to `NSTemporaryDirectory()` on both.
 
 ### P2 - a server-composed notification body is French for everyone, and cannot be otherwise
 

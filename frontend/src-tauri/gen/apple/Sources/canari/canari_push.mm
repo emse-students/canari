@@ -28,6 +28,11 @@ static NSString *const kFcmCacheFileName = @"fcm_message_cache.ndjson";
 static const NSUInteger kMaxFcmCacheEntries = 50;
 static const int kWelcomeRaceRetries = 3;
 static const useconds_t kWelcomeRaceRetryDelayUs = 1800000;
+/// The initials disc drawn when no avatar can be fetched - see CanariInitialsImagePath. Twins of
+/// Android's generateInitialsBitmap (96 px there; an attachment is shown larger than a large icon)
+/// and of NotificationService.swift's own copy, which the appex cannot share.
+static const CGFloat kCanariInitialsSize = 192;
+static const CGFloat kCanariInitialsLetterRatio = 0.4;
 static NSString *const kOutboxPendingFileName = @"outbox_pending.ndjson";
 static NSString *const kOutboxSentFileName = @"outbox_sent.ndjson";
 // How many queued messages one drain takes on. The cap is on the ENCRYPT, deliberately: encrypting
@@ -1911,6 +1916,68 @@ static NSString *_Nullable CanariFetchAvatar(CanariPushContext *ctx, NSString *u
   return cachePath;
 }
 
+/**
+ * The disc drawn instead of a face when no avatar could be fetched, written to a temp PNG.
+ *
+ * Android has done this since the beginning (`generateInitialsBitmap`) and both iOS paths showed
+ * NOTHING - so a notification whose avatar request failed, or whose sender simply has no photo,
+ * arrived on an iPhone with a blank icon and on Android with a letter. This is the one piece of the
+ * reaction rework that was judged not worth writing blind at the time; it is additive and guarded,
+ * so a failure here costs exactly the icon and never the notification.
+ *
+ * `kCanariInitialsSize` is 192 where Android's bitmap is 96: an Android large icon is a small
+ * square, an iOS attachment is rendered at banner size. The colour and the 0.4 letter ratio are
+ * Android's, so the two platforms look like one product. The NSE has its own copy of this in Swift
+ * (`initialsImageUrl`) - the appex is a separate bundle and shares no code with the app.
+ *
+ * The letter is a COMPOSED CHARACTER, not a UTF-16 unit: a name beginning with an emoji or with a
+ * letter carrying a combining accent would otherwise be cut in half and drawn as a replacement box.
+ * Android takes the first code unit and has that flaw; it is not worth reproducing.
+ *
+ * Written to `NSTemporaryDirectory` on purpose - the OS CONSUMES the file an attachment names, so
+ * this must never be handed a path anything else needs afterwards.
+ */
+static NSString *_Nullable CanariInitialsImagePath(NSString *_Nullable name) {
+  NSString *letter = @"?";
+  if (name.length > 0) {
+    NSRange first = [name rangeOfComposedCharacterSequenceAtIndex:0];
+    letter = [[name substringWithRange:first] uppercaseString];
+  }
+  UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat defaultFormat];
+  format.scale = 1;
+  format.opaque = NO;
+  CGFloat size = kCanariInitialsSize;
+  UIGraphicsImageRenderer *renderer =
+      [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(size, size) format:format];
+  UIImage *image = [renderer imageWithActions:^(UIGraphicsImageRendererContext *_Nonnull ctx) {
+    (void)ctx;
+    [[UIColor colorWithRed:0x63 / 255.0 green:0x66 / 255.0 blue:0xf1 / 255.0 alpha:1.0] setFill];
+    [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(0, 0, size, size)] fill];
+    NSDictionary *attrs = @{
+      NSFontAttributeName : [UIFont systemFontOfSize:size * kCanariInitialsLetterRatio
+                                              weight:UIFontWeightSemibold],
+      NSForegroundColorAttributeName : [UIColor whiteColor],
+    };
+    CGSize textSize = [letter sizeWithAttributes:attrs];
+    [letter drawAtPoint:CGPointMake((size - textSize.width) / 2.0, (size - textSize.height) / 2.0)
+         withAttributes:attrs];
+  }];
+  NSData *png = UIImagePNGRepresentation(image);
+  if (png == nil) {
+    NSLog(@"[CanariPush] initialsImage: PNG encoding failed - notification goes out without an icon");
+    return nil;
+  }
+  NSString *path = [NSTemporaryDirectory()
+      stringByAppendingPathComponent:[NSString stringWithFormat:@"initials-%@.png",
+                                                                [[NSUUID UUID] UUIDString]]];
+  NSError *writeErr = nil;
+  if (![png writeToFile:path options:NSDataWritingAtomic error:&writeErr]) {
+    NSLog(@"[CanariPush] initialsImage: write failed: %@", writeErr.localizedDescription);
+    return nil;
+  }
+  return path;
+}
+
 static void CanariProcessWelcomeRequestBackground(NSString *groupId, NSString *requesterUserId,
                                                   NSString *requesterDeviceId) {
   CanariPushContext *ctx = CanariLoadPushContext();
@@ -2132,10 +2199,15 @@ static NSString *_Nullable CanariFetchAndDecryptMedia(CanariPushContext *ctx,
 // cleartext `mentionedUserIds` from the sender, so the server computes it per recipient. An MLS
 // message has no such list - the server cannot read it - which is why the body scan below exists.
 // Two paths, one question, each answered from where the answer actually is.
+//
+// `initialsName` is whose letter is drawn when no avatar can be fetched, and it is a PARAMETER
+// because only the caller knows: a DM draws the sender, a salon draws the SALON (Android does the
+// same), and the title this function composes is no help - for a salon it is
+// `<Communaute> - #<salon>`, whose first character would be the community's, or a `#`.
 static void CanariShowMessageNotification(NSString *senderName, NSString *groupName, NSString *body,
                                           NSString *groupId, NSString *senderId,
                                           CanariDecryptedMessage *_Nullable decrypted,
-                                          BOOL mentionedByServer) {
+                                          BOOL mentionedByServer, NSString *_Nullable initialsName) {
   if (canari_ios_is_in_foreground()) {
     return;
   }
@@ -2155,6 +2227,12 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   }
   if (attachmentPath == nil && ctx != nil && senderId.length > 0) {
     attachmentPath = CanariFetchAvatar(ctx, senderId);
+  }
+  // Last: the initials disc, so a notification is never iconless. It must stay BELOW the media
+  // thumbnail - iOS renders only the first attachment, and a letter replacing the picture the
+  // message is about would be a regression, not a fallback.
+  if (attachmentPath == nil) {
+    attachmentPath = CanariInitialsImagePath(initialsName);
   }
   // @-mention of me (WP-XP-5): the decrypted body carries inline `@[uuid]` tokens; when one
   // targets my own userId the notification is delivered time-sensitive (Focus breakthrough).
@@ -2583,7 +2661,8 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
 
     dispatch_async(dispatch_get_main_queue(), ^{
       // MLS: the server cannot know who is mentioned, so the body scan inside decides.
-      CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted, NO);
+      CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted, NO,
+                                    senderName);
     });
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
@@ -2707,7 +2786,10 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
     dispatch_async(dispatch_get_main_queue(), ^{
       // groupName empty + senderName as the title -> the banner shows it as-is; avatar from senderId.
       // No media thumbnail for channels (WP-XP-3 is MLS DM/group only) -> pass nil.
-      CanariShowMessageNotification(displayName, @"", body, conversationId, senderId, nil, mentionsMe);
+      // The initials fall back to the SALON, not to the composed title: Android twin uses
+      // channelName for exactly the same reason.
+      CanariShowMessageNotification(displayName, @"", body, conversationId, senderId, nil,
+                                    mentionsMe, channelName);
     });
   });
 }
@@ -2824,6 +2906,9 @@ static void CanariHandleFcmData(NSDictionary *data) {
     CanariPushContext *ctx = CanariLoadPushContext();
     if (ctx != nil && actorId.length > 0) {
       attachmentPath = CanariFetchAvatar(ctx, actorId);
+    }
+    if (attachmentPath == nil) {
+      attachmentPath = CanariInitialsImagePath(actorName);
     }
 
     NSString *deepLink = [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];

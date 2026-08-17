@@ -155,7 +155,10 @@ describe('channel push payload contract (social-service writer vs the three nati
     // two shapes each platform offers.
     expect(kotlinHandler).toContain('CHANNEL_MENTIONS');
     expect(swiftHandler).toContain('.timeSensitive');
-    expect(objcHandler).toMatch(/CanariShowMessageNotification\(.*mentionsMe\)/s);
+    // Matched among the ARGUMENTS, not against the closing paren: this used to read `mentionsMe\)`
+    // and broke the day a later argument was added after it (the initials name), which is a change
+    // this assertion has no opinion about. What it pins is that the flag is handed on at all.
+    expect(objcHandler).toMatch(/CanariShowMessageNotification\([^;]*\bmentionsMe\b/s);
     // And the flag is the server's, never the `@[uuid]` scan the MLS path has to use: a channel
     // push whose ciphertext was too large to inline carries no text to scan.
     expect(kotlinHandler).not.toContain('@[$');

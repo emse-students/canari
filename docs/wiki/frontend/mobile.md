@@ -600,6 +600,40 @@ What it still cannot see, and the test says so in its own header: a French liter
 exists in no table at all. On Android the accent heuristic catches most of those; on iOS nothing
 does.
 
+#### The face on a notification, and what happens when there is none
+
+Every notification that names a person tries to show that person. **When it cannot, a coloured disc
+with their first letter is drawn instead** - Android has done this since the beginning, and both iOS
+paths used to show nothing at all, so the same failed avatar request produced a letter on one phone
+and a blank square on the other.
+
+There are three implementations and there cannot be fewer - `generateInitialsBitmap` (Kotlin),
+`CanariInitialsImagePath` (ObjC, the app) and `initialsImageUrl` (Swift, the appex, which shares no
+code with the app). What must be identical is the colour (`#6366f1`) and the 0.4 letter ratio; what
+legitimately differs is the size - 96 px on Android, where it is a small icon beside the text, and
+192 px on iOS, where an attachment is rendered at banner size. `initialsFallback.test.ts` holds the
+three together, including the size difference as a deliberate one.
+
+Two decisions inside it are easy to get wrong:
+
+- **the disc is the LAST resort, below the media thumbnail.** iOS renders only the first attachment,
+  so a letter replacing the picture a message is about would be a regression wearing a fallback's
+  name. Order is media, then avatar, then initials.
+- **a salon draws the SALON's letter, not the speaker's.** The title there is
+  `<Communaute> - #<salon>`, so anything deriving the letter from the title would draw the community
+  - or a bare `#` when the community could not be named. Both platforms pass the salon name
+  explicitly, and on iOS that is why the name is a PARAMETER of the shared notification function:
+  only the call site knows what the letter should stand for.
+
+**Reaction notifications are at parity across the two platforms, and this is the list - do not
+re-derive it.** Both take the MESSAGE path rather than the social one, both use the stable
+per-conversation id and thread so a reaction replaces itself instead of stacking, both suppress
+themselves in the foreground, both drop reply and mark-as-read (neither means anything against a
+reaction), and both compose the sentence in the app's own Français/English rather than the OS one.
+`pushContextFields.test.ts` pins the `locale` field across the Rust writer and all three native
+readers. The push carries an id, an emoji and who reacted - never the message text, since the
+recipient is its author and already holds it.
+
 #### Background MLS decrypt ladder
 
 Both Android and the iOS NSE run the same ladder when an encrypted MLS message push arrives:
