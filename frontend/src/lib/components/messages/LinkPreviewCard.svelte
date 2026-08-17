@@ -6,7 +6,11 @@
   import { fetchCanariLinkPreview, type CanariLinkPreview } from '$lib/utils/canariLinkPreview';
   import { CANARI_BADGE_LABEL } from '$lib/utils/canariLinkPreviewFormat';
   import { confirmUnsafeLinkIfNeeded } from '$lib/utils/checkLinkSafety';
-  import { ecosystemCoverCardFor, ecosystemSiteFor } from '$lib/utils/ecosystemHosts';
+  import {
+    ecosystemCoverCardFor,
+    ecosystemSiteFor,
+    ecosystemSquareCoverUrl,
+  } from '$lib/utils/ecosystemHosts';
   import { faviconCandidates } from '$lib/utils/faviconCandidates';
   import { proxiedPreviewImageUrl } from '$lib/utils/previewImageProxy';
   import { inAppPathFromHref, isInAppHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
@@ -46,6 +50,7 @@
    */
   const ecosystemSite = $derived(ecosystemSiteFor(parsed.host));
   const coverCard = $derived(ecosystemCoverCardFor(parsed.host, parsed.path));
+  const squareCoverUrl = $derived(ecosystemSquareCoverUrl(parsed.href));
 
   const fallbackInAppLabel = $derived(publicAppLinkLabel(url));
   const inAppPath = $derived(inAppPathFromHref(url));
@@ -224,6 +229,7 @@
     {isLoading}
     siteLabel={ecosystemSite?.label ?? parsed.host}
     fallbackTitle={coverCard.fallbackTitle()}
+    {squareCoverUrl}
     {standalone}
   />
 {:else}

@@ -24,6 +24,16 @@ export interface EcosystemCoverCard {
   pattern: RegExp;
   /** Message key resolver, called when the fetched preview carries no title. */
   fallbackTitle: () => string;
+  /**
+   * The square (1:1) cover for this page, when the site publishes one.
+   *
+   * An `og:image` is 1200x630 by contract, and the card shows it in a narrow
+   * full-height column: cropping a 1.9:1 image to that leaves a band of the
+   * middle of the photo. A site that also serves the cover square gets shown
+   * the square one. Built from the URL alone, so it needs no preview fetch and
+   * paints while the metadata is still in flight.
+   */
+  squareCover?: (url: URL) => string | null;
 }
 
 export interface EcosystemSite {
@@ -41,12 +51,21 @@ export interface EcosystemSite {
  * guessed: `docs/PROD-TEST-CERCLE.md` for the Cercle (the endpoint proven live
  * on 2026-08-03), the deployed origins for the other three.
  */
+/** `/albums/<uuid>`, with the id captured so the cover endpoint can be built from it. */
+const MIGALLERY_ALBUM_PATH = /^\/albums\/([0-9a-f-]+)\/?$/i;
+
 const ECOSYSTEM_SITES: Readonly<Record<string, EcosystemSite>> = {
   'gallery.mitv.fr': {
     label: 'MiGallery',
     coverCard: {
-      pattern: /^\/albums\/[0-9a-f-]+\/?$/i,
+      pattern: MIGALLERY_ALBUM_PATH,
       fallbackTitle: () => m.migallery_album_fallback(),
+      // Public for every album, and stable per album: the response revalidates
+      // on its ETag, so a changed cover is picked up without a versioned URL.
+      squareCover: (url) => {
+        const id = MIGALLERY_ALBUM_PATH.exec(url.pathname)?.[1];
+        return id ? `${url.origin}/api/albums/${id}/cover` : null;
+      },
     },
   },
   'sky.mitv.fr': { label: 'Sky' },
@@ -70,4 +89,20 @@ export function ecosystemCoverCardFor(host: string, path: string): EcosystemCove
   const site = ecosystemSiteFor(host);
   if (!site?.coverCard) return null;
   return site.coverCard.pattern.test(path) ? site.coverCard : null;
+}
+
+/**
+ * The square cover URL for a link, or null when the site publishes none.
+ *
+ * Unparseable input is a null rather than a throw: the caller is rendering a
+ * card for a string a user typed.
+ */
+export function ecosystemSquareCoverUrl(href: string): string | null {
+  try {
+    const url = new URL(href);
+    const card = ecosystemCoverCardFor(url.hostname, url.pathname);
+    return card?.squareCover?.(url) ?? null;
+  } catch {
+    return null;
+  }
 }
