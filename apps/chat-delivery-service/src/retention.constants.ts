@@ -122,6 +122,14 @@ export const DEVICE_REVOCATION_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1000;
  * forward secrecy means the server can never re-derive a frame it did not keep. What falls off the
  * end here is recoverable only from a peer that still holds it.
  *
+ * **This is the MEMORY bound, and it is not the only one.** It says how MANY entries a group may
+ * hold and nothing about how far back they reach, so on its own a group under the cap kept every
+ * row it ever had - the TTL is refreshed on every write, so the key never expired either. The write
+ * path therefore also trims by MINID at {@link RETENTION_WINDOW_MS} (`messaging.service.ts`), which
+ * is the AGE bound the rest of the service already assumed: the client's own
+ * `connectionSweepDecision` reasons "could the server have dropped something for me" against that
+ * same window. Whichever bites first wins, and only the age one may be relied on for a date.
+ *
  * Raised from 1000 on 2026-08-12, together with the durability split that put mutations
  * (reactions, edits, deletions, read receipts) into this stream for the first time. Two reasons,
  * in this order:

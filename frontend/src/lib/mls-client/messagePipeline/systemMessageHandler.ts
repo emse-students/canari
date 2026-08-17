@@ -179,6 +179,10 @@ export async function handleSystemEvent(
       return true;
     }
     const since = parseHistorySince(data?.since);
+    if (since === null) {
+      log(`[HISTORY_STATE] No window stated by ${senderNorm} for ${convoKey.slice(0, 8)}…`);
+      return true;
+    }
     noteProbeReceived(convoKey, from, { kind: 'state', key, since });
     log(
       `[HISTORY_STATE] From ${senderNorm} for ${convoKey.slice(0, 8)}… - ${key}, from ${since > 0 ? new Date(since).toISOString() : 'the beginning'}`
@@ -218,9 +222,14 @@ export async function handleSystemEvent(
       log(`[HISTORY_DIGEST] Malformed digest from ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
-    // The window the asker drew, carried to whichever leg of the exchange ends up answering. A frame
-    // that states none parses as 0, which answers in full.
+    // The window the asker drew, carried to whichever leg of the exchange ends up answering. Stating
+    // none is malformed: every sender types it as required, so its absence is a broken frame rather
+    // than an old peer, and answering it in full would be inventing a window on the asker's behalf.
     const since = parseHistorySince(data?.since);
+    if (since === null) {
+      log(`[HISTORY_DIGEST] No window stated by ${senderNorm} for ${convoKey.slice(0, 8)}…`);
+      return true;
+    }
     noteProbeReceived(convoKey, from, { kind: 'digest', digest, since });
     const size =
       digest.mode === 'ids'
@@ -240,7 +249,14 @@ export async function handleSystemEvent(
     if (!from) return true;
     const before = Number(data?.before);
     const limit = Number(data?.limit);
-    if (!Number.isFinite(before) || before <= 0 || !Number.isFinite(limit) || limit <= 0) {
+    const since = parseHistorySince(data?.since);
+    if (
+      !Number.isFinite(before) ||
+      before <= 0 ||
+      !Number.isFinite(limit) ||
+      limit <= 0 ||
+      since === null
+    ) {
       log(`[HISTORY_RANGE] Unusable range from ${senderNorm} for ${convoKey.slice(0, 8)}…`);
       return true;
     }
@@ -248,7 +264,7 @@ export async function handleSystemEvent(
       kind: 'range',
       before: Math.floor(before),
       limit: Math.min(Math.floor(limit), HISTORY_RANGE_MAX),
-      since: parseHistorySince(data?.since),
+      since,
     });
     log(
       `[HISTORY_RANGE] ${senderNorm} wants up to ${limit} message(s) before ${new Date(before).toISOString()} in ${convoKey.slice(0, 8)}…`
@@ -320,6 +336,14 @@ export async function handleSystemEvent(
             (p): p is string => typeof p === 'string' && p.length === depth && /^[0-9a-f]+$/.test(p)
           )
         : [];
+    // The puller's own window, which is NOT the one we would have used: it may retain five years
+    // where we keep ninety days, or the reverse. Only the asker may set the bound on its answer, so
+    // a pull that states none is declined rather than answered over a window we invented for it.
+    const since = parseHistorySince(data?.since);
+    if (since === null) {
+      log(`[HISTORY_PULL] No window stated by ${senderNorm} for ${convoKey.slice(0, 8)}…`);
+      return true;
+    }
 
     // EVERYTHING THAT READS THE STORE WAITS FOR OUR MAILBOX - the selection as much as the send. A
     // prefix slice resolved mid-drain names the messages we hold SO FAR, so the bundle is short of
@@ -350,12 +374,9 @@ export async function handleSystemEvent(
       log(
         `[HISTORY_PULL] ${senderNorm} wants ${wanted.length} message(s) from ${convoKey.slice(0, 8)}…`
       );
-      // The puller's own window, which is NOT the one we would have used: it may retain five years
-      // where we keep ninety days, or the reverse. Only the asker may set the bound on its answer.
-      await sendHistoryBundleForIds(convoKey, wanted, deps, {
-        to: puller,
-        since: parseHistorySince(data?.since),
-      }).catch((e) => log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`));
+      await sendHistoryBundleForIds(convoKey, wanted, deps, { to: puller, since }).catch((e) =>
+        log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`)
+      );
     });
     return true;
   }

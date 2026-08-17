@@ -1,171 +1,146 @@
-# Legacy compatibility - what to delete once every client is current
+# Legacy compatibility - the shims still standing, and the date each one may go
 
-Every entry here is a branch that exists ONLY to keep working against a client too old to speak the
-current protocol. Each one is dead weight the day the last such client is gone, and each one is a
-place where a future reader has to reason about two protocols at once.
+Every entry here is a branch that exists ONLY to keep working against something older than the
+current protocol. Each one is dead weight the day its condition is met, and each one is a place where
+a future reader has to reason about two protocols at once.
 
 **Why this file exists rather than a comment per site.** A compatibility shim is invisible once it
 works: nothing fails, nothing warns, and the condition that would retire it is never re-checked. So
-the condition is written down HERE, next to the thing it retires, and the removal becomes a decision
-somebody takes rather than an archaeology exercise. Every shim below also carries a comment at its
-site pointing back here.
+the condition is written down HERE, and the removal becomes a diary entry somebody acts on rather
+than an archaeology exercise. Every shim below also carries a comment at its site pointing back here.
 
-**The gate is the same for all of them:** the store rollout has reached the devices, `minClientVersion`
-has been raised past the release that introduced the replacement, and the fleet is confirmed on it -
-not merely "the release is out". `minClientVersion` is the mechanism that makes the claim true: while
-it sits below that release, an old client is not just possible, it is *supported*.
+**Nothing below is WORK.** Each entry is a date, and the code change behind it is minutes. What is
+being waited on is the world, not a decision - do not "do" these early, and do not re-argue them.
 
 ---
 
-## Open
+## What the 2026-08-17 gate actually retired, and what it did not
 
-### `remove_reaction` as a system event - since v0.14
+`minClientVersion` went to **0.14.0** on 2026-08-17. The gate is hard - `ensurePlatformAllowsUnlock`
+blocks the MLS unlock outright, so a client below it cannot put a group frame on the wire at all.
+
+It was assumed at the time that this retired most of this page. **Measured, it retired exactly one
+entry**, and the distinction is worth keeping because it is the one this page was getting wrong:
+
+- **A shim that humours a LIVE PEER is retired by the gate.** Only one was:
+  `history_bundle` with no `since`, deleted 2026-08-17.
+- **A shim that decodes DATA AT REST is not**, whatever the fleet is running. The bytes were written
+  before the change and they are still there; the gate says nothing about them. Four entries below.
+- **A shim that protects the SERVER's response shape is not either**, because the replacement has
+  never shipped. One entry below, and it has no date for that reason.
+
+**And a date is only worth what the mechanism under it is worth.** These four were dated on the claim
+that `history:{groupId}` expires after `RETENTION_WINDOW_MS`. It did not: the key carried a TTL
+*refreshed on every write*, and `HISTORY_STREAM_MAXLEN` bounds the entry COUNT, so a group under the
+cap kept every row it had ever held, for ever. Measured on production 2026-08-17: **four of five
+streams still carried rows from before 2026-08-15**, at 1 to 11 entries each, in streams nowhere near
+the 8 000 cap. The write path now trims by `XTRIM ... MINID` at `RETENTION_WINDOW_MS`
+(`messaging.service.ts`), which is what makes the dates below mean something.
+
+---
+
+## The diary
+
+### 2026-11-13 - history rows with no `sender_device_id`
+
+**Site:** `historyTypes.ts` (`HistoryStreamRow.sender_device_id?`) and the `kind === 'own-message'`
+arm of the replay's catch in `frontend/src/lib/utils/chat/history.ts`.
+**Shim:** the replay skips a row whose `sender_device_id` is this device before offering it to MLS. A
+row written before 2026-08-15 has no such field, so it still reaches MLS and is still recognised by
+its refusal - `CannotDecryptOwnMessage`, classified at the throw in `mls-core`. That arm is the shim;
+the skip is the mechanism.
+**Why the field and not `sender_id`:** the archive is ONE stream per group and must hold this
+device's own frames, because every other member reads it. The user cannot discriminate - the same
+account's other device wrote frames that are both decryptable and wanted. Only the device can.
+**On removal:** delete the `ownFramesSkipped++` line in the catch, keep the classification itself,
+and make `sender_device_id` non-optional in `HistoryStreamRow`.
+**Cost of keeping it:** none in traffic. The old rows are still handed to MLS to be refused, which is
+what happened before the field existed; the fix only stopped that from being the design.
+
+### 2026-11-15 - `remove_reaction` as a system event
 
 **Site:** `systemMessageHandler.ts` (live) and `historySystemEvents.ts` (replay), the
 `remove_reaction` branches.
-**Shim:** both branches translate the old frame into `applyReaction(..., removed = true)`, dated
-with the entry's own delivery time because that frame shape carries no timestamp of its own.
-**Replacement:** taking a reaction back is the SAME `ReactionMsg` that placed it, with `removed`
-set - so both legs of one operation have one shape and both carry the `at` the merge orders on.
+**Shim:** both branches translate the old frame into `applyReaction(..., removed = true)`, dated with
+the entry's own delivery time because that frame shape carries no timestamp of its own.
+**Replacement:** taking a reaction back is the SAME `ReactionMsg` that placed it, with `removed` set -
+so both legs of one operation have one shape and both carry the `at` the merge orders on.
 **On removal:** delete both branches, and drop `remove_reaction` from the silent-event list in
 `proto_fields.rs`.
-**What makes this one different:** no client sends the old frame after the rollout, but the shared
-history stream still HOLDS entries written before it, so these branches are decoding data at rest,
-not humouring a live peer. The condition to retire them is therefore the retention window elapsing
-past the rollout, on top of the usual `minClientVersion` gate.
 **Cost of keeping it:** a removal replayed from an old stream entry is ordered by its delivery time
 rather than by the sender's clock. Only distinguishable if a placement and its removal were sent
 within the same delivery, which cannot happen - the outbox serialises them.
 
-### `pin`/`unpin` with no `at`, and a pinned set stored as a bare array - since 2026-08-16
+### 2026-11-15 - `pin`/`unpin` with no `at`, and a pinned set stored as a bare array
 
 **Site:** `systemMessageHandler.ts` (live) and `historySystemEvents.ts` (replay), the `pin`/`unpin`
 branches; `mergePinEntries` and `parseStored` in `pinStore.svelte.ts`.
 **Shim:** three readings of the same missing clock. An undated frame arriving LIVE is dated on
-receipt - later than anything held, which is the right answer for a frame arriving now and the only
-one available. An undated frame REPLAYED is dated by its position in the shared log
-(`parseServerTimestampMs`), the best clock a replay has. A `pins` array of bare id strings - the
-shape shipped for one commit on 2026-08-16, and the shape of every `canari_pins_*` entry written
-before it - is read at `at: 0`, so any dated statement about the same message beats it.
+receipt - later than anything held, the right answer for a frame arriving now and the only one
+available. An undated frame REPLAYED is dated by its position in the shared log
+(`parseServerTimestampMs`), the best clock a replay has. A `pins` array of bare id strings - the shape
+shipped for one commit on 2026-08-16, and the shape of every `canari_pins_*` entry written before it -
+is read at `at: 0`, so any dated statement about the same message beats it.
 **Replacement:** the frame carries `at` on both legs, exactly as a reaction's two legs do, and the
 register is a last-write-wins entry per message with dated tombstones for the unpins.
-**On removal:** delete the three `Number(data.at) ||` fallbacks, the `typeof raw === 'string'` arm
-of `mergePinEntries`, and the `Array.isArray(parsed)` arm of `parseStored`.
-**Same shape as the two around it:** the shared history stream still HOLDS undated `pin` frames, so
-these branches decode data at rest rather than humouring a live peer. Retire them when the retention
-window has elapsed past the rollout, on top of the `minClientVersion` gate.
-**Cost of keeping it:** an undated pin loses every tie against a dated one, so a device that pinned
-on an old client and a device that unpinned on a new one converge on unpinned even if the pin came
+**On removal:** delete the three `Number(data.at) ||` fallbacks, the `typeof raw === 'string'` arm of
+`mergePinEntries`, and the `Array.isArray(parsed)` arm of `parseStored`.
+**This one has a SECOND store behind it, and the date does not cover it.** `canari_pins_*` is
+`localStorage` on each device, which nothing on the server can reach and no retention window bounds.
+The `Array.isArray` arm may only go once every device has rewritten its own entry - which happens on
+the first pin change in each conversation - so on the date, delete the two frame-shape fallbacks and
+re-read that arm as its own question.
+**Cost of keeping it:** an undated pin loses every tie against a dated one, so a device that pinned on
+an old client and a device that unpinned on a new one converge on unpinned even if the pin came
 second. The user can always pin again; the reverse - a resurrected pin nobody can explain - is the
 outcome the dating exists to prevent.
 
-### `read_receipt` naming message ids - since v0.14
+### 2026-11-15 - `read_receipt` naming message ids
 
 **Site:** `systemMessageHandler.ts` (live) and `historySystemEvents.ts` (replay), the `read_receipt`
 branches; and the per-message `readBy` / `readAt` still sitting inside encrypted rows written before
 the change.
-**Shim:** a receipt is translated into a watermark - the latest instant among the named messages
-THIS DEVICE HOLDS. An id it does not hold contributes nothing, which is the only honest reading: the
-frame names messages, and without one there is no instant to compare against.
+**Shim:** a receipt is translated into a watermark - the latest instant among the named messages THIS
+DEVICE HOLDS. An id it does not hold contributes nothing, which is the only honest reading: the frame
+names messages, and without one there is no instant to compare against.
 **Replacement:** `read_watermark`, one monotone instant per participant merged as `max`. See
 [history-reconciliation](protocols/history-reconciliation.md#read-state-becomes-a-watermark).
 **On removal:** delete both branches and the `event === 'read_receipt'` half of their conditions.
-Nothing else has to move - the stored `readBy`/`readAt` are already ignored on read, and the
-watermark column is additive (SQLite v6).
-**Same shape as `remove_reaction` below:** the shared history stream still HOLDS receipts written
-before the rollout, so the branches decode data at rest, not a live peer. Retire them when the
-retention window has elapsed past the rollout, on top of the `minClientVersion` gate.
+Nothing else has to move - the stored `readBy`/`readAt` are already ignored on read, and the watermark
+column is additive (SQLite v6).
 **Cost of keeping it:** a receipt for messages this device never had reads as no read state at all,
 where the sender did read something. It corrects itself on the next watermark that peer sends.
 
-### `history_bundle` with no `since` - predates v0.14
+---
 
-**Site:** `sendHistoryBundleForIds` (`groupActions.ts`).
-**Shim:** a bundle whose ask stated no window is answered UNCLIPPED (`since` defaults to 0). Two
-senders are entitled to that: the invite push, which nobody asked for, and a client too old to state
-a window. Neither has declined anything, so clipping their answer would be inventing a boundary on
-their behalf.
-**Replacement:** every ask - `history_digest`, `history_pull`, `history_range` - carries the asker's
-own `since`, and the answer is clipped to the one it was given. The digest itself is never clipped:
-it says what a device HAS, while `since` says what the asker WANTS.
-**On removal:** make `since` required on the ask and treat its absence as malformed.
-**Cost of keeping it:** an old client is served more than it asked for, which it will store or
-ignore. Bandwidth, never correctness.
+## No date - `GET /api/mls/history/:groupId` answering with a bare array
 
-### `GET /api/mls/history/:groupId` answering with a bare array - since v0.14
+**The gate does not reach this one, and the page used to claim it did.** Retiring it is not a matter
+of which clients are alive: **the replacement has never shipped**. Every deployed client, 0.14
+included, reads the head out of `X-History-Head`, so changing the body today breaks the current fleet
+rather than an old one.
 
-**Site:** `MessagingController.getHistory` (the body stays `Record<string, unknown>[]`, with the
-stream head in the `X-History-Head` response header) and `MlsDeliveryApi.fetchHistory` (a page whose
+**Site:** `MessagingController.getHistory` (the body stays `Record<string, unknown>[]`, the stream
+head goes in the `X-History-Head` response header) and `MlsDeliveryApi.fetchHistory` (a page whose
 `head` is `undefined` walks unbounded, exactly as before).
-**Shim:** the head travels in a HEADER rather than in the body, so that every deployed client - all
-of which `JSON.parse` the response straight into an array - keeps working unchanged. The batch route
-had no such constraint: its response was already an object, so `heads` is simply an added field.
 **Replacement:** the page IS `{ rows, head }`, one shape for both routes, and the head is not
-optional - a walk always knows its upper bound.
+optional - a walk always knows its upper bound. The batch route already has it: its response was
+always an object, so `heads` was simply an added field.
+**Condition, in order and it is a chain:** ship `{ rows, head }` and a client that reads it in some
+release **R**; raise `minClientVersion` past **R**; then delete.
 **On removal:** return `{ rows, head }` from the GET, delete the `res.setHeader` and the
-`@Res({ passthrough: true })` it needs, drop `X-History-Head` from `exposedHeaders` in
-`main.ts`, and make `HistoryPage.head` required.
-**Why the header needs the CORS entry:** the app runs cross-origin under Tauri
-(`http://tauri.localhost`), and a response header that is not in `Access-Control-Expose-Headers` is
-invisible to the client that reads it. Without that line the bound would have been silently absent
-on mobile only - green build, green deploy, wrong behaviour.
-**Cost of keeping it:** two shapes for one concept, and a head that is typed optional at every use
-site even though the server always sends one. No correctness cost: a missing head means an unbounded
-walk, which is what every client did before the bound existed.
-
-### History rows with no `sender_device_id` - written before 2026-08-15
-
-**Site:** `messaging.service.ts` (`XADD` now writes `sender_device_id`), `historyTypes.ts`
-(`HistoryStreamRow.sender_device_id?`) and the `kind === 'own-message'` arm of the replay's catch in
-`frontend/src/lib/utils/chat/history.ts`.
-**Shim:** the replay skips a row whose `sender_device_id` is this device before offering it to MLS.
-A row written earlier has no such field, so it still reaches MLS and is still recognised by its
-refusal - `CannotDecryptOwnMessage`, classified at the throw in `mls-core`. That arm is now the
-shim; the skip is the mechanism.
-**Why the field and not `sender_id`:** the archive is ONE stream per group and must hold this
-device's own frames, because every other member reads it. The user cannot discriminate - the same
-account's other device wrote frames that are both decryptable and wanted. Only the device can.
-**Replacement:** the field is required, and the `own-message` arm becomes unreachable from the
-replay (it stays reachable, and correct, from live delivery).
-**On removal:** delete the `ownFramesSkipped++` line in the catch, keep the classification itself,
-and make `sender_device_id` non-optional in `HistoryStreamRow`.
-**Removal condition, and it needs no judgement:** `history:{groupId}` carries a TTL of
-`RETENTION_WINDOW_MS`, refreshed on every write, and `HISTORY_STREAM_MAXLEN` caps each group at
-8 000 entries. One full retention window after the deploy, no row without the field can exist in
-any stream - so this can go on **2026-11-13** (90 days), with no migration and nothing to verify
-beyond the date.
-**Cost of keeping it:** none in traffic. The old rows are still handed to MLS to be refused, which
-is exactly what happened before; the fix simply stops that from being the design.
+`@Res({ passthrough: true })` it needs, drop `X-History-Head` from `exposedHeaders` in `main.ts`, and
+make `HistoryPage.head` required.
+**Why the header needs the CORS entry, for whoever ships R:** the app runs cross-origin under Tauri
+(`http://tauri.localhost`), and a response header absent from `Access-Control-Expose-Headers` is
+invisible to the client reading it. Without that line the bound would have been silently missing on
+mobile only - green build, green deploy, wrong behaviour.
+**Cost of keeping it:** two shapes for one concept, and a head typed optional at every use site
+though the server always sends one. No correctness cost: a missing head means an unbounded walk,
+which is what every client did before the bound existed.
 
 ---
 
-## Closed
-
-Move an entry here with the date and the release that made it safe, rather than deleting the entry
-outright - the next reader wants to know the shim existed and why it could go.
-
-### `history_bundle` with no `to` - retired 2026-08-12 by the history-reconciliation rework
-
-**Not retired by a rollout: the thing it protected was deleted.** The shim existed so that an
-unaddressed bundle could still DISCHARGE the receiver's durable awaiting-history marker. There is no
-marker. `systemMessageHandler.ts` now ingests every bundle it can decrypt and reads the addressee for
-one log line only - an answer meant for a peer is simply free messages, and what this device holds is
-compared again on its next connection. `isSolicitInFlight` no longer exists.
-
-### `history_request` with no `withDigest` - retired 2026-08-12 by the history-reconciliation rework
-
-**Deleted as a CLEAN BREAK, on the user's explicit decision** (*"finalement, pas besoin de conserver
-le legacy cette fois"*), not because the fleet had updated. `withDigest` is gone from the election
-frame (`messaging.service.ts`, where only a comment now names it) and `requesterHasDigest` is gone
-from `actions.ts`. A responder now waits for the MLS probe and answers what the probe asks for.
-
-**The consequence, which is live during the store rollout and must not be mistaken for a defect:**
-a 0.14 responder that receives no probe answers NOTHING (`actions.ts`, `handleHistoryRequest`:
-*"no probe ... - nothing to answer"*), and a 0.13.0 requester sends no probe. So an old requester gets
-silence from an updated peer where it used to get a whole-store dump. It degrades history repair for
-clients that have not updated; it cannot corrupt anything. **The remedy is to finish the rollout and
-raise `minClientVersion` past 0.14 - never to restore the branch.**
-
-Note the asymmetry that made the deploy order not matter here: this hazard is client↔client. The
-SERVER remained compatible with a 0.13.0 client throughout (no endpoint, DTO, proto field or
-retention constant changed), which is why shipping it before the stores was survivable.
+Retired shims are not listed here. Each one's story is in `CHANGELOG.md` at the release that removed
+it - `history_bundle` with no `to` and `history_request` with no `withDigest` on 2026-08-12,
+`history_bundle` with no `since` on 2026-08-17.

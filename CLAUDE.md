@@ -159,17 +159,18 @@ its commit are in. The detail lives where the link says - **do not restate it he
     written** and no server-side observer (`call-service` logs nothing), so it is a build, not a
     run. Sequence and per-check state live on
     [cross-client-testing](docs/wiki/cross-client-testing.md) - the only copy of the ladder's order.
-12. **LAST:** raise prod's `minClientVersion` to 0.14.0, then sweep
-    [legacy-compatibility](docs/wiki/legacy-compatibility.md). **Asked 2026-08-17 by the user, on the
-    Play Store now serving 0.14.0.** Two things it does NOT settle, and both must be checked before
-    anything is deleted: the App Store half is unverified, and a raise locks out every iOS user it
-    has not reached; and **the fleet gate retires only the shims that humour a LIVE PEER** - four of
-    the six open entries decode DATA AT REST in the shared history stream, so they additionally owe
-    the retention window past the rollout (`sender_device_id` names 2026-11-13; the others fall due
-    ~90 days after the v0.14 deploy). Sweep what the gate actually reaches, and give each survivor
-    its date.
+12. ~~**LAST:** raise prod's `minClientVersion` to 0.14.0~~ - **DONE BY THE USER 2026-08-17 10:49**,
+    written straight into `platform_config` from `/admin/platform` (`min_client_version = 0.14.0`,
+    confirmed in the DB and in the `PlatformService` log). The gate is HARD: a client below it never
+    unlocks MLS, so it cannot put a group frame on the wire at all. **The App Store half is still
+    unverified, so any iOS user the store has not reached is locked out behind an update button** -
+    watch for it. The sweep it unblocks is IN PROGRESS, see below.
 
 ### CANARI - what is open
+
+**THE LEGACY SWEEP IS DONE (2026-08-17).** [legacy-compatibility](docs/wiki/legacy-compatibility.md)
+is a DIARY now, not a board: four dated removals and one that waits on a release. Nothing on it is
+work - do not open it looking for a task.
 
 **Owed on a LOGGED-IN session: the GIF-comment flow end to end.** The blocked step is proven fixed
 on the deployed header - the exact `fetch` + `File` that `handleGifSelected` builds returns 2.44 MB
@@ -220,14 +221,13 @@ its captured log. Same shape: the four human checks left from the SEO work
 after the Garage migration - see [docker](docs/wiki/infrastructure/docker.md)).
 
 **Release status:** v0.14.0 cut 2026-08-17 (tag + `gh release create`, which drives the version bump,
-the mobile builds and the deploy - `cicd.md`). **`minClientVersion` stays at 0.13.0 on purpose** - the
-store rollout has not reached devices, and raising it first locks everyone out behind a button leading
-to the old version. Shipping order: publish to the stores -> VERIFY the store serves it -> only THEN
-raise `minClientVersion` ([legacy-compatibility](docs/wiki/legacy-compatibility.md)). Prod VERIFIED
-answering `{"version":"0.14.0","minClientVersion":"0.13.0"}`; both CD runs and the AppImage build
-green. **The Play Store serves 0.14.0 (the user, 2026-08-17)**, so the Android half of the gate is
-met; the App Store half is NOT verified, and raising `minClientVersion` locks out any iOS user the
-App Store has not reached. That raise, and the shim sweep it unblocks, are queue item 12.
+the mobile builds and the deploy - `cicd.md`); both CD runs and the AppImage build green. Prod
+VERIFIED answering `{"version":"0.14.0","minClientVersion":"0.14.0"}`. **The user raised
+`minClientVersion` to 0.14.0 by hand at 10:49**, from `/admin/platform` - it lives in
+`platform_config`, never in the code, so no deploy touches it. The Play Store serves 0.14.0; **the
+App Store half was never verified, so the raise locks out any iOS user it has not reached.** The
+shipping order this violated is written down for next time: publish -> VERIFY the store serves it ->
+only THEN raise ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
 
 **The changelog is two files now.** `CHANGELOG.md` carries the condensed entry per change plus
 `[Unreleased]`; [changelog-archive](docs/changelog-archive.md) carries the long-form account and every

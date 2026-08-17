@@ -151,11 +151,17 @@ describe('parseHistorySince', () => {
     expect(parseHistorySince(1500.9)).toBe(1500);
   });
 
-  it('reads anything else as zero, i.e. answer in full', () => {
-    // A frame that states no range is a frame from a path that has no window to state. Over-
-    // answering costs bandwidth; under-answering loses messages.
-    for (const raw of [undefined, null, 0, -1, Number.NaN, 'soon']) {
-      expect(parseHistorySince(raw)).toBe(0);
+  it('reads a stated beginning-of-time as the window it is, not as absence', () => {
+    // 0 is a legitimate answer - "from the beginning" - and it is exactly the value the retired
+    // shim used for a frame that stated nothing, which is what made the two indistinguishable.
+    expect(parseHistorySince(0)).toBe(0);
+  });
+
+  it('refuses a frame that states no usable window', () => {
+    // Every ask carries `since`, and its senders type it as required. Absence is therefore a broken
+    // frame, and the callers decline it rather than inventing a window on the asker's behalf.
+    for (const raw of [undefined, null, -1, Number.NaN, Number.POSITIVE_INFINITY, 'soon', {}]) {
+      expect(parseHistorySince(raw)).toBeNull();
     }
   });
 });

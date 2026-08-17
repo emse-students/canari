@@ -1003,18 +1003,20 @@ export async function sendHistoryPull(
  * was sent. So an asker states `since` and the answerer drops what falls below it here, once, rather
  * than every caller filtering an id list it cannot date.
  *
- * `since` defaults to 0, which answers in full. That is what a path with no window to state means:
- * the bundle pushed to a member being invited was asked for by nobody. Over-answering costs
- * bandwidth; under-answering loses messages.
+ * **`since` is required, and has no default.** It used to fall back to 0 - answer in full - so that
+ * an ask stating no window still got served. Nothing reaches this without one: every ask carries it,
+ * and the one path that genuinely has no window to state pushes {@link sendFullHistoryBundle}
+ * instead, which is a different function. A default here could therefore only ever have hidden a
+ * malformed frame, and `0` is a legitimate window, so it hid it as a normal answer.
  */
 export async function sendHistoryBundleForIds(
   groupId: string,
   ids: readonly string[],
   deps: HistoryStoreDeps,
-  opts: { to: string; chunkSize?: number; since?: number }
+  opts: { to: string; chunkSize?: number; since: number }
 ): Promise<void> {
   const { storage, mlsService, log } = deps;
-  const { to, chunkSize = 200, since = 0 } = opts;
+  const { to, chunkSize = 200, since } = opts;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
     return;

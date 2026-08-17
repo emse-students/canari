@@ -136,7 +136,7 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
   /** Every id in `msgs`, so a test asks for the whole selection and only the clip narrows it. */
   const allIds = (msgs: StoredMessage[]) => msgs.map((m) => m.id);
 
-  function serve(msgs: StoredMessage[], since?: number) {
+  function serve(msgs: StoredMessage[], since: number) {
     const mlsService = createMlsServiceStub();
     return {
       mlsService,
@@ -168,10 +168,15 @@ describe("sendHistoryBundleForIds - the asker's window", () => {
     expect(data0(mlsService)).toMatchObject({ id: 'exactly-at' });
   });
 
-  it('answers in full when no window is stated', async () => {
-    // The default that keeps every unasked path working: an invite push and a client too old to
-    // state a window both mean "send it all", and neither can be made to say so.
-    const { mlsService, done } = serve([storedMessage('old', OLD), storedMessage('new', RECENT)]);
+  it('answers in full for an asker whose window opens at the beginning', async () => {
+    // 0 is a WINDOW, not the absence of one, and that distinction is the point: `since` used to
+    // default to 0 so that an ask stating nothing was still served in full. Nothing reaches this
+    // without one - every ask carries it, and the invite push uses `sendFullHistoryBundle` instead -
+    // so the default could only ever have answered a malformed frame while looking like a normal one.
+    const { mlsService, done } = serve(
+      [storedMessage('old', OLD), storedMessage('new', RECENT)],
+      0
+    );
     await done;
 
     expect(sentBundle(mlsService).data.messages).toHaveLength(2);

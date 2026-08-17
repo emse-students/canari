@@ -125,15 +125,22 @@ export function historyRangeStart(floor: number | undefined, now: number = Date.
 }
 
 /**
- * Reads a `since` off a frame a peer sent us.
+ * Reads the window a peer stated on an ask, or `null` when it stated none.
  *
- * A frame that states nothing is answered in full: that is what a device too old to say, or a path
- * that has no window to state (a bundle pushed to a member being invited, which is asked for by
- * nobody), both mean. Over-answering costs bandwidth; under-answering loses messages.
+ * **Every ask carries its own `since`**, and every sender types it as required:
+ * {@link historyRangeStart} feeds `history_state` and `history_digest`, while `history_pull` and
+ * `history_range` take it in their request objects. A frame arriving without one is therefore
+ * MALFORMED, not old - the clients that could not state it are locked out by `minClientVersion`,
+ * which blocks the MLS unlock outright, so such a peer cannot put a group frame on the wire at all.
+ *
+ * **Returning `null` rather than 0 is the whole point.** `0` is a legitimate window meaning "from
+ * the beginning", so mapping absence onto it made the two indistinguishable: a malformed frame was
+ * answered in full, for ever, and nothing ever said so. The caller decides what to do with `null` -
+ * every one of them declines the frame and logs it.
  */
-export function parseHistorySince(raw: unknown): number {
-  const at = typeof raw === 'number' ? raw : Number(raw);
-  return Number.isFinite(at) && at > 0 ? Math.floor(at) : 0;
+export function parseHistorySince(raw: unknown): number | null {
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return null;
+  return Math.floor(raw);
 }
 
 /**
