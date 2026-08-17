@@ -1,4 +1,5 @@
 import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliveryHttp';
+import { fetchJsonUnderProgressDeadline } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
 import { DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { GroupMeta, UserGroupRow } from './IMlsService';
@@ -13,6 +14,20 @@ export type MlsDeliveryFetch = typeof fetch;
  * -> epoch fork on the successor (H1). [[H1]]
  */
 export const MLS_ADD_LOCK_TTL_MS = 30_000;
+
+/**
+ * How long one pending page may stay COMPLETELY SILENT before it is abandoned.
+ *
+ * Not a budget for the page: {@link fetchJsonUnderProgressDeadline} re-arms it on the response head
+ * and on every body chunk, so a slow transfer never trips it and the number does not have to cover
+ * "the biggest page on the slowest link" - a product nobody can bound. What it has to exceed is the
+ * longest stretch the design permits with nothing on the wire, and there is exactly one: the server
+ * assembling a page, which it bounds at `PENDING_PAGE_MAX_BYTES` (1 MB) reading
+ * `PENDING_FETCH_CHUNK_ROWS` (50) rows at a time. Ten seconds of total silence against that is
+ * already pathological, which is the point - it is a hang-guard and nothing else decides how big a
+ * page may be.
+ */
+export const PENDING_PAGE_STALL_MS = 10_000;
 
 /**
  * The delivery service refused this device id: it was explicitly deleted, and the denylist is
@@ -94,16 +109,21 @@ export class MlsDeliveryApi {
    * only grows and it can never catch up (WP-PENDING-1, measured: 5 526 rows = 12 pages, aborted at
    * 10 s on every reconnect). Each page is therefore handed to `onPage` the moment it lands, so an
    * attempt that dies half-way still made progress the next one keeps.
+   *
+   * That per-page deadline measures SILENCE, not elapsed time ({@link PENDING_PAGE_STALL_MS}). The
+   * deadline and the halving below are a detector and a response, not two answers to one question:
+   * the deadline decides when to stop waiting, the ladder decides what to ask next, and neither can
+   * do the other's job.
    */
   async pullPendingMessagesJson(opts?: {
-    /** Deadline for ONE page request. */
-    pageTimeoutMs?: number;
+    /** The longest SILENCE tolerated on one page. Defaults to {@link PENDING_PAGE_STALL_MS}. */
+    stallTimeoutMs?: number;
     /** Receives each page as it lands; when set, pages are not accumulated in memory. */
     onPage?: (rows: unknown[]) => Promise<void> | void;
   }): Promise<unknown[]> {
     if (this.userId === 'unknown') return [];
 
-    const pageTimeoutMs = opts?.pageTimeoutMs ?? 10_000;
+    const stallTimeoutMs = opts?.stallTimeoutMs ?? PENDING_PAGE_STALL_MS;
     const all: unknown[] = [];
     let pageLimit = 500;
     let afterCreatedAt: string | undefined;
@@ -113,16 +133,16 @@ export class MlsDeliveryApi {
       url.searchParams.set('limit', String(pageLimit));
       if (afterCreatedAt) url.searchParams.set('after', afterCreatedAt);
 
-      const ctrl = new AbortController();
-      const tid = setTimeout(() => ctrl.abort(), pageTimeoutMs);
       let batch: Array<{ createdAt?: string }>;
       try {
-        const res = await this.f(url.toString(), {
-          headers: await this.auth(),
-          signal: ctrl.signal,
-        });
-        if (!res.ok) break;
-        batch = (await res.json()) as Array<{ createdAt?: string }>;
+        const page = await fetchJsonUnderProgressDeadline<Array<{ createdAt?: string }>>(
+          this.f,
+          url.toString(),
+          { headers: await this.auth() },
+          stallTimeoutMs
+        );
+        if (!page.ok) break;
+        batch = page.body;
       } catch (e) {
         // A page that does not arrive is a page ASKED FOR TOO BIG, until proven otherwise. Measured
         // on production: a device whose frames carried media needed 12 MB for 500 rows, timed out on
@@ -134,14 +154,18 @@ export class MlsDeliveryApi {
         // Halving, never waiting: the retry changes the REQUEST, so it terminates on a proof - a
         // page of one row is the smallest question that can be asked, and failing that is a genuine
         // transport failure rather than an oversized answer. Nine steps at most, no clock anywhere.
+        //
+        // The reason travels with the error, so the line SEPARATES the two failures halving treats
+        // alike: a server that never started answering (the size question) from a transfer that
+        // started and stopped (the link). Nine identical "did not arrive" lines said neither.
         if (pageLimit > 1) {
           pageLimit = Math.max(1, Math.floor(pageLimit / 2));
-          console.warn(`[PENDING] page did not arrive - retrying with limit=${pageLimit}`);
+          console.warn(
+            `[PENDING] page did not arrive (${e instanceof Error ? e.message : String(e)}) - retrying with limit=${pageLimit}`
+          );
           continue;
         }
         throw e;
-      } finally {
-        clearTimeout(tid);
       }
       if (!Array.isArray(batch) || batch.length === 0) break;
 

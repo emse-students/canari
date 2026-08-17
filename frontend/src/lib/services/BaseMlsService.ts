@@ -920,8 +920,6 @@ export abstract class BaseMlsService implements IMlsService {
 
     void this.delivery.ackMessages([]).catch(() => {});
 
-    /** Per-page deadline: one request's worth of transfer, not the whole backlog's. */
-    const PAGE_TIMEOUT = 10_000;
     let fetched = 0;
 
     /**
@@ -931,8 +929,9 @@ export abstract class BaseMlsService implements IMlsService {
      */
     const pull = (async () => {
       try {
+        // The per-page silence deadline is the delivery API's own (`PENDING_PAGE_STALL_MS`): it is a
+        // property of that request, and a second copy here is a second number to keep true.
         await this.delivery.pullPendingMessagesJson({
-          pageTimeoutMs: PAGE_TIMEOUT,
           onPage: (rows) => {
             fetched += rows.length;
             recordPendingMessagesFetched(rows.length);

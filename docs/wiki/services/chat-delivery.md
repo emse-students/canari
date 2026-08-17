@@ -269,7 +269,7 @@ Three mechanisms, each independently sufficient for a different failure:
 | Where | What | Why it is not the others |
 | --- | --- | --- |
 | `fetchMessages` | fills a page to `PENDING_PAGE_MAX_BYTES` (1 MB), reading `PENDING_FETCH_CHUNK_ROWS` (50) at a time | bounds the SERVICE's memory too: reading 500 rows before trimming would load 44 MB to return 1 MB |
-| `pullPendingMessagesJson` | halves `limit` when a page does not arrive, down to 1 | survives an OLD server, and a link too slow for any fixed budget; terminates on a proof (nine steps), never a clock |
+| `pullPendingMessagesJson` | halves `limit` when a page does not arrive, down to 1 | survives an OLD server, and a link too slow for any fixed budget; terminates on a proof (nine steps), never a clock. What counts as "does not arrive" is the progress deadline below |
 | both | a page always carries **at least one row**, whatever its size | an oversized frame must stay deliverable, or it blocks its own queue for ever |
 
 **Verified on production the same evening.** The server logged
@@ -292,9 +292,39 @@ and the halving ladder really does terminate.
   `createdAt`**, even when finishing the group takes it past its budget or its row limit. Fixed
   server-side on purpose: it covers clients too old to send a better cursor.
 
-The residual imperfection, recorded rather than hidden: the 10 s per-page deadline is a TOTAL, not a
-progress deadline, so it cannot tell a slow transfer from a stopped one. It is a hang-guard now that
-pages fit in a megabyte. The right form and its cost are in [backlog](../backlog.md).
+#### The per-page deadline measures SILENCE, not elapsed time (2026-08-17)
+
+The residual imperfection the section above recorded rather than hid: 10 s was a TOTAL, so it could
+not tell a transfer arriving slowly from one that had stopped arriving at all. That is the wrong
+question. A total deadline has to be large enough for the biggest plausible answer on the slowest
+plausible link - a product nobody can bound, hence a number nobody could justify. Ten seconds was
+that number.
+
+**`fetchJsonUnderProgressDeadline` asks the question that has an answer: is anything still coming.**
+The timer is armed once before the request and RE-ARMED on every arrival - the response head, then
+each body chunk - so it fires only on `PENDING_PAGE_STALL_MS` of complete silence. The constant did
+not change and its justification did: it no longer has to cover a transfer, only the longest quiet
+stretch the design permits, and there is exactly one - the server assembling a page it already
+bounds at 1 MB reading 50 rows at a time. Ten seconds of total silence against that is pathological,
+which is what a hang-guard should be.
+
+Both halves are real on both platforms: the browser streams `res.body`, and Tauri's `plugin-http`
+builds its `Response` over a `ReadableStream` pulling chunks across the IPC boundary, so a chunk
+arriving there is a chunk arriving here. **The reader is raced against the abort rather than trusted
+to honour it** - aborting the signal stops the REQUEST, not a `read()` already awaiting a chunk from
+a stream that was never handed the signal, and a hang-guard that can itself hang is not one.
+
+**The halving ladder stays, and the question of whether it still earns its place is settled: it
+does.** The deadline decides when to stop waiting, the ladder decides what to ask next - a detector
+and a response, not two answers to one question. Neither can do the other's job: without the
+deadline the ladder never fires, and without the ladder the deadline only ever reports.
+
+What the deadline now adds is EVIDENCE. `StalledRequestError` carries whether the response head had
+arrived, so the log separates the two causes halving treats alike - a server that never started
+answering (the size question, the one asking less can fix) from a transfer that started and stopped
+(the link). Nine identical `page did not arrive` lines said neither. Pinned by
+`progressDeadline.test.ts` (the mechanism, both outcomes) and
+`mlsDeliveryApi.pending.test.ts` (a body taking six times the window and never halved).
 
 #### A drain that acknowledges nothing now says so
 

@@ -332,6 +332,21 @@ carry in the head:
   the ORIGINAL failure**: the run's backlog was well inside the old 10 s budget, so it establishes
   partial progress and nothing about the timeout - say which, or the next reader believes more than
   was measured. [chat-delivery](services/chat-delivery.md).
+- **A DEADLINE OVER A TRANSFER MUST MEASURE SILENCE, NOT ELAPSED TIME.** A total deadline answers
+  "did this take too long", which is a fact about nothing: a big answer on a slow link and a dead
+  connection score identically, so the constant has to cover the largest plausible answer times the
+  slowest plausible link - a product nobody can bound, which is why no such number was ever
+  justifiable. Ask instead whether anything is still coming: arm the timer before the request and
+  RE-ARM it on the response head and on every body chunk (`fetchJsonUnderProgressDeadline`, over
+  `res.body.getReader()`). The number then bounds only the longest quiet stretch the design permits,
+  and stops being a tuning knob. Two things this owes: **race the reader against the abort rather
+  than trusting the stream to honour the signal** - aborting stops the REQUEST, not a `read()`
+  already awaiting a chunk, and a hang-guard that can itself hang is not one; and **carry whether
+  the response head had arrived out with the error as a TYPE** (`StalledRequestError`), because a
+  server that never started answering and a transfer that started and stopped are the two causes a
+  retry policy above treats alike. A detector and a response are not two answers to one question:
+  the deadline decides when to stop waiting, the halving ladder decides what to ask next, and
+  neither can do the other's job. [chat-delivery](services/chat-delivery.md).
 - MLS gives no echo of your OWN message, so the sender's optimistic update is the only writer it
   gets: apply it in memory AND persist it (`persistLocalMutation`), or it dies at the next load.
 - A UI buffer placed IN FRONT of a persistence call is a persistence bug, not a rendering choice:

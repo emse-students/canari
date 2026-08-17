@@ -127,7 +127,7 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
   it('gives each page its own deadline, never one budget for the whole pull', async () => {
     vi.useFakeTimers();
     try {
-      // Every page takes just under the per-page budget. Under a single pull-wide deadline the
+      // Every page stays just under the per-page window. Under a single pull-wide deadline the
       // second one would abort; under a per-page deadline both complete.
       const fetchFn = vi.fn().mockImplementation(
         (_url: string, init: { signal: AbortSignal }) =>
@@ -146,7 +146,7 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
           })
       );
 
-      const pending = api(fetchFn).pullPendingMessagesJson({ pageTimeoutMs: 1_000 });
+      const pending = api(fetchFn).pullPendingMessagesJson({ stallTimeoutMs: 1_000 });
       await vi.advanceTimersByTimeAsync(2_000);
       await expect(pending).resolves.toHaveLength(501);
       expect(fetchFn).toHaveBeenCalledTimes(2);
@@ -155,13 +155,59 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
     }
   });
 
-  it('aborts a page that overruns its own deadline, then asks a smaller one', async () => {
+  it('does not halve a page that is merely SLOW, only one that goes silent', async () => {
     vi.useFakeTimers();
     try {
-      // A link so slow that even one row never lands: the deadline fires on every attempt, the
-      // halving runs its full ladder, and the pull ends by REPORTING rather than by hanging. The
-      // deadline is a hang-guard here, not the thing deciding how big a page may be - that is now
-      // the server's byte budget, and the client's halving when the server is older than it.
+      // THE DEFECT THIS ITEM CLOSES. The deadline used to measure the total time a page took, so a
+      // large page on a slow link was indistinguishable from one that had stopped arriving - it was
+      // aborted, then halved, on a link that was working the whole time. Here the body takes six
+      // times the window to arrive and is never quiet for a full one, so there is nothing to doubt:
+      // one request, at the size originally asked.
+      const body = JSON.stringify(page(500, '2026-01-01T00:00:00.000Z'));
+      const slices = Array.from({ length: 12 }, (_, i) =>
+        body.slice(Math.floor((i * body.length) / 12), Math.floor(((i + 1) * body.length) / 12))
+      );
+      const fetchFn = vi.fn().mockImplementation(() => {
+        const first = fetchFn.mock.calls.length === 1;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              const parts = first ? slices : ['[]'];
+              let i = 0;
+              const push = () => {
+                if (i < parts.length) {
+                  controller.enqueue(new TextEncoder().encode(parts[i++]));
+                  setTimeout(push, 500);
+                  return;
+                }
+                controller.close();
+              };
+              setTimeout(push, 500);
+            },
+          }),
+        } as unknown as Response);
+      });
+
+      const pending = api(fetchFn).pullPendingMessagesJson({ stallTimeoutMs: 1_000 });
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(pending).resolves.toHaveLength(500);
+
+      const limits = fetchFn.mock.calls.map((c) => new URL(String(c[0])).searchParams.get('limit'));
+      expect(limits).toEqual(['500', '500']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('abandons a page that goes silent, then asks a smaller one', async () => {
+    vi.useFakeTimers();
+    try {
+      // A server that never answers at all: the deadline fires on every attempt, the halving runs
+      // its full ladder, and the pull ends by REPORTING rather than by hanging. The deadline is a
+      // hang-guard here, not the thing deciding how big a page may be - that is the server's byte
+      // budget, and the client's halving when the server is older than it.
       const fetchFn = vi.fn().mockImplementation(
         (_url: string, init: { signal: AbortSignal }) =>
           new Promise((_resolve, reject) => {
@@ -169,9 +215,11 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
           })
       );
 
-      const pending = api(fetchFn).pullPendingMessagesJson({ pageTimeoutMs: 1_000 });
-      const assertion = expect(pending).rejects.toThrow('aborted');
-      await vi.advanceTimersByTimeAsync(10_000);
+      const pending = api(fetchFn).pullPendingMessagesJson({ stallTimeoutMs: 1_000 });
+      // The failure is NAMED, not just counted: nothing had begun to arrive, which is the one cause
+      // asking a smaller page can fix.
+      const assertion = expect(pending).rejects.toThrow('no response head');
+      await vi.advanceTimersByTimeAsync(20_000);
       await assertion;
       // Nine attempts, bounded by the ladder and not by a retry counter anyone has to maintain.
       expect(fetchFn).toHaveBeenCalledTimes(9);
