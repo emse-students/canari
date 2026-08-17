@@ -199,11 +199,18 @@ its captured log. Same shape: the four human checks left from the SEO work
 **Owed cleanup: remove the orphaned `minio_data` volume after 2026-08-28** (14-day rollback window
 after the Garage migration - see [docker](docs/wiki/infrastructure/docker.md)).
 
-**Release status:** v0.13.1, prod answering `{"version":"0.13.1"}`. **`minClientVersion` stays at
-0.13.0 on purpose** - the store rollout has not reached devices, and raising it first locks everyone
-out behind a button leading to the old version. Shipping order: publish to the stores -> VERIFY the
-store serves it -> only THEN raise `minClientVersion`
-([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+**Release status:** v0.14.0 cut 2026-08-17 (tag + `gh release create`, which drives the version bump,
+the mobile builds and the deploy - `cicd.md`). **`minClientVersion` stays at 0.13.0 on purpose** - the
+store rollout has not reached devices, and raising it first locks everyone out behind a button leading
+to the old version. Shipping order: publish to the stores -> VERIFY the store serves it -> only THEN
+raise `minClientVersion` ([legacy-compatibility](docs/wiki/legacy-compatibility.md)). **Owed: confirm
+prod answers `{"version":"0.14.0"}` once the CD run finishes.**
+
+**The changelog is two files now.** `CHANGELOG.md` carries the condensed entry per change plus
+`[Unreleased]`; [changelog-archive](docs/changelog-archive.md) carries the long-form account and every
+release up to v0.13.1. The archive also records why v0.11.8..v0.13.1 had to be reconstructed (they
+shipped with no section, all four dumped into `[Unreleased]`) and that **v0.11.3 has a tag and still
+has no section** - a gap left open on purpose rather than filled with invented prose.
 
 #### Settled 2026-08-17 - do not re-open any of these
 

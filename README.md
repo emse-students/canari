@@ -190,7 +190,8 @@ canari/
 ├── docs/
 │   ├── wiki/                  # Technical documentation (English)
 │   ├── user-guide/            # User-facing documentation (French)
-│   └── diagrams/              # UML sequence diagrams
+│   ├── diagrams/              # UML sequence diagrams
+│   └── changelog-archive.md   # Long-form release history (<= v0.13.1)
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
@@ -220,7 +221,9 @@ git commit -m "feat: description"   # conventional commits
 git push
 ```
 
-Release history is in [`CHANGELOG.md`](CHANGELOG.md).
+Release history is in [`CHANGELOG.md`](CHANGELOG.md), condensed. The full account behind each entry,
+and every release up to and including v0.13.1, is in
+[`docs/changelog-archive.md`](docs/changelog-archive.md).
 
 ## License
 
