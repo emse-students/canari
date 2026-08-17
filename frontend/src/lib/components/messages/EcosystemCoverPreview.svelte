@@ -8,6 +8,12 @@
   because that is what the link actually points at - an album, not a page with
   a picture on it. The stack fans out on hover; the photo itself never moves,
   so nothing about the image is hidden by the decoration.
+
+  The same cover, blurred past recognition, also tints the card: a link to a
+  sunset arrives orange and a link to a night out arrives blue, which is a
+  better hint at what is behind it than any fixed palette. It sits under an
+  opaque scrim so the text keeps its contrast whatever the photo does, and the
+  card falls back to the warm ecosystem gradient until the image loads.
 -->
 <script lang="ts">
   import { ArrowUpRight, Images } from '@lucide/svelte';
@@ -61,10 +67,22 @@
   href={url}
   target="_blank"
   rel="noopener noreferrer"
-  class="group relative {standalone
+  class="group relative isolate overflow-hidden {standalone
     ? ''
     : 'mt-3'} flex items-center gap-3.5 p-3 pr-2.5 rounded-2xl border border-black/5 dark:border-white/10 bg-gradient-to-br from-amber-100/50 via-white/45 to-rose-100/40 dark:from-amber-400/10 dark:via-black/25 dark:to-fuchsia-400/10 backdrop-blur-xl transition-all duration-300 hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/10 dark:hover:shadow-amber-400/5"
 >
+  <!-- The cover's own colours, blurred out of legibility, under a scrim -->
+  {#if coverUrl}
+    <img
+      src={coverUrl}
+      alt=""
+      aria-hidden="true"
+      loading="lazy"
+      class="absolute inset-0 -z-10 w-full h-full object-cover scale-150 blur-2xl saturate-150 opacity-45 dark:opacity-35 transition-opacity duration-500 group-hover:opacity-60 dark:group-hover:opacity-50"
+    />
+    <div class="absolute inset-0 -z-10 bg-white/55 dark:bg-black/55" aria-hidden="true"></div>
+  {/if}
+
   <!-- Cover, printed on a stack of the album's other photos -->
   <div class="relative shrink-0 w-24 sm:w-28 aspect-square">
     <div
