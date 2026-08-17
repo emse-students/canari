@@ -71,6 +71,45 @@ than the element's own error.
 Counting the headers is the other half, and `curl -sI` is enough: **two `content-security-policy`
 lines mean the edge is injecting one.** There should be exactly one.
 
+### The origin policy is stated once, and it is a description of the client's code
+
+`infrastructure/local/Dockerfile.frontend` writes the policy into `/etc/nginx/snippets/csp.conf` and
+every block that sets response headers pulls it in with `include`. That indirection exists because
+**nginx's `add_header` REPLACES the inherited set rather than adding to it**, so each of the three
+blocks that sets a header of its own (the server block, `location /`, `@app_shell`) has to carry the
+whole policy - and three verbatim copies of a security policy is precisely how one of them keeps an
+old value after the other two are updated. One definition makes that impossible.
+
+`frontend/src/lib/security/csp.test.ts` asserts the invariants: exactly one declaration, more than
+one `include`, both KLIPY hosts present in `connect-src`, and no bare scheme there. It lives in the
+frontend suite on purpose - what invalidates the policy is frontend code calling a host nobody
+added.
+
+**The defect that produced this (2026-08-17): attaching a GIF to a post comment did nothing.**
+`connect-src` named `https://api.klipy.com`, the GIF picker's search API, and nothing else. But the
+picker hands back a URL on `https://static.klipy.com`, and a comment's media is end-to-end
+encrypted, so the client must READ those bytes before it can encrypt and upload them. The grid
+rendered normally, because `img-src` is `https:` - so the feature looked alive:
+
+| What the picker does | Directive that governs it | Verdict before the fix |
+|---|---|---|
+| Search KLIPY | `connect-src https://api.klipy.com` | allowed |
+| Render the grid thumbnails | `img-src https:` | allowed |
+| Read the chosen GIF's bytes | `connect-src` - host absent | **blocked** |
+
+**Displaying a remote image and reading its bytes are two different permissions.** A wide `img-src`
+next to a narrow `connect-src` is the correct shape - the feed renders arbitrary user-posted image
+URLs, while what the app may read into memory stays an allowlist - and it is also the shape that
+makes a missing `connect-src` host look like a broken button rather than a policy.
+
+Measured before fixing, so the allowlist is a fact rather than a guess: 1 440 media URLs across
+KLIPY's trending and two searches, **all on `static.klipy.com`**. The failing request was captured
+on prod against the real header - the browser names the directive itself:
+
+> Connecting to `https://static.klipy.com/...gif` violates the following Content Security Policy
+> directive: "connect-src 'self' blob: wss: ws: ... https://api.klipy.com". The action has been
+> blocked.
+
 ## Administrative hostnames are gated by Cloudflare Access
 
 Every administrative interface published through a tunnel sits behind **Cloudflare Access**, in front

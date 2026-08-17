@@ -484,6 +484,8 @@
   "post_send_comment_label": "Send comment",
   "post_missing_auth_token": "Missing authentication token",
   "post_image_load_error": "Could not load media",
+  "post_comment_gif_fetch_error": "Could not fetch that GIF.",
+  "post_comment_media_error": "Could not attach that media to the comment.",
   "post_media_expired_label": "Media expired (30-day retention).",
   "post_image_alt": "Post image",
   "post_zoom_image_label": "Enlarge media",

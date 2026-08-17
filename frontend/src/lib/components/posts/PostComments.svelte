@@ -26,6 +26,7 @@
   import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   const mentionRenderers = {
@@ -136,6 +137,7 @@
       pendingPreviewUrl = URL.createObjectURL(uploadFile);
     } catch (err) {
       console.error('Failed to upload comment media', err);
+      showToast(m.post_comment_media_error());
     } finally {
       uploadingMedia = false;
     }
@@ -150,7 +152,14 @@
     if (file) await stageMediaFile(file);
   }
 
-  /** In-app GIF picker: fetches the chosen GIF's bytes and stages it as encrypted comment media. */
+  /**
+   * In-app GIF picker: fetches the chosen GIF's bytes and stages it as encrypted comment media.
+   *
+   * The bytes come from KLIPY's CDN, so this READS a cross-origin host into memory - which the
+   * page's `connect-src` has to name (see the CSP snippet in `Dockerfile.frontend`). It is not
+   * covered by the wide `img-src` that renders the picker's grid: displaying a remote image and
+   * reading its bytes are two different permissions, and only the second one applies here.
+   */
   async function handleGifSelected(url: string) {
     showGifPicker = false;
     try {
@@ -160,7 +169,10 @@
       const name = url.split('/').pop()?.split('?')[0] || `gif-${Date.now()}.gif`;
       await stageMediaFile(new File([blob], name, { type: blob.type || 'image/gif' }));
     } catch (err) {
+      // The log separates the two causes this shares one message for: a refused connection
+      // (CSP, offline, CDN down) throws a TypeError, a served error throws our `HTTP <status>`.
       console.error('Failed to load GIF', err);
+      showToast(m.post_comment_gif_fetch_error());
     }
   }
 
@@ -176,6 +188,7 @@
       void stageMediaFile(new File([bytes], name, { type: mime }));
     } catch (err) {
       console.error('Failed to handle keyboard GIF', err);
+      showToast(m.post_comment_media_error());
     }
   }
 

@@ -807,7 +807,7 @@ fallback shell - is on those two pages, plus `BUILD_WEB` in
 ## The edge -> [cloudflare-edge](infrastructure/cloudflare-edge.md), [nginx](infrastructure/nginx.md)
 
 The tunnel topology, the settings that are deliberate and the incident behind all of this are on that
-page. The four that generalise:
+page. The six that generalise:
 
 - **NGINX OWNS EVERY RESPONSE HEADER; THE EDGE ADDS NONE.** The edge is production infrastructure
   with no representation in git, so no review, test or deploy can see it change - a hand-made rule
@@ -820,6 +820,16 @@ page. The four that generalise:
   therefore STRICTER than `connect-src 'self' blob:` for the case that matters, and a directive
   spelt out in full next to it (`img-src * data: blob:`) keeps working, which makes the failure look
   arbitrary instead of systematic.
+- **A PERMISSION TO DISPLAY IS NOT A PERMISSION TO READ.** `img-src` and `connect-src` govern two
+  different things, and a feature that shows a remote image and then wants its BYTES needs both. The
+  half that is allowed is the visible half, so the feature looks alive and does nothing - which is
+  why the report says "the button is broken" and not "the policy is short a host".
+- **A POLICY THAT MUST BE RESTATED PER BLOCK IS DECLARED ONCE AND INCLUDED** - nginx's `add_header`
+  REPLACES the inherited set, so every block setting a header of its own drops the policy unless it
+  carries it. Verbatim copies do not stay equal: one gets the new host and the others go on refusing
+  it. And an allowlist is a DESCRIPTION OF THE CODE, so it has a test that fails when the code calls
+  a host it does not name - no compiler, linter or deploy can see that gap, only a real browser on
+  the real origin.
 - **THE ACCOUNT IS THE UNIT OF AUDIT, NOT THE ZONE - AND A SECOND HOSTNAME CAN NAME THE SAME
   DESTINATION.** Two names on two different zones pointed at one origin, so gating one gated
   nothing; the TUNNEL INGRESS table maps hostname to service and is the only listing that shows it,

@@ -164,6 +164,15 @@ the report is a third party's, so the user's own phone proves nothing either way
     written** and no server-side observer (`call-service` logs nothing), so it is a build, not a
     run. Sequence and per-check state live on
     [cross-client-testing](docs/wiki/cross-client-testing.md) - the only copy of the ladder's order.
+14. **LAST:** raise prod's `minClientVersion` to 0.14.0, then sweep
+    [legacy-compatibility](docs/wiki/legacy-compatibility.md). **Asked 2026-08-17 by the user, on the
+    Play Store now serving 0.14.0.** Two things it does NOT settle, and both must be checked before
+    anything is deleted: the App Store half is unverified, and a raise locks out every iOS user it
+    has not reached; and **the fleet gate retires only the shims that humour a LIVE PEER** - four of
+    the six open entries decode DATA AT REST in the shared history stream, so they additionally owe
+    the retention window past the rollout (`sender_device_id` names 2026-11-13; the others fall due
+    ~90 days after the v0.14 deploy). Sweep what the gate actually reaches, and give each survivor
+    its date.
 
 ### CANARI - what is open
 
@@ -214,8 +223,9 @@ store rollout has not reached devices, and raising it first locks everyone out b
 to the old version. Shipping order: publish to the stores -> VERIFY the store serves it -> only THEN
 raise `minClientVersion` ([legacy-compatibility](docs/wiki/legacy-compatibility.md)). Prod VERIFIED
 answering `{"version":"0.14.0","minClientVersion":"0.13.0"}`; both CD runs and the AppImage build
-green. **Owed: the store half - publish the Android and iOS artefacts, VERIFY the store serves 0.14.0,
-and only then raise `minClientVersion`. Nothing in CI does any of that.**
+green. **The Play Store serves 0.14.0 (the user, 2026-08-17)**, so the Android half of the gate is
+met; the App Store half is NOT verified, and raising `minClientVersion` locks out any iOS user the
+App Store has not reached. That raise, and the shim sweep it unblocks, are queue item 14.
 
 **The changelog is two files now.** `CHANGELOG.md` carries the condensed entry per change plus
 `[Unreleased]`; [changelog-archive](docs/changelog-archive.md) carries the long-form account and every
