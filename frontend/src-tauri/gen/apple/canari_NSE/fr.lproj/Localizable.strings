@@ -8,3 +8,9 @@
 "notif.message.from" = "Nouveau message de %@";
 "notif.message.encrypted" = "Vous avez reçu un message chiffré";
 "notif.channel.message" = "Nouveau message dans #%@";
+"notif.channel.unnamed" = "Salon";
+/* The legacy MLS call invite: only pre-WP-XP-5 callers send it as an alert push, and this process
+   is the one that renders it when the app is killed. The emoji stays in the code - it is not a
+   translation. */
+"notif.call.incoming" = "Appel entrant";
+"notif.call.incoming_video" = "Appel vidéo entrant";

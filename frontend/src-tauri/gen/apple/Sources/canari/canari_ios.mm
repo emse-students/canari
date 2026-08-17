@@ -177,6 +177,10 @@ static void CanariOnWillResignActive(__unused NSNotification *note) {
   // Snapshot the latest decrypt state into the App Group container before suspending, so a push
   // arriving while backgrounded is decrypted by the NSE against fresh state.
   CanariMirrorPushStateToAppGroup();
+  // The quick-action titles are the one native string iOS lets us re-register, and this is the last
+  // moment before a notification can be seen - so a language changed in the foreground reaches the
+  // buttons before anything shows them. No-op when the locale has not moved.
+  CanariRefreshNotificationCategories();
   // Queue a background-processing window now that the app is leaving the foreground, so the OS
   // can drain mls_pending.db while suspended (best-effort; never runs for a force-quit app).
   CanariScheduleBackgroundCleanupTask();

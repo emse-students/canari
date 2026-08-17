@@ -519,39 +519,13 @@ clients nor the services** - it compiles into the web bundle, and the FCM handle
 and NestJS have no access to it. So the rule "user-visible strings use Paraglide" has no enforcement
 mechanism at all outside the bundle, and the three layers each answered differently.
 
-**Android is DONE** (2026-08-17), and iOS is done for the five sentences the 2026-08-15 work named
-and for nothing else - see the entry below. Each platform has a two-language table read through the
-locale the user chose INSIDE Canari, and `nativeStrings.test.ts` holds the four resource files to
-the same key sets. Mechanism on [mobile](frontend/mobile.md#the-language-a-notification-speaks); do
-not re-derive it here.
-
-### P2 - six French literals on iOS that no `.lproj` declares
-
-Found 2026-08-17, immediately after the Android half shipped, by reading the iOS sources for the
-same defect rather than trusting that the platform had been finished. It had not: the 2026-08-15
-work moved the five sentences it was looking at and left every LABEL behind.
-
-- `canari_push.mm`: `@"Repondre"`, `@"Envoyer"` and `@"Marquer comme lu"` (the quick-action titles,
-  registered in `CanariRegisterNotificationCategories`) and `@"Salon"` (the default when a channel
-  push carries no `channelName`).
-- `canari_NSE/NotificationService.swift`: `"Appel entrant"` / `"Appel video entrant"` (the legacy
-  MLS call-invite body) and the same `"Salon"`.
-
-Android declares all six - `notif_action_reply`, `notif_action_mark_read`, `notif_channel_unnamed`,
-`notif_incoming_call`, `notif_incoming_video_call` - so the two tables to copy into already exist,
-and the app table needs one key Android has no use for: iOS's separate send-button title.
-
-**Why the new guardrail did not catch them, and what would.** `nativeStrings.test.ts` checks the
-iOS `.strings` files against EACH OTHER, so a string that never entered a table is invisible to it;
-and its accent heuristic - the Android half's second leg - is blind to `Repondre`, `Salon` and
-`Envoyer`, which carry none. The check that WOULD have caught all six is a different one, worth
-writing with the fix: **no native source may contain a literal equal to a value some table already
-translates.** That one needs no wordlist and no heuristic, and it generalises to both platforms.
-
-**One thing iOS gets right that Android cannot.** A `UNNotificationCategory` is REPLACED by
-`setNotificationCategories`, where an Android channel's name is written once and never again. So the
-quick-action labels can follow a language change; they just have to be re-registered when the app
-learns the new locale, instead of only at `CanariPushSetup`.
+**THE WHOLE CLIENT HALF IS DONE (Android and iOS, 2026-08-17).** Each platform has a two-language
+table read through the locale the user chose INSIDE Canari, `nativeStrings.test.ts` holds the four
+resource files to the same key sets, and a third block of that file holds both platforms to the
+invariant the per-platform ones cannot see: **no native source may carry a literal a table already
+translates.** iOS also re-registers its quick-action titles when the locale moves, which is possible
+there and not on Android. Mechanism on
+[mobile](frontend/mobile.md#the-language-a-notification-speaks); do not re-derive it here.
 
 **What is left is the services, and it is not a translation problem.** `chat-delivery-service` and
 `social-service` compose French sentences for pushes and do not know the recipient's language - no

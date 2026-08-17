@@ -229,7 +229,7 @@ class NotificationService: UNNotificationServiceExtension {
     if let call = decrypted, call.type == "call_invite" {
       applyCallInviteContent(
         content: content, senderName: senderName, groupName: groupName,
-        groupId: groupId, callId: call.callId ?? "", hasVideo: call.hasVideo)
+        groupId: groupId, callId: call.callId ?? "", hasVideo: call.hasVideo, locale: ctx.locale)
       return
     }
     if let call = decrypted, call.type == "call_control" {
@@ -310,11 +310,14 @@ class NotificationService: UNNotificationServiceExtension {
   /// time-sensitive interruption so it breaks through Focus like a call should.
   private func applyCallInviteContent(
     content: UNMutableNotificationContent, senderName: String, groupName: String,
-    groupId: String, callId: String, hasVideo: Bool
+    groupId: String, callId: String, hasVideo: Bool, locale: String?
   ) {
     content.title = senderName.isEmpty ? "Canari" : senderName
     content.subtitle = groupName
-    content.body = hasVideo ? "\u{1f4f9} Appel vid\u{00e9}o entrant" : "\u{1f4de} Appel entrant"
+    // The emoji is not a translation and stays here; the sentence comes from the table, in the
+    // language chosen inside Canari. Android twin: notif_incoming_call / notif_incoming_video_call.
+    let callKey = hasVideo ? "notif.call.incoming_video" : "notif.call.incoming"
+    content.body = "\(hasVideo ? "\u{1f4f9}" : "\u{1f4de}") \(Self.localized(callKey, locale: locale))"
     if #available(iOS 15.2, *) {
       content.sound = .defaultRingtone
     } else {
@@ -645,7 +648,7 @@ class NotificationService: UNNotificationServiceExtension {
     userInfo: [AnyHashable: Any], content: UNMutableNotificationContent
   ) {
     let channelId = Self.string(userInfo["channelId"]) ?? ""
-    let channelName = Self.nonEmpty(Self.string(userInfo["channelName"])) ?? "Salon"
+    let sentChannelName = Self.nonEmpty(Self.string(userInfo["channelName"]))
     let workspaceName = Self.nonEmpty(Self.string(userInfo["workspaceName"])) ?? ""
     let keyVersion = Self.string(userInfo["keyVersion"]) ?? ""
     let ciphertext = Self.string(userInfo["ciphertext"]) ?? ""
@@ -678,6 +681,9 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     let ctx = loadPushContext()
+    // The default when the server could not name the salon is a WORD, so it belongs to the table
+    // like every other sentence here - it used to be a French literal on both iOS paths.
+    let channelName = sentChannelName ?? Self.localized("notif.channel.unnamed", locale: ctx?.locale)
     // `<Communaute> - #<salon>`: a salon name alone is ambiguous, two communities may both have a
     // `#general`. Degrades to the salon alone when the server could not name the workspace. The
     // same format is spelled by the social-service alert title, the Kotlin service and

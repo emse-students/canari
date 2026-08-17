@@ -562,12 +562,43 @@ the channel would fix the wording and discard the sound and importance THEY chos
 larger harm. `ensureChannels(context, manager)` therefore takes a `Context` and does its best at
 creation time; there is no repair after it.
 
+**iOS's quick-action titles are the one native string that CAN follow a language change**, and they
+do. `setNotificationCategories` REPLACES the whole category set, where an Android channel is written
+once and never again, so `CanariRefreshNotificationCategories` re-registers Reply / Send / Mark as
+read whenever the mirrored locale has moved - and returns immediately when it has not.
+
+**Its trigger is a proof, not a poll.** It is called from `UIApplicationWillResignActive`
+(`canari_ios.mm`), because a quick-action title is only ever READ on a notification the user can
+see, and seeing one requires the app not to be frontmost. That transition therefore cannot be
+skipped between the settings toggle that changes the language and the first banner that shows the
+titles. No timer, no observer on the JSON file, and the locale guard makes every other call free.
+
 Both halves are pinned by `frontend/src/lib/mobile/nativeStrings.test.ts`, because nothing else can
 see across a `.kt` and an `.xml`: every `R.string.x` is declared, `values/` and `values-en/` carry
 the same keys (bar the brand), the format arguments match, no key is dead, no accented literal
 survives in Kotlin, and every `getString` goes through the app locale. The iOS half of that file
 holds the four `.lproj` files to the same shape - a key present in one language and not the other
 ships the KEY ITSELF as the notification body, since both resolvers pass `value: key`.
+
+**And a third block holds both platforms to something neither of the first two can see: NO NATIVE
+SOURCE MAY CARRY A LITERAL A TABLE ALREADY TRANSLATES.** Holding resource files against each other
+is blind to a sentence that never entered a table, which is how six French literals survived in the
+Swift and ObjC sources for two days after the tables were written. Three properties make that check
+need no wordlist and no exemption list:
+
+- **The corpus is the FRENCH side of every table only.** Every identifier these sources carry is
+  English by rule, so the push `"channel"` type and the `"reply"` action id fold straight onto an
+  English translation - four false positives, measured, before the corpus was narrowed. French is
+  the one language in which a literal cannot be an identifier.
+- **Comparison is folded**: lowercase, diacritics stripped, Swift `\u{...}` decoded. The defect was
+  spelled `Repondre` for `Répondre` and `Appel vid\u{00e9}o entrant` for `Appel vidéo entrant`, so
+  exact equality would have found neither.
+- **Decoration is stripped at both ends**, because the two call literals were an emoji the table
+  does not carry followed by a sentence it does.
+
+What it still cannot see, and the test says so in its own header: a French literal whose wording
+exists in no table at all. On Android the accent heuristic catches most of those; on iOS nothing
+does.
 
 #### Background MLS decrypt ladder
 

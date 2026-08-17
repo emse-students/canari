@@ -8,11 +8,10 @@ import { fileURLToPath } from 'node:url';
  * Neither half of this is checked by anything else: the two native projects are verified by
  * COMPILING, and a resource file compiles whatever it says.
  *
- * WHAT THE iOS BLOCK DOES NOT CHECK, and it matters: it holds the four `.strings` files against
- * EACH OTHER, so a sentence that never entered a table is invisible to it. Six of them were found
- * in the Swift and ObjC sources the day after this file was written - see the backlog entry "six
- * French literals on iOS that no `.lproj` declares". Reading a green run here as "iOS is done" is
- * exactly the mistake that produced them.
+ * The per-platform blocks hold the resource files against EACH OTHER, so a sentence that never
+ * entered a table used to be invisible to both: six of them were found in the Swift and ObjC
+ * sources the day after this file was written. The last block closes that hole for both platforms
+ * at once - see `describe('Native sources, both platforms')` for what it can and cannot see.
  *
  * Three things can drift on the Android side and NOTHING else reports them:
  *   - a `R.string.x` that no `strings.xml` declares. The Android build catches this one, but only
@@ -172,23 +171,24 @@ describe('Android notification strings', () => {
   });
 });
 
+const APPLE_ROOT = resolve(here, '../../../src-tauri/gen/apple');
+const BUNDLES = ['canari_iOS', 'canari_NSE'];
+
+/** Every `"key" = "value";` of a `.strings` file. */
+function parseLproj(bundle: string, lang: string, file: string): Map<string, string> {
+  const path = join(APPLE_ROOT, bundle, `${lang}.lproj`, file);
+  const entries = new Map<string, string>();
+  for (const m of readFileSync(path, 'utf8').matchAll(/^"([^"]+)"\s*=\s*"(.*)";/gm)) {
+    entries.set(m[1], m[2]);
+  }
+  return entries;
+}
+
 describe('iOS string resources', () => {
   // Same invariant, the other platform's spelling - and a harsher failure than Android's. Both
   // resolvers (`CanariLocalized`, `NotificationService.localized`) pass `value: key`, so a key
   // missing from one `.lproj` ships a notification body reading `notif.message.from`. There is no
   // default table to fall back to, because the table is chosen by the app's locale, not the OS's.
-  const APPLE_ROOT = resolve(here, '../../../src-tauri/gen/apple');
-  const BUNDLES = ['canari_iOS', 'canari_NSE'];
-
-  /** Every `"key" = "value";` of a `.strings` file. */
-  function parseLproj(bundle: string, lang: string, file: string): Map<string, string> {
-    const path = join(APPLE_ROOT, bundle, `${lang}.lproj`, file);
-    const entries = new Map<string, string>();
-    for (const m of readFileSync(path, 'utf8').matchAll(/^"([^"]+)"\s*=\s*"(.*)";/gm)) {
-      entries.set(m[1], m[2]);
-    }
-    return entries;
-  }
 
   it.each(BUNDLES)('%s translates every key both ways', (bundle) => {
     const frLproj = parseLproj(bundle, 'fr', 'Localizable.strings');
@@ -218,5 +218,99 @@ describe('iOS string resources', () => {
     const enInfo = parseLproj('canari_iOS', 'en', 'InfoPlist.strings');
     expect([...frInfo.keys()].sort()).toEqual([...enInfo.keys()].sort());
     for (const [, value] of [...frInfo, ...enInfo]) expect(value.length).toBeGreaterThan(10);
+  });
+});
+
+describe('Native sources, both platforms', () => {
+  /**
+   * NO NATIVE SOURCE MAY CARRY A LITERAL A TABLE ALREADY TRANSLATES.
+   *
+   * The two blocks above hold resource files against each other, which cannot see a sentence that
+   * never entered a table - the hole the six iOS literals of 2026-08-17 went through. This one
+   * needs no wordlist and no accent heuristic: it asks whether the same words already exist as a
+   * translated value, which is the definition of the defect. A literal it flags is either a string
+   * that belongs in the table, or a duplicate of one that is already there and will drift from it.
+   *
+   * COMPARED FOLDED (lowercase, accents stripped, Swift `\u{...}` decoded) because that is exactly
+   * how the previous defect was spelled: `Repondre` for `Répondre`, `Appel vid\u{00e9}o entrant`
+   * for `Appel vidéo entrant`. An exact match would have found neither.
+   *
+   * ONLY THE FRENCH SIDE OF EACH TABLE IS THE CORPUS, and that is not a shortcut. Every identifier
+   * these sources carry is English by rule - the push `"channel"` type and the `"reply"` action id
+   * both fold onto an English translation, and neither is a user-visible string. French is the one
+   * language in which a literal cannot be an identifier, which is what makes this check need no
+   * exemption list.
+   *
+   * WHAT IT CANNOT SEE, stated so a green run is not read as more than it is: a French literal
+   * whose wording exists in no table at all. Nothing catches that but the Kotlin accent heuristic
+   * above, and on iOS nothing at all.
+   */
+  const APPLE_SOURCES = [
+    { dir: join(APPLE_ROOT, 'Sources/canari'), exts: ['.mm', '.h'] },
+    { dir: join(APPLE_ROOT, 'canari_NSE'), exts: ['.swift'] },
+  ];
+
+  /**
+   * Lowercase, diacritics stripped, `\u{...}` and `\'` decoded, and stripped of whatever decorates
+   * the sentence at either end.
+   *
+   * THE DECORATION STRIP IS LOAD-BEARING, not tidiness: the two call literals were spelled
+   * `"\u{1f4f9} Appel vid\u{00e9}o entrant"`, an emoji the table does not carry followed by a
+   * sentence it does. Equality on the raw value finds neither, which is the same failure as the
+   * accent heuristic - a check that cannot fire on the defect it was written for. Applied to BOTH
+   * sides, so a literal that drops a table value's final full stop still matches.
+   */
+  function fold(value: string): string {
+    return value
+      .replace(/\\u\{([0-9a-fA-F]+)\}/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+      .replace(/\\'/g, "'")
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase()
+      .replace(/^[^\p{L}\p{N}]+/u, '')
+      .replace(/[^\p{L}\p{N}]+$/u, '');
+  }
+
+  /** Every French value of both platforms, folded, mapped back to where it is declared. */
+  const translated = new Map<string, string>();
+  for (const [key, value] of fr) {
+    // The brand is the same word in every language, so a `"Canari"` in a source is not an
+    // untranslated string - it is the app's name. Same exemption as `values-en/`.
+    if (!BRAND_ONLY.includes(key) && value.trim().length > 0) {
+      translated.set(fold(value), `android/${key}`);
+    }
+  }
+  for (const bundle of BUNDLES) {
+    for (const [key, value] of parseLproj(bundle, 'fr', 'Localizable.strings')) {
+      if (value.trim().length > 0) translated.set(fold(value), `${bundle}/${key}`);
+    }
+  }
+
+  const appleFiles = APPLE_SOURCES.flatMap(({ dir, exts }) =>
+    readdirSync(dir)
+      .filter((f) => exts.some((e) => f.endsWith(e)))
+      .map((f) => ({ name: f, source: readFileSync(join(dir, f), 'utf8') }))
+  );
+
+  it('reads both platforms', () => {
+    // A wrong path would turn the assertion below into a vacuous pass.
+    expect(appleFiles.length).toBeGreaterThan(5);
+    expect(translated.size).toBeGreaterThan(20);
+  });
+
+  it('leaves no literal a table already translates', () => {
+    const offenders: string[] = [];
+    for (const { name, source } of [...kotlinFiles, ...appleFiles]) {
+      source.split('\n').forEach((line, i) => {
+        const trimmed = line.trim();
+        // A comment may quote a sentence freely - that is documentation, not a shipped string.
+        if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) return;
+        for (const m of line.matchAll(/"(?:[^"\\\n]|\\.)*"/g)) {
+          const declaredBy = translated.get(fold(m[0].slice(1, -1)));
+          if (declaredBy) offenders.push(`${name}:${i + 1} ${m[0]} -> ${declaredBy}`);
+        }
+      });
+    }
+    expect(offenders).toEqual([]);
   });
 });

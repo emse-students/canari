@@ -1055,21 +1055,42 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
 }
 
 /**
+ * The locale the quick-action titles were last registered with, so a refresh that would change
+ * nothing does nothing. Empty string = registered against the default (nothing mirrored yet);
+ * nil = never registered. Only ever read and written on the main queue (`CanariPushSetup` and the
+ * `UIApplicationWillResignActive` observer both run there).
+ */
+static NSString *g_registeredCategoryLocale = nil;
+
+/**
  * Registers the `UNNotificationCategory` backing the message notification quick actions
  * (WP-XP-1): inline reply (text input) and mark as read. Only notifications built with
  * `groupId` set (see `CanariShowLocalNotification`) opt into this category - never a `channel_`
  * conversation (channels are server-authoritative, no MLS outbox to route a reply/receipt through).
+ *
+ * THE TITLES FOLLOW A LANGUAGE CHANGE, and this is the one place on iOS where that is possible:
+ * `setNotificationCategories` REPLACES the whole set, where an Android channel name is written once
+ * at creation and never again. What makes the refresh a proof rather than a poll: a quick-action
+ * title is only ever READ on a notification the user can see, and seeing one requires the app not
+ * to be frontmost - so `UIApplicationWillResignActive`, which calls this, cannot be skipped between
+ * the settings toggle that changes the language and the first banner that shows the titles. The
+ * locale guard makes every other call free.
  */
-static void CanariRegisterNotificationCategories(void) {
-  UNTextInputNotificationAction *replyAction =
-      [UNTextInputNotificationAction actionWithIdentifier:kCanariReplyActionId
-                                                     title:@"Repondre"
-                                                   options:UNNotificationActionOptionNone
-                                      textInputButtonTitle:@"Envoyer"
-                                      textInputPlaceholder:@""];
+void CanariRefreshNotificationCategories(void) {
+  CanariPushContext *ctx = CanariLoadPushContext();
+  NSString *locale = (ctx.locale.length > 0) ? ctx.locale : @"";
+  if (g_registeredCategoryLocale != nil && [g_registeredCategoryLocale isEqualToString:locale]) {
+    return;
+  }
+  UNTextInputNotificationAction *replyAction = [UNTextInputNotificationAction
+      actionWithIdentifier:kCanariReplyActionId
+                     title:CanariLocalized(@"notif.action.reply")
+                   options:UNNotificationActionOptionNone
+      textInputButtonTitle:CanariLocalized(@"notif.action.send")
+      textInputPlaceholder:@""];
   UNNotificationAction *markReadAction =
       [UNNotificationAction actionWithIdentifier:kCanariMarkReadActionId
-                                            title:@"Marquer comme lu"
+                                            title:CanariLocalized(@"notif.action.mark_read")
                                           options:UNNotificationActionOptionNone];
   UNNotificationCategory *category =
       [UNNotificationCategory categoryWithIdentifier:kCanariMessageCategoryId
@@ -1078,7 +1099,9 @@ static void CanariRegisterNotificationCategories(void) {
                                               options:UNNotificationCategoryOptionNone];
   [[UNUserNotificationCenter currentNotificationCenter]
       setNotificationCategories:[NSSet setWithObject:category]];
-  NSLog(@"[CanariPush] notification categories registered");
+  g_registeredCategoryLocale = locale;
+  NSLog(@"[CanariPush] notification categories registered locale=%@",
+        locale.length > 0 ? locale : @"(default)");
 }
 
 /**
@@ -2610,10 +2633,12 @@ static NSString *_Nullable CanariLookupChannelKey(NSString *channelId, NSString 
 static void CanariHandleChannelMessage(NSDictionary *data) {
   NSString *channelId =
       [data[@"channelId"] isKindOfClass:[NSString class]] ? data[@"channelId"] : @"";
+  // The default when the server could not name the salon is a WORD, so it comes from the table like
+  // every other sentence here. Android twin: R.string.notif_channel_unnamed.
   NSString *channelName = ([data[@"channelName"] isKindOfClass:[NSString class]] &&
                            [(NSString *)data[@"channelName"] length] > 0)
                               ? data[@"channelName"]
-                              : @"Salon";
+                              : CanariLocalized(@"notif.channel.unnamed");
   NSString *workspaceName = ([data[@"workspaceName"] isKindOfClass:[NSString class]] &&
                              [(NSString *)data[@"workspaceName"] length] > 0)
                                 ? data[@"workspaceName"]
@@ -3079,7 +3104,7 @@ void CanariPushSetup(void) {
   g_cacheLock = [[NSLock alloc] init];
   g_notifDelegate = [[CanariNotificationDelegate alloc] init];
   [UNUserNotificationCenter currentNotificationCenter].delegate = g_notifDelegate;
-  CanariRegisterNotificationCategories();
+  CanariRefreshNotificationCategories();
   // Incoming-call ring (WP-XP-5): PushKit VoIP registry + CallKit provider + handover hook.
   CanariCallKitSetup();
 

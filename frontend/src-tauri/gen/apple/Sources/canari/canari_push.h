@@ -15,6 +15,12 @@ void CanariPushSetup(void);
 /// Dismisses message notifications when the app comes to the foreground.
 void CanariPushCancelMessageNotifications(void);
 
+/// Re-registers the message quick actions in the language currently mirrored in push_context.json,
+/// and does nothing when that language has not moved. Call it when the app leaves the foreground:
+/// that is the last moment before a notification can be seen, which is the only moment the titles
+/// are read. Called by CanariPushSetup for the initial registration.
+void CanariRefreshNotificationCategories(void);
+
 /// Registers the BGProcessingTask handler (background MLS cleanup).
 /// Must be called BEFORE launch completes (from canari_ios_bootstrap, before start_app).
 void CanariRegisterBackgroundTasks(void);

@@ -4,3 +4,6 @@
 "notif.message.from" = "New message from %@";
 "notif.message.encrypted" = "You received an encrypted message";
 "notif.channel.message" = "New message in #%@";
+"notif.channel.unnamed" = "Channel";
+"notif.call.incoming" = "Incoming call";
+"notif.call.incoming_video" = "Incoming video call";

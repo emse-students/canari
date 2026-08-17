@@ -14,3 +14,11 @@
 "notif.message.encrypted" = "Vous avez reçu un message chiffré";
 "notif.channel.message" = "Nouveau message dans #%@";
 "notif.outbox.pending" = "Vous avez peut-être des messages en attente, ouvrez l'application pour les envoyer.";
+"notif.channel.unnamed" = "Salon";
+/* Quick-action titles (CanariRegisterNotificationCategories). A UNNotificationCategory is REPLACED
+   by setNotificationCategories, so unlike an Android channel name these follow a language change -
+   CanariRefreshNotificationCategories re-registers them when the mirrored locale moves.
+   `notif.action.send` has no Android twin: it is the send button of iOS's inline text field. */
+"notif.action.reply" = "Répondre";
+"notif.action.send" = "Envoyer";
+"notif.action.mark_read" = "Marquer comme lu";
