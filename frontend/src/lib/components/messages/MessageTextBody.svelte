@@ -33,7 +33,7 @@
 
 {#if !isLinkOnly}
   <p
-    class="text-[0.95rem] leading-relaxed break-words whitespace-pre-wrap [overflow-wrap:anywhere] {isDeleted
+    class="select-text text-[0.95rem] leading-relaxed whitespace-pre-wrap wrap-anywhere {isDeleted
       ? 'italic opacity-60'
       : ''}"
   >

@@ -172,31 +172,6 @@ is whether these stalls are CORRELATED, which a one-shot probe cannot answer by 
 
 ## Interface
 
-### P3 - iOS has no home-screen icon, and `/favicon.ico` 404s too
-
-Measured on prod 2026-08-16, re-confirmed 2026-08-17: `/apple-touch-icon.png`,
-`/apple-touch-icon-precomposed.png` and `/favicon.ico` all answer **404**. `frontend/static/` holds
-only `favicon.png` and `favicon.svg`, and `src/app.html` declares those two and nothing else - so
-Safari falls back to the convention path, finds nothing, and an "add to home screen" gets a page
-SCREENSHOT instead of an icon. On a chat app whose mobile install path matters, that is the first
-thing a user sees on their springboard.
-
-Fix is one asset and one `<link>`: a 180x180 PNG at `static/apple-touch-icon.png` plus
-`<link rel="apple-touch-icon">`. A `favicon.ico` alongside them costs nothing and closes the third
-404 - some browsers and most feed readers still ask for it before reading the declared icons.
-
-**The 404 itself is not a server defect** and is classified BENIGN in `srvlog.mjs`: answering 404 to a
-path this site does not have is correct. It is filed here rather than only silenced there, which is
-the whole difference between classifying a line and hiding one - the rule carries a comment pointing
-at this entry so the two cannot drift apart.
-
-### P3 - the whole mobile page is selectable
-
-Reported 2026-08-13, seen while reading a CDP dump: a long press on the phone selects page chrome -
-navigation labels, section descriptions - not just message text. Only message content should be
-selectable, and arguably nothing else at all. One `user-select` rule at the layout level with an
-explicit opt-in on message bodies.
-
 ### P3 - merge "Connexions actives" into "Gestion des appareils"
 
 Two panels describe the same thing and neither is complete, so the user reads both to answer one

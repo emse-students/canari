@@ -145,23 +145,23 @@ const BENIGN = [
   // Spelt out per path for its neighbours' reason - a general `[404] GET /*.txt` would forgive
   // `/robots.txt`, which this site really does serve.
   /^\[404\] GET \/app-ads\.txt$/,
-  // A BROWSER FETCHING THE TAB ICON. Spelt out per path for the same reason as the sitemap guesses
-  // above: a general `GET /...` rule would forgive a request for a route that matters.
-  /^\[\d+\] GET \/favicon\.ico$/,
-  // AN iOS DEVICE ASKING FOR THE HOME-SCREEN ICON, and this one is NOT the same as the crawler 404s
-  // above - it is classified here AND filed as a defect, because the two are different questions.
+  // A BROWSER FETCHING THE TAB ICON, and AN iOS DEVICE FETCHING THE HOME-SCREEN ICON. Both files are
+  // SERVED now (2026-08-17), which is what makes these rules narrow: only a SUCCESS is benign.
   //
-  // Measured 2026-08-16: `/apple-touch-icon.png`, `/apple-touch-icon-precomposed.png` AND
-  // `/favicon.ico` all answer 404, and `frontend/static/` holds only `favicon.png` / `favicon.svg`.
-  // `app.html` declares the two it has and no `apple-touch-icon` at all, so Safari falls back to the
-  // convention path, finds nothing, and an "add to home screen" gets a page screenshot instead of an
-  // icon. Unlike `/sitemap_index.xml` or `/app-ads.txt`, which name things Canari has no business
-  // owning, this is a request for something a mobile-first app SHOULD serve.
-  //
-  // BENIGN is right for the WINDOW - the server answering 404 to a path it does not have is correct
-  // behaviour and not a server defect - and the missing asset is a P3 on the backlog. Silencing it
-  // here WITHOUT filing it there is the move this comment exists to prevent.
-  /^\[\d+\] GET \/apple-touch-icon(-precomposed)?\.png$/,
+  // They used to forgive any status, because at the time all three convention paths answered 404 and
+  // `frontend/static/` held only `favicon.png` / `favicon.svg`. That was the correct classification
+  // for the WINDOW - a server answering 404 to a path it does not have is not a server defect - and
+  // the missing asset was filed as a P3 rather than merely silenced here. It has since shipped, so
+  // the reading inverts: a 404 on either path now means the ASSET IS GONE from the build, which is a
+  // defect on the one surface nobody looks at after a deploy. Leaving `\d+` here would have hidden
+  // exactly the regression the fix created the opportunity for.
+  /^\[(?:200|304)\] GET \/favicon\.ico$/,
+  /^\[(?:200|304)\] GET \/apple-touch-icon\.png$/,
+  // The precomposed spelling is the one that stays a 404 on purpose: `app.html` declares
+  // `apple-touch-icon` explicitly, so Safari has no reason to probe the convention path at all. A
+  // request for it comes from something older that guesses, and 404 is the honest answer - Canari
+  // never claimed that path and does not need a second copy of the same image to satisfy it.
+  /^\[404\] GET \/apple-touch-icon-precomposed\.png$/,
   // The sitemap being built to answer a request for `/sitemap.xml`. Worth one note: the occurrence
   // that first raised this line was the HARNESS - a `curl` run to check whether that route existed
   // at all, while classifying the 404 above. The instrument shows up in the record it is reading,

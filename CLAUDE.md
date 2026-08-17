@@ -127,44 +127,35 @@ its commit are in. The detail lives where the link says - **do not restate it he
 **THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Items 1's `user-select` half, 3,
 4 and 11 need it; keep `adb devices` answering before starting one.
 
-1. `apple-touch-icon.png` + `favicon.ico` (three 404s on prod - **confirmed 2026-08-17**: the image
-   root holds `favicon.png` and `favicon.svg` and neither of the two asked-for names), and
-   `user-select` on mobile.
-2. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
+1. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
    connection itself writes ([durable-rules](docs/wiki/durable-rules.md): a liveness clock).
    **Decided 2026-08-17:** deleting a device PURGES its queue, and the backlog of a device that
    never returns is BOUNDED - nothing obliges a user to delete anything.
-3. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
+2. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
    scrolling onto a white band. **Decided: the OS resizes the view**, never a JS offset; the check
    is 5 messages visible with the keyboard open ([backlog](docs/wiki/backlog.md)).
-4. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
-5. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
-6. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
+3. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
+4. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
+5. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
    **Decided: NO alert**, the panel is the whole of it ([backlog](docs/wiki/backlog.md),
    [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
-7. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
+6. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
    secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
    has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says
    why ([docker](docs/wiki/infrastructure/docker.md)).
-8. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
+7. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
    it as a recovery source it is not. **Approved 2026-08-17** (a prod service change).
-9. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
+8. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
    delete that entry if it does.
-10. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+9. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
     browsers.
-11. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+10. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
     must end green, so every phase runs** - and the board says what that really costs: MSG is the
     ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
     **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
     written** and no server-side observer (`call-service` logs nothing), so it is a build, not a
     run. Sequence and per-check state live on
     [cross-client-testing](docs/wiki/cross-client-testing.md) - the only copy of the ladder's order.
-12. ~~**LAST:** raise prod's `minClientVersion` to 0.14.0~~ - **DONE BY THE USER 2026-08-17 10:49**,
-    written straight into `platform_config` from `/admin/platform` (`min_client_version = 0.14.0`,
-    confirmed in the DB and in the `PlatformService` log). The gate is HARD: a client below it never
-    unlocks MLS, so it cannot put a group frame on the wire at all. **The App Store half is still
-    unverified, so any iOS user the store has not reached is locked out behind an update button** -
-    watch for it. The sweep it unblocks is IN PROGRESS, see below.
 
 ### CANARI - what is open
 

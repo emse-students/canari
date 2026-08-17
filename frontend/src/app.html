@@ -72,6 +72,13 @@
     </style>
     <link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
+    <!--
+      Declared rather than left to the convention path, because Safari only probes
+      /apple-touch-icon.png (and -precomposed) when no link says otherwise - which is
+      what produced three 404s and a home-screen icon that was a page screenshot.
+      Both files come from scripts/gen-web-icons.mjs; do not edit them by hand.
+    -->
+    <link rel="apple-touch-icon" sizes="180x180" href="%sveltekit.assets%/apple-touch-icon.png" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"

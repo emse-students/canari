@@ -337,7 +337,7 @@
 
   <!-- Caption text below the media. -->
   {#if textContent}
-    <p class="mt-2 text-[0.95rem] leading-relaxed break-words whitespace-pre-wrap">
+    <p class="select-text mt-2 text-[0.95rem] leading-relaxed break-words whitespace-pre-wrap">
       {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
         {#if segment.type === 'link'}
           <AppLink href={segment.value} />

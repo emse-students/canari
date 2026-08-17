@@ -123,11 +123,14 @@ const BENIGN_CASES = [
   `${NEST}[LocksController] [ADD_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b acquired=true ttl=30s`,
   `${NEST}[LocksController] [RELEASE_LOCK] group=00000000-0000-4000-8000-000000000001 owner=a:web-a-b released=true`,
   `${NEST}[MembersController] [GET_USER_MEMBERS] group=00000000-0000-4000-8000-000000000001 count=5`,
-  '[3] GET /favicon.ico',
-  // Both spellings of the Apple convention - the rule covers them with one optional group, so both
-  // need a fixture or half of it is never exercised.
+  // The two icons that are SERVED. Both statuses need a fixture: a conditional request answers 304
+  // and a rule matching only 200 would break a clean window on a second visit.
+  '[200] GET /favicon.ico',
+  '[304] GET /favicon.ico',
+  '[200] GET /apple-touch-icon.png',
+  '[304] GET /apple-touch-icon.png',
   `${NEST}[InvitationsController] [PENDING][pending-0a1b2c3d] No active membership for 00000000-0000-4000-8000-000000000001:web-a-b`,
-  '[404] GET /apple-touch-icon.png',
+  // The precomposed spelling is the one Canari deliberately does not serve, so its 404 stays benign.
   '[404] GET /apple-touch-icon-precomposed.png',
 ];
 for (const l of BENIGN_CASES) {
@@ -197,7 +200,16 @@ console.log(`${posterOk ? 'ok  ' : 'FAIL'} unexplained  a public read that serve
 
 // AND THE SAME SHAPE ON THE 404s. Each guessed path is forgiven by name; a 404 on a route this site
 // really does own must stay unexplained, or the bucket that would catch a broken page hides it.
-for (const ownedMiss of ['[404] GET /sitemap.xml', '[404] GET /robots.txt']) {
+// The two icons joined that list on 2026-08-17, and they are the reason it is worth re-reading when
+// an asset ships: their rules used to forgive ANY status because nothing was served at either path.
+// Now that both are, a 404 means the file fell out of the build, and forgiving it would silence the
+// only evidence of that - on the one surface (a home screen, a tab) nobody checks after a deploy.
+for (const ownedMiss of [
+  '[404] GET /sitemap.xml',
+  '[404] GET /robots.txt',
+  '[404] GET /favicon.ico',
+  '[404] GET /apple-touch-icon.png',
+]) {
   const ownedOk = !matches(BENIGN_RULES, ownedMiss);
   if (!ownedOk) failures++;
   console.log(

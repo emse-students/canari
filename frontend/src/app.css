@@ -159,6 +159,37 @@ h6,
   animation: riseIn 260ms ease;
 }
 
+/*
+ * A long press on a touch screen selects text, and on this app it was selecting
+ * the chrome - navigation labels, section headings, the description under a
+ * setting - none of which anybody wants a copy of. Nothing marks chrome as
+ * chrome, so the default is inverted here and the content opts back in.
+ *
+ * Scoped to a COARSE pointer rather than to a viewport width or to the native
+ * shell, because the gesture is what makes this a defect: a mouse drag over a
+ * label is deliberate and harmless, a long press is how you scroll with a thumb
+ * slightly too still. A narrow desktop window keeps its ordinary selection.
+ *
+ * The opt-in is Tailwind's own `select-text`, applied at the message body and
+ * its caption. Form controls are re-enabled HERE rather than at each call site:
+ * WebKit propagates `user-select: none` into an input, so an allowlist that
+ * forgot one would produce a text field whose own text cannot be selected - the
+ * kind of defect that is only ever found on the device.
+ */
+@media (pointer: coarse) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable='true'] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
 /* Mobile swipe between main tabs (+layout.svelte) */
 .page-scroll-wrap {
   touch-action: pan-y pinch-zoom;
