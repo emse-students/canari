@@ -148,6 +148,35 @@ the element used to be handed back the same URL and ask the server again for the
 `direct` is what keeps the native clients working, where the API is a different origin and `fetch`
 can be refused while an `<img>` is not.
 
+##### One lifetime, and the server states it (2026-08-17)
+
+**The `max-age` above is honoured by the browser's HTTP cache and by nothing else.** The client used
+to copy every avatar into a Cache Storage bucket (`canari-user-avatars-v1`) keyed by
+`/api/users/<id>/avatar`, and **Cache Storage ignores `Cache-Control` entirely** - it is a plain
+key/value store, and `cache.match()` performs no freshness check. So the 24 h the server sends
+governed a cache that was never consulted again, and the first photo a device ever drew for a face
+was the photo it kept for ever; the only eviction was the Settings "clear media cache" button. One
+person therefore had one face per device, indefinitely - reported, and not reproducible by whoever
+had only ever drawn them once.
+
+- **A KEY NAMING A CONTENT MAY BE CACHED FOR EVER; A KEY NAMING AN IDENTITY MAY NOT.** This URL
+  names a person and the photo behind it is MiGallery's to change. The same test tells the two other
+  buckets apart: `mediaBlobCache` (an encrypted media id) and `associationLogoCache`
+  (`/api/media/public/<mediaId>?v=<updatedAt>`, a NEW id on every upload) are content-addressed and
+  were right to keep theirs.
+- The module now holds a blob only for the mounts currently displaying that face, so a directory
+  listing the same person twenty times costs **one** request and one decode. Requests in flight are
+  coalesced, which the HTTP cache cannot do for itself.
+- **The retired bucket is deleted at start-up** (`purgeRetiredAvatarCache`, called from the root
+  layout). It is idempotent by construction: the absence of the bucket IS the durable state, so no
+  flag records that it ran.
+- **The native notification paths were never affected** and needed no change: Android
+  (`CanariFirebaseMessagingService.kt`, `AVATAR_CACHE_MAX_AGE_MS`) and iOS
+  (`NotificationService.swift`, `fetchAvatar`) both cache the face on disk with an explicit 24 h
+  age check, matching this endpoint's `max-age`.
+- Guarded by `userAvatarCache.test.ts`: reintroducing any store without an expiry makes "asks the
+  server again for a face nothing is displaying any more" fail - verified by reintroducing one.
+
 `chat-delivery-service` re-exposes the same image at `/api/mls/push/avatar/:targetUserId` for the
 Android background service, and forwards core's status unchanged.
 

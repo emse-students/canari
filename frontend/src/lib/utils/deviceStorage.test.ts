@@ -1,7 +1,9 @@
 import { getDeviceStorageUsage, clearMediaCache, formatStorageBytes } from './deviceStorage';
 import { CIPHER_CACHE_NAME } from './mediaBlobCache';
-import { CACHE_NAME as AVATAR_CACHE_NAME } from './userAvatarCache';
 import { CACHE_NAME as ASSOCIATION_LOGO_CACHE_NAME } from './associationLogoCache';
+
+/** The retired avatar bucket. Present here to assert this panel does NOT count it any more. */
+const RETIRED_AVATAR_CACHE_NAME = 'canari-user-avatars-v1';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
@@ -63,11 +65,13 @@ describe('deviceStorage', () => {
   });
 
   describe('getDeviceStorageUsage', () => {
-    it('sums Content-Length across the media, avatar and logo buckets', async () => {
+    it('sums Content-Length across the media and logo buckets, ignoring the retired avatar one', async () => {
       installFakeCaches({
         [CIPHER_CACHE_NAME]: [1000, 2000],
-        [AVATAR_CACHE_NAME]: [500],
-        [ASSOCIATION_LOGO_CACHE_NAME]: [],
+        [ASSOCIATION_LOGO_CACHE_NAME]: [500],
+        // Deleted at start-up by `purgeRetiredAvatarCache`, so counting it here would report bytes
+        // this panel cannot clear and that are about to disappear on their own.
+        [RETIRED_AVATAR_CACHE_NAME]: [777],
       });
 
       const usage = await getDeviceStorageUsage();
@@ -136,10 +140,9 @@ describe('deviceStorage', () => {
   });
 
   describe('clearMediaCache', () => {
-    it('deletes exactly the media, avatar and logo buckets, never anything else', async () => {
+    it('deletes exactly the media and logo buckets, never anything else', async () => {
       const fakeCaches = installFakeCaches({
         [CIPHER_CACHE_NAME]: [1],
-        [AVATAR_CACHE_NAME]: [1],
         [ASSOCIATION_LOGO_CACHE_NAME]: [1],
       });
       const deleteSpy = vi.spyOn(fakeCaches, 'delete');
@@ -147,9 +150,8 @@ describe('deviceStorage', () => {
       await clearMediaCache();
 
       expect(deleteSpy).toHaveBeenCalledWith(CIPHER_CACHE_NAME);
-      expect(deleteSpy).toHaveBeenCalledWith(AVATAR_CACHE_NAME);
       expect(deleteSpy).toHaveBeenCalledWith(ASSOCIATION_LOGO_CACHE_NAME);
-      expect(deleteSpy).toHaveBeenCalledTimes(3);
+      expect(deleteSpy).toHaveBeenCalledTimes(2);
     });
   });
 

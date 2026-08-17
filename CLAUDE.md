@@ -124,52 +124,42 @@ The user's decision of 2026-08-16 is that **every one of these lands before the 
 Work them top-down; each is one item, and an item is not done until its code, its tests, its doc and
 its commit are in. The detail lives where the link says - **do not restate it here.**
 
-**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Items 2's `user-select` half, 4,
-5 and 12 need it; keep `adb devices` answering before starting one. Item 1 is NOT unblocked by it:
-the report is a third party's, so the user's own phone proves nothing either way.
+**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Items 1's `user-select` half, 3,
+4 and 11 need it; keep `adb devices` answering before starting one.
 
-1. One person, three different avatars across PC / phone / MiGallery. **The user does NOT reproduce
-   it on their own devices - it is a third party's report.** **CAUSE ESTABLISHED 2026-08-17, no
-   device needed:** `resolveUserAvatarDisplayUrl` returns `cache.match(url)` with no freshness
-   check, and the Cache API ignores `Cache-Control` - so the server's 24 h `max-age` governs an HTTP
-   cache that is never consulted again, and a drawn avatar is kept FOR EVER. The only eviction is
-   the Settings "clear media cache" button. Each device therefore keeps the photo it saw the first
-   time it drew that face. Same defect in `associationLogoCache.ts`; `mediaBlobCache.ts` is right to
-   keep for ever - **a key naming a CONTENT may be, a key naming an IDENTITY may not**, and
-   `/api/users/:id/avatar` is mutable behind a stable URL. Fix both, keep `mediaBlobCache` alone.
-2. `apple-touch-icon.png` + `favicon.ico` (three 404s on prod - **confirmed 2026-08-17**: the image
+1. `apple-touch-icon.png` + `favicon.ico` (three 404s on prod - **confirmed 2026-08-17**: the image
    root holds `favicon.png` and `favicon.svg` and neither of the two asked-for names), and
    `user-select` on mobile.
-3. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
+2. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
    connection itself writes ([durable-rules](docs/wiki/durable-rules.md): a liveness clock).
    **Decided 2026-08-17:** deleting a device PURGES its queue, and the backlog of a device that
    never returns is BOUNDED - nothing obliges a user to delete anything.
-4. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
+3. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
    scrolling onto a white band. **Decided: the OS resizes the view**, never a JS offset; the check
    is 5 messages visible with the keyboard open ([backlog](docs/wiki/backlog.md)).
-5. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
-6. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
-7. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
+4. Lock portrait on screens taller than wide. A tablet is a PC here and keeps rotation.
+5. Move and rename `test_adb.py` out of the repository root, updating every doc that names it.
+6. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
    **Decided: NO alert**, the panel is the whole of it ([backlog](docs/wiki/backlog.md),
    [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
-8. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
+7. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
    secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
    has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says
    why ([docker](docs/wiki/infrastructure/docker.md)).
-9. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
+8. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
    it as a recovery source it is not. **Approved 2026-08-17** (a prod service change).
-10. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
-    delete that entry if it does.
-11. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+9. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
+   delete that entry if it does.
+10. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
     browsers.
-12. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+11. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
     must end green, so every phase runs** - and the board says what that really costs: MSG is the
     ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
     **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
     written** and no server-side observer (`call-service` logs nothing), so it is a build, not a
     run. Sequence and per-check state live on
     [cross-client-testing](docs/wiki/cross-client-testing.md) - the only copy of the ladder's order.
-13. **LAST:** raise prod's `minClientVersion` to 0.14.0, then sweep
+12. **LAST:** raise prod's `minClientVersion` to 0.14.0, then sweep
     [legacy-compatibility](docs/wiki/legacy-compatibility.md). **Asked 2026-08-17 by the user, on the
     Play Store now serving 0.14.0.** Two things it does NOT settle, and both must be checked before
     anything is deleted: the App Store half is unverified, and a raise locks out every iOS user it
@@ -237,7 +227,7 @@ raise `minClientVersion` ([legacy-compatibility](docs/wiki/legacy-compatibility.
 answering `{"version":"0.14.0","minClientVersion":"0.13.0"}`; both CD runs and the AppImage build
 green. **The Play Store serves 0.14.0 (the user, 2026-08-17)**, so the Android half of the gate is
 met; the App Store half is NOT verified, and raising `minClientVersion` locks out any iOS user the
-App Store has not reached. That raise, and the shim sweep it unblocks, are queue item 14.
+App Store has not reached. That raise, and the shim sweep it unblocks, are queue item 12.
 
 **The changelog is two files now.** `CHANGELOG.md` carries the condensed entry per change plus
 `[Unreleased]`; [changelog-archive](docs/changelog-archive.md) carries the long-form account and every
@@ -251,7 +241,7 @@ The six entries that stood here are decided. **Nothing tells the RECEIVER's user
 lost, and it stays that way** - not to be revisited. The two history gaps and the reason
 `history_request` is not durable are argued in
 [history-reconciliation](docs/wiki/protocols/history-reconciliation.md); the 30-day media window in
-[storage-forecast](docs/wiki/infrastructure/storage-forecast.md) §6. `mongo` is item 12; the
+[storage-forecast](docs/wiki/infrastructure/storage-forecast.md) §6. `mongo` is item 8; the
 SharedWorker MLS client is a POST-CAMPAIGN project in [backlog](docs/wiki/backlog.md).
 
 ### CANARI - the test campaign

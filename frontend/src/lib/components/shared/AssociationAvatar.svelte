@@ -28,7 +28,11 @@
   const src = $derived(associationLogoSrc(logoUrl ?? undefined));
   const initials = $derived(getInitials(name));
 
-  // Resolve logo via Cache API (kept across sessions) when the URL changes.
+  // Resolve logo via Cache API (kept across sessions) when the URL changes. KEEPING IT FOR EVER IS
+  // LEGITIMATE HERE AND ONLY HERE: a logo URL is `/api/media/public/<mediaId>?v=<updatedAt>`, so
+  // replacing the logo produces a different URL and the old entry is simply never asked for again.
+  // A user avatar is the opposite - one URL, a photo that changes behind it - which is why it does
+  // not go through Cache Storage at all (`userAvatarCache.ts`).
   $effect(() => {
     const httpUrl = src;
     if (!httpUrl) {
@@ -39,12 +43,15 @@
     imageFailed = false;
     triedDirectFallback = false;
     let cancelled = false;
-    void resolveAssociationLogoDisplayUrl(httpUrl).then((resolved) => {
+    const pending = resolveAssociationLogoDisplayUrl(httpUrl).then((resolved) => {
       if (!cancelled) displaySrc = resolved;
     });
     return () => {
       cancelled = true;
-      releaseAssociationLogoDisplayUrl(httpUrl);
+      // The release waits for the retain: unmounting before the bytes arrive would otherwise
+      // decrement a count that is incremented a moment later, leaving a blob URL owned by nobody
+      // and revoked by nobody.
+      void pending.finally(() => releaseAssociationLogoDisplayUrl(httpUrl));
     };
   });
 

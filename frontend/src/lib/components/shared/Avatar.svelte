@@ -67,7 +67,7 @@
     imageLoaded = false;
     triedDirectFallback = false;
     let cancelled = false;
-    void resolveUserAvatarDisplayUrl(httpUrl).then((resolved) => {
+    const pending = resolveUserAvatarDisplayUrl(httpUrl).then((resolved) => {
       if (cancelled) return;
       display = resolved;
       // Bytes already held locally: there is no round trip to wait for, so the initials placeholder
@@ -76,7 +76,11 @@
     });
     return () => {
       cancelled = true;
-      releaseUserAvatarDisplayUrl(httpUrl);
+      // THE RELEASE WAITS FOR THE RETAIN. Unmounting before the bytes arrived used to decrement a
+      // count that had not been incremented yet: the blob retained a moment later was then held by
+      // nobody, so it lived for the whole page AND kept being handed to every later mount of that
+      // same face - a stale photo with no owner and no way out.
+      void pending.finally(() => releaseUserAvatarDisplayUrl(httpUrl));
     };
   });
 

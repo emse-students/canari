@@ -45,6 +45,7 @@
   import { startPushService } from '$lib/services/PushNotificationService';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
+  import { purgeRetiredAvatarCache } from '$lib/utils/userAvatarCache';
   import { m } from '$lib/paraglide/messages';
 
   let { children } = $props();
@@ -98,6 +99,9 @@
 
     const teardownHistory = initHistoryOverlayStack();
     const teardownKeyboard = initKeyboardViewport();
+
+    // Reclaim the avatar bucket this client no longer writes. Idempotent, and free once it is gone.
+    void purgeRetiredAvatarCache();
 
     // Redirect console.log/warn/error to tauri-plugin-log → adb logcat on Android.
     // Dynamic import prevents @tauri-apps/plugin-log from being bundled in the Web build.

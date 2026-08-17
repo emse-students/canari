@@ -87,11 +87,15 @@ Settings shows a breakdown of what Canari is using on the device, distinct from
 [storage-forecast](../infrastructure/storage-forecast.md), which is the SERVER's disk. Two
 measurement paths, because there is no single API that answers this on every platform:
 
-- The media/avatar/association-logo Cache Storage buckets (`mediaBlobCache.ts`,
-  `userAvatarCache.ts`, `associationLogoCache.ts` - each now exports its cache name for this
-  reason) are measured and cleared identically everywhere: Cache Storage works inside the Tauri
-  WebView too, and everything in them is re-fetchable, so this is the only thing "clear cache"
-  ever touches.
+- The media and association-logo Cache Storage buckets (`mediaBlobCache.ts`,
+  `associationLogoCache.ts` - each exports its cache name for this reason) are measured and cleared
+  identically everywhere: Cache Storage works inside the Tauri WebView too, and everything in them
+  is re-fetchable, so this is the only thing "clear cache" ever touches. **Both are keyed by a
+  CONTENT** - an encrypted media id, and an immutable `/api/media/public/<mediaId>?v=<updatedAt>`
+  logo - which is what makes keeping them indefinitely correct.
+- **User avatars are deliberately NOT among them** since 2026-08-17, and the bucket they used to
+  live in is deleted at start-up. Their URL names a PERSON, not a content, so a store with no
+  expiry froze the first photo each device ever drew ([core-service](../services/core-service.md#the-avatar-proxy)).
 - The local database above and `mls.bin` have no cross-platform size API. Native reads real file
   sizes via `get_local_storage_usage` (`src-tauri/src/commands/storage.rs`), bucketing
   `{app_data_dir}` by filename; on the web build there is no such command, so `deviceStorage.ts`

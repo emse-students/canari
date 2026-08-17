@@ -2,7 +2,7 @@
  * WP-DEVICESTORAGE-1: measures and manages how much of the device Canari is using.
  *
  * Two genuinely different measurement paths, not a false uniform abstraction over them:
- * - The media/avatar/logo Cache Storage buckets are measured and cleared the SAME way on every
+ * - The media/logo Cache Storage buckets are measured and cleared the SAME way on every
  *   platform (Cache Storage API works inside the Tauri WebView too), and are always safe to
  *   clear - everything in them is re-fetchable from the server.
  * - Message history and the MLS encryption state are measured differently per platform: native
@@ -15,13 +15,18 @@
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { invoke } from '@tauri-apps/api/core';
 import { CIPHER_CACHE_NAME } from './mediaBlobCache';
-import { CACHE_NAME as AVATAR_CACHE_NAME } from './userAvatarCache';
 import { CACHE_NAME as ASSOCIATION_LOGO_CACHE_NAME } from './associationLogoCache';
 
-const MEDIA_CACHE_NAMES = [CIPHER_CACHE_NAME, AVATAR_CACHE_NAME, ASSOCIATION_LOGO_CACHE_NAME];
+/**
+ * The buckets this panel measures and clears. BOTH ARE KEYED BY A CONTENT: an encrypted media id
+ * and an immutable `/api/media/public/<mediaId>` logo. User avatars are NOT here and must not come
+ * back: their URL names a person, so they are the browser's HTTP cache to keep and to expire
+ * (`userAvatarCache.ts`).
+ */
+const MEDIA_CACHE_NAMES = [CIPHER_CACHE_NAME, ASSOCIATION_LOGO_CACHE_NAME];
 
 export interface DeviceStorageUsage {
-  /** Media/avatar/logo Cache Storage buckets - always safe to clear, always re-fetchable. */
+  /** Media/logo Cache Storage buckets - always safe to clear, always re-fetchable. */
   mediaCacheBytes: number;
   /** Message history and the local database. On native this excludes `mls.bin`; on web it is
    * `estimate()`'s total minus the cache, so it also includes the MLS IndexedDB store there. */
@@ -34,7 +39,7 @@ export interface DeviceStorageUsage {
   totalBytes: number;
 }
 
-/** Sums the Content-Length of every entry across the media/avatar/logo Cache Storage buckets. */
+/** Sums the Content-Length of every entry across the media/logo Cache Storage buckets. */
 async function measureCacheStorageBytes(): Promise<number> {
   if (typeof caches === 'undefined') return 0;
 
@@ -63,7 +68,7 @@ async function measureCacheStorageBytes(): Promise<number> {
   return total;
 }
 
-/** Deletes every media/avatar/logo Cache Storage bucket. Never touches messages or `mls.bin`. */
+/** Deletes every media/logo Cache Storage bucket. Never touches messages or `mls.bin`. */
 export async function clearMediaCache(): Promise<void> {
   if (typeof caches === 'undefined') return;
   await Promise.all(MEDIA_CACHE_NAMES.map((name) => caches.delete(name)));

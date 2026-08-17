@@ -708,6 +708,12 @@ carry in the head:
 Tokens, the one-way-colour sweep, the portalled dropdown, Svelte's whitespace trim and the native
 prompt fields are all on those pages. What must not be forgotten between them:
 
+- **A CLEANUP THAT RELEASES SOMETHING ACQUIRED ASYNCHRONOUSLY MUST WAIT FOR THE ACQUISITION.** An
+  effect that unmounts before its `await` returns runs a release against a reference count that has
+  not been incremented yet: it decrements nothing, the retain lands a moment later, and the resource
+  is then held by NOBODY - never freed, and in the avatar case still served to every later mount of
+  the same face. The `cancelled` flag guards the state assignment, not the resource; release inside
+  the pending promise's `finally`, not beside it.
 - A one-way colour is a dark-mode bug waiting to happen; use the `app.css` tokens - and the 31 the
   sweep left are DELIBERATE (switch thumbs, colour-picker handles, always-dark call/lightbox chrome,
   the white plate behind a QR). Do not "fix" them.
@@ -880,6 +886,16 @@ The three that generalise beyond it:
   the link-preview endpoint are the same defect twice, in opposite directions - one cached a refusal
   it invented, the other cached nothing at all
   ([core-service](services/core-service.md#the-avatar-proxy)).
+- **A KEY NAMING A CONTENT MAY BE CACHED FOR EVER; A KEY NAMING AN IDENTITY MAY NOT** - and the
+  store has to be able to express the difference. **Cache Storage ignores `Cache-Control`
+  entirely**: `cache.match()` is a key lookup with no freshness check of any kind, so entries keyed
+  by `/api/users/<id>/avatar` outlived every `max-age` the server sent and froze the first photo
+  each device ever drew - one person, one face per device, for ever, and invisible to anyone who
+  had only drawn them once. **A SECOND STORE OVER THE SAME BYTES NEEDS A SECOND LIFETIME, AND THE
+  ONE NOBODY WROTE IS INFINITY**: the HTTP cache already honours what the server states, so a layer
+  that cannot read it is not a cache but a freeze. The same test acquits the buckets beside it - an
+  encrypted media id and `/api/media/public/<mediaId>?v=<updatedAt>` name CONTENTS, and a new upload
+  is a new key ([core-service](services/core-service.md#the-avatar-proxy)).
 - **AN OPTIONAL DECORATION THAT CANNOT BE FETCHED DEGRADES, IT DOES NOT ERROR** - and the LOG is
   where the causes are told apart, never the status code. A blip is a `warn`; a credential of ours
   being refused is an `error`, because only one of them needs a human.
