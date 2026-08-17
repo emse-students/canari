@@ -76,6 +76,7 @@
 - Setup/dev: `make install`, `make run-services`, `cd frontend && bun run dev`.
 - Tests: `make test`, `make test-frontend`, `cargo test`.
 - Frontend gates before every commit: `bun run check` (0 errors), `bun run lint`, `bun run format`. Rust >= 1.97. `cargo clippy` for Rust crates. `make run-ci` for the full local pipeline.
+- **NOTHING IN THIS REPO IS FORMATTED BY PRETTIER.** Everything is `oxfmt` (`oxfmt.json`) + `oxlint`. A bare `npx prettier --write` finds NO config, silently applies its own defaults (double quotes, 80 cols) and rewrites whole files - it did, and shipped. Use the package's own `format` / `lint` script, always. `bun run lint` needs bash (the oxvelte shim), so run it through the Bash tool.
 
 ## **THE RULES THAT APPLY TO EVERY TASK**
 
@@ -127,8 +128,20 @@ its commit are in. The detail lives where the link says - **do not restate it he
 **THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Items 1's `user-select` half, 3,
 4 and 11 need it; keep `adb devices` answering before starting one.
 
-1. Merge "Connexions actives" into "Gestion des appareils" - FIRST establish which column the
-   connection itself writes ([durable-rules](docs/wiki/durable-rules.md): a liveness clock).
+1. Merge "Connexions actives" into "Gestion des appareils". **THE BACKEND HALF SHIPPED 2026-08-17**
+   (`f0f57993`) - the two panels were two SERVICES with no join key, and `auth_sessions.deviceId`
+   is now it, written once per app start by `PUT /auth/sessions/current/device`. The liveness
+   question is ANSWERED: no column on `key_package` measures a connection (the GC reads
+   `createdAt`, the upload instant), so the clock is the SESSION's `lastUsedAt`, written by the
+   refresh itself - the thing whose liveness it measures.
+   **Owed, all frontend:** call the new endpoint after MLS unlock (`sessionAuth.ts` ~line 455,
+   where `resolveDeviceId` already runs); add `deviceId` to `AuthSessionInfo`
+   (`$lib/services/authSessions.ts`); fold `SessionManagementPanel.svelte` INTO
+   `DeviceManagementPanel.svelte` - one row per device carrying name, last connection, browser
+   (`describeUserAgent`) and the id prefix, **no IP**; keep BOTH actions (revoke session, delete
+   device) and **keep a row for a session with no device** - that is exactly the stolen-cookie
+   case. Delete `SessionManagementPanel.svelte` and its entry in `SettingsSecuritySection.svelte`,
+   retire the `settings_sessions_*` keys that die with it, then i18n + tests + wiki.
    **Decided 2026-08-17:** deleting a device PURGES its queue, and the backlog of a device that
    never returns is BOUNDED - nothing obliges a user to delete anything.
 2. Android layout, ONE defect with two faces - the composer behind the soft keyboard, and the page
