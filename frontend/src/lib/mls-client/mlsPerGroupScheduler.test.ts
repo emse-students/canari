@@ -75,7 +75,7 @@ describe('MlsPerGroupScheduler', () => {
     await scheduler.drain(async (m) => {
       order.push(m.groupId ?? '?');
       if (m.isWelcome && m.groupId) {
-        scheduler.reinjectAfterWelcome(m.groupId);
+        scheduler.releaseWelcomeBuffer(m.groupId, 'Welcome complete');
       }
     });
 
@@ -267,6 +267,147 @@ describe('MlsPerGroupScheduler', () => {
 
       expect(stuck()).toEqual([]);
       expect(scheduler.draining).toBe(false);
+    });
+  });
+
+  /**
+   * THE WELCOME BUFFER IS THE WORK THIS CLASS HOLDS OUTSIDE ITS QUEUES.
+   *
+   * A group's frames are parked while its Welcome is in flight so they are applied after the key
+   * material that makes them readable. The window is opened by a Welcome and must be closed by that
+   * same Welcome - RELEASING what it held, never discarding it. Two paths used to discard, both in
+   * silence, and a live WebSocket frame need not carry the `queuedMessageId` a re-fetch would need
+   * to bring it back.
+   */
+  describe('the Welcome buffering window', () => {
+    /** Drains, releasing each group's buffer as its Welcome completes - the healthy shape. */
+    const drainReleasing = (scheduler: MlsPerGroupScheduler, order: string[]) =>
+      scheduler.drain(async (m) => {
+        order.push(`${m.isWelcome ? 'welcome' : 'msg'}-${String.fromCharCode(m.ciphertext[0])}`);
+        if (m.isWelcome && m.groupId) scheduler.releaseWelcomeBuffer(m.groupId, 'Welcome complete');
+      });
+
+    it('parks a frame that arrives while its Welcome is in flight, and counts it as work', () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));
+      scheduler.enqueue(msg('group-a', '1'));
+
+      // The frame is NOT in a queue - it is held - and both halves have to be true or the
+      // assertions below could pass on a scheduler that simply queued it normally.
+      expect(scheduler.getPendingCount()).toBe(1);
+      expect(scheduler.getHeldCount()).toBe(1);
+      expect(scheduler.isIdle()).toBe(false);
+    });
+
+    it('applies a parked frame after the Welcome, not before it', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));
+      scheduler.enqueue(msg('group-a', '1'));
+
+      const order: string[] = [];
+      await drainReleasing(scheduler, order);
+
+      expect(order).toEqual(['welcome-w', 'msg-1']);
+      expect(scheduler.isIdle()).toBe(true);
+      expect(scheduler.getHeldCount()).toBe(0);
+    });
+
+    it('a second Welcome does not throw away what the first one was holding', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));
+      scheduler.enqueue(msg('group-a', '1'));
+      // A re-add or a server re-delivery. This used to `set(groupId, [])` and drop frame 1.
+      scheduler.enqueue(msg('group-a', 'W', { isWelcome: true }));
+      scheduler.enqueue(msg('group-a', '2'));
+
+      expect(scheduler.getHeldCount()).toBe(2);
+
+      const order: string[] = [];
+      await drainReleasing(scheduler, order);
+
+      expect(order).toContain('msg-1');
+      expect(order).toContain('msg-2');
+      expect(scheduler.isIdle()).toBe(true);
+    });
+
+    it('re-queues rather than drops when the window closes on a FAILED Welcome', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));
+      scheduler.enqueue(msg('group-a', '1'));
+
+      const order: string[] = [];
+      await scheduler.drain(async (m) => {
+        order.push(String.fromCharCode(m.ciphertext[0]));
+        // What `BaseMlsService` does when the Welcome handler throws: the window closes, and what
+        // it held goes back in the queue for the unknown-group seam to record and re-fetch.
+        if (m.isWelcome && m.groupId) scheduler.releaseWelcomeBuffer(m.groupId, 'Welcome failed');
+      });
+
+      expect(order).toEqual(['w', '1']);
+      expect(scheduler.isIdle()).toBe(true);
+    });
+  });
+
+  /**
+   * The closing invariant, and it is a PROOF rather than a deadline: at the end of a drain that
+   * emptied every queue, a surviving Welcome window has nothing left anywhere to close it. Its
+   * frames would never be applied, and every later frame for that group would be parked behind it
+   * for the life of the tab - the freeze `guarded` cannot see, because nothing is awaiting.
+   */
+  describe('a Welcome window nothing can close', () => {
+    let errors: string[];
+
+    beforeEach(() => {
+      errors = [];
+      vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        errors.push(args.map(String).join(' '));
+      });
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    const stranded = () => errors.filter((e) => e.includes('Welcome buffering window survived'));
+
+    it('is reported and released, naming the group and the count', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));
+      scheduler.enqueue(msg('group-a', '1'));
+
+      // A handler that consumes the Welcome and never closes the window it opened.
+      await scheduler.drain(async () => {});
+
+      expect(stranded()).toHaveLength(1);
+      expect(stranded()[0]).toContain('group-a');
+      expect(stranded()[0]).toContain('holding 1 message(s)');
+      // Released, not dropped: it is back in the queue for the restart guard to pick up.
+      expect(scheduler.getHeldCount()).toBe(0);
+      expect(scheduler.getPendingCount()).toBe(1);
+    });
+
+    it('says nothing when the Welcome closes its own window', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));
+      scheduler.enqueue(msg('group-a', '1'));
+
+      await scheduler.drain(async (m) => {
+        if (m.isWelcome && m.groupId) scheduler.releaseWelcomeBuffer(m.groupId, 'Welcome complete');
+      });
+
+      expect(stranded()).toEqual([]);
+      expect(scheduler.isIdle()).toBe(true);
+    });
+
+    it('says nothing about a drain with no Welcome in it at all', async () => {
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', '1'));
+      scheduler.enqueue(msg('group-b', '2'));
+
+      await scheduler.drain(async () => {});
+
+      expect(stranded()).toEqual([]);
+      expect(scheduler.isIdle()).toBe(true);
     });
   });
 });

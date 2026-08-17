@@ -35,6 +35,42 @@ export interface MlsPerGroupDrainHooks {
  * Per-`groupId` MLS message queues with round-robin scheduling across conversations.
  * Ordering within a group is preserved; only one message is processed at a time on the
  * shared MLS client (global mutex).
+ *
+ * ## Why the drain terminates, and why that is a proof rather than a deadline
+ *
+ * Every iteration of {@link drain} REMOVES exactly one message from a bucket and nothing in the
+ * loop puts that message back. The only thing that ever adds to a bucket from inside the loop is
+ * {@link releaseWelcomeBuffer}, which moves a buffer that is finite and can be moved at most once
+ * per Welcome, since it deletes the entry as it goes. So the loop is a strict decrease over
+ * "messages this scheduler holds", plus whatever genuinely NEW work arrives while it runs.
+ *
+ * That last clause is why elapsed time is not evidence here. A drain running for ten minutes under
+ * sustained traffic is doing its job; a drain running for ten minutes on one message is frozen.
+ * Only a phase that never returns tells the two apart, which is what {@link guarded} watches - and
+ * it reports rather than cancels, for the reason written there.
+ *
+ * ## What the proof does not cover, and what that cost
+ *
+ * The proof is about the BUCKETS, and this class holds messages outside them:
+ * {@link pendingWelcomeGroups} parks a group's frames while its Welcome is in flight, so they are
+ * applied after the Welcome that makes them readable rather than before it. Two paths used to close
+ * that window by DISCARDING what it held rather than releasing it:
+ *
+ * - a SECOND Welcome for the same group replaced the buffer array outright - and a second Welcome
+ *   is ordinary (a re-add, a server re-delivery);
+ * - a FAILED Welcome deleted it, on the assumption that the server would re-deliver what it held.
+ *   That holds only for a frame carrying a `queuedMessageId`; a live WebSocket frame need not carry
+ *   one, and for those the drop was permanent.
+ *
+ * Neither path logged a line, which is the part that made them survivable: a dropped frame and a
+ * frame that never arrived are the same thing on screen.
+ *
+ * STATED PRECISELY, BECAUSE IT IS EASY TO OVERSTATE: the buffer never LEAKED, so {@link isIdle} was
+ * not observably wrong - it stayed true by throwing frames away. {@link getHeldCount} now counts the
+ * buffer and `isIdle` accounts for it, which makes the definition match what the mailbox barrier
+ * claims of it ("nothing left to APPLY") instead of depending on a drop to stay true. What makes
+ * counting it SAFE - rather than a new way to hang every barrier - is
+ * {@link releaseStrandedWelcomeBuffers}: a window nothing can close is reported and released.
  */
 export class MlsPerGroupScheduler {
   private readonly buckets = new Map<string, GroupBuckets>();
@@ -85,7 +121,7 @@ export class MlsPerGroupScheduler {
       console.error(
         `[QUEUE] STUCK in ${label} for ${Math.round((Date.now() - startedAt) / 1000)}s - ` +
           `the inbound queue is frozen: every message arriving now is enqueued and will not be ` +
-          `processed until this returns. pending=${this.getPendingCount()}`
+          `processed until this returns. pending=${this.getPendingCount()} held=${this.getHeldCount()}`
       );
     }, MlsPerGroupScheduler.PHASE_STUCK_MS);
     try {
@@ -98,6 +134,20 @@ export class MlsPerGroupScheduler {
   /** Whether the drain loop is currently running. */
   get draining(): boolean {
     return this.isDraining;
+  }
+
+  /**
+   * Messages parked behind a Welcome still in flight, across all groups.
+   *
+   * Counted SEPARATELY from {@link getPendingCount} because the two answer different questions and
+   * exactly one of them is the drain loop's condition. `pending` is what this loop can pick up now;
+   * `held` is work it owns and cannot pick up yet. Folding held into pending would make the loop
+   * spin on messages `pickNext` cannot return.
+   */
+  getHeldCount(): number {
+    let n = 0;
+    for (const buffered of this.pendingWelcomeGroups.values()) n += buffered.length;
+    return n;
   }
 
   /** Total messages waiting across all groups. */
@@ -122,8 +172,16 @@ export class MlsPerGroupScheduler {
     return { groups: this.rrKeys.length, control, welcome, messages };
   }
 
+  /**
+   * No drain running, no message queued, and none parked behind a Welcome.
+   *
+   * The third term is the one that was missing, and it is a DEFINITION rather than a bug fix: the
+   * mailbox barrier states "nothing left to apply", and a frame parked behind a Welcome is exactly
+   * something left to apply. It was never observably wrong only because both paths that closed the
+   * window discarded what it held - see the class docblock.
+   */
   isIdle(): boolean {
-    return !this.isDraining && this.getPendingCount() === 0;
+    return !this.isDraining && this.getPendingCount() === 0 && this.getHeldCount() === 0;
   }
 
   /** Resolves when all queues are drained and no drain loop is active. */
@@ -194,7 +252,14 @@ export class MlsPerGroupScheduler {
     const bucket = this.getBucket(key);
 
     if (msg.isWelcome) {
-      if (groupId) this.pendingWelcomeGroups.set(groupId, []);
+      // A second Welcome for the same group used to `set(groupId, [])`, which DROPPED whatever the
+      // first one was already holding - silently, and for a live frame carrying no
+      // `queuedMessageId` there was nothing left to re-fetch it by. A second Welcome is a normal
+      // event (a re-add, a server re-delivery), so the buffer is kept: it is released by whichever
+      // Welcome completes first, and the frames were parked for that group either way.
+      if (groupId && !this.pendingWelcomeGroups.has(groupId)) {
+        this.pendingWelcomeGroups.set(groupId, []);
+      }
       if (this.mode === 'tauri') {
         bucket.welcome.push(msg);
       } else {
@@ -207,31 +272,31 @@ export class MlsPerGroupScheduler {
   }
 
   /**
-   * Re-injects messages buffered during Welcome processing at the front of the group's queue.
+   * Ends the Welcome buffering window for a group and puts what it held back at the front of that
+   * group's queue, in arrival order.
+   *
+   * ONE METHOD FOR BOTH OUTCOMES, and that is the change. A Welcome that SUCCEEDED released the
+   * buffer; a Welcome that FAILED used to delete it and drop its contents, on the assumption that
+   * the server would re-deliver them. That assumption holds only for a frame carrying a
+   * `queuedMessageId` - a live WebSocket frame need not carry one, and for those the drop was
+   * permanent and silent. Re-queuing costs nothing when the group is still unknown: the pipeline
+   * records the frame against that group (`unknown-group`) and re-fetches it when a Welcome finally
+   * lands, which is the seam that exists for exactly this case. There is no loop - the frames are
+   * pushed straight into the bucket, past {@link enqueue}, and the buffer entry is gone by then.
+   *
+   * @param reason What ended the window, for the log - a completed Welcome or a failed one.
    */
-  reinjectAfterWelcome(groupId: string): void {
+  releaseWelcomeBuffer(groupId: string, reason: string): void {
     const buffered = this.pendingWelcomeGroups.get(groupId);
-    if (!buffered?.length) {
-      this.pendingWelcomeGroups.delete(groupId);
-      return;
-    }
     this.pendingWelcomeGroups.delete(groupId);
+    if (!buffered?.length) return;
     const bucket = this.getBucket(this.queueKey(groupId));
     for (let i = buffered.length - 1; i >= 0; i--) {
       bucket.messages.unshift(buffered[i]);
     }
     console.log(
-      `[QUEUE] Welcome complete, re-injected ${buffered.length} buffered message(s) for ${groupId}`
+      `[QUEUE] ${reason}: re-queued ${buffered.length} buffered message(s) for ${groupId}`
     );
-  }
-
-  /** Clears Welcome buffering state after Welcome failure (messages may be re-fetched from server). */
-  clearWelcomePending(groupId: string): void {
-    this.pendingWelcomeGroups.delete(groupId);
-  }
-
-  hasWelcomePending(groupId: string): boolean {
-    return this.pendingWelcomeGroups.has(groupId);
   }
 
   /**
@@ -303,10 +368,38 @@ export class MlsPerGroupScheduler {
       } catch (e) {
         console.error('[QUEUE] onDrainEnd failed:', e);
       }
+      this.releaseStrandedWelcomeBuffers();
       this.isDraining = false;
       this.notifyIdle();
       console.log('[QUEUE] Drain complete');
     }
+  }
+
+  /**
+   * The drain's closing invariant: no frame may be left parked with nothing able to release it.
+   *
+   * A buffer is opened by a Welcome and closed by that Welcome finishing, either way. So at the end
+   * of a drain that emptied every bucket, a buffer that is still there has no Welcome left anywhere
+   * to release it, and the frames in it would sit for the life of the tab - which is the freeze this
+   * whole item is about, in the one place {@link guarded} cannot see, since nothing is awaiting.
+   *
+   * IT IS A PROOF, NOT A DEADLINE: the condition is "the buckets are empty and a buffer survives",
+   * which cannot be true of a healthy drain at any speed. Reaching it is a defect, so it is an
+   * error - and the frames are re-queued rather than dropped, which the restart guard in
+   * `processQueue` then picks up.
+   */
+  private releaseStrandedWelcomeBuffers(): void {
+    if (this.getPendingCount() > 0 || this.pendingWelcomeGroups.size === 0) return;
+    const held = this.getHeldCount();
+    const groups = [...this.pendingWelcomeGroups.keys()];
+    console.error(
+      `[QUEUE] a Welcome buffering window survived a drain that emptied every queue, on` +
+        ` [${groups.join(', ')}], holding ${held} message(s) - nothing was left to release it. The` +
+        ' frames it holds would never have been applied, and every LATER frame for those groups' +
+        ' would have been parked behind it for the life of the tab. Released and re-queued. A' +
+        ' Welcome must close the window it opened; find the path that opened one it did not close.'
+    );
+    for (const groupId of groups) this.releaseWelcomeBuffer(groupId, 'stranded buffer');
   }
 
   private queueKey(groupId?: string): string {

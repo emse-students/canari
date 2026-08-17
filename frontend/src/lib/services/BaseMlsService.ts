@@ -811,7 +811,7 @@ export abstract class BaseMlsService implements IMlsService {
           }
 
           if (msg.isWelcome && groupId) {
-            this.messageScheduler.reinjectAfterWelcome(groupId);
+            this.messageScheduler.releaseWelcomeBuffer(groupId, 'Welcome complete');
             this.welcomeProcessedCallback?.(groupId);
             welcomedGroups.push(groupId);
           }
@@ -830,7 +830,12 @@ export abstract class BaseMlsService implements IMlsService {
             console.error(
               `[QUEUE] Welcome failed for group=${groupId} - NOT ACKed, retry on reconnect`
             );
-            if (groupId) this.messageScheduler.clearWelcomePending(groupId);
+            // The window closes either way, and what it held is RE-QUEUED rather than dropped.
+            // Dropping assumed the server would re-deliver, which is true only of a frame carrying
+            // a `queuedMessageId`; a live WebSocket frame need not carry one. Re-queued, the group
+            // is still unknown, so the handler records it against that group and the Welcome that
+            // eventually lands re-fetches it - the seam that exists for exactly this.
+            if (groupId) this.messageScheduler.releaseWelcomeBuffer(groupId, 'Welcome failed');
           } else {
             const exFlags = {
               isWelcome: msg.isWelcome,
@@ -848,9 +853,12 @@ export abstract class BaseMlsService implements IMlsService {
                 isCommit: msg.isCommit,
               });
             }
-            if (groupId && this.messageScheduler.hasWelcomePending(groupId)) {
-              this.messageScheduler.reinjectAfterWelcome(groupId);
-            }
+            // A throwing NON-Welcome used to close the group's Welcome window here, which is the
+            // one path that could close a window its Welcome had not opened and would not close.
+            // It is gone: the window now belongs to the Welcome from end to end, which is what
+            // makes `releaseStrandedWelcomeBuffers` an invariant rather than one case among
+            // several. Nothing is left open by dropping it - this branch could only be reached
+            // while the Welcome was still queued, so that Welcome closes the window itself.
           }
         }
       },
@@ -870,7 +878,7 @@ export abstract class BaseMlsService implements IMlsService {
           }
 
           // A Welcome landing is the proof that frames buffered for an unknown group can now be
-          // read. `reinjectAfterWelcome` replays the ones this session buffered in memory; this
+          // read. `releaseWelcomeBuffer` replays the ones this session buffered in memory; this
           // asks the server for the ones it left unacknowledged in earlier drains.
           if (welcomedGroups.length > 0) {
             this.refetchFramesLeftBehind('unknown-group', 'welcome processed');

@@ -125,6 +125,60 @@ One methodological consequence, because it retired a PASS: a check that asserts 
 the tab is asserting after the very act that releases the drain. A single message can never expose
 this; the second one is the whole test.
 
+#### Why the drain terminates - the proof `guarded` is the complement of
+
+`guarded` watches the awaits; it says nothing about the loop around them. The loop's own argument is
+short and is written on the class: **every iteration removes exactly one message from a bucket, and
+nothing in the loop puts that message back.** The single in-loop addition is `releaseWelcomeBuffer`,
+which moves a finite buffer at most once per Welcome because it deletes the entry as it goes. So the
+loop strictly decreases over the work the scheduler holds, plus whatever genuinely NEW work arrives
+while it runs.
+
+**That last clause is why elapsed time is not evidence.** A drain running ten minutes under sustained
+traffic is doing its job; a drain running ten minutes on one message is frozen. Nothing outside the
+loop can tell those apart, which is exactly why the deadline may only report - and why a watchdog
+that cancelled would be cancelling healthy drains under load.
+
+#### The Welcome buffering window - the one thing the proof does not cover
+
+The proof is about the BUCKETS, and the scheduler holds messages outside them. `pendingWelcomeGroups`
+parks a group's frames while its Welcome is in flight, so they are applied **after** the Welcome that
+makes them readable. Opened by `enqueue` when a Welcome for a group arrives, closed when that Welcome
+finishes.
+
+Three paths used to close it wrongly, and none of them logged a line - which is what made them
+survivable, since a dropped frame and a frame that never arrived are identical on screen. **Every
+frame at risk is one carrying no `queuedMessageId`: a live WebSocket frame, which the server holds no
+row for and no re-fetch can bring back.**
+
+| Path | What it did | Why it is ordinary, not exotic |
+| --- | --- | --- |
+| A SECOND Welcome for the same group | `set(groupId, [])` - dropped what the first was holding | a re-add, or a server re-delivery |
+| A FAILED Welcome | deleted the buffer, assuming the server would re-deliver | true only of a frame carrying a `queuedMessageId` |
+| A throwing NON-Welcome of that group | released a window its Welcome had not opened | reachable whenever a frame already picked throws while a later Welcome opens one - the frames were then applied AHEAD of the Welcome, against an epoch the client does not have |
+
+What replaced them is **one exit with one behaviour**: `releaseWelcomeBuffer(groupId, reason)` always
+re-queues, for both outcomes, and names the reason in the log. Re-queuing costs nothing when the
+group is still unknown - the handler records the frame against that group and
+`refetchFramesLeftBehind('unknown-group', ...)` discharges it when a Welcome finally lands, which is
+the seam that exists for this case. The third path is simply **deleted**, so the window belongs to
+its Welcome from end to end.
+
+`isIdle()` now counts the buffer (`getHeldCount()`), and this is a DEFINITION rather than a bug fix:
+the mailbox barrier claims "nothing left to apply", and a parked frame is something left to apply. It
+was never observably wrong only because the two closing paths discharged the buffer by throwing it
+away. What makes counting it safe - rather than a new way to hang every barrier - is the drain's
+closing invariant, `releaseStrandedWelcomeBuffers`: **the buckets are empty and a buffer survives**
+cannot be true of a healthy drain at any speed, so reaching it is a defect. It is an `error` naming
+the groups and the count, the frames are re-queued, and `processQueue`'s restart guard picks them up.
+A proof, not a deadline - it is the one freeze `guarded` cannot see, because nothing is awaiting.
+
+Both halves are pinned: `mlsPerGroupScheduler.test.ts` (the window, the second Welcome, the failed
+Welcome, the stranded buffer with two negative controls) and
+`BaseMlsService.welcomeBuffer.test.ts`, which proves the parked frame actually **reaches**
+`messageCallback` - a frame re-queued into a bucket nobody drains again is dropped just as
+thoroughly as one deleted.
+
 ## Outbox (outbound delivery)
 
 `utils/chat/outbox.ts` owns every outbound message. A send is persisted first and transmitted

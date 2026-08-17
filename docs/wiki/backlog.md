@@ -452,12 +452,6 @@ Fewer means a band survives between the list and the keyboard. Negative control 
 current build fails it, so the check can be seen failing before it is believed
 ([testing-methodology](testing-methodology.md), rule 2).
 
-### P2 - the inbound drain has no watchdog
-
-The outbound side gained one; the inbound drain can still stall with nothing to notice it. Filed
-rather than fixed because the termination proof matters more than the detection - a timer here would
-be the pattern this area was deliberately cleared of.
-
 ### P3 - the pending pull's per-page deadline is a total, and should be a progress deadline
 
 `BaseMlsService.fetchPendingMessages` gives each page a 10 s `AbortController` (`PAGE_TIMEOUT`), and

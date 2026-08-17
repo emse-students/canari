@@ -308,6 +308,19 @@ carry in the head:
   `beginBulkIngest` across a live `endBulkIngest`, and `bulkIngestPhases` being a STACK that would
   clear the UI buffer without flushing, i.e. WP-ECHO-1 by construction. Report the freeze, do not
   trade it for a loss.
+- **A TERMINATION PROOF COVERS THE STRUCTURE IT IS WRITTEN OVER, AND WORK PARKED OUTSIDE THAT
+  STRUCTURE IS INVISIBLE TO IT AND TO THE WATCHDOG BOTH** - nothing is awaiting, so there is nothing
+  to time. The drain's proof is over its buckets; `pendingWelcomeGroups` parks frames beside them
+  while a Welcome is in flight, and THREE paths closed that window by discharging it wrongly - a
+  second Welcome (a re-add: ordinary) replacing the array, a failed Welcome deleting it "because the
+  server will re-deliver" (true only of a frame carrying a `queuedMessageId`), and a throwing
+  non-Welcome releasing a window its Welcome had not opened. **A WINDOW MUST BE CLOSED BY WHAT OPENED
+  IT, THROUGH ONE EXIT WITH ONE BEHAVIOUR** (`releaseWelcomeBuffer`, which always re-queues and always
+  names its reason); delete the paths that close one they did not open, and the leftover case becomes
+  an INVARIANT you can assert - "the buckets are empty and a window survives" is impossible at any
+  speed, so it is an error, not a deadline. Then, and only then, may the parked work count towards
+  `isIdle`: what the barrier claims is "nothing left to apply", and a claim kept true by DROPPING
+  what it counts is not the claim. [chat](frontend/modules/chat.md).
 - `requestAnimationFrame` NEVER fires in a hidden document, so it can never be the only resolver of
   anything a background path awaits - and a "yield" that can hang is a deadlock, not a delay. Race it
   with a `MessageChannel` message; a timer fallback is clamped to ~1 Hz in the background.
