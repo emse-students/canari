@@ -195,6 +195,7 @@ export class SqliteStorage implements IStorage {
                 first_index  INTEGER DEFAULT 0,
                 created_at   INTEGER,
                 sent_count   INTEGER,
+                distribution_epoch INTEGER,
                 iv           TEXT,
                 cipher_text  TEXT
             )
@@ -293,7 +294,26 @@ export class SqliteStorage implements IStorage {
       // additive: nothing is dropped, because a Graine seed is the first key material the server
       // cannot re-serve, and a migration that cleared them would throw away history no peer is
       // guaranteed to still hold.
-      await this.db.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+      //
+      // Stamped at 8, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch - it read
+      // `SCHEMA_VERSION` while 8 WAS the current version, which is exactly how such a branch hides:
+      // it is only wrong once a v9 exists, and by then it has already claimed every database it
+      // touched.
+      await this.db.execute('PRAGMA user_version = 8');
+    }
+
+    if (currentVersion < 9) {
+      // v8->v9: `graine.distribution_epoch` - the epoch of the community's MLS distribution group
+      // when this device minted the session, which is what makes "rotate when somebody leaves" a
+      // decision rather than a notification (see `$lib/utils/graine/sessionManager`). Additive, and
+      // NULL on every existing row: a session that predates the column is treated as minted under
+      // an unknown roster and is rotated away on the next send, which costs one seed distribution
+      // and is the only safe reading.
+      const cols: any[] = await this.db.select('PRAGMA table_info(graine)');
+      if (!cols.some((c) => c.name === 'distribution_epoch')) {
+        await this.db.execute('ALTER TABLE graine ADD COLUMN distribution_epoch INTEGER');
+      }
+      await this.db.execute('PRAGMA user_version = 9');
     }
   }
 
@@ -704,6 +724,7 @@ export class SqliteStorage implements IStorage {
       firstIndex: Number(row.first_index) || 0,
       createdAt: rowTimestampMs(row.created_at),
       sentCount: row.sent_count ?? undefined,
+      distributionEpoch: row.distribution_epoch ?? undefined,
     };
   }
 
@@ -740,8 +761,8 @@ export class SqliteStorage implements IStorage {
     const c = graineClearColumns(session);
     await this.db.execute(
       `INSERT OR REPLACE INTO graine
-         (session_id, workspace_id, channel_id, sender_id, first_index, created_at, sent_count, iv, cipher_text)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         (session_id, workspace_id, channel_id, sender_id, first_index, created_at, sent_count, distribution_epoch, iv, cipher_text)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         c.sessionId,
         c.workspaceId,
@@ -750,6 +771,7 @@ export class SqliteStorage implements IStorage {
         c.firstIndex,
         c.createdAt,
         c.sentCount ?? null,
+        c.distributionEpoch ?? null,
         uint8ToBase64(encrypted.iv),
         uint8ToBase64(encrypted.cipherText),
       ]
@@ -802,8 +824,8 @@ export class SqliteStorage implements IStorage {
   async importEncryptedGraineRow(row: EncryptedGraineRow): Promise<void> {
     await this.db.execute(
       `INSERT OR IGNORE INTO graine
-         (session_id, workspace_id, channel_id, sender_id, first_index, created_at, sent_count, iv, cipher_text)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         (session_id, workspace_id, channel_id, sender_id, first_index, created_at, sent_count, distribution_epoch, iv, cipher_text)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         row.sessionId,
         row.workspaceId,
@@ -812,6 +834,7 @@ export class SqliteStorage implements IStorage {
         row.firstIndex,
         row.createdAt,
         row.sentCount ?? null,
+        row.distributionEpoch ?? null,
         uint8ToBase64(row.iv),
         uint8ToBase64(row.cipherText),
       ]

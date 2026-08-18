@@ -21,6 +21,7 @@ export interface GraineClearColumns {
   firstIndex: number;
   createdAt: number;
   sentCount?: number;
+  distributionEpoch?: number;
 }
 
 /** The clear columns of a session, ready to be written beside its encrypted seed. */
@@ -33,6 +34,7 @@ export function graineClearColumns(session: StoredGraineSession): GraineClearCol
     firstIndex: session.firstIndex,
     createdAt: session.createdAt,
     sentCount: session.sentCount,
+    distributionEpoch: session.distributionEpoch,
   };
 }
 
@@ -53,6 +55,10 @@ export function decodeGraineSession(
 ): StoredGraineSession {
   const seed = (payload as { seedB64?: unknown } | null)?.seedB64;
   const sentCount = Number(row.sentCount);
+  // A row written before the column existed has no epoch, and `Number(null)` is 0 - an epoch a
+  // real group genuinely has. Absent has to stay absent, because "minted before we recorded the
+  // roster" and "minted at epoch 0" are the same row only if this coercion says so.
+  const distributionEpoch = row.distributionEpoch == null ? NaN : Number(row.distributionEpoch);
   return {
     sessionId: String(row.sessionId),
     workspaceId: String(row.workspaceId),
@@ -61,6 +67,7 @@ export function decodeGraineSession(
     firstIndex: Number(row.firstIndex) || 0,
     createdAt: Number(row.createdAt) || 0,
     sentCount: Number.isFinite(sentCount) ? sentCount : undefined,
+    distributionEpoch: Number.isFinite(distributionEpoch) ? distributionEpoch : undefined,
     seedB64: typeof seed === 'string' ? seed : '',
   };
 }

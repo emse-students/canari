@@ -501,12 +501,53 @@ acknowledged, so the server redelivers it once the join lands; a dispatched fram
 ### Phase 4 - send, receive, repair
 
 - **WP-30** Outbound session manager: create per (channel, sender), rotate on departure / 100
-  messages / 7 days, persist through WP-13.
+  messages / 7 days, persist through WP-13. **DONE 2026-08-18** - below.
 - **WP-31** Send path: encrypt under the session, carry `sessionId`.
 - **WP-32** Receive path: decrypt by `sessionId`; unknown session renders as explicitly unreadable.
 - **WP-33** Request and answer a missing seed over the distribution group.
 - **WP-34** The history bundle on join, in one message, gated by `history_visibility`.
 - **WP-35** `history_visibility` per community: column, API, settings UI, i18n.
+
+#### WP-30, and the departure nobody records
+
+**"Rotate when somebody leaves" is decided from the distribution group's EPOCH, not from an event.**
+Every membership change commits to that group, so its epoch is a number every device already holds,
+reads identically and cannot forget. A session records the epoch it was minted at
+(`graine.distribution_epoch`, SQLite v9; IndexedDB rows are objects and needed no version); a
+mismatch means the set of people holding that seed is no longer the set entitled to it, and the next
+send mints a new one.
+
+The alternative was a durable "somebody left" marker. It has to be written by every device, kept
+until every session has cycled past it, and cleared by something - three chances to be silently
+wrong, against a number that is simply read. *Durable state answers only the question it was written
+for*, and the group's epoch was written to answer exactly this one.
+
+**An ADD advances the epoch too, and rotates a session it did not have to.** Deliberate: the cost is
+one extra seed distribution, which is O(1), against a discriminator that would have to distinguish
+add from remove and be trusted to. The comparison is `!==`, not `<`, for the same reason - any
+disagreement is a disagreement.
+
+**A session with no epoch is rotated, never trusted.** `undefined` is not epoch 0. A row written
+before the column existed was minted under a roster nobody recorded, which is the case rotation
+exists for; the codec keeps absent absent rather than letting `Number(null)` turn it into a real
+epoch.
+
+**Three orderings in `reserveOutboundSlot`, each the answer to a failure that leaves no trace:**
+
+| Rule | What the other order costs |
+| --- | --- |
+| Serialised per (channel, sender) | Two racing sends read one `sentCount`, seal two messages under one AES-GCM key. No symptom at either end. |
+| Distribute the seed, THEN persist the session | Persisting first leaves a session in hand that nobody can read; it is reused, so every message under it is lost, permanently. Distributing first means a failure leaves the seed nowhere and the next attempt mints again. |
+| Burn the index before the send, and leave it burned on failure | A gap costs nothing - every message carries its index and the key is derived directly. Re-handing one out after a send that the server did receive costs the session. |
+
+**The sender id is lower-cased at the one place a session is written and the one place it is looked
+up.** A row stored as `Alice` and searched for as `alice` is never found, so every send mints - a
+community that works perfectly while rotating on every single message, and distributing a seed for
+each.
+
+The rotation is the only line logged (at `info`): it is rare by construction - once per 100
+messages, per week, or per membership change - and it is the only record that a departure took a
+seed out of circulation.
 
 ### Phase 5 - reactions
 

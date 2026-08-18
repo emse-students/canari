@@ -194,6 +194,20 @@ export interface StoredGraineSession {
    * counts. Absent on a received session: this device never seals with someone else's.
    */
   sentCount?: number;
+  /**
+   * Epoch of the community's MLS distribution group when this device MINTED the session.
+   *
+   * This is how "rotate when somebody leaves" is decided without anyone recording that somebody
+   * left. Every membership change commits to that group and advances its epoch, so a session whose
+   * stamp differs from the group's current epoch was minted under a roster that no longer holds -
+   * whoever left still has its seed, and it must not seal another message. Derived from state
+   * every device already has and reads identically, rather than from a "a departure happened"
+   * marker, which is durable state answering a question it was not written for.
+   *
+   * Absent on a received session, for the same reason `sentCount` is: rotation is a decision the
+   * SENDER makes, and another device's epoch view is not ours to judge.
+   */
+  distributionEpoch?: number;
 }
 
 /**
@@ -211,6 +225,7 @@ export interface EncryptedGraineRow {
   firstIndex: number;
   createdAt: number;
   sentCount?: number;
+  distributionEpoch?: number;
   /** 12-byte AES-GCM initialization vector, as for a message row. */
   iv: Uint8Array;
   /** AES-256-GCM ciphertext of the seed payload. */

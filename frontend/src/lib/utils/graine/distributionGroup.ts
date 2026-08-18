@@ -41,19 +41,21 @@ export async function ensureCommunityDistributionGroup(
     // user is no longer a member, and anything else is transport. Never branched on the sentence.
     if (e instanceof ChannelApiError && e.code === 'WORKSPACE_HAS_NO_DISTRIBUTION_GROUP') {
       log(
-        `[GRAINE] community ${workspaceId.slice(0, 8)}… has NO distribution group - its salons cannot carry seeds`
+        `[GRAINE] community ${workspaceId.slice(0, 8)}... has NO distribution group - its salons cannot carry seeds`
       );
       return false;
     }
     log(
-      `[GRAINE] could not read the distribution group of ${workspaceId.slice(0, 8)}…: ${e instanceof Error ? e.message : String(e)}`
+      `[GRAINE] could not read the distribution group of ${workspaceId.slice(0, 8)}...: ${e instanceof Error ? e.message : String(e)}`
     );
     return false;
   }
 
   const joined = await mlsService.ensureDistributionGroup(workspaceId, ref);
   if (!joined) {
-    log(`[GRAINE] could not join the distribution group of community ${workspaceId.slice(0, 8)}…`);
+    log(
+      `[GRAINE] could not join the distribution group of community ${workspaceId.slice(0, 8)}...`
+    );
   }
   return joined;
 }
