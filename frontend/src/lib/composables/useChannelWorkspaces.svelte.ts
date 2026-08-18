@@ -862,11 +862,19 @@ export function useChannelWorkspaces() {
   /**
    * Deletes a whole community (admin-only, server-enforced) and purges it locally. Other
    * members are cleaned up by the `workspace.deleted` broadcast, so nothing here fans out.
+   *
+   * `confirmationName` is the name the admin typed into the dialog. It is carried all the way to
+   * the server, which refuses the deletion unless it matches - so it must never be filled in from
+   * the workspace the caller already has, only from what a human actually typed.
    */
-  async function deleteCurrentWorkspace(workspaceDbId: string, ctx: ChannelWorkspaceContext) {
+  async function deleteCurrentWorkspace(
+    workspaceDbId: string,
+    confirmationName: string,
+    ctx: ChannelWorkspaceContext
+  ) {
     if (!workspaceDbId) return;
     try {
-      await service.deleteWorkspace(workspaceDbId);
+      await service.deleteWorkspace(workspaceDbId, confirmationName);
       await purgeWorkspaceLocally(workspaceDbId, ctx);
       ctx.log('Community deleted.');
     } catch (error) {

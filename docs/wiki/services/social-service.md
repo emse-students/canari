@@ -82,8 +82,9 @@ Two facts that decide every capacity question about communities, both verified a
   `queued_message` holds **0** rows for any channel id. This is the opposite of a DM, where a copy of
   the ciphertext is stored per recipient *device* - see [chat-delivery](chat-delivery.md).
 - **Nothing ever GCs `channel_messages`.** There is no cron and no retention window. Deleting a
-  community only sets `archived`; account deletion rewrites `authorId` to `[deleted]` and keeps the
-  row. The only removal is an explicit `deleteChannelMessage`. Community history therefore grows
+  community now drops its rows outright (since 2026-08-18), but that is the only bulk removal;
+  account deletion rewrites `authorId` to `[deleted]` and keeps the row, and the only other removal
+  is an explicit `deleteChannelMessage`. The history of a living community therefore grows
   monotonically - cheaply (~960 B/row including indexes, `content` averaging 137 B because a channel
   ciphertext carries no MLS framing), but forever.
 
@@ -125,7 +126,7 @@ The numbers and what they imply are in
 | POST | `/api/channels/:channelId/members/invite` | Invite user to channel |
 | POST | `/api/channels/:channelId/members/leave` | Leave a **private** channel (drops the caller from `allowedUsers` and rotates the key). A public channel answers 400 - see "A channel-scoped action never touches community membership" |
 | GET | `/api/channels/:channelId/members` | Roster of THIS channel (private = `allowedUsers` + admins); `?scope=workspace` for the whole community |
-| DELETE | `/api/channels/workspaces/:workspaceId` | Delete a whole community for every member (MANAGE_WORKSPACE **only** - see "Deleting a community") |
+| DELETE | `/api/channels/workspaces/:workspaceId` | Delete a whole community for every member, irreversibly. MANAGE_WORKSPACE **only**, and the body must carry `{confirmationName}` equal to the community name or it is refused with `WORKSPACE_CONFIRMATION_MISMATCH` - see "Deleting a community" |
 | DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Remove a member from the whole workspace (MANAGE_WORKSPACE / MANAGE_CHANNEL / KICK_MEMBERS) |
 | PATCH | `/api/channels/workspaces/:workspaceId/members/:userId/role` | Set a member's workspace role, replacing existing roles (MANAGE_WORKSPACE / MANAGE_ROLES) |
 | GET \| PATCH | `/api/channels/:channelId/access` | Get/set channel visibility (`isPrivate`), `allowedUsers`, and `writePolicy` (MANAGE_CHANNEL to write) |
@@ -230,14 +231,28 @@ strips it: there is no `ClassSerializerInterceptor` and the entity carries no `@
 disappears. It is **admin-only**: unlike a kick or a channel archive, MANAGE_CHANNEL is
 deliberately not accepted, because the action hits every member at once.
 
-It is a **soft delete**. `channel_workspaces.archived` (migration 033) flips to true, every
-channel in the workspace is archived alongside it, and nothing is dropped - members, channels,
-messages and the slug all stay in place. Recovering a community deleted by mistake is two
-`UPDATE`s. What actually makes it vanish is that every read path filters `archived`:
-`listWorkspacesForUser`, `getWorkspaceBySlug` (404 on the slug), `getWorkspaceInvitePreview` and
-`acceptWorkspaceInvite` (a link must not resurrect a deleted community).
+**It is a hard delete, since 2026-08-18.** It calls the same `hardDeleteWorkspace` the last member
+leaving calls: one transaction over `channel_messages`, `channel_members`, `channel_roles`,
+`workspace_invites`, `channels`, `channel_workspaces`, after the distribution group is deleted in
+chat-delivery. Four endings, one code path - so a table added to that list is added for all four.
 
-The audience is snapshotted **before** archiving, then `workspace.deleted`
+It used to archive, flipping `channel_workspaces.archived` (migration 033), on the reasoning that
+recovering a community deleted by mistake was then two `UPDATE`s. Graine ended that: an archived
+community's messages are ciphertext whose seeds no client keeps, so what the two `UPDATE`s would
+restore is rows nobody can read - occupying the name and the slug, invisible to every screen, and
+no longer deletable through any route, since deleting needs a member and the UI lists only
+communities you are in. That is the orphan shape the 2026-08-17 purge had to find by hand.
+
+**The confirmation is enforced here, not only in the dialog.** The request must carry
+`confirmationName` equal to the community's name (both trimmed, otherwise exact) or it is refused
+with `WORKSPACE_CONFIRMATION_MISMATCH`, before the distribution group call. The reason is the
+fleet, not defence in depth: clients built while this route archived send no such field, and their
+"are you sure?" was worded for a reversible action. An argument they do not send is what makes them
+fail closed instead of destroying a community behind a warning that no longer describes what
+happens. The name is a confirmation token, never a selector - the workspace is chosen by the id in
+the path - so the two communities on prod that share a name are not ambiguous here.
+
+The audience is snapshotted **before** deleting, then `workspace.deleted`
 (`{ workspaceId, deletedBy }`) is broadcast to it, so connected members purge the community from
 their sidebar and drop its channel conversations without polling. Frontend:
 `handleWorkspaceDeleted` in `useChannelWorkspaces.svelte.ts`, which shares its
@@ -490,12 +505,15 @@ this is what the code does.
 permissions include `workspace.manage`. It is the permission that can grant every other one back,
 and therefore the only one whose disappearance a community cannot recover from on its own.
 
-**The last member leaving deletes the community outright** (`hardDeleteWorkspace`): one transaction,
-seven tables in dependency order - `channel_key_distributions`, `channel_messages`,
-`channel_members`, `channel_roles`, `workspace_invites`, `channels`, `channel_workspaces` - because
-there is not one foreign key on `channel_workspaces` or `channels` to cascade, so a table left out
-becomes orphan rows nobody sees. Attached media are left to the retention sweep, which collects them
-once nothing accesses them again.
+**Every ending goes through `hardDeleteWorkspace`**: the last member leaving, the last member being
+kicked, an account deletion that empties the community, and an admin deleting it. One transaction,
+six tables in dependency order - `channel_messages`, `channel_members`, `channel_roles`,
+`workspace_invites`, `channels`, `channel_workspaces` - because there is not one foreign key on
+`channel_workspaces` or `channels` to cascade, so a table left out becomes orphan rows nobody sees.
+Those six are the complete set: no other table in the database carries a `workspaceId` or a
+`channelId` (checked against `information_schema` on prod, 2026-08-18). `channel_key_distributions`
+was a seventh until the Graine rework dropped the table. Attached media are left to the retention
+sweep, which collects them once nothing accesses them again.
 
 **Account deletion is the one path that cannot refuse.** `internal.controller` deletes
 `channel_members` rows by `userId` directly, so it bypasses every guard above, and the account is

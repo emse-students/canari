@@ -69,7 +69,7 @@
     /** Callback fired when the current user leaves the selected workspace. */
     onLeaveWorkspace?: (workspaceDbId: string) => void;
     /** Callback fired when an admin deletes the selected workspace for every member. */
-    onDeleteWorkspace?: (workspaceDbId: string) => void;
+    onDeleteWorkspace?: (workspaceDbId: string, confirmationName: string) => void;
     /** Callback to send a community membership invitation with the given role. Rejects on key-distribution failure. */
     onInviteCommunityMember?: (
       memberId: string,
@@ -481,19 +481,22 @@
   }
 
   /**
-   * Confirms then deletes the whole community for every member. Only rendered for admins;
-   * the server re-checks MANAGE_WORKSPACE, so hiding the button is convenience, not the gate.
+   * Confirms then deletes the whole community for every member, irreversibly. Only rendered for
+   * admins; the server re-checks MANAGE_WORKSPACE, so hiding the button is convenience, not the
+   * gate - and it re-checks the typed name too, so neither is this dialog.
    */
   async function deleteCommunity() {
+    const name = selectedWorkspace?.name ?? '';
     if (
-      !(await showConfirm(
-        m.chat_community_delete_confirm({ selectedWorkspace: selectedWorkspace?.name ?? '' }),
-        { danger: true, confirmLabel: m.common_delete_button() }
-      ))
+      !(await showConfirm(m.chat_community_delete_confirm({ selectedWorkspace: name }), {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+        requireText: name,
+      }))
     ) {
       return;
     }
-    onDeleteWorkspace?.(selectedWorkspace?.workspaceDbId ?? '');
+    onDeleteWorkspace?.(selectedWorkspace?.workspaceDbId ?? '', name);
     onClose();
   }
 

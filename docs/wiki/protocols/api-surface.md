@@ -260,7 +260,8 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 |---|---|---|
 | POST | `/api/channels/workspaces` | Create workspace |
 | GET | `/api/channels/workspaces/user/me` | List caller's workspaces (each carries `viewerCanManage`: true iff the caller holds MANAGE_WORKSPACE, used to gate admin controls) |
-| GET | `/api/channels/workspaces/by-slug/:slug` | One workspace with its readable channels, members and roles. **Members only**, and channels are projected (never the entity - it carries `masterSecret`) |
+| GET | `/api/channels/workspaces/by-slug/:slug` | One workspace with its readable channels, members and roles. **Members only**, and channels are projected rather than returned as entities. That projection was what kept `channels.masterSecret` off the wire; migration 041 dropped the column outright, so there is no longer a secret to leak, and the projection stays as the narrow contract |
+| DELETE | `/api/channels/workspaces/:workspaceId` | Delete a community for every member, irreversibly. MANAGE_WORKSPACE only, and the body must carry `{confirmationName}` equal to the community's name - `WORKSPACE_CONFIRMATION_MISMATCH` otherwise, which is also what an older client gets, since it sends no such field |
 | GET | `/api/channels/workspace/:workspaceId/user/me` | List channels for caller |
 | POST | `/api/channels/workspaces/:workspaceId/leave` | Leave a community. Refuses the sole admin (`WORKSPACE_WOULD_HAVE_NO_ADMIN`); the last member leaving deletes the community |
 | DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Kick. Consults the TARGET's roles, same refusal |

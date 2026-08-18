@@ -37,6 +37,15 @@ streams still carried rows from before 2026-08-15**, at 1 to 11 entries each, in
 the 8 000 cap. The write path now trims by `XTRIM ... MINID` at `RETENTION_WINDOW_MS`
 (`messaging.service.ts`), which is what makes the dates below mean something.
 
+**One deliberate break, recorded here so it is not read as an oversight.** `DELETE
+/api/channels/workspaces/:id` requires a `confirmationName` since 2026-08-18, and a client that does
+not send it is refused. No shim was written on purpose: that route stopped archiving and now destroys
+a community outright, while older clients still ask "are you sure?" in the words of the reversible
+action. Accepting their call would let them destroy something behind a warning that no longer
+describes it, so the missing argument IS the protection - see
+[social-service](services/social-service.md#deleting-a-community). It retires itself when no client
+below 0.15.0 remains; there is nothing to delete when it does.
+
 ---
 
 ## The diary

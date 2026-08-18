@@ -28,6 +28,7 @@ import { CHANNEL_PERMISSIONS } from './permissions';
 describe('ChannelService - the community distribution group', () => {
   const SECRET = 'internal-secret-for-tests';
   const WORKSPACE = 'ws-1';
+  const WORKSPACE_NAME = 'Les Canaris';
   const USER = 'u1';
 
   let fetchMock: jest.Mock;
@@ -297,6 +298,7 @@ describe('ChannelService - the community distribution group', () => {
     }) {
       repos.workspaceRepo.findOne.mockResolvedValue({
         id: WORKSPACE,
+        name: WORKSPACE_NAME,
         slug: 'test',
         archived: false,
       });
@@ -310,16 +312,16 @@ describe('ChannelService - the community distribution group', () => {
       ]);
     }
 
-    it('deletes the group before archiving anything', async () => {
+    it('deletes the group before deleting anything', async () => {
       const repos = makeService();
       asAdmin(repos);
       const deleteFetch = answerWith({ deleted: true });
       global.fetch = deleteFetch as unknown as typeof fetch;
 
-      await repos.service.deleteWorkspace(WORKSPACE, USER);
+      await repos.service.deleteWorkspace(WORKSPACE, USER, WORKSPACE_NAME);
 
       expect(deleteFetch.mock.calls[0][1]).toMatchObject({ method: 'DELETE' });
-      expect(repos.channelRepo.update).toHaveBeenCalled();
+      expect(repos.workspaceRepo.manager.transaction).toHaveBeenCalled();
     });
 
     it('leaves the community intact when the group cannot be deleted', async () => {
@@ -327,13 +329,45 @@ describe('ChannelService - the community distribution group', () => {
       asAdmin(repos);
       global.fetch = jest.fn(() => Promise.reject(new Error('down'))) as unknown as never;
 
-      await expect(repos.service.deleteWorkspace(WORKSPACE, USER)).rejects.toBeInstanceOf(
-        ServiceUnavailableException
-      );
+      await expect(
+        repos.service.deleteWorkspace(WORKSPACE, USER, WORKSPACE_NAME)
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
       // A half-deletion is the state nothing can reconcile afterwards: the community would be gone
       // while its group lived on, named by nobody. Retryable beats orphaned.
-      expect(repos.channelRepo.update).not.toHaveBeenCalled();
+      expect(repos.workspaceRepo.manager.transaction).not.toHaveBeenCalled();
       expect(repos.workspaceRepo.save).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The deletion is irreversible now, so the typed name is a gate and not a formality. It is
+     * checked on the server because the fleet still holds clients built when this call archived:
+     * they send no name at all, and must be refused rather than obeyed.
+     */
+    it('refuses a name that does not match, and touches nothing', async () => {
+      const repos = makeService();
+      asAdmin(repos);
+      const deleteFetch = answerWith({ deleted: true });
+      global.fetch = deleteFetch as unknown as typeof fetch;
+
+      for (const wrong of ['', 'les canaris', 'Les Canari', 'Les  Canaris']) {
+        await expect(repos.service.deleteWorkspace(WORKSPACE, USER, wrong)).rejects.toMatchObject({
+          response: { code: 'WORKSPACE_CONFIRMATION_MISMATCH' },
+        });
+      }
+
+      // Refused BEFORE the distribution group call: that one is not undoable either.
+      expect(deleteFetch).not.toHaveBeenCalled();
+      expect(repos.workspaceRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('accepts the name with surrounding whitespace, which a copy carries', async () => {
+      const repos = makeService();
+      asAdmin(repos);
+      global.fetch = answerWith({ deleted: true }) as unknown as typeof fetch;
+
+      await repos.service.deleteWorkspace(WORKSPACE, USER, `  ${WORKSPACE_NAME}\n`);
+
+      expect(repos.workspaceRepo.manager.transaction).toHaveBeenCalled();
     });
   });
 });

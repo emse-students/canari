@@ -15,10 +15,21 @@ export interface ConfirmOptions {
   cancelLabel?: string;
   /** When true, renders the confirm button in red (destructive action). */
   danger?: boolean;
+  /**
+   * When set, the dialog also asks the user to TYPE this exact text, and confirming is
+   * impossible until it matches (trimmed on both sides, otherwise exact).
+   *
+   * For actions that destroy something irreversibly, where "are you sure?" is answered by
+   * reflex. Typing the name of what is about to go is the only part of a confirmation that
+   * cannot be clicked through without reading it.
+   */
+  requireText?: string;
 }
 
-interface PendingConfirm extends Required<ConfirmOptions> {
+interface PendingConfirm extends Required<Omit<ConfirmOptions, 'requireText'>> {
   message: string;
+  /** `null` when no typed confirmation is required - see {@link ConfirmOptions.requireText}. */
+  requireText: string | null;
   resolve: (confirmed: boolean) => void;
 }
 
@@ -42,6 +53,7 @@ export function showConfirm(message: string, opts: ConfirmOptions = {}): Promise
       confirmLabel: opts.confirmLabel ?? m.common_confirm_button(),
       cancelLabel: opts.cancelLabel ?? m.common_cancel_button(),
       danger: opts.danger ?? false,
+      requireText: opts.requireText ?? null,
       resolve,
     };
   });

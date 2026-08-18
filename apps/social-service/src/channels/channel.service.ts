@@ -255,10 +255,11 @@ export class ChannelService {
    * every dependent table has to be named here in dependency order or it becomes orphan rows -
    * which is exactly what the 2026-08-17 purge had to do by hand.
    *
-   * Hard rather than archived because the only caller is the disappearance of the last member: an
-   * archived community nobody belongs to is unreachable from every UI and is storage nothing will
-   * ever free. Attached media are left to the retention sweep, which collects them within its
-   * window once nothing accesses them again.
+   * Every way a community ends comes through here: the last member leaving, the last member being
+   * kicked, an account deletion that empties it, and - since 2026-08-18 - an admin deleting it
+   * outright. One ending, one code path, so a table added to the list below is added for all four.
+   * Attached media are left to the retention sweep, which collects them within its window once
+   * nothing accesses them again.
    */
   private async hardDeleteWorkspace(workspaceId: string, reason: string): Promise<void> {
     const channels = await this.channelRepo.find({ where: { workspaceId }, select: { id: true } });
@@ -1120,15 +1121,26 @@ export class ChannelService {
   }
 
   /**
-   * Soft-deletes an entire community and broadcasts `workspace.deleted` so every member's
+   * Deletes an entire community, for real, and broadcasts `workspace.deleted` so every member's
    * client drops it from the sidebar and purges its channels locally.
    *
-   * Admin-only on purpose: unlike a kick or a channel archive, this is irreversible from the
-   * UI and it acts on everyone at once, so MANAGE_CHANNEL is deliberately NOT enough - only
-   * MANAGE_WORKSPACE. The workspace row, its members, channels and messages all survive; the
-   * `archived` flags are what hide them, which keeps a mistake recoverable with two UPDATEs.
+   * Admin-only on purpose: unlike a kick or a channel archive, this acts on everyone at once, so
+   * MANAGE_CHANNEL is deliberately NOT enough - only MANAGE_WORKSPACE.
+   *
+   * It used to archive instead, which kept a mistake recoverable "with two UPDATEs". That stopped
+   * being true with Graine: an archived community's messages are ciphertext whose seeds no client
+   * keeps, so the rows would survive as something nobody can read, invisible to every screen and
+   * impossible to delete afterwards - the exact orphan shape the 2026-08-17 purge had to find by
+   * hand. Recoverability that only recovers unreadable rows is not recoverability.
+   *
+   * `confirmationName` MUST equal the community's name, and it is checked HERE rather than only in
+   * the dialog. Not defence in depth for its own sake: the fleet still holds clients built when
+   * this call archived, whose confirmation was worded for a reversible action. Turning the server
+   * irreversible without a new argument would make those clients destroy a community behind a
+   * warning that no longer describes what happens. Requiring an argument they do not send makes
+   * them fail closed, which is the only safe way for this change to meet an old client.
    */
-  async deleteWorkspace(workspaceId: string, actorUserId: string) {
+  async deleteWorkspace(workspaceId: string, actorUserId: string, confirmationName: string) {
     const workspace = await this.workspaceRepo.findOne({
       where: { id: workspaceId, archived: false },
     });
@@ -1146,21 +1158,25 @@ export class ChannelService {
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
 
-    // Snapshot the audience BEFORE archiving: the event has to reach every member, and
-    // membership rows are what the broadcast resolves against.
+    // Checked after the permission checks on purpose: a non-admin must not be able to probe
+    // whether a name matches. Trimmed on both sides because a copied name carries whitespace;
+    // otherwise exact, since the whole point is having read what is about to be destroyed.
+    if (confirmationName.trim() !== workspace.name.trim()) {
+      this.logger.warn(
+        `[WORKSPACE] delete refused, name mismatch workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+      );
+      throw new BadRequestException({
+        code: 'WORKSPACE_CONFIRMATION_MISMATCH',
+        message: 'The confirmation does not match the community name.',
+      });
+    }
+
+    // Snapshot the audience BEFORE deleting: the event has to reach every member, and the
+    // membership rows the broadcast resolves against are about to be gone.
     const memberIds = await this.getWorkspaceMemberIds(workspaceId);
+    const slug = workspace.slug;
 
-    // The distribution group goes first, for the reason spelled out in `hardDeleteWorkspace`: it is
-    // the one piece living in another service, so a failure must stop the deletion rather than
-    // leave a group whose community is gone.
-    await deleteDistributionGroup(this.internalSecret, workspaceId);
-
-    // Archive the channels too, so any client holding a stale channel id stops listing them
-    // even if it never sees the workspace event.
-    await this.channelRepo.update({ workspaceId, archived: false }, { archived: true });
-
-    workspace.archived = true;
-    await this.workspaceRepo.save(workspace);
+    await this.hardDeleteWorkspace(workspaceId, 'admin_deleted');
 
     await this.redis.publishChannelEvent(
       'workspace.deleted',
@@ -1169,7 +1185,7 @@ export class ChannelService {
     );
 
     this.logger.log(
-      `[WORKSPACE] delete workspace=${workspaceId} slug="${workspace.slug}" by=${actorUserId.slice(0, 8)} members=${memberIds.length}`
+      `[WORKSPACE] delete workspace=${workspaceId} slug="${slug}" by=${actorUserId.slice(0, 8)} members=${memberIds.length}`
     );
     return { success: true, workspaceId };
   }

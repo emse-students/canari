@@ -462,13 +462,18 @@ export class ChannelService {
   }
 
   /**
-   * Soft-deletes a whole community for every member (admin-only, MANAGE_WORKSPACE).
+   * Deletes a whole community for every member, irreversibly (admin-only, MANAGE_WORKSPACE).
    * The server broadcasts `workspace.deleted`, so other connected members clean up
    * without polling.
+   *
+   * `confirmationName` must be the community's name, and the server refuses the call when it does
+   * not match. Passing it is not optional politeness: the check exists precisely so that a client
+   * which does not send it cannot destroy anything.
    */
-  async deleteWorkspace(workspaceId: string) {
+  async deleteWorkspace(workspaceId: string, confirmationName: string) {
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/workspaces/${workspaceId}`, {
       method: 'DELETE',
+      body: JSON.stringify({ confirmationName }),
     });
     await this.handleError(res);
     return res.json();

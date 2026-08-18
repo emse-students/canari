@@ -273,17 +273,27 @@ export class ChannelsController {
   }
 
   /**
-   * Soft-deletes a whole community for every member. Requires MANAGE_WORKSPACE (admin-only).
-   * Declared before `DELETE :channelId` for readability; the two never collide because this
-   * path carries two segments.
+   * Deletes a whole community for every member, irreversibly. Requires MANAGE_WORKSPACE
+   * (admin-only) AND `confirmationName` equal to the community's name - see
+   * {@link ChannelService.deleteWorkspace} for why the name is checked on the server and not
+   * only in the dialog. Declared before `DELETE :channelId` for readability; the two never
+   * collide because this path carries two segments.
+   *
+   * The body is read defensively: a DELETE with no body at all is what an older client sends,
+   * and it must reach the name check and be refused there rather than crash on a missing field.
    */
   @UseGuards(NginxAuthGuard)
   @Delete('workspaces/:workspaceId')
   deleteWorkspace(
     @Headers('x-user-id') xUserId: string,
-    @Param('workspaceId') workspaceId: string
+    @Param('workspaceId') workspaceId: string,
+    @Body() body?: { confirmationName?: string }
   ) {
-    return this.service.deleteWorkspace(workspaceId, xUserId.trim().toLowerCase());
+    return this.service.deleteWorkspace(
+      workspaceId,
+      xUserId.trim().toLowerCase(),
+      body?.confirmationName ?? ''
+    );
   }
 
   /** Kicks a member from a workspace (removes from all channels). Requires MANAGE_WORKSPACE, MANAGE_CHANNEL, or KICK_MEMBERS permission. */

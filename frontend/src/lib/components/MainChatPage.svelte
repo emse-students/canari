@@ -321,13 +321,13 @@
             convs.selectedContact = null;
         }
       },
-      onDeleteWorkspace: (workspaceDbId: string) => {
+      onDeleteWorkspace: (workspaceDbId: string, confirmationName: string) => {
         // Resolve the channel list before the delete purges the workspace from the sidebar.
         const doomedChannelIds =
           channels.channelWorkspaces
             .find((w) => w.workspaceDbId === workspaceDbId)
             ?.channels.map((c) => c.id) ?? [];
-        void channels.deleteCurrentWorkspace(workspaceDbId, channelsCtx());
+        void channels.deleteCurrentWorkspace(workspaceDbId, confirmationName, channelsCtx());
         if (convs.selectedContact && doomedChannelIds.includes(convs.selectedContact)) {
           convs.selectedContact = null;
         }

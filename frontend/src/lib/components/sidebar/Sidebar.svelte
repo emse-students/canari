@@ -81,7 +81,7 @@
     /** Callback fired when the user leaves a workspace. */
     onLeaveWorkspace?: (workspaceDbId: string) => void;
     /** Callback fired when an admin deletes a workspace for every member. */
-    onDeleteWorkspace?: (workspaceDbId: string) => void;
+    onDeleteWorkspace?: (workspaceDbId: string, confirmationName: string) => void;
     /** Callback fired when the user drags a community to a new position in the rail. */
     onReorderCommunities?: (newOrder: ChannelWorkspace[]) => void;
     /** Callback fired when the user selects a direct or group conversation. */

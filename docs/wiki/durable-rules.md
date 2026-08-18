@@ -109,6 +109,17 @@ ones that must be seen without opening one:
   impossible** - the account is going regardless - the repair must be DETERMINISTIC (highest-priority
   survivor, ties by lowest id), never a heuristic and never a clock. Measured first: 15 of 29
   communities had exactly one admin. See [community-rework](services/community-rework.md).
+- **RECOVERABILITY THAT ONLY RECOVERS UNREADABLE ROWS IS NOT RECOVERABILITY.** Deleting a community
+  archived it, because a mistake was then "two `UPDATE`s" away. Graine made those two `UPDATE`s
+  restore ciphertext no client holds a seed for - keeping the name, the slug and the storage, listed
+  by no screen, deletable by no route. When a soft delete's justification is a restore, re-ask
+  whether the restore still produces something usable; if it does not, the soft delete is only an
+  orphan with a flag on it.
+- **TURNING A REVERSIBLE CONTROL IRREVERSIBLE CHANGES WHAT EVERY DEPLOYED CLIENT IS SAYING.** Their
+  "are you sure?" was written for the old meaning, and shipping the server half alone makes them
+  destroy things behind a warning that no longer describes what happens. Require a NEW argument the
+  old clients do not send - here the typed community name, checked server-side - so they fail closed.
+  A confirmation that only the dialog enforces is not a gate, it is a decoration on one client.
 - **A LINK NOBODY CAN ENUMERATE IS NOT REVOCABLE.** "Creates (or returns)" only ever created and the
   UI called it per click, so one member minted 3 live tokens in 59 seconds and revoking the one they
   shared revoked nothing. One live invite per community, rotation the only way to mint, and the
