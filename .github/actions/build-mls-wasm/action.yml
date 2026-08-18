@@ -23,6 +23,10 @@ runs:
       with:
         toolchain: stable
         target: wasm32-unknown-unknown
+        # The repository root holds no workspace manifest, so the default (`.`) makes the bundled
+        # rust-cache run `cargo metadata` there and print `failed with exit code 101` on every
+        # run - a red line that means nothing and teaches its reader to skip red lines.
+        cache-workspaces: frontend/mls-wasm
 
     - name: Install wasm-pack
       if: steps.cache.outputs.cache-hit != 'true'
