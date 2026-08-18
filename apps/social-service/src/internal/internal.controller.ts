@@ -14,6 +14,7 @@ import { UserTag } from '../users/entities/user-tag.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { UserModeration } from '../moderation/entities/user-moderation.entity';
 import { ContentReport } from '../moderation/entities/content-report.entity';
+import { ChannelService } from '../channels/channel.service';
 
 /**
  * Internal-only user data deletion endpoint - called by core-service during account deletion.
@@ -48,7 +49,8 @@ export class InternalController {
     @InjectRepository(UserModeration)
     private readonly moderationRepo: Repository<UserModeration>,
     @InjectRepository(ContentReport)
-    private readonly reportRepo: Repository<ContentReport>
+    private readonly reportRepo: Repository<ContentReport>,
+    private readonly channelService: ChannelService
   ) {}
 
   /** Returns member user IDs for an association (core-service directory filter). */
@@ -139,6 +141,11 @@ export class InternalController {
    * Hard-deletes: posts, memberships, follows, tags, moderation records.
    * Anonymises (keeps record): channel messages, purchase records, content reports
    * - these are preserved for conversation continuity or legal/financial obligations.
+   *
+   * Community memberships are deleted here directly, which is the ONE path that bypasses
+   * `leaveWorkspace` and its governance guards - so the workspaces involved are captured first and
+   * repaired afterwards, or a deleted account would leave communities with no admin, or with no
+   * members at all, that nothing could recover.
    */
   @Delete('users/:userId')
   async deleteUserData(
@@ -148,6 +155,10 @@ export class InternalController {
     assertInternalSecret(headerSecret);
 
     this.logger.log(`[INTERNAL_DELETE] starting social data for user=${userId}`);
+
+    const affectedWorkspaceIds = (
+      await this.channelMemberRepo.find({ where: { userId }, select: { workspaceId: true } })
+    ).map((m) => m.workspaceId);
 
     await Promise.all([
       // Hard deletes - user's own content and memberships
@@ -167,7 +178,11 @@ export class InternalController {
       this.reportRepo.update({ reporterId: userId }, { reporterId: '[deleted]' }),
     ]);
 
-    this.logger.log(`[INTERNAL_DELETE] done social data for user=${userId}`);
+    await this.channelService.repairWorkspacesAfterAccountDeletion(affectedWorkspaceIds);
+
+    this.logger.log(
+      `[INTERNAL_DELETE] done social data for user=${userId} workspaces=${affectedWorkspaceIds.length}`
+    );
     return { ok: true };
   }
 }

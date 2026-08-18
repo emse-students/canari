@@ -9,6 +9,27 @@ export interface ReorderWorkspacesDto {
   orderedIds: string[];
 }
 
+/**
+ * A community's one live invite link. The bounds travel with the token because a link a human can
+ * reason about has to show what it is bounded by - a token alone cannot say whether it expires.
+ */
+export interface WorkspaceInviteDto {
+  token: string;
+  /** ISO-8601, or null for a link that never expires. */
+  expiresAt: string | null;
+  /** Cap on accepted joins, or null for unlimited. */
+  maxUses: number | null;
+  /** Joins already accepted through this token. */
+  uses: number;
+}
+
+/** Body of the invite-link endpoint. `rotate` is the only way to replace the live token. */
+export interface CreateWorkspaceInviteDto {
+  expiresAt?: string | null;
+  maxUses?: number | null;
+  rotate?: boolean;
+}
+
 export interface CreateRoleDto {
   workspaceId: string;
   name: string;

@@ -84,8 +84,22 @@ The four traps worth seeing without opening one:
 ## Community channels -> [chat](frontend/modules/chat.md), [social-service](services/social-service.md)
 
 Deep links, system events, rosters and the channel/DM asymmetry are all on those two pages. The
-four that must be seen without opening one:
+ones that must be seen without opening one:
 
+- **EVERY OPERATION CHECKS WHAT THE ACTOR MAY DO; ASK ALSO WHAT THE SYSTEM WOULD BE LEFT AS.** Leave,
+  kick, demote, join-by-link and account-deletion all removed an admin without counting the ones
+  remaining - which is not five bugs but ONE absent postcondition seen from five sides, so guarding
+  any of them alone left the hole open. Enumerate the sides before writing the guard: the fifth was
+  found only by asking what else writes the table (`internal.controller` deletes memberships
+  directly). Enforce it as a REFUSAL wherever refusing is possible, and add no repair route - making
+  the broken state unreachable beats a destructive button that restores it. **Where a refusal is
+  impossible** - the account is going regardless - the repair must be DETERMINISTIC (highest-priority
+  survivor, ties by lowest id), never a heuristic and never a clock. Measured first: 15 of 29
+  communities had exactly one admin. See [community-rework](services/community-rework.md).
+- **A LINK NOBODY CAN ENUMERATE IS NOT REVOCABLE.** "Creates (or returns)" only ever created and the
+  UI called it per click, so one member minted 3 live tokens in 59 seconds and revoking the one they
+  shared revoked nothing. One live invite per community, rotation the only way to mint, and the
+  bounds shown next to the token - a token alone cannot say whether it expires.
 - **AN ACTION MAY ONLY MUTATE STATE AT ITS OWN SCOPE.** Membership is stored per COMMUNITY, so a
   public channel - readable by every member - has no row naming anyone, and "leave this public
   channel" is not an operation the model can express. `leaveChannel` deleted the community

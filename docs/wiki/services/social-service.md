@@ -468,6 +468,52 @@ public channel it only rotates the key, "the user is still a workspace member". 
 no call site in any shipped client, and the two operations that do exist are correct at their own
 scope (`removeMemberFromChannel` for a channel, `kickFromWorkspace` for a community).
 
+### A community always has an admin, or it has no members (2026-08-18)
+
+One postcondition, enforced at every point where a member can stop being one. The full audit that
+produced it - with the prod figures - is [community-rework](community-rework.md#axis-2---a-community-can-never-be-left-ungoverned---shipped-2026-08-18);
+this is what the code does.
+
+| Operation | What it checks now | Refusal |
+|---|---|---|
+| `leaveWorkspace` | the leaver is not the sole admin while others remain | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
+| `kickFromWorkspace` | the TARGET's roles, which it never consulted before | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
+| `updateWorkspaceMemberRole` | the new role still carries `workspace.manage`, or another admin exists | `WORKSPACE_WOULD_HAVE_NO_ADMIN` |
+| `acceptWorkspaceInvite` | the community still has at least one member | `WORKSPACE_HAS_NO_MEMBERS` |
+| `internal DELETE users/:id` | cannot refuse - repairs instead, see below | - |
+
+`listWorkspaceAdminIds` is the single definition of "admin": a member holding a role whose
+permissions include `workspace.manage`. It is the permission that can grant every other one back,
+and therefore the only one whose disappearance a community cannot recover from on its own.
+
+**The last member leaving deletes the community outright** (`hardDeleteWorkspace`): one transaction,
+seven tables in dependency order - `channel_key_distributions`, `channel_messages`,
+`channel_members`, `channel_roles`, `workspace_invites`, `channels`, `channel_workspaces` - because
+there is not one foreign key on `channel_workspaces` or `channels` to cascade, so a table left out
+becomes orphan rows nobody sees. Attached media are left to the retention sweep, which collects them
+once nothing accesses them again.
+
+**Account deletion is the one path that cannot refuse.** `internal.controller` deletes
+`channel_members` rows by `userId` directly, so it bypasses every guard above, and the account is
+going regardless. It therefore captures the affected workspace ids BEFORE deleting and calls
+`repairWorkspacesAfterAccountDeletion` after: a community left with nobody is hard-deleted, and one
+left with members but no admin promotes its highest-priority survivor, ties broken by the lowest
+user id. Deterministic, per-workspace `try` so one failure never strands the others, and logged at
+`warn` because an automatic promotion is something a human should be able to find afterwards.
+
+### One invite link, bounded (2026-08-18)
+
+`createWorkspaceInvite` returns THE community's live token and mints one only when there is none.
+`rotate: true` is the only way to get a new token, and it revokes the previous in the same call, so
+opening the panel cannot invalidate a link somebody already shared. Tokens still live from before
+this rule are revoked on the first call, keeping the newest - the one a human most plausibly shared
+last.
+
+`expiresAt` and `maxUses` travel back with the token, because a token alone cannot say whether it
+expires. Bounds that would mint a dead link - an expiry already past, a cap below one - are refused
+(`INVITE_EXPIRY_INVALID`, `INVITE_EXPIRY_IN_THE_PAST`, `INVITE_MAX_USES_INVALID`) rather than stored,
+since `inviteIsValid` would otherwise hand back a token dead on arrival with nothing saying why.
+
 ## Environment variables
 
 | Variable | Required | Description |

@@ -1,9 +1,10 @@
 # The community rework - master plan (2026-08-17)
 
-> **Status: PLANNED, nothing shipped.** This page is the plan of record for the whole community
-> subsystem. The protocol half has its own page - [channel-encryption](../protocols/channel-encryption.md) -
-> and is not repeated here. The FRONTEND is explicitly out of scope: it is good, and only its
-> unreadable-message state (axis 1) and its invite form (axis 3) are touched.
+> **Status: axes 2 and 3 SHIPPED 2026-08-18; axis 1 - the crypto - is the remaining work.** This
+> page is the plan of record for the whole community subsystem. The protocol half has its own page -
+> [channel-encryption](../protocols/channel-encryption.md) - and is not repeated here. The FRONTEND
+> is explicitly out of scope: it is good, and only its unreadable-message state (axis 1) and its
+> invite form (axis 3) are touched.
 
 ## What triggered it
 
@@ -39,40 +40,61 @@ Migration is a **clean cut**: at cutover every community and all its content are
 2026-08-17 by the user, which removes the legacy read path, the dual-version window and the
 re-encryption pass in one stroke.
 
-## Axis 2 - a community can never be left ungoverned
+## Axis 2 - a community can never be left ungoverned - **SHIPPED 2026-08-18**
 
-Today `leaveWorkspace` deletes the row and broadcasts, counting neither admins nor members.
-`kickFromWorkspace` checks the actor and never looks at the target's roles, so `KICK_MEMBERS` alone
-removes the sole Administrateur. `updateWorkspaceMemberRole` replaces roles outright with no admin
-count and no self-check, so `MANAGE_ROLES` alone demotes the last admin - including oneself.
+`leaveWorkspace` deleted the row and broadcast, counting neither admins nor members.
+`kickFromWorkspace` checked the actor and never looked at the target's roles, so `KICK_MEMBERS`
+alone removed the sole Administrateur. `updateWorkspaceMemberRole` replaced roles outright with no
+admin count and no self-check, so `MANAGE_ROLES` alone demoted the last admin - including oneself.
 **15 of the 29 communities on prod had exactly one admin**; that is the median, not the tail.
 
-The invariant to enforce at every exit, server-side, as a refusal rather than a repair:
+The invariant, enforced server-side at every exit as a refusal rather than a repair:
 
 - **A community always has at least one admin, or it has no members.** Leaving, being kicked and
-  being demoted all check it. The last admin is refused until they hand the role over.
-- **A community with no members does not exist.** The last member leaving deletes it, in the same
-  transaction. Five such communities existed on prod and were removed by hand on 2026-08-17; the fix
-  is the postcondition, not the cleanup.
+  being demoted all consult `listWorkspaceAdminIds` before acting. The last admin is refused with a
+  stable code (`WORKSPACE_WOULD_HAVE_NO_ADMIN`) until they hand the role over.
+- **A community with no members does not exist.** The last member leaving takes it with them -
+  `hardDeleteWorkspace`, one transaction, seven tables named in dependency order because there is
+  not one foreign key here to cascade. Five such communities existed on prod and were removed by
+  hand on 2026-08-17; the fix is the postcondition, not the cleanup.
 - **No repair route is added, deliberately.** A destructive control needs an allowlist and a reason
   to exist; making the broken state unreachable is strictly better than shipping a button that
   restores it.
 
-## Axis 3 - an invite is one link, bounded
+**The sixth side, found while implementing: account deletion.** `internal.controller` deletes
+`channel_members` rows by `userId` directly, so it bypasses every guard above - and it is the one
+path that cannot refuse, because the account is going regardless. So it is the one place a repair
+exists, and it is deterministic rather than a heuristic: a community left with nobody is deleted,
+and a community left with members and no admin promotes its highest-priority survivor, ties broken
+by the lowest user id. Deleting other people's community because one person deleted their account
+would be far worse, and leaving it ungoverned is the state everything else here exists to prevent.
 
-`createWorkspaceInvite` documents itself as "creates (or returns)" and only ever creates; the UI
-calls it on every click. **One member minted 3 tokens for the same community in 59 seconds**, all
-three still valid, one ever used - so revoking the link you shared revokes nothing. And all 10 live
-invites carry `expiresAt = NULL` and `maxUses = NULL`, because the form offers neither field.
+## Axis 3 - an invite is one link, bounded - **SHIPPED 2026-08-18**
 
-- One live invite per community: the call returns the existing valid token, and minting a new one
-  revokes the previous, so "the link" is a single object a human can reason about.
-- Expiry and a use cap surfaced in the UI. Both columns exist and `inviteIsValid` already honours
-  them; only the form is missing.
-- Accepting an invite requires the community to still have a member - see axis 2. Today it checks
-  `archived: false` and nothing else, so one forwarded link resurrects an empty community into a
-  populated one with **zero** admins, which is the one state nothing can repair from inside.
+`createWorkspaceInvite` documented itself as "creates (or returns)" and only ever created; the UI
+called it on every click. **One member minted 3 tokens for the same community in 59 seconds**, all
+three still valid, one ever used - so revoking the link you shared revoked nothing. And all 10 live
+invites carried `expiresAt = NULL` and `maxUses = NULL`, because the form offered neither field.
+
+- One live invite per community. The call returns the existing valid token; `rotate: true` is the
+  ONLY way to get a new one and revokes the previous in the same call. Opening the panel therefore
+  cannot invalidate a link somebody already shared, and "the link" is a single object a human can
+  reason about. Tokens still live from before this rule are revoked on the first call, keeping the
+  newest.
+- Expiry and a use cap surfaced in the UI (never / 1 / 7 / 30 days, unlimited / 1 / 5 / 25 / 100).
+  Both columns existed and `inviteIsValid` already honoured them; only the form was missing. Bounds
+  that would mint a dead link - an expiry in the past, a cap below one - are refused rather than
+  stored, because `inviteIsValid` would otherwise hand back a token dead on arrival with nothing
+  saying why.
+- Accepting an invite requires the community to still have a member. It used to check
+  `archived: false` and nothing else, so one forwarded link resurrected an empty community into a
+  populated one with **zero** admins - the one state nothing can repair from inside.
 - After axis 1, a leaked link stops granting the past: the joiner receives current sessions only.
+
+**Every refusal above carries a stable `code`**, and the three screens that surface them - the
+sidebar leave, the admin modal's remove, the invite landing page - map that code to a Paraglide
+sentence through one shared `describeCommunityRefusal`. A distinction carried in prose is one that
+exactly one call site will make.
 
 ## Axis 4 - message growth is bounded, or it is not a system
 
@@ -124,8 +146,9 @@ and the `.proto` comment.
 
 ## Order of work
 
-1. **WP-0** - finish and commit the storage panel already in the working tree.
-2. **WP-1** - axes 2 and 3, server-side, with tests. Hours, and it keeps the crypto diff readable.
+1. ~~**WP-0** - the storage panel already in the working tree.~~ Shipped 2026-08-18.
+2. ~~**WP-1** - axes 2 and 3, server-side, with tests.~~ Shipped 2026-08-18: twelve cases in
+   `channel.service.spec.ts` pin the postcondition from each side it can be reached from.
 3. **WP-2..WP-8** - axis 1, as broken down in
    [channel-encryption](../protocols/channel-encryption.md#the-work-packages-in-order).
 4. **Axis 4** once the user has answered it; **axis 5** opportunistically, inside whichever package

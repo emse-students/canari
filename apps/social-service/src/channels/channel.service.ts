@@ -43,6 +43,7 @@ import {
   type ChannelNotificationLevel,
   type ChannelPollMeta,
   type ChannelWritePolicy,
+  type WorkspaceInviteDto,
 } from './dto/channel.dto';
 
 /**
@@ -198,6 +199,165 @@ export class ChannelService {
     );
   }
 
+  // ================= THE GOVERNANCE POSTCONDITION =================
+  //
+  // Every community operation used to check what the ACTOR may do, and never what the community
+  // would be LEFT AS. That is one absent postcondition seen from five sides - leaving, being
+  // kicked, being demoted, joining by link, and having one's account deleted - so guarding any of
+  // them alone leaves the hole open. Measured on prod 2026-08-17: 15 of 29 communities had exactly
+  // one admin and 5 had no members at all.
+  //
+  // The invariant, enforced server-side as a REFUSAL wherever a refusal is possible:
+  //   a community has at least one admin, or it has no members.
+  // No repair route exists to put a broken community back, deliberately: making the state
+  // unreachable is strictly better than shipping a destructive button that restores it.
+
+  /**
+   * The user ids holding an admin role in this workspace, where "admin" means MANAGE_WORKSPACE -
+   * the permission that can grant every other one back, and therefore the only one whose
+   * disappearance a community cannot recover from on its own.
+   *
+   * Reads roles then members rather than joining: `channel_members.roleIds` is a `simple-array`
+   * text column, so there is no indexable join to make here anyway.
+   */
+  private async listWorkspaceAdminIds(workspaceId: string): Promise<string[]> {
+    const roles = await this.roleRepo.find({ where: { workspaceId } });
+    const adminRoleIds = new Set(
+      roles
+        .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
+        .map((r) => r.id)
+    );
+    if (adminRoleIds.size === 0) return [];
+    const members = await this.memberRepo.find({ where: { workspaceId } });
+    return members
+      .filter((m) => (m.roleIds ?? []).some((id) => adminRoleIds.has(id)))
+      .map((m) => m.userId);
+  }
+
+  /**
+   * Refuses to remove `targetUserId` when that would leave the community with members and no
+   * admin. Shared by leaving and being kicked, which are the same removal seen from two ends.
+   *
+   * The LAST member leaving is not this case and is allowed: a community with nobody in it is
+   * deleted outright rather than left ungoverned - see {@link hardDeleteWorkspace}.
+   */
+  private async assertRemovalKeepsAnAdmin(
+    workspaceId: string,
+    targetUserId: string
+  ): Promise<void> {
+    const adminIds = await this.listWorkspaceAdminIds(workspaceId);
+    if (adminIds.length !== 1 || adminIds[0] !== targetUserId) return;
+
+    const memberIds = await this.getWorkspaceMemberIds(workspaceId);
+    if (memberIds.every((id) => id === targetUserId)) return;
+
+    this.logger.warn(
+      `[WORKSPACE] refused removal of the last admin workspace=${workspaceId} target=${targetUserId.slice(0, 8)} members=${memberIds.length}`
+    );
+    throw new BadRequestException({
+      code: 'WORKSPACE_WOULD_HAVE_NO_ADMIN',
+      message: 'The community would be left with no administrator.',
+    });
+  }
+
+  /**
+   * Deletes a community and everything under it, for real, in one transaction.
+   *
+   * There is not ONE foreign key on `channel_workspaces` or `channels`, so nothing cascades and
+   * every dependent table has to be named here in dependency order or it becomes orphan rows -
+   * which is exactly what the 2026-08-17 purge had to do by hand.
+   *
+   * Hard rather than archived because the only caller is the disappearance of the last member: an
+   * archived community nobody belongs to is unreachable from every UI and is storage nothing will
+   * ever free. Attached media are left to the retention sweep, which collects them within its
+   * window once nothing accesses them again.
+   */
+  private async hardDeleteWorkspace(workspaceId: string, reason: string): Promise<void> {
+    const channels = await this.channelRepo.find({ where: { workspaceId }, select: { id: true } });
+    const channelIds = channels.map((c) => c.id);
+
+    await this.workspaceRepo.manager.transaction(async (mgr) => {
+      if (channelIds.length > 0) {
+        await mgr.delete(ChannelKeyDistribution, { channelId: In(channelIds) });
+      }
+      await mgr.delete(ChannelMessage, { workspaceId });
+      await mgr.delete(ChannelMember, { workspaceId });
+      await mgr.delete(ChannelRole, { workspaceId });
+      await mgr.delete(WorkspaceInvite, { workspaceId });
+      await mgr.delete(Channel, { workspaceId });
+      await mgr.delete(Workspace, { id: workspaceId });
+    });
+
+    this.logger.log(
+      `[WORKSPACE] hard delete workspace=${workspaceId} channels=${channelIds.length} reason=${reason}`
+    );
+  }
+
+  /**
+   * Repairs the communities a deleted account leaves behind. Called by the internal account
+   * deletion route with the workspaces the user belonged to, AFTER their membership rows are gone.
+   *
+   * This is the one path where the postcondition cannot be a refusal - the account is being
+   * deleted and there is nothing left to refuse - so it is the one place a repair exists, and it
+   * is deterministic rather than a heuristic:
+   *  - no members left: the community is deleted, exactly as if the last member had left;
+   *  - members but no admin: the highest-priority remaining role holder is promoted, ties broken by
+   *    the lowest user id. Deleting other people's community because one person deleted their
+   *    account would be far worse, and leaving it ungoverned is the state everything else here
+   *    exists to prevent.
+   *
+   * Per workspace isolation: one community failing to repair must not strand the others, and a
+   * swallowed branch that logs nothing would leave no trace at all of what was skipped.
+   */
+  async repairWorkspacesAfterAccountDeletion(workspaceIds: string[]): Promise<void> {
+    for (const workspaceId of workspaceIds) {
+      try {
+        await this.repairOneWorkspaceAfterAccountDeletion(workspaceId);
+      } catch (err) {
+        this.logger.error(
+          `[WORKSPACE] repair failed workspace=${workspaceId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+  }
+
+  private async repairOneWorkspaceAfterAccountDeletion(workspaceId: string): Promise<void> {
+    const members = await this.memberRepo.find({ where: { workspaceId } });
+    if (members.length === 0) {
+      await this.hardDeleteWorkspace(workspaceId, 'account_deletion_left_no_members');
+      return;
+    }
+
+    const adminIds = await this.listWorkspaceAdminIds(workspaceId);
+    if (adminIds.length > 0) return;
+
+    const roles = await this.roleRepo.find({ where: { workspaceId } });
+    const adminRole = roles
+      .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
+      .sort((a, b) => b.priority - a.priority)[0];
+    if (!adminRole) {
+      // Nothing to promote anyone INTO. Reported rather than swallowed: a community whose roles no
+      // longer include MANAGE_WORKSPACE is a data fault this route cannot fix by itself.
+      this.logger.error(
+        `[WORKSPACE] cannot promote a successor workspace=${workspaceId} - no role carries MANAGE_WORKSPACE`
+      );
+      return;
+    }
+
+    const priorityOf = new Map(roles.map((r) => [r.id, r.priority]));
+    const rankOf = (m: ChannelMember): number =>
+      Math.max(0, ...(m.roleIds ?? []).map((id) => priorityOf.get(id) ?? 0));
+    const successor = members
+      .slice()
+      .sort((a, b) => rankOf(b) - rankOf(a) || a.userId.localeCompare(b.userId))[0];
+
+    successor.roleIds = [adminRole.id];
+    await this.memberRepo.save(successor);
+    this.logger.warn(
+      `[WORKSPACE] promoted a successor admin workspace=${workspaceId} user=${successor.userId.slice(0, 8)} role="${adminRole.name}" members=${members.length} reason=account_deletion`
+    );
+  }
+
   /**
    * Derive a 32-byte AES-256 key from the channel's master secret + version.
    * Uses HKDF-SHA256 to produce a unique key per epoch.
@@ -264,15 +424,46 @@ export class ChannelService {
     return true;
   }
 
+  /** Revokes a set of invites in one statement, saying how many and why. */
+  private async revokeInvites(invites: WorkspaceInvite[], reason: string): Promise<void> {
+    if (invites.length === 0) return;
+    await this.inviteRepo.update({ id: In(invites.map((i) => i.id)) }, { revoked: true });
+    this.logger.log(`[INVITE] revoked count=${invites.length} reason=${reason}`);
+  }
+
+  /** The shape of an invite the UI needs: the token plus the bounds it was minted with. */
+  private toInviteDto(invite: WorkspaceInvite): WorkspaceInviteDto {
+    return {
+      token: invite.token,
+      expiresAt: invite.expiresAt ? invite.expiresAt.toISOString() : null,
+      maxUses: invite.maxUses,
+      uses: invite.uses,
+    };
+  }
+
   /**
-   * Creates (or returns) a shareable invite link token for a community.
+   * Returns THE community's invite link, minting one if it has none.
    * Requires the actor to hold INVITE_USERS or MANAGE_WORKSPACE in the workspace.
+   *
+   * There used to be no "the". This documented itself as "creates (or returns)" and only ever
+   * created, while the UI called it on every click - so one member minted 3 valid tokens for the
+   * same community in 59 seconds, of which one was ever used. Revoking the link you shared revoked
+   * nothing, because the other two still worked and nobody knew they existed. A community now has
+   * at most ONE live invite, which makes "the link" an object a human can reason about.
+   *
+   * `rotate` is the only way to get a new token: it revokes whatever is live and mints its
+   * replacement. Without it the existing link is returned unchanged, bounds included, so opening
+   * the panel never silently invalidates what somebody already shared.
+   *
+   * `expiresAt` and `maxUses` were honoured by {@link inviteIsValid} all along and simply never
+   * surfaced - all 10 live invites on prod carried NULL for both, so every link ever shared was
+   * eternal and unlimited.
    */
   async createWorkspaceInvite(
     workspaceId: string,
     actorUserId: string,
-    opts?: { expiresAt?: string | null; maxUses?: number | null }
-  ): Promise<{ token: string }> {
+    opts?: { expiresAt?: string | null; maxUses?: number | null; rotate?: boolean }
+  ): Promise<WorkspaceInviteDto> {
     const workspace = await this.workspaceRepo.findOne({
       where: { id: workspaceId, archived: false },
     });
@@ -280,18 +471,72 @@ export class ChannelService {
     if (!(await this.actorCanInvite(workspaceId, actorUserId))) {
       throw new ForbiddenException('Missing INVITE_USERS permission');
     }
-    const invite = this.inviteRepo.create({
-      workspaceId,
-      token: crypto.randomBytes(18).toString('base64url'),
-      createdBy: actorUserId,
-      expiresAt: opts?.expiresAt ? new Date(opts.expiresAt) : null,
-      maxUses: opts?.maxUses ?? null,
-      uses: 0,
-      revoked: false,
-    });
-    const saved = await this.inviteRepo.save(invite);
-    this.logger.log(`[INVITE] created workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`);
-    return { token: saved.token };
+
+    const live = (await this.inviteRepo.find({ where: { workspaceId, revoked: false } }))
+      .filter((i) => this.inviteIsValid(i))
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    if (!opts?.rotate && live.length > 0) {
+      // Several may still be live from before this rule. The most recent is the one a human most
+      // plausibly shared last; the rest are revoked so the singular becomes true again.
+      await this.revokeInvites(live.slice(1), 'superseded_by_newest');
+      return this.toInviteDto(live[0]);
+    }
+
+    await this.revokeInvites(live, 'rotated');
+
+    const expiresAt = this.parseInviteExpiry(opts?.expiresAt);
+    const maxUses = this.parseInviteMaxUses(opts?.maxUses);
+    const saved = await this.inviteRepo.save(
+      this.inviteRepo.create({
+        workspaceId,
+        token: crypto.randomBytes(18).toString('base64url'),
+        createdBy: actorUserId,
+        expiresAt,
+        maxUses,
+        uses: 0,
+        revoked: false,
+      })
+    );
+    this.logger.log(
+      `[INVITE] created workspace=${workspaceId} by=${actorUserId.slice(0, 8)} expiresAt=${expiresAt?.toISOString() ?? 'never'} maxUses=${maxUses ?? 'unlimited'} replaced=${live.length}`
+    );
+    return this.toInviteDto(saved);
+  }
+
+  /**
+   * Validates an expiry sent by a client. A date the server cannot parse, or one already in the
+   * past, is refused rather than stored: `inviteIsValid` would treat an unparseable Date as expired
+   * and the caller would be handed a token that is dead on arrival, with nothing saying why.
+   */
+  private parseInviteExpiry(raw?: string | null): Date | null {
+    if (!raw) return null;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException({
+        code: 'INVITE_EXPIRY_INVALID',
+        message: 'expiresAt is not a valid date',
+      });
+    }
+    if (parsed.getTime() <= Date.now()) {
+      throw new BadRequestException({
+        code: 'INVITE_EXPIRY_IN_THE_PAST',
+        message: 'expiresAt is already in the past',
+      });
+    }
+    return parsed;
+  }
+
+  /** Validates a use cap. Zero or negative would mint a link nobody can ever use. */
+  private parseInviteMaxUses(raw?: number | null): number | null {
+    if (raw === undefined || raw === null) return null;
+    if (!Number.isInteger(raw) || raw < 1) {
+      throw new BadRequestException({
+        code: 'INVITE_MAX_USES_INVALID',
+        message: 'maxUses must be a positive integer',
+      });
+    }
+    return raw;
   }
 
   /** Public-ish preview of an invite (community name/image) shown before the user joins. */
@@ -335,6 +580,20 @@ export class ChannelService {
       where: { id: invite.workspaceId, archived: false },
     });
     if (!ws) throw new NotFoundException('Workspace not found');
+
+    // A link outlives the membership that minted it. Joining a community nobody belongs to any more
+    // would produce the one state nothing can repair from inside - members, and no admin among
+    // them - out of a forwarded URL. Leaving now deletes such a community outright, but account
+    // deletion still removes membership rows directly (`internal.controller`), so this is a live
+    // guard rather than a leftover.
+    const memberIdsBeforeJoin = await this.getWorkspaceMemberIds(ws.id);
+    if (memberIdsBeforeJoin.length === 0) {
+      this.logger.warn(`[INVITE] refused - workspace=${ws.id} has no members left`);
+      throw new NotFoundException({
+        code: 'WORKSPACE_HAS_NO_MEMBERS',
+        message: 'This community no longer exists.',
+      });
+    }
 
     const existing = await this.memberRepo.findOne({
       where: { workspaceId: ws.id, userId },
@@ -726,7 +985,13 @@ export class ChannelService {
     return { success: true, workspaceId, imageMediaId: mediaId };
   }
 
-  /** Removes the user from the workspace and broadcasts a member-kicked event so other clients clean up their UI. */
+  /**
+   * Removes the user from the workspace and broadcasts a member-kicked event so other clients clean
+   * up their UI.
+   *
+   * Both halves of the governance postcondition apply here: the last admin is refused until they
+   * hand the role over, and the last member leaving takes the community with them.
+   */
   async leaveWorkspace(workspaceId: string, userId: string) {
     const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
     if (!workspace) throw new NotFoundException('Workspace not found');
@@ -734,14 +999,23 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
     if (!member) throw new NotFoundException('Not a member of this workspace');
 
+    await this.assertRemovalKeepsAnAdmin(workspaceId, userId);
+
     await this.memberRepo.delete({ workspaceId, userId });
 
     const remainingMemberIds = await this.getWorkspaceMemberIds(workspaceId);
+    // Published before any deletion: the event is what tells the leaver's own devices to drop the
+    // community, and its audience is passed explicitly rather than resolved from rows that may be
+    // about to disappear.
     await this.redis.publishChannelEvent(
       'channel.member.kicked',
       { workspaceId, kickedUserId: userId, kickedBy: userId },
       [...remainingMemberIds, userId]
     );
+
+    if (remainingMemberIds.length === 0) {
+      await this.hardDeleteWorkspace(workspaceId, 'last_member_left');
+    }
 
     return { success: true };
   }
@@ -1518,6 +1792,10 @@ export class ChannelService {
     });
     if (!targetMember) throw new NotFoundException('Target member not found in workspace');
 
+    // The actor's permission was checked; the TARGET's roles never were, so KICK_MEMBERS alone
+    // used to remove the sole Administrateur.
+    await this.assertRemovalKeepsAnAdmin(workspaceId, targetUserId);
+
     await this.memberRepo.delete({ workspaceId, userId: targetUserId });
 
     // Notify the kicked user and remaining workspace members
@@ -1536,6 +1814,13 @@ export class ChannelService {
     this.logger.log(
       `[WORKSPACE] kick workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`
     );
+
+    // An admin removing themselves as the last member is the same disappearance as leaving, and
+    // gets the same answer rather than an archived community nobody belongs to.
+    if (remainingMemberIds.length === 0) {
+      await this.hardDeleteWorkspace(workspaceId, 'last_member_kicked');
+    }
+
     return { success: true };
   }
 
@@ -1578,6 +1863,23 @@ export class ChannelService {
       },
     });
     if (!role) throw new NotFoundException('Role not found');
+
+    // A demotion is an exit from the admin set, so it faces the same postcondition as a departure.
+    // MANAGE_ROLES alone used to be enough to strip the last Administrateur - including oneself -
+    // after which nothing inside the community could grant the role back. There is always at least
+    // one member here (the target), so the "no members" escape never applies.
+    if (!role.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)) {
+      const adminIds = await this.listWorkspaceAdminIds(workspaceId);
+      if (adminIds.length === 1 && adminIds[0] === targetUserId) {
+        this.logger.warn(
+          `[WORKSPACE] refused demotion of the last admin workspace=${workspaceId} target=${targetUserId.slice(0, 8)} by=${actorUserId.slice(0, 8)}`
+        );
+        throw new BadRequestException({
+          code: 'WORKSPACE_WOULD_HAVE_NO_ADMIN',
+          message: 'The community would be left with no administrator.',
+        });
+      }
+    }
 
     // Replace all existing roles with the single specified role.
     targetMember.roleIds = [role.id];

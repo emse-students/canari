@@ -28,6 +28,20 @@ export interface WorkspaceDetailDto {
   roles: Array<{ id: string; name: string; priority?: number; permissions?: string[] }>;
 }
 
+/**
+ * A community's ONE live invite link. The bounds travel with the token because a link a human can
+ * reason about has to show what bounds it - a token alone cannot say whether it expires.
+ */
+export interface WorkspaceInviteDto {
+  token: string;
+  /** ISO-8601, or null for a link that never expires. */
+  expiresAt: string | null;
+  /** Cap on accepted joins, or null for unlimited. */
+  maxUses: number | null;
+  /** Joins already accepted through this token. */
+  uses: number;
+}
+
 export interface CreateChannelDto {
   workspaceId: string;
   name: string;
@@ -299,17 +313,23 @@ export class ChannelService {
     await this.handleError(res);
   }
 
-  /** Creates a shareable invite-link token for a community. */
+  /**
+   * Returns the community's one live invite link, minting it if there is none.
+   *
+   * `rotate` is the only way to get a new token: it revokes the live one and mints its
+   * replacement. Without it the existing link comes back unchanged, so opening the panel can never
+   * silently invalidate a link somebody has already shared.
+   */
   async createWorkspaceInvite(
     workspaceId: string,
-    opts?: { expiresAt?: string | null; maxUses?: number | null }
-  ): Promise<{ token: string }> {
+    opts?: { expiresAt?: string | null; maxUses?: number | null; rotate?: boolean }
+  ): Promise<WorkspaceInviteDto> {
     const res = await this.fetchWithAuth(
       `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/invites`,
       { method: 'POST', body: JSON.stringify(opts ?? {}) }
     );
     await this.handleError(res);
-    return res.json() as Promise<{ token: string }>;
+    return res.json() as Promise<WorkspaceInviteDto>;
   }
 
   /** Previews an invite link (community name/image) before joining. */

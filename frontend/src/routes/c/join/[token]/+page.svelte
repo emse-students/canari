@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { channelService } from '$lib/services/ChannelService';
+  import { channelService, ChannelApiError } from '$lib/services/ChannelService';
+  import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
   import { openInvitedChannel } from '$lib/utils/chat/notificationRouting';
   import { currentUserId } from '$lib/stores/user';
   import { Users, Loader2, AlertCircle } from '@lucide/svelte';
@@ -52,7 +53,10 @@
       }
       await goto('/communities', { replaceState: true });
     } catch (e) {
-      error = e instanceof Error ? e.message : m.community_join_error_fallback();
+      // A link outliving its community is refused with a code rather than a sentence, so the
+      // reason survives any rewording on the server side.
+      const coded = e instanceof ChannelApiError ? describeCommunityRefusal(e.code) : null;
+      error = coded ?? (e instanceof Error ? e.message : m.community_join_error_fallback());
       joining = false;
     }
   }

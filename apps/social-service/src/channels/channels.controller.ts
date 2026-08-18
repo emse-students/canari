@@ -23,6 +23,7 @@ import {
   type CreateChannelDto,
   type CreateRoleDto,
   type CreateWorkspaceDto,
+  type CreateWorkspaceInviteDto,
   type GetChannelMessagesQuery,
   type MarkDistributionReceivedDto,
   type RenameChannelDto,
@@ -80,13 +81,18 @@ export class ChannelsController {
     return this.service.reorderWorkspacesForUser(xUserId.trim().toLowerCase(), body.orderedIds);
   }
 
-  /** Creates a shareable invite link for a community (requires INVITE_USERS / MANAGE_WORKSPACE). */
+  /**
+   * Returns the community's one live invite link, minting it if there is none (requires
+   * INVITE_USERS / MANAGE_WORKSPACE). `rotate: true` revokes the live token and mints its
+   * replacement - it is the only way to get a new one, so opening the panel cannot invalidate a
+   * link somebody already shared.
+   */
   @UseGuards(NginxAuthGuard)
   @Post('workspaces/:workspaceId/invites')
   createWorkspaceInvite(
     @Headers('x-user-id') xUserId: string,
     @Param('workspaceId') workspaceId: string,
-    @Body() body: { expiresAt?: string | null; maxUses?: number | null }
+    @Body() body: CreateWorkspaceInviteDto
   ) {
     return this.service.createWorkspaceInvite(
       workspaceId,

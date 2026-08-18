@@ -1,4 +1,4 @@
-import { ForbiddenException, BadRequestException, Logger } from '@nestjs/common';
+import { ForbiddenException, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
@@ -12,10 +12,18 @@ import { RedisService } from '../common/redis';
 
 describe('ChannelService security hardening', () => {
   function makeService() {
+    // Every table a hard delete has to name, funnelled through one spy: nothing cascades on
+    // `channel_workspaces`, so the COUNT of deletes is the assertion worth making.
+    const hardDeletes = jest.fn(() => Promise.resolve({ affected: 1 }));
     const workspaceRepo = {
       findOne: jest.fn(),
       find: jest.fn(),
       save: jest.fn(),
+      manager: {
+        transaction: jest.fn((cb: (m: { delete: typeof hardDeletes }) => Promise<void>) =>
+          cb({ delete: hardDeletes })
+        ),
+      },
     };
     const channelRepo = {
       findOne: jest.fn(),
@@ -50,9 +58,10 @@ describe('ChannelService security hardening', () => {
     };
     const inviteRepo = {
       findOne: jest.fn(),
-      find: jest.fn(),
+      find: jest.fn(() => Promise.resolve([])),
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
+      update: jest.fn(() => Promise.resolve({ affected: 1 })),
       increment: jest.fn(() => Promise.resolve()),
     };
     const redis = {
@@ -78,7 +87,9 @@ describe('ChannelService security hardening', () => {
       memberRepo,
       messageRepo,
       keyDistributionRepo,
+      inviteRepo,
       redis,
+      hardDeletes,
     };
   }
 
@@ -884,7 +895,9 @@ describe('ChannelService security hardening', () => {
       };
       expect(sent.title).toBe('#general');
       expect(sent.data.workspaceName).toBe('');
-      expect(logError).toHaveBeenCalledWith(expect.stringContaining('[CHANNEL_PUSH] workspace=ws1'));
+      expect(logError).toHaveBeenCalledWith(
+        expect.stringContaining('[CHANNEL_PUSH] workspace=ws1')
+      );
     } finally {
       logError.mockRestore();
       process.env.INTERNAL_SECRET = prevSecret;
@@ -1263,5 +1276,235 @@ describe('ChannelService security hardening', () => {
     expect(channel.allowedUsers).toEqual(['boss']);
     expect(channel.keyVersion).toBe(2);
     expect(rows.map((r) => r.userId).sort()).toEqual(['boss', 'u1']);
+  });
+
+  // ── The governance postcondition (2026-08-18) ──────────────────────────────────────────────
+  //
+  // Every operation below used to check what the ACTOR may do and never what the community would
+  // be LEFT AS. Measured on prod 2026-08-17: 15 of 29 communities had exactly one admin, 5 had no
+  // members at all, and all 10 live invites were unbounded. These cases pin the postcondition from
+  // each of the six sides it can be reached from, because guarding one alone leaves the hole open.
+
+  const GOVERNED_ROLES = [
+    { id: 'r-admin', name: 'Administrateur', priority: 100, permissions: ['workspace.manage'] },
+    {
+      id: 'r-mod',
+      name: 'Modérateur',
+      priority: 50,
+      permissions: ['member.kick', 'role.manage', 'member.invite'],
+    },
+    { id: 'r-member', name: 'Membre', priority: 10, permissions: ['channel.send'] },
+  ];
+
+  /** A community whose roster is a real table, so a write by one call is seen by the next. */
+  function arrangeGovernedCommunity(
+    repos: ReturnType<typeof makeService>,
+    members: Array<{ userId: string; roleIds: string[] }>
+  ) {
+    const rows = seedMemberTable(
+      repos.memberRepo,
+      members.map((mem) => ({ workspaceId: 'ws1', ...mem }))
+    );
+    repos.memberRepo.save.mockImplementation((m: unknown) => Promise.resolve(m));
+    repos.workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', slug: 'ws1', archived: false });
+    repos.roleRepo.find.mockResolvedValue(GOVERNED_ROLES);
+    repos.roleRepo.findOne.mockImplementation(({ where }: { where: { name: string } }) =>
+      Promise.resolve(GOVERNED_ROLES.find((r) => r.name === where.name) ?? null)
+    );
+    repos.channelRepo.find.mockResolvedValue([{ id: 'ch1' }]);
+    return rows;
+  }
+
+  /** The refusal's `code`, which is what every client branches on - never its sentence. */
+  async function refusalCode(promise: Promise<unknown>): Promise<unknown> {
+    const err = await promise.then(
+      () => null,
+      (e: unknown) => e
+    );
+    return err instanceof BadRequestException || err instanceof NotFoundException
+      ? err.getResponse()
+      : err;
+  }
+
+  it('refuses the last admin leaving while other members remain', async () => {
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
+      { userId: 'u1', roleIds: ['r-member'] },
+    ]);
+
+    expect(await refusalCode(repos.service.leaveWorkspace('ws1', 'boss'))).toMatchObject({
+      code: 'WORKSPACE_WOULD_HAVE_NO_ADMIN',
+    });
+    expect(rows.map((r) => r.userId).sort()).toEqual(['boss', 'u1']);
+  });
+
+  it('lets the last member leave, and deletes the community with them', async () => {
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [{ userId: 'boss', roleIds: ['r-admin'] }]);
+
+    await expect(repos.service.leaveWorkspace('ws1', 'boss')).resolves.toEqual({ success: true });
+
+    expect(rows).toHaveLength(0);
+    // Seven tables, each named: nothing cascades here, so one left out is an orphan nobody sees.
+    expect(repos.hardDeletes).toHaveBeenCalledTimes(7);
+  });
+
+  it('refuses to kick the last admin, whatever the actor is allowed to do', async () => {
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
+      { userId: 'mod', roleIds: ['r-mod'] },
+    ]);
+
+    // KICK_MEMBERS alone used to be enough: the target's roles were never consulted at all.
+    expect(await refusalCode(repos.service.kickFromWorkspace('ws1', 'boss', 'mod'))).toMatchObject({
+      code: 'WORKSPACE_WOULD_HAVE_NO_ADMIN',
+    });
+    expect(rows.map((r) => r.userId).sort()).toEqual(['boss', 'mod']);
+  });
+
+  it('refuses to demote the last admin, including oneself', async () => {
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
+      { userId: 'u1', roleIds: ['r-member'] },
+    ]);
+
+    expect(
+      await refusalCode(repos.service.updateWorkspaceMemberRole('ws1', 'boss', 'member', 'boss'))
+    ).toMatchObject({ code: 'WORKSPACE_WOULD_HAVE_NO_ADMIN' });
+    expect(rows.find((r) => r.userId === 'boss')?.roleIds).toEqual(['r-admin']);
+  });
+
+  it('allows a demotion while another admin remains', async () => {
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
+      { userId: 'boss2', roleIds: ['r-admin'] },
+    ]);
+
+    await expect(
+      repos.service.updateWorkspaceMemberRole('ws1', 'boss2', 'member', 'boss')
+    ).resolves.toEqual({ success: true });
+    expect(rows.find((r) => r.userId === 'boss2')?.roleIds).toEqual(['r-member']);
+  });
+
+  it('refuses an invite into a community nobody belongs to any more', async () => {
+    const repos = makeService();
+    arrangeGovernedCommunity(repos, []);
+    repos.inviteRepo.findOne.mockResolvedValue({
+      id: 'inv1',
+      workspaceId: 'ws1',
+      token: 't',
+      revoked: false,
+      expiresAt: null,
+      maxUses: null,
+      uses: 0,
+    });
+
+    // One forwarded link would otherwise repopulate a community with ZERO admins - the single
+    // state nothing inside the community can repair from.
+    expect(await refusalCode(repos.service.acceptWorkspaceInvite('t', 'newcomer'))).toMatchObject({
+      code: 'WORKSPACE_HAS_NO_MEMBERS',
+    });
+  });
+
+  it('returns the live invite instead of minting a second one', async () => {
+    const repos = makeService();
+    arrangeGovernedCommunity(repos, [{ userId: 'boss', roleIds: ['r-admin'] }]);
+    repos.inviteRepo.find.mockResolvedValue([
+      {
+        id: 'inv-old',
+        token: 'older',
+        revoked: false,
+        expiresAt: null,
+        maxUses: null,
+        uses: 1,
+        createdAt: new Date(1000),
+      },
+      {
+        id: 'inv-new',
+        token: 'newest',
+        revoked: false,
+        expiresAt: null,
+        maxUses: null,
+        uses: 0,
+        createdAt: new Date(2000),
+      },
+    ]);
+
+    const invite = await repos.service.createWorkspaceInvite('ws1', 'boss');
+
+    // The newest live token is "the link"; the stragglers from before this rule are revoked, so
+    // revoking what you shared finally revokes something.
+    expect(invite.token).toBe('newest');
+    expect(repos.inviteRepo.save).not.toHaveBeenCalled();
+    expect(repos.inviteRepo.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('rotating revokes the live token before minting its replacement', async () => {
+    const repos = makeService();
+    arrangeGovernedCommunity(repos, [{ userId: 'boss', roleIds: ['r-admin'] }]);
+    repos.inviteRepo.find.mockResolvedValue([
+      {
+        id: 'inv-old',
+        token: 'older',
+        revoked: false,
+        expiresAt: null,
+        maxUses: null,
+        uses: 0,
+        createdAt: new Date(1000),
+      },
+    ]);
+
+    const invite = await repos.service.createWorkspaceInvite('ws1', 'boss', {
+      rotate: true,
+      maxUses: 5,
+    });
+
+    expect(invite.token).not.toBe('older');
+    expect(invite.maxUses).toBe(5);
+    expect(repos.inviteRepo.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses bounds that would mint a link nobody can use', async () => {
+    const repos = makeService();
+    arrangeGovernedCommunity(repos, [{ userId: 'boss', roleIds: ['r-admin'] }]);
+
+    expect(
+      await refusalCode(
+        repos.service.createWorkspaceInvite('ws1', 'boss', { expiresAt: '2000-01-01T00:00:00Z' })
+      )
+    ).toMatchObject({ code: 'INVITE_EXPIRY_IN_THE_PAST' });
+    expect(
+      await refusalCode(repos.service.createWorkspaceInvite('ws1', 'boss', { maxUses: 0 }))
+    ).toMatchObject({ code: 'INVITE_MAX_USES_INVALID' });
+  });
+
+  it('account deletion promotes a successor rather than leaving a community ungoverned', async () => {
+    const repos = makeService();
+    // The admin's membership row is already gone: this route deletes it directly, which is the one
+    // path that cannot refuse, and therefore the one place a repair exists.
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'zoe', roleIds: ['r-member'] },
+      { userId: 'mod', roleIds: ['r-mod'] },
+      { userId: 'amy', roleIds: ['r-member'] },
+    ]);
+
+    await repos.service.repairWorkspacesAfterAccountDeletion(['ws1']);
+
+    // Highest-priority survivor, deterministically - no clock and no tie left to chance.
+    expect(rows.find((r) => r.userId === 'mod')?.roleIds).toEqual(['r-admin']);
+    expect(repos.hardDeletes).not.toHaveBeenCalled();
+  });
+
+  it('account deletion deletes a community it emptied', async () => {
+    const repos = makeService();
+    arrangeGovernedCommunity(repos, []);
+
+    await repos.service.repairWorkspacesAfterAccountDeletion(['ws1']);
+
+    expect(repos.hardDeletes).toHaveBeenCalledTimes(7);
   });
 });

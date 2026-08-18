@@ -230,67 +230,23 @@ the same change, never before it.
 
 ## Communities and permissions
 
-All six entries below came out of ONE audit on 2026-08-17, prompted by a user question rather than by
-a failure, and every figure in them is a `GROUP BY` over prod that day. They share a single shape
-worth naming before reading any of them individually: **every community operation checks what the
-ACTOR may do and never what the community would be left as.** Nothing counts the admins on the way
-down, nothing counts the members on the way down, and there is no platform-level recourse - the
-`/admin` "Communauté" group is associations, document reviewers and the carte, with no route touching
-a workspace. So each of these is not a bug in an operation, it is the same missing postcondition
-seen from six sides, and a fix that adds a guard to one of them and not the others leaves the hole.
+Six entries came out of ONE audit on 2026-08-17, prompted by a user question rather than by a
+failure. **Five of them shipped on 2026-08-18** and are not repeated here: the mechanism is on
+[social-service](services/social-service.md#a-community-always-has-an-admin-or-it-has-no-members-2026-08-18),
+the audit and its prod figures on [community-rework](services/community-rework.md), the rule in
+[durable-rules](durable-rules.md), and the story in `CHANGELOG.md`. One remains, and it remains
+because the user decided it is not a defect.
 
-### P2 - the last admin can leave, and the community is then unmanageable for ever
+### P3 - "delete community" still archives, so its rows are permanent
 
-`leaveWorkspace` deletes the membership row and broadcasts. It never counts the remaining admins.
-Every management path (`deleteWorkspace`, `createWorkspaceInvite`, `renameChannel`,
-`updateWorkspaceMemberRole`, ...) requires `workspace.manage` held **by a member**, so a community
-whose last admin walks out can never again be renamed, invited into, archived or deleted by anybody.
-
-**Measured 2026-08-17: 15 of the 29 communities on prod have exactly one admin.** That is not a tail
-case, it is the median community.
-
-Two sibling paths reach the same state without anyone leaving, and both must be fixed with it or the
-guard is theatre: `kickFromWorkspace` checks the ACTOR's permissions and never looks at the target's
-roles, so `KICK_MEMBERS` alone removes the sole Administrateur; and `updateWorkspaceMemberRole`
-replaces a member's roles outright with no admin count and no self-check, so `MANAGE_ROLES` alone
-demotes the last admin - including oneself.
-
-### P2 - a community with no members survives, invisible and unreachable
-
-Nothing counts members on the way down either, so `leaveWorkspace` will happily remove the last one.
-The result is a row no read path returns (every listing is member-scoped), that nobody can delete
-because deletion needs a member, and whose slug stays reserved by the unique index for ever.
-
-**Five such communities existed on prod on 2026-08-17**, one of them holding 3 messages and 3
-channels. All six (those five plus a superseded duplicate) were archived by hand the same day - see
-the CHANGELOG entry; the fix here is the postcondition, not the cleanup.
-
-### P2 - a live invite resurrects an admin-less community, which is strictly worse than an empty one
-
-`acceptWorkspaceInvite` checks `archived: false` and nothing else - never that a member remains. The
-joiner is given the LOWEST-priority role by construction (`roles.sort(priority)[0]`). So one shared
-link turns an empty community into a populated one with **zero** admins, which is the one state that
-cannot be repaired from inside the product at all.
-
-None on prod today, because the five empty communities happened to carry no live invite - and the
-invites of the six archived ones were revoked in the same transaction that archived them. It is one
-forwarded link away from happening, so treat the absence as luck rather than as a guard.
-
-### P3 - "creates (or returns) an invite link" only ever creates
-
-`createWorkspaceInvite`'s docstring promises to return an existing token; the code mints a new row
-every call, and the UI calls it on each click of "générer le lien". Every token stays independently
-valid, so revoking the one you shared revokes nothing.
-
-**Prod, 2026-08-17: one member created 3 tokens for the same community within 59 seconds**, all three
-still valid, only the last one ever used. Two keys to the house, in circulation, that nobody knows
-exist.
-
-### P3 - every invite on the platform is unlimited and eternal
-
-All 10 live invites carry `expiresAt = NULL` and `maxUses = NULL`, which is what the UI creates: it
-offers neither field. A link pasted once into a group chat opens the community to anyone, for ever.
-The columns already exist and `inviteIsValid` already honours both - only the UI is missing.
+An admin deleting a community sets `archived = true` on the workspace and its channels; the members,
+the messages and the media stay. That was defensible while a mistake had to be recoverable "with two
+UPDATEs" - it is less so now that the same page has a HARD delete on the neighbouring path (the last
+member leaving), and it becomes a lie after the crypto rework: an archived community's messages will
+be ciphertext whose seeds no client keeps, so "recoverable" would mean recovering rows nobody can
+read. Deliberately not changed in the 2026-08-18 pass - making an irreversible action out of a
+reversible one needs its own confirmation flow, not a quiet swap. Revisit at the clean cut, where
+every old community is deleted anyway.
 
 ### P3 - two communities may carry the same name
 
@@ -307,15 +263,18 @@ is where any measurement belongs.
 
 ### Server - can occupancy be monitored, and will it hold?
 
-The forecast exists on paper; what is missing is a live measurement over TIME. `/admin/storage`
-already answers disk, `auth_db`, bucket size and object count, and Redis memory - but only as TOTALS,
-and only when somebody goes and looks. Scope: what is actually growing (Postgres, Garage, Redis
-streams), at what RATE, and a presentation that distinguishes "media grew" from "the retention stopped
-working" - two causes with the same symptom and opposite fixes. The second is not hypothetical:
+**The media half shipped 2026-08-18** and is documented on
+[storage-forecast](infrastructure/storage-forecast.md): `/admin/storage` now separates growth (bytes
+written per 7-day window) from a retention sweep that has stopped taking anything, and counts
+separately the objects no sweep can EVER reach. That last one was not hypothetical -
 `purgeExpiredMedia` iterates the metadata index, so an object with no entry is invisible to it for
-ever, and 7 such objects (~11 MB) are already measured. §5.7's WP-GHOST-1 shape belongs on the same
-panel: a device holding memberships with no `key_package`, or more than a few hundred `queued_message`
-rows.
+ever, and 7 such objects (~11 MB) were already measured.
+
+**What is still open is the MLS half.** §5.7's WP-GHOST-1 shape belongs on the same panel: a device
+holding memberships with no `key_package`, or more than a few hundred `queued_message` rows. Neither
+is measured anywhere today, and neither is a byte count - they are the shapes that precede a byte
+count going wrong. Postgres and Redis are still reported as bare totals, with no breakdown by table
+or stream and no slope.
 
 **Decided 2026-08-17: the panel is the whole of it, there is NO alert.** The user's call. Worth
 stating what that costs rather than pretending it costs nothing - the standing rule is that a correct

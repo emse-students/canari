@@ -20,6 +20,7 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
+import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
 
 /** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {
@@ -211,21 +212,23 @@ export function useChannelWorkspaces() {
   }
 
   /**
-   * Extracts an HTTP status code and a human-readable detail from a raw API error body.
-   * Handles NestJS JSON error envelopes ({ statusCode, message }) and plain-text bodies,
-   * so callers can distinguish 401 (session) from 403 (permission) and surface the real reason.
+   * Extracts an HTTP status code, a stable refusal `code` and a human-readable detail from a raw
+   * API error body. Handles NestJS JSON error envelopes ({ statusCode, code, message }) and
+   * plain-text bodies, so callers can distinguish 401 (session) from 403 (permission) and surface
+   * the real reason.
    */
-  function parseApiError(raw: string): { status?: number; detail: string } {
+  function parseApiError(raw: string): { status?: number; code?: string; detail: string } {
     try {
       const body = JSON.parse(raw) as {
         statusCode?: number;
+        code?: string;
         message?: string | string[];
         error?: string;
       };
       const detail = Array.isArray(body.message)
         ? body.message.join(', ')
         : (body.message ?? body.error ?? raw);
-      return { status: body.statusCode, detail };
+      return { status: body.statusCode, code: body.code, detail };
     } catch {
       const match = raw.match(/\b(4\d\d|5\d\d)\b/);
       return { status: match ? Number(match[1]) : undefined, detail: raw };
@@ -243,7 +246,15 @@ export function useChannelWorkspaces() {
    */
   function toUiActionError(action: string, error: unknown, toast = true): string {
     const raw = error instanceof Error ? error.message : String(error);
-    const { status, detail } = parseApiError(raw);
+    const { status, code, detail } = parseApiError(raw);
+
+    // A typed refusal is answered from its code, before any of the prose matching below runs.
+    const coded = describeCommunityRefusal(code);
+    if (coded) {
+      if (toast) showToast(coded, 'error');
+      return coded;
+    }
+
     const hay = `${status ?? ''} ${detail}`.toLowerCase();
 
     let message: string;

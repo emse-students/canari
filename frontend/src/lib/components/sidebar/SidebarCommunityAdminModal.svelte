@@ -23,7 +23,12 @@
   } from '../shared/PermissionGrid.svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
-  import { channelService } from '$lib/services/ChannelService';
+  import {
+    channelService,
+    ChannelApiError,
+    type WorkspaceInviteDto,
+  } from '$lib/services/ChannelService';
+  import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
   import { m } from '$lib/paraglide/messages';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { Log } from '$lib/utils/Log';
@@ -118,10 +123,20 @@
   let roleSaving = $state<Record<string, boolean>>({});
 
   // ── Shareable invite link ─────────────────────────────────────────────────
+  // A community has exactly ONE live link. The two selects below bound the link about to be
+  // MINTED; a link that already exists keeps whatever it was minted with, which is why its own
+  // bounds are displayed as text rather than reflected back into the form.
   let shareLink = $state('');
+  let shareInvite = $state<WorkspaceInviteDto | null>(null);
   let shareLoading = $state(false);
   let shareError = $state('');
   let shareCopied = $state(false);
+  /** Days until expiry for the next link; 0 means it never expires. */
+  let shareExpiryDays = $state(0);
+  /** Cap on accepted joins for the next link; 0 means unlimited. */
+  let shareMaxUses = $state(0);
+  const SHARE_EXPIRY_CHOICES = [0, 1, 7, 30];
+  const SHARE_MAX_USES_CHOICES = [0, 1, 5, 25, 100];
 
   /** All workspace-level permissions, editable per role in the grid. */
   const roleGridPermissions: PermissionGridPermission[] = [
@@ -333,7 +348,10 @@
       await channelService.kickFromWorkspace(workspaceDbId, userId);
       communityMembers = communityMembers.filter((mem) => mem.userId !== userId);
     } catch (e) {
-      membersError = e instanceof Error ? e.message : m.common_save_error();
+      // Removing the last admin is refused with a code, which is what names the reason here - the
+      // raw body would otherwise be printed at the user.
+      const coded = e instanceof ChannelApiError ? describeCommunityRefusal(e.code) : null;
+      membersError = coded ?? (e instanceof Error ? e.message : m.common_save_error());
     } finally {
       const updated = { ...memberRemoving };
       delete updated[userId];
@@ -377,7 +395,14 @@
     }
   }
 
-  async function generateShareLink() {
+  /**
+   * Fetches the community's link, or replaces it when `rotate` is set.
+   *
+   * Rotating is the ONLY way to get a new token, so the plain call can be made freely: it returns
+   * whatever link is already live rather than minting a fourth one nobody knows about, which is
+   * what the old "generate" button did on every click.
+   */
+  async function loadShareLink(rotate: boolean) {
     const workspaceDbId = selectedWorkspace?.workspaceDbId;
     if (!workspaceDbId) return;
     shareLoading = true;
@@ -385,8 +410,16 @@
     shareCopied = false;
     try {
       const { publicAppUrl } = await import('$lib/utils/publicAppUrl');
-      const { token } = await channelService.createWorkspaceInvite(workspaceDbId);
-      shareLink = publicAppUrl(`/c/join/${token}`);
+      const invite = await channelService.createWorkspaceInvite(workspaceDbId, {
+        rotate,
+        expiresAt:
+          shareExpiryDays > 0
+            ? new Date(Date.now() + shareExpiryDays * 24 * 60 * 60 * 1000).toISOString()
+            : null,
+        maxUses: shareMaxUses > 0 ? shareMaxUses : null,
+      });
+      shareInvite = invite;
+      shareLink = publicAppUrl(`/c/join/${invite.token}`);
       try {
         await navigator.clipboard.writeText(shareLink);
         shareCopied = true;
@@ -399,6 +432,24 @@
       shareLoading = false;
     }
   }
+
+  /** What the live link is bounded by, as one line - a token alone cannot say whether it expires. */
+  const shareBounds = $derived.by(() => {
+    if (!shareInvite) return '';
+    const expiry = shareInvite.expiresAt
+      ? m.chat_community_invite_bounds_expires({
+          date: new Date(shareInvite.expiresAt).toLocaleDateString(),
+        })
+      : m.chat_community_invite_bounds_never();
+    const uses =
+      shareInvite.maxUses === null
+        ? m.chat_community_invite_bounds_uses_unlimited({ uses: shareInvite.uses })
+        : m.chat_community_invite_bounds_uses_capped({
+            uses: shareInvite.uses,
+            max: shareInvite.maxUses,
+          });
+    return `${expiry} - ${uses}`;
+  });
 
   /** Confirms then leaves/removes the selected community, closing the modal on success. */
   async function leaveCommunity() {
@@ -465,6 +516,7 @@
       inviteRole = 'member';
       imageUploadError = '';
       shareLink = '';
+      shareInvite = null;
       shareCopied = false;
       activeTab = 'overview';
     }
@@ -757,6 +809,41 @@
                 {m.chat_community_invite_link_label()}
               </p>
               <p class="text-sm text-text-muted">{m.chat_community_invite_link_description()}</p>
+              <p class="text-sm text-text-muted">{m.chat_community_invite_single_link_note()}</p>
+
+              <div class="flex flex-wrap gap-3">
+                <label class="flex flex-col gap-1 text-xs font-semibold text-text-muted">
+                  {m.chat_community_invite_expiry_label()}
+                  <select
+                    bind:value={shareExpiryDays}
+                    class="rounded-xl border border-cn-border bg-cn-surface px-3 py-2 text-sm font-normal text-text-main"
+                  >
+                    {#each SHARE_EXPIRY_CHOICES as days (days)}
+                      <option value={days}>
+                        {days === 0
+                          ? m.chat_community_invite_expiry_never()
+                          : m.chat_community_invite_expiry_days({ days })}
+                      </option>
+                    {/each}
+                  </select>
+                </label>
+                <label class="flex flex-col gap-1 text-xs font-semibold text-text-muted">
+                  {m.chat_community_invite_max_uses_label()}
+                  <select
+                    bind:value={shareMaxUses}
+                    class="rounded-xl border border-cn-border bg-cn-surface px-3 py-2 text-sm font-normal text-text-main"
+                  >
+                    {#each SHARE_MAX_USES_CHOICES as count (count)}
+                      <option value={count}>
+                        {count === 0
+                          ? m.chat_community_invite_max_uses_unlimited()
+                          : m.chat_community_invite_max_uses_count({ count })}
+                      </option>
+                    {/each}
+                  </select>
+                </label>
+              </div>
+
               {#if shareLink}
                 <div class="flex items-center gap-2">
                   <input
@@ -767,13 +854,14 @@
                   />
                   <button
                     type="button"
-                    onclick={generateShareLink}
+                    onclick={() => void loadShareLink(true)}
                     disabled={shareLoading}
                     class="shrink-0 rounded-xl border border-cn-border px-3 py-2 text-xs font-semibold hover:bg-cn-bg disabled:opacity-50"
                   >
                     {m.chat_regenerate_link_button()}
                   </button>
                 </div>
+                <p class="text-xs text-text-muted">{shareBounds}</p>
                 {#if shareCopied}
                   <p class="text-xs font-semibold text-green-ok">
                     {m.chat_link_copied_success()}
@@ -782,7 +870,7 @@
               {:else}
                 <button
                   type="button"
-                  onclick={generateShareLink}
+                  onclick={() => void loadShareLink(false)}
                   disabled={shareLoading}
                   class="rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
                 >
