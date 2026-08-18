@@ -71,7 +71,13 @@ to become healthy before booting, which delayed every start for a container it n
 socket to. It was still dumped nightly into a 116-byte archive listed in the backup manifest, where
 a line reads as a backup.
 
-Service, `mongo_data` volume, `depends_on` and backup step are all gone.
+Service, volumes, `depends_on` and backup step are all gone. The deploy of `40e4f801` removed the
+container; `infrastructure_mongo_data` (480 MB), `infrastructure_mongo_config` and `local_mongo_data`
+(0 B each) were deleted by hand the same day, since a volume outlives the compose file that named
+it. Before deleting the 480 MB, the volume was mounted into a throwaway `mongod` one last time and
+asked directly: `admin` 40 KB, `config` 102 KB, `local` 94 KB - **237 KB of MongoDB's own bookkeeping
+inside 480 MB of preallocated WiredTiger files**, and not one application byte. That is the third
+independent measurement, and the only one taken after the container was already gone.
 
 ---
 

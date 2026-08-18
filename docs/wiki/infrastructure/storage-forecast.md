@@ -295,7 +295,8 @@ be done before any growth in usage rather than after.
 #### BUILT AND MEASURED 2026-08-11 - running alongside the tar, cutover NOT taken
 
 `infrastructure/backup/backup-objects.sh` keeps `infrastructure_minio_data` and
-`infrastructure_media_meta` in a restic repository (throwaway image, no host dependency), 14d/8w/6m
+`infrastructure_media_meta` in a restic repository (that volume list is the pre-Garage one - since
+2026-08-14 the script reads `garage_data` + `garage_meta` + `media_meta`) (throwaway image, no host dependency), 14d/8w/6m
 retention, `restic check` after every run, then an rsync mirror of the repository to `mitv`. It is in
 the `canari` crontab at 04:00, after the tar, and was verified under cron's own environment
 (`env -i` + cron `PATH`), not just from an interactive shell.

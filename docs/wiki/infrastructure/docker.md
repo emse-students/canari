@@ -55,8 +55,8 @@ on 2026-08-18 (`GARAGE_ENDPOINT`, `GARAGE_PORT`, `GARAGE_USE_SSL`, `GARAGE_BUCKE
   now - see below). `GARAGE_RPC_SECRET` and `GARAGE_ADMIN_TOKEN` are separate, unrelated secrets
   (cluster RPC and admin-API auth) with no MinIO equivalent.
 - **Two volumes, not one.** `garage_meta` (small, LMDB) and `garage_data` (object bytes) replace
-  the single `minio_data`. On the production host, the `minio` service was removed at the cutover
-  and `minio_data` is kept, orphaned, as a 14-day rollback net (remove after 2026-08-28).
+  the single `minio_data`. The `minio` service went at the cutover and its volume was kept orphaned
+  as a rollback net until 2026-08-18, when it was deleted - see below for what it turned out to hold.
 
 #### The rename to Garage - decided 2026-08-17, DONE 2026-08-18
 
@@ -96,8 +96,45 @@ Three boundaries the sweep deliberately did not cross:
   provisioned with that key ID, and changing the literal locks a developer out of their own local
   media until they delete the volume. The variable NAMES around it are Garage.
 
-`minio_data` itself cannot go before **2026-08-28** - it is the rollback net, and the rename does
-not shorten that window.
+#### `minio_data` is gone - 2026-08-18, and what it was really holding
+
+The rollback net was meant to stand until 2026-08-28. It was deleted ten days early, on the user's
+instruction, and what gated the deletion is worth more than the 47.7 MB it freed.
+
+The volume held **200 object keys**. Garage today holds 306, so the naive check ("the new store has
+more") passes - and it is worthless. Comparing the key SETS instead, **five keys in `minio_data`
+were absent from Garage**:
+
+```
+46f53db5-2609-47cf-8aac-8231ae7c7ffd   5a7f80c9-a921-45e5-92f4-04f52a7c8a7a
+8c1264e9-e4a1-4d0f-b6d8-d42771cc3887   ca35beec-d156-4497-b2c5-d7e2b80ccd3c
+fedf2767-d86e-4320-b5a4-20cc99148dfd
+```
+
+Two readings fit: the migration missed them, or they were migrated and later deleted. They lead to
+opposite actions - restore them, or delete them - so the difference had to be settled, not guessed.
+**The database cannot settle it**: there is no media table at all, and `channel_messages.attachments`
+is `NULL` in every row because an attachment's id travels inside the ciphertext. The server cannot
+enumerate what references an object, by design.
+
+What settled it is the line above: `rclone check` counted **200 objects, 0 diffs** at the cutover -
+the same 200. All five were therefore in Garage on 2026-08-14 and left it afterwards, through the
+only path that removes an object, `storage.service.ts:111`. They are media a user **deleted**.
+
+So the volume was not a safety net at all. **A frozen object store keeps deleted user content
+readable for as long as the window lasts** - here, four days past the moment the platform reported
+the media gone. Restoring those five would have resurrected them; keeping the volume kept them
+alive. Deleting it was the only reading that honours the deletions.
+
+One copy is deliberately left standing: restic snapshots taken before 2026-08-14 still hold
+`infrastructure_minio_data`, and they age out on the repository's own 14d/8w/6m schedule. That is a
+backup under a stated policy, which is a different thing from a live volume any container could
+mount - but it does mean "deleted" is only final once those snapshots expire.
+
+Also removed the same day: `infrastructure_mongo_config` and `local_mongo_data` (0 B, orphaned), and
+the `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` repository secrets - unreferenced since the rename, and
+credentials to a server whose storage no longer exists.
+
 - **Health check.** MinIO's `/minio/health/live` has no Garage equivalent, and the Garage image
   ships no shell/curl to poll an HTTP endpoint anyway (distroless, only the `/garage` binary) -
   the healthcheck runs `/garage status` instead, which talks to the node over its own RPC socket.

@@ -1374,6 +1374,27 @@ rule it cost is on that page - read it before touching any login, cookie or rota
 
 ---
 
+## Object storage, and deleting infrastructure -> [docker](infrastructure/docker.md)
+
+- **A COUNT IS NOT A COMPARISON.** "The new store holds more objects than the old one" passes while
+  the new store is missing objects the old one had. Compare the KEY SETS, both directions. Ours held
+  306 against 200 and was still missing five.
+- **A ROLLBACK WINDOW ON AN OBJECT STORE IS A WINDOW DURING WHICH DELETED USER CONTENT STAYS
+  READABLE.** A frozen store keeps serving what the platform has told the user is gone. Weigh that
+  against what the window buys before choosing its length - it is not free time.
+- **THE DATABASE CANNOT TELL YOU WHAT REFERENCES A MEDIA OBJECT.** There is no media table, and an
+  attachment's id travels inside the ciphertext (`channel_messages.attachments` is NULL in every
+  row). Any question of the form "is this blob still needed" has to be answered from the migration
+  record, never from a query.
+- **Before deleting a volume, mount it and ask it.** A container removed by a deploy takes its own
+  answer with it; a throwaway `mongod`/`alpine` over the volume costs 30 seconds and is the only
+  measurement that postdates the decision to delete.
+- **A volume outlives the compose file that named it.** Dropping a service stops its container and
+  leaves its storage; every deleted service owes an explicit `docker volume rm`, and there is usually
+  more than one (`mongo_data`, `mongo_config`, and a `local_`-prefixed twin from a stack run by hand).
+
+---
+
 ## Shared gotchas -> [development](development.md), [cicd](cicd.md)
 
 Environment and tooling traps that are not about any one subsystem. Each one cost a run.

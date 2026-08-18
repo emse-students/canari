@@ -451,9 +451,6 @@ volumes:
   postgres_data:
   # The shared message log. See the redis service above for why this is not optional.
   redis_data:
-  # Orphaned by the Garage cutover (2026-08-14): the `minio` service is gone, this volume
-  # is the rollback net. Remove after 2026-08-28 - see docs/wiki/infrastructure/docker.md.
-  minio_data:
   garage_meta:
   garage_data:
   media_meta:

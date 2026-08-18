@@ -162,17 +162,6 @@ device ladder cannot be run at all - written up as such on
 
 ### CANARI - what is open
 
-**Owed on the prod host, once the deploy that removes `mongo` has answered: delete the container
-and `docker volume rm infrastructure_mongo_data`** (479 MB of MongoDB system files - the instance
-never held an application database, checked twice). The compose files no longer declare it, so the
-deploy stops it; the volume outlives a `compose down` and has to be named.
-
-**Owed cleanup: remove the orphaned `minio_data` volume after 2026-08-28** (14-day rollback window
-after the Garage migration - see [docker](docs/wiki/infrastructure/docker.md)). **And delete the
-`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` repository secrets once a dev deploy has answered** - the
-Garage rename (2026-08-18) removed the last thing that read them, `cd-dev.yml`, which had been
-demanding them for a service stopped on 2026-08-14.
-
 **Release status:** v0.14.0 cut 2026-08-17 (tag + `gh release create`, which drives the version bump,
 the mobile builds and the deploy - `cicd.md`); both CD runs and the AppImage build green. Prod
 VERIFIED answering `{"version":"0.14.0","minClientVersion":"0.14.0"}`. **The user raised
