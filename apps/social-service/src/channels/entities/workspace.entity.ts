@@ -26,6 +26,17 @@ export class Workspace {
   @Column({ default: false })
   archived: boolean;
 
+  /**
+   * `dm_groups.id` of this community's Graine key-distribution group, minted by chat-delivery when
+   * the community is created and never changed afterwards.
+   *
+   * Null means the community predates Graine, or its group has not been created yet - a state, not
+   * a fault. It is what a client needs in order to external-join and receive channel seeds; see
+   * `docs/wiki/protocols/channel-encryption.md`.
+   */
+  @Column({ type: 'uuid', nullable: true, default: null })
+  distributionGroupId: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

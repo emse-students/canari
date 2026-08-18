@@ -26,6 +26,7 @@ import {
   type CreateWorkspaceInviteDto,
   type GetChannelMessagesQuery,
   type MarkDistributionReceivedDto,
+  type PublishDistributionGroupInfoDto,
   type RenameChannelDto,
   type ReorderWorkspacesDto,
   type SendChannelMessageDto,
@@ -79,6 +80,45 @@ export class ChannelsController {
   @Patch('workspaces/reorder')
   reorderWorkspaces(@Headers('x-user-id') xUserId: string, @Body() body: ReorderWorkspacesDto) {
     return this.service.reorderWorkspacesForUser(xUserId.trim().toLowerCase(), body.orderedIds);
+  }
+
+  /**
+   * The community's Graine key-distribution group, with the latest GroupInfo published on it.
+   *
+   * Served by THIS service and not by chat-delivery because the answer is authorized by community
+   * membership, which only lives here; chat-delivery's own MLS routes gate on a `dm_group_members`
+   * row, and a distribution group has none by construction. See
+   * `docs/wiki/protocols/channel-encryption.md`.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('workspaces/:workspaceId/distribution-group')
+  getDistributionGroup(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string
+  ) {
+    return this.service.getDistributionGroupForMember(workspaceId, xUserId.trim().toLowerCase());
+  }
+
+  /** Publishes the GroupInfo a member just committed on the community's distribution group. */
+  @UseGuards(NginxAuthGuard)
+  @Post('workspaces/:workspaceId/distribution-group/group-info')
+  publishDistributionGroupInfo(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: PublishDistributionGroupInfoDto
+  ) {
+    if (typeof body?.groupInfo !== 'string' || body.groupInfo.length === 0) {
+      throw new HttpException('groupInfo (base64) is required', HttpStatus.BAD_REQUEST);
+    }
+    if (!Number.isInteger(body?.baseEpoch) || body.baseEpoch < 0) {
+      throw new HttpException('baseEpoch must be a non-negative integer', HttpStatus.BAD_REQUEST);
+    }
+    return this.service.publishDistributionGroupInfoForMember(
+      workspaceId,
+      xUserId.trim().toLowerCase(),
+      body.groupInfo,
+      body.baseEpoch
+    );
   }
 
   /**

@@ -11,6 +11,30 @@ import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 
 describe('ChannelService security hardening', () => {
+  const previousSecret = process.env.INTERNAL_SECRET;
+
+  beforeEach(() => {
+    // Deleting a community now takes its Graine key-distribution group with it, and that group
+    // lives in chat-delivery. The call is deliberately allowed to abort the deletion (an orphan
+    // group is the one outcome nothing can reconcile later), so these tests have to answer it -
+    // otherwise every deletion here fails on an unreachable service rather than on its own logic.
+    // Behaviour when that call FAILS is covered in `distribution-group.spec.ts`.
+    process.env.INTERNAL_SECRET = 'internal-secret-for-tests';
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () =>
+          Promise.resolve(JSON.stringify({ groupId: 'g-1', created: true, deleted: true })),
+      } as unknown as Response)
+    ) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    if (previousSecret === undefined) delete process.env.INTERNAL_SECRET;
+    else process.env.INTERNAL_SECRET = previousSecret;
+  });
+
   function makeService() {
     // Every table a hard delete has to name, funnelled through one spy: nothing cascades on
     // `channel_workspaces`, so the COUNT of deletes is the assertion worth making.

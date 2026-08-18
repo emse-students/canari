@@ -6,6 +6,7 @@ import {
   Param,
   Body,
   Headers,
+  BadRequestException,
   ForbiddenException,
   Inject,
   Logger,
@@ -137,6 +138,159 @@ export class InternalController {
       `[INTERNAL_PUSH] type=${data.type ?? 'none'} user=${userId} sent=${result.sent} failed=${result.failed}`
     );
     return result;
+  }
+
+  /**
+   * Creates - or returns, unchanged - the Graine key-distribution group of a community.
+   *
+   * WHY THE COMMUNITY'S ID AND NOT A NAME: `dm_groups."distributionWorkspaceId"` carries a partial
+   * unique index, so "exactly one distribution group per community" is a fact the DATABASE holds.
+   * A second concurrent creation loses the insert instead of producing two groups each owning half
+   * the seeds - which is why the conflict is re-read rather than reported.
+   *
+   * WHAT IT DELIBERATELY DOES NOT WRITE: no `dm_group_members` row and no `DeviceGroupMembership`.
+   * The group is entered by external commit, and its roster is the community's, held by
+   * social-service. Both absences are load-bearing - see the WP-20 audit in
+   * `docs/wiki/protocols/channel-encryption.md`, whose whole enumeration rests on them.
+   *
+   * The MLS group itself is NOT created here and cannot be: the server holds no MLS state and can
+   * derive none. This is the row; a client initialises the group and publishes its GroupInfo
+   * through {@link publishDistributionGroupInfo}.
+   */
+  @Post('mls/distribution-groups')
+  async createDistributionGroup(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Body() body: { workspaceId?: string }
+  ): Promise<{ groupId: string; created: boolean }> {
+    this.assertInternalSecret(headerSecret);
+    const workspaceId = (body?.workspaceId ?? '').trim();
+    if (!workspaceId) {
+      throw new BadRequestException('workspaceId is required');
+    }
+
+    const existing = await this.groupRepo.findOne({
+      where: { distributionWorkspaceId: workspaceId },
+    });
+    if (existing) {
+      this.logger.log(`[DISTRIBUTION_GROUP] reuse workspace=${workspaceId} group=${existing.id}`);
+      return { groupId: existing.id, created: false };
+    }
+
+    try {
+      const created = await this.groupRepo.save(
+        this.groupRepo.create({ isGroup: true, distributionWorkspaceId: workspaceId })
+      );
+      this.logger.log(`[DISTRIBUTION_GROUP] created workspace=${workspaceId} group=${created.id}`);
+      return { groupId: created.id, created: true };
+    } catch (e) {
+      // The unique index fired: another request created it between the SELECT and the INSERT. The
+      // winner's row is the answer, so re-read rather than surfacing a conflict the caller cannot
+      // act on. Anything else is a real failure and must propagate.
+      const raced = await this.groupRepo.findOne({
+        where: { distributionWorkspaceId: workspaceId },
+      });
+      if (!raced) throw e;
+      this.logger.warn(
+        `[DISTRIBUTION_GROUP] concurrent creation workspace=${workspaceId} group=${raced.id} - the index held`
+      );
+      return { groupId: raced.id, created: false };
+    }
+  }
+
+  /**
+   * The community's distribution group and the latest GroupInfo published on it, so a caller that
+   * has already established community membership can hand a client what it needs to external-join.
+   *
+   * `groupInfo` is null until the first client has initialised the MLS group - a real state, not an
+   * error: the community exists and nobody has opened it yet.
+   */
+  @Get('mls/distribution-groups/:workspaceId')
+  async getDistributionGroup(
+    @Param('workspaceId') workspaceId: string,
+    @Headers('x-internal-secret') headerSecret: string
+  ): Promise<{ groupId: string; groupInfo: string | null; baseEpoch: number | null } | null> {
+    this.assertInternalSecret(headerSecret);
+
+    const group = await this.groupRepo.findOne({
+      where: { distributionWorkspaceId: workspaceId },
+    });
+    if (!group) {
+      this.logger.warn(`[DISTRIBUTION_GROUP] absent workspace=${workspaceId}`);
+      return null;
+    }
+
+    const info = await this.messagingService.readGroupInfo(group.id);
+    this.logger.log(
+      `[DISTRIBUTION_GROUP] read workspace=${workspaceId} group=${group.id} published=${!!info}`
+    );
+    return {
+      groupId: group.id,
+      groupInfo: info?.groupInfo ?? null,
+      baseEpoch: info?.baseEpoch ?? null,
+    };
+  }
+
+  /**
+   * Publishes the GroupInfo of a community's distribution group, after its committer's own service
+   * has established that they belong to the community.
+   *
+   * The public route (`POST /mls/group-info/:groupId`) cannot serve this: it gates on a
+   * `dm_group_members` row, and a distribution group has none by construction. The monotonic rule
+   * is not duplicated here - both routes land on the same `putGroupInfo`.
+   */
+  @Post('mls/distribution-groups/:workspaceId/group-info')
+  async publishDistributionGroupInfo(
+    @Param('workspaceId') workspaceId: string,
+    @Headers('x-internal-secret') headerSecret: string,
+    @Body() body: { groupInfo?: string; baseEpoch?: number }
+  ): Promise<{ stored: boolean }> {
+    this.assertInternalSecret(headerSecret);
+    if (typeof body?.groupInfo !== 'string' || !Number.isFinite(body?.baseEpoch)) {
+      throw new BadRequestException('groupInfo (base64) and baseEpoch are required');
+    }
+
+    const group = await this.groupRepo.findOne({
+      where: { distributionWorkspaceId: workspaceId },
+    });
+    if (!group) {
+      throw new BadRequestException(`No distribution group for community ${workspaceId}`);
+    }
+
+    const result = await this.messagingService.putGroupInfo(
+      group.id,
+      body.groupInfo,
+      body.baseEpoch as number
+    );
+    this.logger.log(
+      `[DISTRIBUTION_GROUP] group-info workspace=${workspaceId} group=${group.id} epoch=${body.baseEpoch} stored=${result.stored}`
+    );
+    return result;
+  }
+
+  /**
+   * Tombstones the distribution group of a community that is going away. Deliberately the same
+   * soft delete every other group dies of, so `cleanupSoftDeletedGroups` reaps it on the same
+   * schedule and no second lifecycle exists.
+   */
+  @Delete('mls/distribution-groups/:workspaceId')
+  async deleteDistributionGroup(
+    @Param('workspaceId') workspaceId: string,
+    @Headers('x-internal-secret') headerSecret: string
+  ): Promise<{ deleted: boolean }> {
+    this.assertInternalSecret(headerSecret);
+
+    const group = await this.groupRepo.findOne({
+      where: { distributionWorkspaceId: workspaceId },
+    });
+    if (!group) {
+      // Not an error: a community created before Graine, or one whose group was already reaped.
+      this.logger.log(`[DISTRIBUTION_GROUP] delete workspace=${workspaceId} - nothing to delete`);
+      return { deleted: false };
+    }
+
+    await this.groupRepo.update({ id: group.id }, { deletedAt: new Date() });
+    this.logger.log(`[DISTRIBUTION_GROUP] deleted workspace=${workspaceId} group=${group.id}`);
+    return { deleted: true };
   }
 
   /**

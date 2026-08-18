@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { deliveryUrl } from '../internal/service-urls';
+import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
 
 /**
  * Fire-and-forget FCM dispatcher.
@@ -34,7 +34,7 @@ export class PushService {
           'X-Internal-Secret': this.secret,
         },
         body: JSON.stringify({ userId, title, body, data }),
-        signal: AbortSignal.timeout(5_000),
+        signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
       });
       if (!res.ok) {
         this.logger.warn(`[PUSH] notify HTTP ${res.status} for user=${userId}`);

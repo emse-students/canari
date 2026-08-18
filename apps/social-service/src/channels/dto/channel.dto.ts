@@ -10,6 +10,17 @@ export interface ReorderWorkspacesDto {
 }
 
 /**
+ * A GroupInfo a member has just committed on the community's Graine distribution group, published
+ * so the next device can external-join without anyone being online to Welcome it.
+ */
+export interface PublishDistributionGroupInfoDto {
+  /** Serialized MLS GroupInfo, base64. */
+  groupInfo: string;
+  /** The epoch it was exported at. Monotonic server-side: a lower one is ignored, never an error. */
+  baseEpoch: number;
+}
+
+/**
  * A community's one live invite link. The bounds travel with the token because a link a human can
  * reason about has to show what it is bounded by - a token alone cannot say whether it expires.
  */

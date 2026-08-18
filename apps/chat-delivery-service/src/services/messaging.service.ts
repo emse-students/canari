@@ -1175,7 +1175,25 @@ export class MessagingService {
     if (!membership) {
       throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
+    return this.putGroupInfo(groupId, groupInfo, baseEpoch);
+  }
 
+  /**
+   * The monotonic GroupInfo upsert with NO authorization of its own: whoever calls has already
+   * decided who may write.
+   *
+   * TWO CALLERS DECIDE IT DIFFERENTLY, and neither can be expressed in the other's terms.
+   * {@link storeGroupInfo} gates on a `dm_group_members` row - the roster of an ordinary
+   * conversation. A community's Graine distribution group holds no such row by construction (it is
+   * joined by external commit), and the roster that governs it is community membership, which lives
+   * in social-service and nowhere here. So social-service authorizes and calls the internal route,
+   * which lands here. Splitting the gate from the write is what keeps ONE monotonic rule for both.
+   */
+  async putGroupInfo(
+    groupId: string,
+    groupInfo: string,
+    baseEpoch: number
+  ): Promise<{ stored: boolean }> {
     // Monotonic upsert: only overwrite when the incoming epoch is newer-or-equal. `orIgnore` guards
     // the concurrent-insert race; the WHERE guards the concurrent-update race.
     const existing = await this.groupInfoRepo.findOne({ where: { groupId } });
@@ -1219,7 +1237,14 @@ export class MessagingService {
     if (!membership) {
       throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
     }
+    return this.readGroupInfo(groupId);
+  }
 
+  /**
+   * The stored GroupInfo with NO authorization of its own - the read half of the split described on
+   * {@link putGroupInfo}. Null when nothing has been published yet.
+   */
+  async readGroupInfo(groupId: string): Promise<{ groupInfo: string; baseEpoch: number } | null> {
     const row = await this.groupInfoRepo.findOne({ where: { groupId } });
     if (!row) return null;
     return { groupInfo: row.groupInfo, baseEpoch: row.baseEpoch };

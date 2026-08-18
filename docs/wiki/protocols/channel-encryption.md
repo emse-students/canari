@@ -343,7 +343,8 @@ letting "tested on both backends" be read as more than it is.**
   syncs a group must be found and audited, not just the sidebar. **DONE 2026-08-18** - the audit
   and its result are below.
 - **WP-21** Server: the group is created with the community, published through `mls_group_info` for
-  external join, and its membership tracks `channel_members`.
+  external join, and its membership tracks `channel_members`. **DONE 2026-08-18** - the design and
+  what it turned out to cost are below.
 - **WP-22** Client: external-join on first use, ignore the group in the conversation pipeline, route
   its messages to the Graine handler.
 
@@ -391,6 +392,67 @@ nothing client-side can see the group - it is absent from the only list the clie
 holds only while WP-22 keeps the Graine layer's access deliberate and separate; the moment the
 distribution group enters `getUserGroups`, every row above is back in question.
 
+#### WP-21, and the gate it had nowhere to live
+
+**Invariant 1 has a consequence nobody had priced: chat-delivery cannot authorize anything about a
+distribution group.** All three of its MLS gates - `getCommitsSince`, `getGroupInfo`,
+`storeGroupInfo` - answer one question, "is there a `dm_group_members` row", and by construction
+there is not. Left alone, the group would have been unusable by everyone including its own members.
+
+The roster that governs it is COMMUNITY membership, which lives in social-service. So the decision
+is made there, and the call goes the direction it already goes:
+
+| | |
+| --- | --- |
+| Who authorizes | social-service, against `channel_workspace_members`, in `assertWorkspaceMember` |
+| Who holds the group | chat-delivery, `dm_groups."distributionWorkspaceId"` |
+| How they talk | `POST/GET/DELETE /api/internal/mls/distribution-groups[/:workspaceId]`, `X-Internal-Secret`, never through Nginx |
+| What the client calls | `GET|POST /api/channels/workspaces/:id/distribution-group[/group-info]` |
+
+**Three alternatives were rejected, each for one reason:**
+
+- **Write `dm_group_members` rows anyway** - the gates would all work untouched. Rejected because it
+  voids the WP-20 audit: `registerDevice` would mint a pending `DeviceGroupMembership` per row and
+  the `getUserGroups` warning would fire on every request, having been written to mean the opposite.
+- **Mirror community membership into chat-delivery** - a local table, fed by social-service on join
+  and leave. Rejected on drift: a mirror that misses one removal leaves a former member reading
+  seeds, and it heals only when somebody notices. *A race that heals cleanly is still a defect;* one
+  that does not heal at all is worse.
+- **Let chat-delivery ask social-service per call** - no drift, but it puts a network hop inside an
+  authorization path, needs a fourth `deliveryUrl`-shaped helper pointing the other way, and adds a
+  fail-closed branch to a service that has none. The proxy costs the same and keeps the decision in
+  one service.
+
+**THE GROUPINFO IS THE CAPABILITY.** Anyone holding it can external-join, so handing it out IS the
+authorization decision - which is why it is the thing social-service gates, and why chat-delivery's
+public `GET /mls/group-info/:groupId` is left refusing distribution groups rather than taught about
+them. A member removed from the community must still be removed from the MLS group (WP-30's
+rotation-on-departure); no server-side check substitutes for that.
+
+**What creation writes, and what it deliberately does not.** The `dm_groups` row, and nothing else:
+no `dm_group_members`, no `DeviceGroupMembership`. Both absences are asserted directly in
+`internal.distribution-group.spec.ts`, because nothing in the system would ever complain about their
+presence and the whole audit above rests on them. The MLS group is not created server-side and
+cannot be - the first member in finds `groupInfo: null`, initialises it, and publishes back. That
+null is a state the client acts on, never an error.
+
+**Failures are failures.** Every function in `distribution-group.client.ts` throws: an unset
+`INTERNAL_SECRET`, an unreachable delivery, a non-2xx. The service already carries one guard that
+fails OPEN (`userHasMlsDevices`), and the day its URL was wrong that turned it into a constant
+`true` - a check nobody had. So a community whose group cannot be created is UNWOUND (`createWorkspace`
+deletes the row it just wrote and rethrows) rather than left holding a slug it cannot use, and a
+community whose group cannot be deleted is NOT deleted - retryable beats an orphan group named by
+nobody, which is exactly the shape of row the 2026-08-17 purge had to find by hand.
+
+**One duplication was closed on the way through.** The four `deliveryUrl` callers carried 4 s, 4 s,
+5 s and 5 s of timeout with nothing recording why; they are one `DELIVERY_TIMEOUT_MS` now, in
+`internal/service-urls.ts`, the same one-constant-per-repo discipline WP-AVATAR-1 settled on.
+
+**Not in scope, and stated rather than assumed:** `getCommitsSince` still gates on
+`dm_group_members`, so a distribution-group member who falls behind cannot replay commits and
+re-joins by external commit instead. That is the intended rung for this group - it holds seeds, not
+a conversation - but it is a difference from ordinary groups, not an oversight.
+
 ### Phase 4 - send, receive, repair
 
 - **WP-30** Outbound session manager: create per (channel, sender), rotate on departure / 100
@@ -412,7 +474,8 @@ distribution group enters `getUserGroups`, every row above is back in question.
   `getChannelHistoryKeysForUser` and their routes. `STALE_CHANNEL_KEY_VERSION` goes with them - the
   server no longer knows which session is current and no longer needs to, which removes a coupling
   instead of moving it.
-- **WP-51** Migration `037`: `channel_messages.senderSessionId` replaces `keyVersion`; `channels`
+- **WP-51** Migration `038` (`037` was taken by WP-21's `distributionGroupId`):
+  `channel_messages.senderSessionId` replaces `keyVersion`; `channels`
   drops `masterSecret` and `keyVersion`; `channel_members` drops the legacy `keys` jsonb.
 - **WP-52** Push payload carries `sessionId`; everything else about the notification path is
   unchanged, and that is asserted rather than assumed.

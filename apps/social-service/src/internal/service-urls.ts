@@ -36,6 +36,17 @@
 /** Every Nest service in this repo serves its routes under this prefix. See each `main.ts`. */
 const GLOBAL_PREFIX = 'api';
 
+/**
+ * How long this service waits on any internal call before giving up, in milliseconds.
+ *
+ * ONE CONSTANT FOR EVERY CALLER, on purpose - the same discipline WP-AVATAR-1 settled on for the
+ * avatar proxies. A budget spelled out at each call site is a budget that drifts, and it had: the
+ * four `deliveryUrl` callers carried 4 s, 4 s, 5 s and 5 s, with nothing recording why they
+ * differed. These are Docker-network hops, so the value is generous either way and what matters is
+ * that it is one value. Anything slower than this is a failure worth surfacing, not waiting out.
+ */
+export const DELIVERY_TIMEOUT_MS = 5_000;
+
 /** Joins a service origin to a controller route, inserting the global prefix exactly once. */
 function join(baseUrl: string, path: string): string {
   const base = baseUrl.replace(/\/+$/, '');

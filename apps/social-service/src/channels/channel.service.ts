@@ -19,7 +19,14 @@ import {
 } from './entities/channel-key-distribution.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
-import { deliveryUrl } from '../internal/service-urls';
+import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
+import {
+  createDistributionGroup,
+  deleteDistributionGroup,
+  publishDistributionGroupInfo,
+  readDistributionGroup,
+  type DistributionGroupRef,
+} from './distribution-group.client';
 
 import {
   CHANNEL_PERMISSIONS,
@@ -275,6 +282,13 @@ export class ChannelService {
   private async hardDeleteWorkspace(workspaceId: string, reason: string): Promise<void> {
     const channels = await this.channelRepo.find({ where: { workspaceId }, select: { id: true } });
     const channelIds = channels.map((c) => c.id);
+
+    // BEFORE the transaction, and allowed to abort it. The distribution group lives in another
+    // service, so it cannot join the transaction; doing it afterwards as best-effort would turn a
+    // failed call into an orphan group nothing names any more - the very shape of row the
+    // 2026-08-17 purge had to find by hand. Failing here leaves the community intact and the whole
+    // deletion retryable, which is the only outcome that stays reconcilable.
+    await deleteDistributionGroup(this.internalSecret, workspaceId);
 
     await this.workspaceRepo.manager.transaction(async (mgr) => {
       if (channelIds.length > 0) {
@@ -679,6 +693,25 @@ export class ChannelService {
     });
     const savedWs = await this.workspaceRepo.save(ws);
 
+    // THE DISTRIBUTION GROUP IS CREATED WITH THE COMMUNITY, NOT ON FIRST USE. A community whose
+    // seeds have nowhere to travel is a community whose salons cannot be encrypted, so this is not
+    // a decoration that may degrade: it fails the creation. The row is unwound first, because a
+    // half-created community would hold its slug hostage while being unusable, and the migration
+    // to Graine is a clean cut - there is no population of older communities to be gentle with.
+    try {
+      savedWs.distributionGroupId = await createDistributionGroup(this.internalSecret, savedWs.id);
+      await this.workspaceRepo.save(savedWs);
+    } catch (e) {
+      await this.workspaceRepo.delete({ id: savedWs.id });
+      this.logger.error(
+        `[WORKSPACE] create ROLLED BACK workspace=${savedWs.id} slug="${slug}" - no distribution group: ${e instanceof Error ? e.message : String(e)}`
+      );
+      throw e;
+    }
+    this.logger.log(
+      `[WORKSPACE] distribution group workspace=${savedWs.id} group=${savedWs.distributionGroupId}`
+    );
+
     const adminRole = this.roleRepo.create({
       workspaceId: savedWs.id,
       name: 'Administrateur',
@@ -722,6 +755,89 @@ export class ChannelService {
     await this.pushKeyToUser(savedGeneralChannel, input.createdBy);
 
     return { ...savedWs, viewerCanManage: true };
+  }
+
+  /**
+   * Establishes that `userId` belongs to a live community, and returns it.
+   *
+   * The single gate in front of everything Graine: the GroupInfo it guards IS the capability to
+   * enter the distribution group and read every seed on it, so this decides who may hold one. It
+   * lives here because `channel_workspace_members` lives here - chat-delivery cannot answer this
+   * question about a table it does not own, and would have had to ask anyway.
+   */
+  private async assertWorkspaceMember(workspaceId: string, userId: string): Promise<Workspace> {
+    const workspace = await this.workspaceRepo.findOne({
+      where: { id: workspaceId, archived: false },
+    });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+
+    const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
+    if (!member) {
+      this.logger.warn(
+        `[DISTRIBUTION_GROUP] refused workspace=${workspaceId} user=${userId.slice(0, 8)} - not a member`
+      );
+      throw new ForbiddenException('Not a member of this workspace');
+    }
+    return workspace;
+  }
+
+  /**
+   * Hands a community member its distribution group and the latest GroupInfo published on it, so
+   * the client can external-join and start receiving channel seeds.
+   *
+   * `groupInfo: null` means nobody has initialised the MLS group yet - the FIRST caller to see it
+   * is the one that creates it and publishes back through
+   * {@link publishDistributionGroupInfoForMember}. That is a state the client must be able to act
+   * on, which is why it is a null field and not an error.
+   */
+  async getDistributionGroupForMember(
+    workspaceId: string,
+    userId: string
+  ): Promise<DistributionGroupRef> {
+    await this.assertWorkspaceMember(workspaceId, userId);
+
+    const ref = await readDistributionGroup(this.internalSecret, workspaceId);
+    if (!ref) {
+      // Every community created since WP-21 has one, and the clean cut leaves no older population.
+      // So this is not a state to repair silently: it is a community that cannot carry seeds, and
+      // saying so is what makes it findable.
+      this.logger.error(
+        `[DISTRIBUTION_GROUP] workspace=${workspaceId} has NO distribution group - salons in it cannot be encrypted`
+      );
+      throw new NotFoundException({
+        code: 'WORKSPACE_HAS_NO_DISTRIBUTION_GROUP',
+        message: 'This community has no key distribution group.',
+      });
+    }
+
+    this.logger.log(
+      `[DISTRIBUTION_GROUP] served workspace=${workspaceId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null}`
+    );
+    return ref;
+  }
+
+  /**
+   * Publishes a member's freshly committed GroupInfo for the community's distribution group.
+   * Monotonic on the delivery side, so a late refresh can never regress the served base epoch.
+   */
+  async publishDistributionGroupInfoForMember(
+    workspaceId: string,
+    userId: string,
+    groupInfo: string,
+    baseEpoch: number
+  ): Promise<{ stored: boolean }> {
+    await this.assertWorkspaceMember(workspaceId, userId);
+
+    const result = await publishDistributionGroupInfo(
+      this.internalSecret,
+      workspaceId,
+      groupInfo,
+      baseEpoch
+    );
+    this.logger.log(
+      `[DISTRIBUTION_GROUP] published workspace=${workspaceId} user=${userId.slice(0, 8)} epoch=${baseEpoch} stored=${result.stored}`
+    );
+    return result;
   }
 
   /**
@@ -1050,6 +1166,11 @@ export class ChannelService {
     // Snapshot the audience BEFORE archiving: the event has to reach every member, and
     // membership rows are what the broadcast resolves against.
     const memberIds = await this.getWorkspaceMemberIds(workspaceId);
+
+    // The distribution group goes first, for the reason spelled out in `hardDeleteWorkspace`: it is
+    // the one piece living in another service, so a failure must stop the deletion rather than
+    // leave a group whose community is gone.
+    await deleteDistributionGroup(this.internalSecret, workspaceId);
 
     // Archive the channels too, so any client holding a stale channel id stops listing them
     // even if it never sees the workspace event.
@@ -1468,7 +1589,7 @@ export class ChannelService {
     try {
       const res = await fetch(deliveryUrl(`mls/devices/${encodeURIComponent(userId)}`), {
         headers: { 'X-Internal-Secret': this.internalSecret },
-        signal: AbortSignal.timeout(4_000),
+        signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
       });
       if (!res.ok) return true;
       const devices: unknown[] = await res.json();
@@ -2307,7 +2428,7 @@ export class ChannelService {
         },
         // body left empty: the device composes the visible text after decrypting the ciphertext.
         body: JSON.stringify({ userId, title, body: '', data }),
-        signal: AbortSignal.timeout(5_000),
+        signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
       });
       if (!res.ok) {
         this.logger.warn(`[CHANNEL_PUSH] notify HTTP ${res.status} for user=${userId}`);

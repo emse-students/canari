@@ -265,6 +265,8 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | POST | `/api/channels/workspaces/:workspaceId/leave` | Leave a community. Refuses the sole admin (`WORKSPACE_WOULD_HAVE_NO_ADMIN`); the last member leaving deletes the community |
 | DELETE | `/api/channels/workspaces/:workspaceId/members/:userId` | Kick. Consults the TARGET's roles, same refusal |
 | POST | `/api/channels/workspaces/:workspaceId/invites` | Returns THE live invite (`{token, expiresAt, maxUses, uses}`), minting one if none. `rotate: true` revokes the live token and mints its replacement - the only way to get a new one |
+| GET | `/api/channels/workspaces/:workspaceId/distribution-group` | The community's Graine key-distribution group + its latest GroupInfo, for external join. **Members only** - the GroupInfo IS the capability. `groupInfo: null` means nobody has initialised the MLS group yet; `WORKSPACE_HAS_NO_DISTRIBUTION_GROUP` means there is no group at all |
+| POST | `/api/channels/workspaces/:workspaceId/distribution-group/group-info` | Publish a committed GroupInfo (`{groupInfo, baseEpoch}`). Members only, monotonic - `{stored: false}` is a refused regression, not a failure |
 | GET | `/api/channels/invites/:token` | Preview a community invite |
 | POST | `/api/channels/invites/:token/accept` | Join through an invite. Refuses a community with no members left (`WORKSPACE_HAS_NO_MEMBERS`) |
 | POST | `/api/channels` | Create channel |

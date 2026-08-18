@@ -140,12 +140,14 @@ iOS half of the device ladder cannot be run at all - written up as such on
    **Governance and invites (axes 2 and 3) SHIPPED 2026-08-18**, prod re-measured clean, and so did
    **Phase 2, the Graine foundations (WP-10..14)** - constants, proto, the derivation with vectors
    shared by TS and Rust, the durable session store on both backends with backup and PIN-change
-   re-keying, and the bounded native mirror. All of it is dark: nothing calls it yet. **WP-20 too**
-   - `dm_groups.distributionWorkspaceId`, and the enumeration audit whose two invariants **WP-21
-   must preserve or the audit is void** (no `dm_group_members` rows on a distribution group; the
-   exclusion lives in `getUserGroups` alone). **Next is WP-21**, which spans two services:
-   social-service creates the group with the community through `deliveryUrl`, and the delivery
-   recipient set comes from `channel_members`. **The two open decisions are ANSWERED (2026-08-18):
+   re-keying, and the bounded native mirror. All of it is dark: nothing calls it yet. **So are
+   WP-20 and WP-21** - `dm_groups.distributionWorkspaceId` with its enumeration audit, then the
+   group created WITH the community, gated by social-service because it is the only service holding
+   community membership. Both audit invariants survive. The design, the three rejected alternatives
+   and what is deliberately out of scope are on
+   [channel-encryption](docs/wiki/protocols/channel-encryption.md) - do not re-derive them.
+   **Next is WP-22**: the client external-joins on first use and routes those messages to the Graine
+   handler. **The two open decisions are ANSWERED (2026-08-18):
    the cut DELETES EVERYTHING** - communities, channels, members, roles, messages - **and runs
    SILENTLY at deploy** (the user has already warned people, so no in-app notice precedes it); and
    **`channel_messages` gets a ONE-YEAR retention window**, whose storage cost is measured on
