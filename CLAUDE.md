@@ -113,7 +113,7 @@ escapes.
 | **Sky** | `../Sky` | COMPLETE, nothing open |
 | **MiGallery** | `../MiGallery` | COMPLETE but for one follow-up: its search is still plain substring. The user's standing requirement is that **every search box across the ecosystem tolerates typos and word inversion and ranks by edit distance** - done in Sky (`personMatchScore`) and in Canari (`applyFuzzyNameSearch`, pg_trgm + unaccent), never started there. |
 | **Portail-etu** | `../refonte-portail-etu` | COMPLETE. **No SSH to that box** - the self-hosted CD runner is the only way in; `deploy.yml` has a `workflow_dispatch` (a dispatch can 500 while STILL creating the run - check `gh run list` before re-dispatching). PUBLIC, so every run log must redact and `grep -a` is mandatory. `pm2 flush`, never `rm`. `data-export/` holds PII, never commit. |
-| **Le Cercle** | `../le-cercle`, `gitlab.emse.fr:aurel.dautry/le-cercle` | Aurel owns it - **never commit to its `main`**. See below. |
+| **Le Cercle** | `../le-cercle`, `gitlab.emse.fr:aurel.dautry/le-cercle` | Aurel's repo, but the rewrite is MERGED and we hold push rights now. See below. |
 
 Work is tracked as Work Packages by severity: **P1** (security, or a broken user-facing path), **P2**
 (correctness), **P3** (hygiene). Delete a WP outright once it ships. Everything wanted but NOT
@@ -215,15 +215,11 @@ and the identifying query stay on
 [social-service](docs/wiki/services/social-service.md#a-channel-scoped-action-never-touches-community-membership-2026-08-17)
 as the record of the defect, not as work.
 
-**WP-AVATAR-1 (P2) - THREE OF THE FOUR SHIPPED AND DEPLOYED 2026-08-16; ONLY LE CERCLE IS LEFT.**
-The contract is written and implemented three times: **only an ANSWER may be cached**, an optional
-decoration degrades rather than errors, and the LOG tells the causes apart, never the status code.
-Canari's three outcomes, its 4 s budget and the client half are on
-[core-service](docs/wiki/services/core-service.md#the-avatar-proxy); Sky (`424f439`) and Portail-etu
-(`6bede6a`) each hold the budget in ONE constant per repo, covering their Canari-API and Authentik
-calls too. **Le Cercle caches nothing** - a merge request and Aurel's decision, never a commit.
-Table, the three findings the work turned up and what a fifth project should copy are in
-[backlog](docs/wiki/backlog.md). **Decided: four aligned copies, not a shared client.**
+**WP-AVATAR-1 IS CLOSED (2026-08-18): FOUR ALIGNED IMPLEMENTATIONS, NOT A SHARED CLIENT.** Le Cercle
+was the last one and now holds the same contract - three outcomes, only an ANSWER cached, the LOG
+telling the causes apart. The contract itself lives on
+[core-service](docs/wiki/services/core-service.md#the-avatar-proxy); what the convergence still owes
+as a PROCESS is in [backlog](docs/wiki/backlog.md).
 
 **WP-STRANDED-1 IS ATTRIBUTED AND FIXED AT ITS CAUSE (2026-08-16), VERIFICATION OWED.** The four
 sender-only rows were WITHDRAWN messages: `deleteMessage` knew it had withdrawn rather than
@@ -320,26 +316,27 @@ architecturalement regle, pas mettre des pansements avec des timeouts ou autre, 
 deterministe, reproductible, explicable. Et doit marcher avec une conversation de toute les
 tailles"*; *"pense factorisation, proprete, simplicite"*.
 
-### LE CERCLE - MR !4 pushed, awaiting Aurel
+### LE CERCLE - MERGED, AND WE PUSH TO `main` NOW
 
-**MR !4** - `chore/project-conventions`, 13 commits, rebased onto `main` and pushed 2026-08-05:
-https://gitlab.emse.fr/aurel.dautry/le-cercle/-/merge_requests/4
-**Description still to PASTE by hand: `../MR-CERCLE-2.md`**, which also carries what !4 contains and
-every decision behind it - do not re-litigate them. Git refuses a push option containing newlines, so
-`merge_request.description` is unusable, while `merge_request.create` + `.target_branch` + `.title`
-over SSH DO work.
+**MR !4 was merged by Aurel on 2026-08-18**, squashed as `369f8ea` + merge `8423b22`. `origin/main`
+came out **byte-identical to our eleven-commit series** - nothing was dropped or amended - and GitLab
+deleted the source branch. `chore/project-conventions` no longer exists; do not recreate it.
+`../MR-CERCLE-2.md` is now a record of what that series contained, not a description to paste.
 
-**VEILLE - on demand, never scheduled.** He keeps working on `main`; when asked: `git fetch`,
-`git log --oneline origin/main --not chore/project-conventions`, then
-`git rebase --onto origin/main <merge-base>`. Two files conflict every time: `.env.example` (HIS
-convention wins) and `.prettierignore` (keep his `/db/sql/seed.sql` line). Re-apply our conventions
-to HIS new code per `../le-cercle/AGENTS.md` - the canonical checklist - expecting `prettier --check`
-failures on what he merged, with formatting-only fixes in their own commit. Resync the wiki
-(`authentication.md`, `ledger.md`, `data-model.md`, `deployment.md`, `frontend.md` rot fastest).
-Gates, `push --force-with-lease`, then paste the MR description by hand.
+**The user granted push rights and, on 2026-08-18, authorised committing straight to `main`**
+(*"ne fais pas de branche, va direct push sur main (regle exceptionnelle aujourd'hui)"*). `3836b8f`
+(the cercleux tab) went that way. **Exceptional and dated** - it is still Aurel's repository, and a
+large or opinionated change is still owed a branch and his word.
 
-**No Work Package is open on the Cercle.** What is left is his to decide (the ledger's unwritable
-`undo`/`cashout`, `JWT_OLD_SECRET`, the placeholder `AUTH_SECRET`) and it is written up, with the
+**VEILLE - on demand, never scheduled.** He works on `main` and so do we now, so it is a plain
+`git pull` and a read of what landed. Re-apply our conventions to HIS new code per
+`../le-cercle/AGENTS.md` - the canonical checklist - expecting `prettier --check` failures on what he
+merged, with formatting-only fixes in their own commit. Resync the wiki (`authentication.md`,
+`ledger.md`, `data-model.md`, `deployment.md`, `frontend.md` rot fastest). **Le Cercle is prettier +
+eslint + husky, NOT Canari's oxfmt/oxlint** - run its own `format` / `lint` scripts.
+
+**What is left is his to decide** (the ledger's unwritable `undo`/`cashout`, the placeholder
+`AUTH_SECRET`; `JWT_OLD_SECRET` was DELETED by the merged series) and it is written up, with the
 fingerprints that establish it, in [PROD-TEST-CERCLE](docs/PROD-TEST-CERCLE.md) - to RAISE, never to
 patch. Three prod tests there need a human and are not WPs: V1 (a real MiConnect round trip), V2 (the
 access gate), V4 (the alcohol gate at a till).

@@ -102,29 +102,18 @@ is what an app would add that the web version cannot do. Answer that before esti
 
 ## Owed to somebody else
 
-### P2 - Le Cercle's avatar proxy caches nothing
-
-The last of the four projects that fetch `gallery.mitv.fr/api/users/<id>/avatar`. Canari, Sky and
-Portail-etu were aligned on 2026-08-16 - the contract, the three outcomes and the caching rule are on
-[core-service](services/core-service.md#the-avatar-proxy) - and each keeps its budget in ONE constant
-per repo, which is the shape a fifth project should copy.
-
-Le Cercle re-asks the gallery for a known-absent photo on every render: the amplification the cache
-exists to remove. **It is Aurel's repository**, so this travels as a merge request or not at all,
-never a commit on his `main`.
-
 ### P2 - converge the five projects on the best version of each shared solution
 
 **The avatar proxy is the sample, not the subject.** Four projects wrote four different failure
 behaviours for one endpoint, each in isolation - one had no deadline at all, one dressed a refused key
 as "this member has no face", one narrated every request, and only one cached. **Nobody chose that
-spread**, and the best version never travelled. Three are aligned now, which settles the contract but
-not the process: alignment took one person reading four repositories in one sitting, and nothing makes
-the fourth follow or the next shared solution converge.
+spread**, and the best version never travelled. All four are aligned since 2026-08-18, which settles
+the contract but not the process: alignment took one person reading four repositories in one sitting,
+and nothing makes the next shared solution converge the same way.
 
 **What this asks for is an inventory first, not a refactor.** What is actually established today:
 
-- **verified** - the avatar proxy, four implementations, three aligned;
+- **verified** - the avatar proxy, four implementations, all four aligned;
 - **known partial** - tolerant search (done in Sky and Canari, owed in MiGallery), and the i18n /
   wiki / English-comments normalisation (done in Canari, partial elsewhere);
 - **to inventory** - outbound HTTP handling in general (timeout, retry, what a failure degrades to),

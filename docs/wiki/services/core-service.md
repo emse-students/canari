@@ -59,8 +59,9 @@ live session **and** be the one that session expects.
 
 A `jti` that is neither current nor freshly rotated has already been spent, which means the cookie
 exists in two places. The session is **destroyed**, not merely refused: logging the event and
-letting the rotation proceed (what Le Cercle does) hands the rotation to whoever presented the
-token, so the theft succeeds and the alarm is decorative.
+letting the rotation proceed hands the rotation to whoever presented the token, so the theft
+succeeds and the alarm is decorative. Le Cercle shipped that weaker version and was corrected on
+2026-08-18 - it now revokes the session too.
 
 That rule cannot be applied naively. Two tabs of the same browser share one cookie, so a
 double refresh is routine: exactly one wins, and the loser presents a token one generation old
