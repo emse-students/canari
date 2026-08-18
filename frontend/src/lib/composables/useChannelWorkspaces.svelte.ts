@@ -11,6 +11,7 @@ import {
 } from '$lib/envelope';
 import {
   isChannelConversationId,
+  sendChannelReaction,
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
 import {
@@ -20,7 +21,12 @@ import {
 } from '$lib/utils/graine/runtime';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { currentUserId } from '$lib/stores/userState.svelte';
-import { applyLocalChannelReaction, setChannelReactions } from '$lib/stores/reactionStore.svelte';
+import { applyChannelReactionFrame, getChannelReactions } from '$lib/stores/reactionStore.svelte';
+import {
+  activeReactions,
+  canAddDistinctReactionEmoji,
+  MAX_DISTINCT_MESSAGE_REACTIONS,
+} from '$lib/utils/chat/messageReactions';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
@@ -921,10 +927,16 @@ export function useChannelWorkspaces() {
   }
 
   /**
-   * Toggles the caller's emoji reaction on a channel message. The pill flips immediately, then
-   * the server's authoritative tally replaces it - and the same tally reaches everyone else as a
-   * `channel.reaction` broadcast. On failure the optimistic toggle is rolled back by re-applying
-   * it, since the toggle is its own inverse.
+   * Places or takes back the caller's emoji reaction on a channel message.
+   *
+   * **The reaction IS the message (WP-40).** It is sealed under this device's Graine session and
+   * stored by the server as an opaque blob, so the server no longer counts who reacted with what -
+   * it used to hold that tally in cleartext, which is content by any honest reading.
+   *
+   * The local merge comes FIRST and with the same `at` the frame carries, so the pill flips at
+   * once and this device's own row, when it comes back, merges to exactly the same state. There is
+   * no rollback on failure and none is possible: what a send failure costs is the peers' copy, and
+   * a device that unflipped its own pill would disagree with the frame it may still have sent.
    */
   async function toggleChannelReaction(
     channelConversationId: string,
@@ -934,26 +946,35 @@ export function useChannelWorkspaces() {
   ) {
     const userId = currentUserId();
     if (!channelConversationId || !messageId || !emoji || !userId) return;
-    applyLocalChannelReaction(messageId, userId, emoji);
-    try {
-      const tally = await service.toggleReaction(channelConversationId, messageId, emoji);
-      setChannelReactions(messageId, tally);
 
-      // NOTIFY THE AUTHOR, AND NOBODY ELSE. A channel reaction reached every member as a
-      // `channel.reaction` broadcast and reached no phone at all - a tally that repaints a bubble
-      // is not a notification, and nothing pushed. Only the author is told: a reaction concerns
-      // the person reacted to, and telling a whole channel about each one is exactly the noise a
-      // busy community cannot afford.
-      //
-      // The SAME endpoint as a DM reaction, deliberately: `channel_<id>` is a conversation id like
-      // any other, so the phone attaches it to that channel's notification, with the same avatar,
-      // the same stable id and the same dismissal. Nothing of the message crosses - see
-      // `notifyReaction`.
-      const added = Array.isArray(tally[emoji]) && tally[emoji].includes(userId);
+    const held = getChannelReactions(messageId);
+    const standing = activeReactions(held).some(
+      (r) => r.userId === userId.toLowerCase() && r.emoji === emoji
+    );
+    // The distinct-emoji cap belongs where the user ACTS, never in the merge: a frame that arrived
+    // is something the community did, and a device that refused it would drift from one that
+    // accepted it.
+    if (!standing && !canAddDistinctReactionEmoji(held, emoji)) {
+      ctx.log(
+        `[CHANNEL] reaction refused: ${MAX_DISTINCT_MESSAGE_REACTIONS} distinct emoji already`
+      );
+      return;
+    }
+
+    const at = Date.now();
+    applyChannelReactionFrame(messageId, userId, emoji, at, standing);
+    try {
+      await sendChannelReaction(channelConversationId, messageId, emoji, at, standing);
+
+      // NOTIFY THE AUTHOR, AND NOBODY ELSE. The reaction itself is sent silent - a heart must not
+      // ring every phone in the community - so this targeted push is the only notification there
+      // is. It concerns the person reacted to, and telling a whole channel about each one is
+      // exactly the noise a busy community cannot afford. Nothing of the message crosses; the
+      // author's own devices hold it already (see `notifyReaction`).
       const author = ctx.conversations
         .get(channelConversationId)
         ?.messages.find((msg) => msg.id === messageId)?.senderId;
-      if (added && author && author !== userId) {
+      if (!standing && author && author !== userId) {
         const getName = await resolveDisplayNames([userId]);
         void notifyReaction({
           groupId: channelConversationId,
@@ -964,7 +985,6 @@ export function useChannelWorkspaces() {
         }).catch(() => {});
       }
     } catch (error) {
-      applyLocalChannelReaction(messageId, userId, emoji);
       ctx.log(toUiActionError(m.channel_action_message_react(), error));
     }
   }

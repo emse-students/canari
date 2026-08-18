@@ -3,7 +3,7 @@ import {
   type ChannelMessageRow,
   type ChannelPollInput,
 } from '$lib/services/ChannelService';
-import { encodeAppMessage, decodeAppMessage, mkPoll } from '$lib/proto/codec';
+import { encodeAppMessage, decodeAppMessage, mkPoll, mkReaction } from '$lib/proto/codec';
 import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import {
@@ -30,15 +30,38 @@ export interface DecodedChannelMessage {
 }
 
 /**
- * Decrypts and decodes a single channel message row into a renderable message, or returns null
- * when the payload is unreadable or carries no displayable content. Shared by channel history
- * loading and full-text search so both decode rows identically.
+ * What a channel row turned out to be.
+ *
+ * A row is not always a bubble: since WP-40 a reaction travels as an encrypted channel message, so
+ * the same page carries frames that change an existing message rather than adding one. The caller
+ * is TOLD which it got rather than left to infer it from a null, because "nothing to render" and
+ * "something that belongs elsewhere" need different handling and only one of them is a loss.
+ */
+export type DecodedChannelRow =
+  | { kind: 'message'; message: DecodedChannelMessage }
+  | { kind: 'reaction'; reaction: DecodedChannelReaction };
+
+/** A reaction frame read off a channel row: who, on what, which emoji, and when. */
+export interface DecodedChannelReaction {
+  /** The message reacted to - a SERVER row id, the same key the reaction store uses. */
+  targetMessageId: string;
+  senderId: string;
+  emoji: string;
+  /** The sender's clock for this `(user, emoji)` pair. The larger one wins the merge. */
+  at: number;
+  removed: boolean;
+}
+
+/**
+ * Decrypts and decodes a single channel message row, or returns null when the payload is unreadable
+ * or carries no displayable content. Shared by channel history loading and full-text search so both
+ * decode rows identically.
  */
 export async function decodeChannelMessageRow(
   channelId: string,
   row: ChannelMessageRow,
   userIdLower: string
-): Promise<DecodedChannelMessage | null> {
+): Promise<DecodedChannelRow | null> {
   const channel = rawChannelId(channelId);
   const serverMs = parseServerTimestampMs(row.createdAt);
   let content: string | undefined;
@@ -47,6 +70,21 @@ export async function decodeChannelMessageRow(
   try {
     const bytes = await openChannelMessage(channel, row);
     const decoded = decodeAppMessage(bytes);
+    if (decoded?.reaction) {
+      // Not a bubble: it changes one. Returned rather than applied here, so this stays a pure
+      // decode and the store it feeds has exactly one writer per call site.
+      return {
+        kind: 'reaction',
+        reaction: {
+          targetMessageId: String(decoded.reaction.messageId ?? ''),
+          senderId: String(row.senderId || '').toLowerCase(),
+          emoji: String(decoded.reaction.emoji ?? ''),
+          // An undated frame reads as 0 and loses to anything dated - it cannot be trusted to win.
+          at: Number(decoded.reaction.at ?? 0),
+          removed: decoded.reaction.removed === true,
+        },
+      };
+    }
     if (decoded) {
       const envelope =
         appMsgToEnvelope(decoded, serverMs) ?? appMsgToChannelSystemEnvelope(decoded, serverMs);
@@ -84,12 +122,16 @@ export async function decodeChannelMessageRow(
   // to the sender would give it an avatar, a name header and a left-aligned bubble.
   const senderId = isSystem ? 'system' : String(row.senderId || 'unknown').toLowerCase();
   return {
-    id: String(row.id),
-    senderId,
-    content,
-    timestamp: timestamp ?? (serverMs !== undefined ? new SvelteDate(serverMs) : new SvelteDate()),
-    isOwn: !isSystem && senderId === userIdLower,
-    isSystem,
+    kind: 'message',
+    message: {
+      id: String(row.id),
+      senderId,
+      content,
+      timestamp:
+        timestamp ?? (serverMs !== undefined ? new SvelteDate(serverMs) : new SvelteDate()),
+      isOwn: !isSystem && senderId === userIdLower,
+      isSystem,
+    },
   };
 }
 
@@ -122,7 +164,8 @@ export async function sendEncryptedChannelMessage(
   payloadBytes: Uint8Array,
   messageId?: string,
   poll?: ChannelPollInput,
-  mentionedUserIds?: string[]
+  mentionedUserIds?: string[],
+  options?: { silent?: boolean }
 ): Promise<void> {
   const channel = rawChannelId(channelId);
   const sealed = await sealChannelMessage(channel, payloadBytes);
@@ -134,6 +177,37 @@ export async function sendEncryptedChannelMessage(
     ...(messageId ? { messageId } : {}),
     ...(poll ? { poll } : {}),
     ...(mentionedUserIds && mentionedUserIds.length ? { mentionedUserIds } : {}),
+    ...(options?.silent ? { silent: true } : {}),
+  });
+}
+
+/**
+ * Places or takes back an emoji reaction, as an encrypted channel message (WP-40).
+ *
+ * A reaction is a message like any other here: sealed under the sender's Graine session, stored by
+ * the server as an opaque blob. It is sent SILENT - a heart must not become a push, and a channel
+ * where every reaction rang would be a channel people mute.
+ *
+ * `at` is the sender's clock for this `(user, emoji)` pair, and both legs carry it: the merge on
+ * every device keeps the larger one, which is what makes a removal reach a device still holding the
+ * placement.
+ */
+export async function sendChannelReaction(
+  channelId: string,
+  targetMessageId: string,
+  emoji: string,
+  at: number,
+  removed: boolean
+): Promise<void> {
+  const protoBytes = encodeAppMessage({
+    ...mkReaction(targetMessageId, emoji, at, removed),
+    // Its OWN id, never the reacted-to message's: this is a row in the channel like any other, and
+    // giving it the target's id would make two rows answer to one address.
+    messageId: crypto.randomUUID(),
+    sentAt: at,
+  });
+  await sendEncryptedChannelMessage(channelId, protoBytes, undefined, undefined, undefined, {
+    silent: true,
   });
 }
 

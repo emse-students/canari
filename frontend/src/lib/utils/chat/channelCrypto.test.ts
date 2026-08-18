@@ -34,7 +34,10 @@ vi.mock('$lib/utils/graine/channelSeal', async (importOriginal) => {
 
 const { ChannelApiError } = await import('$lib/services/ChannelService');
 const { GraineDistributionUnavailableError } = await import('$lib/utils/graine/seedDistribution');
-const { sendEncryptedChannelMessage } = await import('$lib/utils/chat/channelCrypto');
+const { sendEncryptedChannelMessage, sendChannelReaction } =
+  await import('$lib/utils/chat/channelCrypto');
+const { decodeAppMessage } = await import('$lib/proto/codec');
+const { fromBase64 } = await import('$lib/utils/hex');
 
 const CHANNEL = 'channel_11111111-2222-3333-4444-555555555555';
 const RAW = '11111111-2222-3333-4444-555555555555';
@@ -109,5 +112,26 @@ describe('sendEncryptedChannelMessage', () => {
     // `mentions` notification level as though somebody had been named.
     expect('mentionedUserIds' in body).toBe(false);
     expect('poll' in body).toBe(false);
+  });
+});
+
+describe('sendChannelReaction (WP-40)', () => {
+  it('sends the reaction as a SILENT channel message carrying both legs of the toggle', async () => {
+    await sendChannelReaction(CHANNEL, 'target-1', 'THUMB', 1_700_000_000_000, true);
+
+    const body = sendMessage.mock.calls[0][1];
+    // Silent, or every heart in the community becomes a push and the channel gets muted.
+    expect(body.silent).toBe(true);
+    const frame = decodeAppMessage(sealChannelMessage.mock.calls[0][1]);
+    expect(frame?.reaction?.messageId).toBe('target-1');
+    expect(frame?.reaction?.removed).toBe(true);
+    // The clock travels with BOTH legs: the merge on the far side keeps the larger one, which is
+    // what lets a removal reach a device still holding the placement.
+    expect(Number(frame?.reaction?.at)).toBe(1_700_000_000_000);
+    // Its own row id, never the reacted-to message's - two rows answering to one address would
+    // make a delete or a pin ambiguous.
+    expect(frame?.messageId).not.toBe('target-1');
+    expect(String(frame?.messageId ?? '')).not.toHaveLength(0);
+    expect(fromBase64(body.ciphertext).length).toBeGreaterThan(0);
   });
 });

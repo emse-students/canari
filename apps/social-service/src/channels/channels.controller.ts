@@ -605,26 +605,6 @@ export class ChannelsController {
     return this.service.closePoll(channelId, messageId, xUserId.trim().toLowerCase());
   }
 
-  /**
-   * Toggles the caller's emoji reaction on a channel message and returns the new tally
-   * (`emoji -> userIds`). Any member who can read the channel may react.
-   */
-  @UseGuards(NginxAuthGuard)
-  @Post(':channelId/messages/:messageId/reactions')
-  toggleReaction(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string,
-    @Param('messageId') messageId: string,
-    @Body() body: { emoji?: string }
-  ) {
-    return this.service.toggleMessageReaction(
-      channelId,
-      messageId,
-      xUserId.trim().toLowerCase(),
-      String(body?.emoji ?? '')
-    );
-  }
-
   /** Returns the IDs of the pinned messages in a channel. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/pins')

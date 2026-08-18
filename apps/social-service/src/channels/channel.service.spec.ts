@@ -516,86 +516,62 @@ describe('ChannelService security hardening', () => {
     expect(msg.pinned).toBe(true);
   });
 
-  it('toggleMessageReaction adds the caller then removes them, dropping the empty emoji key', async () => {
-    const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
-    arrangePollAccess(channelRepo, memberRepo);
-    const msg = { id: 'm1', channelId: 'ch1', authorId: 'someone-else', reactions: {} };
-    lockMessage(messageRepo, msg);
+  // ── Silent rows (WP-40) ───────────────────────────────────────────────────
+  // A reaction is an encrypted message now. The server holds no tally, and the only thing it
+  // learns about such a row is that it must not ring a phone.
 
-    expect(await service.toggleMessageReaction('ch1', 'm1', 'u1', '👍')).toEqual({ '👍': ['u1'] });
-    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
-      'channel.reaction',
-      expect.objectContaining({ channelId: 'ch1', messageId: 'm1' }),
-      expect.any(Array)
-    );
-
-    // The key disappears with its last reactor, so it never counts against the cap.
-    expect(await service.toggleMessageReaction('ch1', 'm1', 'u1', '👍')).toEqual({});
-  });
-
-  it('toggleMessageReaction keeps the other reactors when one of them removes theirs', async () => {
-    const { service, channelRepo, memberRepo, messageRepo } = makeService();
-    arrangePollAccess(channelRepo, memberRepo);
-    const msg = { id: 'm1', channelId: 'ch1', reactions: { '👍': ['u1', 'u2'] } };
-    lockMessage(messageRepo, msg);
-
-    expect(await service.toggleMessageReaction('ch1', 'm1', 'u1', '👍')).toEqual({ '👍': ['u2'] });
-  });
-
-  it('toggleMessageReaction refuses a __proto__ key rather than polluting the tally', async () => {
-    const { service, channelRepo, memberRepo, messageRepo } = makeService();
-    arrangePollAccess(channelRepo, memberRepo);
-    lockMessage(messageRepo, { id: 'm1', channelId: 'ch1', reactions: {} });
-
-    await expect(
-      service.toggleMessageReaction('ch1', 'm1', 'u1', '__proto__')
-    ).rejects.toBeInstanceOf(BadRequestException);
-    await expect(service.toggleMessageReaction('ch1', 'm1', 'u1', '')).rejects.toBeInstanceOf(
-      BadRequestException
-    );
-    await expect(
-      service.toggleMessageReaction('ch1', 'm1', 'u1', 'x'.repeat(65))
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-
-  it('toggleMessageReaction caps the distinct emojis but still lets an existing one toggle', async () => {
-    const { service, channelRepo, memberRepo, messageRepo } = makeService();
-    arrangePollAccess(channelRepo, memberRepo);
-    const reactions: Record<string, string[]> = {};
-    for (let i = 0; i < 15; i++) reactions[`e${i}`] = ['u2'];
-    lockMessage(messageRepo, { id: 'm1', channelId: 'ch1', reactions });
-
-    await expect(service.toggleMessageReaction('ch1', 'm1', 'u1', '🆕')).rejects.toBeInstanceOf(
-      BadRequestException
-    );
-    // Joining an emoji already on the message adds no distinct type, so the cap must not block it.
-    const result = await service.toggleMessageReaction('ch1', 'm1', 'u1', 'e0');
-    expect(result.e0).toEqual(['u2', 'u1']);
-  });
-
-  it('toggleMessageReaction needs no moderation permission and ignores authorship', async () => {
+  it('sendMessage does not notify for a silent row', async () => {
     const { service, channelRepo, memberRepo, roleRepo, messageRepo } = makeService();
-    arrangePollAccess(channelRepo, memberRepo);
-    roleRepo.find.mockResolvedValue([{ permissions: [] }]);
-    lockMessage(messageRepo, {
-      id: 'm1',
-      channelId: 'ch1',
-      authorId: 'someone-else',
-      reactions: {},
+    channelRepo.findOne.mockResolvedValue({
+      id: 'ch1',
+      workspaceId: 'ws1',
+      isPrivate: false,
+      writePolicy: 'everyone',
+    });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+    roleRepo.find.mockResolvedValue([]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u2' }]);
+    messageRepo.create.mockImplementation((v: any) => v);
+    messageRepo.save.mockImplementation(async (v: any) => ({ ...v, id: 'm-new', createdAt: new Date() }));
+    const notify = jest.spyOn(service as any, 'notifyChannelRecipients').mockResolvedValue(undefined);
+
+    await service.sendMessage('ch1', {
+      senderId: 'u1',
+      ciphertext: 'c',
+      nonce: 'n',
+      senderSessionId: 's-1',
+      messageIndex: 0,
+      silent: true,
     });
 
-    expect(await service.toggleMessageReaction('ch1', 'm1', 'u1', '🔥')).toEqual({ '🔥': ['u1'] });
+    // A heart that rang every phone in the community is a community people mute.
+    expect(notify).not.toHaveBeenCalled();
+    notify.mockRestore();
   });
 
-  it('toggleMessageReaction rejects a non-member of the workspace', async () => {
+  it('listMessages fills its page with bodies and adds the silent rows inside it', async () => {
     const { service, channelRepo, memberRepo, messageRepo } = makeService();
     arrangePollAccess(channelRepo, memberRepo);
-    memberRepo.findOne.mockResolvedValue(null);
-    lockMessage(messageRepo, { id: 'm1', channelId: 'ch1', reactions: {} });
-
-    await expect(service.toggleMessageReaction('ch1', 'm1', 'u1', '👍')).rejects.toBeInstanceOf(
-      ForbiddenException
+    const body = (id: string, ms: number) => ({
+      id,
+      channelId: 'ch1',
+      authorId: 'u1',
+      content: 'c',
+      createdAt: new Date(ms),
+      silent: false,
+      metadata: {},
+    });
+    const silent = (id: string, ms: number) => ({ ...body(id, ms), silent: true });
+    messageRepo.find.mockImplementation(async (opts: any) =>
+      opts.where.silent === true ? [silent('r1', 150)] : [body('m2', 200), body('m1', 100)]
     );
+
+    const page = await service.listMessages('ch1', 'u1', 2);
+
+    // Without the split, a burst of reactions would push real messages out of the page - a channel
+    // that shows less history the more people react to it, with nothing saying so.
+    expect(page.map((m) => m.id)).toEqual(['m2', 'r1', 'm1']);
+    expect(page.find((m) => m.id === 'r1')?.silent).toBe(true);
   });
 
   it('rejects listMessages for a private channel when the user is neither admin nor allow-listed', async () => {

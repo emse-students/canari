@@ -21,7 +21,7 @@ import { withMlsBulkIngest } from '$lib/mls-client/mlsBulkIngest';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
-import { setChannelReactions } from '$lib/stores/reactionStore.svelte';
+import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import {
   fetchUniqueGroupMembers,
   removeMemberAndBroadcast,
@@ -378,19 +378,25 @@ export function useConversations() {
         for (const msg of rows) {
           const decoded = await decodeChannelMessageRow(rawId, msg, meLower);
           if (!decoded) continue;
+          // A reaction is a row of its own now (WP-40): it changes a bubble instead of being one.
+          // Merged by the same last-write-wins rule everywhere, so the order the page is read in
+          // cannot change the result - including a reaction read before the message it lands on.
+          if (decoded.kind === 'reaction') {
+            const r = decoded.reaction;
+            applyChannelReactionFrame(r.targetMessageId, r.senderId, r.emoji, r.at, r.removed);
+            continue;
+          }
 
           // Seed the live poll tally from the server row, keyed by the server id.
           if (msg.poll) setPollMeta(String(msg.id), msg.poll);
-          // Same for reactions: the row carries the authoritative tally.
-          setChannelReactions(String(msg.id), msg.reactions);
 
           loaded.push({
-            id: decoded.id,
-            senderId: decoded.senderId,
-            content: decoded.content,
-            timestamp: decoded.timestamp,
-            isOwn: decoded.isOwn,
-            isSystem: decoded.isSystem,
+            id: decoded.message.id,
+            senderId: decoded.message.senderId,
+            content: decoded.message.content,
+            timestamp: decoded.message.timestamp,
+            isOwn: decoded.message.isOwn,
+            isSystem: decoded.message.isSystem,
           });
         }
       }
@@ -448,24 +454,31 @@ export function useConversations() {
     for (const row of rows) {
       const decoded = await decodeChannelMessageRow(rawId, row, meLower);
       if (!decoded) continue;
+      if (decoded.kind === 'reaction') {
+        // Searching the whole history is also the widest sweep of reaction frames there is, so it
+        // merges them rather than dropping them - a search must not cost a message its hearts.
+        const r = decoded.reaction;
+        applyChannelReactionFrame(r.targetMessageId, r.senderId, r.emoji, r.at, r.removed);
+        continue;
+      }
+      const message = decoded.message;
       if (row.poll) setPollMeta(String(row.id), row.poll);
-      setChannelReactions(String(row.id), row.reactions);
       decodedAll.push({
-        id: decoded.id,
-        senderId: decoded.senderId,
-        content: decoded.content,
-        timestamp: decoded.timestamp,
-        isOwn: decoded.isOwn,
-        isSystem: decoded.isSystem,
+        id: message.id,
+        senderId: message.senderId,
+        content: message.content,
+        timestamp: message.timestamp,
+        isOwn: message.isOwn,
+        isSystem: message.isSystem,
       });
-      let text = decoded.content;
+      let text = message.content;
       try {
-        text = getPreviewText(parseEnvelope(decoded.content));
+        text = getPreviewText(parseEnvelope(message.content));
       } catch {
         /* fall back to the raw content */
       }
       if (text.toLowerCase().includes(q)) {
-        matches.push({ id: decoded.id, ts: decoded.timestamp.getTime() });
+        matches.push({ id: message.id, ts: message.timestamp.getTime() });
       }
     }
 

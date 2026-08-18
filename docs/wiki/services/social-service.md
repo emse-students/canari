@@ -133,7 +133,6 @@ The numbers and what they imply are in
 | GET \| PUT | `/api/channels/roles/:roleId/permissions` | Get/set a workspace role's base permissions (MANAGE_WORKSPACE / MANAGE_ROLES) |
 | DELETE | `/api/channels/:channelId/messages/:messageId` | Delete a channel message: own always, someone else's with `channel.moderate` |
 | POST | `/api/channels/:channelId/messages/:messageId/pin` | Pin message (own always, someone else's with `channel.moderate`) |
-| POST | `/api/channels/:channelId/messages/:messageId/reactions` | Toggle the caller's emoji reaction (`{ emoji }`); returns the new `emoji -> userIds` tally |
 | POST | `/api/channels/:channelId/messages/:messageId/poll/vote` | Vote on a poll (empty = retract) |
 | PATCH | `/api/channels/:channelId/messages/:messageId/poll/close` | Close a poll now (author or moderator); forces the deadline + unpins |
 | GET | `/api/channels/:channelId/notification-level` | Caller's push level for the channel |
@@ -185,24 +184,25 @@ to the workspace, which is how other members' clients replace the bubble with th
 
 #### Message reactions
 
-`POST /:channelId/messages/:messageId/reactions` with `{ emoji }` toggles the caller's reaction
-and returns the new tally. Reacting is a plain **read-access** right: no moderation permission,
-and the author has no say over reactions on their own message.
+**A reaction is an encrypted channel message (WP-40, 2026-08-18).** It is sealed under its sender's
+Graine session like any other body, so the server counts nothing and stores nothing readable. The
+endpoint, the `channel.reaction` broadcast and `channel_messages.reactions` are GONE - the tally used
+to be cleartext `emoji -> [userId]` (migration 034, dropped in 040), which meant a server that could
+not read "j'arrive" could still see that eight people put a heart on it.
 
-The tally is stored **in cleartext** on `channel_messages.reactions` (migration 034) as
-`emoji -> [userId]`, unlike the message body. That is the deliberate opposite of a DM reaction,
-which travels as an encrypted MLS system message: here the server has to count, and a single
-emoji leaks nothing the membership list does not already state. `GET /:channelId/messages`
-returns `reactions` on every row so a freshly opened channel renders its pills without a second
-call, and `channel.reaction` (`{ channelId, messageId, reactions }`) broadcasts the whole new map
-to the workspace - so it also reconciles the sender's optimistic toggle.
+What the server keeps is one boolean, `channel_messages.silent`: whether a row may ring a phone. It
+says nothing about what the row contains, and it does two things. A silent row gets **no push
+fan-out** - the author is still told, by the client, through the same targeted push a DM reaction
+uses. And `GET /:channelId/messages` fills its page with **non-silent rows**, then adds every silent
+row newer than the oldest of them: without that split, a burst of reactions would push real messages
+out of a 200-row page, and a channel would show less history the more people reacted in it.
 
-A pessimistic write lock serialises concurrent reactors on one row, exactly as poll voting does.
-Two guards worth keeping: the emoji is a JSON object **key**, so it is the prototype-pollution
-vector (`__proto__`/`constructor`/`prototype` are refused, and the map is null-prototype), and
-distinct emojis per message are capped at 15, mirroring the client's
-`MAX_DISTINCT_MESSAGE_REACTIONS`. An emoji key is dropped when its last reactor leaves, so the
-cap only ever counts live reactions.
+Clients merge the frames with the same convergent rule the DM path uses - last-write-wins per
+`(user, emoji)` pair on the sender's `at` - so the order a page is read in cannot change the result,
+and a frame seen twice changes nothing. The distinct-emoji cap (15) is enforced where the user ACTS
+and never in the merge: a frame that arrived is something the community did, and a device that
+refused it would drift from one that accepted it. Full reasoning:
+[channel-encryption](../protocols/channel-encryption.md).
 
 #### Reading a community by slug
 
@@ -416,7 +416,7 @@ The social-service publishes to `chat:channel_events`:
 | `channel.message.created` / `.deleted` | send, delete |
 | `channel.updated` / `.deleted` | rename, delete |
 | `workspace.updated` / `.deleted` | cover image change, soft delete |
-| `channel.typing`, `channel.pin`, `channel.reaction`, `channel.poll.vote` | live UI signals |
+| `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals |
 
 The chat-gateway subscribers fan out these events to all connected devices of the affected users.
 

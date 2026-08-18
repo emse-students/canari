@@ -1,60 +1,47 @@
 import { SvelteMap } from 'svelte/reactivity';
 import type { MessageReaction } from '$lib/types';
+import { applyReaction } from '$lib/utils/chat/messageReactions';
 
 /**
  * Reactive emoji reactions for community channel messages, keyed by SERVER message id.
  *
- * Channels take the opposite route from DMs: a DM reaction is an encrypted MLS system message
- * replayed by every member, whereas a channel reaction is a cleartext server-side tally the
- * server has to count. So DM reactions live in `useMessaging.messageReactions` while these live
- * here, seeded from the message rows on channel open and refreshed by `channel.reaction` events.
+ * **A channel reaction is an encrypted message now (WP-40), exactly like a DM one.** It used to be
+ * a cleartext `emoji -> userIds` tally the server counted, which meant the server could not read
+ * "j'arrive" but could still see that eight people put a heart on it - content, by any honest
+ * reading. What travels instead is a `ReactionMsg` sealed under the sender's Graine session, and
+ * this store is where the frames are merged.
+ *
+ * The merge is the SAME convergent rule the DM path uses (`applyReaction`, last-write-wins per
+ * `(user, emoji)` pair on `at`), so two devices that saw the same frames in any order hold the same
+ * set and a frame seen twice changes nothing.
  *
  * Not persisted - channels are server-authoritative and never stored locally.
  */
 const reactionsByMessage = new SvelteMap<string, MessageReaction[]>();
-
-/** Flattens the server tally (`emoji -> userIds`) into the flat list the UI renders. */
-export function flattenReactionTally(
-  tally: Record<string, string[]> | null | undefined
-): MessageReaction[] {
-  if (!tally) return [];
-  const out: MessageReaction[] = [];
-  for (const [emoji, userIds] of Object.entries(tally)) {
-    if (!emoji || !Array.isArray(userIds)) continue;
-    for (const userId of userIds) out.push({ emoji, userId: String(userId).toLowerCase() });
-  }
-  return out;
-}
 
 /** The reactions known for a channel message, or an empty list. */
 export function getChannelReactions(messageId: string): MessageReaction[] {
   return reactionsByMessage.get(messageId) ?? [];
 }
 
-/** Replaces a message's tally with the authoritative server one (load or `channel.reaction`). */
-export function setChannelReactions(
-  messageId: string,
-  tally: Record<string, string[]> | null | undefined
-): void {
-  if (!messageId) return;
-  reactionsByMessage.set(messageId, flattenReactionTally(tally));
-}
-
 /**
- * Applies the caller's toggle optimistically so the pill reacts to the click without waiting for
- * the round trip. The server response (and the broadcast) then replaces it wholesale.
+ * Merges one reaction frame - a placement or a removal - into what is held.
+ *
+ * @returns true when it changed something. A false is a frame that lost the last-write-wins race
+ *   or is a replay, and it is not an error: it is what makes replaying a page of history free.
  */
-export function applyLocalChannelReaction(messageId: string, userId: string, emoji: string): void {
-  if (!messageId || !userId || !emoji) return;
-  const userNorm = userId.toLowerCase();
-  const current = reactionsByMessage.get(messageId) ?? [];
-  const has = current.some((r) => r.userId === userNorm && r.emoji === emoji);
-  reactionsByMessage.set(
-    messageId,
-    has
-      ? current.filter((r) => !(r.userId === userNorm && r.emoji === emoji))
-      : [...current, { emoji, userId: userNorm }]
-  );
+export function applyChannelReactionFrame(
+  messageId: string,
+  userId: string,
+  emoji: string,
+  at: number,
+  removed = false
+): boolean {
+  if (!messageId || !userId || !emoji) return false;
+  const updated = applyReaction(getChannelReactions(messageId), userId, emoji, at, removed);
+  if (!updated) return false;
+  reactionsByMessage.set(messageId, updated);
+  return true;
 }
 
 /**

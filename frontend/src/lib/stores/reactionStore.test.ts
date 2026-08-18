@@ -1,65 +1,75 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  applyLocalChannelReaction,
+  applyChannelReactionFrame,
   channelReactionMap,
-  flattenReactionTally,
   getChannelReactions,
-  setChannelReactions,
 } from './reactionStore.svelte';
+
+/**
+ * The channel reaction store (WP-40).
+ *
+ * A channel reaction is an encrypted message now, so this store no longer receives an authoritative
+ * server tally - it receives FRAMES, in whatever order the network and a 200-row page hand them
+ * over. Every test here is about the one property that makes that safe: two devices that saw the
+ * same frames in any order hold the same set.
+ */
 
 describe('channel reaction store', () => {
   beforeEach(() => channelReactionMap().clear());
 
-  it('flattens the server tally into one entry per (emoji, user)', () => {
-    expect(flattenReactionTally({ '👍': ['u1', 'u2'], '🔥': ['u2'] })).toEqual([
-      { emoji: '👍', userId: 'u1' },
-      { emoji: '👍', userId: 'u2' },
-      { emoji: '🔥', userId: 'u2' },
-    ]);
-  });
-
-  it('lowercases user ids so ownership matches the normalised current user', () => {
-    expect(flattenReactionTally({ '👍': ['Camille.Dupont'] })).toEqual([
-      { emoji: '👍', userId: 'camille.dupont' },
-    ]);
-  });
-
-  it('treats a missing or malformed tally as no reactions', () => {
-    expect(flattenReactionTally(undefined)).toEqual([]);
-    expect(flattenReactionTally(null)).toEqual([]);
-    // A row predating the feature, or a key whose value is not a list.
-    expect(flattenReactionTally({ '👍': null as unknown as string[] })).toEqual([]);
-  });
-
-  it('replaces a message tally wholesale rather than merging into it', () => {
-    setChannelReactions('m1', { '👍': ['u1', 'u2'] });
-    setChannelReactions('m1', { '🔥': ['u3'] });
-    expect(getChannelReactions('m1')).toEqual([{ emoji: '🔥', userId: 'u3' }]);
-  });
-
-  it('applies a local toggle both ways, and twice is a no-op', () => {
-    setChannelReactions('m1', { '👍': ['u2'] });
-
-    applyLocalChannelReaction('m1', 'u1', '👍');
+  it('records a placement, lower-casing the user id', () => {
+    expect(applyChannelReactionFrame('m1', 'Camille.Dupont', '👍', 10)).toBe(true);
     expect(getChannelReactions('m1')).toEqual([
-      { emoji: '👍', userId: 'u2' },
-      { emoji: '👍', userId: 'u1' },
+      { emoji: '👍', userId: 'camille.dupont', at: 10, removed: false },
     ]);
-
-    // The toggle is its own inverse - that is what the failed-request rollback relies on.
-    applyLocalChannelReaction('m1', 'u1', '👍');
-    expect(getChannelReactions('m1')).toEqual([{ emoji: '👍', userId: 'u2' }]);
   });
 
-  it('ignores an empty message id, user or emoji instead of storing a phantom entry', () => {
-    applyLocalChannelReaction('', 'u1', '👍');
-    applyLocalChannelReaction('m1', '', '👍');
-    applyLocalChannelReaction('m1', 'u1', '');
-    setChannelReactions('', { '👍': ['u1'] });
+  it('lets a later removal take a placement back', () => {
+    applyChannelReactionFrame('m1', 'u1', '👍', 10);
+    expect(applyChannelReactionFrame('m1', 'u1', '👍', 20, true)).toBe(true);
+    expect(getChannelReactions('m1')[0].removed).toBe(true);
+  });
+
+  it('ignores a frame that lost the race, and a replay of one it holds', () => {
+    applyChannelReactionFrame('m1', 'u1', '👍', 20, true);
+    // A placement that was superseded must not come back because it arrived second.
+    expect(applyChannelReactionFrame('m1', 'u1', '👍', 10)).toBe(false);
+    // Replaying a frame onto its own result is a no-op, not a flip.
+    expect(applyChannelReactionFrame('m1', 'u1', '👍', 20, true)).toBe(false);
+    expect(getChannelReactions('m1')[0].removed).toBe(true);
+  });
+
+  it('converges whatever order the frames arrive in', () => {
+    applyChannelReactionFrame('m1', 'u1', '👍', 30, true);
+    applyChannelReactionFrame('m1', 'u1', '👍', 10);
+    applyChannelReactionFrame('m1', 'u1', '👍', 20, false);
+    const forwards = getChannelReactions('m1');
+
+    channelReactionMap().clear();
+    applyChannelReactionFrame('m1', 'u1', '👍', 10);
+    applyChannelReactionFrame('m1', 'u1', '👍', 20, false);
+    applyChannelReactionFrame('m1', 'u1', '👍', 30, true);
+
+    // Reading a history page newest-first is exactly this, and it must not change the answer.
+    expect(getChannelReactions('m1')).toEqual(forwards);
+  });
+
+  it('keeps one entry per (user, emoji) pair and one per message', () => {
+    applyChannelReactionFrame('m1', 'u1', '👍', 10);
+    applyChannelReactionFrame('m1', 'u2', '👍', 10);
+    applyChannelReactionFrame('m1', 'u1', '🔥', 10);
+    applyChannelReactionFrame('m2', 'u1', '👍', 10);
+    expect(getChannelReactions('m1')).toHaveLength(3);
+    expect(getChannelReactions('m2')).toHaveLength(1);
+  });
+
+  it('ignores an incomplete frame rather than storing half of one', () => {
+    expect(applyChannelReactionFrame('', 'u1', '👍', 10)).toBe(false);
+    expect(applyChannelReactionFrame('m1', '', '👍', 10)).toBe(false);
+    expect(applyChannelReactionFrame('m1', 'u1', '', 10)).toBe(false);
     expect(channelReactionMap().size).toBe(0);
   });
 
-  it('reports no reactions for a message nothing is known about', () => {
+  it('answers an empty list for a message nobody reacted to', () => {
     expect(getChannelReactions('never-seen')).toEqual([]);
   });
 });

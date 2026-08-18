@@ -213,6 +213,13 @@ export interface SendChannelMessageDto {
    * exposes WHO is mentioned (never the content) to the server.
    */
   mentionedUserIds?: string[];
+  /**
+   * True for a message that must never notify - a reaction (WP-40).
+   *
+   * Told rather than inferred: the server cannot read the body and must not have to guess whether
+   * it is worth a push. Whether to ring a phone is the ONLY thing this flag says.
+   */
+  silent?: boolean;
 }
 
 export interface GetChannelMessagesQuery {

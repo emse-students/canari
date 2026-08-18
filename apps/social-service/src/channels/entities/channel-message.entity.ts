@@ -63,8 +63,15 @@ export class ChannelMessage {
   @Column('jsonb', { default: [] })
   attachments: any[];
 
-  @Column('jsonb', { default: {} })
-  reactions: Record<string, string[]>;
+  /**
+   * True for a row that must never ring a phone - a reaction, today.
+   *
+   * The ONE thing the server legitimately needs to know about a body it cannot read. It says
+   * nothing about what the row contains: not which emoji, not on what, not by whom. It also keeps
+   * a burst of reactions from pushing older messages out of a page - see {@link listMessages}.
+   */
+  @Column({ type: 'boolean', default: false })
+  silent: boolean;
 
   @Column('jsonb', { default: {} })
   metadata: any;

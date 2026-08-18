@@ -6,8 +6,8 @@ import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { setTyping } from '$lib/stores/typingStore.svelte';
 import { applyPin } from '$lib/stores/pinStore.svelte';
+import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
-import { setChannelReactions } from '$lib/stores/reactionStore.svelte';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 
@@ -87,15 +87,6 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     // order, so there is nothing to merge it against - the date only has to beat what we hold.
     if (channelId && messageId)
       applyPin(`channel_${channelId}`, messageId, !!data.pinned, Date.now());
-    return;
-  }
-
-  // Live reaction tally broadcast after any member toggles one. The server sends the whole
-  // map, so it also reconciles the optimistic local toggle.
-  if (event.type === 'channel.reaction') {
-    const data = event.data || {};
-    const messageId = String(data.messageId || '');
-    if (messageId) setChannelReactions(messageId, data.reactions);
     return;
   }
 
@@ -257,6 +248,19 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
                 : Number(data.messageIndex),
           });
           const msg = decodeAppMessage(bytes);
+          // A reaction is a channel message now (WP-40), so it arrives on this very path. It
+          // changes a bubble instead of adding one, and it is the ONLY live route reactions have -
+          // there is no server tally left to broadcast.
+          if (msg?.reaction) {
+            applyChannelReactionFrame(
+              String(msg.reaction.messageId ?? ''),
+              String(sender || '').toLowerCase(),
+              String(msg.reaction.emoji ?? ''),
+              Number(msg.reaction.at ?? 0),
+              msg.reaction.removed === true
+            );
+            return;
+          }
           if (msg) {
             const envelope =
               appMsgToEnvelope(msg, channelServerMs) ??

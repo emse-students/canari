@@ -162,6 +162,8 @@ export interface SendChannelMessageDto {
    * notification level without decrypting. Exposes WHO is mentioned (never the content).
    */
   mentionedUserIds?: string[];
+  /** True for a message that must never notify - a reaction. The server pushes nothing for it. */
+  silent?: boolean;
 }
 
 /** Per-channel push notification level a member can set for themselves. */
@@ -218,8 +220,13 @@ export interface ChannelMessageRow {
   createdAt: string;
   pinned: boolean;
   poll: ChannelPollMeta | null;
-  /** Cleartext reaction tally, `emoji -> userIds`. Absent on rows predating the feature. */
-  reactions?: Record<string, string[]>;
+  /**
+   * True for a row that must never notify - a reaction (WP-40).
+   *
+   * The only thing the server knows about a body it cannot read. It does NOT say what the row is:
+   * the client decodes it like any other, and a reaction frame is routed to the reaction store.
+   */
+  silent?: boolean;
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
@@ -719,24 +726,6 @@ export class ChannelService {
     );
     await this.handleError(res);
     return res.json() as Promise<ChannelPollMeta>;
-  }
-
-  /**
-   * Toggles the caller's emoji reaction on a channel message. Returns the new authoritative
-   * tally (`emoji -> userIds`); the server also broadcasts `channel.reaction` to every member.
-   */
-  async toggleReaction(
-    channelId: string,
-    messageId: string,
-    emoji: string
-  ): Promise<Record<string, string[]>> {
-    const cid = this.normalizeChannelId(channelId);
-    const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/${cid}/messages/${encodeURIComponent(messageId)}/reactions`,
-      { method: 'POST', body: JSON.stringify({ emoji }) }
-    );
-    await this.handleError(res);
-    return res.json() as Promise<Record<string, string[]>>;
   }
 
   /** Returns the IDs of the pinned messages in a channel. */

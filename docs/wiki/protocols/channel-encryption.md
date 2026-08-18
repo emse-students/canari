@@ -1,11 +1,12 @@
 # Graine - channel encryption (WP-GRAINE)
 
-> **Status 2026-08-18: THE CLIENT SEALS AND OPENS UNDER GRAINE (Phases 1-4, up to WP-32).** A salon
-> message is sealed under a per-sender seed the server has never held, and the push path derives its
-> key the same way on all three native surfaces. What is NOT done: the repair (WP-33), the history
-> bundle (WP-34/35), reactions (WP-40), and the deletion of the server's own derivation - so
-> `channels.masterSecret` still EXISTS, unused, until WP-50/51. §1 describes what it did while it
-> was live, and stays as the record of why this was worth doing.
+> **Status 2026-08-18: PHASES 1-5 ARE IN (up to WP-40).** A salon message is sealed under a
+> per-sender seed the server has never held; the push path derives its key the same way on all three
+> native surfaces; a missing seed is asked for and answered; a joiner receives the history its
+> community allows; and a reaction is an encrypted message rather than a cleartext tally. What is NOT
+> done: the deletion of the server's own derivation - so `channels.masterSecret` still EXISTS,
+> unused, until WP-50/51 - and the cut itself (WP-60..62). §1 describes what the old regime did while
+> it was live, and stays as the record of why this was worth doing.
 
 **The requirement, from the user:** a community message must not be readable by the server, at the
 level MLS already gives DMs. **The constraints:** the interface barely moves; a member must be able
@@ -684,7 +685,37 @@ is empty.
 ### Phase 5 - reactions
 
 - **WP-40** Reactions become silent encrypted channel messages aggregated client-side; the
-  `reactions` column and its endpoint are removed.
+  `reactions` column and its endpoint are removed. **DONE 2026-08-18** - below.
+
+#### WP-40, and the one bit the server still needs
+
+**A reaction is a channel message now**, sealed under its sender's Graine session like any other
+(`ReactionMsg`, the same frame a DM uses, with the same `at` on both legs). `channel_messages.reactions`
+- a cleartext `emoji -> userIds` jsonb the server counted - is DROPPED in migration `040`, with its
+endpoint and its `channel.reaction` broadcast. It was the last place the server could read content:
+it could not read "j'arrive" but could see that eight people put a heart on it.
+
+**`silent` is what replaces it, and it is one boolean.** Not which emoji, not on what, not by whom -
+only whether a row may ring a phone. The server cannot read the body, so it is TOLD rather than left
+to guess: *never learn by failing what a fact could have told you*. Two things depend on it:
+
+| Consequence | Why it is not optional |
+| --- | --- |
+| No push fan-out for a silent row | A heart that rang every phone in the community is a community people mute. The AUTHOR is still told, by the client, through the same targeted push a DM reaction uses. |
+| The page is filled with BODIES, silent rows added | A plain `take: 200` would let a burst of reactions push real messages out of the page - a channel that shows less history the more people react to it, with nothing anywhere saying so. The limit counts non-silent rows; every silent row newer than the oldest of them comes along. |
+
+**The merge is the DM one, unchanged** (`applyReaction`, last-write-wins per `(user, emoji)` pair on
+`at`), so reading a history page newest-first gives the same result as reading it oldest-first, and
+a frame seen twice changes nothing. That is what makes a reaction arriving before the message it
+lands on a non-event.
+
+**The distinct-emoji cap moved to where the user ACTS.** The server enforced it; nothing server-side
+can now. It is checked before sending and never in the merge, because a frame that arrived is
+something the community did, and a device that refused it would drift from one that accepted it.
+
+**A reaction row carries its OWN message id**, never the reacted-to message's: every server-side
+operation on a channel message - delete, pin, poll vote - addresses it by row id, and two rows
+answering to one address would make each of those ambiguous.
 
 ### Phase 6 - the server forgets how to read
 
@@ -692,9 +723,10 @@ is empty.
   `getChannelHistoryKeysForUser` and their routes. `STALE_CHANNEL_KEY_VERSION` goes with them - the
   server no longer knows which session is current and no longer needs to, which removes a coupling
   instead of moving it.
-- **WP-51** Migration `040` (`037` was WP-21's `distributionGroupId`, `038` added
+- **WP-51** Migration `041` (`037` was WP-21's `distributionGroupId`, `038` added
   `channel_messages."senderSessionId"` and `"messageIndex"` in WP-31, `039` added
-  `channel_workspaces."historyVisibility"` in WP-35): drop
+  `channel_workspaces."historyVisibility"` in WP-35, `040` traded
+  `channel_messages.reactions` for `silent` in WP-40): drop
   `channel_messages.keyVersion`; `channels` drops `masterSecret` and `keyVersion`; `channel_members`
   drops the legacy `keys` jsonb.
 - **WP-52** ~~Push payload carries `sessionId`~~ **DONE inside WP-31/32**, server and all three
