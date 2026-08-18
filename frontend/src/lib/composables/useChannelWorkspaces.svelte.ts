@@ -13,7 +13,12 @@ import {
   isChannelConversationId,
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
-import { registerChannelWorkspace } from '$lib/utils/graine/runtime';
+import {
+  narrowHistoryVisibility,
+  registerChannelWorkspace,
+  registerCommunityHistoryVisibility,
+} from '$lib/utils/graine/runtime';
+import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { applyLocalChannelReaction, setChannelReactions } from '$lib/stores/reactionStore.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -51,6 +56,8 @@ export interface ChannelSidebarWorkspace {
   viewerCanManage?: boolean;
   /** Server-authoritative: true when the current user holds `channel.moderate` (or a permission that subsumes it) here, letting them delete other members' channel messages. */
   viewerCanModerate?: boolean;
+  /** What this community lets a newcomer read. Absent until the backend listing says. */
+  historyVisibility?: GraineHistoryVisibility;
   /** Ordered list of channels belonging to this workspace. */
   channels: ChannelSidebarItem[];
 }
@@ -310,6 +317,21 @@ export function useChannelWorkspaces() {
       .slice(0, 48);
   }
 
+  /**
+   * Records a community's history rule in the Graine layer and returns the narrowed value.
+   *
+   * The rule reaches the sidebar and the seed layer from the same read, because they must never
+   * disagree: the modal showing "shared" while this device answers a joiner with nothing is a
+   * divergence no log would ever name.
+   */
+  function adoptHistoryVisibility(
+    workspaceId: string | undefined,
+    visibility: string
+  ): GraineHistoryVisibility {
+    if (!workspaceId) return narrowHistoryVisibility(visibility);
+    return registerCommunityHistoryVisibility(workspaceId, visibility);
+  }
+
   /** Inserts a new workspace sidebar entry or updates the matching one if it already exists. Returns the sidebar entry. */
   function upsertWorkspaceFromDto(workspace: WorkspaceDto): ChannelSidebarWorkspace {
     const workspaceId = workspace.id ?? workspace._id;
@@ -328,6 +350,12 @@ export function useChannelWorkspaces() {
         existing.viewerCanManage = workspace.viewerCanManage;
       if (workspace.viewerCanModerate !== undefined)
         existing.viewerCanModerate = workspace.viewerCanModerate;
+      if (workspace.historyVisibility !== undefined) {
+        existing.historyVisibility = adoptHistoryVisibility(
+          workspaceId,
+          workspace.historyVisibility
+        );
+      }
       channelWorkspaces = [...channelWorkspaces];
       return existing;
     }
@@ -340,6 +368,10 @@ export function useChannelWorkspaces() {
       imageMediaId: workspace.imageMediaId ?? null,
       viewerCanManage: workspace.viewerCanManage ?? false,
       viewerCanModerate: workspace.viewerCanModerate ?? false,
+      historyVisibility:
+        workspace.historyVisibility === undefined
+          ? undefined
+          : adoptHistoryVisibility(workspaceId, workspace.historyVisibility),
       channels: [],
     };
     channelWorkspaces = [...channelWorkspaces, created];
@@ -1060,11 +1092,29 @@ export function useChannelWorkspaces() {
     }
   }
 
-  /** Applies an incoming real-time workspace-updated event (currently: cover image change). */
-  function handleWorkspaceUpdated(event: { workspaceId: string; imageMediaId?: string }) {
+  /**
+   * Applies an incoming real-time workspace-updated event (cover image, history rule).
+   *
+   * The history rule is applied to the Graine layer too, and not only to the sidebar: a member
+   * still holding `shared` in memory would keep handing the past to joiners after an admin had
+   * closed it, until their next relaunch.
+   */
+  function handleWorkspaceUpdated(event: {
+    workspaceId: string;
+    imageMediaId?: string;
+    historyVisibility?: string;
+  }) {
+    const visibility =
+      event.historyVisibility === undefined
+        ? undefined
+        : adoptHistoryVisibility(event.workspaceId, event.historyVisibility);
     channelWorkspaces = channelWorkspaces.map((ws) =>
       ws.workspaceDbId === event.workspaceId
-        ? { ...ws, imageMediaId: event.imageMediaId ?? ws.imageMediaId }
+        ? {
+            ...ws,
+            imageMediaId: event.imageMediaId ?? ws.imageMediaId,
+            historyVisibility: visibility ?? ws.historyVisibility,
+          }
         : ws
     );
   }

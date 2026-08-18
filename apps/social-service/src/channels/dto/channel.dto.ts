@@ -229,3 +229,14 @@ export interface GetChannelMessagesQuery {
 export interface UpdateChannelImageDto {
   mediaId: string;
 }
+
+/**
+ * What a community lets a newcomer read. The two values are the whole vocabulary: anything else is
+ * refused rather than coerced, because a value nobody recognises would silently become the default
+ * on the very devices that decide what history to hand over.
+ */
+export type HistoryVisibility = 'shared' | 'joined';
+
+export interface UpdateWorkspaceHistoryVisibilityDto {
+  historyVisibility: HistoryVisibility;
+}

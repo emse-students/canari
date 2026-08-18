@@ -9,6 +9,7 @@
     Upload,
     Loader,
     Link2,
+    History,
   } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Modal from '../shared/Modal.svelte';
@@ -29,6 +30,10 @@
     type WorkspaceInviteDto,
   } from '$lib/services/ChannelService';
   import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
+  import {
+    GRAINE_DEFAULT_HISTORY_VISIBILITY,
+    type GraineHistoryVisibility,
+  } from '$lib/crypto/graineConstants';
   import { m } from '$lib/paraglide/messages';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { Log } from '$lib/utils/Log';
@@ -45,6 +50,8 @@
     workspaceDbId?: string;
     /** Server-authoritative: true when the current user holds MANAGE_WORKSPACE here. Gates admin controls. */
     viewerCanManage?: boolean;
+    /** What this community lets a newcomer read, as the last backend listing said. */
+    historyVisibility?: GraineHistoryVisibility;
     channels: ChannelItem[];
   }
 
@@ -105,6 +112,14 @@
   let inviteUserId = $state('');
   let inviteRole = $state<CanonicalRole>('member');
   let inviteLoading = $state(false);
+
+  // ── History visibility ────────────────────────────────────────────────────
+  // Mirrored into local state rather than read straight off the workspace, because the sidebar
+  // entry is only corrected when the server's `workspace.updated` broadcast comes back - and the
+  // select must not snap back to its old value while that is in flight.
+  let historyVisibility = $state<GraineHistoryVisibility>(GRAINE_DEFAULT_HISTORY_VISIBILITY);
+  let historyVisibilitySaving = $state(false);
+  let historyVisibilityError = $state('');
 
   // ── Members state ─────────────────────────────────────────────────────────
   let communityMembers = $state<Array<{ userId: string; role: CanonicalRole }>>([]);
@@ -505,6 +520,40 @@
     }
   }
 
+  /**
+   * Publishes the community's history rule.
+   *
+   * The value is applied locally only once the server has ACCEPTED it: this decides what every
+   * member's device hands a newcomer, so an optimistic flip would show an admin a community closed
+   * while every device kept opening it.
+   */
+  async function saveHistoryVisibility(next: GraineHistoryVisibility) {
+    const workspaceDbId = selectedWorkspace?.workspaceDbId;
+    if (!workspaceDbId || next === historyVisibility) return;
+    historyVisibilitySaving = true;
+    historyVisibilityError = '';
+    try {
+      const result = await channelService.updateWorkspaceHistoryVisibility(workspaceDbId, next);
+      historyVisibility = result.historyVisibility;
+      Log.d('CHANNEL', `history visibility set to ${result.historyVisibility}`);
+    } catch (e) {
+      // Classified by the server's CODE, never by its sentence - the same contract every other
+      // community refusal in this modal is read through.
+      historyVisibilityError =
+        describeCommunityRefusal(e instanceof ChannelApiError ? e.code : null) ??
+        (e instanceof Error ? e.message : String(e));
+    } finally {
+      historyVisibilitySaving = false;
+    }
+  }
+
+  // The selected community's rule, re-read whenever the modal opens on another one. Sourced from
+  // the sidebar entry, which the server's broadcast keeps current on every member's device.
+  $effect(() => {
+    const declared = selectedWorkspace?.historyVisibility;
+    historyVisibility = declared ?? GRAINE_DEFAULT_HISTORY_VISIBILITY;
+  });
+
   // Load data lazily when a tab becomes active; reset transient state on close.
   $effect(() => {
     void selectedWorkspace?.id;
@@ -515,6 +564,7 @@
       inviteUserId = '';
       inviteRole = 'member';
       imageUploadError = '';
+      historyVisibilityError = '';
       shareLink = '';
       shareInvite = null;
       shareCopied = false;
@@ -650,6 +700,42 @@
               <span class="text-xs text-text-muted">{m.chat_community_e2e_description()}</span>
             </div>
           </div>
+
+          {#if canManage}
+            <div class="border border-cn-border bg-cn-surface rounded-xl p-4 shadow-sm space-y-3">
+              <p
+                class="text-xs font-bold uppercase tracking-wider text-text-muted flex items-center gap-1.5"
+              >
+                <History size={14} />
+                {m.chat_community_history_visibility_label()}
+              </p>
+              <p class="text-sm text-text-muted">
+                {m.chat_community_history_visibility_description()}
+              </p>
+              <label class="flex flex-col gap-1 text-xs font-semibold text-text-muted">
+                <select
+                  value={historyVisibility}
+                  disabled={historyVisibilitySaving}
+                  onchange={(event) =>
+                    void saveHistoryVisibility(
+                      (event.currentTarget as HTMLSelectElement).value as GraineHistoryVisibility
+                    )}
+                  class="rounded-xl border border-cn-border bg-cn-surface px-3 py-2 text-sm font-normal text-text-main disabled:opacity-50"
+                >
+                  <option value="shared">{m.chat_community_history_shared_option()}</option>
+                  <option value="joined">{m.chat_community_history_joined_option()}</option>
+                </select>
+              </label>
+              <p class="text-xs text-text-muted">
+                {historyVisibility === 'shared'
+                  ? m.chat_community_history_shared_note()
+                  : m.chat_community_history_joined_note()}
+              </p>
+              {#if historyVisibilityError}
+                <p class="text-xs text-red-err">{historyVisibilityError}</p>
+              {/if}
+            </div>
+          {/if}
         </div>
       {/if}
 

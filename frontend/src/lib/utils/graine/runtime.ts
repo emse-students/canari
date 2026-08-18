@@ -1,5 +1,6 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
+import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 
 /**
  * What the Graine layer needs from the session, injected once rather than imported.
@@ -46,9 +47,61 @@ export function setGraineRuntime(next: GraineRuntime | null): void {
   runtime = next ? { ...next, userId: next.userId.toLowerCase() } : null;
   if (!next) {
     workspaceByChannel.clear();
+    historyVisibilityByWorkspace.clear();
     seedCache.clear();
     repairListener = null;
   }
+}
+
+/** What each loaded community lets a newcomer read - the rule its members enforce. */
+const historyVisibilityByWorkspace = new Map<string, GraineHistoryVisibility>();
+
+/**
+ * Records a community's history rule, narrowing whatever the wire said.
+ *
+ * Narrowed HERE and nowhere else, so a value the server does not recognise cannot reach the
+ * decision that hands seeds over. An unknown word is refused rather than coerced to the default:
+ * coercion is how a community whose admin closed its past ends up handing it out.
+ */
+export function registerCommunityHistoryVisibility(
+  workspaceId: string,
+  visibility: string
+): GraineHistoryVisibility {
+  const narrowed = narrowHistoryVisibility(visibility);
+  historyVisibilityByWorkspace.set(workspaceId, narrowed);
+  return narrowed;
+}
+
+/**
+ * Turns whatever the wire said into one of the two values, refusing the unknown.
+ *
+ * The ONE place the narrowing happens, so the sidebar and the seed layer cannot end up disagreeing
+ * about a community - a modal reading "shared" while this device answers joiners with nothing is a
+ * divergence no log would ever name.
+ */
+export function narrowHistoryVisibility(visibility: string): GraineHistoryVisibility {
+  if (visibility === 'shared' || visibility === 'joined') return visibility;
+  console.warn(
+    `[GRAINE] historyVisibility='${visibility}' is not a value this client knows - treating it as 'joined'`
+  );
+  return 'joined';
+}
+
+/**
+ * A community's history rule, or `joined` when this session never learned it.
+ *
+ * **Fail-closed, and loudly.** The unknown case is a device about to decide whether to hand a
+ * newcomer the past; refusing costs a newcomer some history they were entitled to, guessing `shared`
+ * costs a community the privacy it asked for. Those are not symmetrical, so the cheap mistake is the
+ * one taken - and it is logged, because the other symptom is a joiner with a blank salon.
+ */
+export function historyVisibilityFor(workspaceId: string): GraineHistoryVisibility {
+  const known = historyVisibilityByWorkspace.get(workspaceId);
+  if (known) return known;
+  console.warn(
+    `[GRAINE] no history rule known for community ${workspaceId.slice(0, 8)} - refusing to hand the past over`
+  );
+  return 'joined';
 }
 
 /**

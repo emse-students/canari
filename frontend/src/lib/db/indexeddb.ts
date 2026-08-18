@@ -737,6 +737,20 @@ export class IndexedDbStorage implements IStorage {
     return decoded[0] ?? null;
   }
 
+  async getGraineSessionsForWorkspace(
+    workspaceId: string,
+    deviceKeyB64: string
+  ): Promise<StoredGraineSession[]> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction('graine', 'readonly');
+      const req = tx.objectStore('graine').index('byWorkspace').getAll(workspaceId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return this.decodeGraineRows(rows, deviceKeyB64);
+  }
+
   async deleteGraineSessionsForWorkspace(workspaceId: string): Promise<number> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {

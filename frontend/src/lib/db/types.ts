@@ -371,6 +371,15 @@ export interface IStorage {
   /** One session by id, or null. The lookup a received message makes before it can be opened. */
   getGraineSession(sessionId: string, deviceKeyB64: string): Promise<StoredGraineSession | null>;
   /**
+   * Every session held for one COMMUNITY, newest first - what a joiner's history bundle is built
+   * from. Scoped to the community and not to a channel because one bundle answers for all of them:
+   * a newcomer joins the community, not a salon at a time.
+   */
+  getGraineSessionsForWorkspace(
+    workspaceId: string,
+    deviceKeyB64: string
+  ): Promise<StoredGraineSession[]>;
+  /**
    * Drop every session of a community, returning how many went.
    *
    * The scope is deliberately the COMMUNITY and not the channel: leaving takes away every salon at

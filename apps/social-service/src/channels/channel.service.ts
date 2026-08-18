@@ -50,6 +50,7 @@ import {
   type ChannelNotificationLevel,
   type ChannelPollMeta,
   type ChannelWritePolicy,
+  type HistoryVisibility,
   type WorkspaceInviteDto,
 } from './dto/channel.dto';
 
@@ -1102,6 +1103,57 @@ export class ChannelService {
   }
 
   /**
+   * Sets what the community lets a newcomer read, and tells every member.
+   *
+   * **The server cannot enforce this and does not pretend to.** It holds no seed; the rule is
+   * applied by whichever member answers a joiner's history request, which is why the value has to
+   * be readable by every device rather than kept as one admin's local preference. Broadcasting it
+   * is not a nicety either: a member still holding `shared` in memory would keep handing the past
+   * over after an admin had closed it.
+   */
+  async updateWorkspaceHistoryVisibility(
+    workspaceId: string,
+    actorUserId: string,
+    historyVisibility: HistoryVisibility
+  ) {
+    if (historyVisibility !== 'shared' && historyVisibility !== 'joined') {
+      throw new BadRequestException({
+        code: 'HISTORY_VISIBILITY_INVALID',
+        message: `historyVisibility must be 'shared' or 'joined'`,
+      });
+    }
+
+    const workspace = await this.workspaceRepo.findOne({ where: { id: workspaceId } });
+    if (!workspace) throw new NotFoundException('Workspace not found');
+    if (
+      !(await this.memberHasWorkspacePermission(
+        workspaceId,
+        actorUserId,
+        CHANNEL_PERMISSIONS.MANAGE_WORKSPACE
+      ))
+    ) {
+      throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
+    }
+
+    workspace.historyVisibility = historyVisibility;
+    await this.workspaceRepo.save(workspace);
+    // Logged at info: it changes what every future joiner may read, it is rare, and it is the only
+    // trace of who opened or closed a community's past.
+    this.logger.log(
+      `[WORKSPACE] historyVisibility=${historyVisibility} workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+    );
+
+    const workspaceMemberIds = await this.getWorkspaceMemberIds(workspaceId);
+    await this.redis.publishChannelEvent(
+      'workspace.updated',
+      { workspaceId, historyVisibility },
+      workspaceMemberIds
+    );
+
+    return { success: true, workspaceId, historyVisibility };
+  }
+
+  /**
    * Removes the user from the workspace and broadcasts a member-kicked event so other clients clean
    * up their UI.
    *
@@ -2146,6 +2198,34 @@ export class ChannelService {
     };
 
     return members.filter(belongsToChannel).map((m) => {
+      const memberRoles = (m.roleIds || []).map((rid) => roleMap.get(rid)).filter(Boolean);
+      const highestRole = memberRoles.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
+      return {
+        id: m.id,
+        userId: m.userId,
+        role: this.normalizeRoleLabelToCanonical(highestRole?.name),
+        joinedAt: m.createdAt,
+      };
+    });
+  }
+
+  /**
+   * The community's roster, keyed by the COMMUNITY.
+   *
+   * `listChannelMembers(..., 'workspace')` answers the same question through a channel id, which
+   * every caller that has one should keep using. This one exists for the caller that has none: a
+   * device that has just joined a community's Graine distribution group and needs to name who to
+   * ask for history, before any salon has been opened. Reaching for an arbitrary channel to get a
+   * community's roster is the kind of indirection that breaks the first time the list is empty.
+   */
+  async listWorkspaceMembers(workspaceId: string, actorUserId: string) {
+    await this.assertWorkspaceMember(workspaceId, actorUserId);
+
+    const members = await this.memberRepo.find({ where: { workspaceId } });
+    const roles = await this.roleRepo.find({ where: { workspaceId } });
+    const roleMap = new Map(roles.map((r) => [r.id, r]));
+
+    return members.map((m) => {
       const memberRoles = (m.roleIds || []).map((rid) => roleMap.get(rid)).filter(Boolean);
       const highestRole = memberRoles.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
       return {

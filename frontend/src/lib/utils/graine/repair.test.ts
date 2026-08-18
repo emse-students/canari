@@ -1,7 +1,9 @@
+import type { StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';
 import { decodeAppMessage } from '$lib/proto/codec';
 import {
   noteMissingSeed,
+  requestCommunityHistory,
   resetGraineRepairState,
   resolveAnswerer,
   forgetAskedSession,
@@ -17,22 +19,33 @@ import { registerChannelWorkspace, setGraineRuntime } from './runtime';
  */
 
 const listMembers = vi.fn();
+const listWorkspaceMembers = vi.fn();
 vi.mock('$lib/services/ChannelService', () => ({
   ChannelService: class {
     listMembers(...args: unknown[]) {
       return listMembers(...args);
     }
+    listWorkspaceMembers(...args: unknown[]) {
+      return listWorkspaceMembers(...args);
+    }
   },
 }));
 
 let sendMessage: ReturnType<typeof vi.fn>;
+/** What the fake store answers for the community - empty means "this device has no history". */
+let heldSessions: StoredGraineSession[];
 
 beforeEach(() => {
   resetGraineRepairState();
-  listMembers.mockResolvedValue([{ userId: 'Bob' }, { userId: 'alice' }, { userId: 'carol' }]);
+  const roster = [{ userId: 'Bob' }, { userId: 'alice' }, { userId: 'carol' }];
+  listMembers.mockResolvedValue(roster);
+  listWorkspaceMembers.mockResolvedValue(roster);
+  heldSessions = [];
   sendMessage = vi.fn().mockResolvedValue(undefined);
   setGraineRuntime({
-    storage: {} as never,
+    storage: {
+      getGraineSessionsForWorkspace: async () => heldSessions,
+    } as never,
     deviceKeyB64: 'device-key',
     userId: 'alice',
     mlsService: {
@@ -137,17 +150,61 @@ describe('noteMissingSeed', () => {
   });
 });
 
+describe('requestCommunityHistory (WP-34)', () => {
+  it('asks the lowest other member, once, when this device holds nothing', async () => {
+    await requestCommunityHistory('ws-1');
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const request = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest;
+    expect(request?.kind).toBe(canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY);
+    // 'alice' is us, so the lowest OTHER member is 'bob'.
+    expect(request?.answererUserId).toBe('bob');
+    expect(request?.sessionIds ?? []).toHaveLength(0);
+  });
+
+  it('asks nothing when this device already holds a seed for the community', async () => {
+    heldSessions = [{ sessionId: 's-1' } as never];
+
+    await requestCommunityHistory('ws-1');
+
+    // Derived from the store, not from a "done" flag: it survives a reload, and a device that has
+    // history has nothing to catch up on.
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("says so rather than asking when we are the community's only member", async () => {
+    listMembers.mockResolvedValue([{ userId: 'alice' }]);
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalled();
+    info.mockRestore();
+  });
+});
+
 describe('resolveAnswerer', () => {
   it('addresses the sender whenever they are still in the community', () => {
-    expect(resolveAnswerer('Bob', new Set(['alice', 'bob', 'carol']))).toBe('bob');
+    expect(resolveAnswerer('Bob', new Set(['alice', 'bob', 'carol']), 'alice')).toBe('bob');
   });
 
   it('falls back to the lowest user id, which every device computes identically', () => {
     // No clock, no election, nothing for a race to decide: a total order every device already has.
-    expect(resolveAnswerer('dave', new Set(['carol', 'alice', 'bob']))).toBe('alice');
+    expect(resolveAnswerer('dave', new Set(['carol', 'alice', 'bob']), 'zoe')).toBe('alice');
+  });
+
+  it('never addresses ourselves, even when the session was minted by our own other device', () => {
+    // A request reaches only the member it names. Naming ourselves costs a round trip and answers
+    // nothing: we are asking precisely because this device does not hold the seed.
+    expect(resolveAnswerer('alice', new Set(['alice', 'bob']), 'alice')).toBe('bob');
+    expect(resolveAnswerer('dave', new Set(['alice', 'bob']), 'alice')).toBe('bob');
   });
 
   it('answers null when nobody is left who could hold the seed', () => {
-    expect(resolveAnswerer('dave', new Set())).toBeNull();
+    expect(resolveAnswerer('dave', new Set(), 'alice')).toBeNull();
+    expect(resolveAnswerer('dave', new Set(['alice']), 'alice')).toBeNull();
   });
 });

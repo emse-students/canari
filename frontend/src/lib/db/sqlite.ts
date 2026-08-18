@@ -799,6 +799,17 @@ export class SqliteStorage implements IStorage {
     return decoded[0] ?? null;
   }
 
+  /** Every session of a community, newest first. See {@link IStorage.getGraineSessionsForWorkspace}. */
+  async getGraineSessionsForWorkspace(
+    workspaceId: string,
+    deviceKeyB64: string
+  ): Promise<StoredGraineSession[]> {
+    const rows: any[] = await this.db.select('SELECT * FROM graine WHERE workspace_id = $1', [
+      workspaceId,
+    ]);
+    return this.decodeGraineRows(rows, deviceKeyB64);
+  }
+
   /** Erase a community's seeds and report how many. See {@link IStorage.deleteGraineSessionsForWorkspace}. */
   async deleteGraineSessionsForWorkspace(workspaceId: string): Promise<number> {
     const rows: any[] = await this.db.select(

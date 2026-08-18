@@ -511,7 +511,9 @@ acknowledged, so the server redelivers it once the join lands; a dispatched fram
 - **WP-33** Request and answer a missing seed over the distribution group. **DONE 2026-08-18** -
   below.
 - **WP-34** The history bundle on join, in one message, gated by `history_visibility`.
+  **DONE 2026-08-18** - below.
 - **WP-35** `history_visibility` per community: column, API, settings UI, i18n.
+  **DONE 2026-08-18** - below.
 
 #### WP-30, and the departure nobody records
 
@@ -642,6 +644,43 @@ holding both the seed layer and the conversations - and a repair landing with no
 rather than passing silently. `truncated` is on the wire for the same reason: *"this is all there
 is"* and *"this is all I could send"* are different facts, and only one of them means ask again.
 
+#### WP-34/35, and the rule the server cannot enforce
+
+**`channel_workspaces."historyVisibility"` (migration `039`) is stored server-side and applied
+client-side, and that split is the whole design.** The server holds no seed, so it could not enforce
+the rule if it wanted to; what it can do is give every device the same answer and tell them when it
+changes. The enforcement point is the ONE place a seed is about to leave a device -
+`gatherCommunityHistory` in the frame handler. `NOT NULL DEFAULT 'shared'`, unlike 037's nullable
+pointer: there is no such thing as a community with no answer to this question, and a null would be
+a third state every reader would have to interpret.
+
+**Broadcast, not just stored.** `workspace.updated` carries the new value to every member, because a
+device still holding `shared` in memory would keep handing the past over after an admin had closed
+it - until its next relaunch.
+
+**Narrowed once, and fail-closed.** `narrowHistoryVisibility` is the only place a wire string becomes
+one of the two values, so the sidebar and the seed layer cannot disagree about a community. A value
+this client does not know, and a community whose rule this session never learned, both read as
+`joined`: refusing costs a newcomer some history they were entitled to, guessing `shared` costs a
+community the privacy it asked for, and those are not symmetrical. Both cases warn.
+
+**The ask is derived state, twice over.** A joiner asks when it holds NO seed for the community -
+read from the store, so it survives a reload a "done" flag would have lied about - and when it has
+not already asked in this app session - in memory, so a restart is free to ask again, because the
+answerer may simply have been offline. Neither is a clock. The ask sits in
+`ensureCommunityDistributionGroup`, on BOTH its branches: entering the group is what makes asking
+possible, and a device that joined while its answerer was offline must still ask on the next start.
+It is best-effort and never fails the join.
+
+**The answerer is the lowest OTHER member.** `resolveAnswerer` never names this user, and that fixed
+a real hole in WP-33 as well: a session's sender can be another device of ours, so a repair could
+address a request to the very device that was asking - a round trip that answers nothing.
+
+**A community roster now has its own route.** `GET /workspaces/:id/members` exists because the
+caller that needs it - a device that has just joined and opened no salon yet - holds no channel id,
+and reaching for an arbitrary channel to learn a community's roster breaks the first time the list
+is empty.
+
 ### Phase 5 - reactions
 
 - **WP-40** Reactions become silent encrypted channel messages aggregated client-side; the
@@ -653,8 +692,9 @@ is"* and *"this is all I could send"* are different facts, and only one of them 
   `getChannelHistoryKeysForUser` and their routes. `STALE_CHANNEL_KEY_VERSION` goes with them - the
   server no longer knows which session is current and no longer needs to, which removes a coupling
   instead of moving it.
-- **WP-51** Migration `039` (`037` was WP-21's `distributionGroupId`, `038` added
-  `channel_messages."senderSessionId"` and `"messageIndex"` in WP-31): drop
+- **WP-51** Migration `040` (`037` was WP-21's `distributionGroupId`, `038` added
+  `channel_messages."senderSessionId"` and `"messageIndex"` in WP-31, `039` added
+  `channel_workspaces."historyVisibility"` in WP-35): drop
   `channel_messages.keyVersion`; `channels` drops `masterSecret` and `keyVersion`; `channel_members`
   drops the legacy `keys` jsonb.
 - **WP-52** ~~Push payload carries `sessionId`~~ **DONE inside WP-31/32**, server and all three

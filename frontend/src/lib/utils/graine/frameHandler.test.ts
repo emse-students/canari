@@ -10,7 +10,11 @@ import {
 } from '$lib/proto/codec';
 import { toBase64 } from '$lib/utils/hex';
 import { handleDistributionFrame } from './frameHandler';
-import { setGraineRepairListener, setGraineRuntime } from './runtime';
+import {
+  registerCommunityHistoryVisibility,
+  setGraineRepairListener,
+  setGraineRuntime,
+} from './runtime';
 
 /**
  * What arriving on a community's distribution group DOES (WP-32, inbound half).
@@ -300,6 +304,100 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     );
 
     // "repair these" and "send me everything" would otherwise be one message with an empty field.
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe('a history request from a joiner (WP-34)', () => {
+  function historyFrame() {
+    return {
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'newcomer',
+      plaintext: encodeAppMessage(
+        mkGraineRequest({
+          workspaceId: 'ws-1',
+          kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
+          answererUserId: 'alice',
+          requestId: 'r-h',
+        })
+      ),
+    };
+  }
+
+  function wireWithSessions(sessions: StoredGraineSession[]) {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    setGraineRuntime({
+      storage: {
+        getGraineSession: async () => null,
+        saveGraineSession: async () => undefined,
+        getGraineSessionsForWorkspace: async () => sessions,
+      } as unknown as IStorage,
+      deviceKeyB64: 'device-key',
+      userId: 'alice',
+      mlsService: { sendMessage } as never,
+    });
+    return sendMessage;
+  }
+
+  const community: StoredGraineSession[] = [
+    {
+      workspaceId: 'ws-1',
+      channelId: 'chan-1',
+      sessionId: 's-1',
+      senderId: 'alice',
+      seedB64: toBase64(SEED),
+      firstIndex: 0,
+      createdAt: 1,
+    },
+    {
+      workspaceId: 'ws-1',
+      channelId: 'chan-2',
+      sessionId: 's-2',
+      senderId: 'bob',
+      seedB64: toBase64(SEED),
+      firstIndex: 5,
+      createdAt: 2,
+    },
+  ];
+
+  it('sends every seed of the community in ONE bundle when the rule is shared', async () => {
+    const sendMessage = wireWithSessions(community);
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+
+    await handleDistributionFrame(historyFrame());
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.requestId).toBe('r-h');
+    expect(bundle?.seeds?.map((s) => s.sessionId)).toEqual(['s-1', 's-2']);
+    expect(bundle?.truncated).toBeFalsy();
+  });
+
+  it('sends nothing when the community is set to joined, and says why', async () => {
+    const sendMessage = wireWithSessions(community);
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(historyFrame());
+
+    // The rule is enforced HERE because here is the only place a seed leaves a device - the server
+    // holds no key and could not enforce it.
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('refuses to hand the past over when this session never learned the rule', async () => {
+    const sendMessage = wireWithSessions(community);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(historyFrame());
+
+    // Fail-closed and loudly: refusing costs a newcomer some history, guessing 'shared' costs a
+    // community the privacy it asked for. Those are not symmetrical.
     expect(sendMessage).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();

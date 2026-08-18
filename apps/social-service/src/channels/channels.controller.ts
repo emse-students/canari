@@ -33,6 +33,7 @@ import {
   type SetChannelNotificationLevelDto,
   type UpdateChannelImageDto,
   type UpdateChannelAccessDto,
+  type UpdateWorkspaceHistoryVisibilityDto,
   type UpdateWorkspaceMemberRoleDto,
   CHANNEL_NOTIFICATION_LEVELS,
   CHANNEL_WRITE_POLICIES,
@@ -389,6 +390,31 @@ export class ChannelsController {
       workspaceId,
       xUserId.trim().toLowerCase(),
       body.mediaId
+    );
+  }
+
+  /** Returns the whole community roster, for a caller holding no channel id (Graine history). */
+  @UseGuards(NginxAuthGuard)
+  @Get('workspaces/:workspaceId/members')
+  listWorkspaceMembers(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string
+  ) {
+    return this.service.listWorkspaceMembers(workspaceId, xUserId.trim().toLowerCase());
+  }
+
+  /** Sets what this community lets a newcomer read (`shared` or `joined`). */
+  @UseGuards(NginxAuthGuard)
+  @Patch('workspaces/:workspaceId/history-visibility')
+  async updateWorkspaceHistoryVisibility(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: UpdateWorkspaceHistoryVisibilityDto
+  ) {
+    return await this.service.updateWorkspaceHistoryVisibility(
+      workspaceId,
+      xUserId.trim().toLowerCase(),
+      body.historyVisibility
     );
   }
 

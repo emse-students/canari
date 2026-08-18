@@ -1,5 +1,6 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { ChannelApiError, type ChannelService } from '$lib/services/ChannelService';
+import { requestCommunityHistory } from './repair';
 
 /**
  * Joining a community's Graine key-distribution group, on first use.
@@ -30,7 +31,13 @@ export async function ensureCommunityDistributionGroup(
   log: (message: string) => void = () => {}
 ): Promise<boolean> {
   const known = mlsService.distributionGroupFor(workspaceId);
-  if (known && mlsService.getLocalGroups().includes(known)) return true;
+  if (known && mlsService.getLocalGroups().includes(known)) {
+    // Already in the group - but not necessarily holding anything. A device that joined while its
+    // answerer was offline would never ask again if the ask lived only on the joining branch, and
+    // the request is exactly what decides whether it is needed.
+    await askForHistory(workspaceId, log);
+    return true;
+  }
 
   let ref: { groupId: string; groupInfo: string | null; baseEpoch: number | null };
   try {
@@ -56,6 +63,30 @@ export async function ensureCommunityDistributionGroup(
     log(
       `[GRAINE] could not join the distribution group of community ${workspaceId.slice(0, 8)}...`
     );
+    return false;
   }
-  return joined;
+
+  await askForHistory(workspaceId, log);
+  return true;
+}
+
+/**
+ * Asks the community for a joiner's history, best-effort.
+ *
+ * ENTERING THE GROUP IS WHAT MAKES ASKING POSSIBLE, so asking belongs here rather than in a caller
+ * that would have to know it had just happened. The request decides for itself whether it is needed
+ * (this device holds no seed for the community) and whether it has already been made - see
+ * {@link requestCommunityHistory}.
+ *
+ * It must never fail the join: a community whose group is held but whose past is missing still
+ * works for every message from now on, and the failure is reported rather than propagated.
+ */
+async function askForHistory(workspaceId: string, log: (message: string) => void): Promise<void> {
+  try {
+    await requestCommunityHistory(workspaceId);
+  } catch (e) {
+    log(
+      `[GRAINE] could not ask for the history of ${workspaceId.slice(0, 8)}...: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
 }

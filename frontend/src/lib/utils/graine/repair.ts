@@ -15,7 +15,18 @@ import { GraineDistributionUnavailableError } from './seedDistribution';
  * Protocol: `docs/wiki/protocols/channel-encryption.md`.
  */
 
-const channelService = new ChannelService();
+/**
+ * Built on first use, never at import.
+ *
+ * This module is imported by the community-join path, which is itself imported very early; a
+ * constructor running at import time makes the whole graph order-sensitive, and the first symptom
+ * was a test suite that could no longer load its own mock.
+ */
+let channelServiceInstance: ChannelService | null = null;
+function channels(): ChannelService {
+  channelServiceInstance ??= new ChannelService();
+  return channelServiceInstance;
+}
 
 /**
  * Sessions asked for, and never asked for twice in one app session.
@@ -30,6 +41,9 @@ const asked = new Set<string>();
 
 /** Missing sessions collected but not yet asked about, keyed by channel. */
 const outstanding = new Map<string, Map<string, string>>();
+
+/** Communities whose history has been asked for in this app session. Same lifetime, same reason. */
+const historyAsked = new Set<string>();
 
 /** True while a flush is in flight, so the accumulator keeps filling instead of racing it. */
 let flushing = false;
@@ -104,7 +118,7 @@ async function resolveRepairTargets(channelId: string): Promise<RepairTargets> {
   const groupId = mlsService.distributionGroupFor(workspaceId);
   if (!groupId) throw new GraineDistributionUnavailableError(workspaceId);
 
-  const members = (await channelService.listMembers(channelId, 'workspace')).map((m) =>
+  const members = (await channels().listMembers(channelId, 'workspace')).map((m) =>
     String(m.userId).toLowerCase()
   );
   return { workspaceId, groupId, roster: new Set(members) };
@@ -116,14 +130,14 @@ async function requestSeedsForChannel(
   sessions: Map<string, string>,
   { workspaceId, groupId, roster }: RepairTargets
 ): Promise<void> {
-  const { mlsService } = requireGraineRuntime('cannot ask for a missing seed');
+  const { mlsService, userId } = requireGraineRuntime('cannot ask for a missing seed');
 
   // ONE named answerer per request, never a broadcast: every member holding the seed would
   // otherwise answer at once, so a salon of three hundred would pay three hundred bundles for one
   // missing session.
   const byAnswerer = new Map<string, string[]>();
   for (const [sessionId, senderId] of sessions) {
-    const answerer = resolveAnswerer(senderId, roster);
+    const answerer = resolveAnswerer(senderId, roster, userId);
     if (!answerer) {
       // Nobody is left who could hold it. Said once, here, rather than discovered as a permanently
       // blank message every time the salon is opened.
@@ -165,12 +179,78 @@ async function requestSeedsForChannel(
  * they are not, SOME member has to be picked and every device has to pick the same one without
  * talking to any other - so it is the lowest id, which is a total order every device already has.
  * No clock, no election, nothing for a race to decide.
+ *
+ * **Never ourselves.** The sender of a session can be this very user - another device of theirs
+ * minted it - and a request addressed to us reaches only us, who are asking precisely because we do
+ * not hold it. It would cost a round trip and answer nothing.
  */
-export function resolveAnswerer(senderId: string, roster: Set<string>): string | null {
+export function resolveAnswerer(
+  senderId: string,
+  roster: Set<string>,
+  self: string
+): string | null {
   const sender = senderId.toLowerCase();
-  if (roster.has(sender)) return sender;
-  const remaining = [...roster].sort();
-  return remaining[0] ?? null;
+  const me = self.toLowerCase();
+  if (sender !== me && roster.has(sender)) return sender;
+  return lowestOtherMember(roster, me);
+}
+
+/** The lowest user id in the roster that is not us, or null when there is nobody else. */
+function lowestOtherMember(roster: Set<string>, self: string): string | null {
+  return [...roster].filter((id) => id !== self).sort()[0] ?? null;
+}
+
+/**
+ * Asks the community for the history a joiner is entitled to, once per session and only when this
+ * device holds nothing.
+ *
+ * **Both halves of the condition are derived state, not a flag.** "I hold no seed for this
+ * community" is read from the store, so it stays true across a reload a "done" marker would have
+ * lied about; "I have not asked yet" is in memory, so a restart is free to ask again - the answerer
+ * may simply have been offline. Neither is a clock.
+ *
+ * Best-effort by construction: it is called from the join path and must never fail it. Every branch
+ * says what it did, because the alternative symptom is a joiner staring at an empty salon.
+ */
+export async function requestCommunityHistory(workspaceId: string): Promise<void> {
+  if (historyAsked.has(workspaceId)) return;
+  const { storage, deviceKeyB64, userId, mlsService } = requireGraineRuntime(
+    'cannot ask for community history'
+  );
+
+  const held = await storage.getGraineSessionsForWorkspace(workspaceId, deviceKeyB64);
+  if (held.length > 0) return;
+
+  const groupId = mlsService.distributionGroupFor(workspaceId);
+  if (!groupId) throw new GraineDistributionUnavailableError(workspaceId);
+
+  const roster = new Set(
+    (await channels().listWorkspaceMembers(workspaceId)).map((m) => String(m.userId).toLowerCase())
+  );
+  const answerer = lowestOtherMember(roster, userId);
+  if (!answerer) {
+    // A community whose only member is us. Nothing to ask for and nobody to ask; said once rather
+    // than retried on every load.
+    historyAsked.add(workspaceId);
+    console.info(
+      `[GRAINE] community ${workspaceId.slice(0, 8)} has no other member to ask for history`
+    );
+    return;
+  }
+
+  const frame = encodeAppMessage(
+    mkGraineRequest({
+      workspaceId,
+      kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
+      answererUserId: answerer,
+      requestId: crypto.randomUUID(),
+    })
+  );
+  await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
+  historyAsked.add(workspaceId);
+  console.info(
+    `[GRAINE] asked ${answerer} for the history of community ${workspaceId.slice(0, 8)}`
+  );
 }
 
 /** Forgets that `sessionId` was asked for, so a later miss may ask again. */
@@ -182,5 +262,6 @@ export function forgetAskedSession(sessionId: string): void {
 export function resetGraineRepairState(): void {
   asked.clear();
   outstanding.clear();
+  historyAsked.clear();
   flushing = false;
 }

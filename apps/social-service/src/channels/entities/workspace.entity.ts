@@ -37,6 +37,20 @@ export class Workspace {
   @Column({ type: 'uuid', nullable: true, default: null })
   distributionGroupId: string | null;
 
+  /**
+   * What this community lets a newcomer read: `shared` (the past, by default) or `joined` (nothing
+   * written before they arrived).
+   *
+   * Per community and not per channel, because a member joins the community's single Graine
+   * distribution group and every salon's seeds travel on it. Enforced entirely CLIENT-SIDE, by the
+   * member answering the history request - the server holds no seed and could not enforce it if it
+   * wanted to. Storing it here is what lets every device read the same answer.
+   *
+   * See `docs/wiki/protocols/channel-encryption.md`.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'shared' })
+  historyVisibility: string;
+
   @CreateDateColumn()
   createdAt: Date;
 }

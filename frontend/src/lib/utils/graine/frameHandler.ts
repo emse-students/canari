@@ -1,12 +1,17 @@
 import type { DistributionFrame } from '$lib/mls-client/IMlsService';
-import type { StoredGraineSession } from '$lib/db/types';
+import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import type { canari } from '$lib/proto/canari';
 import { canari as canariRuntime } from '$lib/proto/canari';
 import { decodeAppMessage, encodeAppMessage, mkGraineBundle } from '$lib/proto/codec';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
-import { announceGraineRepair, cacheGraineSession, requireGraineRuntime } from './runtime';
+import {
+  announceGraineRepair,
+  cacheGraineSession,
+  historyVisibilityFor,
+  requireGraineRuntime,
+} from './runtime';
 import { mirrorGraineSeed } from './graineMirror';
 
 /**
@@ -140,15 +145,66 @@ async function answerSeedRequest(
   );
   if (String(request.answererUserId ?? '').toLowerCase() !== userId) return;
 
-  if (request.kind !== canariRuntime.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS) {
+  const kinds = canariRuntime.GraineRequestKind;
+  if (
+    request.kind !== kinds.GRAINE_REQUEST_KIND_SESSIONS &&
+    request.kind !== kinds.GRAINE_REQUEST_KIND_HISTORY
+  ) {
     // UNSPECIFIED is declined and logged, never guessed at: "repair these" and "send me
     // everything" would otherwise be one message with an empty field.
     console.warn(
-      `[GRAINE] declining a request of kind ${request.kind} from ${frame.sender} - only SESSIONS is answered here`
+      `[GRAINE] declining a request of kind ${request.kind} from ${frame.sender} - only SESSIONS and HISTORY are answered here`
     );
     return;
   }
 
+  const gathered =
+    request.kind === kinds.GRAINE_REQUEST_KIND_HISTORY
+      ? await gatherCommunityHistory(frame, storage, deviceKeyB64)
+      : await gatherNamedSessions(frame, request, storage, deviceKeyB64);
+  if (!gathered || gathered.seeds.length === 0) return;
+
+  const bundle = encodeAppMessage(
+    mkGraineBundle({
+      workspaceId: frame.workspaceId,
+      requestId: String(request.requestId ?? ''),
+      seeds: gathered.seeds,
+      // Stated rather than left to be inferred from a short list: "this is all there is" and "this
+      // is all I could send" are different facts, and only one of them means ask again.
+      truncated: gathered.truncated,
+    })
+  );
+  const seeds = gathered.seeds;
+  await mlsService.sendMessage(frame.groupId, bundle, undefined, DELIVERY.transport);
+  console.info(`[GRAINE] answered ${frame.sender} with ${seeds.length} seed(s)`);
+}
+
+/** Seeds ready to travel, and whether more were held than the bundle could carry. */
+interface GatheredSeeds {
+  seeds: canari.GraineMsg.$Properties[];
+  truncated: boolean;
+}
+
+/** Turns a held session into its wire form. */
+function toWireSeed(held: StoredGraineSession): canari.GraineMsg.$Properties {
+  return {
+    channelId: held.channelId,
+    sessionId: held.sessionId,
+    seed: fromBase64(held.seedB64),
+    // The floor travels as ours: a member cannot hand over more than they were given themselves,
+    // and raising it here is what stops a repair from widening access.
+    firstIndex: held.firstIndex,
+    createdAt: held.createdAt,
+  };
+}
+
+/** The seeds named by a SESSIONS request, and what this device turned out not to hold. */
+async function gatherNamedSessions(
+  frame: DistributionFrame,
+  request: canari.GraineRequestMsg.$Properties,
+  storage: IStorage,
+  deviceKeyB64: string
+): Promise<GatheredSeeds> {
   const wanted = (request.sessionIds ?? []).map(String).filter(Boolean);
   const seeds: canari.GraineMsg.$Properties[] = [];
   const missing: string[] = [];
@@ -158,15 +214,7 @@ async function answerSeedRequest(
       missing.push(sessionId);
       continue;
     }
-    seeds.push({
-      channelId: held.channelId,
-      sessionId: held.sessionId,
-      seed: fromBase64(held.seedB64),
-      // The floor travels as ours: a member cannot hand over more than they were given
-      // themselves, and raising it here is what stops a repair from widening access.
-      firstIndex: held.firstIndex,
-      createdAt: held.createdAt,
-    });
+    seeds.push(toWireSeed(held));
   }
 
   if (missing.length > 0) {
@@ -176,20 +224,38 @@ async function answerSeedRequest(
       `[GRAINE] asked for ${wanted.length} seed(s) by ${frame.sender}, holding ${seeds.length} - missing ${missing.join(', ')}`
     );
   }
-  if (seeds.length === 0) return;
+  return { seeds, truncated: wanted.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS };
+}
 
-  const bundle = encodeAppMessage(
-    mkGraineBundle({
-      workspaceId: frame.workspaceId,
-      requestId: String(request.requestId ?? ''),
-      seeds,
-      // Stated rather than left to be inferred from a short list: "this is all there is" and "this
-      // is all I could send" are different facts, and only one of them means ask again.
-      truncated: wanted.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS,
-    })
+/**
+ * Everything this device holds for the community - a joiner's catch-up, gated by the community's
+ * history rule (WP-34).
+ *
+ * **The rule is enforced HERE and nowhere else**, because here is the only place a seed is about to
+ * leave a device. The server stores the setting and broadcasts it; it holds no key and could not
+ * enforce it if it wanted to.
+ *
+ * Refusing is not a silence: `joined` means the joiner reads from their arrival onwards, which is
+ * the setting working, so it is logged as a decision rather than left to look like a lost frame.
+ */
+async function gatherCommunityHistory(
+  frame: DistributionFrame,
+  storage: IStorage,
+  deviceKeyB64: string
+): Promise<GatheredSeeds | null> {
+  if (historyVisibilityFor(frame.workspaceId) === 'joined') {
+    console.info(
+      `[GRAINE] not sending history to ${frame.sender}: community ${frame.workspaceId.slice(0, 8)} is set to 'joined'`
+    );
+    return null;
+  }
+
+  const held = await storage.getGraineSessionsForWorkspace(frame.workspaceId, deviceKeyB64);
+  const seeds = held.slice(0, GRAINE_HISTORY_BUNDLE_MAX_SEEDS).map(toWireSeed);
+  console.info(
+    `[GRAINE] sending ${seeds.length} of ${held.length} held seed(s) as history to ${frame.sender}`
   );
-  await mlsService.sendMessage(frame.groupId, bundle, undefined, DELIVERY.transport);
-  console.info(`[GRAINE] answered ${frame.sender} with ${seeds.length} seed(s)`);
+  return { seeds, truncated: held.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS };
 }
 
 /** Stores the seeds of an answer and tells the UI which salons just became readable. */

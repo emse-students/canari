@@ -339,6 +339,54 @@ describe('ChannelService security hardening', () => {
     await expect(service.closePoll('ch1', 'm1', 'u1')).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  // ── History visibility (WP-35) ────────────────────────────────────────────
+  // The server stores and broadcasts this and can enforce nothing: it holds no seed. What it CAN
+  // do is refuse a word no client knows and make sure every member hears the change - a member
+  // still holding 'shared' in memory would keep handing the past over after an admin closed it.
+
+  it('updateWorkspaceHistoryVisibility broadcasts the new rule to every member', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo, redis } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', historyVisibility: 'shared' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ id: 'r1', permissions: ['workspace.manage'] }]);
+    memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u2' }]);
+
+    const result = await service.updateWorkspaceHistoryVisibility('ws1', 'u1', 'joined');
+
+    expect(result).toEqual({ success: true, workspaceId: 'ws1', historyVisibility: 'joined' });
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'workspace.updated',
+      { workspaceId: 'ws1', historyVisibility: 'joined' },
+      expect.arrayContaining(['u1', 'u2'])
+    );
+  });
+
+  it('updateWorkspaceHistoryVisibility refuses a value no client knows', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ id: 'r1', permissions: ['workspace.manage'] }]);
+
+    // Stored unchecked, it would reach every device as a word none of them recognises - and each
+    // of them would have to guess, on the one decision that hands over the past.
+    await expect(
+      service.updateWorkspaceHistoryVisibility('ws1', 'u1', 'everyone' as never)
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(workspaceRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('updateWorkspaceHistoryVisibility refuses a member without MANAGE_WORKSPACE', async () => {
+    const { service, workspaceRepo, memberRepo, roleRepo } = makeService();
+    workspaceRepo.findOne.mockResolvedValue({ id: 'ws1' });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: ['r1'] });
+    roleRepo.find.mockResolvedValue([{ id: 'r1', permissions: ['channel.send'] }]);
+
+    await expect(
+      service.updateWorkspaceHistoryVisibility('ws1', 'u1', 'joined')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(workspaceRepo.save).not.toHaveBeenCalled();
+  });
+
   // ── Member removal broadcasts ─────────────────────────────────────────────
   // Both events fan out to every remaining member as well as the target, so the payload is the
   // only thing a client can use to tell whose access changed and whether anything was lost.

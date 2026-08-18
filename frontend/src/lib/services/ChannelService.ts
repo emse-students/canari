@@ -1,3 +1,5 @@
+import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
+
 export interface CreateWorkspaceDto {
   slug: string;
   name: string;
@@ -14,6 +16,13 @@ export interface WorkspaceDto {
   viewerCanManage?: boolean;
   /** Server-authoritative flag: true when the calling user holds `channel.moderate` (or a permission that subsumes it), i.e. may delete other members' channel messages. */
   viewerCanModerate?: boolean;
+  /**
+   * What this community lets a newcomer read: `shared` (the past) or `joined` (nothing older).
+   *
+   * Typed as a plain string because it comes off the wire: the client narrows it once, where it is
+   * stored, rather than trusting the server to have sent one of two words.
+   */
+  historyVisibility?: string;
 }
 
 /**
@@ -816,6 +825,20 @@ export class ChannelService {
     return res.json();
   }
 
+  /**
+   * The whole community roster, for a caller that holds no channel id.
+   *
+   * Used by the Graine layer at join time, when no salon has been opened yet and the device still
+   * has to name the one member it will ask for history.
+   */
+  async listWorkspaceMembers(workspaceId: string): Promise<ChannelMemberDto[]> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/members`
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
   async rotateChannelKey(channelId: string): Promise<{ channelId: string; keyVersion: number }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/key/rotate`, {
@@ -914,6 +937,32 @@ export class ChannelService {
     );
     await this.handleError(res);
     return res.json() as Promise<{ success: boolean; workspaceId: string; imageMediaId: string }>;
+  }
+
+  /**
+   * Sets what the community lets a newcomer read.
+   *
+   * The server stores and broadcasts the value; it cannot enforce it and holds no seed. The rule is
+   * applied by whichever member answers a joiner's history request - see
+   * `docs/wiki/protocols/channel-encryption.md`.
+   */
+  async updateWorkspaceHistoryVisibility(
+    workspaceId: string,
+    historyVisibility: GraineHistoryVisibility
+  ) {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/history-visibility`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ historyVisibility }),
+      }
+    );
+    await this.handleError(res);
+    return res.json() as Promise<{
+      success: boolean;
+      workspaceId: string;
+      historyVisibility: GraineHistoryVisibility;
+    }>;
   }
 }
 
