@@ -178,7 +178,13 @@ iOS half of the device ladder cannot be run at all - written up as such on
    unaccent approach or Sky's `personMatchScore`, whichever fits what that repo has.
 8. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
     browsers.
-9. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+9. **THE COMMITTED WASM IS STALE AND ONLY THE APPS SHIP IT (P1, found 2026-08-18).** `cd.yml`
+    rebuilds it, so the web is fine; the three release pipelines do NOT, so the phone and the desktop
+    app are at least one MLS-core fix behind, silently - a campaign in this state measures two
+    different cryptos. Rebuild and commit the binary BEFORE the APK, and never gitignore it. The
+    evidence, the table and the CI gate that ends it are in
+    [backlog](docs/wiki/backlog.md#build-integrity).
+10. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
     must end green, so every phase runs** - and the board says what that really costs: MSG is the
     ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
     **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
