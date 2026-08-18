@@ -163,47 +163,6 @@ is whether these stalls are CORRELATED, which a one-shot probe cannot answer by 
 
 ---
 
-## Build integrity
-
-### P1 - the committed WASM is stale, and only the APPS ship it - FOUND 2026-08-18
-
-`frontend/src/lib/wasm/mls_wasm_bg.wasm` is a **committed build artefact**, and only one of the four
-pipelines that consume it rebuilds it.
-
-| Pipeline | Builds the WASM? | What it ships |
-| --- | --- | --- |
-| `cd.yml` (web/prod) | **yes** - `wasm-pack build --target web --out-dir ../src/lib/wasm` | current crypto, always |
-| `android-release.yml` | no | whatever is committed |
-| `ios-release.yml` | no | whatever is committed |
-| `appimage-release.yml` | no | whatever is committed |
-
-**It is stale right now, and this is checkable rather than argued.** The binary was last rebuilt in
-`bde8a3fe`; `frontend/mls-core/src` changed afterwards in `84918c68` (`git merge-base --is-ancestor`
-confirms the order), and `mls-wasm` depends on `mls-core` - `ci.yml` states that dependency
-explicitly when it decides what to rebuild. So **the phone and the desktop app are at least one
-MLS-core fix behind the web, silently.**
-
-**Why it matters more than usual right now:** a campaign run in this state measures two different
-cryptos - A1's phone rows and the browser rows - and nothing on the board would say which row read
-which. Rebuild and commit the binary BEFORE rebuilding the APK.
-
-**Do NOT gitignore it.** Three release pipelines depend on it being present in the tree; ignoring it
-breaks all three. The direction is the opposite one.
-
-**The durable fix is a gate, not a habit.** `CLAUDE.md` already carries the rule - *"rebuild WASM
-(`mls-wasm/`) and protobufs after structural changes"* - and a rule kept by hand is exactly the shape
-that fails silently: nothing anywhere compares the committed binary to its source. A CI step that
-rebuilds the wasm and fails when the result differs from the committed one would have caught this on
-the commit that caused it. Cheap, because `ci.yml` already builds `mls-wasm` for its Rust matrix.
-
-**Note on history size, so nobody reaches for the wrong tool:** the binary is also the single largest
-thing in the repo's history (a dozen full copies, ~19 MB of a 34 MB pack, since wasm does not delta
-well). That is NOT a reason to rewrite history - a `filter-repo` would force-push a public repo with
-another active contributor to reclaim 19 MB. Not worth it. Left here so the trade-off is on record
-rather than rediscovered.
-
----
-
 ## Interface
 
 ### P2 - an admin announcement, shown once per account - ASKED FOR 2026-08-18, SCHEDULED

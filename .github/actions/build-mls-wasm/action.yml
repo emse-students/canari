@@ -1,0 +1,47 @@
+name: Build MLS WASM
+description: >
+  Compile frontend/mls-wasm into frontend/src/lib/wasm. The output is a build artefact and is
+  never committed, so EVERY pipeline that ships a client - web, Android, iOS, AppImage - builds
+  it here. One place, one pinned wasm-pack, one cache key: a client cannot be a crypto fix behind
+  another without this file changing.
+
+runs:
+  using: composite
+  steps:
+    # Keyed on the sources, so an unchanged crate never pays for a rebuild and a changed one
+    # can never miss it. mls-wasm is bindings over mls-core, so both crates are in the key.
+    - name: Restore built WASM
+      id: cache
+      uses: actions/cache@v6
+      with:
+        path: frontend/src/lib/wasm
+        key: mls-wasm-${{ runner.os }}-wp0.15.0-${{ hashFiles('frontend/mls-wasm/**', 'frontend/mls-core/**', 'rust-toolchain.toml') }}
+
+    - name: Setup Rust
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        target: wasm32-unknown-unknown
+
+    - name: Install wasm-pack
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: ./scripts/install-wasm-pack.sh
+
+    - name: Build WASM
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: frontend/mls-wasm
+      run: wasm-pack build --target web --out-dir ../src/lib/wasm
+
+    # A cache that restores an empty directory would otherwise be found by a module-resolution
+    # error three steps later, in a job that has nothing to do with crypto. Say it here.
+    - name: Verify the artefact
+      shell: bash
+      run: |
+        if [ ! -s frontend/src/lib/wasm/mls_wasm_bg.wasm ]; then
+          echo "::error::MLS WASM is missing after the build step (cache-hit=${{ steps.cache.outputs.cache-hit }})"
+          exit 1
+        fi
+        ls -l frontend/src/lib/wasm/

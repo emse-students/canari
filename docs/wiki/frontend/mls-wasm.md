@@ -183,11 +183,48 @@ WebSocket frame / fetchPendingMessages
 
 ## Building
 
+`frontend/src/lib/wasm/` is a **build artefact and is not in git** (2026-08-18). It is produced from
+`frontend/mls-wasm/`, which is bindings over `frontend/mls-core/`.
+
 ```bash
 cd frontend
-wasm-pack build mls-wasm --target web --out-dir src/lib/wasm-mls
-# Or via make:
-make build-frontend   # builds WASM + SvelteKit
+npm run wasm:build   # wasm-pack build mls-wasm --target web --out-dir ../src/lib/wasm
+npm run generate     # the same, plus the protobuf bindings
+make install         # a fresh clone: dependencies, svelte-kit sync, then generate
 ```
 
-After any change to `frontend/mls-core/` or `frontend/mls-wasm/`, always rebuild WASM before testing the frontend.
+`make build-frontend` calls `generate` before `vite build`, so a full build never needs the step by
+hand. After a change to `frontend/mls-core/` or `frontend/mls-wasm/`, run `npm run wasm:build` before
+testing the frontend - `svelte-check` and Vitest both import the generated bindings.
+
+### Why it is not committed
+
+It was, until 2026-08-18, and it went stale. Only `cd.yml` and `cd-dev.yml` rebuilt it; the three
+release pipelines (`android-release`, `ios-release`, `appimage-release`) shipped whatever the tree
+happened to hold. The result was two different cryptos in the fleet: the web ran the current
+`mls-core`, the phone and the desktop app ran the binary from the last commit that thought to
+regenerate it. Nothing anywhere compared the two, so nothing said so. Rebuilding the untouched
+sources on 2026-08-18 produced a binary of 1 664 493 bytes against the committed 1 664 508 - the
+drift was real and measurable, not inferred from dates.
+
+**Every pipeline that ships a client now builds it**, through one composite action,
+[`.github/actions/build-mls-wasm`](../../../.github/actions/build-mls-wasm/action.yml):
+
+- one pinned `wasm-pack` (0.15.0, installed from the official prebuilt release by
+  `scripts/install-wasm-pack.sh`) - two pipelines on two toolchains would put two cryptos back in
+  the fleet;
+- one cache keyed on `frontend/mls-wasm/**` + `frontend/mls-core/**` + `rust-toolchain.toml`, so an
+  unchanged crate never pays for a rebuild and a changed one can never miss it;
+- a verification step that fails the job when the artefact is absent, rather than letting a module
+  resolution error three steps later say it in a job that has nothing to do with crypto.
+
+`ci.yml` builds it too, because the frontend gates import it, and its change detection now treats
+`frontend/mls-core/` as a frontend change for the same reason.
+
+The generated protobuf module (`src/lib/proto/canari.js`, `.d.ts`) left git in the same commit and
+for the same reason. `src/lib/paraglide/` had always worked this way and never drifted once.
+
+**One note kept so nobody reaches for the wrong tool:** the binary is the largest thing in the
+repository's history - a dozen full copies, roughly 19 MB of a 34 MB pack, since wasm does not delta
+well. That is not a reason to rewrite history. A `filter-repo` would force-push a public repository
+with another active contributor to reclaim 19 MB. The history stops growing here, which is enough.

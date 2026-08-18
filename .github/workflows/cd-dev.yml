@@ -202,18 +202,8 @@ jobs:
           bun install --frozen-lockfile
           bunx svelte-kit sync
 
-      - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          target: wasm32-unknown-unknown
-
-      - name: Install wasm-pack
-        run: cargo install wasm-pack
-
-      - name: Build WASM
-        working-directory: frontend/mls-wasm
-        run: wasm-pack build --target web --out-dir ../src/lib/wasm
+      - name: Build MLS WASM
+        uses: ./.github/actions/build-mls-wasm
 
       - name: Generate protobuf bindings
         working-directory: frontend

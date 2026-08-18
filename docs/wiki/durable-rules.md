@@ -1290,6 +1290,17 @@ that decide whether you believe a run:
   undid it. They are gitignored now, like `gen/schemas/` already was; the SOURCE (`default.toml` and
   the `COMMANDS` list in `build.rs`) stays tracked. Before ignoring any generated file, delete it and
   rebuild - that is the only proof the generator really owns it.
+- **A GENERATED FILE IN GIT IS A COPY OF THE TRUTH, AND A COPY GOES STALE IN SILENCE.** The
+  question to ask is never "is it up to date" - it is **which pipelines rebuild it, and which ship
+  the committed one**. `frontend/src/lib/wasm/` was committed and rebuilt by `cd.yml` alone, so the
+  web ran the current `mls-core` while the Android, iOS and AppImage releases shipped the binary
+  from the last commit that thought to regenerate it: **two different cryptos in one fleet, and
+  nothing anywhere comparing them**. Rebuilding the untouched sources produced a different binary,
+  which is how it was proven rather than argued. The fix is not a habit or a reminder in `CLAUDE.md`
+  - it is that **every pipeline shipping a client builds the artefact itself**, from one composite
+  action with one pinned toolchain ([mls-wasm](frontend/mls-wasm.md#why-it-is-not-committed)).
+  A build step duplicated per pipeline is the same defect wearing a different hat: two toolchains
+  put two cryptos back in the fleet.
 
 ## Carte de la Vie Asso -> [carte-vie-asso](carte-vie-asso.md)
 

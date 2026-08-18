@@ -152,7 +152,7 @@ install-rust:
 
 install-wasm-pack:
 	@echo "${BLUE}ℹ️ wasm-pack auto-install skipped on Windows${RESET}"
-	@echo "${BLUE}ℹ️ Install manually: cargo install wasm-pack${RESET}"
+	@echo "${BLUE}ℹ️ Install manually, PINNED to the version CI uses: cargo install wasm-pack --locked --version 0.15.0${RESET}"
 else
 install-node:
 	@echo "${BLUE}📦 Checking Node.js/npm installation…${RESET}"
@@ -207,24 +207,7 @@ install-oxvelte:
 
 install-wasm-pack:
 	@echo "${BLUE}📦 Checking wasm-pack installation…${RESET}"
-	@if command -v wasm-pack >/dev/null 2>&1; then \
-		echo "${GREEN}✅ wasm-pack already installed: $$(wasm-pack --version)${RESET}"; \
-	else \
-		echo "${BLUE}⬇️ Installing wasm-pack via cargo…${RESET}"; \
-		if command -v cargo >/dev/null 2>&1; then \
-			cargo install wasm-pack; \
-			echo "${GREEN}✅ wasm-pack installed successfully${RESET}"; \
-		else \
-			. "$$HOME/.cargo/env" 2>/dev/null || true; \
-			if command -v cargo >/dev/null 2>&1; then \
-				cargo install wasm-pack; \
-				echo "${GREEN}✅ wasm-pack installed successfully${RESET}"; \
-			else \
-				echo "${RED}❌ Error: Rust/cargo not found even after sourcing. Please restart shell.${RESET}"; \
-				exit 1; \
-			fi; \
-		fi; \
-	fi
+	@./scripts/install-wasm-pack.sh
 endif
 
 install-frontend:
@@ -232,6 +215,8 @@ install-frontend:
 	@cd frontend && npm install --legacy-peer-deps
 	@echo "${BLUE}🔄 Running svelte-kit sync…${RESET}"
 	@cd frontend && npx svelte-kit sync
+	@echo "${BLUE}🔄 Generating WASM + protobuf bindings…${RESET}"
+	@cd frontend && npm run generate
 	@echo "${GREEN}✅ Frontend prêt${RESET}"
 
 install-services:
@@ -320,10 +305,8 @@ test-history:
 
 build-frontend:
 	@echo "${BLUE}🚀 Building frontend…${RESET}"
-	@echo "${BLUE}🔄 Building WASM…${RESET}"
-	@cd frontend/mls-wasm && wasm-pack build --target web --out-dir ../src/lib/wasm
-	@echo "${BLUE}🔄 Generating protobuf bindings…${RESET}"
-	@cd frontend && npm run proto:gen
+	@echo "${BLUE}🔄 Generating WASM + protobuf bindings…${RESET}"
+	@cd frontend && npm run generate
 	@echo "${BLUE}🔄 Building SvelteKit…${RESET}"
 	@cd frontend && npm run build
 	@echo "${GREEN}✅ Frontend buildé${RESET}"

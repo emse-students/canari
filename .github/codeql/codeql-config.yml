@@ -7,11 +7,15 @@ name: "Canari CodeQL config"
 # - proto/canari.js is emitted by `pbjs` from libs/proto/canari.proto (npm run
 #   proto:gen); its unused-local-variable notes are inherent to the generator.
 #   The hand-written proto/codec.ts stays in scope.
+# - wasm/ is emitted by wasm-pack (npm run wasm:build); the JS half is
+#   wasm-bindgen glue. Named here rather than left to the fact that it is absent
+#   from a checkout, so an analysis run after a build reads the same scope.
 # - gen/ directories contain Tauri-generated platform glue (Android, iOS, macOS)
 #   that is regenerated on every build and should not be hand-audited.
 paths-ignore:
   - frontend/src/lib/paraglide
   - frontend/src/lib/proto/canari.js
+  - frontend/src/lib/wasm
   - frontend/src-tauri/gen
   - tools
   - scripts

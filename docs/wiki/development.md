@@ -9,7 +9,9 @@
 make all                  # installs deps + builds frontend + starts services
 
 # Or step by step:
-make install              # installs Node, Bun, Rust, wasm-pack, frontend + service deps
+make install              # installs Node, Bun, Rust, wasm-pack, frontend + service deps,
+                         # then generates the MLS WASM and protobuf bindings - both are
+                         # build artefacts and are NOT in git
 make install-hooks        # installs Git hooks (Husky + oxlint + oxfmt + svelte-check)
 make build-frontend       # builds WASM + protobuf bindings + SvelteKit
 make run-services         # starts Docker Compose (local dev)
@@ -32,8 +34,8 @@ bun run dev
 | `make install-node` | Installs Node.js (nvm LTS), Linux/Mac only |
 | `make install-bun` | Installs Bun, Linux/Mac only |
 | `make install-rust` | Installs Rust >= 1.93 via rustup |
-| `make install-wasm-pack` | Installs `wasm-pack` via cargo |
-| `make install-frontend` | `npm install` + `svelte-kit sync` in `frontend/` |
+| `make install-wasm-pack` | Installs `wasm-pack`, PINNED, via `scripts/install-wasm-pack.sh` |
+| `make install-frontend` | `npm install` + `svelte-kit sync` + `npm run generate` in `frontend/` |
 | `make install-services` | `npm install` in all NestJS service dirs + shared-ts |
 | `make install-hooks` | Husky + pre-commit hooks |
 
@@ -41,7 +43,7 @@ bun run dev
 
 | Target | What it does |
 |---|---|
-| `make build-frontend` | `wasm-pack build` → `npm run proto:gen` → `npm run build` (SvelteKit) |
+| `make build-frontend` | `npm run generate` (WASM + protobuf) → `npm run build` (SvelteKit) |
 
 ### Services
 

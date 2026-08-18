@@ -75,6 +75,9 @@ jobs:
           bun install --frozen-lockfile
           bunx svelte-kit sync
 
+      - name: Build MLS WASM
+        uses: ./.github/actions/build-mls-wasm
+
       - name: Generate protobuf bindings
         working-directory: frontend
         run: bun run proto:gen

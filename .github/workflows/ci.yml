@@ -142,7 +142,7 @@ jobs:
              has '^frontend/package\.json' || has '^frontend/svelte\.config' || \
              has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
              has '^frontend/tsconfig' || has '^frontend/\.oxlintrc' || has '^oxfmt\.json' || has '^\.oxlintrc' || has '^rust-toolchain\.toml' || has '^scripts/install-oxvelte\.sh' || \
-             has '^frontend/mls-wasm/'; then
+             has '^frontend/mls-wasm/' || has '^frontend/mls-core/' || has '^libs/proto/'; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend=false" >> "$GITHUB_OUTPUT"
@@ -322,6 +322,15 @@ jobs:
       - name: Sync SvelteKit
         working-directory: frontend
         run: bun run sync
+
+      # The check and the tests import the generated MLS bindings and the generated protobuf
+      # module. Neither is committed - they are build artefacts - so the job builds them.
+      - name: Build MLS WASM
+        uses: ./.github/actions/build-mls-wasm
+
+      - name: Generate protobuf bindings
+        working-directory: frontend
+        run: bun run proto:gen
 
       - name: Lint Frontend
         working-directory: frontend

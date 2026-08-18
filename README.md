@@ -58,8 +58,13 @@ Infrastructure: PostgreSQL · MongoDB · Redis · Kafka · Garage
 ### Prerequisites
 
 - Docker + Docker Compose
-- Node.js 24+, [Bun](https://bun.sh/), [Rust ≥ 1.93](https://rustup.rs/), `cargo install wasm-pack`
+- Node.js 24+, [Bun](https://bun.sh/), [Rust ≥ 1.93](https://rustup.rs/)
 - `make`
+
+`make install` also installs `wasm-pack` (pinned, via `scripts/install-wasm-pack.sh`) and generates
+the MLS WASM bindings and the protobuf module. Both are build artefacts and are not in git, so a
+fresh clone needs that step before `bun run dev` - `cd frontend && npm run generate` re-runs it
+alone after a change to `mls-core/`, `mls-wasm/` or `libs/proto/canari.proto`.
 
 ### Setup
 

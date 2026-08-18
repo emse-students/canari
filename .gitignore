@@ -79,6 +79,17 @@ out/
 Figma/
 
 
+# Generated sources - built, never committed.
+#
+# A generated file in git is a copy of the truth, and a copy goes stale in silence: the
+# committed WASM was a crypto fix behind the sources for weeks, and only the pipelines that
+# happened to rebuild it shipped the fix. Every pipeline that ships a client now builds it
+# (.github/actions/build-mls-wasm), and `npm run generate` does the same on a dev machine.
+# `src/lib/paraglide/` already worked this way and never drifted.
+frontend/src/lib/wasm/
+frontend/src/lib/proto/canari.js
+frontend/src/lib/proto/canari.d.ts
+
 # Application specific
 apps/user-service/bin/
 
