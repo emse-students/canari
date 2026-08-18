@@ -44,4 +44,19 @@
     <string name="notif_incoming_video_call">Appel vidéo entrant</string>
     <string name="notif_action_answer_call">Répondre</string>
     <string name="notif_action_decline_call">Refuser</string>
+    <!-- Server-composed pushes, moved here 2026-08-19: the services do not know the reader's
+         language, so they send a `contentKey` and at most a name and one fragment, and the phone
+         writes the sentence. %1$s is the person who acted; %2$s the reaction. -->
+    <string name="notif_social_mention_title">%1$s vous a mentionné</string>
+    <string name="notif_social_mention_body">Vous avez été mentionné dans un commentaire</string>
+    <string name="notif_social_reply_title">%1$s a répondu</string>
+    <string name="notif_social_reply_body">Nouvelle réponse</string>
+    <string name="notif_social_comment_title">%1$s a commenté</string>
+    <string name="notif_social_comment_body">Nouveau commentaire</string>
+    <string name="notif_social_reaction_title">Nouvelle réaction</string>
+    <string name="notif_social_reaction_body">%1$s a réagi %2$s à votre publication</string>
+    <string name="notif_form_opening_soon_title">Formulaire bientôt ouvert</string>
+    <string name="notif_form_opening_soon_body">Un formulaire que vous suivez ouvre dans 5 minutes !</string>
+    <string name="notif_form_open_title">Formulaire ouvert !</string>
+    <string name="notif_form_open_body">Le formulaire est disponible - dépêchez-vous, les places sont limitées !</string>
 </resources>

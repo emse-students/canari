@@ -1128,8 +1128,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // Social notifications and form reminders: no MLS decryption
         if (msgType == "social" || msgType == "form_reminder") {
-            val title    = data["title"]  ?: getString(R.string.app_name)
-            val body     = data["body"]   ?: ""
+            val composed = composeServerNotification(data)
+            val title    = composed?.first  ?: data["title"] ?: getString(R.string.app_name)
+            val body     = composed?.second ?: data["body"]  ?: ""
             // explicit deepLink (message reactions) > deepLink built from postId/formId
             val postId   = data["postId"] ?: ""
             val formId   = data["formId"] ?: ""
@@ -2708,6 +2709,63 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * its author - correct in a DM, and in a group it costs the conversation title on that one
      * notification until the next real message rebuilds it.
      */
+    /**
+     * Writes a server-sent notification's sentence HERE, in the language chosen inside Canari.
+     *
+     * The services are the only layer that cannot know the reader's language - no header carries it
+     * and no column stores it - so since 2026-08-19 they send a `contentKey` from a closed set plus
+     * the two pieces that are not translatable: who acted, and one fragment whose meaning is fixed
+     * per key. This is what the message-reaction push always did; it is now the rule.
+     *
+     * Returns null for a payload with no `contentKey`, which only a server predating that change
+     * can send - so the caller falls back to the French/English `title`/`body` that server also
+     * sends, and LOGS it: after the shim is removed, reaching that branch means the payload lost a
+     * field rather than that an old client is being kind to.
+     *
+     * An unknown key returns null too. Inventing a sentence for a key this build does not know
+     * would be worse than the server's own wording, which at least says something true.
+     */
+    private fun composeServerNotification(data: Map<String, String>): Pair<String, String>? {
+        val key = data["contentKey"]
+        if (key.isNullOrEmpty()) {
+            Log.w(TAG, "server push with no contentKey - falling back to its own wording")
+            return null
+        }
+        val res = appLocaleContext(this).resources
+        val actor = data["actorName"] ?: ""
+        val arg = data["contentArg"] ?: ""
+        return when (key) {
+            "social_mention" -> Pair(
+                res.getString(R.string.notif_social_mention_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_mention_body) }
+            )
+            "social_reply" -> Pair(
+                res.getString(R.string.notif_social_reply_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_reply_body) }
+            )
+            "social_comment" -> Pair(
+                res.getString(R.string.notif_social_comment_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_comment_body) }
+            )
+            "social_reaction" -> Pair(
+                res.getString(R.string.notif_social_reaction_title),
+                res.getString(R.string.notif_social_reaction_body, actor, arg)
+            )
+            "form_opening_soon" -> Pair(
+                res.getString(R.string.notif_form_opening_soon_title),
+                res.getString(R.string.notif_form_opening_soon_body)
+            )
+            "form_open" -> Pair(
+                res.getString(R.string.notif_form_open_title),
+                res.getString(R.string.notif_form_open_body)
+            )
+            else -> {
+                Log.w(TAG, "unknown contentKey=$key - using the server's own wording")
+                null
+            }
+        }
+    }
+
     private fun handleReactionNotification(data: Map<String, String>) {
         val groupId = data["groupId"] ?: ""
         val emoji = data["emoji"] ?: ""

@@ -129,48 +129,42 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**Build first, then measure, then the campaign.** 1-5 are code, 6-10 measurements and questions that
-need a deploy to have happened, 11 a panel, 12 the campaign. **The phone is back (2026-08-17) -
+**Build first, then measure, then the campaign.** 1-3 are code, 4-8 measurements and questions that
+need a deploy to have happened, 9 a panel, 10 the campaign. **The phone is back (2026-08-17) -
 nothing is on hold; keep `adb devices` answering. There is NO iPhone (2026-08-18)**, so the iOS half
 of the device ladder cannot be run at all
 ([device-verification](docs/wiki/device-verification.md)).
 
-1. **THE ADMIN ANNOUNCEMENT** (the user, 2026-08-18) - a message published from `/admin/platform`,
-   shown ONCE PER ACCOUNT, server-side "seen" so a reinstall does not replay it.
-   [backlog](docs/wiki/backlog.md#p2---an-admin-announcement-shown-once-per-account---asked-for-2026-08-18-scheduled)
-2. **A SERVER-COMPOSED NOTIFICATION BODY IS FRENCH FOR EVERYONE** - the client half shipped; what is
-   left is to MOVE the composition off the services, never to store a `locale` column.
-   [backlog](docs/wiki/backlog.md#p2---a-server-composed-notification-body-is-french-for-everyone-and-cannot-be-otherwise)
-3. **`channel_messages` GETS A ONE-YEAR WINDOW, AND THE GRAINE SEEDS THE SAME ONE** - one item, not
+1. **`channel_messages` GETS A ONE-YEAR WINDOW, AND THE GRAINE SEEDS THE SAME ONE** - one item, not
    two, and the storage cost is measured on
    [storage-forecast](docs/wiki/infrastructure/storage-forecast.md) BEFORE the sweep is written.
    **ARMED ON DEPLOY - the user's decision of 2026-08-19**, taken against the recommendation to
    leave it disarmed until the figure was read. Measure and report the figure anyway.
-4. **A BACKUP THAT FAILS TELLS THE USER NOTHING** - seven refusals in `importBackup` reach only
+2. **A BACKUP THAT FAILS TELLS THE USER NOTHING** - seven refusals in `importBackup` reach only
    `console.log`. Whoever picks it up decides the surface; the sentences become Paraglide messages in
    the SAME change.
-5. **MiGallery's FUZZY SEARCH** - the last of the four projects on plain substring, against the
+3. **MiGallery's FUZZY SEARCH** - the last of the four projects on plain substring, against the
    user's standing requirement. Port Canari's pg_trgm + unaccent or Sky's `personMatchScore`.
-6. **SEO FOR Sky, MiGallery AND Portail-etu** - one method ([seo](docs/wiki/frontend/seo.md)), three
+4. **SEO FOR Sky, MiGallery AND Portail-etu** - one method ([seo](docs/wiki/frontend/seo.md)), three
    separate repos and three deploys.
-7. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - and it starts with an INVENTORY, not a
+5. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - and it starts with an INVENTORY, not a
    refactor. A shared package is probably the wrong shape; one written contract, four aligned
    implementations. Do NOT enumerate the inventory from memory.
-8. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
+6. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
    is whether the two stalls were CORRELATED, which a one-shot probe cannot answer.
-9. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how
+7. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how
     often it fires and against what population, then decide whether the two-minute backoff has a case.
-10. **THE TWO STORAGE-BOUND QUESTIONS, ANSWERED BY FAULT INJECTION** - what a phone out of space
+8. **THE TWO STORAGE-BOUND QUESTIONS, ANSWERED BY FAULT INJECTION** - what a phone out of space
     actually does, and what the web client does when the browser evicts its store. Both are TIME
     bounds today with no SIZE bound; the question is the failure SHAPE. **Injected, never on the
     campaign phone - the user's decision, 2026-08-19**: the appliance the campaign depends on is
     not the place to find out.
-11. **THE MLS HALF OF `/admin/storage`** - the media half shipped 2026-08-18; Postgres and Redis are
+9. **THE MLS HALF OF `/admin/storage`** - the media half shipped 2026-08-18; Postgres and Redis are
     still bare totals with no breakdown and no slope, and the WP-GHOST-1 shapes (a device holding
     memberships with no `key_package`, a queue past a few hundred rows) are measured nowhere. **A
     panel, no alert** - the user's call, 2026-08-17; the slope is what makes that survivable.
     [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)
-12. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
+10. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
     **Everything must end green, so every phase runs.** What that costs, the ladder's order, and the
     two decisions it turns on - `call-service` logging BEFORE the CALL phase, and the community
     rework never having run against prod - are all on

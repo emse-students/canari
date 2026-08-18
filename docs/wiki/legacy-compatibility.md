@@ -50,6 +50,30 @@ below 0.15.0 remains; there is nothing to delete when it does.
 
 ## The diary
 
+### 2027-02-19 - a server-composed `title` / `body` on social and form pushes
+
+**Site:** `PushContent.legacyTitle` / `legacyBody` in
+[`apps/social-service/src/push/push-content.ts`](../../apps/social-service/src/push/push-content.ts),
+passed through by `PushService.notifyContent`.
+**Shim:** since 2026-08-19 those pushes carry `contentKey` + `actorName` + `contentArg`, and the
+device writes the sentence from its own two-language table. Clients built before that read `title`
+and `body` and know nothing of the key, so both are still sent, in the wording they had - French for
+the post notifications, English for the form reminders.
+**Why a shim rather than a clean break:** dropping the two fields does not degrade an old client, it
+BLANKS it - `data["body"] ?: ""` on Android, `content.body` left as the empty alert on iOS. Every
+phone installed today would show a notification with no text, and nothing would say why.
+**Why the date is six months out, not three:** an Android or iOS user updates when their store
+decides to. The other entries here are protocol shims between a client and a server that deploy
+together; this one waits on app installs.
+**On removal:** delete the two fields from `PushContent` and its six builders, have `notifyContent`
+call `notify` with empty title and body exactly as the MESSAGE push path already does, and delete
+the `?: data["title"]` arms in `CanariFirebaseMessagingService.composeServerNotification`'s caller,
+`NotificationService.applyServerContent` and `CanariComposeServerNotification`. All three already
+log when they take that arm, so the traffic is measurable before the date rather than guessed at.
+**Cost of keeping it:** two short strings per push, and a real hazard the log answers - while both
+halves are sent, a key missing from a native table is invisible, because the phone silently shows
+the server's wording and it looks deliberate. `nativeStrings.test.ts` is what closes that.
+
 ### 2026-11-13 - history rows with no `sender_device_id`
 
 **Site:** `historyTypes.ts` (`HistoryStreamRow.sender_device_id?`) and the `kind === 'own-message'`

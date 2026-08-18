@@ -14,3 +14,18 @@
    translation. */
 "notif.call.incoming" = "Appel entrant";
 "notif.call.incoming_video" = "Appel vidéo entrant";
+
+/* Server-composed pushes, moved here 2026-08-19: social-service sends a `contentKey` and at most a
+   name and one fragment, and this process writes the sentence in the language chosen in the app. */
+"notif.social.mention.title" = "%@ vous a mentionné";
+"notif.social.mention.body" = "Vous avez été mentionné dans un commentaire";
+"notif.social.reply.title" = "%@ a répondu";
+"notif.social.reply.body" = "Nouvelle réponse";
+"notif.social.comment.title" = "%@ a commenté";
+"notif.social.comment.body" = "Nouveau commentaire";
+"notif.social.reaction.title" = "Nouvelle réaction";
+"notif.social.reaction.body" = "%1$@ a réagi %2$@ à votre publication";
+"notif.form.opening_soon.title" = "Formulaire bientôt ouvert";
+"notif.form.opening_soon.body" = "Un formulaire que vous suivez ouvre dans 5 minutes !";
+"notif.form.open.title" = "Formulaire ouvert !";
+"notif.form.open.body" = "Le formulaire est disponible - dépêchez-vous, les places sont limitées !";

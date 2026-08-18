@@ -1,23 +1,22 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
 import { Post } from './entities/post.entity';
 import { PushService } from '../push/push.service';
 import {
-  pushMentionTitle,
-  pushMentionBody,
-  pushReplyTitle,
-  pushReplyBody,
-  pushReactionTitle,
-  pushReactionBody,
-  pushCommentTitle,
-  pushCommentBody,
-} from './push-messages';
+  mentionContent,
+  replyContent,
+  reactionContent,
+  commentContent,
+  type PushContent,
+} from '../push/push-content';
 
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
 export class PostNotificationsService {
+  private readonly logger = new Logger(PostNotificationsService.name);
+
   constructor(
     @InjectRepository(PostNotification) private readonly notifRepo: Repository<PostNotification>,
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
@@ -25,27 +24,26 @@ export class PostNotificationsService {
   ) {}
 
   /**
-   * Builds the FCM push title/body for a notification type (mirrors the in-app wording).
-   * Fallback path for callers that don't build a richer push themselves (e.g. mentions in a
-   * brand-new post) - callers with more context (reaction emoji, comment preview) should send
-   * their own push and pass `skipPush: true` to `createNotification` instead of relying on this.
+   * Maps a notification type to WHAT its push says, for callers that do not build their own.
+   * Callers with more context (reaction emoji, comment preview) send their own and pass
+   * `skipPush: true` to `createNotification` instead of relying on this.
+   *
+   * An unknown type gets NO push rather than an invented sentence. It used to fall through to a
+   * hardcoded "Nouvelle notification", which is a sentence no table can translate and no reader
+   * learns anything from - and it hid the fact that a type had been added without a push.
    */
-  private pushContent(
-    type: string,
-    actorName: string,
-    text: string
-  ): { title: string; body: string } {
+  private pushContent(type: string, actorName: string, text: string): PushContent | null {
     switch (type) {
       case 'mention':
-        return { title: pushMentionTitle(actorName), body: pushMentionBody(text) };
+        return mentionContent(actorName, text);
       case 'reply':
-        return { title: pushReplyTitle(actorName), body: pushReplyBody(text) };
+        return replyContent(actorName, text);
       case 'reaction':
-        return { title: pushReactionTitle(), body: pushReactionBody(actorName, text) };
+        return reactionContent(actorName, text);
       case 'comment':
-        return { title: pushCommentTitle(actorName), body: pushCommentBody(text) };
+        return commentContent(actorName, text);
       default:
-        return { title: actorName, body: text || 'Nouvelle notification' };
+        return null;
     }
   }
 
@@ -106,8 +104,18 @@ export class PostNotificationsService {
     if (skipPush) return;
 
     // FCM push so every visible notification also triggers a system notification, even with the app closed. Fire-and-forget.
-    const { title, body } = this.pushContent(data.type, actorName, data.text);
-    void this.push.notify(data.recipientId, title, body, { type: 'social', postId: data.postId });
+    const content = this.pushContent(data.type, actorName, data.text);
+    if (!content) {
+      this.logger.warn(
+        `[NOTIFY] no push content for type=${data.type} - the in-app notification was written, ` +
+          'the system one was not. Add the type to pushContent or send your own push.'
+      );
+      return;
+    }
+    void this.push.notifyContent(data.recipientId, content, {
+      type: 'social',
+      postId: data.postId,
+    });
   }
 
   /** Returns the most recent notifications for a user, newest first. */

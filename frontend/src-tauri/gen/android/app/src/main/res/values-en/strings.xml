@@ -32,4 +32,17 @@
     <string name="notif_incoming_video_call">Incoming video call</string>
     <string name="notif_action_answer_call">Answer</string>
     <string name="notif_action_decline_call">Decline</string>
+    <!-- Server-composed pushes; see the French table for why they live here. -->
+    <string name="notif_social_mention_title">%1$s mentioned you</string>
+    <string name="notif_social_mention_body">You were mentioned in a comment</string>
+    <string name="notif_social_reply_title">%1$s replied</string>
+    <string name="notif_social_reply_body">New reply</string>
+    <string name="notif_social_comment_title">%1$s commented</string>
+    <string name="notif_social_comment_body">New comment</string>
+    <string name="notif_social_reaction_title">New reaction</string>
+    <string name="notif_social_reaction_body">%1$s reacted %2$s to your post</string>
+    <string name="notif_form_opening_soon_title">Form opening soon</string>
+    <string name="notif_form_opening_soon_body">A form you are watching opens in 5 minutes!</string>
+    <string name="notif_form_open_title">Form now open!</string>
+    <string name="notif_form_open_body">The form is available - hurry, spots are limited!</string>
 </resources>

@@ -100,18 +100,77 @@ class NotificationService: UNNotificationServiceExtension {
       applyReactionContent(userInfo: userInfo, content: content)
       finish()
     case "social", "form_reminder":
-      // Not encrypted: the payload already carries the final title/body, so leave the alert
-      // untouched and deliver as-is.
+      // Not encrypted, and since 2026-08-19 not composed by the server either: the payload carries
+      // a `contentKey` and the two untranslatable pieces, and the sentence is written here in the
+      // language chosen in the app. A payload without one only a server predating that change can
+      // send, and its own `title`/`body` are then left untouched.
       //
       // `channel_read` used to be listed here too, and could never arrive: the extension runs on
       // `mutable-content: 1` ALERT pushes only, and buildInternalApnsRequest sends every silent
       // frame as `content-available: 1` / `apns-push-type: background`. A background push goes to
       // the app (canari_push.mm `CanariHandleFcmData`, which clears the channel's notification);
       // it never reaches this process. Listing it here read as "handled" and was a dead branch.
+      applyServerContent(userInfo: userInfo, content: content)
       finish()
     default:
       handleMlsMessage(userInfo: userInfo, content: content)
     }
+  }
+
+  /// Writes a server-sent notification's sentence here, in the language chosen inside Canari.
+  ///
+  /// The services are the only layer that cannot know the reader's language - no header carries it
+  /// and no column stores it - so they send WHAT the notification is and this process says it. An
+  /// absent key means a server older than that change, and an unknown one means a key this build
+  /// does not know; both leave the server's own wording, which at least says something true, and
+  /// both are logged, since after the shim is removed either is a payload that lost a field.
+  private func applyServerContent(
+    userInfo: [AnyHashable: Any],
+    content: UNMutableNotificationContent
+  ) {
+    guard let key = Self.nonEmpty(Self.string(userInfo["contentKey"])) else {
+      NSLog("[CanariNSE] server push with no contentKey - keeping its own wording")
+      return
+    }
+    let locale = loadPushContext()?.locale
+    let actor = Self.string(userInfo["actorName"]) ?? ""
+    let arg = Self.string(userInfo["contentArg"]) ?? ""
+
+    /// Title from the actor, body from the fragment or a fixed sentence when it is empty.
+    func actorTitled(_ stem: String) -> (String, String) {
+      let body = arg.isEmpty ? Self.localized("notif.social.\(stem).body", locale: locale) : arg
+      return (Self.localizedFormat("notif.social.\(stem).title", actor, locale: locale), body)
+    }
+
+    let composed: (String, String)?
+    switch key {
+    case "social_mention": composed = actorTitled("mention")
+    case "social_reply": composed = actorTitled("reply")
+    case "social_comment": composed = actorTitled("comment")
+    case "social_reaction":
+      composed = (
+        Self.localized("notif.social.reaction.title", locale: locale),
+        String(
+          format: Self.localized("notif.social.reaction.body", locale: locale), actor, arg)
+      )
+    case "form_opening_soon":
+      composed = (
+        Self.localized("notif.form.opening_soon.title", locale: locale),
+        Self.localized("notif.form.opening_soon.body", locale: locale)
+      )
+    case "form_open":
+      composed = (
+        Self.localized("notif.form.open.title", locale: locale),
+        Self.localized("notif.form.open.body", locale: locale)
+      )
+    default:
+      NSLog("[CanariNSE] unknown contentKey=\(key) - keeping the server's own wording")
+      composed = nil
+    }
+
+    guard let (title, body) = composed else { return }
+    content.title = title
+    content.body = body
   }
 
   /// Rewrites a reaction alert: the phone's own sentence, and the CONVERSATION's thread rather

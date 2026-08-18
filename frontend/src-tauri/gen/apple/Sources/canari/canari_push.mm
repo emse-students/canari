@@ -419,6 +419,59 @@ static NSString *CanariBuildFallbackText(NSString *senderName) {
   return CanariLocalized(@"notif.message.encrypted");
 }
 
+/**
+ * Writes a server-sent notification's sentence in the language chosen inside Canari.
+ *
+ * The services are the only layer that cannot know the reader's language - no header carries it and
+ * no column stores it - so they send WHAT the notification is (`contentKey`) plus the two pieces
+ * that are not translatable, and this writes it. Leaves `title` / `body` untouched when the key is
+ * absent (a server predating the change) or unknown to this build, and says so in the log: once the
+ * shim is gone, either means a payload that lost a field.
+ *
+ * The NSE has the same function in Swift; it runs when the app is not alive, this one when it is.
+ */
+static void CanariComposeServerNotification(NSDictionary *data, NSString **title, NSString **body) {
+  NSString *key = [data[@"contentKey"] isKindOfClass:[NSString class]] ? data[@"contentKey"] : @"";
+  if (key.length == 0) {
+    NSLog(@"[CanariPush] server push with no contentKey - keeping its own wording");
+    return;
+  }
+  NSString *actor = [data[@"actorName"] isKindOfClass:[NSString class]] ? data[@"actorName"] : @"";
+  NSString *arg = [data[@"contentArg"] isKindOfClass:[NSString class]] ? data[@"contentArg"] : @"";
+
+  NSDictionary<NSString *, NSString *> *actorTitled = @{
+    @"social_mention" : @"mention",
+    @"social_reply" : @"reply",
+    @"social_comment" : @"comment",
+  };
+  NSString *stem = actorTitled[key];
+  if (stem) {
+    *title = [NSString
+        stringWithFormat:CanariLocalized([NSString stringWithFormat:@"notif.social.%@.title", stem]),
+                         actor];
+    *body = arg.length > 0
+                ? arg
+                : CanariLocalized([NSString stringWithFormat:@"notif.social.%@.body", stem]);
+    return;
+  }
+  if ([key isEqualToString:@"social_reaction"]) {
+    *title = CanariLocalized(@"notif.social.reaction.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.social.reaction.body"), actor, arg];
+    return;
+  }
+  if ([key isEqualToString:@"form_opening_soon"]) {
+    *title = CanariLocalized(@"notif.form.opening_soon.title");
+    *body = CanariLocalized(@"notif.form.opening_soon.body");
+    return;
+  }
+  if ([key isEqualToString:@"form_open"]) {
+    *title = CanariLocalized(@"notif.form.open.title");
+    *body = CanariLocalized(@"notif.form.open.body");
+    return;
+  }
+  NSLog(@"[CanariPush] unknown contentKey=%@ - keeping the server's own wording", key);
+}
+
 /** The sentence shown for a reaction. See `CanariLocalized` for where the language comes from. */
 static NSString *CanariReactionBody(NSString *emoji) {
   NSString *safeEmoji = (emoji.length > 0) ? emoji : @"";
@@ -2939,6 +2992,9 @@ static void CanariHandleFcmData(NSDictionary *data) {
   if ([msgType isEqualToString:@"social"] || [msgType isEqualToString:@"form_reminder"]) {
     NSString *title = [data[@"title"] isKindOfClass:[NSString class]] ? data[@"title"] : @"Canari";
     NSString *body = [data[@"body"] isKindOfClass:[NSString class]] ? data[@"body"] : @"";
+    // Since 2026-08-19 the sentence is written HERE, in the language chosen inside Canari; the
+    // server's own title/body above survive only for a server predating that change.
+    CanariComposeServerNotification(data, &title, &body);
     NSString *postId = [data[@"postId"] isKindOfClass:[NSString class]] ? data[@"postId"] : @"";
     NSString *formId = [data[@"formId"] isKindOfClass:[NSString class]] ? data[@"formId"] : @"";
     NSString *deepLink = @"fr.emse.canari://posts";

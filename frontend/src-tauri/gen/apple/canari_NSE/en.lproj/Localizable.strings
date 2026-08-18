@@ -7,3 +7,18 @@
 "notif.channel.unnamed" = "Channel";
 "notif.call.incoming" = "Incoming call";
 "notif.call.incoming_video" = "Incoming video call";
+
+/* Server-composed pushes, moved here 2026-08-19: social-service sends a `contentKey` and at most a
+   name and one fragment, and this process writes the sentence in the language chosen in the app. */
+"notif.social.mention.title" = "%@ mentioned you";
+"notif.social.mention.body" = "You were mentioned in a comment";
+"notif.social.reply.title" = "%@ replied";
+"notif.social.reply.body" = "New reply";
+"notif.social.comment.title" = "%@ commented";
+"notif.social.comment.body" = "New comment";
+"notif.social.reaction.title" = "New reaction";
+"notif.social.reaction.body" = "%1$@ reacted %2$@ to your post";
+"notif.form.opening_soon.title" = "Form opening soon";
+"notif.form.opening_soon.body" = "A form you are watching opens in 5 minutes!";
+"notif.form.open.title" = "Form now open!";
+"notif.form.open.body" = "The form is available - hurry, spots are limited!";

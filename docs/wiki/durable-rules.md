@@ -857,6 +857,18 @@ prompt fields are all on those pages. What must not be forgotten between them:
   something that reappears after one is worse than never having shown it. And that row answers ONE
   question: "has this account seen X", never "is this account current".
 
+- **THE LAYER THAT CANNOT KNOW THE READER'S LANGUAGE MUST NOT WRITE THE SENTENCE.** No header
+  carries a locale and no column stores one, so a server-composed body is a DESIGN smell, never an
+  untranslated string - and storing a `locale` column is the wrong repair, because it makes the
+  server authoritative about a preference that lives in the app. Send WHAT the notification is (a
+  key from a closed set, plus only what is untranslatable - a name, an emoji, the text somebody
+  typed) and let the device say it. The symptom is not one-sided: the post notifications were French
+  for everyone and the form reminders English for everyone, in the same service.
+- **A SEAM NO BUILD CHECKS NEEDS A TEST THAT READS BOTH SIDES.** A `contentKey` added server-side
+  with no native resource fails nothing: the phone keeps the compatibility wording and it looks
+  deliberate. `nativeStrings.test.ts` reads the union type out of the service's source and holds it
+  against six string tables and three composers - and was mutation-checked by deleting one string.
+
 ## The public head, and the two adapters -> [frontend/seo](frontend/seo.md), [nginx](infrastructure/nginx.md)
 
 The whole model - the injected head, the two escapers, the sitemap, the adapter split and the
@@ -1430,6 +1442,18 @@ rule it cost is on that page - read it before touching any login, cookie or rota
   more than one (`mongo_data`, `mongo_config`, and a `local_`-prefixed twin from a stack run by hand).
 
 ---
+
+## Editing files from a script, on this box -> [development](development.md)
+
+- **A PYTHON WRITE IN TEXT MODE REWRITES EVERY LINE ENDING ON WINDOWS**, and the diff hides it: git
+  normalises on the way in, so `git diff` shows only the lines you added while the WORKING TREE has
+  become CRLF. It cost two test suites that slice a native source between multi-line anchors - a
+  pattern matching a newline followed by indentation cannot match one followed by a carriage return,
+  so both files threw at import and reported "0 test" rather than a failure anyone would read as
+  one. Always pass `newline='\n'` to `io.open(..., 'w')`, or write bytes.
+- **A SUITE THAT CANNOT LOAD REPORTS ZERO TESTS, NOT A FAILING ONE.** Read the FILE count in a
+  vitest summary, never only the test count: "2 failed | 197 passed" beside "1743 passed" is two
+  files that never ran. The exit code is 1, so CI does catch it - a human skimming the tail does not.
 
 ## Shared gotchas -> [development](development.md), [cicd](cicd.md)
 

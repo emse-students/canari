@@ -171,23 +171,6 @@ is whether these stalls are CORRELATED, which a one-shot probe cannot answer by 
 
 ## Protocol and delivery
 
-### P2 - a server-composed notification body is French for everyone, and cannot be otherwise
-
-**The whole CLIENT half is done** (Android and iOS, 2026-08-17): each platform has a two-language
-table read through the locale the user chose inside Canari, and `nativeStrings.test.ts` holds all four
-resource files to the same key sets plus the invariant that no native source may carry a literal a
-table already translates. Mechanism on [mobile](frontend/mobile.md#the-language-a-notification-speaks).
-
-**What is left is the services, and it is not a translation problem.** `chat-delivery-service` and
-`social-service` compose French sentences for pushes and do not know the recipient's language - no
-header carries it and no column stores it. Paraglide compiles into the web bundle and reaches neither
-the native clients nor the services, so the rule "user-visible strings use Paraglide" has no
-enforcement mechanism at all outside the bundle. The MESSAGE push path already answers this correctly
-by sending `body: ''` and letting the device compose after decrypting, which is the only layer that
-knows the locale. **Any server-composed body is therefore a design smell rather than an untranslated
-string, and the fix is to MOVE THE COMPOSITION** - which is also why storing a `locale` column
-server-side would be the wrong repair.
-
 ### P3 - a backup that fails to export or import tells the user nothing
 
 Found 2026-08-16. `sessionBackup.ts` catches both failures and hands them to `log`, which is

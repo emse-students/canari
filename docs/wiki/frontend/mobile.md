@@ -602,6 +602,30 @@ else. It reads `push_context.json` once per call, so it is resolved once per not
 down. `R.string.app_name` is exempt: the brand is the same word in every language and lives only in
 the default resources.
 
+**Since 2026-08-19 the SERVER writes no sentence at all.** `social-service` used to compose the
+body for a comment, a reply, a mention, a reaction and the two form reminders - the first four in
+French for everyone, the last two in English for everyone, in the same service. It is the one layer
+that cannot know the reader's language: no header carries it and no column stores it, so this was
+never a translation that had been forgotten. A push now carries a `contentKey` from a closed set
+plus the two pieces nothing translates - who acted, and one fragment whose meaning is fixed per key
+(the text somebody typed, or the emoji) - and each native surface writes the sentence from the
+tables above. The message-reaction push always did this; it is now the rule rather than the one
+exception. A `locale` column server-side would have been the wrong repair: it makes the server
+authoritative about a preference that lives in the app.
+
+The keys are `PushContentKey` in
+[`apps/social-service/src/push/push-content.ts`](../../../apps/social-service/src/push/push-content.ts);
+the composers are `composeServerNotification` (Kotlin), `applyServerContent` (NSE) and
+`CanariComposeServerNotification` (`canari_push.mm`). Clients built before that date read `title`
+and `body`, which are still sent in their old wording until 2027-02-19 - dropping them does not
+degrade an old client, it BLANKS it
+([legacy-compatibility](../legacy-compatibility.md)).
+
+**Nothing in either build connects those two sides**, which is the hazard while the shim lives: a
+key with no resource silently falls back to the server's wording and looks deliberate.
+`nativeStrings.test.ts` reads the union type out of the service's source and holds it against all
+six tables and all three composers - and was mutation-checked by deleting one string.
+
 **A notification channel's name and description are written ONCE, at creation.** Android keeps the
 strings the channel was given, and re-creating an existing channel changes nothing - so a user who
 switches language afterwards keeps the wording of the day they installed. Deleting and re-creating

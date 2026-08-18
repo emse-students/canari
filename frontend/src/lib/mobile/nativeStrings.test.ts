@@ -221,6 +221,79 @@ describe('iOS string resources', () => {
   });
 });
 
+/**
+ * The seam between the SERVER's closed set of notification kinds and the four native tables that
+ * have to spell each one.
+ *
+ * Since 2026-08-19 `social-service` sends a `contentKey` instead of a French sentence, and each
+ * platform writes the sentence from its own table. Nothing else connects the two sides: adding a
+ * key server-side with no matching resource does not fail any build - the phone silently keeps the
+ * server's compatibility wording, which is the exact "French for everyone" this replaced, only now
+ * invisible because it looks deliberate.
+ *
+ * The key set is read from `push-content.ts` rather than restated, so a key added there and
+ * forgotten everywhere else fails HERE rather than on somebody's phone.
+ */
+describe('Server-composed push keys reach every native table', () => {
+  const PUSH_CONTENT = resolve(here, '../../../../apps/social-service/src/push/push-content.ts');
+
+  /** The `PushContentKey` union, read out of the source. */
+  const serverKeys = (() => {
+    const source = readFileSync(PUSH_CONTENT, 'utf8');
+    const union = source.match(/export type PushContentKey =([\s\S]*?);/);
+    if (!union) throw new Error('PushContentKey union not found in push-content.ts');
+    return [...union[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  })();
+
+  /** Keys whose title names the actor take an extra `%s`; the rest are fixed sentences. */
+  const androidNames = (key: string) => [`notif_${key}_title`, `notif_${key}_body`];
+  const iosNames = (key: string) => {
+    const dotted = key.replace(/^social_/, 'social.').replace(/^form_/, 'form.');
+    return [`notif.${dotted}.title`, `notif.${dotted}.body`];
+  };
+
+  it('finds the server key set at all', () => {
+    expect(serverKeys.length).toBeGreaterThan(3);
+    expect(serverKeys).toContain('social_comment');
+  });
+
+  it.each(serverKeys)('%s is spelled in both Android tables', (key) => {
+    for (const name of androidNames(key)) {
+      expect(fr.has(name), `${name} missing from values/strings.xml`).toBe(true);
+      expect(en.has(name), `${name} missing from values-en/strings.xml`).toBe(true);
+    }
+  });
+
+  it.each(serverKeys)('%s is spelled in all four iOS tables', (key) => {
+    for (const bundle of BUNDLES) {
+      const frLproj = parseLproj(bundle, 'fr', 'Localizable.strings');
+      const enLproj = parseLproj(bundle, 'en', 'Localizable.strings');
+      for (const name of iosNames(key)) {
+        expect(frLproj.has(name), `${name} missing from ${bundle}/fr.lproj`).toBe(true);
+        expect(enLproj.has(name), `${name} missing from ${bundle}/en.lproj`).toBe(true);
+      }
+    }
+  });
+
+  it('is handled by both native composers, not merely declared', () => {
+    // A key with resources that no `when`/`switch` names renders the server's wording anyway.
+    const kotlin = kotlinFiles.find((f) => f.name === 'CanariFirebaseMessagingService.kt');
+    const swift = readFileSync(join(APPLE_ROOT, 'canari_NSE', 'NotificationService.swift'), 'utf8');
+    const objc = readFileSync(join(APPLE_ROOT, 'Sources', 'canari', 'canari_push.mm'), 'utf8');
+    for (const key of serverKeys) {
+      expect(kotlin?.source.includes(`"${key}"`), `${key} unhandled in Kotlin`).toBe(true);
+      expect(
+        swift.includes(`"${key}"`) || swift.includes(key.replace(/^social_/, '')),
+        `${key} unhandled in the NSE`
+      ).toBe(true);
+      expect(
+        objc.includes(`@"${key}"`) || objc.includes(key.replace(/^social_/, '')),
+        `${key} unhandled in canari_push.mm`
+      ).toBe(true);
+    }
+  });
+});
+
 describe('Native sources, both platforms', () => {
   /**
    * NO NATIVE SOURCE MAY CARRY A LITERAL A TABLE ALREADY TRANSLATES.

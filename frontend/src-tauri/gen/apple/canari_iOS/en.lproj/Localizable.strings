@@ -10,3 +10,17 @@
 "notif.action.reply" = "Reply";
 "notif.action.send" = "Send";
 "notif.action.mark_read" = "Mark as read";
+
+/* Server-composed pushes; see the French table. Twin: canari_NSE/en.lproj. */
+"notif.social.mention.title" = "%@ mentioned you";
+"notif.social.mention.body" = "You were mentioned in a comment";
+"notif.social.reply.title" = "%@ replied";
+"notif.social.reply.body" = "New reply";
+"notif.social.comment.title" = "%@ commented";
+"notif.social.comment.body" = "New comment";
+"notif.social.reaction.title" = "New reaction";
+"notif.social.reaction.body" = "%1$@ reacted %2$@ to your post";
+"notif.form.opening_soon.title" = "Form opening soon";
+"notif.form.opening_soon.body" = "A form you are watching opens in 5 minutes!";
+"notif.form.open.title" = "Form now open!";
+"notif.form.open.body" = "The form is available - hurry, spots are limited!";

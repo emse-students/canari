@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, LessThanOrEqual } from 'typeorm';
 import { FormReminder } from './entities/form-reminder.entity';
 import { PushService } from '../push/push.service';
+import { formOpeningSoonContent, formOpenContent } from '../push/push-content';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { FormsService } from './forms.service';
 
@@ -39,14 +40,16 @@ export class FormReminderScheduler {
       },
     });
     for (const r of toNotify5min) {
-      const title = 'Form opening soon';
-      const body = 'A form you are watching opens in 5 minutes!';
+      const content = formOpeningSoonContent();
       try {
         // Mark as notified BEFORE sending to avoid duplicate notifications if the process
         // crashes between the push and the flag update.  Worst case: the notification is
         // silently lost; acceptable vs spamming the user on every cron tick.
         await this.reminderRepo.update(r.id, { notified5min: true });
-        await this.push.notify(r.userId, title, body, { type: 'form_reminder', formId: r.formId });
+        await this.push.notifyContent(r.userId, content, {
+          type: 'form_reminder',
+          formId: r.formId,
+        });
         // In-app bell notification: postId holds the formId for deep linking.
         // skipPush: the FCM push was already sent above with the exact wording.
         await this.notifications.createNotification({
@@ -55,7 +58,7 @@ export class FormReminderScheduler {
           postId: r.formId,
           actorId: 'system',
           actorName: 'Canari',
-          text: body,
+          text: content.legacyBody,
           skipPush: true,
         });
         this.logger.log(
@@ -74,12 +77,14 @@ export class FormReminderScheduler {
       },
     });
     for (const r of toNotifyOpen) {
-      const title = 'Form now open!';
-      const body = 'The form is available - hurry, spots are limited!';
+      const content = formOpenContent();
       try {
         // Mark as notified BEFORE sending to avoid duplicate notifications (same rationale as above).
         await this.reminderRepo.update(r.id, { notifiedOnOpen: true });
-        await this.push.notify(r.userId, title, body, { type: 'form_reminder', formId: r.formId });
+        await this.push.notifyContent(r.userId, content, {
+          type: 'form_reminder',
+          formId: r.formId,
+        });
         // In-app bell notification. skipPush: the FCM push was already sent above.
         await this.notifications.createNotification({
           recipientId: r.userId,
@@ -87,7 +92,7 @@ export class FormReminderScheduler {
           postId: r.formId,
           actorId: 'system',
           actorName: 'Canari',
-          text: body,
+          text: content.legacyBody,
           skipPush: true,
         });
         this.logger.log(
