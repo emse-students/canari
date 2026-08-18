@@ -193,28 +193,6 @@ Three things the implementation must not get wrong, each from a rule this repo a
 - **The version range is a filter, never a gate on delivery.** A client outside the range must not
   be told an announcement exists and refused it; it must simply have none.
 
-### P2 - a deleted message still offers the emoji picker, and using it throws
-
-Measured by MUT-17 on 2026-08-15. `MessageBubbleToolbar.svelte` gates the quick-reaction strip on
-`!isDeleted`, but the "open the full picker" (smile) button is passed on `onReact` alone, with no
-`!isDeleted` anywhere in that prop's derivation. So on a tombstone the strip correctly disappears and
-the picker button stays.
-
-Observed, on the same row, in one pass: `smileOnDeletedPresent: true`,
-`quickStripOnDeletedPresent: false`, `reactAttempted: true`, **`reactSucceeded: false`**, and W1
-raised `TypeError: Cannot read properties of undefined (reading 'replace')` at that exact moment. The
-row itself is undamaged on both clients, so nothing is corrupted; an affordance is offered that cannot
-work and that throws when used.
-
-Two things to decide together: whether the picker button should be gated on `!isDeleted` like every
-other action (it should - a reaction to a tombstone means nothing), and what the `replace` is reading,
-since a guard on the button would hide that crash rather than fix it.
-
-**A later MUT-17 run read `smileOnDeletedPresent: false`** - confirm that before deleting this entry;
-a check that changed verdict without a change to the code it measures is itself a finding.
-
----
-
 ## Protocol and delivery
 
 ### P2 - a server-composed notification body is French for everyone, and cannot be otherwise

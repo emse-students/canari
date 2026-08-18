@@ -132,24 +132,22 @@ its commit are in. The detail lives where the link says - **do not restate it he
 device ladder cannot be run at all - written up as such on
 [device-verification](docs/wiki/device-verification.md) rather than left looking pending.
 
-1. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
-   delete that entry if it does.
-2. **`deleteWorkspace` really deletes** (decided 2026-08-18), behind an explicit confirmation -
+1. **`deleteWorkspace` really deletes** (decided 2026-08-18), behind an explicit confirmation -
    typing the community name. The durable-delete code has existed since WP-01; what is new is
    turning a reversible control irreversible, so the confirmation is part of the work, not a
    follow-up. See [backlog](docs/wiki/backlog.md).
-3. **THE ADMIN ANNOUNCEMENT** (new, the user, 2026-08-18): a place in `/admin/platform` to publish a
+2. **THE ADMIN ANNOUNCEMENT** (new, the user, 2026-08-18): a place in `/admin/platform` to publish a
    message shown ONCE PER ACCOUNT at the next app opening, on whichever device gets there first -
    so the "seen" state is server-side and survives a reinstall. A centred modal closed by a button,
    French and English both entered, one active announcement at a time, with an OPTIONAL client
    version range so "what changed in 0.15" reaches only those who have it. Scoped in
    [backlog](docs/wiki/backlog.md).
-4. **MiGallery's fuzzy search** - the last of the four projects still on plain substring matching,
+3. **MiGallery's fuzzy search** - the last of the four projects still on plain substring matching,
    against the user's standing requirement. In scope, decided 2026-08-18; port Canari's pg_trgm +
    unaccent approach or Sky's `personMatchScore`, whichever fits what that repo has.
-5. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+4. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
    browsers.
-6. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+5. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
    must end green, so every phase runs** - and the board says what that really costs: MSG is the
    ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
    **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
@@ -207,10 +205,8 @@ committed and `git clean -xdf` cannot reach a profile.
 campagne clean, et s'il est necessaire de realiser l'integralite des WP de claude.md, du backlog et
 tout le reste pour ca, faisons le."* A MUT x5 was stopped mid-run at 45/105 for this reason: every
 fix below redeploys prod, and a run straddling a deploy has to be re-attributed. **Nothing measured
-before the last WP lands is a campaign result.** What the stopped run did establish, and is worth
-keeping: MUT-17 now reads `smileOnDeletedPresent: false` (the backlog's deleted-message picker entry
-may already be fixed - confirm before deleting it), and MUT-20 is unarmable until a campaign message
-reaches 90 days (earliest 2026-11-09).
+before the last WP lands is a campaign result.** The one thing the stopped run left worth keeping:
+MUT-20 is unarmable until a campaign message reaches 90 days (earliest 2026-11-09).
 
 **Owed once the WPs are closed:** `recon.mjs` on both pairs (`--rightUrl tauri.localhost` for the
 phone), then MUT, TYPE, READ and FWD several clean passes on the final build, then the phases that
