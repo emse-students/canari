@@ -13,10 +13,28 @@ Everything below is measured on production, not estimated, unless a line says ot
 
 **A live admin panel now exists for four of these numbers** (`/admin/storage`, WP-DEVICESTORAGE-1's
 backend counterpart, added 2026-08-11): disk usage, the Postgres `auth_db` size, the object
-storage bucket's total size and object count, and Redis memory - via `GET /api/mls/admin/storage`
-on chat-delivery-service (global-admin only). It replaces the manual `df`/`psql`/`redis-cli` steps
-below for a QUICK check; the detailed per-table breakdown, the backup-cost multiplier and the
-scenario math below still need this page, since the endpoint reports totals only.
+storage bucket, and Redis memory - via `GET /api/mls/admin/storage` on chat-delivery-service
+(global-admin only). It replaces the manual `df`/`psql`/`redis-cli` steps below for a QUICK check;
+the detailed per-table breakdown, the backup-cost multiplier and the scenario math below still need
+this page.
+
+**The media bucket is more than a total, since 2026-08-18**, because a bucket that grows looks
+identical whether people are uploading more or the retention sweep has stopped removing anything -
+and those two have opposite fixes. The panel separates them without storing any state or running
+any timer of its own: everything is derived from one object listing crossed with the metadata index
+(`MediaService.getStorageStats`), so asking twice a month apart makes the weekly buckets the slope.
+
+| What it shows | What it distinguishes |
+| --- | --- |
+| Bytes last written in each of the last four 7-day windows | Growth. Climbing bars with everything else flat = people are uploading more. |
+| Overdue objects, with the age of the OLDEST | A retention verdict. Under one sweep interval it is the ordinary gap between expiry and the sweep; over it, a pass ran and did not take them. |
+| Untracked objects (in the bucket, absent from the metadata) | Objects no sweep can EVER reach, since the sweep only iterates the metadata. Measured at 7 on 2026-08-11. |
+| Tombstoned objects (metadata says purged, object still present) | A delete that failed. Becomes "untracked" once the tombstone is trimmed at 90 days. |
+| Public assets (avatars, logos) | Exempt from retention by design, so never counted as overdue. |
+
+The overdue predicate is deliberately the SAME expression `purgeExpiredMedia` uses, which is what
+makes the number a verdict on the sweep rather than an estimate of it - and is only true while the
+two stay identical.
 
 **The object storage backend migrated from MinIO to Garage on 2026-08-14** (MinIO is no longer
 maintained upstream) - see [docker](docker.md). Every measurement below predates that migration

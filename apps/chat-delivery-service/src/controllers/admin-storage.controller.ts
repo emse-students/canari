@@ -12,13 +12,40 @@ import Redis from 'ioredis';
  * dependency (e.g. media-service down) never takes the other three numbers down with it - the same
  * per-job isolation the hourly queue-depth report and the account-deletion GC already follow.
  */
+/**
+ * The media bucket's breakdown, as media-service computes it. Mirrored here rather than imported:
+ * the two services share no code, and a structural type is what the HTTP call actually carries.
+ * The field docs live with the implementation (`MediaService.getStorageStats`).
+ */
+export interface MediaBucketUsage {
+  totalBytes: number;
+  objectCount: number;
+  recentBytesByWeek: number[];
+  olderBytes: number;
+  undatedCount: number;
+  overdueCount: number;
+  overdueBytes: number;
+  overdueOldestMs: number | null;
+  untrackedCount: number;
+  untrackedBytes: number;
+  tombstonedCount: number;
+  tombstonedBytes: number;
+  publicAssetCount: number;
+  publicAssetBytes: number;
+  retentionMs: number;
+  sweepIntervalMs: number;
+}
+
 export interface BackendStorageUsage {
   diskTotalBytes: number | null;
   diskUsedBytes: number | null;
   postgresBytes: number | null;
   redisBytes: number | null;
-  garageBytes: number | null;
-  garageObjectCount: number | null;
+  /**
+   * The media bucket. Carries its own total and count rather than duplicating them alongside, so
+   * the panel cannot end up showing a size and a breakdown that disagree.
+   */
+  media: MediaBucketUsage | null;
 }
 
 @Controller('mls/admin')
@@ -47,11 +74,11 @@ export class AdminStorageController {
   ): Promise<BackendStorageUsage> {
     this.assertGlobalAdmin(headerGlobalAdmin);
 
-    const [disk, postgresBytes, redisBytes, garage] = await Promise.all([
+    const [disk, postgresBytes, redisBytes, media] = await Promise.all([
       this.measureDisk(),
       this.measurePostgres(),
       this.measureRedis(),
-      this.measureGarage(),
+      this.measureMedia(),
     ]);
 
     return {
@@ -59,8 +86,7 @@ export class AdminStorageController {
       diskUsedBytes: disk?.usedBytes ?? null,
       postgresBytes,
       redisBytes,
-      garageBytes: garage?.totalBytes ?? null,
-      garageObjectCount: garage?.objectCount ?? null,
+      media,
     };
   }
 
@@ -108,11 +134,11 @@ export class AdminStorageController {
   }
 
   /** Server-to-server call to media-service, the only holder of the Garage client. */
-  private async measureGarage(): Promise<{ totalBytes: number; objectCount: number } | null> {
+  private async measureMedia(): Promise<MediaBucketUsage | null> {
     const mediaUrl = process.env.MEDIA_SERVICE_URL ?? 'http://media-service:3011';
     const internalSecret = process.env.INTERNAL_SECRET ?? '';
     if (!internalSecret) {
-      this.logger.warn('[STORAGE] garage measurement skipped - INTERNAL_SECRET unset');
+      this.logger.warn('[STORAGE] media measurement skipped - INTERNAL_SECRET unset');
       return null;
     }
     try {
@@ -120,12 +146,15 @@ export class AdminStorageController {
         headers: { 'x-internal-secret': internalSecret },
         signal: AbortSignal.timeout(10_000),
       });
-      if (!upstream.ok) return null;
-      const body = (await upstream.json()) as { totalBytes: number; objectCount: number };
-      return body;
+      if (!upstream.ok) {
+        // Was silently null before, which is indistinguishable from the secret being unset.
+        this.logger.warn(`[STORAGE] media measurement refused (HTTP ${upstream.status})`);
+        return null;
+      }
+      return (await upstream.json()) as MediaBucketUsage;
     } catch (err) {
       this.logger.warn(
-        `[STORAGE] garage measurement failed: ${err instanceof Error ? err.message : String(err)}`
+        `[STORAGE] media measurement failed: ${err instanceof Error ? err.message : String(err)}`
       );
       return null;
     }

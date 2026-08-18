@@ -18,6 +18,19 @@ import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import * as Minio from 'minio';
 import { Readable } from 'stream';
 
+/** One object as the store describes it. The service never learns anything else about it. */
+export interface StoredObject {
+  /** Object key, which for chat media is the media id. */
+  id: string;
+  size: number;
+  /**
+   * Null when the store did not report one. Kept as a state rather than defaulted to "now" or to
+   * the epoch: either default would silently move the object into an age bucket it does not belong
+   * in, and the panel's whole job is to say which bucket things are in.
+   */
+  lastModifiedMs: number | null;
+}
+
 @Injectable()
 export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
@@ -96,21 +109,27 @@ export class StorageService implements OnModuleInit {
   }
 
   /**
-   * Sums the size and count of every object in the bucket, for the admin storage panel
-   * (WP-DEVICESTORAGE-1's backend counterpart). MinIO's JS client has no bucket-size API, so this
-   * streams the full object list - acceptable at this bucket's current scale (low hundreds of
-   * objects), but would need MinIO's server-side data-usage API if that ever changes.
+   * Every object in the bucket, with the two facts the admin panel needs about each: how big it is
+   * and when it last changed. The S3 client has no bucket-size API, so the full list has to be
+   * streamed either way - returning it instead of a running total costs nothing and is what lets
+   * the caller tell "media grew" apart from "the retention stopped working" without a second pass.
+   *
+   * Acceptable at this bucket's current scale (low hundreds of objects); past that it would need
+   * the server-side data-usage API, and the panel would lose the per-object breakdown with it.
    */
-  async getBucketStats(): Promise<{ totalBytes: number; objectCount: number }> {
+  async listObjects(): Promise<StoredObject[]> {
     return new Promise((resolve, reject) => {
-      let totalBytes = 0;
-      let objectCount = 0;
+      const objects: StoredObject[] = [];
       const stream = this.client.listObjectsV2(this.bucket, '', true);
       stream.on('data', (obj) => {
-        totalBytes += obj.size ?? 0;
-        objectCount += 1;
+        if (!obj.name) return;
+        objects.push({
+          id: obj.name,
+          size: obj.size ?? 0,
+          lastModifiedMs: obj.lastModified ? obj.lastModified.getTime() : null,
+        });
       });
-      stream.on('end', () => resolve({ totalBytes, objectCount }));
+      stream.on('end', () => resolve(objects));
       stream.on('error', reject);
     });
   }

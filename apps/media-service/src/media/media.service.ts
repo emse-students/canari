@@ -18,6 +18,40 @@ const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 /** Purged metadata entries (tombstones) are removed from the index after this delay. */
 const META_TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_SWEEP_MS = 60 * 60 * 1000;
+/** Width of one bucket in the admin panel's growth breakdown. */
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * What the media bucket holds, broken down so its size can be EXPLAINED rather than only reported.
+ * See {@link MediaService.getStorageStats} for what each field distinguishes.
+ */
+export interface MediaStorageStats {
+  totalBytes: number;
+  objectCount: number;
+  /** Bytes last written in each of the last four 7-day windows, index 0 being the most recent. */
+  recentBytesByWeek: number[];
+  /** Bytes last written before those four windows. */
+  olderBytes: number;
+  /** Objects whose store reported no modification date, so they are in no window above. */
+  undatedCount: number;
+  /** Live objects the retention sweep should already have removed. */
+  overdueCount: number;
+  overdueBytes: number;
+  /** Age of the oldest overdue object. Under one sweep interval it is a schedule, over it a fault. */
+  overdueOldestMs: number | null;
+  /** Present in the bucket, absent from the metadata index - unreachable by the sweep for ever. */
+  untrackedCount: number;
+  untrackedBytes: number;
+  /** Metadata says purged, object still present: a delete that failed. */
+  tombstonedCount: number;
+  tombstonedBytes: number;
+  /** Avatars and logos, exempt from retention by design - so never counted as overdue. */
+  publicAssetCount: number;
+  publicAssetBytes: number;
+  /** Echoed so the reader does not have to know the constants to interpret the numbers. */
+  retentionMs: number;
+  sweepIntervalMs: number;
+}
 
 type PurgeReason = 'retention_expired' | 'manual_delete';
 
@@ -276,9 +310,92 @@ export class MediaService {
     return { deleted, failed };
   }
 
-  /** Bucket-wide size and object count, for the admin storage panel (WP-DEVICESTORAGE-1). */
-  async getStorageStats(): Promise<{ totalBytes: number; objectCount: number }> {
-    return this.storage.getBucketStats();
+  /**
+   * What the bucket holds, and why it is that size.
+   *
+   * A total answers "how much" and nothing else, so a bucket that grows looks identical whether
+   * people are uploading more or the retention has stopped removing anything - two causes with
+   * opposite fixes. Every field below exists to separate them, and each is derived from the object
+   * listing crossed with the metadata index, so the panel adds no stored state and no timer of its
+   * own: ask it twice a month apart and the weekly buckets ARE the slope.
+   *
+   * The four causes it can tell apart:
+   *  - `recentBytesByWeek` climbing, everything else flat: people are uploading more.
+   *  - `overdue*` above zero with `overdueOldestMs` past a sweep interval: the retention sweep is
+   *    not doing its job. Below one interval it is simply the window between expiry and the sweep.
+   *  - `untracked*`: objects with no metadata entry at all. The sweep only ever iterates the
+   *    metadata, so these can never be seen again by it - measured at 7 objects on 2026-08-11.
+   *  - `tombstoned*`: the metadata says purged and the object is still there, so a delete failed.
+   *    They become `untracked` once the tombstone is trimmed at 90 days.
+   */
+  async getStorageStats(): Promise<MediaStorageStats> {
+    const objects = await this.storage.listObjects();
+    const now = Date.now();
+    const retentionCutoff = now - RETENTION_MS;
+
+    const stats: MediaStorageStats = {
+      totalBytes: 0,
+      objectCount: objects.length,
+      recentBytesByWeek: [0, 0, 0, 0],
+      olderBytes: 0,
+      undatedCount: 0,
+      overdueCount: 0,
+      overdueBytes: 0,
+      overdueOldestMs: null,
+      untrackedCount: 0,
+      untrackedBytes: 0,
+      tombstonedCount: 0,
+      tombstonedBytes: 0,
+      publicAssetCount: 0,
+      publicAssetBytes: 0,
+      retentionMs: RETENTION_MS,
+      sweepIntervalMs: this.sweepIntervalMs,
+    };
+
+    for (const object of objects) {
+      stats.totalBytes += object.size;
+
+      if (object.lastModifiedMs === null) {
+        stats.undatedCount += 1;
+      } else {
+        const week = Math.floor((now - object.lastModifiedMs) / WEEK_MS);
+        if (week >= 0 && week < stats.recentBytesByWeek.length) {
+          stats.recentBytesByWeek[week] += object.size;
+        } else {
+          stats.olderBytes += object.size;
+        }
+      }
+
+      const entry = this.meta.items[object.id];
+      if (!entry) {
+        stats.untrackedCount += 1;
+        stats.untrackedBytes += object.size;
+        continue;
+      }
+      if (entry.purgedAt) {
+        stats.tombstonedCount += 1;
+        stats.tombstonedBytes += object.size;
+        continue;
+      }
+      if (this.isPublicAssetEntry(entry)) {
+        stats.publicAssetCount += 1;
+        stats.publicAssetBytes += object.size;
+        continue;
+      }
+      // Deliberately the SAME predicate purgeExpiredMedia uses. Anything counted here is something
+      // the sweep was supposed to have taken, so the number is a verdict on the sweep, not an
+      // estimate of it - which is only true while the two predicates stay identical.
+      if (entry.lastAccessAt < retentionCutoff) {
+        stats.overdueCount += 1;
+        stats.overdueBytes += object.size;
+        const age = now - entry.lastAccessAt;
+        if (stats.overdueOldestMs === null || age > stats.overdueOldestMs) {
+          stats.overdueOldestMs = age;
+        }
+      }
+    }
+
+    return stats;
   }
 
   // --- Chunked upload ---

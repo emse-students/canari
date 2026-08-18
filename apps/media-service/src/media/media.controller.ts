@@ -38,7 +38,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { Request, Response } from 'express';
 import * as crypto from 'crypto';
 import sharp from 'sharp';
-import { MediaService } from './media.service';
+import { MediaService, type MediaStorageStats } from './media.service';
 import { assertInternalSecret } from './internal-secret.util';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
@@ -241,17 +241,19 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
-  // GET /media/internal/storage-stats - bucket size for the admin storage panel
+  // GET /media/internal/storage-stats - what the bucket holds, and why it is that size
   // ---------------------------------------------------------------------------
   /**
-   * Reports the object storage bucket's total size and object count to an internal caller (the
-   * chat-delivery-service admin storage aggregator, WP-DEVICESTORAGE-1's backend counterpart).
+   * Reports the object storage bucket's breakdown to an internal caller (the chat-delivery-service
+   * admin storage aggregator, WP-DEVICESTORAGE-1's backend counterpart). Not just a total: the
+   * fields separate growth from a retention sweep that has stopped working - see
+   * {@link MediaService.getStorageStats}.
    * Declared before `internal/:id` so "storage-stats" is matched as a literal segment, not an id.
    */
   @Get('internal/storage-stats')
   async internalStorageStats(
     @Headers('x-internal-secret') internalSecret: string | undefined
-  ): Promise<{ totalBytes: number; objectCount: number }> {
+  ): Promise<MediaStorageStats> {
     assertInternalSecret(internalSecret);
     return this.mediaService.getStorageStats();
   }
