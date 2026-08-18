@@ -11,7 +11,6 @@ import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
-import { ChannelKeyDistribution } from './entities/channel-key-distribution.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 import { CHANNEL_PERMISSIONS } from './permissions';
@@ -84,7 +83,6 @@ describe('ChannelService - the community distribution group', () => {
       delete: jest.fn(),
     };
     const messageRepo = { delete: jest.fn(), manager: { transaction: jest.fn() } };
-    const keyDistributionRepo = { findOne: jest.fn(), save: jest.fn(), create: jest.fn() };
     const inviteRepo = { findOne: jest.fn(), find: jest.fn().mockResolvedValue([]) };
     const redis = { publishChannelEvent: jest.fn(() => Promise.resolve()) };
 
@@ -94,7 +92,6 @@ describe('ChannelService - the community distribution group', () => {
       roleRepo as unknown as Repository<ChannelRole>,
       memberRepo as unknown as Repository<ChannelMember>,
       messageRepo as unknown as Repository<ChannelMessage>,
-      keyDistributionRepo as unknown as Repository<ChannelKeyDistribution>,
       inviteRepo as unknown as Repository<WorkspaceInvite>,
       redis as unknown as RedisService
     );

@@ -18,59 +18,55 @@ The social-service manages all community features:
 
 | Store | Purpose |
 |---|---|
-| PostgreSQL | Channels, workspaces, memberships, key distributions, forms, submissions, associations, products |
+| PostgreSQL | Channels, workspaces, memberships, Graine sessions, forms, submissions, associations, products |
 | MongoDB | Posts, comments, reactions (document store) |
 | Redis | `chat:channel_events` pub/sub (publishes to chat-gateway) |
 
 ## Channel encryption model
 
-Channels use server-assisted symmetric encryption (not MLS):
+**A channel message is sealed with a Graine message key, and the server holds none of it.** The
+protocol, its derivation, its measurements and its rejected alternatives are on
+[channel-encryption](../protocols/channel-encryption.md); this page carries only what the SERVICE
+does, which is now almost nothing:
 
-1. On workspace creation, `masterSecret` is generated and stored server-side.
-2. A per-channel key is derived: `HKDF(masterSecret, channelId, keyVersion)`.
-3. A member receives that derived key **in the clear**, over an authenticated REST call -
-   `buildChannelBootstrap` returns `newEpochBaseKey` as raw base64.
-4. Key rotation increments `keyVersion`; old ciphertexts remain decryptable.
-5. `channel_key_distributions` tracks which devices have received each key version.
+1. A message names `senderSessionId` and `messageIndex`, and the row is refused without them
+   (`CHANNEL_SESSION_REQUIRED`, `CHANNEL_MESSAGE_INDEX_REQUIRED`). The key is
+   `HKDF(seed, sessionId, index)` and the seed never leaves the sending devices, so a row missing
+   either is a row NOBODY can open - including its own author.
+2. Seeds travel over the community's MLS distribution group, whose `groupInfo` this service serves
+   to members only (`/workspaces/:id/distribution-group`). That GroupInfo IS the capability to read
+   every seed on the group, which is why the membership check lives here: `channel_workspace_members`
+   is this service's table, and chat-delivery could not answer the question about it.
+3. What a newcomer reads of the past is `channel_workspaces.historyVisibility` (`shared` | `joined`),
+   stored and broadcast here and ENFORCED on the answering client - the only place that holds a seed
+   to withhold.
 
-**THE SERVER CAN READ EVERY CHANNEL MESSAGE, AND THAT IS THE DESIGN.** `channels.masterSecret` sits
-in Postgres in the clear and every epoch key is a pure function of it, so anyone holding the database
-decrypts the whole history of every salon without touching a membership row. Say it plainly wherever
-the question comes up: this is the property that distinguishes a channel from a DM or a group, which
-really are MLS and really do leave the server with ciphertext only. Step 3 read "encrypted with their
-MLS group key" until 2026-08-17 and was simply false - no code ever wrapped that key.
+**Until WP-50/51 (2026-08-18) the server could read every channel message, and that was the design.**
+`channels.masterSecret` sat in Postgres in the clear, every epoch key was `HKDF(masterSecret, ...)`,
+and a member received that derived key as raw base64 over an authenticated REST call. Migration `041`
+drops `masterSecret`, both `keyVersion` columns, the legacy `channel_members.keys` jsonb and the
+`channel_key_distributions` ledger; `deriveEpochKey`, `buildChannelBootstrap`, the two key routes,
+`rotateChannelKey` and `pushKeyToUser` are gone with them. Dropped rather than left nullable: while
+the root secret exists, a future read path can derive from it.
 
-A related note for anyone auditing this file: `soft-crypto.ts` (`encryptSoft` / `decryptSoft`) had no
-call site anywhere in `apps/`, `frontend/src` or `libs/` and was deleted 2026-08-17. It was a second,
-unused derivation sharing the `canari-channel-e2ee-v1` info string with the live one above, which is
-exactly the shape that gets mistaken for the real mechanism while reading.
-
-### An epoch that rotates under an open tab, and the codes that name it
-
-A tab holding epoch N and sending after a rotation to N+1 encrypts under a key the server no longer
-accepts. Nothing pushes a rotation into an in-flight send, so this is expected rather than a fault,
-and it is repaired by exactly one refresh and one retry. Every half of that decision is
-machine-readable:
-
-| Raised by | What it is | The client's answer |
-|---|---|---|
-| `ChannelKeyVault.getCurrentKey` / `getKeyForEpoch` | `ChannelKeyUnavailableError`, carrying `epochId` and the epochs the vault does hold | re-bootstrap, retry once |
-| `sendMessage`, keyVersion behind the channel | 403 with `code: 'STALE_CHANNEL_KEY_VERSION'` | re-bootstrap, retry once |
-| `sendMessage`, keyVersion absent | 400 with `code: 'CHANNEL_KEY_VERSION_REQUIRED'` | fail loudly, never retry |
-
-**The last row is deliberately not retryable.** `encryptMessage` either returns a keyVersion or
-throws, so this client cannot produce that refusal; the guard exists to refuse a *different* client,
-and retrying would re-send an identical body and hide it behind a pointless round trip.
+**Three refusal codes went with the epoch, and nothing replaced them.**
+`STALE_CHANNEL_KEY_VERSION` and `CHANNEL_KEY_VERSION_REQUIRED` named an epoch the server derived and
+could therefore be behind; it now knows a session's NAME and nothing more, so a sender can never be
+stale against it. `ChannelKeyUnavailableError` and the vault that raised it are gone too - a missing
+seed is `GraineSessionUnavailableError`, and it is REPAIRABLE (a request to one named member) rather
+than re-bootstrappable.
 
 **The code is the contract, the sentence beside it is for humans** and may be reworded freely.
 Until 2026-08-16 the client read the sentences instead - five `includes()` on `Error.message`, one of
 which (`'Sync required'`) was only the tail of another - and `channelCrypto.test.ts` now pins that an
-untyped error carrying that exact prose is NOT retried. The client half is
-`ChannelApiError` (`ChannelService.ts`), which carries the status and the parsed `code` while leaving
-`message` as the raw body, the same shape `DEVICE_REVOKED` uses on
-[chat-delivery](chat-delivery.md). Both halves ship in the same deploy; a frontend newer than the
-social-service would see no `code` and simply stop retrying, which fails the send rather than
-corrupting anything.
+untyped error carrying that exact prose is NOT retried. The client half is `ChannelApiError`
+(`ChannelService.ts`), which carries the status and the parsed `code` while leaving `message` as the
+raw body, the same shape `DEVICE_REVOKED` uses on [chat-delivery](chat-delivery.md).
+
+A related note for anyone auditing this file: `soft-crypto.ts` (`encryptSoft` / `decryptSoft`) had no
+call site anywhere in `apps/`, `frontend/src` or `libs/` and was deleted 2026-08-17. It was a second,
+unused derivation sharing the `canari-channel-e2ee-v1` info string with the live one, which is
+exactly the shape that gets mistaken for the real mechanism while reading.
 
 ## Storage and retention: a channel message costs one row, forever
 
@@ -213,9 +209,11 @@ and the invite preview returns it before you join - so membership, not knowledge
 the authorization.
 
 Its channels are **projected field by field** (`id`, `workspaceId`, `name`, `visibility`,
-`keyVersion`, `writePolicy`), never returned as entities. `Channel.masterSecret` is the 32-byte
-HKDF root every epoch key of that channel derives from; serializing the entity handed it to the
-caller and made a slug sufficient to decrypt the whole channel history. The list is filtered by
+`writePolicy`), never returned as entities. The rule was written after `Channel.masterSecret` - the
+32-byte HKDF root every epoch key derived from - reached callers because the read spread the entity,
+making a slug sufficient to decrypt the whole channel history. That column is gone (WP-51) and the
+rule is not: `allowedUsers` is the private-channel roster, and the next column nobody thought about
+will be added by someone who is not reading this page. The list is filtered by
 `canAccessChannel`, the same rule `listChannelsForUser` applies, so a private channel the caller
 may not read is absent rather than merely unusable - which is also what lets the accepted-invite
 page pick a landing channel from it safely.
@@ -262,16 +260,18 @@ Sending a channel message fans out FCM pushes to workspace members (background +
 chat-delivery's `/internal/push/notify`. Each member has a per-channel level stored on
 `channel_members.notifLevels` (`all` default, `mentions`, `none`); `mentions` is routed from a
 cleartext `mentionedUserIds` list the sender attaches (metadata-only; content stays encrypted). The
-push carries the ciphertext inline; the Android native layer decrypts it locally with the epoch key
-mirrored to `channel_keys.json` (so plaintext never transits FCM). See the frontend chat module for
-the vault mirror and the per-channel level selector.
+push carries the ciphertext inline; the native layer derives the message key from the Graine seed
+mirrored to `graine_seeds.json` and decrypts locally (so plaintext never transits FCM). The mirror is
+bounded to the newest sessions per channel: a miss degrades the banner to "new message in #salon",
+which is the same outcome an oversized ciphertext already produces. See the frontend chat module for
+the mirror and the per-channel level selector.
 
 **The payload is exactly what a client reads: `type, channelId, channelName, workspaceName,
-keyVersion, ciphertext, nonce, senderId` plus a per-recipient `mentioned`.** Three more fields
+senderSessionId, messageIndex, ciphertext, nonce, senderId` plus a per-recipient `mentioned`.** Three more fields
 (`workspaceId`, `messageId`, `createdAt`) travelled with it until 2026-08-16 and were read by none of
 the three native handlers - dropped rather than left looking like a contract. `workspaceId` was a
 uuid no native surface can turn into a community name (there is no workspace mirror the way
-`channel_keys.json` mirrors the keys); `workspaceName` replaced it because it is what the title
+`graine_seeds.json` mirrors the seeds); `workspaceName` replaced it because it is what the title
 actually needs. `messageId` / `createdAt` cannot repeat what the MLS path does
 with them: that path writes `fcm_message_cache.ndjson` so a background-decrypted message is already
 in the store at open, whereas a channel message is DELIBERATELY never persisted locally
@@ -363,8 +363,8 @@ key every document CEK is derived from, and `notesCiphertext`.
 
 `toSafeAssociation` (`associations/association.projection.ts`) is now the single seam that nulls
 both, applied at the three controller reads. Third instance of one rule, after `Channel.masterSecret`
-and `AssociationProduct.webhookSecret`: **an entity that carries a secret needs one projection, and
-every read has to pass through it.**
+(since deleted outright) and `AssociationProduct.webhookSecret`: **an entity that carries a secret
+needs one projection, and every read has to pass through it.**
 
 The seam is the controller, not the service, on purpose: `findById` is also used by writers
 (`update`), and stripping in the service would hand them a row whose key column reads null. It
@@ -409,10 +409,9 @@ The social-service publishes to `chat:channel_events`:
 
 | Event | Emitted by |
 |---|---|
-| `channel.member.joined` | join, invite accept, key distribution |
+| `channel.member.joined` | join, invite accept |
 | `channel.member.kicked` | `kickFromWorkspace`, `leaveWorkspace` |
 | `channel.member.removed` | `removeMemberFromChannel` |
-| `channel.key.rotated` | any membership change that invalidates the epoch key |
 | `channel.message.created` / `.deleted` | send, delete |
 | `channel.updated` / `.deleted` | rename, delete |
 | `workspace.updated` / `.deleted` | cover image change, soft delete |
@@ -429,8 +428,8 @@ receiving one means nothing on its own, and two payload fields carry the entire 
 - `kickedUserId` / `removedUserId` - the target. A client that acts without comparing it to its
   own user id purges state on somebody else's behalf.
 - `isPrivate` - on the channel-scoped removals only. A **public** channel stays readable by every
-  workspace member, so removing someone from one merely rotates the epoch key; nothing is lost
-  and the client must not drop it (a reload would bring it straight back).
+  workspace member, so removing someone from one changes nothing they hold, and the client must not
+  drop it (a reload would bring it straight back).
 
 A community-wide removal (`kickFromWorkspace`) carries **no `channelId`**: that absence is what
 tells the client the whole workspace is gone. Client side: `removalOutcome` in

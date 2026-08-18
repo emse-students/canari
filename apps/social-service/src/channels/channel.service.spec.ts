@@ -6,7 +6,6 @@ import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
-import { ChannelKeyDistribution } from './entities/channel-key-distribution.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 
@@ -75,11 +74,6 @@ describe('ChannelService security hardening', () => {
         transaction: jest.fn(),
       },
     };
-    const keyDistributionRepo = {
-      findOne: jest.fn(),
-      save: jest.fn((x: unknown) => Promise.resolve(x)),
-      create: jest.fn((x: unknown) => x),
-    };
     const inviteRepo = {
       findOne: jest.fn(),
       find: jest.fn(() => Promise.resolve([])),
@@ -98,7 +92,6 @@ describe('ChannelService security hardening', () => {
       roleRepo as unknown as Repository<ChannelRole>,
       memberRepo as unknown as Repository<ChannelMember>,
       messageRepo as unknown as Repository<ChannelMessage>,
-      keyDistributionRepo as unknown as Repository<ChannelKeyDistribution>,
       inviteRepo as unknown as Repository<WorkspaceInvite>,
       redis as unknown as RedisService
     );
@@ -110,7 +103,6 @@ describe('ChannelService security hardening', () => {
       roleRepo,
       memberRepo,
       messageRepo,
-      keyDistributionRepo,
       inviteRepo,
       redis,
       hardDeletes,
@@ -532,8 +524,14 @@ describe('ChannelService security hardening', () => {
     roleRepo.find.mockResolvedValue([]);
     memberRepo.find.mockResolvedValue([{ userId: 'u1' }, { userId: 'u2' }]);
     messageRepo.create.mockImplementation((v: any) => v);
-    messageRepo.save.mockImplementation(async (v: any) => ({ ...v, id: 'm-new', createdAt: new Date() }));
-    const notify = jest.spyOn(service as any, 'notifyChannelRecipients').mockResolvedValue(undefined);
+    messageRepo.save.mockImplementation(async (v: any) => ({
+      ...v,
+      id: 'm-new',
+      createdAt: new Date(),
+    }));
+    const notify = jest
+      .spyOn(service as any, 'notifyChannelRecipients')
+      .mockResolvedValue(undefined);
 
     await service.sendMessage('ch1', {
       senderId: 'u1',
@@ -616,7 +614,7 @@ describe('ChannelService security hardening', () => {
     await expect(service.listMessages('ch1', 'admin')).resolves.toEqual([]);
   });
 
-  it('returns sanitized channels with key bootstrap for accessible members', async () => {
+  it('returns channels projected field by field, carrying no key material at all', async () => {
     const { service, channelRepo, memberRepo } = makeService();
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
     channelRepo.find.mockResolvedValue([
@@ -626,23 +624,19 @@ describe('ChannelService security hardening', () => {
         name: 'general',
         isPrivate: false,
         allowedRoles: [],
-        keyVersion: 2,
-        masterSecret: Buffer.alloc(32).toString('base64'),
+        allowedUsers: ['u1'],
       },
     ]);
 
+    // `toEqual` and not `objectContaining`: this route used to hand back an epoch key the SERVER
+    // had derived, and the assertion that says that is gone is an EXACT shape.
     await expect(service.listChannelsForUser('ws1', 'u1')).resolves.toEqual([
-      expect.objectContaining({
+      {
         id: 'ch1',
         workspaceId: 'ws1',
         name: 'general',
         visibility: 'public',
-        keyVersion: 2,
-        keyBootstrap: expect.objectContaining({
-          channelId: 'ch1',
-          keyVersion: 2,
-        }),
-      }),
+      },
     ]);
   });
 
@@ -701,7 +695,11 @@ describe('ChannelService security hardening', () => {
     });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
     messageRepo.create.mockImplementation((row: any) => row);
-    messageRepo.save.mockImplementation(async (row: any) => ({ ...row, id: 'm1', createdAt: new Date() }));
+    messageRepo.save.mockImplementation(async (row: any) => ({
+      ...row,
+      id: 'm1',
+      createdAt: new Date(),
+    }));
 
     await service.sendMessage('ch1', {
       senderId: 'u1',
@@ -743,73 +741,6 @@ describe('ChannelService security hardening', () => {
         messageIndex: 0,
       })
     ).rejects.toBeInstanceOf(ForbiddenException);
-  });
-
-  it('rejects invalid distribution transition pending -> key_received', async () => {
-    const { service, keyDistributionRepo, memberRepo, channelRepo } = makeService();
-
-    keyDistributionRepo.findOne.mockResolvedValue({
-      id: 'd1',
-      channelId: 'ch1',
-      workspaceId: 'ws1',
-      targetUserId: 'u2',
-      invitedBy: 'u1',
-      keyVersion: 3,
-      status: 'pending_key_distribution',
-    });
-
-    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u2', roleIds: [] });
-    channelRepo.findOne.mockResolvedValue({
-      id: 'ch1',
-      workspaceId: 'ws1',
-      isPrivate: false,
-      allowedRoles: [],
-    });
-
-    await expect(service.markKeyDistributionReceived('ch1', 'd1', 'u2', 3)).rejects.toBeInstanceOf(
-      BadRequestException
-    );
-  });
-
-  it('accepts valid distribution chain sent -> received -> acked', async () => {
-    const { service, keyDistributionRepo, memberRepo, channelRepo } = makeService();
-
-    const distribution: ChannelKeyDistribution = {
-      id: 'd1',
-      channelId: 'ch1',
-      workspaceId: 'ws1',
-      targetUserId: 'u2',
-      invitedBy: 'u1',
-      keyVersion: 3,
-      status: 'key_sent',
-      attempts: 0,
-      lastError: null,
-      sentAt: null,
-      receivedAt: null,
-      ackedAt: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    keyDistributionRepo.findOne.mockImplementation(() => Promise.resolve(distribution));
-
-    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u2', roleIds: [] });
-    channelRepo.findOne.mockResolvedValue({
-      id: 'ch1',
-      workspaceId: 'ws1',
-      isPrivate: false,
-      allowedRoles: [],
-    });
-
-    await expect(service.markKeyDistributionReceived('ch1', 'd1', 'u2', 3)).resolves.toEqual(
-      expect.objectContaining({ success: true, status: 'key_received' })
-    );
-    expect(distribution.status).toBe('key_received');
-
-    await expect(service.ackKeyDistribution('ch1', 'd1', 'u2', 3)).resolves.toEqual(
-      expect.objectContaining({ success: true, status: 'key_acked' })
-    );
-    expect(distribution.status).toBe('key_acked');
   });
 
   it('getNotificationLevel defaults to all and returns the stored value', async () => {
@@ -1095,23 +1026,23 @@ describe('ChannelService security hardening', () => {
           workspaceId: 'ws1',
           name: 'general',
           isPrivate: false,
-          keyVersion: 3,
-          masterSecret: Buffer.alloc(32).toString('base64'),
+          allowedUsers: ['u1', 'u2'],
         },
       ]
     );
 
     const result = await repos.service.getWorkspaceBySlug('team', 'u1');
 
-    // The HKDF root of every epoch key: leaking it hands over the whole channel history.
-    expect(JSON.stringify(result)).not.toContain('masterSecret');
+    // The projection is field by field, never the entity. `allowedUsers` is the private-channel
+    // roster and stands here for every column the contract does not name: spreading the row is what
+    // once handed `masterSecret` - the HKDF root of every epoch key - to the caller.
+    expect(JSON.stringify(result)).not.toContain('allowedUsers');
     expect(result.channels).toEqual([
       {
         id: 'ch1',
         workspaceId: 'ws1',
         name: 'general',
         visibility: 'public',
-        keyVersion: 3,
         writePolicy: 'everyone',
       },
     ]);
@@ -1133,13 +1064,12 @@ describe('ChannelService security hardening', () => {
       repos,
       [{ userId: 'u1', roleIds: [] }],
       [
-        { id: 'ch1', workspaceId: 'ws1', name: 'general', isPrivate: false, keyVersion: 1 },
+        { id: 'ch1', workspaceId: 'ws1', name: 'general', isPrivate: false },
         {
           id: 'ch2',
           workspaceId: 'ws1',
           name: 'staff',
           isPrivate: true,
-          keyVersion: 1,
           allowedUsers: [],
         },
       ]
@@ -1368,7 +1298,6 @@ describe('ChannelService security hardening', () => {
     });
 
     expect(channel.allowedUsers).toEqual(['boss']);
-    expect(channel.keyVersion).toBe(2);
     expect(rows.map((r) => r.userId).sort()).toEqual(['boss', 'u1']);
   });
 
@@ -1440,8 +1369,8 @@ describe('ChannelService security hardening', () => {
     await expect(repos.service.leaveWorkspace('ws1', 'boss')).resolves.toEqual({ success: true });
 
     expect(rows).toHaveLength(0);
-    // Seven tables, each named: nothing cascades here, so one left out is an orphan nobody sees.
-    expect(repos.hardDeletes).toHaveBeenCalledTimes(7);
+    // Six tables, each named: nothing cascades here, so one left out is an orphan nobody sees.
+    expect(repos.hardDeletes).toHaveBeenCalledTimes(6);
   });
 
   it('refuses to kick the last admin, whatever the actor is allowed to do', async () => {
@@ -1599,6 +1528,6 @@ describe('ChannelService security hardening', () => {
 
     await repos.service.repairWorkspacesAfterAccountDeletion(['ws1']);
 
-    expect(repos.hardDeletes).toHaveBeenCalledTimes(7);
+    expect(repos.hardDeletes).toHaveBeenCalledTimes(6);
   });
 });

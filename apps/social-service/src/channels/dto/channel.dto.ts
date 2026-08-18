@@ -102,40 +102,6 @@ export interface ChannelInviteDto {
   roleName?: string;
 }
 
-export interface ChannelKeyDistributionPayloadDto {
-  type: 'channel_key_distribution';
-  channelId: string;
-  channelName?: string;
-  keyVersion: number;
-  encryptedChannelKey: string;
-  epochKeys?: Array<{
-    keyVersion: number;
-    encryptedChannelKey: string;
-  }>;
-  distributionId: string;
-  issuedAt: string;
-  invitedBy: string;
-}
-
-export interface ChannelBootstrapDto {
-  channelId: string;
-  keyVersion: number;
-  newEpochBaseKey: string;
-}
-
-export interface ChannelHistoryKeysDto {
-  channelId: string;
-  latestKeyVersion: number;
-  epochKeys: Array<{
-    keyVersion: number;
-    encryptedChannelKey: string;
-  }>;
-}
-
-export interface MarkDistributionReceivedDto {
-  keyVersion: number;
-}
-
 export interface ChannelUpdateRoleDto {
   targetUserId: string;
   actorUserId: string;
@@ -198,11 +164,6 @@ export interface SendChannelMessageDto {
    */
   senderSessionId: string;
   messageIndex: number;
-  /**
-   * @deprecated Ignored since WP-31 and dropped by WP-51. The server no longer derives a channel
-   * key, so there is no epoch for a client to be stale against.
-   */
-  keyVersion?: number;
   /** Client-generated UUID used as PK so the WS echo can be deduplicated. */
   messageId?: string;
   /** When present, this message is a poll: it is auto-pinned and accepts votes. */

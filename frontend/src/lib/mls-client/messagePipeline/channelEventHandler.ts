@@ -1,5 +1,4 @@
 import { openChannelMessage } from '$lib/utils/graine/channelSeal';
-import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
@@ -176,40 +175,6 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       channelId: String(data.channelId || ''),
       workspaceId: data.workspaceId,
     });
-    return;
-  }
-
-  if (event.type === 'channel.key.rotated') {
-    const data = event.data || {};
-    const channelId = String(data.channelId || '');
-    const newEpochBaseKey = data.newEpochBaseKey;
-    const keyVersion = data.keyVersion;
-    if (channelId && newEpochBaseKey && keyVersion !== undefined) {
-      try {
-        if (!Number.isInteger(keyVersion) || keyVersion < 0) {
-          throw new Error(`Invalid keyVersion: ${keyVersion}`);
-        }
-        if (
-          typeof newEpochBaseKey !== 'string' ||
-          !/^[A-Za-z0-9+/]*={0,2}$/.test(newEpochBaseKey)
-        ) {
-          throw new Error('Invalid base64 format for epoch key');
-        }
-        const rawKeyMat = new Uint8Array(
-          atob(newEpochBaseKey)
-            .split('')
-            .map((c) => c.charCodeAt(0))
-        );
-        if (rawKeyMat.length < 32) {
-          throw new Error(`Key material too short: ${rawKeyMat.length} bytes`);
-        }
-        await importChannelEpochKey(channelId, keyVersion, rawKeyMat);
-        log(`[Key Rotation] Epoch ${keyVersion} stored for Channel ${channelId}`);
-      } catch (e) {
-        log(`[ERROR] Key rotation failed for channel ${channelId}: ${e}`);
-        console.error('[Key Rotation] failed for channel', channelId, e);
-      }
-    }
     return;
   }
 

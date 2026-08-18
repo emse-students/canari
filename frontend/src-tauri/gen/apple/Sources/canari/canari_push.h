@@ -32,7 +32,7 @@ void CanariScheduleBackgroundCleanupTask(void);
 /// Called from CanariMaybeNotifyPendingSync when the opportunistic drain fails.
 void CanariScheduleOutboxRetryTask(void);
 
-/// Copies the push decrypt inputs (mls.bin, push_context.json, channel_keys.json,
+/// Copies the push decrypt inputs (mls.bin, push_context.json, graine_seeds.json,
 /// push_secret.txt) into the `group.fr.emse.canari` App Group container for the Notification
 /// Service Extension. Call it on both foreground/background transitions.
 void CanariMirrorPushStateToAppGroup(void);

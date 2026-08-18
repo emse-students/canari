@@ -13,10 +13,6 @@ import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
 import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
-import {
-  ChannelKeyDistribution,
-  type ChannelKeyDistributionStatus,
-} from './entities/channel-key-distribution.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
@@ -44,9 +40,6 @@ import {
   ChannelInviteDto,
   ChannelUpdateRoleDto,
   SendChannelMessageDto,
-  type ChannelBootstrapDto,
-  type ChannelHistoryKeysDto,
-  type ChannelKeyDistributionPayloadDto,
   type ChannelNotificationLevel,
   type ChannelPollMeta,
   type ChannelWritePolicy,
@@ -54,7 +47,7 @@ import {
   type WorkspaceInviteDto,
 } from './dto/channel.dto';
 
-/** Manages workspaces, channels, roles, members, key distribution, and encrypted messages. */
+/** Manages workspaces, channels, roles, members and encrypted messages. */
 @Injectable()
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
@@ -279,9 +272,6 @@ export class ChannelService {
     await deleteDistributionGroup(this.internalSecret, workspaceId);
 
     await this.workspaceRepo.manager.transaction(async (mgr) => {
-      if (channelIds.length > 0) {
-        await mgr.delete(ChannelKeyDistribution, { channelId: In(channelIds) });
-      }
       await mgr.delete(ChannelMessage, { workspaceId });
       await mgr.delete(ChannelMember, { workspaceId });
       await mgr.delete(ChannelRole, { workspaceId });
@@ -360,45 +350,12 @@ export class ChannelService {
     );
   }
 
-  /**
-   * Derive a 32-byte AES-256 key from the channel's master secret + version.
-   * Uses HKDF-SHA256 to produce a unique key per epoch.
-   */
-  private deriveEpochKey(masterSecret: string, channelId: string, version: number): Buffer {
-    const salt = crypto
-      .createHash('sha256')
-      .update(`channel-epoch:${channelId}:${version}`)
-      .digest();
-    const raw = crypto.hkdfSync(
-      'sha256',
-      Buffer.from(masterSecret, 'base64'),
-      salt,
-      Buffer.from('canari-channel-e2ee-v1'),
-      32
-    );
-    return Buffer.from(raw);
-  }
-
-  /** Builds the bootstrap payload (channelId, keyVersion, base64 epoch key) sent to a client on join or key refresh. */
-  private buildChannelBootstrap(
-    channel: Pick<Channel, 'id' | 'keyVersion' | 'masterSecret'>
-  ): ChannelBootstrapDto {
-    const epochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
-    return {
-      channelId: channel.id,
-      keyVersion: channel.keyVersion,
-      newEpochBaseKey: epochKey.toString('base64'),
-    };
-  }
-
   constructor(
     @InjectRepository(Workspace) private readonly workspaceRepo: Repository<Workspace>,
     @InjectRepository(Channel) private readonly channelRepo: Repository<Channel>,
     @InjectRepository(ChannelRole) private readonly roleRepo: Repository<ChannelRole>,
     @InjectRepository(ChannelMember) private readonly memberRepo: Repository<ChannelMember>,
     @InjectRepository(ChannelMessage) private readonly messageRepo: Repository<ChannelMessage>,
-    @InjectRepository(ChannelKeyDistribution)
-    private readonly keyDistributionRepo: Repository<ChannelKeyDistribution>,
     @InjectRepository(WorkspaceInvite)
     private readonly inviteRepo: Repository<WorkspaceInvite>,
     private readonly redis: RedisService
@@ -735,12 +692,8 @@ export class ChannelService {
       workspaceId: savedWs.id,
       name: 'general',
       isPrivate: false,
-      masterSecret: crypto.randomBytes(32).toString('base64'),
-      keyVersion: 1,
     });
-    const savedGeneralChannel = await this.channelRepo.save(generalChannel);
-
-    await this.pushKeyToUser(savedGeneralChannel, input.createdBy);
+    await this.channelRepo.save(generalChannel);
 
     return { ...savedWs, viewerCanManage: true };
   }
@@ -857,19 +810,17 @@ export class ChannelService {
       workspaceId: string;
       name: string;
       visibility: 'public' | 'private';
-      keyVersion: number;
       writePolicy: ChannelWritePolicy;
     }> = [];
     for (const ch of allChannels) {
       if (!(await this.canAccessChannel(ch, viewerMember, normalizedUserId))) continue;
-      // Projected field by field, never the entity: `masterSecret` is the HKDF root every epoch
-      // key of the channel derives from, and serializing the entity handed it to the caller.
+      // Projected field by field, never the entity: a channel row carries columns no caller needs,
+      // and serializing the entity handed every one of them to the client.
       channels.push({
         id: ch.id,
         workspaceId: ch.workspaceId,
         name: ch.name,
         visibility: ch.isPrivate ? 'private' : 'public',
-        keyVersion: ch.keyVersion,
         writePolicy: ch.writePolicy ?? 'everyone',
       });
     }
@@ -1029,7 +980,6 @@ export class ChannelService {
     if (channelName.length > 80)
       throw new BadRequestException('Channel name too long (max 80 characters)');
 
-    const masterSecret = crypto.randomBytes(32).toString('base64');
     const isPrivate = input.visibility === 'private';
 
     const channel = this.channelRepo.create({
@@ -1038,20 +988,14 @@ export class ChannelService {
       isPrivate,
       allowedRoles: [],
       allowedUsers: isPrivate ? [input.actorUserId.trim().toLowerCase()] : [],
-      masterSecret,
-      keyVersion: 1,
     });
     const savedChannel = await this.channelRepo.save(channel);
-
-    await this.pushKeyToUser(savedChannel, input.actorUserId);
 
     return {
       id: savedChannel.id,
       workspaceId: savedChannel.workspaceId,
       name: savedChannel.name,
       visibility: savedChannel.isPrivate ? 'private' : 'public',
-      keyVersion: savedChannel.keyVersion,
-      keyBootstrap: this.buildChannelBootstrap(savedChannel),
     };
   }
 
@@ -1364,141 +1308,7 @@ export class ChannelService {
     return { success: true };
   }
 
-  /**
-   * Rotate the channel key: increment keyVersion, derive a new epoch key,
-   * and broadcast to all workspace members.
-   */
-  async rotateChannelKey(channelId: string, actorUserId: string) {
-    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException('Channel not found');
-
-    const actorMember = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId: actorUserId },
-    });
-    if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
-
-    let hasPerm = false;
-    if (actorMember.roleIds?.length > 0) {
-      const roles = await this.roleRepo.find({ where: { id: In(actorMember.roleIds) } });
-      hasPerm = roles.some(
-        (r) =>
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE) ||
-          r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_CHANNEL)
-      );
-    }
-    if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
-
-    // Backfill master secret if missing
-    if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString('base64');
-    }
-
-    channel.keyVersion += 1;
-    await this.channelRepo.save(channel);
-
-    const epochKey = this.deriveEpochKey(channel.masterSecret, channelId, channel.keyVersion);
-
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
-    await this.redis.publishChannelEvent(
-      'channel.key.rotated',
-      {
-        channelId,
-        newEpochBaseKey: epochKey.toString('base64'),
-        keyVersion: channel.keyVersion,
-      },
-      workspaceMemberIds
-    );
-
-    return { channelId, keyVersion: channel.keyVersion };
-  }
-
-  /**
-   * Push `channel.key.rotated` for a specific user (e.g. on join).
-   */
-  private async pushKeyToUser(channel: Channel, userId: string) {
-    if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString('base64');
-      await this.channelRepo.save(channel);
-    }
-
-    const epochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
-    await this.redis.publishChannelEvent(
-      'channel.key.rotated',
-      {
-        channelId: channel.id,
-        newEpochBaseKey: epochKey.toString('base64'),
-        keyVersion: channel.keyVersion,
-      },
-      [userId]
-    );
-  }
-
-  /** Constructs the ChannelKeyDistributionPayloadDto sent to the invited user so they can decrypt historical messages. */
-  private toDistributionPayload(
-    distribution: ChannelKeyDistribution,
-    channel: Channel,
-    channelName: string,
-    epochKeyB64: string,
-    epochKeys?: Array<{ keyVersion: number; encryptedChannelKey: string }>
-  ): ChannelKeyDistributionPayloadDto {
-    return {
-      type: 'channel_key_distribution',
-      channelId: channel.id,
-      channelName,
-      keyVersion: distribution.keyVersion,
-      encryptedChannelKey: epochKeyB64,
-      epochKeys,
-      distributionId: distribution.id,
-      issuedAt: distribution.createdAt.toISOString(),
-      invitedBy: distribution.invitedBy,
-    };
-  }
-
-  /** Advances a key-distribution record through its lifecycle (pending → sent → received → acked). Enforces valid state transitions. Accepts either an already-loaded entity or its UUID to avoid redundant DB round-trips. */
-  private async updateDistributionStatus(
-    distributionOrId: ChannelKeyDistribution | string,
-    status: ChannelKeyDistributionStatus,
-    actorUserId?: string
-  ) {
-    const distribution =
-      typeof distributionOrId === 'string'
-        ? await this.keyDistributionRepo.findOne({ where: { id: distributionOrId } })
-        : distributionOrId;
-    if (!distribution) throw new NotFoundException('Channel key distribution not found');
-
-    if (actorUserId && distribution.targetUserId !== actorUserId) {
-      throw new ForbiddenException('Only target user can update this distribution');
-    }
-
-    const isValidTransition =
-      (distribution.status === 'pending_key_distribution' && status === 'key_sent') ||
-      (distribution.status === 'key_sent' &&
-        (status === 'key_received' || status === 'key_acked')) ||
-      (distribution.status === 'key_received' && status === 'key_acked') ||
-      distribution.status === status;
-    if (!isValidTransition) {
-      throw new BadRequestException(
-        `Invalid distribution status transition ${distribution.status} -> ${status}`
-      );
-    }
-
-    distribution.status = status;
-    if (status === 'key_sent') {
-      distribution.sentAt = new Date();
-      distribution.attempts += 1;
-    }
-    if (status === 'key_received') {
-      distribution.receivedAt = new Date();
-    }
-    if (status === 'key_acked') {
-      distribution.ackedAt = new Date();
-      if (!distribution.receivedAt) distribution.receivedAt = distribution.ackedAt;
-    }
-    await this.keyDistributionRepo.save(distribution);
-    return distribution;
-  }
-
-  /** Lists all non-archived channels the user can access in a workspace, including the current epoch key bootstrap for each. */
+  /** Lists all non-archived channels the user can access in a workspace. */
   async listChannelsForUser(workspaceId: string, userId: string) {
     const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
@@ -1515,62 +1325,7 @@ export class ChannelService {
       workspaceId: channel.workspaceId,
       name: channel.name,
       visibility: channel.isPrivate ? 'private' : 'public',
-      keyVersion: channel.keyVersion,
-      keyBootstrap: this.buildChannelBootstrap(channel),
     }));
-  }
-
-  /** Returns the current epoch key bootstrap for a single channel, used when reconnecting after a missed key rotation. */
-  async getChannelKeyBootstrapForUser(channelId: string, userId: string) {
-    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException('Channel not found');
-
-    const member = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId },
-    });
-    if (!member) throw new ForbiddenException('Not a member of this workspace');
-    if (!(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException('Not allowed to access this channel');
-    }
-
-    return this.buildChannelBootstrap(channel);
-  }
-
-  /** Returns all epoch keys (versions 1…N) for a channel, allowing a new member to decrypt historical messages. */
-  async getChannelHistoryKeysForUser(
-    channelId: string,
-    userId: string
-  ): Promise<ChannelHistoryKeysDto> {
-    const channel = await this.channelRepo.findOne({ where: { id: channelId } });
-    if (!channel) throw new NotFoundException('Channel not found');
-
-    const member = await this.memberRepo.findOne({
-      where: { workspaceId: channel.workspaceId, userId },
-    });
-    if (!member) throw new ForbiddenException('Not a member of this workspace');
-    if (!(await this.canAccessChannel(channel, member, userId))) {
-      throw new ForbiddenException('Not allowed to access this channel');
-    }
-
-    if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString('base64');
-      await this.channelRepo.save(channel);
-    }
-
-    const epochKeys = Array.from({ length: channel.keyVersion }, (_, index) => {
-      const version = index + 1;
-      const key = this.deriveEpochKey(channel.masterSecret, channel.id, version);
-      return {
-        keyVersion: version,
-        encryptedChannelKey: key.toString('base64'),
-      };
-    });
-
-    return {
-      channelId: channel.id,
-      latestKeyVersion: channel.keyVersion,
-      epochKeys,
-    };
   }
 
   /** Adds a user to a workspace channel. Creates the workspace membership with the default Member role if this is their first channel in the workspace. */
@@ -1639,35 +1394,13 @@ export class ChannelService {
   }
 
   /**
-   * Validates an active key-distribution record for the given target user and returns the loaded
-   * entities. Shared by markKeyDistributionReceived and ackKeyDistribution to avoid duplication.
+   * Invites a user to a channel: makes them a member of the community if they are not one yet, and
+   * for a private channel adds them to `allowedUsers`.
+   *
+   * It hands back NO key material, and cannot: a channel message is sealed under a Graine session
+   * whose seed only its sender's devices hold. What the invitee reads of the past is decided by
+   * `historyVisibility` and answered by another member over the distribution group, never here.
    */
-  private async resolveDistributionForTarget(
-    channelId: string,
-    distributionId: string,
-    actorUserId: string,
-    keyVersion: number
-  ): Promise<{ distribution: ChannelKeyDistribution; member: ChannelMember; channel: Channel }> {
-    const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
-    if (!distribution || distribution.channelId !== channelId) {
-      throw new NotFoundException('Channel key distribution not found');
-    }
-    if (distribution.keyVersion !== keyVersion) {
-      throw new ForbiddenException('Distribution keyVersion mismatch');
-    }
-    const [member, channel] = await Promise.all([
-      this.memberRepo.findOne({
-        where: { workspaceId: distribution.workspaceId, userId: actorUserId },
-      }),
-      this.channelRepo.findOne({ where: { id: distribution.channelId } }),
-    ]);
-    if (!member || !channel || !(await this.canAccessChannel(channel, member, actorUserId))) {
-      throw new ForbiddenException('Target user no longer authorized for this channel');
-    }
-    return { distribution, member, channel };
-  }
-
-  /** Invites a user to a channel. Rotates the channel key if it's a new member, then returns a full key-distribution payload so the invitee can decrypt all past messages. */
   async inviteToChannel(channelId: string, input: ChannelInviteDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');
@@ -1742,85 +1475,27 @@ export class ChannelService {
         workspaceMemberIds
       );
 
-      // For private channels with user-based access, add the new member to allowedUsers.
+      // For private channels with user-based access, add the new member to allowedUsers. Nothing
+      // else on the row changes any more, so the save belongs to this branch alone.
       if (channel.isPrivate) {
         const existing = channel.allowedUsers || [];
         const normalized = input.targetUserId.trim().toLowerCase();
         if (!existing.includes(normalized)) {
           channel.allowedUsers = [...existing, normalized];
+          await this.channelRepo.save(channel);
         }
       }
-
-      // Membership change => mandatory channel key rotation.
-      if (!channel.masterSecret) {
-        channel.masterSecret = crypto.randomBytes(32).toString('base64');
-      }
-      channel.keyVersion += 1;
-      await this.channelRepo.save(channel);
     }
-
-    // Existing members can be re-invited to resync historical keys.
-    if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString('base64');
-      await this.channelRepo.save(channel);
-    }
-
-    const epochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
-    const epochKeys = Array.from({ length: channel.keyVersion }, (_, index) => {
-      const version = index + 1;
-      const key = this.deriveEpochKey(channel.masterSecret, channel.id, version);
-      return {
-        keyVersion: version,
-        encryptedChannelKey: key.toString('base64'),
-      };
-    });
-
-    // Upsert: reuse any in-flight distribution for same channel/user/version to prevent
-    // duplicates when two admins invite simultaneously or the inviter retries.
-    const existingDist = await this.keyDistributionRepo.findOne({
-      where: {
-        channelId: channel.id,
-        targetUserId: input.targetUserId,
-        keyVersion: channel.keyVersion,
-        status: In(['pending_key_distribution', 'key_sent']),
-      },
-      order: { createdAt: 'DESC' },
-    });
-    const savedDistribution = await this.keyDistributionRepo.save(
-      existingDist
-        ? {
-            ...existingDist,
-            invitedBy: input.actorUserId,
-            status: 'pending_key_distribution' as const,
-          }
-        : this.keyDistributionRepo.create({
-            workspaceId: channel.workspaceId,
-            channelId: channel.id,
-            targetUserId: input.targetUserId,
-            invitedBy: input.actorUserId,
-            keyVersion: channel.keyVersion,
-            status: 'pending_key_distribution',
-          })
-    );
-
-    const payload = this.toDistributionPayload(
-      savedDistribution,
-      channel,
-      channel.name,
-      epochKey.toString('base64'),
-      epochKeys
-    );
 
     return {
       success: true,
       userId: input.targetUserId,
       alreadyMember: !isNewMember,
-      keyDistribution: payload,
     };
   }
 
   /**
-   * Removes the calling user from a PRIVATE channel and rotates its key so their copy is dead.
+   * Removes the calling user from a PRIVATE channel.
    *
    * Only a private channel can be left, because only a private channel holds per-user access
    * (`allowedUsers`). A public one is readable by every member of the community and has no row
@@ -1849,79 +1524,14 @@ export class ChannelService {
       );
     }
 
-    // Rotate the key BEFORE removing the access so there is no window where the member
-    // is absent but the key hasn't been rotated - which would let them decrypt messages
-    // sent with the still-valid old key during that gap.
-    if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString('base64');
-    }
-    channel.keyVersion += 1;
-
+    // Access is the only thing this revokes. Nothing here rotates a key: a channel message is
+    // sealed under a Graine session, and what shuts the leaver out is the senders minting a fresh
+    // session on the next send - which they do because a departure is what rotates a Graine.
     const normalized = input.userId.trim().toLowerCase();
     channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
-    // Single save: atomically persists both the key rotation and the access change.
     await this.channelRepo.save(channel);
 
-    const newEpochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
-    await this.redis.publishChannelEvent(
-      'channel.key.rotated',
-      {
-        channelId,
-        newEpochBaseKey: newEpochKey.toString('base64'),
-        keyVersion: channel.keyVersion,
-      },
-      workspaceMemberIds
-    );
-
     return { success: true };
-  }
-
-  /** Called by the inviter once they have transmitted the encrypted key to the target device. Advances status → key_sent. */
-  async markKeyDistributionSent(channelId: string, distributionId: string, actorUserId: string) {
-    const distribution = await this.keyDistributionRepo.findOne({ where: { id: distributionId } });
-    if (!distribution || distribution.channelId !== channelId) {
-      throw new NotFoundException('Channel key distribution not found');
-    }
-    if (distribution.invitedBy !== actorUserId) {
-      throw new ForbiddenException('Only inviter can mark distribution as sent');
-    }
-    await this.updateDistributionStatus(distribution, 'key_sent');
-    return { success: true, distributionId, status: 'key_sent' };
-  }
-
-  /** Called by the target user once they have received (but not yet decrypted) the key package. Advances status → key_received. */
-  async markKeyDistributionReceived(
-    channelId: string,
-    distributionId: string,
-    actorUserId: string,
-    keyVersion: number
-  ) {
-    const { distribution } = await this.resolveDistributionForTarget(
-      channelId,
-      distributionId,
-      actorUserId,
-      keyVersion
-    );
-    await this.updateDistributionStatus(distribution, 'key_received', actorUserId);
-    return { success: true, distributionId, status: 'key_received' };
-  }
-
-  /** Called by the target user once they have successfully decrypted and stored the key. Advances status → key_acked. */
-  async ackKeyDistribution(
-    channelId: string,
-    distributionId: string,
-    actorUserId: string,
-    keyVersion: number
-  ) {
-    const { distribution } = await this.resolveDistributionForTarget(
-      channelId,
-      distributionId,
-      actorUserId,
-      keyVersion
-    );
-    await this.updateDistributionStatus(distribution, 'key_acked', actorUserId);
-    return { success: true, distributionId, status: 'key_acked' };
   }
 
   /** Kicks a member from the workspace entirely (removes from all channels). Requires MANAGE_WORKSPACE, MANAGE_CHANNEL, or KICK_MEMBERS permission. */
@@ -2120,24 +1730,9 @@ export class ChannelService {
       notifyIds
     );
 
-    // Rotate the channel key so the removed user can no longer decrypt new messages
-    if (!channel.masterSecret) {
-      channel.masterSecret = crypto.randomBytes(32).toString('base64');
-    }
-    channel.keyVersion += 1;
-    await this.channelRepo.save(channel);
-
-    const newEpochKey = this.deriveEpochKey(channel.masterSecret, channel.id, channel.keyVersion);
-    await this.redis.publishChannelEvent(
-      'channel.key.rotated',
-      {
-        channelId,
-        newEpochBaseKey: newEpochKey.toString('base64'),
-        keyVersion: channel.keyVersion,
-      },
-      workspaceMemberIds
-    );
-
+    // No key is rotated here, and none can be: the seed that opens this channel's messages lives on
+    // the sending devices. Removing someone from the community makes them ineligible for the
+    // distribution group, and every sender mints a fresh session on the next send.
     return { success: true };
   }
 
@@ -2253,7 +1848,11 @@ export class ChannelService {
     };
   }
 
-  /** Persists a client-encrypted message after validating keyVersion against the current channel epoch, then publishes the ciphertext to all workspace members via Redis. */
+  /**
+   * Persists a client-encrypted message, then publishes the ciphertext to every workspace member
+   * over Redis. The server validates that the row NAMES a Graine session and an index - never that
+   * it can open it, which it cannot.
+   */
   async sendMessage(channelId: string, input: SendChannelMessageDto) {
     const channel = await this.channelRepo.findOne({ where: { id: channelId } });
     if (!channel) throw new NotFoundException('Channel not found');

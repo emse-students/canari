@@ -6,8 +6,6 @@ import {
   mkChannelInviteSentEnvelope,
   channelInviteMessageId,
 } from '$lib/envelope';
-import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
-import { ChannelService } from '$lib/services/ChannelService';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
@@ -378,61 +376,6 @@ export async function handleSystemEvent(
         log(`[HISTORY_PULL] Answer failed: ${String(e).slice(0, 120)}`)
       );
     });
-    return true;
-  }
-
-  if (event === 'channel_key_distribution') {
-    const channelId = String(data.channelId || '');
-    const distributionId = String(data.distributionId || '');
-    const encryptedChannelKey = String(data.encryptedChannelKey || '');
-    const keyVersion = Number(data.keyVersion || 0);
-    const epochKeysRaw = Array.isArray(data.epochKeys) ? data.epochKeys : [];
-
-    const epochKeys = epochKeysRaw
-
-      .map((entry: any) => ({
-        keyVersion: Number(entry?.keyVersion),
-        encryptedChannelKey: String(entry?.encryptedChannelKey || ''),
-      }))
-      .filter(
-        (entry: { keyVersion: number; encryptedChannelKey: string }) =>
-          Number.isFinite(entry.keyVersion) && entry.keyVersion > 0 && !!entry.encryptedChannelKey
-      );
-
-    const fallbackCurrent =
-      encryptedChannelKey && Number.isFinite(keyVersion) && keyVersion > 0
-        ? [{ keyVersion, encryptedChannelKey }]
-        : [];
-    const keysToImport = epochKeys.length > 0 ? epochKeys : fallbackCurrent;
-
-    if (!channelId || !distributionId || keysToImport.length === 0) {
-      log(
-        `[CHANNEL-KEY] Distribution rejected - channelId=${channelId || '-'} distributionId=${distributionId || '-'} keysToImport=${keysToImport.length}`
-      );
-      return true;
-    }
-
-    try {
-      for (const item of keysToImport) {
-        const rawKeyMat = Uint8Array.from(atob(item.encryptedChannelKey), (c) => c.charCodeAt(0));
-        await importChannelEpochKey(channelId, item.keyVersion, rawKeyMat);
-      }
-
-      const channelSvc = new ChannelService();
-      await channelSvc
-        .markKeyDistributionReceived(channelId, distributionId, keyVersion)
-        .catch(() => {});
-      await channelSvc.ackKeyDistribution(channelId, distributionId, keyVersion).catch(() => {});
-
-      log(
-        `[CHANNEL-KEY] ${keysToImport.length} key(s) received via MLS for #${data.channelName || channelId} (up to v${keyVersion}).`
-      );
-    } catch (e) {
-      log(
-        `[CHANNEL-KEY] Distribution handling failed ${distributionId}: ${e instanceof Error ? e.message : String(e)}`
-      );
-    }
-
     return true;
   }
 

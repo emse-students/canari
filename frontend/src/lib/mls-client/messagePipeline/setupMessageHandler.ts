@@ -306,7 +306,7 @@ async function handleWelcome({
 
       // FIX 1 — Add the conversation to the map early, to avoid the race between the Welcome
       // (which adds the group to WASM) and the arrival of system messages
-      // (channel_key_distribution) that need handleKnownGroup to find the conversation.
+      // (a channel invitation card, say) that need handleKnownGroup to find the conversation.
       if (!deps.conversations.has(joinedGroupId)) {
         const isDirectByPattern = joinedGroupId.includes('::');
         const directPeerId = isDirectByPattern
@@ -327,7 +327,7 @@ async function handleWelcome({
       }
 
       // FIX 4 — Drain the orphan messages that arrived before the conversation was in the map
-      // (channel_key_distribution / Welcome race).
+      // (system message / Welcome race).
       deps.drainOrphanMessages?.(joinedGroupId);
 
       // Drop the pending buffer for this group; cancel any recovery bookkeeping (cooldown + timer).

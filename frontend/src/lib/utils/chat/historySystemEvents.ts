@@ -207,8 +207,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // Mirrors the live handler: both sides render the same card, the inviter's copy without a
       // Join button (`invitedName` is the discriminator). Replayed rather than ignored because an
       // invitation that lands while the device is offline only ever reaches it through the stream.
-      // Its sibling `channel_key_distribution` needs no replay: `hydrateChannelHistoryKeys` pulls
-      // every epoch key from the server when the channel is opened.
+      // Nothing else has to be replayed alongside it: the invitation carries no key material, and
+      // the seeds that open the channel are asked for over the distribution group on join.
       const channelId = String(data.channelId);
       const channelName = String(data.channelName || channelId);
       const workspaceName = data.workspaceName ? String(data.workspaceName) : undefined;

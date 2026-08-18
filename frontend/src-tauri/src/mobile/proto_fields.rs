@@ -144,14 +144,8 @@ fn format_system_event_text(event: &str, data: &str) -> Option<String> {
         "memberLeft" => Some("a quitté le groupe".to_string()),
         "groupDeleted" => Some("a supprimé la conversation".to_string()),
         // Control / sync frames: no user-visible notification preview.
-        "read_receipt"
-        | "delete_message"
-        | "edit_message"
-        | "remove_reaction"
-        | "pin"
-        | "unpin"
-        | "history_bundle"
-        | "channel_key_distribution" => None,
+        "read_receipt" | "delete_message" | "edit_message" | "remove_reaction" | "pin"
+        | "unpin" | "history_bundle" => None,
         _ => Some(format!("événement de groupe ({event})")),
     }
 }

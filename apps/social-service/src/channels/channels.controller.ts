@@ -25,7 +25,6 @@ import {
   type CreateWorkspaceDto,
   type CreateWorkspaceInviteDto,
   type GetChannelMessagesQuery,
-  type MarkDistributionReceivedDto,
   type PublishDistributionGroupInfoDto,
   type RenameChannelDto,
   type ReorderWorkspacesDto,
@@ -40,7 +39,7 @@ import {
 } from './dto/channel.dto';
 import { type SetRolePermissionsDto } from './dto/channel-permission.dto';
 
-/** Manages workspace and channel resources including membership, keys, and messages. */
+/** Manages workspace and channel resources including membership and messages. */
 @Controller('channels')
 export class ChannelsController {
   constructor(private readonly service: ChannelService) {}
@@ -177,26 +176,6 @@ export class ChannelsController {
     return this.service.listChannelsForUser(workspaceId, xUserId.trim().toLowerCase());
   }
 
-  /** Returns the current encryption key bootstrap data for the calling user in a channel. */
-  @UseGuards(NginxAuthGuard)
-  @Get(':channelId/key')
-  getChannelKeyBootstrap(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string
-  ) {
-    return this.service.getChannelKeyBootstrapForUser(channelId, xUserId.trim().toLowerCase());
-  }
-
-  /** Returns historical encryption keys for a channel to allow decryption of past messages. */
-  @UseGuards(NginxAuthGuard)
-  @Get(':channelId/keys/history')
-  getChannelHistoryKeys(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string
-  ) {
-    return this.service.getChannelHistoryKeysForUser(channelId, xUserId.trim().toLowerCase());
-  }
-
   /** Adds the calling user as a member of the specified channel. */
   @UseGuards(NginxAuthGuard)
   @Post(':channelId/members/join')
@@ -283,45 +262,6 @@ export class ChannelsController {
       channelId,
       xUserId.trim().toLowerCase(),
       scope === 'workspace' ? 'workspace' : 'channel'
-    );
-  }
-
-  /** Rotates the encryption key for a channel, generating a new key version. */
-  @UseGuards(NginxAuthGuard)
-  @Post(':channelId/key/rotate')
-  rotateChannelKey(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {
-    return this.service.rotateChannelKey(channelId, xUserId.trim().toLowerCase());
-  }
-
-  /** Marks a key distribution as sent by the calling user. */
-  @UseGuards(NginxAuthGuard)
-  @Post(':channelId/key-distributions/:distributionId/sent')
-  markKeyDistributionSent(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string,
-    @Param('distributionId') distributionId: string
-  ) {
-    return this.service.markKeyDistributionSent(
-      channelId,
-      distributionId,
-      xUserId.trim().toLowerCase()
-    );
-  }
-
-  /** Marks a key distribution as received and records the accepted key version. */
-  @UseGuards(NginxAuthGuard)
-  @Post(':channelId/key-distributions/:distributionId/received')
-  markKeyDistributionReceived(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string,
-    @Param('distributionId') distributionId: string,
-    @Body() body: MarkDistributionReceivedDto
-  ) {
-    return this.service.markKeyDistributionReceived(
-      channelId,
-      distributionId,
-      xUserId.trim().toLowerCase(),
-      Number(body.keyVersion)
     );
   }
 
@@ -415,23 +355,6 @@ export class ChannelsController {
       workspaceId,
       xUserId.trim().toLowerCase(),
       body.historyVisibility
-    );
-  }
-
-  /** Acknowledges receipt and processing of a key distribution for a channel. */
-  @UseGuards(NginxAuthGuard)
-  @Post(':channelId/key-distributions/:distributionId/ack')
-  ackKeyDistribution(
-    @Headers('x-user-id') xUserId: string,
-    @Param('channelId') channelId: string,
-    @Param('distributionId') distributionId: string,
-    @Body() body: MarkDistributionReceivedDto
-  ) {
-    return this.service.ackKeyDistribution(
-      channelId,
-      distributionId,
-      xUserId.trim().toLowerCase(),
-      Number(body.keyVersion)
     );
   }
 

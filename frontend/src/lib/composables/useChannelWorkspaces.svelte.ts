@@ -676,12 +676,12 @@ export function useChannelWorkspaces() {
           : roleName === 'moderator'
             ? 'Modérateur'
             : 'Membre';
-      const inviteResult = await service.inviteToChannel(channelId, {
+      await service.inviteToChannel(channelId, {
         targetUserId: memberId,
         roleName: backendRoleName,
       });
 
-      if (inviteResult.keyDistribution && ctx.ensureMls && ctx.startDirectConversation) {
+      if (ctx.ensureMls && ctx.startDirectConversation) {
         const previousSelection = ctx.getSelectedConversationId?.() ?? null;
         try {
           await ctx.startDirectConversation(memberId, { silent: true });
@@ -692,17 +692,6 @@ export function useChannelWorkspaces() {
 
           if (directConvo) {
             const mlsService = await ctx.ensureMls();
-            const controlMsg = encodeAppMessage(
-              mkSystem(
-                'channel_key_distribution',
-                JSON.stringify({
-                  ...inviteResult.keyDistribution,
-                  channelName: channelDisplayName,
-                  workspaceName: workspaceDisplayName,
-                })
-              )
-            );
-            await mlsService.sendMessage(directConvo[1].id, controlMsg);
 
             // Send a channel_invitation message, visible in the DM conversation
             const inviterId = currentUserId();
@@ -746,11 +735,6 @@ export function useChannelWorkspaces() {
                 console.warn('[Channel Invite] Failed to send invitation message:', err);
               }
             }
-
-            await service.markKeyDistributionSent(
-              channelId,
-              inviteResult.keyDistribution.distributionId
-            );
           } else {
             throw new Error('Private MLS conversation not found after creation');
           }

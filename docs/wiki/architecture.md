@@ -186,12 +186,11 @@ All tables share the `auth_db` database host. Full schemas are in the service wi
 
 | Table | Key columns |
 |---|---|
-| `channel_workspaces` | `id`, `slug` (unique), `name`, `createdBy`, `imageMediaId` |
-| `channels` | `workspaceId`, `name`, `isPrivate`, `allowedRoles[]`, `keyVersion`, `masterSecret`, `archived` |
+| `channel_workspaces` | `id`, `slug` (unique), `name`, `createdBy`, `imageMediaId`, `distributionGroupId`, `historyVisibility` |
+| `channels` | `workspaceId`, `name`, `isPrivate`, `allowedRoles[]`, `allowedUsers[]`, `writePolicy`, `archived` |
 | `channel_roles` | `workspaceId`, `name`, `priority`, `permissions[]` |
-| `channel_members` | `workspaceId`, `userId`, `roleIds[]`, `keys` (JSONB) |
-| `channel_messages` | `channelId`, `senderId`, `content` (ciphertext), `nonce`, `keyVersion`, `replyTo`, `attachments`, `reactions` |
-| `channel_key_distributions` | `channelId`, `userId`, `deviceId`, `status`, `attempts`, `sentAt`, `receivedAt`, `ackedAt` |
+| `channel_members` | `workspaceId`, `userId`, `roleIds[]`, `notifLevels` (JSONB), `sortOrder` |
+| `channel_messages` | `channelId`, `senderId`, `content` (ciphertext), `nonce`, `senderSessionId`, `messageIndex`, `silent`, `replyTo`, `attachments` |
 
 ## Production deployment
 

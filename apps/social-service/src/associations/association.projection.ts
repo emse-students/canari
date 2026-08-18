@@ -9,7 +9,7 @@ import { Association } from './entities/association.entity';
  * entity (`{ ...asso, memberCount }`), and the three routes that do so carry no guard at all - so an
  * unauthenticated request could enumerate every vault key on the platform.
  *
- * Same lesson as `Channel.masterSecret` and `AssociationProduct.webhookSecret`: an entity that
+ * Same lesson as `AssociationProduct.webhookSecret`: an entity that
  * carries a secret needs one seam that removes it, and every read has to pass through it.
  *
  * Nulls rather than deletes, so the response keeps the shape its TypeScript clients expect - and so

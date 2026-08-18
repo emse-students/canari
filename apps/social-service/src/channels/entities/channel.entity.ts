@@ -37,12 +37,6 @@ export class Channel {
   @Column({ type: 'varchar', default: 'everyone' })
   writePolicy: 'everyone' | 'admins_moderators' | 'admins';
 
-  @Column({ default: 1 })
-  keyVersion: number;
-
-  @Column({ nullable: true })
-  masterSecret: string;
-
   @Column({ default: false })
   archived: boolean;
 

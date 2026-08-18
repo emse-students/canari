@@ -7,7 +7,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
-/** TypeORM entity representing a user's membership in a workspace, including their role IDs and per-channel keys. */
+/** TypeORM entity representing a user's membership in a workspace: their role IDs, per-channel notification levels and sidebar order. */
 @Entity('channel_members')
 @Index(['workspaceId', 'userId'], { unique: true })
 export class ChannelMember {
@@ -22,9 +22,6 @@ export class ChannelMember {
 
   @Column('simple-array', { default: '' })
   roleIds: string[];
-
-  @Column('jsonb', { default: {} })
-  keys: Record<string, string>;
 
   /**
    * Per-channel push notification level keyed by channelId (`all` | `mentions` | `none`).

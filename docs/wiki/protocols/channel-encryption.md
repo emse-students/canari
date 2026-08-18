@@ -229,9 +229,10 @@ Two things it does NOT survive unchanged:
 
 ### 4.10 Seeds must become durable, which they are not today
 
-`ChannelKeyVault` is **in memory only**, and that is currently sound: the server re-serves every
-epoch key on load, so losing the vault costs nothing. **After Graine the server has nothing to
-re-serve**, so a lost seed is history a member can only get back by asking a peer.
+`ChannelKeyVault` was **in memory only**, and that was sound while it lasted: the server re-served
+every epoch key on load, so losing the vault cost nothing. **After Graine the server has nothing to
+re-serve**, so a lost seed is history a member can only get back by asking a peer. (The vault itself
+was deleted in WP-50 - this section is why the store that replaced it is durable.)
 
 Seeds therefore move into `IStorage` (IndexedDB on web, SQLite on mobile), encrypted with the device
 key like messages and outbox entries, and into the backup export/import path beside them. Channel
@@ -607,10 +608,9 @@ oversized ciphertext already produces, and the correct one. `channelPushFields.t
 holds the writer and the three readers together; it caught this migration rather than being updated
 after it.
 
-**Still standing, and deliberately: the epoch-key machinery is now WRITE-ONLY.**
-`ChannelKeyVault`, `channelKeyMirror`, `channel.key.rotated` and the key-distribution handlers still
-run and still import keys nothing reads. They come out with their server halves in WP-50/51, in one
-piece, rather than leaving the client talking to routes that no longer exist.
+**The epoch-key machinery came out whole in WP-50/51** - client and server in one commit, so no
+build ever ran with a client calling routes that had gone. See "the server forgets how to read"
+below for what that removed and what replaced each guarantee.
 
 #### WP-33, and the answerer nobody elects
 
@@ -717,18 +717,38 @@ something the community did, and a device that refused it would drift from one t
 operation on a channel message - delete, pin, poll vote - addresses it by row id, and two rows
 answering to one address would make each of those ambiguous.
 
-### Phase 6 - the server forgets how to read
+### Phase 6 - the server forgets how to read - SHIPPED
 
-- **WP-50** Delete `deriveEpochKey`, `buildChannelBootstrap`, `getChannelKeyBootstrapForUser`,
-  `getChannelHistoryKeysForUser` and their routes. `STALE_CHANNEL_KEY_VERSION` goes with them - the
-  server no longer knows which session is current and no longer needs to, which removes a coupling
-  instead of moving it.
-- **WP-51** Migration `041` (`037` was WP-21's `distributionGroupId`, `038` added
-  `channel_messages."senderSessionId"` and `"messageIndex"` in WP-31, `039` added
-  `channel_workspaces."historyVisibility"` in WP-35, `040` traded
-  `channel_messages.reactions` for `silent` in WP-40): drop
-  `channel_messages.keyVersion`; `channels` drops `masterSecret` and `keyVersion`; `channel_members`
-  drops the legacy `keys` jsonb.
+**WP-50 deleted the derivation and every route that served it**, in the same commit as the client
+halves: `deriveEpochKey`, `buildChannelBootstrap`, `getChannelKeyBootstrapForUser`,
+`getChannelHistoryKeysForUser`, `rotateChannelKey`, `pushKeyToUser`, the four-state
+`channel_key_distributions` ledger with its three status routes, and on the client
+`ChannelKeyVault`, `channelKeyMirror`, the `channel.key.rotated` handler, the
+`channel_key_distribution` system-message branch and the Rust `store_channel_key` mirror. One
+commit and not two, because a client left calling a route that had gone is a broken deploy with a
+green gate on both sides of it.
+
+**Three guarantees the old machinery carried had to be re-answered, not dropped:**
+
+| What the epoch machinery did | What answers it now |
+| --- | --- |
+| Invite hands the newcomer every past epoch key | Nothing is handed at invite time. `historyVisibility` decides, and another member answers over the distribution group (WP-34). |
+| Leaving or being removed rotates the key | The senders mint a fresh session on the next send, because a departure is what rotates a Graine. The server rotates nothing, and now cannot. |
+| `STALE_CHANNEL_KEY_VERSION` refuses a sender behind the epoch | Gone with the epoch. The server knows a session's NAME and nothing else, so a sender can never be behind it - a coupling removed rather than moved. |
+
+**`channel_members.keys` went with them, and it is the one nobody would have missed.** A jsonb map
+of per-channel keys, written by a path deleted long before this one and read by nothing since - the
+exact shape of a column that survives because no query fails when it is wrong.
+
+**WP-51 is migration `041`** (`037` was WP-21's `distributionGroupId`, `038` added
+`channel_messages."senderSessionId"` and `"messageIndex"` in WP-31, `039` added
+`channel_workspaces."historyVisibility"` in WP-35, `040` traded `channel_messages.reactions` for
+`silent` in WP-40): it drops `channel_messages.keyVersion`, `channels.masterSecret`,
+`channels.keyVersion`, `channel_members.keys` and the `channel_key_distributions` table. Dropped
+rather than left nullable, deliberately: while `masterSecret` exists a future read path can derive
+from it, and the point of the work is that the ABILITY is gone. The cut (WP-60) empties these tables
+at the same deploy, so no row loses data it could still have been read with.
+
 - **WP-52** ~~Push payload carries `sessionId`~~ **DONE inside WP-31/32**, server and all three
   native readers, because `channelPushFields.test.ts` refuses a payload whose keys no client reads -
   which is exactly the drift it was written to catch. Everything else about the notification path is

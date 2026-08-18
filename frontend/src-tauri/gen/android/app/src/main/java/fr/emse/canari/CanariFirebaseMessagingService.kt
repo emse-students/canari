@@ -1145,7 +1145,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
-        // Community (channel) encrypted message: AES-256-GCM, key looked up in channel_keys.json.
+        // Community (channel) encrypted message: AES-256-GCM under a Graine message key, derived
+        // from the seed mirrored in graine_seeds.json.
         // Not MLS: no mls.bin, no MlsStateLock - decryption is stateless and read-only.
         if (msgType == "channel") {
             Log.d(TAG, "type=channel → groupId=${data["channelId"]} - background channel notification")
@@ -2738,11 +2739,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     // --- Channel (community) message push --------------------------------------
 
     /**
-     * Decrypts a channel-message push and shows a notification. The epoch key is read from the
-     * app-private `channel_keys.json` mirror (written by the foreground); the inline ciphertext is
-     * AES-256-GCM-decrypted natively so the plaintext never transits FCM. Falls back to a generic
-     * body when the key is missing (channel not yet hydrated) or the ciphertext was too large to
-     * inline (omitted server-side).
+     * Decrypts a channel-message push and shows a notification. The Graine seed named by
+     * `senderSessionId` is read from the app-private `graine_seeds.json` mirror (written by the
+     * foreground); the message key is derived from it at `messageIndex` and the inline ciphertext is
+     * AES-256-GCM-decrypted natively, so the plaintext never transits FCM. Falls back to a generic
+     * body when the seed is missing (session never mirrored, or older than the mirror's bound) or
+     * the ciphertext was too large to inline (omitted server-side).
      *
      * An `@` OF ME IS TOLD, NOT INFERRED. The MLS path scans the decrypted text for `@[<myUserId>]`
      * because the server cannot read it; a channel message carries a cleartext `mentionedUserIds`

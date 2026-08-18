@@ -34,7 +34,6 @@ vi.mock('$lib/stores/toast.svelte', () => ({
 
 vi.mock('$lib/utils/chat/channelCrypto', () => ({
   isChannelConversationId: (id: string) => id.startsWith('channel_'),
-  hydrateChannelBootstrap: vi.fn().mockResolvedValue({ keyVersion: 1 }),
   sendEncryptedChannelMessage: vi.fn(),
 }));
 

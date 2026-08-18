@@ -60,7 +60,7 @@ pub fn decode_commits_b64_json(json: &str) -> Vec<Vec<u8>> {
 /// Decrypts a channel-message push (AES-256-GCM) and returns the message metadata JSON.
 ///
 /// Channel messages are NOT MLS: they are AES-256-GCM encrypted with a per-epoch key the client
-/// already holds (mirrored to `channel_keys.json` by the foreground). The push carries the inline
+/// already holds (mirrored to `graine_seeds.json` by the foreground). The push carries the inline
 /// ciphertext (`ciphertext||tag`) and 12-byte nonce; the raw 32-byte epoch key is looked up natively
 /// so the plaintext never transits Google/FCM. The decrypted bytes are the same encoded AppMessage
 /// proto as MLS, so `extract_full_message_info` parses them identically.

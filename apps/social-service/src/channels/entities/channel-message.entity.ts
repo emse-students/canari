@@ -30,15 +30,6 @@ export class ChannelMessage {
   nonce: string;
 
   /**
-   * Epoch of the server-derived channel key this message was sealed under.
-   *
-   * @deprecated Written by nothing since WP-31: a channel message is sealed under a Graine session
-   * the server holds no seed for. Kept only until WP-51 drops it along with `channels.masterSecret`.
-   */
-  @Column({ type: 'int', nullable: true })
-  keyVersion: number;
-
-  /**
    * The Graine session whose seed opens this message, as its SENDER named it.
    *
    * Opaque to the server, and unique across senders by construction - no two senders ever write the

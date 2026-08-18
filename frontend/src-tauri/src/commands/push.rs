@@ -217,42 +217,6 @@ pub(crate) fn read_outbox_mirror(app: tauri::AppHandle) -> Vec<serde_json::Value
     entries
 }
 
-/// Merges one channel epoch key into {app_data_dir}/channel_keys.json so the Android background
-/// service can AES-256-GCM-decrypt channel-message pushes (app killed). The file is a JSON map
-/// `channelId -> { keyVersion -> base64(rawKey) }`; the raw 32-byte epoch key never leaves the
-/// device. App-private plaintext storage, consistent with push_context.json / mls.bin.
-#[tauri::command]
-pub(crate) fn store_channel_key(
-    app: tauri::AppHandle,
-    channel_id: String,
-    key_version: u32,
-    key_b64: String,
-) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
-    let path = data_dir.join("channel_keys.json");
-
-    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
-        Ok(c) => serde_json::from_str(&c).unwrap_or_else(|_| serde_json::json!({})),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
-        Err(e) => return Err(format!("read channel_keys.json: {e}")),
-    };
-
-    let map = root
-        .as_object_mut()
-        .ok_or("channel_keys.json is not an object")?;
-    let channel_entry = map
-        .entry(channel_id)
-        .or_insert_with(|| serde_json::json!({}));
-    if let Some(versions) = channel_entry.as_object_mut() {
-        versions.insert(key_version.to_string(), serde_json::Value::String(key_b64));
-    }
-
-    std::fs::write(&path, root.to_string()).map_err(|e| e.to_string())?;
-    log::debug!("[CHANNEL_KEYS] stored epoch key (version {key_version})");
-    Ok(())
-}
-
 /// How many Graine sessions per channel the mirror keeps. Mirrors
 /// `GRAINE_NATIVE_MIRROR_SESSIONS_PER_CHANNEL` in `graineConstants.ts`.
 const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
@@ -261,7 +225,7 @@ const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
 /// derive a message key with the app killed. The file is a JSON map
 /// `channelId -> { sessionId -> { seed: base64, createdAt: epochMs } }`.
 ///
-/// **Bounded, unlike the epoch mirror it will replace.** Epoch keys were few and a whole channel's
+/// **Bounded, unlike the epoch mirror it replaced.** Epoch keys were few and a whole channel's
 /// worth could be kept; seeds accumulate for ever, in a file rewritten on every rotation, which is
 /// unbounded growth waiting for a year to pass. Only the newest
 /// [`GRAINE_MIRROR_SESSIONS_PER_CHANNEL`] are kept, because this file has exactly one job -
@@ -269,7 +233,7 @@ const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
 /// be mirrored is not a failure: the notification degrades to a generic "new message", which is the
 /// existing behaviour and the correct one.
 ///
-/// App-private plaintext storage, consistent with push_context.json / mls.bin / channel_keys.json.
+/// App-private plaintext storage, consistent with push_context.json / mls.bin.
 #[tauri::command]
 pub(crate) fn store_graine_seed(
     app: tauri::AppHandle,
@@ -483,7 +447,7 @@ fn read_push_context_locale(data_dir: &std::path::Path) -> Option<String> {
 /// inside the app, so a French phone running the app in English produced French notifications.
 /// The app's choice lives in the WebView, which is not running when a push arrives; the only way
 /// the native side can honour it is if it was written down while the app was open. This is the
-/// same posture as `channel_keys.json`: the WebView is the source of truth, the file is what
+/// same posture as `graine_seeds.json`: the WebView is the source of truth, the file is what
 /// survives it being closed.
 ///
 /// Patches one key rather than rewriting the file: the locale changes on a settings toggle, which
