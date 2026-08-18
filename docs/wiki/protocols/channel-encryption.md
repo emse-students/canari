@@ -622,6 +622,20 @@ they always hold it - and the lowest user id in the roster when they are not. Th
 every device already has, computed identically everywhere with no clock, no election and nothing for
 a race to decide.
 
+**An empty hand is answered, never met with silence (WP-63, 2026-08-18).** Determinism is what makes
+the election safe and was also what made it a dead end: a member elected by the rule but not holding
+the seed was elected again by every device and on every retry, and answering nothing left the session
+unreadable for the whole app session. So `GraineBundleMsg.missing_session_ids` carries what the
+answerer turned out **not** to hold, and the requester strikes them off and elects the next member -
+`resolveAnswerer(..., tried)`. This is the rule against *learning by failing what a fact could have
+told you*, applied on the wire: *"I hold none of these"*, *"I never saw your request"* and *"I am
+offline"* are three different facts an empty wire cannot separate, and only the first one means ask
+somebody else. **The walk terminates on a proof, not on a count or a clock**: each decline removes one
+member from a finite roster, so it ends either on the seed arriving or on `resolveAnswerer` returning
+`null`, which is logged as *no reachable holder* rather than left as a permanently blank salon. A
+history refusal stays silent on purpose - it is the one case the requester can already derive, since
+the visibility rule is broadcast by the server.
+
 **A member hands over the floor they hold, never a lower one.** `firstIndex` travels as stored, so a
 repair cannot widen access: somebody given the seed from index 40 answers with 40, and the requester
 ends up exactly as entitled as their answerer was.
@@ -638,12 +652,21 @@ first and reads the accumulator afterwards, so everything that finishes decoding
 joins the same request. A timer here would have been *a clock deciding correctness*: the worst case
 of the hop is one extra request, never a silence.
 
-**A bundle tells the UI which salons it repaired.** The rows it fixes were rendered unreadable and
-dropped minutes earlier, and nothing else would go back for them before the user next leaves and
-re-enters the salon. `setGraineRepairListener` is registered by `ChatBackgroundService` - the layer
+**EVERY path a seed lands by tells the UI, not just a repair bundle (WP-63, 2026-08-18).** The rows a
+seed makes readable were rendered unreadable and dropped minutes earlier, and nothing else goes back
+for them before the user next leaves and re-enters the salon. A seed reaches a device by **two**
+paths - its sender distributing it, and the distribution group's **durable log replaying it on
+reconnect** - and only the second races the salon's own history load. While only the bundle path
+announced, a device that reconnected into an open salon sat in front of a blank history whose seed it
+was already holding. `setGraineRepairListener` is registered by `ChatBackgroundService` - the layer
 holding both the seed layer and the conversations - and a repair landing with nobody listening warns
 rather than passing silently. `truncated` is on the wire for the same reason: *"this is all there
 is"* and *"this is all I could send"* are different facts, and only one of them means ask again.
+
+**A seed arriving disarms its ask.** `forgetAskedSession` is called on every path that ends with the
+device holding the session, so the asked-set holds only requests still outstanding. It existed with
+**no caller at all** until WP-63 - the same shape as `deleteGraineSessionsForWorkspace` before WP-60,
+and the second time in this protocol that a correct mechanism shipped unwired.
 
 #### WP-34/35, and the rule the server cannot enforce
 
@@ -788,9 +811,57 @@ at the same deploy, so no row loses data it could still have been read with.
   under `joined`; an unknown session is requested and repaired; a departure forces a new session on
   the next send; a notification still decrypts on the phone; a reaction produces no push.
 
-## 7. Open, and not blocking
+### Phase 8 - availability of the key material - SHIPPED 2026-08-18
+
+**Asked for after the rest was written, and the right question:** the DM path gives an unreadable
+frame a whole recovery apparatus - left unacknowledged in `queued_message`, tallied in
+`unackedFrames`, re-fetched by `refetchFramesLeftBehind` when the EVENT that unblocks it happens -
+and the audit was whether a Graine seed gets the same. **Half of it already did**: a seed is
+`DELIVERY.keyMaterial`, so it is appended to the distribution group's shared log and an offline
+member picks it up on reconnect exactly like a queued frame, with no ask and no round trip. The
+recovery half had three holes, all found by reading the two paths side by side.
+
+- **WP-63 SHIPPED.** Three defects, one theme - *a want that nothing ever came back for*.
+  1. **A declining answerer answered with silence.** Fixed on the wire, with
+     `GraineBundleMsg.missing_session_ids` and a walk down the roster - above.
+  2. **Only the repair-bundle path announced a repair.** A seed replayed from the durable log on
+     reconnect could lose the race against the salon's own history load, and nothing went back for
+     the rows it had just made readable - above.
+  3. **`forgetAskedSession` had no caller**, so a satisfied ask stayed armed for the app session -
+     above.
+
+  What is deliberately NOT here: nothing re-asks on a schedule, and nothing re-asks on reopening a
+  salon. Every retry in this protocol is driven by an arriving frame, so *no answer, no ask* - there
+  is no cycle to bound and no clock that could be wrong.
+
+## 7. What the server can still do, stated rather than implied
+
+Graine removes the server's ability to READ. It does not make the server irrelevant, and the two
+residual powers below are worth naming, because a reader who has just been told "the server holds no
+key" will otherwise assume more than is true.
+
+**The server still decides WHO is a member, so it still decides who may enter the distribution
+group.** Entry is by external commit against a published `mls_group_info`, and eligibility is read
+from a roster the server owns. A server that wanted future seeds would not read them out of a column
+any more - it would admit a device it controls. That is a strictly better position than before (it
+buys nothing retroactive, and every commit is visible to the members in the group's log) but it is
+not nothing, and no client currently WATCHES that log for an unexpected admission.
+
+**`history_visibility` is a policy guarantee, never a cryptographic one.** Only a device holding a
+seed can withhold it, so the rule is applied by the answering member. A modified client answers
+anyway. This is inherent - the server holds no key and could not enforce it if it wanted to - and it
+is written here so nobody later reads the setting as something it is not.
+
+## 8. Open, and not blocking
 
 **Retention on `channel_messages`** - there is none, and a salon message lives for ever. Either
 channels get a window (ninety days, matching conversations, is the obvious candidate) or they are
 declared permanent and the growth is measured. The current state - no policy, no measurement, no
 statement - is the only unacceptable one. Nothing above is blocked by the answer.
+
+**The seeds must be swept on whatever window the messages get.** The durable seed store is
+UNBOUNDED - only the native mirror is capped per channel, and its own comment says seeds accumulate
+for ever - so a device that stays in an active community holds every session ever minted for it.
+Today the only thing that ever drops a seed is leaving the community (`forgetCommunityGraine`,
+WP-60). When the retention window above lands, a device otherwise keeps the keys to messages that no
+longer exist.

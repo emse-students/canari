@@ -130,23 +130,30 @@ its commit are in. The detail lives where the link says - **do not restate it he
 iOS half of the device ladder cannot be run at all - written up as such on
 [device-verification](docs/wiki/device-verification.md) rather than left looking pending.
 
-1. **THE COMMUNITY REWORK IS DONE (2026-08-18)**, every phase, and the cut ships with it. The
-   server holds no key to any salon: `channels.masterSecret`, both `keyVersion` columns,
-   `channel_members.keys` and the key-distribution ledger are dropped (migration `041`), and
-   migrations `042` (social) + `015` (chat-delivery) delete every community, channel, member, role,
-   invitation, message and distribution group, SILENTLY, at the deploy. **The account of what was
-   built, and why each alternative was rejected, is
-   [channel-encryption](docs/wiki/protocols/channel-encryption.md)** - phases 1..7, all marked
-   shipped - with the service half on
+1. **THE COMMUNITY REWORK IS DONE (2026-08-18)**, every phase, and **the cut was PUSHED on
+   2026-08-18** - the deploy applies it, so every community on prod is gone. The server holds no key
+   to any salon: `channels.masterSecret`, both `keyVersion` columns, `channel_members.keys` and the
+   key-distribution ledger are dropped (migration `041`), and migrations `042` (social) + `015`
+   (chat-delivery) delete every community, channel, member, role, invitation, message and
+   distribution group, SILENTLY. **The account of what was built, and why each alternative was
+   rejected, is [channel-encryption](docs/wiki/protocols/channel-encryption.md)** - phases 1..8, all
+   marked shipped - with the service half on
    [social-service](docs/wiki/services/social-service.md#channel-encryption-model). **Do not
-   re-derive any of it here.** What is OWED before the campaign believes it: the whole thing is
-   verified by compiling and by unit tests only - nothing has run against prod, no client has joined
-   a distribution group on a real deploy, and no notification has been decrypted from a Graine seed
-   on hardware. That is WP-62's rows on
+   re-derive any of it here.** WP-63 (phase 8, availability of the key material) answers the user's
+   question of 2026-08-18 - *does a seed travel in the background like a Welcome?* Half of it always
+   did (`DELIVERY.keyMaterial` puts it in the distribution group's durable log); the recovery half
+   had three holes, all shipped fixed: a declining answerer answered with SILENCE and stranded the
+   session for the app session, only the repair-bundle path announced a repair, and
+   `forgetAskedSession` had no caller. What is OWED before the campaign believes any of it: the whole
+   thing is verified by compiling and by unit tests only - nothing has run against prod, no client
+   has joined a distribution group on a real deploy, and no notification has been decrypted from a
+   Graine seed on hardware. That is WP-62's rows on
    [cross-client-testing](docs/wiki/cross-client-testing.md), and item 9 below is where they run.
    **Still open and deliberately deferred: `channel_messages` gets a ONE-YEAR retention window**,
    whose storage cost is measured on
-   [storage-forecast](docs/wiki/infrastructure/storage-forecast.md) BEFORE the sweep is written.
+   [storage-forecast](docs/wiki/infrastructure/storage-forecast.md) BEFORE the sweep is written -
+   **and the Graine seeds must be swept on the SAME window**, or a device keeps the keys to messages
+   that no longer exist (the durable seed store is unbounded; only the native mirror is capped).
 2. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
    secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
    has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says

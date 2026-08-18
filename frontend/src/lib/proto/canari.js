@@ -6030,6 +6030,7 @@ export const canari = $root.canari = (() => {
          * @property {string|null} [requestId] GraineBundleMsg requestId
          * @property {Array.<canari.GraineMsg.$Properties>|null} [seeds] GraineBundleMsg seeds
          * @property {boolean|null} [truncated] GraineBundleMsg truncated
+         * @property {Array.<string>|null} [missingSessionIds] GraineBundleMsg missingSessionIds
          * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
@@ -6056,6 +6057,7 @@ export const canari = $root.canari = (() => {
          */
         const GraineBundleMsg = function (properties) {
             this.seeds = [];
+            this.missingSessionIds = [];
             if (properties)
                 for (let keys = $Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null && keys[i] !== "__proto__")
@@ -6093,6 +6095,14 @@ export const canari = $root.canari = (() => {
          * @instance
          */
         GraineBundleMsg.prototype.truncated = false;
+
+        /**
+         * GraineBundleMsg missingSessionIds.
+         * @member {Array.<string>} missingSessionIds
+         * @memberof canari.GraineBundleMsg
+         * @instance
+         */
+        GraineBundleMsg.prototype.missingSessionIds = $util.emptyArray;
 
         /**
          * Creates a new GraineBundleMsg instance using the specified properties.
@@ -6135,6 +6145,9 @@ export const canari = $root.canari = (() => {
                     $root.canari.GraineMsg.encode(message.seeds[i], writer.uint32(/* id 3, wireType 2 =*/26).fork(), _depth + 1).ldelim();
             if (message.truncated != null && $Object.hasOwnProperty.call(message, "truncated") && message.truncated !== false)
                 writer.uint32(/* id 4, wireType 0 =*/32).bool(message.truncated);
+            if (message.missingSessionIds != null && message.missingSessionIds.length)
+                for (let i = 0; i < message.missingSessionIds.length; ++i)
+                    writer.uint32(/* id 5, wireType 2 =*/42).string(message.missingSessionIds[i]);
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
                     writer.raw(message.$unknowns[i]);
@@ -6217,6 +6230,14 @@ export const canari = $root.canari = (() => {
                             delete message.truncated;
                         continue;
                     }
+                case 5: {
+                        if (wireType !== 2)
+                            break;
+                        if (!(message.missingSessionIds && message.missingSessionIds.length))
+                            message.missingSessionIds = [];
+                        message.missingSessionIds.push(reader.stringVerify());
+                        continue;
+                    }
                 }
                 reader.skipType(wireType, _depth, tag);
                 if (!reader.discardUnknown) {
@@ -6278,6 +6299,13 @@ export const canari = $root.canari = (() => {
             if (message.truncated != null && $Object.hasOwnProperty.call(message, "truncated"))
                 if (typeof message.truncated !== "boolean")
                     return "truncated: boolean expected";
+            if (message.missingSessionIds != null && $Object.hasOwnProperty.call(message, "missingSessionIds")) {
+                if (!$Array.isArray(message.missingSessionIds))
+                    return "missingSessionIds: array expected";
+                for (let i = 0; i < message.missingSessionIds.length; ++i)
+                    if (!$util.isString(message.missingSessionIds[i]))
+                        return "missingSessionIds: string[] expected";
+            }
             return null;
         };
 
@@ -6318,6 +6346,13 @@ export const canari = $root.canari = (() => {
             if (object.truncated != null)
                 if (object.truncated)
                     message.truncated = $Boolean(object.truncated);
+            if (object.missingSessionIds) {
+                if (!$Array.isArray(object.missingSessionIds))
+                    throw $TypeError(".canari.GraineBundleMsg.missingSessionIds: array expected");
+                message.missingSessionIds = $Array(object.missingSessionIds.length);
+                for (let i = 0; i < object.missingSessionIds.length; ++i)
+                    message.missingSessionIds[i] = $String(object.missingSessionIds[i]);
+            }
             return message;
         };
 
@@ -6338,8 +6373,10 @@ export const canari = $root.canari = (() => {
             if (_depth > $util.recursionLimit)
                 throw $Error("max depth exceeded");
             let object = {};
-            if (options.arrays || options.defaults)
+            if (options.arrays || options.defaults) {
                 object.seeds = [];
+                object.missingSessionIds = [];
+            }
             if (options.defaults) {
                 object.workspaceId = "";
                 object.requestId = "";
@@ -6356,6 +6393,11 @@ export const canari = $root.canari = (() => {
             }
             if (message.truncated != null && $Object.hasOwnProperty.call(message, "truncated"))
                 object.truncated = message.truncated;
+            if (message.missingSessionIds && message.missingSessionIds.length) {
+                object.missingSessionIds = $Array(message.missingSessionIds.length);
+                for (let j = 0; j < message.missingSessionIds.length; ++j)
+                    object.missingSessionIds[j] = message.missingSessionIds[j];
+            }
             return object;
         };
 

@@ -2261,6 +2261,9 @@ export namespace canari {
         /** GraineBundleMsg truncated. */
         truncated: boolean;
 
+        /** GraineBundleMsg missingSessionIds. */
+        missingSessionIds: string[];
+
         /**
          * Creates a new GraineBundleMsg instance using the specified properties.
          * @param [properties] Properties to set
@@ -2356,6 +2359,9 @@ export namespace canari {
 
             /** GraineBundleMsg truncated */
             truncated?: (boolean|null);
+
+            /** GraineBundleMsg missingSessionIds */
+            missingSessionIds?: (string[]|null);
 
             /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];

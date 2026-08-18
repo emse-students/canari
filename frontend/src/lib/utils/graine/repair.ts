@@ -36,8 +36,32 @@ function channels(): ChannelService {
  * point-to-point transport, so an answerer who was offline never saw it, and the next start must be
  * free to ask again. A durable "already asked" marker would be a state answering a question it was
  * not written for - it would silence the retry exactly when the retry is the whole point.
+ *
+ * An entry is discharged by an EVENT and never by a clock: the seed arriving
+ * ({@link forgetAskedSession}), or the answerer saying it does not hold it
+ * ({@link noteSeedUnavailable}).
  */
 const asked = new Set<string>();
+
+/**
+ * What a still-missing session needs to be asked for AGAIN, kept from the first ask.
+ *
+ * A re-ask cannot wait for the render to notice the row a second time: the row was dropped when it
+ * first failed and nothing re-reads it until the seed lands. So the channel and the minting sender -
+ * the two facts {@link resolveAnswerer} needs - are held here for as long as the session is wanted,
+ * and dropped the moment it stops being ({@link forgetAskedSession}, or a roster with nobody left).
+ */
+const wants = new Map<string, { channelId: string; senderId: string }>();
+
+/**
+ * Per session, the members who have answered that they do NOT hold it.
+ *
+ * This is what makes the retry TERMINATE on a proof rather than on a count or a clock: the answerer
+ * is picked deterministically from the roster, so without a record of who has declined, the next ask
+ * would elect the same member for ever. Each decline removes one member from a finite roster, so the
+ * walk ends - either on the seed arriving or on the roster being exhausted, which is said out loud.
+ */
+const declined = new Map<string, Set<string>>();
 
 /** Missing sessions collected but not yet asked about, keyed by channel. */
 const outstanding = new Map<string, Map<string, string>>();
@@ -61,6 +85,9 @@ export function noteMissingSeed(channelId: string, sessionId: string, senderId: 
   const perChannel = outstanding.get(channelId) ?? new Map<string, string>();
   perChannel.set(sessionId, senderId.toLowerCase());
   outstanding.set(channelId, perChannel);
+  // Kept for the re-ask: the row that named this session has already been dropped from the render,
+  // so nothing would come back to supply the channel and the sender a second time.
+  wants.set(sessionId, { channelId, senderId: senderId.toLowerCase() });
   if (!flushing) void flushRepairs();
 }
 
@@ -137,14 +164,18 @@ async function requestSeedsForChannel(
   // missing session.
   const byAnswerer = new Map<string, string[]>();
   for (const [sessionId, senderId] of sessions) {
-    const answerer = resolveAnswerer(senderId, roster, userId);
+    const answerer = resolveAnswerer(senderId, roster, userId, declined.get(sessionId));
     if (!answerer) {
-      // Nobody is left who could hold it. Said once, here, rather than discovered as a permanently
-      // blank message every time the salon is opened.
+      // The roster is exhausted: everyone who could have held it has been asked and has said no.
+      // That is the walk TERMINATING on a proof, so the want is dropped rather than left to be
+      // retried for ever - and it is said once, here, rather than discovered as a permanently blank
+      // message every time the salon is opened.
       console.warn(
         `[GRAINE] session ${sessionId} of channel ${channelId.slice(0, 8)} has no reachable holder - ` +
-          `its sender ${senderId} has left and the community is empty of anyone else`
+          `its sender ${senderId} is gone or does not hold it, and every other member has declined`
       );
+      wants.delete(sessionId);
+      declined.delete(sessionId);
       continue;
     }
     byAnswerer.set(answerer, [...(byAnswerer.get(answerer) ?? []), sessionId]);
@@ -173,7 +204,7 @@ async function requestSeedsForChannel(
 
 /**
  * Who to address a request to: the session's own sender, or the lowest user id still in the
- * community.
+ * community that has not already declined.
  *
  * The sender always holds the seed, so they are the answer whenever they are still reachable. When
  * they are not, SOME member has to be picked and every device has to pick the same one without
@@ -183,21 +214,39 @@ async function requestSeedsForChannel(
  * **Never ourselves.** The sender of a session can be this very user - another device of theirs
  * minted it - and a request addressed to us reaches only us, who are asking precisely because we do
  * not hold it. It would cost a round trip and answer nothing.
+ *
+ * **Never someone who has said no.** Determinism is what makes the choice safe and is also what
+ * would make it a dead end: a member elected by the rule but holding nothing would be elected again
+ * on every retry. `tried` is what turns one election into a walk down the roster, and because the
+ * roster is finite the walk ends - on the seed, or on `null`, which the caller reports.
+ *
+ * @param senderId Who minted the session; the first candidate whenever they are still a member.
+ * @param roster Community members, lower-cased.
+ * @param self This user, never a candidate.
+ * @param tried Members who have already answered that they do not hold it.
  */
 export function resolveAnswerer(
   senderId: string,
   roster: Set<string>,
-  self: string
+  self: string,
+  tried?: ReadonlySet<string>
 ): string | null {
   const sender = senderId.toLowerCase();
   const me = self.toLowerCase();
-  if (sender !== me && roster.has(sender)) return sender;
-  return lowestOtherMember(roster, me);
+  if (sender !== me && roster.has(sender) && !tried?.has(sender)) return sender;
+  return lowestOtherMember(roster, me, tried);
 }
 
-/** The lowest user id in the roster that is not us, or null when there is nobody else. */
-function lowestOtherMember(roster: Set<string>, self: string): string | null {
-  return [...roster].filter((id) => id !== self).sort()[0] ?? null;
+/**
+ * The lowest user id in the roster that is neither us nor already tried, or null when there is
+ * nobody left - which is the proof that ends the walk.
+ */
+function lowestOtherMember(
+  roster: Set<string>,
+  self: string,
+  tried?: ReadonlySet<string>
+): string | null {
+  return [...roster].filter((id) => id !== self && !tried?.has(id)).sort()[0] ?? null;
 }
 
 /**
@@ -253,9 +302,54 @@ export async function requestCommunityHistory(workspaceId: string): Promise<void
   );
 }
 
-/** Forgets that `sessionId` was asked for, so a later miss may ask again. */
+/**
+ * The seed arrived: this session is no longer wanted.
+ *
+ * Called from the frame handler on EVERY path a seed can land by, so `asked` holds only requests
+ * still outstanding. Leaving a satisfied session in it costs nothing today and would cost a silence
+ * the day a later miss on the same id needs to ask - a repaired seed can still carry a `firstIndex`
+ * above the rows that prompted the ask.
+ */
 export function forgetAskedSession(sessionId: string): void {
   asked.delete(sessionId);
+  wants.delete(sessionId);
+  declined.delete(sessionId);
+}
+
+/**
+ * The chosen answerer has said it does not hold `sessionId`. Ask the next member instead.
+ *
+ * **This is the difference between one unlucky election and a permanently blank salon.** The
+ * answerer is chosen deterministically, so a member who does not hold the seed is chosen by every
+ * device alike; without this the request would be answered by silence and the session would never be
+ * asked for again in the whole app session.
+ *
+ * Driven entirely by the ARRIVAL of a declining bundle, so there is no cycle to bound and no clock
+ * to be wrong: no answer, no re-ask. Each pass strikes one member off a finite roster, so the walk
+ * ends either on the seed or on {@link resolveAnswerer} returning null, which is reported.
+ *
+ * @param sessionId Session the answerer turned out not to hold.
+ * @param answerer Who declined, lower-cased by the caller or here.
+ */
+export function noteSeedUnavailable(sessionId: string, answerer: string): void {
+  const want = wants.get(sessionId);
+  if (!want) {
+    // Nothing is waiting on it: the seed landed by another path between the ask and this answer, or
+    // the community has since left this device. Either way there is nobody to ask on behalf of.
+    return;
+  }
+
+  const tried = declined.get(sessionId) ?? new Set<string>();
+  tried.add(answerer.toLowerCase());
+  declined.set(sessionId, tried);
+
+  console.info(
+    `[GRAINE] ${answerer} does not hold session ${sessionId} - asking the next member of the roster`
+  );
+  // Re-armed BEFORE re-noting: `noteMissingSeed` declines anything already in `asked`, which is
+  // exactly where this session still is.
+  asked.delete(sessionId);
+  noteMissingSeed(want.channelId, sessionId, want.senderId);
 }
 
 /**
@@ -272,12 +366,14 @@ export function forgetWorkspaceRepairState(
   sessionIds: readonly string[]
 ): void {
   historyAsked.delete(workspaceId);
-  for (const sessionId of sessionIds) asked.delete(sessionId);
+  for (const sessionId of sessionIds) forgetAskedSession(sessionId);
 }
 
 /** Test seam: drops every in-memory trace of what has been asked. */
 export function resetGraineRepairState(): void {
   asked.clear();
+  wants.clear();
+  declined.clear();
   outstanding.clear();
   historyAsked.clear();
   flushing = false;

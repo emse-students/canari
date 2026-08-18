@@ -218,6 +218,14 @@ message GraineBundleMsg {
   // than render a short history as a complete one - "this is all there is" and "this is all I could
   // send" are different facts.
   bool               truncated    = 4;
+  // Sessions the request named that this device turned out NOT to hold.
+  //
+  // Named rather than left to a silence. The answerer is chosen deterministically by the requester,
+  // so a member who does not hold the seed is chosen by every device alike and answering with
+  // nothing would strand the session for good. "I hold none of these", "I never saw your request"
+  // and "I am offline" are three different facts that an empty wire is unable to separate, and only
+  // the first one means ask somebody else - which is what the requester does with this field.
+  repeated string    missing_session_ids = 5;
 }
 
 // ── Encrypted media attachment ───────────────────────────────────────────

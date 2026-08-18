@@ -13,6 +13,7 @@ import {
   requireGraineRuntime,
 } from './runtime';
 import { mirrorGraineSeed } from './graineMirror';
+import { forgetAskedSession, noteSeedUnavailable } from './repair';
 
 /**
  * What a frame arriving on a community's distribution group MEANS.
@@ -55,10 +56,10 @@ export async function storeIncomingSeed(
     // on every fresh start. Writing it would drop `sentCount` - the count that decides the next
     // index and the 100-message rotation - and the session would look received rather than minted,
     // so the next send would rotate for no reason and distribute a seed nobody needed.
-    if (existing.sentCount !== undefined) return true;
+    if (existing.sentCount !== undefined) return nowHeld(seed.sessionId);
     // A lower floor is strictly more history: same seed, more of it readable. Anything else is a
     // replay of what is already held.
-    if (existing.firstIndex <= seed.firstIndex) return true;
+    if (existing.firstIndex <= seed.firstIndex) return nowHeld(seed.sessionId);
   }
 
   const session: StoredGraineSession = {
@@ -78,6 +79,18 @@ export async function storeIncomingSeed(
   // correctness - the seed is already durable - but awaited for ORDER: a notification racing the
   // mirror would degrade for no reason.
   await mirrorGraineSeed(session);
+  return nowHeld(seed.sessionId);
+}
+
+/**
+ * Marks a session as held on every path that ends with this device holding it.
+ *
+ * A repair left armed for a seed that has arrived is not merely useless: the ask is what a later
+ * miss on the same session has to get past, so leaving it in place would silence the one request
+ * that could still widen a floor.
+ */
+function nowHeld(sessionId: string): true {
+  forgetAskedSession(sessionId);
   return true;
 }
 
@@ -108,6 +121,13 @@ export async function handleDistributionFrame(frame: DistributionFrame): Promise
       console.debug(
         `[GRAINE] seed ${msg.graine.sessionId} from ${frame.sender} for channel ${String(msg.graine.channelId).slice(0, 8)}`
       );
+      // ANNOUNCED HERE TOO, not only from a repair bundle. A seed reaches a device by two paths -
+      // the sender distributing it, and the distribution group's durable log replaying it on
+      // reconnect - and only the second one races the salon's own history load. Losing that race
+      // rendered rows unreadable and dropped them, and until this line nothing went back for them:
+      // a device that reconnected into an open salon sat in front of a blank history it already
+      // held the seed for.
+      announceGraineRepair([String(msg.graine.channelId ?? '')].filter(Boolean));
     }
     return;
   }
@@ -162,13 +182,19 @@ async function answerSeedRequest(
     request.kind === kinds.GRAINE_REQUEST_KIND_HISTORY
       ? await gatherCommunityHistory(frame, storage, deviceKeyB64)
       : await gatherNamedSessions(frame, request, storage, deviceKeyB64);
-  if (!gathered || gathered.seeds.length === 0) return;
+  // A refusal (`null`, history withheld) is the only case answered by silence, and it is the one the
+  // requester can already derive: the visibility rule is broadcast by the server, so both sides know
+  // it. Everything else answers, INCLUDING an empty hand - "I hold none of these" is the fact that
+  // sends the requester to the next member, and withholding it strands the session for good.
+  if (!gathered) return;
+  if (gathered.seeds.length === 0 && gathered.missing.length === 0) return;
 
   const bundle = encodeAppMessage(
     mkGraineBundle({
       workspaceId: frame.workspaceId,
       requestId: String(request.requestId ?? ''),
       seeds: gathered.seeds,
+      missingSessionIds: gathered.missing,
       // Stated rather than left to be inferred from a short list: "this is all there is" and "this
       // is all I could send" are different facts, and only one of them means ask again.
       truncated: gathered.truncated,
@@ -176,12 +202,17 @@ async function answerSeedRequest(
   );
   const seeds = gathered.seeds;
   await mlsService.sendMessage(frame.groupId, bundle, undefined, DELIVERY.transport);
-  console.info(`[GRAINE] answered ${frame.sender} with ${seeds.length} seed(s)`);
+  console.info(
+    `[GRAINE] answered ${frame.sender} with ${seeds.length} seed(s)` +
+      (gathered.missing.length > 0 ? `, declining ${gathered.missing.length}` : '')
+  );
 }
 
-/** Seeds ready to travel, and whether more were held than the bundle could carry. */
+/** Seeds ready to travel, what was asked for and not held, and whether more were held than fits. */
 interface GatheredSeeds {
   seeds: canari.GraineMsg.$Properties[];
+  /** Sessions the request named that this device does not hold. Travels, rather than being logged. */
+  missing: string[];
   truncated: boolean;
 }
 
@@ -219,12 +250,14 @@ async function gatherNamedSessions(
 
   if (missing.length > 0) {
     // Named rather than counted: this device was chosen as the holder and turned out not to be,
-    // which is either a roster that moved under the requester or a seed lost on this side.
+    // which is either a roster that moved under the requester or a seed lost on this side. The list
+    // also TRAVELS, in the bundle, so the requester can elect somebody else instead of waiting on an
+    // answer that is never coming.
     console.warn(
       `[GRAINE] asked for ${wanted.length} seed(s) by ${frame.sender}, holding ${seeds.length} - missing ${missing.join(', ')}`
     );
   }
-  return { seeds, truncated: wanted.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS };
+  return { seeds, missing, truncated: wanted.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS };
 }
 
 /**
@@ -255,7 +288,8 @@ async function gatherCommunityHistory(
   console.info(
     `[GRAINE] sending ${seeds.length} of ${held.length} held seed(s) as history to ${frame.sender}`
   );
-  return { seeds, truncated: held.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS };
+  // A history request names no session, so there is nothing it could have named and missed.
+  return { seeds, missing: [], truncated: held.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS };
 }
 
 /** Stores the seeds of an answer and tells the UI which salons just became readable. */
@@ -280,6 +314,13 @@ async function absorbSeedBundle(
       `[GRAINE] ${frame.sender} sent a TRUNCATED bundle for community ${frame.workspaceId.slice(0, 8)} - some seeds are still missing`
     );
   }
+
+  // What the answerer turned out not to hold. Each one re-elects the next member of the roster, so
+  // an unlucky election costs a round trip instead of costing the session for the whole app session.
+  for (const sessionId of bundle.missingSessionIds ?? []) {
+    if (sessionId) noteSeedUnavailable(String(sessionId), frame.sender);
+  }
+
   // The rows this repairs were rendered unreadable and dropped minutes ago; nothing else would go
   // back for them before the user next leaves and re-enters the salon.
   announceGraineRepair([...repaired]);

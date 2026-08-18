@@ -3,6 +3,7 @@ import { canari } from '$lib/proto/canari';
 import { decodeAppMessage } from '$lib/proto/codec';
 import {
   noteMissingSeed,
+  noteSeedUnavailable,
   requestCommunityHistory,
   resetGraineRepairState,
   resolveAnswerer,
@@ -206,5 +207,80 @@ describe('resolveAnswerer', () => {
   it('answers null when nobody is left who could hold the seed', () => {
     expect(resolveAnswerer('dave', new Set(), 'alice')).toBeNull();
     expect(resolveAnswerer('dave', new Set(['alice']), 'alice')).toBeNull();
+  });
+
+  it('walks past everyone who has already declined, sender included', () => {
+    const roster = new Set(['alice', 'bob', 'carol']);
+    // Determinism is what makes the election safe and is also what would make it a dead end: the
+    // same member would be chosen on every retry. `tried` is what turns one election into a walk.
+    expect(resolveAnswerer('bob', roster, 'alice', new Set(['bob']))).toBe('carol');
+    expect(resolveAnswerer('dave', roster, 'alice', new Set(['bob']))).toBe('carol');
+    // Exhausted: null is the PROOF that ends the walk, not a step in it.
+    expect(resolveAnswerer('bob', roster, 'alice', new Set(['bob', 'carol']))).toBeNull();
+  });
+});
+
+describe('noteSeedUnavailable', () => {
+  /** Reads the user id a request frame was addressed to. */
+  function answererOf(call: unknown[]): string {
+    return String(decodeAppMessage(call[1] as Uint8Array)?.graineRequest?.answererUserId ?? '');
+  }
+
+  it('elects the next member when the chosen answerer does not hold the seed', async () => {
+    // Sender 'dave' has left, so the roster decides: bob is the lowest id that is not us.
+    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(answererOf(sendMessage.mock.calls[0])).toBe('bob');
+
+    // Without this the session was unreadable for the WHOLE app session: bob is elected by every
+    // device alike, so a silent "I don't have it" stranded it for good.
+    noteSeedUnavailable('sess-1', 'bob');
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(answererOf(sendMessage.mock.calls[1])).toBe('carol');
+  });
+
+  it('stops on the roster being exhausted, and says so', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    await settle();
+
+    noteSeedUnavailable('sess-1', 'bob');
+    await settle();
+    noteSeedUnavailable('sess-1', 'carol');
+    await settle();
+
+    // Two members, two asks, then nothing: the walk ends on a PROOF that nobody holds it - not on a
+    // counter and not on a clock - and the give-up is logged rather than left as a blank salon.
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls.flat().join(' ')).toContain('no reachable holder');
+    warn.mockRestore();
+  });
+
+  it('asks nobody on behalf of a session that is no longer wanted', async () => {
+    // The seed landed by the durable log between the ask and this answer. Re-electing here would
+    // spend a round trip on a session this device already holds.
+    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    await settle();
+    forgetAskedSession('sess-1');
+
+    noteSeedUnavailable('sess-1', 'bob');
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a later miss ask again once the seed has been forgotten', async () => {
+    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    await settle();
+    // Still armed: a second unreadable row naming the same session must not become a second ask.
+    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    forgetAskedSession('sess-1');
+    noteMissingSeed('chan-1', 'sess-1', 'dave');
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 });

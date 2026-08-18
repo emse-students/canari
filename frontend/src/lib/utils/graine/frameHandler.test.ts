@@ -155,6 +155,23 @@ describe('a seed arriving on the distribution group', () => {
     expect(saved).toHaveLength(0);
   });
 
+  it('tells the UI the salon became readable, not only a repair bundle does', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+
+    await handleDistributionFrame(frame());
+
+    // A seed reaches a device by TWO paths - its sender distributing it, and the distribution
+    // group's durable log replaying it on reconnect - and only the second races the salon's own
+    // history load. Losing that race dropped the rows as unreadable, and while only the bundle path
+    // announced, nothing ever went back for them: a device that reconnected into an open salon sat
+    // in front of a blank history whose seed it was already holding.
+    expect(repaired).toEqual([['chan-1']]);
+    setGraineRepairListener(null);
+  });
+
   it('declines a malformed seed and says so', async () => {
     const { storage, saved } = fakeStorage();
     wire(storage);
@@ -267,7 +284,7 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     expect(answer?.graineBundle?.truncated).toBeFalsy();
   });
 
-  it('names the sessions it was asked for and does not hold, and sends nothing when it holds none', async () => {
+  it('says which sessions it does not hold, rather than answering an empty hand with silence', async () => {
     const { storage } = fakeStorage();
     const sendMessage = wireWithMls(storage);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -283,9 +300,16 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     );
 
     // Chosen as the holder and not being one is either a roster that moved under the requester or a
-    // seed lost on this side - both worth naming, neither worth an empty bundle.
+    // seed lost on this side - both worth naming locally.
     expect(warn.mock.calls.flat().join(' ')).toContain('sess-9');
-    expect(sendMessage).not.toHaveBeenCalled();
+
+    // AND WORTH A BUNDLE. The answerer is elected deterministically, so every device would elect
+    // this same one again: answering with silence is what once left the session unreadable for the
+    // whole app session. An empty hand is a fact, and it is the fact that sends the requester on.
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const answer = decodeAppMessage(sendMessage.mock.calls[0][1]);
+    expect(answer?.graineBundle?.seeds ?? []).toHaveLength(0);
+    expect(answer?.graineBundle?.missingSessionIds).toEqual(['sess-9']);
     warn.mockRestore();
   });
 
