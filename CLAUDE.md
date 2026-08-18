@@ -138,8 +138,12 @@ its commit are in. The detail lives where the link says - **do not restate it he
    **Governance and invites (axes 2 and 3) SHIPPED 2026-08-18**, prod re-measured clean, and so did
    **Phase 2, the Graine foundations (WP-10..14)** - constants, proto, the derivation with vectors
    shared by TS and Rust, the durable session store on both backends with backup and PIN-change
-   re-keying, and the bounded native mirror. All of it is dark: nothing calls it yet. **Next is
-   Phase 3, the distribution group (WP-20..22).** Two open decisions belong to the user and block
+   re-keying, and the bounded native mirror. All of it is dark: nothing calls it yet. **WP-20 too**
+   - `dm_groups.distributionWorkspaceId`, and the enumeration audit whose two invariants **WP-21
+   must preserve or the audit is void** (no `dm_group_members` rows on a distribution group; the
+   exclusion lives in `getUserGroups` alone). **Next is WP-21**, which spans two services:
+   social-service creates the group with the community through `deliveryUrl`, and the delivery
+   recipient set comes from `channel_members`. Two open decisions belong to the user and block
    nothing: what the cut keeps (whole communities, or the shells minus messages), and whether
    `channel_messages` gets a retention window at all.
 2. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
