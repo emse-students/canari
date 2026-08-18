@@ -286,6 +286,19 @@ them until the ids were put side by side.
 The server side has a page already - [storage-forecast](infrastructure/storage-forecast.md) - and it
 is where any measurement belongs.
 
+### P2 - `channel_messages` gets a one-year window, and the Graine seeds get the SAME one
+
+Deferred on purpose when the community rework shipped (2026-08-18), not forgotten. Community
+messages are kept for ever today; the decision is a **one-year** window, and **the storage cost is
+measured on [storage-forecast](infrastructure/storage-forecast.md) BEFORE the sweep is written** -
+a sweep sized against a guess is how a retention job becomes the thing that has to be undone.
+
+**The seeds must be swept on the same window, in the same work.** A Graine seed opens the messages
+of one session; if the messages go and the seed stays, a device keeps the keys to messages that no
+longer exist - unbounded, and pure liability. The durable seed store has no cap at all; only the
+native mirror is capped. Two windows that are supposed to be one is exactly the shape that drifts,
+so it is one item, not two.
+
 ### Server - can occupancy be monitored, and will it hold?
 
 **The media half shipped 2026-08-18** and is documented on

@@ -33,11 +33,10 @@ Infrastructure:
 longer maintained upstream). `apps/media-service` talks to it through the same generic `minio`
 npm S3 client as before - Garage implements every S3 operation that client calls
 (CreateBucket/HeadBucket, PutObject, GetObject, DeleteObject, ListObjectsV2), so the app code
-is unchanged. Every env var keeps its `MINIO_*` name for that reason (`MINIO_ENDPOINT`,
-`MINIO_PORT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`, plus a new `MINIO_REGION`
-required by Garage's SigV4 signing - unset for MinIO, `garage` for Garage, must match
-`s3_region` in `infrastructure/garage/garage.toml`). What's structurally different, all at the
-infra layer:
+is unchanged. The env vars kept their `MINIO_*` names for four days and were renamed `GARAGE_*`
+on 2026-08-18 (`GARAGE_ENDPOINT`, `GARAGE_PORT`, `GARAGE_USE_SSL`, `GARAGE_BUCKET`, and
+`GARAGE_REGION`, required by Garage's SigV4 signing - it must match `s3_region` in
+`infrastructure/garage/garage.toml`). What's structurally different, all at the infra layer:
 
 - **No root user, and a minimum-length constraint MinIO never had.** Garage requires an access
   key ID >= 8 characters and a secret >= 16; MinIO enforces neither, and this deployment's
@@ -45,38 +44,58 @@ infra layer:
   the container on first prod deploy: `Invalid default access key: Key identifiers should be at
   least 8 characters long`). The container is started with `--single-node --default-bucket` and
   `GARAGE_DEFAULT_ACCESS_KEY`/`GARAGE_DEFAULT_SECRET_KEY`/`GARAGE_DEFAULT_BUCKET` set from
-  dedicated `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY`/`MINIO_BUCKET` secrets - Garage
-  self-provisions the bucket and grants that exact key on first boot, and it is idempotent on
-  restart (verified locally: no duplicate-key error, same key still granted). `MINIO_ACCESS_KEY`/
-  `MINIO_SECRET_KEY` (what media-service actually reads, name kept from the MinIO era) are set to
-  the same values as `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY` - on the prod host this
-  was a one-time, deliberate credential change for media-service at the cutover (2026-08-14), not
-  a rotation of MinIO's own root credentials (which the now-removed `minio` service used to read
-  from `MINIO_ROOT_USER`/`PASSWORD`, untouched throughout). `GARAGE_RPC_SECRET` and
-  `GARAGE_ADMIN_TOKEN` are separate, unrelated secrets (cluster RPC and admin-API auth) with no
-  MinIO equivalent.
+  `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY`/`GARAGE_BUCKET` - Garage self-provisions the
+  bucket and grants that exact key on first boot, and it is idempotent on restart (verified
+  locally: no duplicate-key error, same key still granted). **That key is the only S3 identity in
+  the stack**: media-service authenticates with it directly. Until 2026-08-18 the same two values
+  were ALSO written as `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`, which is what media-service read -
+  one value under two names, verified identical on prod before the mirror was deleted. On the prod
+  host this was a one-time, deliberate credential change for media-service at the cutover
+  (2026-08-14), not a rotation of MinIO's own root credentials (which the now-removed `minio`
+  service read from `MINIO_ROOT_USER`/`PASSWORD`, untouched throughout, and which are deleted
+  now - see below). `GARAGE_RPC_SECRET` and `GARAGE_ADMIN_TOKEN` are separate, unrelated secrets
+  (cluster RPC and admin-API auth) with no MinIO equivalent.
 - **Two volumes, not one.** `garage_meta` (small, LMDB) and `garage_data` (object bytes) replace
   the single `minio_data`. On the production host, the `minio` service was removed at the cutover
   and `minio_data` is kept, orphaned, as a 14-day rollback net (remove after 2026-08-28).
 
-#### The rename to Garage - decided 2026-08-17, and what it must NOT touch
+#### The rename to Garage - decided 2026-08-17, DONE 2026-08-18
 
-The names above are being retired: **every `MINIO_*` variable, volume, port name and secret becomes
-a `GARAGE_*` one**, in compose, scripts, CD and docs. The reason recorded for keeping them - "the
-app talks through the generic `minio` npm client" - is a fact about a THIRD-PARTY PACKAGE NAME and
-was never a reason our own variables had to carry it. Three boundaries, so the sweep does not
-overrun:
+Every `MINIO_*` variable is a `GARAGE_*` one now, in compose (prod, dev, local), the CD, the
+service and the docs. The reason recorded for keeping them - "the app talks through the generic
+`minio` npm client" - is a fact about a THIRD-PARTY PACKAGE NAME and was never a reason our own
+variables had to carry it. A name that lies about what it configures is read by the next person as
+evidence about what is running.
+
+**The credential half turned out to be already done, and this was checked rather than assumed.**
+The GitHub secrets were minted with Garage names at the 2026-08-14 cutover
+(`GARAGE_ACCESS_KEY_ID`, `GARAGE_SECRET_ACCESS_KEY`, `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN`);
+what carried MinIO names was the CD's own mirror of them into `.env`. Verified on prod before
+touching anything, by comparing the values inside the two running containers without printing
+them - `GARAGE_DEFAULT_ACCESS_KEY` in `garage` against `MINIO_ACCESS_KEY` in `media-service`, both
+SAME - so collapsing the mirror is a rename and not a credential change. Two secrets were genuinely
+stale: `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD`, which `cd-dev.yml` still required and wrote for
+a service removed on 2026-08-14, and which nothing in `docker-compose.dev.yml` ever read. Both are
+gone from the workflow; **delete the two repository secrets once a dev deploy has answered**.
+
+`.env` is regenerated from `.env.example` on every deploy and drops keys that are no longer in it,
+so the stale `MINIO_*` lines on the prod host disappear on the next deploy rather than needing a
+hand-edit. The non-secret values were read off prod first and matched the compose defaults exactly
+(`garage` / `3900` / `false` / `garage` / `canari-media`), which is what makes falling back to
+those defaults safe. `MINIO_API_HOST_PORT` was found dead on the way through: `.env.example`
+defined it as `19000` while compose has read `GARAGE_API_HOST_PORT` (default `19010`) since the
+cutover.
+
+Three boundaries the sweep deliberately did not cross:
 
 - **the npm dependency stays `minio`.** It is what the package is called on the registry; renaming
   an import is not ours to do, and `storage.service.ts` keeps talking S3 through it unchanged.
 - **a measurement dated before 2026-08-14 keeps its MinIO wording**, here and in
   [storage-forecast](storage-forecast.md). Those numbers were taken on MinIO; rewriting them would
   falsify a record rather than tidy it. Each says which backend it was measured on.
-- **the secrets are the risky half and go in this order**: read the live values off prod, set the
-  new GitHub secret names, deploy, verify the container answers with the new names in place, and
-  only THEN delete the old secrets. A deploy that half-renames a credential is an outage, and the
-  drift check that fingerprints the value inside the running container is what proves the cutover
-  rather than a green workflow.
+- **the local dev default credentials still read `minioadmin`.** A local `garage_meta` volume was
+  provisioned with that key ID, and changing the literal locks a developer out of their own local
+  media until they delete the volume. The variable NAMES around it are Garage.
 
 `minio_data` itself cannot go before **2026-08-28** - it is the rollback net, and the rename does
 not shorten that window.
@@ -86,7 +105,7 @@ not shorten that window.
 - **Byte migration went through the S3 protocol** (`rclone sync` between the two endpoints), not
   a volume copy - Garage's on-disk format is not MinIO's. Verified with `rclone check` (0 diffs,
   200 objects / 45.370 MiB matching on both sides) before the cutover.
-- **`MINIO_REGION` is required, and its absence is a crash loop, not a degradation.** Garage signs
+- **`GARAGE_REGION` is required, and its absence is a crash loop, not a degradation.** Garage signs
   with the region configured in `garage.toml` (`garage`); the `minio` npm client defaults to
   `us-east-1` when unset, and the mismatch fails inside `bucketExists` during `onModuleInit` - so
   the service never finishes booting rather than starting in some reduced mode. This line was
@@ -111,7 +130,7 @@ In dev, each service is offset from its canonical port to avoid conflicts with l
 | PostgreSQL | 5432 | 5433 |
 | MongoDB | 27017 | 27018 |
 | Kafka (external) | 9092 | 9093 |
-| Garage S3 API | 3900 | configurable (`MINIO_API_HOST_PORT`, default 19100 - name kept from MinIO) |
+| Garage S3 API | 3900 | configurable (`GARAGE_API_HOST_PORT`, default 19010 prod / 19100 dev) |
 
 ## Images
 

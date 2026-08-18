@@ -24,7 +24,7 @@
 import { pathToFileURL } from 'node:url';
 import { ssh } from './ssh.mjs';
 
-/** The application containers. Infrastructure (redis, kafka, postgres, minio) is deliberately out. */
+/** The application containers. Infrastructure (redis, kafka, postgres, garage) is deliberately out. */
 const SERVICES = [
   'chat-gateway',
   'chat-delivery-service',

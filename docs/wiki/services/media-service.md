@@ -100,15 +100,19 @@ object's 30-day clock.
 | Variable | Required | Description |
 |---|---|---|
 | `JWT_SECRET` | yes | HS256 secret (shared with all services) |
-| `MINIO_ENDPOINT` | yes | Garage server URL (name kept from the MinIO era - see [docker](../infrastructure/docker.md)) |
-| `MINIO_PORT` | yes | Garage S3 API port (`3900`) |
-| `MINIO_REGION` | Garage only | Must match `s3_region` in `infrastructure/garage/garage.toml` (`garage`); unset for MinIO |
-| `MINIO_ACCESS_KEY` | yes | S3 access key |
-| `MINIO_SECRET_KEY` | yes | S3 secret key |
-| `MINIO_BUCKET` | yes | Bucket name for media blobs (default `canari-media`), **also used for public assets** |
+| `GARAGE_ENDPOINT` | yes | Garage host (`garage` in Compose) |
+| `GARAGE_PORT` | yes | Garage S3 API port (`3900`) |
+| `GARAGE_REGION` | yes | Must match `s3_region` in `infrastructure/garage/garage.toml` (`garage`). Its absence is a crash loop, not a degradation: the S3 client signs for `us-east-1` and `bucketExists` fails inside `onModuleInit` |
+| `GARAGE_ACCESS_KEY_ID` | yes | The key Garage provisions on first boot - the only S3 identity in the stack |
+| `GARAGE_SECRET_ACCESS_KEY` | yes | Its secret |
+| `GARAGE_BUCKET` | yes | Bucket name for media blobs (default `canari-media`), **also used for public assets** |
 | `MEDIA_MAX_SIZE_MB` | no | Max upload size in MB (default 100, capped at 100) |
 | `MEDIA_RETENTION_SWEEP_MS` | no | Retention sweep interval (default 1 h) |
 
+**Every one of these was named `MINIO_*` until 2026-08-18**, four days after the store itself
+stopped being MinIO. Renamed rather than kept: a name that lies about what it configures is read
+by the next person as evidence about what is running.
+
 `MINIO_PUBLIC_BUCKET` used to be listed here and is **not read anywhere** in
 `apps/media-service/src` - `storage.service.ts` puts private and public objects in the single
-`MINIO_BUCKET`. Removed 2026-08-07.
+`GARAGE_BUCKET`. Removed 2026-08-07.

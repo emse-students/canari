@@ -4,15 +4,18 @@
  * The service ONLY stores opaque bytes.  It has no knowledge of encryption
  * keys and cannot inspect the content of any uploaded file.
  *
- * Configuration via environment variables (names kept from the MinIO era on purpose - see
- * docs/wiki/infrastructure/docker.md):
- *   MINIO_ENDPOINT  (default: localhost)
- *   MINIO_PORT      (default: 9000)
- *   MINIO_USE_SSL   (default: false)
- *   MINIO_ACCESS_KEY
- *   MINIO_SECRET_KEY
- *   MINIO_BUCKET    (default: canari-media)
- *   MINIO_REGION    (optional; required for Garage, must match its `s3_region`)
+ * Configuration via environment variables:
+ *   GARAGE_ENDPOINT          (default: localhost)
+ *   GARAGE_PORT              (default: 3900)
+ *   GARAGE_USE_SSL           (default: false)
+ *   GARAGE_ACCESS_KEY_ID     - the key Garage provisions on first boot, not a second one
+ *   GARAGE_SECRET_ACCESS_KEY
+ *   GARAGE_BUCKET            (default: canari-media)
+ *   GARAGE_REGION            (must match `s3_region` in infrastructure/garage/garage.toml)
+ *
+ * The `minio` npm package is a generic S3 client and is kept as the client library; nothing
+ * about it implies a MinIO server. MinIO itself is gone since the 2026-08-14 cutover
+ * (docs/wiki/infrastructure/docker.md).
  */
 import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import * as Minio from 'minio';
@@ -38,22 +41,22 @@ export class StorageService implements OnModuleInit {
   private readonly bucket: string;
 
   constructor() {
-    this.bucket = process.env.MINIO_BUCKET ?? 'canari-media';
+    this.bucket = process.env.GARAGE_BUCKET ?? 'canari-media';
     this.client = new Minio.Client({
-      endPoint: process.env.MINIO_ENDPOINT ?? 'localhost',
-      port: parseInt(process.env.MINIO_PORT ?? '9000', 10),
-      useSSL: process.env.MINIO_USE_SSL === 'true',
-      // Unset (MinIO): auto-detected via GetBucketLocation, as before. Garage's S3 API needs
-      // this to match `s3_region` in infrastructure/garage/garage.toml (set MINIO_REGION=garage).
-      region: process.env.MINIO_REGION,
+      endPoint: process.env.GARAGE_ENDPOINT ?? 'localhost',
+      port: parseInt(process.env.GARAGE_PORT ?? '3900', 10),
+      useSSL: process.env.GARAGE_USE_SSL === 'true',
+      // Garage's S3 API signs with the region declared in garage.toml; the client otherwise
+      // defaults to us-east-1 and every request is refused. Not optional here.
+      region: process.env.GARAGE_REGION,
       accessKey: (() => {
-        const v = process.env.MINIO_ACCESS_KEY;
-        if (!v) throw new Error('MINIO_ACCESS_KEY is required');
+        const v = process.env.GARAGE_ACCESS_KEY_ID;
+        if (!v) throw new Error('GARAGE_ACCESS_KEY_ID is required');
         return v;
       })(),
       secretKey: (() => {
-        const v = process.env.MINIO_SECRET_KEY;
-        if (!v) throw new Error('MINIO_SECRET_KEY is required');
+        const v = process.env.GARAGE_SECRET_ACCESS_KEY;
+        if (!v) throw new Error('GARAGE_SECRET_ACCESS_KEY is required');
         return v;
       })(),
     });

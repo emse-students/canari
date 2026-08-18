@@ -672,22 +672,21 @@ jobs:
             exit 1
           fi
 
-          # Garage's own S3 key. Requires an access key ID >= 8 characters and a secret >= 16 -
-          # MinIO enforced neither, which is why this was ever a separate pair from MinIO's old
-          # root credentials rather than a rename of them. MINIO_ACCESS_KEY/SECRET_KEY (what
-          # media-service actually reads, name kept from the MinIO era, presented to whatever
-          # `MINIO_ENDPOINT` names) mirror these same two values since the 2026-08-14 cutover.
+          # Garage's own S3 key, and the ONLY S3 identity in the stack: media-service
+          # authenticates with it too. It required an access key ID >= 8 characters and a secret
+          # >= 16, which MinIO enforced neither of - that is why the cutover minted a new pair
+          # instead of renaming MinIO's old root credentials. Until 2026-08-18 these values were
+          # ALSO written under MINIO_ACCESS_KEY/SECRET_KEY, which media-service read; one value
+          # under two names is a duplicate that can drift, and drift here refuses every media
+          # request. One name now, everywhere.
           #
-          # THE ENDPOINT AND THE CREDENTIALS FOR IT MUST MOVE IN THE SAME COMMIT. .env.example is
-          # copied over .env on every deploy; an earlier version of this cutover moved the
-          # endpoint in .env.example without moving these upserts, so media-service kept getting
-          # MinIO's root credentials for a store that no longer existed and crash-looped on
-          # `AccessDenied` inside `onModuleInit`. The `minio` service and its root-credential
-          # secrets are gone from this deploy entirely (not merely stopped) - see
-          # docs/wiki/infrastructure/docker.md.
+          # THE ENDPOINT AND THE CREDENTIALS FOR IT MUST MOVE IN THE SAME COMMIT. .env is
+          # regenerated from .env.example on every deploy; an earlier version of this cutover
+          # moved the endpoint in .env.example without moving these upserts, so media-service kept
+          # getting MinIO's root credentials for a store that no longer existed and crash-looped
+          # on `AccessDenied` inside `onModuleInit`. See docs/wiki/infrastructure/docker.md.
           if [ -n "$GARAGE_ACCESS_KEY_ID" ]; then
             upsert_env_var "GARAGE_ACCESS_KEY_ID" "$GARAGE_ACCESS_KEY_ID"
-            upsert_env_var "MINIO_ACCESS_KEY" "$GARAGE_ACCESS_KEY_ID"
           else
             echo "::error::GARAGE_ACCESS_KEY_ID is not set - media storage (Garage) will fail to start"
             exit 1
@@ -695,7 +694,6 @@ jobs:
 
           if [ -n "$GARAGE_SECRET_ACCESS_KEY" ]; then
             upsert_env_var "GARAGE_SECRET_ACCESS_KEY" "$GARAGE_SECRET_ACCESS_KEY"
-            upsert_env_var "MINIO_SECRET_KEY" "$GARAGE_SECRET_ACCESS_KEY"
           else
             echo "::error::GARAGE_SECRET_ACCESS_KEY is not set - media storage (Garage) will fail to start"
             exit 1

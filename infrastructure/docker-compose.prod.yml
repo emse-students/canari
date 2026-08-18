@@ -253,13 +253,15 @@ services:
     environment:
       GARAGE_RPC_SECRET: "${GARAGE_RPC_SECRET:?GARAGE_RPC_SECRET is required - see .env.example}"
       GARAGE_ADMIN_TOKEN: "${GARAGE_ADMIN_TOKEN:?GARAGE_ADMIN_TOKEN is required - see .env.example}"
-      # Deliberately NOT MINIO_ACCESS_KEY/SECRET_KEY: Garage requires an access key ID >= 8
-      # characters and a secret >= 16, a constraint MinIO never had (this deployment's old
-      # MINIO_ROOT_USER was shorter than that). media-service's MINIO_ACCESS_KEY/SECRET_KEY
-      # below are the SAME values as these two, via the CD's env generation.
+      # The key Garage provisions on first boot, and the ONLY S3 credential in the stack:
+      # media-service authenticates with these same two values below. They were two separate
+      # names until 2026-08-18 (`MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` mirrored these), which is
+      # one duplicate that can drift, and drifting means every media request is refused.
+      # Garage requires an access key ID >= 8 characters and a secret >= 16 - a constraint MinIO
+      # never had, which is why the old `MINIO_ROOT_USER` could not simply be reused.
       GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_ACCESS_KEY_ID:?GARAGE_ACCESS_KEY_ID is required - see .env.example}
       GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_SECRET_ACCESS_KEY:?GARAGE_SECRET_ACCESS_KEY is required - see .env.example}
-      GARAGE_DEFAULT_BUCKET: ${MINIO_BUCKET:-canari-media}
+      GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:-canari-media}
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garage_meta:/var/lib/garage/meta
@@ -289,18 +291,18 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-garage}
-      MINIO_PORT: "${MINIO_PORT:-3900}"
-      MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"
+      GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
+      GARAGE_PORT: "${GARAGE_PORT:-3900}"
+      GARAGE_USE_SSL: "${GARAGE_USE_SSL:-false}"
       # REQUIRED BY GARAGE, AND ITS ABSENCE IS A CRASH LOOP, NOT A DEGRADATION. Garage signs with
       # the region in garage.toml (`garage`); the S3 client defaults to `us-east-1`, and the
       # mismatch fails at `bucketExists` during `onModuleInit` - so the service never finishes
       # booting. This took media-service down on production for over two hours (13:56-16:10Z,
       # 2026-08-14) before the missing line was found.
-      MINIO_REGION: ${MINIO_REGION:-garage}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required - set via CD secrets or .env}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required - set via CD secrets or .env}
-      MINIO_BUCKET: ${MINIO_BUCKET:-canari-media}
+      GARAGE_REGION: ${GARAGE_REGION:-garage}
+      GARAGE_ACCESS_KEY_ID: ${GARAGE_ACCESS_KEY_ID:?GARAGE_ACCESS_KEY_ID is required - set via CD secrets or .env}
+      GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:?GARAGE_SECRET_ACCESS_KEY is required - set via CD secrets or .env}
+      GARAGE_BUCKET: ${GARAGE_BUCKET:-canari-media}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
     volumes:
       - media_meta:/app/media_meta
@@ -311,10 +313,11 @@ services:
       retries: 3
       start_period: 40s
     depends_on:
-      # GARAGE, NOT MINIO - this waits on the store `MINIO_ENDPOINT` actually names. Waiting on
-      # MinIO gated the boot on a service media-service no longer talks to, while leaving the one
-      # it does talk to ungated: `bucketExists` runs in `onModuleInit`, so reaching Garage before
-      # it is ready is a crash loop, and the deploy's health gate reads that as a failed release.
+      # This waits on the store `GARAGE_ENDPOINT` actually names. It waited on MinIO until
+      # 2026-08-14, which gated the boot on a service media-service no longer talks to while
+      # leaving the one it does talk to ungated: `bucketExists` runs in `onModuleInit`, so
+      # reaching Garage before it is ready is a crash loop, and the deploy's health gate reads
+      # that as a failed release.
       garage:
         condition: service_healthy
 

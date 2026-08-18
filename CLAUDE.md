@@ -127,74 +127,45 @@ The user's decision of 2026-08-16 is that **every one of these lands before the 
 Work them top-down; each is one item, and an item is not done until its code, its tests, its doc and
 its commit are in. The detail lives where the link says - **do not restate it here.**
 
-**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Item 9 needs it; keep
-`adb devices` answering before starting it. **There is NO iPhone (the user, 2026-08-18)**, so the
-iOS half of the device ladder cannot be run at all - written up as such on
+**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** The campaign needs it; keep
+`adb devices` answering. **There is NO iPhone (the user, 2026-08-18)**, so the iOS half of the
+device ladder cannot be run at all - written up as such on
 [device-verification](docs/wiki/device-verification.md) rather than left looking pending.
 
-1. **THE COMMUNITY REWORK IS DONE (2026-08-18)**, every phase, and **the cut was PUSHED on
-   2026-08-18** - the deploy applies it, so every community on prod is gone. The server holds no key
-   to any salon: `channels.masterSecret`, both `keyVersion` columns, `channel_members.keys` and the
-   key-distribution ledger are dropped (migration `041`), and migrations `042` (social) + `015`
-   (chat-delivery) delete every community, channel, member, role, invitation, message and
-   distribution group, SILENTLY. **The account of what was built, and why each alternative was
-   rejected, is [channel-encryption](docs/wiki/protocols/channel-encryption.md)** - phases 1..8, all
-   marked shipped - with the service half on
-   [social-service](docs/wiki/services/social-service.md#channel-encryption-model). **Do not
-   re-derive any of it here.** WP-63 (phase 8, availability of the key material) answers the user's
-   question of 2026-08-18 - *does a seed travel in the background like a Welcome?* Half of it always
-   did (`DELIVERY.keyMaterial` puts it in the distribution group's durable log); the recovery half
-   had three holes, all shipped fixed: a declining answerer answered with SILENCE and stranded the
-   session for the app session, only the repair-bundle path announced a repair, and
-   `forgetAskedSession` had no caller. What is OWED before the campaign believes any of it: the whole
-   thing is verified by compiling and by unit tests only - nothing has run against prod, no client
-   has joined a distribution group on a real deploy, and no notification has been decrypted from a
-   Graine seed on hardware. That is WP-62's rows on
-   [cross-client-testing](docs/wiki/cross-client-testing.md), and item 9 below is where they run.
-   **Still open and deliberately deferred: `channel_messages` gets a ONE-YEAR retention window**,
-   whose storage cost is measured on
-   [storage-forecast](docs/wiki/infrastructure/storage-forecast.md) BEFORE the sweep is written -
-   **and the Graine seeds must be swept on the SAME window**, or a device keeps the keys to messages
-   that no longer exist (the durable seed store is unbounded; only the native mirror is capped).
-2. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
-   secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
-   has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says
-   why ([docker](docs/wiki/infrastructure/docker.md)).
-3. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
+1. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
    it as a recovery source it is not. **Approved 2026-08-17** (a prod service change), volume
    included - the user's instruction is to delete what is stale, not to keep it for a window.
-4. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
+2. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
    delete that entry if it does.
-5. **`deleteWorkspace` really deletes** (decided 2026-08-18), behind an explicit confirmation -
+3. **`deleteWorkspace` really deletes** (decided 2026-08-18), behind an explicit confirmation -
    typing the community name. The durable-delete code has existed since WP-01; what is new is
    turning a reversible control irreversible, so the confirmation is part of the work, not a
    follow-up. See [backlog](docs/wiki/backlog.md).
-6. **THE ADMIN ANNOUNCEMENT** (new, the user, 2026-08-18): a place in `/admin/platform` to publish a
+4. **THE ADMIN ANNOUNCEMENT** (new, the user, 2026-08-18): a place in `/admin/platform` to publish a
    message shown ONCE PER ACCOUNT at the next app opening, on whichever device gets there first -
    so the "seen" state is server-side and survives a reinstall. A centred modal closed by a button,
    French and English both entered, one active announcement at a time, with an OPTIONAL client
    version range so "what changed in 0.15" reaches only those who have it. Scoped in
    [backlog](docs/wiki/backlog.md).
-7. **MiGallery's fuzzy search** - the last of the four projects still on plain substring matching,
+5. **MiGallery's fuzzy search** - the last of the four projects still on plain substring matching,
    against the user's standing requirement. In scope, decided 2026-08-18; port Canari's pg_trgm +
    unaccent approach or Sky's `personMatchScore`, whichever fits what that repo has.
-8. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
-    browsers.
-9. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
-    must end green, so every phase runs** - and the board says what that really costs: MSG is the
-    ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
-    **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
-    written**, and **`call-service` gets its server-side logging FIRST** (decided 2026-08-18:
-    invite, answer, ICE, hangup, duration) - a call failure two clients each see half of cannot be
-    attributed without it, which is exactly what caught the silent channel-push 404s. Sequence and
-    per-check state live on [cross-client-testing](docs/wiki/cross-client-testing.md) - the only
-    copy of the ladder's order.
+6. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+   browsers.
+7. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+   must end green, so every phase runs** - and the board says what that really costs: MSG is the
+   ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
+   **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
+   written**, and **`call-service` gets its server-side logging FIRST** (decided 2026-08-18:
+   invite, answer, ICE, hangup, duration) - a call failure two clients each see half of cannot be
+   attributed without it, which is exactly what caught the silent channel-push 404s. Sequence and
+   per-check state live on [cross-client-testing](docs/wiki/cross-client-testing.md) - the only
+   copy of the ladder's order. **The whole community rework is verified by COMPILING and by unit
+   tests only** - nothing has run against prod, no client has joined a distribution group on a real
+   deploy, no notification has been decrypted from a Graine seed on hardware. Those are WP-62's
+   rows, and this is where they run.
 
 ### CANARI - what is open
-
-**THE LEGACY SWEEP IS DONE (2026-08-17).** [legacy-compatibility](docs/wiki/legacy-compatibility.md)
-is a DIARY now, not a board: four dated removals and one that waits on a release. Nothing on it is
-work - do not open it looking for a task.
 
 **Owed on a LOGGED-IN session: the GIF-comment flow end to end.** The blocked step is proven fixed
 on the deployed header - the exact `fetch` + `File` that `handleGifSelected` builds returns 2.44 MB
@@ -203,31 +174,11 @@ of `image/gif` with zero `securitypolicyviolation` events. What is NOT re-checke
 are where those live. It is the same `stageMediaFile` an image comment uses, so it is a confirmation,
 not a suspicion - fold it into the campaign rather than opening a WP.
 
-**THE SIX LOST COMMUNITY MEMBERSHIPS ARE DROPPED, BY THE USER, 2026-08-18.** Leaving a public
-channel used to delete the community membership row (fixed 2026-08-17), costing one user six
-memberships. Nothing can restore them automatically - a deliberate "leave the community" leaves the
-identical trace - and the cut deletes every community anyway. **Do not re-open it.** The mechanism
-and the identifying query stay on
-[social-service](docs/wiki/services/social-service.md#a-channel-scoped-action-never-touches-community-membership-2026-08-17)
-as the record of the defect, not as work.
-
-**WP-AVATAR-1 IS CLOSED (2026-08-18): FOUR ALIGNED IMPLEMENTATIONS, NOT A SHARED CLIENT.** Le Cercle
-was the last one and now holds the same contract - three outcomes, only an ANSWER cached, the LOG
-telling the causes apart. The contract itself lives on
-[core-service](docs/wiki/services/core-service.md#the-avatar-proxy); what the convergence still owes
-as a PROCESS is in [backlog](docs/wiki/backlog.md).
-
-**WP-STRANDED-1 IS ATTRIBUTED AND FIXED AT ITS CAUSE (2026-08-16), VERIFICATION OWED.** The four
-sender-only rows were WITHDRAWN messages: `deleteMessage` knew it had withdrawn rather than
-broadcast and returned `void`, so the caller tombstoned either way and the sender kept a durable row
-no peer ever had. **Attributed by a causal test, not by the dates** - one `mut.mjs --only 19`, four
-became five. The outcome is a type now (`DeleteOutcome`), `IStorage.deleteMessage` drops the row on
-`withdrawn`, and MUT-19 asserts the sender's STORE (`senderKeptRow`), because a tombstone and a
-dropped row are identical on screen. Mechanism on
-[chat](docs/wiki/frontend/modules/chat.md), rule in [durable-rules](docs/wiki/durable-rules.md),
-methodology rule 20 in [testing-methodology](docs/wiki/testing-methodology.md).
-**Owed: MUT-19 on the deployed bundle, then delete the five residue rows on W1 by id** (an allowlist
-of exactly those five, each proven MUT-19's) so `recon.mjs` reads `RECONCILED` again.
+**WP-STRANDED-1 - fixed at its cause 2026-08-16, VERIFICATION OWED.** Owed: MUT-19 on the deployed
+bundle, then delete the five residue rows on W1 by id (an allowlist of exactly those five, each
+proven MUT-19's) so `recon.mjs` reads `RECONCILED` again. The mechanism is on
+[chat](docs/wiki/frontend/modules/chat.md), the rule in
+[durable-rules](docs/wiki/durable-rules.md) - do not re-derive either here.
 
 **The device verification ladder.** Everything native is verified by COMPILING, which proves nothing
 about running; the owed list is [device-verification](docs/wiki/device-verification.md). Android
@@ -238,7 +189,10 @@ its captured log. Same shape: the four human checks left from the SEO work
 ([seo](docs/wiki/frontend/seo.md)).
 
 **Owed cleanup: remove the orphaned `minio_data` volume after 2026-08-28** (14-day rollback window
-after the Garage migration - see [docker](docs/wiki/infrastructure/docker.md)).
+after the Garage migration - see [docker](docs/wiki/infrastructure/docker.md)). **And delete the
+`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` repository secrets once a dev deploy has answered** - the
+Garage rename (2026-08-18) removed the last thing that read them, `cd-dev.yml`, which had been
+demanding them for a service stopped on 2026-08-14.
 
 **Release status:** v0.14.0 cut 2026-08-17 (tag + `gh release create`, which drives the version bump,
 the mobile builds and the deploy - `cicd.md`); both CD runs and the AppImage build green. Prod
@@ -249,20 +203,11 @@ App Store half was never verified, so the raise locks out any iOS user it has no
 shipping order this violated is written down for next time: publish -> VERIFY the store serves it ->
 only THEN raise ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
 
-**The changelog is two files now.** `CHANGELOG.md` carries the condensed entry per change plus
-`[Unreleased]`; [changelog-archive](docs/changelog-archive.md) carries the long-form account and every
-release up to v0.13.1. The archive also records why v0.11.8..v0.13.1 had to be reconstructed (they
-shipped with no section, all four dumped into `[Unreleased]`) and that **v0.11.3 has a tag and still
-has no section** - a gap left open on purpose rather than filled with invented prose.
-
-#### Settled 2026-08-17 - do not re-open any of these
-
-The six entries that stood here are decided. **Nothing tells the RECEIVER's user that a message was
-lost, and it stays that way** - not to be revisited. The two history gaps and the reason
-`history_request` is not durable are argued in
+**Settled - do not re-open.** **Nothing tells the RECEIVER's user that a message was lost, and it
+stays that way.** The two history gaps and why `history_request` is not durable are argued in
 [history-reconciliation](docs/wiki/protocols/history-reconciliation.md); the 30-day media window in
-[storage-forecast](docs/wiki/infrastructure/storage-forecast.md) §6. `mongo` is item 5; the
-SharedWorker MLS client is a POST-CAMPAIGN project in [backlog](docs/wiki/backlog.md).
+[storage-forecast](docs/wiki/infrastructure/storage-forecast.md) §6; the SharedWorker MLS client is
+POST-CAMPAIGN in [backlog](docs/wiki/backlog.md).
 
 ### CANARI - the test campaign
 

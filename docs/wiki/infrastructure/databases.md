@@ -115,15 +115,15 @@ Redis is **not persisted** (no AOF/RDB in the default config). Presence and pend
 **Image**: `dxflrs/garage:v2.3.0` (migrated from MinIO 2026-08-14, unmaintained upstream - see
 [docker](docker.md))  
 **S3 API port**: 3900 (container), configurable dev host port (default 19100, var name
-`MINIO_API_HOST_PORT` kept from the MinIO era)  
-**Admin API port**: 3903 (container) - health check and CLI, no MinIO equivalent
+`GARAGE_API_HOST_PORT`)  
+**Admin API port**: 3903 (container) - health check and CLI, which MinIO had no equivalent of
 
 S3-compatible object storage. Used exclusively by media-service, through the same generic
 `minio` npm S3 client as before (Garage implements every S3 operation it calls).
 
 | Bucket | Contents |
 |---|---|
-| `canari-media` (`MINIO_BUCKET`) | Both encrypted media blobs (AES-256-GCM, client-side encrypted) and resized public images (logos, avatars) - `storage.service.ts` puts both in this one bucket. `MINIO_PUBLIC_BUCKET` is not read anywhere in the code (removed 2026-08-07). |
+| `canari-media` (`GARAGE_BUCKET`) | Both encrypted media blobs (AES-256-GCM, client-side encrypted) and resized public images (logos, avatars) - `storage.service.ts` puts both in this one bucket. `MINIO_PUBLIC_BUCKET` was not read anywhere in the code (removed 2026-08-07). Every remaining variable was renamed `MINIO_*` -> `GARAGE_*` on 2026-08-18. |
 
 The `garage_data` (object bytes) and `garage_meta` (bucket/key metadata) Docker volumes are
 backed up via the deduplicated restic repository in `infrastructure/backup/backup-objects.sh`,

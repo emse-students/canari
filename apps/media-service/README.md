@@ -70,12 +70,12 @@ Requires running PostgreSQL, Garage (S3 store), and configured credentials.
 | Variable | Required | Description |
 |---|---|---|
 | `JWT_SECRET` | yes | HS256 secret (shared with all services) |
-| `MINIO_ENDPOINT` | yes | Garage server URL (variable name kept from MinIO era) |
-| `MINIO_PORT` | yes | Garage S3 API port (`3900`) |
-| `MINIO_REGION` | no | Garage region (must match `s3_region` in garage.toml); unset for MinIO |
-| `MINIO_ACCESS_KEY` | yes | S3 access key |
-| `MINIO_SECRET_KEY` | yes | S3 secret key |
-| `MINIO_BUCKET` | yes | Bucket name for both private and public blobs (default `canari-media`) |
+| `GARAGE_ENDPOINT` | yes | Garage host (`garage` in Compose) |
+| `GARAGE_PORT` | yes | Garage S3 API port (`3900`) |
+| `GARAGE_REGION` | yes | Must match `s3_region` in `garage.toml`; without it every request is refused |
+| `GARAGE_ACCESS_KEY_ID` | yes | The key Garage provisions on first boot - not a second one |
+| `GARAGE_SECRET_ACCESS_KEY` | yes | Its secret |
+| `GARAGE_BUCKET` | yes | Bucket for both private and public blobs (default `canari-media`) |
 | `MEDIA_MAX_SIZE_MB` | no | Max upload size in MB (default 100, capped at 100) |
 | `MEDIA_RETENTION_SWEEP_MS` | no | Retention sweep interval (default 1 hour) |
 
@@ -83,4 +83,4 @@ Requires running PostgreSQL, Garage (S3 store), and configured credentials.
 
 - [Wiki: media-service](../../docs/wiki/services/media-service.md) - Full API, encryption model, retention design
 - [Wiki: Storage forecast](../../docs/wiki/infrastructure/storage-forecast.md) - Media storage capacity planning
-- [Wiki: Docker (Garage)](../../docs/wiki/infrastructure/docker.md) - Garage S3 store and MinIO migration
+- [Wiki: Docker (Garage)](../../docs/wiki/infrastructure/docker.md) - the Garage S3 store, and the migration off MinIO

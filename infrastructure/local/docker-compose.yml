@@ -190,9 +190,12 @@ services:
       GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-dev-garage-admin-token-change-me}
       # --default-bucket provisions this bucket and grants this exact key on first boot -
       # same values media-service reads below, so the two never drift apart.
-      GARAGE_DEFAULT_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      GARAGE_DEFAULT_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin-dev-secret-key}
-      GARAGE_DEFAULT_BUCKET: ${MINIO_BUCKET:-canari-media}
+      # The literal defaults still read "minioadmin" on purpose: a local `garage_meta` volume
+      # was provisioned with that key ID, and changing it locks a developer out of their own
+      # local media until they delete the volume. The VARIABLE names are Garage everywhere.
+      GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_ACCESS_KEY_ID:-minioadmin}
+      GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_SECRET_ACCESS_KEY:-minioadmin-dev-secret-key}
+      GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:-canari-media}
     volumes:
       - ../garage/garage.toml:/etc/garage.toml:ro
       - garage_meta:/var/lib/garage/meta
@@ -219,13 +222,13 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-garage}
-      MINIO_PORT: "${MINIO_PORT:-3900}"
-      MINIO_USE_SSL: "${MINIO_USE_SSL:-false}"
-      MINIO_REGION: ${MINIO_REGION:-garage}
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin-dev-secret-key}
-      MINIO_BUCKET: ${MINIO_BUCKET:-canari-media}
+      GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
+      GARAGE_PORT: "${GARAGE_PORT:-3900}"
+      GARAGE_USE_SSL: "${GARAGE_USE_SSL:-false}"
+      GARAGE_REGION: ${GARAGE_REGION:-garage}
+      GARAGE_ACCESS_KEY_ID: ${GARAGE_ACCESS_KEY_ID:-minioadmin}
+      GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:-minioadmin-dev-secret-key}
+      GARAGE_BUCKET: ${GARAGE_BUCKET:-canari-media}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
     volumes:
       - media_meta:/app/media_meta
