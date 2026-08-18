@@ -21,6 +21,15 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       storeGroupInfo: vi.fn().mockResolvedValue(undefined),
     },
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
+    // The REAL routing method, not a stand-in: `externalJoin` no longer reaches the delivery client
+    // directly, and a stub reproducing that hop here would keep passing after the real one broke.
+    groupInfoChannel: (
+      BaseMlsService.prototype as unknown as {
+        groupInfoChannel: (groupId: string) => unknown;
+      }
+    ).groupInfoChannel,
+    distributionWorkspaceByGroup: new Map<string, string>(),
+    distributionGroupInfo: null,
     joinByExternalCommit: vi.fn().mockResolvedValue({ groupId: 'g', commit: new Uint8Array([9]) }),
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     refreshGroupInfo: vi.fn().mockResolvedValue(undefined),

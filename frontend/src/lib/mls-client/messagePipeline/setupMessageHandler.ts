@@ -165,6 +165,16 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
       if (!groupId) return true; // ACK without group - control frame
 
+      // ── A community's Graine key-distribution group ───────────────────────
+      // BEFORE both branches below, and that order is the point. This group carries channel seeds
+      // and never a chat message, so it has no conversation: `handleKnownGroup` would look one up,
+      // find nothing, and return WITHOUT acknowledging - redelivering every seed for ever while
+      // reading none of them. `handleUnknownGroup` would ask for a Welcome nobody sends, this group
+      // being joined by external commit.
+      if (mlsService.isDistributionGroup(groupId)) {
+        return mlsService.routeDistributionFrame(groupId, senderNorm, content);
+      }
+
       // ── Unknown group (not in the local WASM) ─────────────────────────────
       const inGroup = mlsService.getLocalGroups().includes(groupId);
       if (!inGroup) {

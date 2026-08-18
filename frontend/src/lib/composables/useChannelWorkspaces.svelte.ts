@@ -21,6 +21,7 @@ import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
+import { ensureCommunityDistributionGroup } from '$lib/utils/graine/distributionGroup';
 
 /** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {
@@ -152,6 +153,21 @@ export function useChannelWorkspaces() {
       const workspaceId = sidebarWorkspace.workspaceDbId;
       if (!workspaceId) continue;
       validWorkspaceSlugs.add(sidebarWorkspace.id);
+
+      // Joining the community's Graine key-distribution group is done HERE, and AWAITED, for a
+      // reason beyond tidiness: it is what registers the group id locally, and until it is
+      // registered a seed frame arriving on that group is treated as an unknown conversation and
+      // answered with a welcome_request nobody will ever send. Awaiting closes that window instead
+      // of leaving one spurious recovery per community per start.
+      //
+      // Never fatal to the load: nothing reads a seed yet (the Graine layer is dark until WP-50),
+      // and a community that fails to prepare must still appear in the sidebar. The failure is
+      // logged with its cause by `ensureCommunityDistributionGroup`, which is all a best-effort
+      // path leaves behind.
+      if (ctx.ensureMls) {
+        const mls = await ctx.ensureMls();
+        await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
+      }
 
       const channels = await service.listChannels(workspaceId);
       for (const channel of channels as ChannelDto[]) {

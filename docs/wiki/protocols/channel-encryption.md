@@ -346,7 +346,7 @@ letting "tested on both backends" be read as more than it is.**
   external join, and its membership tracks `channel_members`. **DONE 2026-08-18** - the design and
   what it turned out to cost are below.
 - **WP-22** Client: external-join on first use, ignore the group in the conversation pipeline, route
-  its messages to the Graine handler.
+  its messages to the Graine handler. **DONE 2026-08-18** - below.
 
 #### The WP-20 audit, and why it came out short
 
@@ -452,6 +452,51 @@ nobody, which is exactly the shape of row the 2026-08-17 purge had to find by ha
 `dm_group_members`, so a distribution-group member who falls behind cannot replay commits and
 re-joins by external commit instead. That is the intended rung for this group - it holds seeds, not
 a conversation - but it is a difference from ordinary groups, not an oversight.
+
+#### WP-22, and the race that had no election
+
+**The client joins where the community is loaded** (`useChannelWorkspaces`), through one function,
+`ensureCommunityDistributionGroup`. It is idempotent and its early return is derived from state that
+already exists - the registered group id, and the local MLS group list - rather than from a "done"
+flag, which a state reload would have made a lie.
+
+**It is AWAITED there, and that is load-bearing.** Joining is also what REGISTERS the group id
+locally, and until it is registered a seed frame arriving on that group is treated as an unknown
+conversation and answered with a `welcome_request` nobody will ever send. Awaiting closes that
+window instead of paying one spurious recovery per community per start.
+
+**One decision point for where a base lives.** `BaseMlsService.groupInfoChannel(groupId)` answers it
+once, from the registry, and both `refreshGroupInfo` and `externalJoin` go through it - a rule each
+call site had to remember is the shape of rule the next call site does not. A group registered as a
+distribution group with no transport wired **throws**: sending it to chat-delivery instead would
+produce a 403 that reads like a permission problem and send the next reader to the wrong place.
+
+**The transport is injected, not imported** (`setDistributionGroupInfoTransport`, wired in
+`sessionAuth` from `ChannelService`). The MLS layer never learns to speak to the communities API.
+
+**THE FIRST-PUBLISH RACE, AND WHY IT NEEDED A SERVER CHANGE.** Two devices can both find a community
+uninitialised and both create an MLS group under the same id at epoch 0. The monotonic rule cannot
+separate them - epoch 0 is no newer than epoch 0 - so without a discriminator the second publish
+overwrites the first and the community's seeds split in half, silently, for ever. Who won the INSERT
+separates them, and `putGroupInfo` used to answer `stored: true` from the insert branch regardless:
+`orIgnore` makes a lost race silent. It now reports `ON CONFLICT DO NOTHING`'s empty `raw` truthfully,
+and the loser discards its group and joins the winner's base. **No election, no coordination, no
+peer online.** The cost of being wrong here is the reason this is not left to heal: nothing
+reconciles two MLS groups sharing an id.
+
+**Routing.** `setupMessageHandler` branches on `isDistributionGroup` BEFORE the known/unknown split,
+because both would misbehave: `handleKnownGroup` looks up a conversation that does not exist and
+returns without acknowledging, so every seed would be redelivered for ever while being read by
+nobody; `handleUnknownGroup` asks for a Welcome that external join exists to avoid.
+`routeDistributionFrame` decrypts and hands the plaintext to a registered handler - **a seam, and
+deliberately empty**: what a seed offer, a seed request or a history bundle MEANS is WP-30..33. A
+frame arriving with no handler wired is logged at ERROR and NOT acknowledged, because the only other
+symptom would be a community whose history quietly never loads, weeks later, with nothing to point
+at.
+
+**Acknowledgement rules, since they decide what is lost:** a commit is applied and acknowledged (no
+payload, and a replay would only be refused); a frame that cannot be decrypted yet is NOT
+acknowledged, so the server redelivers it once the join lands; a dispatched frame is acknowledged.
 
 ### Phase 4 - send, receive, repair
 

@@ -19,17 +19,29 @@ describe('MessagingService - group-info (external-join base)', () => {
   let service: MessagingService;
 
   const groupMemberRepo = { findOne: jest.fn() };
+  /**
+   * ONE `execute` for both builders, because the fixture below merges them into a single object and
+   * a spread keeps exactly one of any duplicated key.
+   *
+   * It used to be two, and the insert one was therefore dead - shadowed by the update one, never
+   * called, so `expect(insertBuilder.execute).not.toHaveBeenCalled()` was vacuously true and the
+   * insert's return value could not be varied at all. Shared, both assertions mean something.
+   *
+   * `raw` holding a row is `ON CONFLICT DO NOTHING` having inserted; `raw: []` is the conflict, and
+   * that is the only signal separating the winner of a first-publish race from the loser.
+   */
+  const execute = jest.fn();
   const updateBuilder = {
     update: jest.fn().mockReturnThis(),
     set: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
-    execute: jest.fn().mockResolvedValue({}),
+    execute,
   };
   const insertBuilder = {
     insert: jest.fn().mockReturnThis(),
     values: jest.fn().mockReturnThis(),
     orIgnore: jest.fn().mockReturnThis(),
-    execute: jest.fn().mockResolvedValue({}),
+    execute,
   };
   const groupInfoRepo = {
     findOne: jest.fn(),
@@ -55,6 +67,9 @@ describe('MessagingService - group-info (external-join base)', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // Re-armed AFTER the clear, which drops the implementation set at definition time. The default
+    // is winning the race; the test that cares about losing it says so.
+    execute.mockResolvedValue({ raw: [{ groupId: 'g1' }] });
     groupInfoRepo.createQueryBuilder.mockImplementation((): unknown => ({
       ...insertBuilder,
       ...updateBuilder,
@@ -106,6 +121,17 @@ describe('MessagingService - group-info (external-join base)', () => {
         groupInfo: 'Z2k=',
         baseEpoch: 5,
       });
+    });
+
+    it('reports a LOST insert race as not stored, rather than assuming it won', async () => {
+      groupMemberRepo.findOne.mockResolvedValue({ id: 'm' });
+      groupInfoRepo.findOne.mockResolvedValue(null);
+      execute.mockResolvedValueOnce({ raw: [] });
+
+      // Two clients finding a community's distribution group uninitialised both publish at epoch 0,
+      // and epoch 0 does not beat epoch 0 - so the monotonic rule cannot separate them. Who won the
+      // insert can, and the loser discards its group and joins the winner's. It only can if told.
+      expect(await service.storeGroupInfo('g1', 'member-1', 'Z2k=', 0)).toEqual({ stored: false });
     });
 
     it('ignores a write with a lower baseEpoch than the stored one (monotonic)', async () => {

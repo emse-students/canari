@@ -87,6 +87,7 @@ import {
   setCallSystemMessageContext,
 } from '$lib/utils/chat/callSystemMessages';
 import { resetSiblingCallWarning } from '$lib/utils/callPresence';
+import { ChannelService } from '$lib/services/ChannelService';
 import type { ICallMsg } from '$lib/proto/codec';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import {
@@ -664,6 +665,22 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // a browser mid-boot, before tab leadership, with no socket and no error line, on every reload.
 
     beginStartupCatchupPhase('setup_handler');
+
+    // A community's key-distribution group has its external-join base on social-service, not on
+    // chat-delivery: the base IS the capability to read every seed in the community, so it is
+    // gated on community membership, which only social-service holds. Wired as a transport rather
+    // than imported, so the MLS layer never learns to speak to the communities API.
+    const distributionChannels = new ChannelService();
+    mlsService.setDistributionGroupInfoTransport({
+      fetch: async (workspaceId) => {
+        const ref = await distributionChannels.getDistributionGroup(workspaceId);
+        return ref.groupInfo !== null && ref.baseEpoch !== null
+          ? { groupInfo: ref.groupInfo, baseEpoch: ref.baseEpoch }
+          : null;
+      },
+      publish: (workspaceId, groupInfo, baseEpoch) =>
+        distributionChannels.publishDistributionGroupInfo(workspaceId, groupInfo, baseEpoch),
+    });
 
     const callSystemCtx = {
       userId: ctx.getUserId(),

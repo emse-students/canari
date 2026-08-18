@@ -44,6 +44,10 @@ import {
 } from '$lib/mls-client/messagePipeline/unackedFrames';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
+import type {
+  DistributionFrameHandler,
+  DistributionGroupInfoTransport,
+} from '$lib/mls-client/IMlsService';
 
 /**
  * Abstract base class shared by WebMlsService (WASM) and TauriMlsService (Rust native).
@@ -109,6 +113,24 @@ export abstract class BaseMlsService implements IMlsService {
 
   // ── Delivery REST client ──────────────────────────────────────────────────
   protected readonly delivery: MlsDeliveryApi;
+
+  // ── Graine key-distribution groups ────────────────────────────────────────
+  /**
+   * Group id -> community id, for the ONE group per community that carries channel seeds.
+   *
+   * It exists because a distribution group's external-join base does not live where every other
+   * group's does. Chat-delivery gates `group-info` on a `dm_group_members` row, and this group has
+   * none by construction - it is entered by external commit and authorized by COMMUNITY membership,
+   * a fact only social-service holds. So the base is fetched and published through social-service,
+   * and this map is how the MLS layer knows which of the two it is looking at without asking.
+   */
+  private readonly distributionWorkspaceByGroup = new Map<string, string>();
+
+  /** Set once at wiring time; see {@link setDistributionGroupInfoTransport}. */
+  private distributionGroupInfo: DistributionGroupInfoTransport | null = null;
+
+  /** Set once at wiring time; see {@link onDistributionFrame}. */
+  private distributionFrameHandler: DistributionFrameHandler | null = null;
 
   // ── Init dedup ────────────────────────────────────────────────────────────
   protected initPromise: Promise<void> | null = null;
@@ -1715,11 +1737,138 @@ export abstract class BaseMlsService implements IMlsService {
    * refresh only means a joiner
    * may momentarily get a one-epoch-stale base and retry).
    */
+  /**
+   * Declares `groupId` to be the Graine key-distribution group of community `workspaceId`.
+   *
+   * Called once the client has learned the pair from social-service. From here on, every decision
+   * that differs for this group - where its external-join base lives, and that its frames are seeds
+   * rather than a conversation - is taken from THIS fact rather than rediscovered.
+   */
+  registerDistributionGroup(workspaceId: string, groupId: string): void {
+    this.distributionWorkspaceByGroup.set(groupId, workspaceId);
+  }
+
+  /** True when `groupId` carries channel seeds and must never reach the conversation pipeline. */
+  isDistributionGroup(groupId: string): boolean {
+    return this.distributionWorkspaceByGroup.has(groupId);
+  }
+
+  /**
+   * The distribution group registered for `workspaceId`, or null.
+   *
+   * Scanned rather than kept in a second map on purpose: a reverse index is a second copy of the
+   * same fact, and two copies of a fact drift. The population is one entry per community a user
+   * belongs to - a handful - so the scan is not worth a consistency risk.
+   */
+  distributionGroupFor(workspaceId: string): string | null {
+    for (const [groupId, ws] of this.distributionWorkspaceByGroup) {
+      if (ws === workspaceId) return groupId;
+    }
+    return null;
+  }
+
+  /** Wires the social-service transport for distribution-group GroupInfo. Set once, at startup. */
+  setDistributionGroupInfoTransport(transport: DistributionGroupInfoTransport | null): void {
+    this.distributionGroupInfo = transport;
+  }
+
+  /** Wires what decrypted key-distribution frames are handed to. Set once, at startup. */
+  onDistributionFrame(handler: DistributionFrameHandler | null): void {
+    this.distributionFrameHandler = handler;
+  }
+
+  /**
+   * Decrypts a frame that arrived on a key-distribution group and hands it to the Graine handler.
+   *
+   * It never touches a conversation, and it is the reason the pipeline branches on
+   * {@link isDistributionGroup} BEFORE anything else: `handleKnownGroup` looks the group up in the
+   * conversation map, finds nothing, and returns without acknowledging - so every seed frame would
+   * be redelivered for ever while never being read.
+   *
+   * @returns whether the frame may be acknowledged. A commit is applied and acknowledged with no
+   *   handler involvement (it carries no payload); a frame this device cannot yet decrypt is NOT
+   *   acknowledged, so the server redelivers it once the join has landed.
+   */
+  async routeDistributionFrame(
+    groupId: string,
+    sender: string,
+    ciphertext: Uint8Array
+  ): Promise<boolean> {
+    const workspaceId = this.distributionWorkspaceByGroup.get(groupId);
+    if (workspaceId === undefined) {
+      // Unreachable through the pipeline, which only calls this behind `isDistributionGroup`.
+      console.warn(`[GRAINE] frame for unregistered distribution group ${groupId.slice(0, 8)}…`);
+      return false;
+    }
+
+    let plaintext: Uint8Array | null;
+    try {
+      plaintext = await this.processIncomingMessage(groupId, ciphertext);
+    } catch (e) {
+      console.warn(
+        `[GRAINE] undecryptable frame on ${groupId.slice(0, 8)}… - not acknowledged:`,
+        String(e).slice(0, 120)
+      );
+      return false;
+    }
+
+    // A commit: MLS state advanced and there is nothing to hand over. Acknowledged, because
+    // replaying it would only be refused.
+    if (!plaintext) return true;
+
+    const handler = this.distributionFrameHandler;
+    if (!handler) {
+      // Not silent, and not acknowledged: the frame is a seed somebody needs, and the ONLY symptom
+      // of a handler never wired would otherwise be a community whose history quietly never loads.
+      console.error(
+        `[GRAINE] no handler wired - dropping a ${plaintext.length}-byte frame from ${sender.slice(0, 8)}… on community ${workspaceId.slice(0, 8)}…`
+      );
+      return false;
+    }
+
+    await handler({ workspaceId, groupId, sender, plaintext });
+    return true;
+  }
+
+  /**
+   * THE ONE PLACE that decides where a group's external-join base lives.
+   *
+   * Both callers below need the same answer, and a group cannot change kind, so the decision is made
+   * once from a fact already registered rather than re-derived at each call site - which is the shape
+   * of rule the next call site forgets.
+   *
+   * A group registered as a distribution group with no transport wired is a WIRING BUG, and it
+   * throws: routing it to chat-delivery instead would produce a 403 that reads like a permission
+   * problem and send the next reader to entirely the wrong place.
+   */
+  protected groupInfoChannel(groupId: string): {
+    fetch(): Promise<{ groupInfo: string; baseEpoch: number } | null>;
+    publish(groupInfoBase64: string, baseEpoch: number): Promise<{ stored: boolean }>;
+  } {
+    const workspaceId = this.distributionWorkspaceByGroup.get(groupId);
+    if (workspaceId === undefined) {
+      return {
+        fetch: () => this.delivery.fetchGroupInfo(groupId),
+        publish: (gi, epoch) => this.delivery.storeGroupInfo(groupId, gi, epoch),
+      };
+    }
+    const transport = this.distributionGroupInfo;
+    if (!transport) {
+      throw new Error(
+        `[MLS] no distribution GroupInfo transport wired - group ${groupId.slice(0, 8)}… belongs to community ${workspaceId.slice(0, 8)}…`
+      );
+    }
+    return {
+      fetch: () => transport.fetch(workspaceId),
+      publish: (gi, epoch) => transport.publish(workspaceId, gi, epoch),
+    };
+  }
+
   async refreshGroupInfo(groupId: string): Promise<void> {
     try {
       const groupInfo = await this.exportGroupInfo(groupId);
       const baseEpoch = this.getEpoch(groupId);
-      await this.delivery.storeGroupInfo(groupId, toBase64(groupInfo), baseEpoch);
+      await this.groupInfoChannel(groupId).publish(toBase64(groupInfo), baseEpoch);
     } catch (e) {
       console.warn(
         `[MLS] refreshGroupInfo failed for ${groupId.slice(0, 8)}…:`,
@@ -1742,7 +1891,9 @@ export abstract class BaseMlsService implements IMlsService {
   async externalJoin(groupId: string): Promise<boolean> {
     const excludeSelf = [`${this.userId}:${this.deviceId}`];
     for (let attempt = 0; attempt < 3; attempt++) {
-      const gi = await this.delivery.fetchGroupInfo(groupId).catch(() => null);
+      const gi = await this.groupInfoChannel(groupId)
+        .fetch()
+        .catch(() => null);
       if (!gi) return false; // nothing stored / not a member -> fall back to welcome_request
 
       let joined: { groupId: string; commit: Uint8Array };
@@ -1782,6 +1933,73 @@ export abstract class BaseMlsService implements IMlsService {
       );
     }
     return false;
+  }
+
+  /**
+   * Makes this device a member of a community's Graine key-distribution group, whatever state it
+   * finds - the "on first use" entry point of WP-22.
+   *
+   * Three states, and the caller does not have to know which one it is in:
+   *  - already held locally: nothing to do;
+   *  - a base is published: external-join it, exactly as any other group is rejoined;
+   *  - nothing published: this device is the first member in, so it CREATES the MLS group and
+   *    publishes the base everyone after it will join from.
+   *
+   * THE THIRD CASE RACES, AND IS SETTLED WITHOUT AN ELECTION. Two devices can both find the group
+   * uninitialised, and both create an MLS group under the same id at epoch 0 - so the monotonic
+   * rule cannot separate them, epoch 0 being no newer than epoch 0. What separates them is who won
+   * the INSERT, which the server now reports: the loser throws its group away and joins the
+   * winner's. Nothing was built on the discarded group - this runs before any seed is sent - so
+   * discarding it costs nothing, and no peer has to be online for any of it.
+   *
+   * @param ref what social-service answered: the group id, and the published base or null
+   * @returns true when this device holds the group afterwards
+   */
+  async ensureDistributionGroup(
+    workspaceId: string,
+    ref: { groupId: string; groupInfo: string | null; baseEpoch: number | null }
+  ): Promise<boolean> {
+    const { groupId } = ref;
+    this.registerDistributionGroup(workspaceId, groupId);
+
+    if (this.getLocalGroups().includes(groupId)) return true;
+
+    if (ref.groupInfo !== null) {
+      return this.externalJoin(groupId);
+    }
+
+    console.log(
+      `[GRAINE] no base published for community ${workspaceId.slice(0, 8)}… - creating group ${groupId.slice(0, 8)}…`
+    );
+    await this.runUnderMlsLock(() => this.createGroup(groupId));
+
+    let published: { stored: boolean };
+    try {
+      const groupInfo = await this.exportGroupInfo(groupId);
+      published = await this.groupInfoChannel(groupId).publish(
+        toBase64(groupInfo),
+        this.getEpoch(groupId)
+      );
+    } catch (e) {
+      // The group exists locally and nobody can join it: that is worse than not having created it,
+      // because the next call would find it in `getLocalGroups` and return early for ever.
+      this.forgetGroup(groupId);
+      console.warn(
+        `[GRAINE] publishing the base for ${groupId.slice(0, 8)}… failed - group discarded:`,
+        String(e).slice(0, 120)
+      );
+      return false;
+    }
+
+    if (published.stored) return true;
+
+    // Lost the race: another device published first and its base is what everyone else will join
+    // from. Ours would fork the community in two.
+    this.forgetGroup(groupId);
+    console.log(
+      `[GRAINE] lost the first-publish race for ${groupId.slice(0, 8)}… - joining the published base instead`
+    );
+    return this.externalJoin(groupId);
   }
 
   async addMember(

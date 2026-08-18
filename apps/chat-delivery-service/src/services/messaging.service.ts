@@ -1201,13 +1201,21 @@ export class MessagingService {
       return { stored: false };
     }
     if (!existing) {
-      await this.groupInfoRepo
+      const inserted = await this.groupInfoRepo
         .createQueryBuilder()
         .insert()
         .values({ groupId, groupInfo, baseEpoch })
         .orIgnore()
         .execute();
-      return { stored: true };
+      // REPORTED, NOT ASSUMED. `orIgnore` makes a lost race silent, and this branch used to answer
+      // `stored: true` regardless - which is fine for a refresh and wrong for the one caller that
+      // acts on it. Two clients finding a community's distribution group uninitialised BOTH create
+      // an MLS group at epoch 0, and epoch 0 does not beat epoch 0, so the monotonic rule cannot
+      // separate them: what separates them is who won the insert. The loser discards its group and
+      // joins the winner's, which needs no election - but only if it is told it lost.
+      // `ON CONFLICT DO NOTHING` returns no row on conflict, which is the signal.
+      const won = Array.isArray(inserted.raw) && inserted.raw.length > 0;
+      return { stored: won };
     }
     await this.groupInfoRepo
       .createQueryBuilder()

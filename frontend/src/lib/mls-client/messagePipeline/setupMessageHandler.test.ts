@@ -94,6 +94,29 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(typeof (deps.mlsService as any).onChannelEvent).toBe('function');
   });
 
+  it('routes a key-distribution frame to the Graine handler, never to a conversation', async () => {
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    const distributionGroup = '22222222-2222-4222-8222-222222222222';
+    mls.isDistributionGroup = vi.fn((g: string) => g === distributionGroup);
+    mls.getLocalGroups = vi.fn().mockReturnValue([]);
+    setupMessageHandler(deps as any);
+    const cb = mls.onMessage.mock.calls[0][0];
+
+    const acked = await cb('peer', new Uint8Array([1, 2]), distributionGroup, false);
+
+    // The branch has to come FIRST. This group has no conversation, so the known-group path would
+    // return without acknowledging and the seed would be redelivered for ever; and it is joined by
+    // external commit, so the unknown-group path would ask for a Welcome nobody sends.
+    expect(acked).toBe(true);
+    expect(mls.routeDistributionFrame).toHaveBeenCalledWith(
+      distributionGroup,
+      'peer',
+      new Uint8Array([1, 2])
+    );
+    expect(deps.addMessageToChat).not.toHaveBeenCalled();
+  });
+
   it('propagates channel.member.joined to callback', async () => {
     const onChannelMemberJoined = vi.fn();
     const deps = baseDeps({ onChannelMemberJoined });

@@ -512,8 +512,16 @@ export class MlsDeliveryApi {
    * Refreshes the stored GroupInfo for `groupId` (the committer calls this after each accepted commit;
    * a new group's first member-add is itself a commit). Membership-gated and monotonic server-side
    * (a lower baseEpoch is ignored).
+   *
+   * `stored: false` is the monotonic rule declining a base that is not newer, or an insert lost to
+   * a concurrent first publish - both legitimate outcomes, neither a failure. A refresh may ignore
+   * it; the caller initialising a group must not.
    */
-  async storeGroupInfo(groupId: string, groupInfoBase64: string, baseEpoch: number): Promise<void> {
+  async storeGroupInfo(
+    groupId: string,
+    groupInfoBase64: string,
+    baseEpoch: number
+  ): Promise<{ stored: boolean }> {
     const res = await this.f(
       `${this.historyUrl}/api/mls/group-info/${encodeURIComponent(groupId)}`,
       {
@@ -525,6 +533,8 @@ export class MlsDeliveryApi {
     if (!res.ok) {
       throw new Error(`GroupInfo store HTTP error: ${res.status}`);
     }
+    const data = await res.json().catch(() => null);
+    return { stored: data?.stored === true };
   }
 
   /**

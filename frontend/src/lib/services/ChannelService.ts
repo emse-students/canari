@@ -42,6 +42,21 @@ export interface WorkspaceInviteDto {
   uses: number;
 }
 
+/**
+ * A community's Graine key-distribution group as social-service serves it.
+ *
+ * `groupInfo` and `baseEpoch` are null together, and only together: the group row exists but no
+ * client has initialised the MLS group yet.
+ */
+export interface DistributionGroupDto {
+  /** The MLS group id, in chat-delivery's `dm_groups`. Stable for the life of the community. */
+  groupId: string;
+  /** Serialized MLS GroupInfo (base64) to external-join from, or null when none is published. */
+  groupInfo: string | null;
+  /** The epoch `groupInfo` was exported at, or null when `groupInfo` is. */
+  baseEpoch: number | null;
+}
+
 export interface CreateChannelDto {
   workspaceId: string;
   name: string;
@@ -296,6 +311,50 @@ export class ChannelService {
     );
     await this.handleError(res);
     return res.json() as Promise<WorkspaceDetailDto>;
+  }
+
+  /**
+   * The community's Graine key-distribution group, and the latest GroupInfo published on it.
+   *
+   * Served by social-service rather than chat-delivery, and that is not an arbitrary placement: the
+   * GroupInfo IS the capability to enter this group and read every seed on it, so the answer is
+   * authorized by COMMUNITY membership - a fact only social-service holds. See
+   * `docs/wiki/protocols/channel-encryption.md`.
+   *
+   * `groupInfo: null` means the MLS group has not been initialised yet. The caller seeing it is the
+   * first member in and is the one that creates it - a state to act on, never an error. A community
+   * with no group at all is a `ChannelApiError` carrying `WORKSPACE_HAS_NO_DISTRIBUTION_GROUP`,
+   * because those two need opposite responses.
+   */
+  async getDistributionGroup(workspaceId: string): Promise<DistributionGroupDto> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/distribution-group`
+    );
+    await this.handleError(res);
+    return res.json() as Promise<DistributionGroupDto>;
+  }
+
+  /**
+   * Publishes a GroupInfo this device just committed on the community's distribution group.
+   *
+   * Monotonic server-side: `{ stored: false }` means a newer base epoch is already published and
+   * this one was declined, which is the mechanism working, not a failure.
+   */
+  async publishDistributionGroupInfo(
+    workspaceId: string,
+    groupInfoBase64: string,
+    baseEpoch: number
+  ): Promise<{ stored: boolean }> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/distribution-group/group-info`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupInfo: groupInfoBase64, baseEpoch }),
+      }
+    );
+    await this.handleError(res);
+    return res.json() as Promise<{ stored: boolean }>;
   }
 
   async listUserWorkspaces() {

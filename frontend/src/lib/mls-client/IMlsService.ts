@@ -6,6 +6,49 @@ export type { FrameDelivery };
 
 export type { IncomingDeliveryMeta };
 
+/**
+ * Where a community's distribution-group GroupInfo is fetched from and published to.
+ *
+ * INJECTED RATHER THAN IMPORTED, for one reason: this transport is social-service, and the MLS
+ * layer must not learn to speak to the communities API. Everything it needs is the pair of calls,
+ * keyed by community id.
+ */
+export interface DistributionGroupInfoTransport {
+  /** The published base, or null when no client has initialised the MLS group yet. */
+  fetch(workspaceId: string): Promise<{ groupInfo: string; baseEpoch: number } | null>;
+  /**
+   * Publishes a committed base. Monotonic on the far side: `stored: false` is a base that was not
+   * newer, or a first publish lost to a concurrent one - legitimate outcomes, not errors.
+   */
+  publish(
+    workspaceId: string,
+    groupInfoBase64: string,
+    baseEpoch: number
+  ): Promise<{ stored: boolean }>;
+}
+
+/** A decrypted frame that arrived on a community's key-distribution group. */
+export interface DistributionFrame {
+  /** The community the group belongs to. */
+  workspaceId: string;
+  /** The MLS group it arrived on. */
+  groupId: string;
+  /** Lower-cased sender user id. */
+  sender: string;
+  /** The decrypted payload - a Graine control message, never a chat message. */
+  plaintext: Uint8Array;
+}
+
+/**
+ * What a decrypted distribution-group frame is handed to.
+ *
+ * A SEAM, deliberately: WP-22 gets these frames out of the conversation pipeline and delivers them
+ * somewhere; what a seed offer, a seed request or a history bundle MEANS is WP-30..33. A frame
+ * arriving with no handler wired is logged rather than dropped in silence, because that is the one
+ * symptom the omission would otherwise have.
+ */
+export type DistributionFrameHandler = (frame: DistributionFrame) => Promise<void>;
+
 /** Per-message outcome from a {@link MlsDecryptSession} page decrypt. */
 export type MlsBatchProcessResult =
   | { ok: true; plaintext: Uint8Array | null }
@@ -369,6 +412,36 @@ export interface IMlsService {
    * GroupInfo, not a member, or the epoch race is lost) so the caller falls back to welcome_request.
    */
   externalJoin(groupId: string): Promise<boolean>;
+  /**
+   * Declares `groupId` to be the Graine key-distribution group of community `workspaceId`, so every
+   * later decision that differs for it is taken from a registered fact rather than rediscovered.
+   */
+  registerDistributionGroup(workspaceId: string, groupId: string): void;
+  /** True when `groupId` carries channel seeds and must never reach the conversation pipeline. */
+  isDistributionGroup(groupId: string): boolean;
+  /** The distribution group registered for `workspaceId`, or null when none is. */
+  distributionGroupFor(workspaceId: string): string | null;
+  /**
+   * Wires where distribution-group GroupInfo is fetched from and published to (social-service).
+   * Injected rather than imported so the MLS layer never learns to speak to the communities API.
+   */
+  setDistributionGroupInfoTransport(transport: DistributionGroupInfoTransport | null): void;
+  /** Wires what decrypted key-distribution frames are handed to. Set once, at startup. */
+  onDistributionFrame(handler: DistributionFrameHandler | null): void;
+  /**
+   * Joins the community's key-distribution group whatever state it is in - held already, published
+   * and joinable, or not yet initialised (this device then creates it). Returns true when the group
+   * is held afterwards.
+   */
+  ensureDistributionGroup(
+    workspaceId: string,
+    ref: { groupId: string; groupInfo: string | null; baseEpoch: number | null }
+  ): Promise<boolean>;
+  /**
+   * Decrypts a frame that arrived on a key-distribution group and hands it to the Graine handler.
+   * Returns whether the frame may be acknowledged.
+   */
+  routeDistributionFrame(groupId: string, sender: string, ciphertext: Uint8Array): Promise<boolean>;
   /** Returns the unique device ID assigned to this MLS instance. */
   getDeviceId(): string;
   /**

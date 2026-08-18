@@ -52,6 +52,15 @@ export function createMlsServiceStub(
       .mockResolvedValue({ commits: [], activeEpoch: 0, belowFloor: false }),
     refreshGroupInfo: vi.fn().mockResolvedValue(undefined),
     externalJoin: vi.fn().mockResolvedValue(false),
+    // Default: NOT a key-distribution group. The inbound pipeline asks this of every frame before
+    // anything else, so the default has to be the ordinary case; a test about seeds overrides it.
+    registerDistributionGroup: vi.fn(),
+    isDistributionGroup: vi.fn().mockReturnValue(false),
+    distributionGroupFor: vi.fn().mockReturnValue(null),
+    ensureDistributionGroup: vi.fn().mockResolvedValue(false),
+    routeDistributionFrame: vi.fn().mockResolvedValue(true),
+    setDistributionGroupInfoTransport: vi.fn(),
+    onDistributionFrame: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue('device-test'),
     resolveDeviceId: vi.fn().mockResolvedValue('device-test'),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),

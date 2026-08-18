@@ -146,8 +146,11 @@ iOS half of the device ladder cannot be run at all - written up as such on
    community membership. Both audit invariants survive. The design, the three rejected alternatives
    and what is deliberately out of scope are on
    [channel-encryption](docs/wiki/protocols/channel-encryption.md) - do not re-derive them.
-   **Next is WP-22**: the client external-joins on first use and routes those messages to the Graine
-   handler. **The two open decisions are ANSWERED (2026-08-18):
+   **WP-22 too**: the client joins where a community is loaded, one decision point says where a
+   group's base lives, and seed frames are routed to a handler seam that is deliberately EMPTY -
+   filling it is WP-30..33. **Next is Phase 4 (WP-30..35)**: the outbound session manager, send,
+   receive, repair, the history bundle and `history_visibility`.
+   **The two open decisions are ANSWERED (2026-08-18):
    the cut DELETES EVERYTHING** - communities, channels, members, roles, messages - **and runs
    SILENTLY at deploy** (the user has already warned people, so no in-app notice precedes it); and
    **`channel_messages` gets a ONE-YEAR retention window**, whose storage cost is measured on
