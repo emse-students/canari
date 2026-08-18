@@ -18,6 +18,11 @@ import {
   QUEUE_DEPTH_REPORT_TOP_N,
 } from './retention.constants';
 import { activeRevocationCutoff } from './utils/revocation';
+import {
+  deleteGroupOwnedRows,
+  deleteGroupRedisKeys,
+  totalGroupOwnedRows,
+} from './utils/group-purge';
 import { MessagingService } from './services/messaging.service';
 
 /**
@@ -569,10 +574,16 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Purge soft-deleted group tombstones (deletedAt != null) older than 90 days,
-   * along with their GroupMember and DeviceGroupMembership rows.
+   * Purge soft-deleted group tombstones (deletedAt != null) older than 90 days, along with
+   * everything the group owns - {@link deleteGroupOwnedRows} is the single allowlist of that.
    * The tombstone is kept for 90 days so that lagging devices can still observe the
    * deletion (deletedAt) and converge; after that the data has no recovery value.
+   *
+   * The rows and the `dm_groups` row go in ONE transaction. Until 2026-08-18 this named only the
+   * two membership tables and left `mls_group_info`, `mls_commit_log`, `queued_message` and
+   * `group_invites` behind for ever - and the sweep meant to catch the remains looks for orphans by
+   * joining FROM the membership rows this deletes first, so it was structurally blind to exactly
+   * the groups that died normally. Both holes close here.
    */
   private async cleanupSoftDeletedGroups() {
     const TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
@@ -587,11 +598,21 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
     const ids = deadGroups.map((g) => g.id);
 
-    await this.groupMemberRepo.delete({ groupId: In(ids) });
-    await this.deviceGroupRepo.delete({ groupId: In(ids) });
-    await this.groupRepo.delete(ids);
+    const counts = await this.groupRepo.manager.transaction(async (tx) => {
+      const removed = await deleteGroupOwnedRows(tx, ids);
+      await tx.getRepository(Group).delete(ids);
+      return removed;
+    });
 
-    this.logger.log(`[CRON] cleanupSoftDeletedGroups: purged ${ids.length} tombstone(s)`);
+    // After the commit: Redis cannot join the transaction, and a crash here leaves keys that
+    // cleanupOrphanedRedisGroups collects - whereas deleting them first would strip a live
+    // group's history if the transaction then rolled back.
+    await deleteGroupRedisKeys(this.redis, ids);
+
+    this.logger.log(
+      `[CRON] cleanupSoftDeletedGroups: purged ${ids.length} tombstone(s) and ` +
+        `${totalGroupOwnedRows(counts)} owned row(s): ${JSON.stringify(counts)}`
+    );
   }
 
   /**

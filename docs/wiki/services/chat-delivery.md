@@ -34,10 +34,48 @@ The chat-delivery-service is the MLS API layer. It:
 | 1h | Full GC of stale device entries |
 | 1h | Report queue depth (observation only, deletes nothing) |
 | 6h | Clean orphaned Redis `group:members:*` keys |
-| 24h | Purge soft-deleted groups (> 90 days old) |
+| 24h | Purge soft-deleted groups (> 90 days old), with everything they own |
 | 24h | Purge stale push tokens (> 90 days) |
-| 24h | Purge orphaned member rows |
+| 24h | Purge orphaned member rows (and the rest of what those groups own) |
 | 24h | Purge stale pending invitations (> 30 days) |
+
+### What a group owns, and the one list that says so
+
+A group's rows live in **seven** tables, and `deleteGroupOwnedRows`
+([`utils/group-purge.ts`](../../../apps/chat-delivery-service/src/utils/group-purge.ts)) is the only
+definition of that set: `queued_message`, `dm_group_members`, `dm_device_group_memberships`,
+`mls_commit_log`, `mls_group_info`, `group_invites`, `dm_user_dismissed_groups`. Both ways a group
+ends call it - the 90-day tombstone reaper (`cleanupSoftDeletedGroups`) and the orphan sweep
+(`purgeOrphanGroups`, reached from `cleanupOrphanedMemberRows`). Plus three Redis keys through
+`deleteGroupRedisKeys`: `history:`, `group:members:`, `pending_welcome:`. The MLS locks
+(`mls:addlock:`, `mls:commitlock:`) are **not** in it, and deliberately: both are written with an
+`EX` TTL, so they collect themselves.
+
+It exists because each caller used to carry its own shorter list. **Measured on prod 2026-08-18**,
+before the fix: `mls_group_info` 21 orphan rows of 69 (30%), `mls_commit_log` 293 of 452 (65%),
+`queued_message` 220, `group_invites` 3 of 4 - each naming a `groupId` absent from `dm_groups`.
+`mls_commit_log` at least ages out through `pruneExpiredCommitLog`; **`mls_group_info` had no
+collector of any kind**, so those rows were permanent.
+
+What made it invisible for so long is worth keeping: `dm_group_members` and
+`dm_device_group_memberships` measured **zero** orphans. That is not health, it is the diagnosis.
+`cleanupOrphanedMemberRows` finds orphans by joining FROM those two tables - the ones the reaper
+deletes one step before it deletes the group - so the sweep was looking in the only two places where
+nothing can ever survive, and was structurally blind to every group that died normally. The fix is
+therefore the shared list, **not** a wider sweep predicate: asking "which rows have no group" on a
+recurring job would race the reaper that is mid-way through the same deletes.
+
+The reaper deletes the owned rows and the `dm_groups` row in **one transaction**, so no window
+exists in which the group is gone and its rows are not. Redis comes after the commit, because it
+cannot join the transaction: a crash between the two leaves keys that
+`cleanupOrphanedRedisGroups` collects, whereas the reverse order would strip a live group's history
+if the transaction then rolled back.
+
+**No foreign key enforces this**, and the reason is measured rather than assumed:
+`dm_user_dismissed_groups."groupId"` is `character varying` while `dm_groups.id` is `uuid`, so a
+uniform `ON DELETE CASCADE` is unavailable without first rewriting the type of a live table. The
+one-shot that collected the rows already there is
+[`016_group_owned_orphans.sql`](../../../apps/chat-delivery-service/src/migrations/016_group_owned_orphans.sql).
 
 ### Dead devices are reaped, but only after 90 days
 

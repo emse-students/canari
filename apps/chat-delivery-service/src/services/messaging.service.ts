@@ -25,6 +25,11 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { resolveUserDisplayName, resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { activeRevocationWhere } from '../utils/revocation';
 import {
+  deleteGroupOwnedRows,
+  deleteGroupRedisKeys,
+  totalGroupOwnedRows,
+} from '../utils/group-purge';
+import {
   buildPushDataFields,
   buildApnsRequest,
   buildInternalApnsRequest,
@@ -1898,14 +1903,16 @@ export class MessagingService {
 
   /**
    * Among `groupIds`, identifies those with no remaining row in `dm_groups`
-   * (neither active nor soft-delete tombstone) and purges their entire server residue:
-   * queued messages, membership rows, device membership rows, and the Redis keys
-   * `history:`, `group:members:`, and `pending_welcome:`.
+   * (neither active nor soft-delete tombstone) and purges their entire server residue through
+   * {@link deleteGroupOwnedRows} - the one allowlist of what a group owns - plus the Redis keys.
    *
    * These groups result from an incomplete deletion: the row is gone but surviving data
    * causes a client-side recovery loop (welcome_request with no target) and an undecipherable
    * ghost history. Soft-deleted groups keep their tombstone row and are therefore never purged
-   * here (the 90-day cron reclaims them).
+   * here (the 90-day cron reclaims them, through that same function).
+   *
+   * No transaction here, and that is not an oversight: the group row is ALREADY gone, so there is
+   * no window this could open. The reaper, which still has one to delete, does use one.
    *
    * @returns the set of `groupId`s still present in `dm_groups` (deliverable).
    */
@@ -1920,18 +1927,12 @@ export class MessagingService {
     const orphaned = groupIds.filter((id) => !existingIds.has(id));
     if (orphaned.length === 0) return existingIds;
 
-    await Promise.all([
-      this.queuedMessageRepo.delete({ groupId: In(orphaned) }),
-      this.groupMemberRepo.delete({ groupId: In(orphaned) }),
-      this.deviceGroupRepo.delete({ groupId: In(orphaned) }),
-      ...orphaned.flatMap((id) => [
-        this.redis.del(`history:${id}`),
-        this.redis.del(`group:members:${id}`),
-        this.redis.del(`pending_welcome:${id}`),
-      ]),
-    ]);
+    const counts = await deleteGroupOwnedRows(this.groupRepo.manager, orphaned);
+    await deleteGroupRedisKeys(this.redis, orphaned);
+
     this.logger.warn(
-      `[ORPHAN_PURGE] purged ${orphaned.length} group(s) absent from dm_groups: ${orphaned.join(', ')}`
+      `[ORPHAN_PURGE] purged ${orphaned.length} group(s) absent from dm_groups ` +
+        `(${totalGroupOwnedRows(counts)} row(s): ${JSON.stringify(counts)}): ${orphaned.join(', ')}`
     );
     return existingIds;
   }

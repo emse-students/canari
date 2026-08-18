@@ -267,6 +267,19 @@ ones that must be seen without opening one:
   and the defect above lived under them. The refutation was one probe that sent NOTHING: opening the
   DM on two peers produced the line once on each, opening a channel produced none. Same shape as the
   avatar IPv6 diagnosis - **a bad measurement is worse than none, because it gets written down.**
+- **WHEN TWO PATHS BOTH END THE SAME THING, "WHAT IT OWNS" IS ONE LIST OR IT IS NEITHER.** The
+  tombstone reaper and the orphan sweep each carried their own shorter set of tables, and both were
+  short in the same direction: 30% of `mls_group_info` and 65% of `mls_commit_log` on prod named a
+  group that no longer existed, and `mls_group_info` had no collector at all, so those rows were
+  permanent. One exported allowlist, called by every ending, and the owned rows dropped in the SAME
+  transaction as the row they belong to - outside one there is a window in which the parent is gone
+  and its rows are not.
+- **A SWEEP THAT LOOKS FOR ORPHANS WHERE THE REAPER ALREADY DELETED FINDS NONE, AND READS AS PROOF
+  THAT THERE ARE NONE.** `cleanupOrphanedMemberRows` joins FROM the two membership tables the reaper
+  deletes one step before the group, so it was blind to every group that died normally - and those
+  two tables measuring ZERO orphans was the evidence, not the reassurance. **A cleanup job's
+  predicate must be read against what runs BEFORE it**, and the fix is the shared list, never a wider
+  predicate: "rows whose parent is missing", asked on a schedule, races the reaper mid-delete.
 
 ## Outbound delivery -> [chat](frontend/modules/chat.md), [mobile](frontend/mobile.md)
 

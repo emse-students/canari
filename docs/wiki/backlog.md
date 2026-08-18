@@ -249,35 +249,6 @@ them until the ids were put side by side.
 The server side has a page already - [storage-forecast](infrastructure/storage-forecast.md) - and it
 is where any measurement belongs.
 
-### P2 - a group dies but its MLS bookkeeping does not, and no cron collects it
-
-**Measured on prod 2026-08-18**: `mls_group_info` holds 21 orphan rows out of 69 (**30%**),
-`mls_commit_log` 293 out of 452 (**65%**), and `queued_message` 220 - each naming a `groupId` absent
-from `dm_groups`.
-
-Two holes, and they close in the same place:
-
-- `cleanupSoftDeletedGroups` (`app.controller.ts`) reaps a 90-day tombstone by deleting
-  `dm_group_members`, `dm_device_group_memberships` and `dm_groups`. It names neither
-  `mls_group_info` nor `mls_commit_log` nor `queued_message`, so the group's own bookkeeping
-  survives the group.
-- `cleanupOrphanedMemberRows` is the sweep that would catch the remains - but it FINDS orphans by
-  joining from `dm_group_members` / `dm_device_group_memberships`, the very rows the reaper deleted
-  one step earlier. It is structurally blind to exactly the groups that died normally, which is why
-  this accumulates rather than being swept late. `purgeOrphanGroups` then misses the same two tables
-  again.
-
-`mls_commit_log` has `pruneExpiredCommitLog` ageing it out, so that share is transient.
-**`mls_group_info` has no collector at all** - those rows are permanent.
-
-The fix is one function: everything a group owns, deleted in one place, called by both the tombstone
-reaper and the orphan sweep. Plus a one-shot for the rows already there. Do NOT widen the orphan
-predicate instead - "rows whose group is missing" over a table the reaper is mid-way through is how
-a sweep races a delete.
-
-Noticed while making community deletion irreversible, which routes every community's distribution
-group through this same lifecycle - see [chat-delivery](services/chat-delivery.md).
-
 ### P2 - `channel_messages` gets a one-year window, and the Graine seeds get the SAME one
 
 Deferred on purpose when the community rework shipped (2026-08-18), not forgotten. Community
