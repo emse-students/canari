@@ -845,6 +845,18 @@ prompt fields are all on those pages. What must not be forgotten between them:
   WHITELIST of real hosts sidesteps the ambiguity entirely instead of trying to out-narrow it
   (WP-LINK-1).
 
+- **A FILTER THAT REFUSES IS A GATE, AND THE DIFFERENCE IS WHAT THE CALLER LEARNS.** An announcement's
+  version range answers `null` for "out of range" in exactly the same way as for "none published" and
+  "already seen" - a client outside the range must never learn that something exists and was withheld.
+  Three reasons, one answer, on purpose.
+- **A RANGE WITH NO BOUNDS MUST NOT READ THE VALUE IT WOULD HAVE COMPARED.** Requiring a parsable
+  client version before showing an UNBOUNDED announcement hid it from the entire deployed fleet,
+  none of which sends one. Ask whether the discriminator is needed BEFORE demanding it be valid; a
+  test caught this, a deploy would have shipped a feature addressed at nobody.
+- **"ONCE PER ACCOUNT" IS A SERVER ROW OR IT IS NOTHING** - local state is wiped by a reinstall, and
+  something that reappears after one is worse than never having shown it. And that row answers ONE
+  question: "has this account seen X", never "is this account current".
+
 ## The public head, and the two adapters -> [frontend/seo](frontend/seo.md), [nginx](infrastructure/nginx.md)
 
 The whole model - the injected head, the two escapers, the sitemap, the adapter split and the

@@ -9,6 +9,8 @@ import { HealthController } from './health.controller';
 import { User } from './users/entities/user.entity';
 import { AuthSession } from './auth/entities/auth-session.entity';
 import { PlatformConfig } from './platform/entities/platform-config.entity';
+import { PlatformAnnouncement } from './platform/entities/platform-announcement.entity';
+import { PlatformAnnouncementSeen } from './platform/entities/platform-announcement-seen.entity';
 import { PaymentModule } from './payment/payment.module';
 import { VersionModule } from './version/version.module';
 import { ExternalModule } from './external/external.module';
@@ -28,7 +30,13 @@ import { SkyModule } from './sky/sky.module';
         username: configService.get<string>('DB_USERNAME', 'admin'),
         password: configService.getOrThrow<string>('DB_PASSWORD'),
         database: configService.get<string>('DB_DATABASE', 'auth_db'), // Changed from users_db to auth_db globally
-        entities: [User, AuthSession, PlatformConfig],
+        entities: [
+          User,
+          AuthSession,
+          PlatformConfig,
+          PlatformAnnouncement,
+          PlatformAnnouncementSeen,
+        ],
         synchronize: process.env.NODE_ENV !== 'production',
       }),
       inject: [ConfigService],

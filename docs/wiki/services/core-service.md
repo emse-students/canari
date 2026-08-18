@@ -214,6 +214,11 @@ Both `unaccent` and `pg_trgm` are enabled on boot in `UsersService.onModuleInit`
 |---|---|---|---|
 | GET | `/api/users/admin/platform` | global admin | Get platform config (maintenance, min version) |
 | PATCH | `/api/users/admin/platform` | global admin | Update platform config |
+| GET | `/api/users/admin/platform/announcement` | global admin | The live announcement + how many accounts have seen it |
+| PUT | `/api/users/admin/platform/announcement` | global admin | Publish one, retiring whatever was live |
+| DELETE | `/api/users/admin/platform/announcement` | global admin | Retire the live one (keeps the row and its readership) |
+| GET | `/api/users/announcement?clientVersion=` | session | The announcement this account has not seen, or `null` |
+| POST | `/api/users/announcement/:id/seen` | session | Record that this account has read it |
 | GET | `/api/version` | none | Latest app version + platform gates |
 
 ### Payments (Stripe)
@@ -249,6 +254,8 @@ PostgreSQL (`auth_db`). Main tables:
 | `users` | `id` (OIDC sub), `displayName`, `promo`, `formation`, `bio`, `stripeCustomerId`, `admin`, `notesCiphertext`, `notesKey`, `notes` (legacy) |
 | `auth_sessions` | `id` (= `sid`), `userId` (FK CASCADE), `tokenId` (= current `jti`), `previousTokenId`, `rotatedAt`, `createdAt`, `lastUsedAt`, `expiresAt`, `userAgent`, `lastIp`, `deviceId` |
 | `platform_config` | `maintenanceEnabled`, `maintenanceMessage`, `minClientVersion` |
+| `platform_announcements` | `title_fr/en`, `body_fr/en`, `min_client_version`, `max_client_version`, `active`, `created_by` |
+| `platform_announcement_seen` | `announcement_id` (FK CASCADE), `user_id` — PK is the pair |
 
 `auth_sessions` rows are swept hourly, and any row past `expiresAt` is refused before it is swept —
 the sweep is housekeeping, never a security boundary. `userAgent` and `lastIp` exist so the owner
@@ -256,6 +263,49 @@ can recognise a session that is not theirs; they are shown to nobody else, never
 authorization, and die with the row. The IP is taken from the **last** `X-Forwarded-For` entry, not
 the first: nginx appends the connecting address to whatever the client sent, so the head of that
 list is attacker-controlled and only the tail is what nginx actually saw.
+
+### The admin announcement, shown once per account
+
+Published from `/admin/platform` as a ROW, never a deploy - exactly as `minClientVersion` is. An
+announcement that needs a release to go out arrives after the thing it announces.
+
+**Once per ACCOUNT, not per device**, which is what forces the "seen" state server-side: local state
+is wiped by a reinstall, and an announcement that reappears after one is worse than none. The row in
+`platform_announcement_seen` answers exactly one question - *has this account seen announcement X* -
+and must not be borrowed for a second. Two questions that differ only in lifetime sharing one row is
+how a durable-state trigger gets silenced.
+
+**Both languages are columns and both are sent.** The server is the only layer that does not know
+the reader's language, so it stores both halves and the client picks with the locale chosen inside
+Canari. A `locale` column here would be the same mistake the server-composed notification bodies
+still carry.
+
+**The version range is a FILTER, never a gate.** A client outside `[min, max]` is not told an
+announcement exists and refused - `getForUser` simply returns `null`, indistinguishably from "none
+published" and "already seen". The three reasons are deliberately the same answer.
+
+**With NO bound the version is not read at all**, and that case is load-bearing rather than a
+shortcut: every client already deployed sends no `clientVersion`, so a range-free announcement has
+to reach them or the feature ships addressed at nobody. A unit test pins it, because the first
+implementation got it wrong in exactly that direction.
+
+**One active row at a time, held by a partial unique index** (`WHERE active`) rather than by the
+service that happens to write next; publish retires and inserts in ONE transaction so the index has
+nothing to reject and no window exists with zero announcements. Publishing writes a NEW row rather
+than editing the old one - "seen" is keyed by announcement id, so an edit in place would show new
+text to nobody who had read the old.
+
+Retiring keeps the row and its readership: they are the record of who was told what, and deleting
+them would make a re-publication reappear for people who had already read it.
+
+The modal is `dismissible={false}` on the shared `Modal`, so only its button closes it - a banner
+was rejected on purpose, being a line its reader learns to skip, which would make "seen" stop
+meaning seen. It stands down entirely while a platform gate is up (below minimum version, or
+maintenance), since covering the instruction someone needs to get out of a gate helps nobody.
+
+**Never verified against production** - the user's decision of 2026-08-19: publishing a real
+announcement to test it would show a modal to every real member. Unit tests and the admin panel
+only.
 
 ### Personal notepad
 

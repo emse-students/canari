@@ -5,7 +5,8 @@
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { refreshAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
-  import { Wrench, Save, RefreshCw } from '@lucide/svelte';
+  import { Wrench, Save, RefreshCw, Megaphone, Trash2 } from '@lucide/svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
 
   type PlatformConfig = {
@@ -24,6 +25,119 @@
   let maintenanceMessage = $state('');
   let minClientVersion = $state('0.0.0');
   let paymentProvider = $state<'stripe' | 'lydia'>('stripe');
+
+  /** The live announcement as the server holds it, or null when none is published. */
+  type ActiveAnnouncement = {
+    id: string;
+    titleFr: string;
+    titleEn: string;
+    bodyFr: string;
+    bodyEn: string;
+    minClientVersion: string | null;
+    maxClientVersion: string | null;
+    seenCount: number;
+  };
+
+  let announcement = $state<ActiveAnnouncement | null>(null);
+  let announcementSaving = $state(false);
+  let announcementError = $state<string | null>(null);
+  let announcementSaved = $state('');
+
+  let titleFr = $state('');
+  let titleEn = $state('');
+  let bodyFr = $state('');
+  let bodyEn = $state('');
+  let annMinVersion = $state('');
+  let annMaxVersion = $state('');
+
+  const announcementComplete = $derived(
+    titleFr.trim() !== '' && titleEn.trim() !== '' && bodyFr.trim() !== '' && bodyEn.trim() !== ''
+  );
+
+  /** Loads the live announcement into the form, so publishing an edit starts from what is out. */
+  async function loadAnnouncement() {
+    announcementError = null;
+    try {
+      const res = await apiFetch(`${coreUrl()}/api/users/admin/platform/announcement`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as ActiveAnnouncement | null;
+      announcement = data;
+      titleFr = data?.titleFr ?? '';
+      titleEn = data?.titleEn ?? '';
+      bodyFr = data?.bodyFr ?? '';
+      bodyEn = data?.bodyEn ?? '';
+      annMinVersion = data?.minClientVersion ?? '';
+      annMaxVersion = data?.maxClientVersion ?? '';
+    } catch (e) {
+      announcementError = e instanceof Error ? e.message : m.admin_announcement_load_error();
+    }
+  }
+
+  async function publishAnnouncement() {
+    // Replacing is not an edit: the "seen" rows are keyed by announcement, so everyone sees the new
+    // one, including the accounts that had already read the old. Said out loud before it happens.
+    if (
+      announcement &&
+      !(await showConfirm(m.admin_announcement_replace_confirm(), {
+        confirmLabel: m.admin_announcement_publish_button(),
+      }))
+    ) {
+      return;
+    }
+    announcementSaving = true;
+    announcementError = null;
+    announcementSaved = '';
+    try {
+      const res = await apiFetch(`${coreUrl()}/api/users/admin/platform/announcement`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          titleFr: titleFr.trim(),
+          titleEn: titleEn.trim(),
+          bodyFr: bodyFr.trim(),
+          bodyEn: bodyEn.trim(),
+          minClientVersion: annMinVersion.trim(),
+          maxClientVersion: annMaxVersion.trim(),
+        }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      announcement = (await res.json()) as ActiveAnnouncement;
+      announcementSaved = m.admin_announcement_published_label();
+    } catch (e) {
+      announcementError = e instanceof Error ? e.message : m.admin_announcement_save_error();
+    } finally {
+      announcementSaving = false;
+    }
+  }
+
+  async function retireAnnouncement() {
+    if (
+      !(await showConfirm(m.admin_announcement_retire_confirm(), {
+        danger: true,
+        confirmLabel: m.admin_announcement_retire_button(),
+      }))
+    ) {
+      return;
+    }
+    announcementSaving = true;
+    announcementError = null;
+    announcementSaved = '';
+    try {
+      const res = await apiFetch(`${coreUrl()}/api/users/admin/platform/announcement`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      announcement = null;
+      announcementSaved = m.admin_announcement_retired_label();
+    } catch (e) {
+      announcementError = e instanceof Error ? e.message : m.admin_announcement_save_error();
+    } finally {
+      announcementSaving = false;
+    }
+  }
 
   async function loadConfig() {
     loading = true;
@@ -83,6 +197,7 @@
       return;
     }
     void loadConfig();
+    void loadAnnouncement();
   });
 </script>
 
@@ -203,8 +318,148 @@
           class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-text-muted hover:text-text-main disabled:opacity-50"
         >
           <RefreshCw size={16} />
-          Recharger
+          {m.common_reload_button()}
         </button>
+      </div>
+    </form>
+
+    <form
+      class="rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 space-y-5"
+      onsubmit={(e) => {
+        e.preventDefault();
+        void publishAnnouncement();
+      }}
+    >
+      <header class="flex items-start gap-3">
+        <span
+          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cn-yellow/15 text-cn-dark"
+        >
+          <Megaphone size={18} />
+        </span>
+        <div>
+          <h3 class="text-sm font-bold text-text-main">{m.admin_announcement_section_title()}</h3>
+          <p class="text-xs text-text-muted mt-0.5">{m.admin_announcement_section_desc()}</p>
+        </div>
+      </header>
+
+      <p class="text-xs text-text-muted">
+        {#if announcement}
+          <span class="font-bold text-text-main">{m.admin_announcement_active_label()}</span>
+          - {m.admin_announcement_seen_count({ count: announcement.seenCount })}
+        {:else}
+          {m.admin_announcement_none_label()}
+        {/if}
+      </p>
+
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div class="space-y-1.5">
+          <label for="ann-title-fr" class="text-sm font-bold text-text-main">
+            {m.admin_announcement_title_fr_label()}
+          </label>
+          <input
+            id="ann-title-fr"
+            type="text"
+            bind:value={titleFr}
+            maxlength="200"
+            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+          />
+        </div>
+        <div class="space-y-1.5">
+          <label for="ann-title-en" class="text-sm font-bold text-text-main">
+            {m.admin_announcement_title_en_label()}
+          </label>
+          <input
+            id="ann-title-en"
+            type="text"
+            bind:value={titleEn}
+            maxlength="200"
+            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+          />
+        </div>
+        <div class="space-y-1.5">
+          <label for="ann-body-fr" class="text-sm font-bold text-text-main">
+            {m.admin_announcement_body_fr_label()}
+          </label>
+          <textarea
+            id="ann-body-fr"
+            bind:value={bodyFr}
+            rows="5"
+            maxlength="4000"
+            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+          ></textarea>
+        </div>
+        <div class="space-y-1.5">
+          <label for="ann-body-en" class="text-sm font-bold text-text-main">
+            {m.admin_announcement_body_en_label()}
+          </label>
+          <textarea
+            id="ann-body-en"
+            bind:value={bodyEn}
+            rows="5"
+            maxlength="4000"
+            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+          ></textarea>
+        </div>
+      </div>
+      <p class="text-xs text-text-muted">{m.admin_announcement_both_languages_hint()}</p>
+
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div class="space-y-1.5">
+          <label for="ann-min-version" class="text-sm font-bold text-text-main">
+            {m.admin_announcement_min_version_label()}
+          </label>
+          <input
+            id="ann-min-version"
+            type="text"
+            bind:value={annMinVersion}
+            pattern="^(\d+\.\d+\.\d+)?$"
+            placeholder="0.15.0"
+            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm font-mono text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+          />
+        </div>
+        <div class="space-y-1.5">
+          <label for="ann-max-version" class="text-sm font-bold text-text-main">
+            {m.admin_announcement_max_version_label()}
+          </label>
+          <input
+            id="ann-max-version"
+            type="text"
+            bind:value={annMaxVersion}
+            pattern="^(\d+\.\d+\.\d+)?$"
+            placeholder="0.15.9"
+            class="w-full rounded-xl border border-cn-border bg-transparent px-3 py-2 text-sm font-mono text-text-main focus:outline-none focus:ring-2 focus:ring-cn-yellow/40"
+          />
+        </div>
+      </div>
+      <p class="text-xs text-text-muted">{m.admin_announcement_version_hint()}</p>
+
+      {#if announcementError}
+        <p class="text-sm text-red-500" role="alert">{announcementError}</p>
+      {/if}
+      {#if announcementSaved}
+        <p class="text-sm text-green-ok" role="status">{announcementSaved}</p>
+      {/if}
+
+      <div class="flex flex-wrap gap-2">
+        <button
+          type="submit"
+          disabled={announcementSaving || !announcementComplete}
+          class="inline-flex items-center gap-2 rounded-xl bg-cn-yellow px-4 py-2 text-sm font-bold text-cn-ink hover:bg-cn-yellow-hover disabled:opacity-50"
+        >
+          <Save size={16} />
+          {announcementSaving ? m.common_saving_label() : m.admin_announcement_publish_button()}
+        </button>
+        {#if announcement}
+          <button
+            type="button"
+            disabled={announcementSaving}
+            onclick={() => void retireAnnouncement()}
+            class="inline-flex items-center gap-2 rounded-xl border border-cn-border px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+          >
+            <Trash2 size={16} />
+            {m.admin_announcement_retire_button()}
+          </button>
+        {/if}
       </div>
     </form>
   {/if}

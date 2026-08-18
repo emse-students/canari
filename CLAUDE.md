@@ -129,8 +129,8 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**Build first, then measure, then the campaign.** 1-6 are code, 7-11 measurements and questions that
-need a deploy to have happened, 12 a panel, 13 the campaign. **The phone is back (2026-08-17) -
+**Build first, then measure, then the campaign.** 1-5 are code, 6-10 measurements and questions that
+need a deploy to have happened, 11 a panel, 12 the campaign. **The phone is back (2026-08-17) -
 nothing is on hold; keep `adb devices` answering. There is NO iPhone (2026-08-18)**, so the iOS half
 of the device ladder cannot be run at all
 ([device-verification](docs/wiki/device-verification.md)).
@@ -144,32 +144,33 @@ of the device ladder cannot be run at all
 3. **`channel_messages` GETS A ONE-YEAR WINDOW, AND THE GRAINE SEEDS THE SAME ONE** - one item, not
    two, and the storage cost is measured on
    [storage-forecast](docs/wiki/infrastructure/storage-forecast.md) BEFORE the sweep is written.
+   **ARMED ON DEPLOY - the user's decision of 2026-08-19**, taken against the recommendation to
+   leave it disarmed until the figure was read. Measure and report the figure anyway.
 4. **A BACKUP THAT FAILS TELLS THE USER NOTHING** - seven refusals in `importBackup` reach only
    `console.log`. Whoever picks it up decides the surface; the sentences become Paraglide messages in
    the SAME change.
-5. **TWO COMMUNITIES MAY CARRY THE SAME NAME** - the user decided in the 2026-08-17 audit that this
-   is not a defect, so the scope is making a list DISTINGUISHABLE (the slug beside a duplicated
-   name), not making names unique. **Confirm that reading before writing anything.**
-6. **MiGallery's FUZZY SEARCH** - the last of the four projects on plain substring, against the
+5. **MiGallery's FUZZY SEARCH** - the last of the four projects on plain substring, against the
    user's standing requirement. Port Canari's pg_trgm + unaccent or Sky's `personMatchScore`.
-7. **SEO FOR Sky, MiGallery AND Portail-etu** - one method ([seo](docs/wiki/frontend/seo.md)), three
+6. **SEO FOR Sky, MiGallery AND Portail-etu** - one method ([seo](docs/wiki/frontend/seo.md)), three
    separate repos and three deploys.
-8. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - and it starts with an INVENTORY, not a
+7. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - and it starts with an INVENTORY, not a
    refactor. A shared package is probably the wrong shape; one written contract, four aligned
    implementations. Do NOT enumerate the inventory from memory.
-9. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
+8. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
    is whether the two stalls were CORRELATED, which a one-shot probe cannot answer.
-10. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how
+9. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how
     often it fires and against what population, then decide whether the two-minute backoff has a case.
-11. **THE TWO STORAGE-BOUND QUESTIONS, ANSWERED BY EXPERIMENT** - what a phone out of space actually
-    does, and what the web client does when the browser evicts its store. Both are TIME bounds today
-    with no SIZE bound; the question is the failure shape, not whether it can be prevented.
-12. **THE MLS HALF OF `/admin/storage`** - the media half shipped 2026-08-18; Postgres and Redis are
+10. **THE TWO STORAGE-BOUND QUESTIONS, ANSWERED BY FAULT INJECTION** - what a phone out of space
+    actually does, and what the web client does when the browser evicts its store. Both are TIME
+    bounds today with no SIZE bound; the question is the failure SHAPE. **Injected, never on the
+    campaign phone - the user's decision, 2026-08-19**: the appliance the campaign depends on is
+    not the place to find out.
+11. **THE MLS HALF OF `/admin/storage`** - the media half shipped 2026-08-18; Postgres and Redis are
     still bare totals with no breakdown and no slope, and the WP-GHOST-1 shapes (a device holding
     memberships with no `key_package`, a queue past a few hundred rows) are measured nowhere. **A
     panel, no alert** - the user's call, 2026-08-17; the slope is what makes that survivable.
     [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)
-13. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
+12. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
     **Everything must end green, so every phase runs.** What that costs, the ladder's order, and the
     two decisions it turns on - `call-service` logging BEFORE the CALL phase, and the community
     rework never having run against prod - are all on

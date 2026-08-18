@@ -169,36 +169,6 @@ is whether these stalls are CORRELATED, which a one-shot probe cannot answer by 
 
 ---
 
-## Interface
-
-### P2 - an admin announcement, shown once per account - ASKED FOR 2026-08-18, SCHEDULED
-
-The user asked for a place in `/admin/platform` to publish a message that people see the next time
-they open the app. Every shape below is the user's decision of 2026-08-18, taken before any code was
-written; it is **item 1 of the queue in `CLAUDE.md`**.
-
-- **Once per ACCOUNT, not once per device.** Whichever device opens the app first shows it, and it
-  never appears again anywhere. That makes the "seen" state server-side by construction - which is
-  the point: local state is wiped by a reinstall, and an announcement that reappears after one is
-  worse than none.
-- **A centred modal**, title and body, closed by one button. Chosen over a dismissible banner
-  deliberately: a banner is a line its reader learns to skip, so "seen" would stop meaning seen.
-- **French and English both entered**, shown per the language chosen in Canari. No inline literal,
-  no fallback to one language - it would be the only user-visible string in the app not to follow
-  the user's language.
-- **One active announcement at a time**, with an OPTIONAL client version range so "what changed in
-  0.15" reaches only clients that have it.
-
-Three things the implementation must not get wrong, each from a rule this repo already paid for:
-
-- **The "seen" row answers exactly one question - "has this account seen announcement X".** Not "is
-  the account current", not "has it been notified". Two questions differing only in lifetime are how
-  a durable-state trigger gets silenced.
-- **It lives in `platform_config`'s neighbourhood, not in the code.** Publishing must not need a
-  deploy, exactly as `minClientVersion` does not.
-- **The version range is a filter, never a gate on delivery.** A client outside the range must not
-  be told an announcement exists and refused it; it must simply have none.
-
 ## Protocol and delivery
 
 ### P2 - a server-composed notification body is French for everyone, and cannot be otherwise
@@ -236,17 +206,13 @@ the same change, never before it.
 ## Communities and permissions
 
 Six entries came out of ONE audit on 2026-08-17, prompted by a user question rather than by a
-failure. **Five of them shipped on 2026-08-18** and are not repeated here: the mechanism is on
+failure. **All six are closed as of 2026-08-19** and are not repeated here - the last one, two communities
+sharing a name, the user closed by decision rather than by code (2026-08-19: it is not a defect).
+The five that shipped on 2026-08-18: the mechanism is on
 [social-service](services/social-service.md#a-community-always-has-an-admin-or-it-has-no-members-2026-08-18),
 the audit and its prod figures on [community-rework](services/community-rework.md), the rule in
 [durable-rules](durable-rules.md), and the story in `CHANGELOG.md`. One remains, and it remains
 because the user decided it is not a defect.
-
-### P3 - two communities may carry the same name
-
-Only `slug` is unique. Prod holds two "MiTV" and two "Test", and a member reading a list of names
-cannot tell which one they are in. This is what made a real user's lost memberships unreadable to
-them until the ids were put side by side.
 
 ---
 
