@@ -300,6 +300,41 @@ fn prune_graine_sessions(sessions: &mut serde_json::Map<String, serde_json::Valu
     doomed.len()
 }
 
+/// Drops one channel's whole entry from {app_data_dir}/graine_seeds.json.
+///
+/// Called when a community leaves this device - the member left it, was removed from it, or it was
+/// deleted. The durable store is purged at the same moment; without this the mirror would keep
+/// plaintext seeds for salons the device can no longer even list, and the bound that trims the file
+/// only ever runs on a channel something is still being WRITTEN to.
+///
+/// Absent file or absent channel is success, not an error: there is nothing to forget, which is the
+/// state the caller asked for.
+#[tauri::command]
+pub(crate) fn forget_graine_channel(
+    app: tauri::AppHandle,
+    channel_id: String,
+) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = data_dir.join("graine_seeds.json");
+
+    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(c) => serde_json::from_str(&c).unwrap_or_else(|_| serde_json::json!({})),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
+    };
+
+    let map = root
+        .as_object_mut()
+        .ok_or("graine_seeds.json is not an object")?;
+    if map.remove(&channel_id).is_none() {
+        return Ok(());
+    }
+
+    std::fs::write(&path, root.to_string()).map_err(|e| e.to_string())?;
+    log::debug!("[GRAINE_MIRROR] forgot every seed of one channel");
+    Ok(())
+}
+
 /// Reads {app_data_dir}/outbox_sent.ndjson (one messageId per line, written by the Android service
 /// after a successful background send), clears the file and returns the ids. Called at login to
 /// drop from the outbox the messages already delivered in the background.

@@ -179,6 +179,27 @@ export function workspaceForChannel(channelId: string): string | null {
   return workspaceByChannel.get(rawChannelId(channelId)) ?? null;
 }
 
+/**
+ * Forgets, in memory, everything this session knew about one community.
+ *
+ * The three maps here are keyed differently - by session, by channel, by workspace - so the caller
+ * has to hand over the sessions and channels it just purged; deriving them here would mean reading
+ * a store the purge has already emptied.
+ *
+ * @param workspaceId Community leaving this device.
+ * @param sessionIds Sessions whose decrypted seeds must leave the cache.
+ * @param channelIds Channels of that community, raw uuid or `channel_`-prefixed.
+ */
+export function forgetWorkspaceGraineState(
+  workspaceId: string,
+  sessionIds: readonly string[],
+  channelIds: readonly string[]
+): void {
+  for (const sessionId of sessionIds) seedCache.delete(sessionId);
+  for (const channelId of channelIds) workspaceByChannel.delete(rawChannelId(channelId));
+  historyVisibilityByWorkspace.delete(workspaceId);
+}
+
 /** Strip the `channel_` conversation prefix: the map is keyed by the raw uuid, everywhere. */
 export function rawChannelId(channelId: string): string {
   return String(channelId).replace(/^channel_/, '');

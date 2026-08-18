@@ -37,3 +37,23 @@ export async function mirrorGraineSeed(session: StoredGraineSession): Promise<vo
     console.warn(`[GRAINE_MIRROR] store failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
+
+/**
+ * Drops every mirrored seed of one channel. Tauri only; a no-op on web.
+ *
+ * Called when a community leaves the device, alongside the durable purge. Best-effort like the
+ * write: a mirror that refuses to shrink costs stale plaintext in an app-private file, which is
+ * worth a warning and not worth failing a purge over - and the durable rows, the ones that decide
+ * what the app can READ, are gone regardless.
+ */
+export async function forgetGraineChannelMirror(channelId: string): Promise<void> {
+  if (!isTauriRuntime()) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('forget_graine_channel', { channelId });
+  } catch (e) {
+    console.warn(
+      `[GRAINE_MIRROR] forget failed for channel ${channelId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+}

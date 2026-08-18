@@ -258,6 +258,23 @@ export function forgetAskedSession(sessionId: string): void {
   asked.delete(sessionId);
 }
 
+/**
+ * Forgets what was asked on behalf of a community that is leaving this device.
+ *
+ * `historyAsked` in particular MUST go: a member who leaves and rejoins holds no seed again, and a
+ * stale "already asked this session" entry would silence the one request that repopulates them.
+ *
+ * @param workspaceId Community leaving this device.
+ * @param sessionIds Sessions purged with it, so a later miss on the same id may ask again.
+ */
+export function forgetWorkspaceRepairState(
+  workspaceId: string,
+  sessionIds: readonly string[]
+): void {
+  historyAsked.delete(workspaceId);
+  for (const sessionId of sessionIds) asked.delete(sessionId);
+}
+
 /** Test seam: drops every in-memory trace of what has been asked. */
 export function resetGraineRepairState(): void {
   asked.clear();

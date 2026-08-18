@@ -33,6 +33,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
 import { ensureCommunityDistributionGroup } from '$lib/utils/graine/distributionGroup';
+import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 
 /** One channel entry shown in the sidebar under its workspace. */
 export interface ChannelSidebarItem {
@@ -819,12 +820,18 @@ export function useChannelWorkspaces() {
   }
 
   /**
-   * Drops a workspace from local state: its channels leave the conversations map and local
-   * storage, the workspace leaves the sidebar, and the selection is cleared if it pointed
-   * inside. Shared by the three ways a community can disappear - leaving it, deleting it, and
-   * receiving the `workspace.deleted` broadcast for someone else's deletion.
+   * Drops a workspace from local state: its Graine seeds are erased, its channels leave the
+   * conversations map and local storage, the workspace leaves the sidebar, and the selection is
+   * cleared if it pointed inside. Shared by the four ways a community can disappear - leaving it,
+   * deleting it, being removed from it, and receiving the `workspace.deleted` broadcast for
+   * someone else's deletion.
+   *
+   * The seeds go FIRST, and they are the reason this is one function rather than four: they are
+   * the only thing here that is key material, and a device keeping them for a community it can no
+   * longer list is residue nothing else would ever come back for.
    */
   async function purgeWorkspaceLocally(workspaceDbId: string, ctx: WorkspacePurgeContext) {
+    await forgetCommunityGraine(workspaceDbId);
     const workspace = channelWorkspaces.find((ws) => ws.workspaceDbId === workspaceDbId);
     if (workspace) {
       for (const ch of workspace.channels) {

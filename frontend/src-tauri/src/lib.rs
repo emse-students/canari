@@ -39,10 +39,10 @@ use crate::commands::mls::{
     skip_send_generations, supprimer_groupe, trailer_welcome,
 };
 use crate::commands::push::{
-    check_push_secret_health, get_fcm_token, get_voip_token, load_push_context,
-    read_and_clear_fcm_cache, read_and_clear_outbox_sent, read_and_clear_pending_call_accept,
-    read_outbox_mirror, set_push_context_locale, store_graine_seed, store_outbox_mirror,
-    store_push_context, store_push_secret,
+    check_push_secret_health, forget_graine_channel, get_fcm_token, get_voip_token,
+    load_push_context, read_and_clear_fcm_cache, read_and_clear_outbox_sent,
+    read_and_clear_pending_call_accept, read_outbox_mirror, set_push_context_locale,
+    store_graine_seed, store_outbox_mirror, store_push_context, store_push_secret,
 };
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, get_installer_package, get_local_storage_usage,
@@ -889,6 +889,7 @@ pub fn run() {
             read_and_clear_pending_call_accept,
             get_voip_token,
             store_graine_seed,
+            forget_graine_channel,
             actualiser_cle_keystore_avec_devicekey,
             flush_webview_cookies
         ])

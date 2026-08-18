@@ -130,30 +130,22 @@ its commit are in. The detail lives where the link says - **do not restate it he
 iOS half of the device ladder cannot be run at all - written up as such on
 [device-verification](docs/wiki/device-verification.md) rather than left looking pending.
 
-1. **THE COMMUNITY REWORK** - the biggest item in the queue and the reason the rest waits.
-   `channels.masterSecret` is a plain Postgres column, so **the server reads every salon message
-   and opens every attachment**. The plan of record is
-   [community-rework](docs/wiki/services/community-rework.md) (six axes) and
-   [channel-encryption](docs/wiki/protocols/channel-encryption.md) (the Graine protocol, its
-   measurements and its rejected alternatives). **The work packages live on those two pages, in
-   order - do not restate them here.** Migration is a CLEAN CUT, decided 2026-08-17.
-   **Governance and invites (axes 2 and 3) SHIPPED 2026-08-18**, prod re-measured clean, and so did
-   **Phase 2, the Graine foundations (WP-10..14)** - constants, proto, the derivation with vectors
-   shared by TS and Rust, the durable session store on both backends with backup and PIN-change
-   re-keying, and the bounded native mirror. All of it is dark: nothing calls it yet. **So are
-   WP-20 and WP-21** - `dm_groups.distributionWorkspaceId` with its enumeration audit, then the
-   group created WITH the community, gated by social-service because it is the only service holding
-   community membership. Both audit invariants survive. The design, the three rejected alternatives
-   and what is deliberately out of scope are on
-   [channel-encryption](docs/wiki/protocols/channel-encryption.md) - do not re-derive them.
-   **WP-22 too**: the client joins where a community is loaded, one decision point says where a
-   group's base lives, and seed frames are routed to a handler seam that is deliberately EMPTY -
-   filling it is WP-30..33. **Next is Phase 4 (WP-30..35)**: the outbound session manager, send,
-   receive, repair, the history bundle and `history_visibility`.
-   **The two open decisions are ANSWERED (2026-08-18):
-   the cut DELETES EVERYTHING** - communities, channels, members, roles, messages - **and runs
-   SILENTLY at deploy** (the user has already warned people, so no in-app notice precedes it); and
-   **`channel_messages` gets a ONE-YEAR retention window**, whose storage cost is measured on
+1. **THE COMMUNITY REWORK IS DONE (2026-08-18)**, every phase, and the cut ships with it. The
+   server holds no key to any salon: `channels.masterSecret`, both `keyVersion` columns,
+   `channel_members.keys` and the key-distribution ledger are dropped (migration `041`), and
+   migrations `042` (social) + `015` (chat-delivery) delete every community, channel, member, role,
+   invitation, message and distribution group, SILENTLY, at the deploy. **The account of what was
+   built, and why each alternative was rejected, is
+   [channel-encryption](docs/wiki/protocols/channel-encryption.md)** - phases 1..7, all marked
+   shipped - with the service half on
+   [social-service](docs/wiki/services/social-service.md#channel-encryption-model). **Do not
+   re-derive any of it here.** What is OWED before the campaign believes it: the whole thing is
+   verified by compiling and by unit tests only - nothing has run against prod, no client has joined
+   a distribution group on a real deploy, and no notification has been decrypted from a Graine seed
+   on hardware. That is WP-62's rows on
+   [cross-client-testing](docs/wiki/cross-client-testing.md), and item 9 below is where they run.
+   **Still open and deliberately deferred: `channel_messages` gets a ONE-YEAR retention window**,
+   whose storage cost is measured on
    [storage-forecast](docs/wiki/infrastructure/storage-forecast.md) BEFORE the sweep is written.
 2. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
    secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy

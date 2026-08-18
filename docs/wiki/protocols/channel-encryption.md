@@ -756,7 +756,30 @@ at the same deploy, so no row loses data it could still have been read with.
 
 ### Phase 7 - the cut and the record
 
-- **WP-60** Announce, then delete every community and all its content.
+- **WP-60 SHIPPED.** Two migrations, one deploy, no in-app notice: social-service's `042` deletes
+  every community, channel, member, role, invitation and message; chat-delivery's `015` deletes the
+  distribution groups those communities owned, with their commit log, their GroupInfo, their queued
+  messages and both membership tables.
+  **Why a delete and not a data migration:** every message ever written was sealed with an epoch key
+  derived from `channels.masterSecret`, which `041` has just dropped, and no device holds a
+  replacement - a Graine seed is minted by a SENDER, and no sender ever minted one for a pre-Graine
+  message. The rows would read as history right up until somebody scrolled to them.
+  **The delivery half is an ALLOWLIST**: every statement is scoped through
+  `dm_groups."distributionWorkspaceId" IS NOT NULL`, because "delete the groups that are not
+  conversations" is one wrong predicate away from deleting every DM on the platform. It hard-deletes
+  where `deleteDistributionGroup` tombstones, and says why in the file: a tombstone is right when
+  ONE community goes and the system keeps running, wrong here, where the row would spend ninety days
+  naming a workspace that no longer exists and the reaper that eventually collects it touches
+  neither `mls_commit_log` nor `mls_group_info`.
+  **The device half is `forgetCommunityGraine`**, called from `purgeWorkspaceLocally` - the one seam
+  all four ways a community leaves local state already went through (left, removed, deleted, or the
+  `workspace.deleted` broadcast). It erases the durable seeds, the decrypted in-memory cache, the
+  channel-to-community map, the history rule, what was asked for, and the native `graine_seeds.json`
+  mirror through a new `forget_graine_channel` command. All three stores, because none stands in for
+  the others: the durable rows are what the app READS, the mirror is what a background push reads,
+  and the maps are what an open tab answers from. `deleteGraineSessionsForWorkspace` had existed
+  since WP-13 with **no caller at all** - a purge implemented and never wired, which is why a member
+  who left a community kept every seed they had held.
 - **WP-61** Rewrite what described the old model: the channel section of
   [social-service](../services/social-service.md), the transport table in
   [cross-client-campaign](../cross-client-campaign.md), the schema row in
