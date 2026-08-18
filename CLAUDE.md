@@ -125,8 +125,10 @@ The user's decision of 2026-08-16 is that **every one of these lands before the 
 Work them top-down; each is one item, and an item is not done until its code, its tests, its doc and
 its commit are in. The detail lives where the link says - **do not restate it here.**
 
-**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Item 6 needs it; keep
-`adb devices` answering before starting it.
+**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Item 9 needs it; keep
+`adb devices` answering before starting it. **There is NO iPhone (the user, 2026-08-18)**, so the
+iOS half of the device ladder cannot be run at all - written up as such on
+[device-verification](docs/wiki/device-verification.md) rather than left looking pending.
 
 1. **THE COMMUNITY REWORK** - the biggest item in the queue and the reason the rest waits.
    `channels.masterSecret` is a plain Postgres column, so **the server reads every salon message
@@ -143,9 +145,11 @@ its commit are in. The detail lives where the link says - **do not restate it he
    must preserve or the audit is void** (no `dm_group_members` rows on a distribution group; the
    exclusion lives in `getUserGroups` alone). **Next is WP-21**, which spans two services:
    social-service creates the group with the community through `deliveryUrl`, and the delivery
-   recipient set comes from `channel_members`. Two open decisions belong to the user and block
-   nothing: what the cut keeps (whole communities, or the shells minus messages), and whether
-   `channel_messages` gets a retention window at all.
+   recipient set comes from `channel_members`. **The two open decisions are ANSWERED (2026-08-18):
+   the cut DELETES EVERYTHING** - communities, channels, members, roles, messages - **and runs
+   SILENTLY at deploy** (the user has already warned people, so no in-app notice precedes it); and
+   **`channel_messages` gets a ONE-YEAR retention window**, whose storage cost is measured on
+   [storage-forecast](docs/wiki/infrastructure/storage-forecast.md) BEFORE the sweep is written.
 2. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
    secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
    has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says
@@ -155,15 +159,30 @@ its commit are in. The detail lives where the link says - **do not restate it he
    included - the user's instruction is to delete what is stale, not to keep it for a window.
 4. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
    delete that entry if it does.
-5. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+5. **`deleteWorkspace` really deletes** (decided 2026-08-18), behind an explicit confirmation -
+   typing the community name. The durable-delete code has existed since WP-01; what is new is
+   turning a reversible control irreversible, so the confirmation is part of the work, not a
+   follow-up. See [backlog](docs/wiki/backlog.md).
+6. **THE ADMIN ANNOUNCEMENT** (new, the user, 2026-08-18): a place in `/admin/platform` to publish a
+   message shown ONCE PER ACCOUNT at the next app opening, on whichever device gets there first -
+   so the "seen" state is server-side and survives a reinstall. A centred modal closed by a button,
+   French and English both entered, one active announcement at a time, with an OPTIONAL client
+   version range so "what changed in 0.15" reaches only those who have it. Scoped in
+   [backlog](docs/wiki/backlog.md).
+7. **MiGallery's fuzzy search** - the last of the four projects still on plain substring matching,
+   against the user's standing requirement. In scope, decided 2026-08-18; port Canari's pg_trgm +
+   unaccent approach or Sky's `personMatchScore`, whichever fits what that repo has.
+8. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
     browsers.
-6. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+9. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
     must end green, so every phase runs** - and the board says what that really costs: MSG is the
     ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
     **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
-    written** and no server-side observer (`call-service` logs nothing), so it is a build, not a
-    run. Sequence and per-check state live on
-    [cross-client-testing](docs/wiki/cross-client-testing.md) - the only copy of the ladder's order.
+    written**, and **`call-service` gets its server-side logging FIRST** (decided 2026-08-18:
+    invite, answer, ICE, hangup, duration) - a call failure two clients each see half of cannot be
+    attributed without it, which is exactly what caught the silent channel-push 404s. Sequence and
+    per-check state live on [cross-client-testing](docs/wiki/cross-client-testing.md) - the only
+    copy of the ladder's order.
 
 ### CANARI - what is open
 
@@ -178,13 +197,13 @@ of `image/gif` with zero `securitypolicyviolation` events. What is NOT re-checke
 are where those live. It is the same `stageMediaFile` an image comment uses, so it is a confirmation,
 not a suspicion - fold it into the campaign rather than opening a WP.
 
-**OWED, AND ONLY A HUMAN CAN DO IT: six community memberships to grant back by hand.** Leaving a
-public channel used to delete the community membership row (fixed 2026-08-17). Prod holds one
-affected user, out of six communities they had written in, still a member of nine others. The
-identifying query, and why it yields CANDIDATES rather than proof, are on
+**THE SIX LOST COMMUNITY MEMBERSHIPS ARE DROPPED, BY THE USER, 2026-08-18.** Leaving a public
+channel used to delete the community membership row (fixed 2026-08-17), costing one user six
+memberships. Nothing can restore them automatically - a deliberate "leave the community" leaves the
+identical trace - and the cut deletes every community anyway. **Do not re-open it.** The mechanism
+and the identifying query stay on
 [social-service](docs/wiki/services/social-service.md#a-channel-scoped-action-never-touches-community-membership-2026-08-17)
-- a deliberate "leave the community" deletes the same row and leaves the same trace, so nothing can
-restore them automatically. **The user id stays out of this PUBLIC repo; re-run the query.**
+as the record of the defect, not as work.
 
 **WP-AVATAR-1 (P2) - THREE OF THE FOUR SHIPPED AND DEPLOYED 2026-08-16; ONLY LE CERCLE IS LEFT.**
 The contract is written and implemented three times: **only an ANSWER may be cached**, an optional

@@ -1124,6 +1124,14 @@ forgives is one nobody reads.
 in 24 hours**, its last entry the startup line from two days earlier - so the CALL phase, when it is
 written, will have no server-side observer at all until that service logs something.
 
+**DECIDED 2026-08-18 (the user): `call-service` gets that logging BEFORE the twenty CALL scripts are
+written** - invite, answer, ICE candidate exchange, hangup, duration. The argument is the paragraph
+above it: a call has two halves and each client sees only its own, so a failed call is exactly the
+shape of result nothing on either side can attribute. The same reasoning found the silent channel
+push 404s, which had been failing on every channel message and which no client-side observation
+could have surfaced. **Twenty scripts standing on no observer would produce twenty results none of
+which could be believed**, which is not a cheaper campaign, it is a longer one.
+
 Two rate rules follow. **A claim about frequency needs a denominator** - "it fires on every launch"
 is a measurement (N cold starts, N observations), never an impression from one occurrence. And **a
 measurement taken on a locked client measures nothing**: entering the PIN is part of starting a

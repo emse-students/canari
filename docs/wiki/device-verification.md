@@ -27,8 +27,23 @@ was not one**: the user reported on 2026-08-01 that a tapped notification still 
 conversation. That is the lesson this file exists for - a check whose verdict is "it looked right"
 is not a check, so H now names the log lines that decide it.
 
-**iOS is entirely owed.** Not one check has ever run on hardware. That is what this file is now
-for. The iOS half of WP-SEC-1 and WP-IOS-1 has only ever been compiled, and a green CI run is not
+**iOS is NOT OWED - IT IS UNRUNNABLE. There is no iPhone (the user, 2026-08-18.)** Every iOS cell
+below is therefore BLOCKED, not pending, and the distinction is the point: "owed" invites someone to
+plan around it being done shortly, and nothing here will be done until hardware exists. **Do not
+schedule iOS checks, and do not read a blank iOS cell as an oversight.** What follows about how to
+believe an iOS build stands unchanged for whenever that day comes.
+
+Two consequences to carry deliberately rather than rediscover:
+
+- **The iOS half of the app ships on compilation alone**, and compilation proves nothing about
+  running. Every iOS-specific claim in this wiki is a claim about source, not behaviour.
+- **v0.14.0's App Store publication was never verified, and `minClientVersion` is 0.14.0** - so any
+  iOS user the store has not reached is locked out, with nothing here able to detect it. The user
+  decided on 2026-08-18 to leave it as is. It is recorded because the state is real, not because
+  something is owed.
+
+Not one check has ever run on hardware. The iOS half of WP-SEC-1 and WP-IOS-1 has only ever been
+compiled, and a green CI run is not
 proof a given file compiled - the pbxproj is hand-maintained, so grep the log for
 `SwiftCompile ...<file>.swift` / `CompileC ...<file>.o` before believing any of it. That caveat is
 iOS-only: Tauri runs Gradle quietly, so there is no Kotlin task line to look for, and Gradle

@@ -149,6 +149,10 @@ The user's standing requirement is that every search box across the ecosystem to
 inversion and ranks by edit distance. Done in Sky (`personMatchScore`) and in Canari
 (`applyFuzzyNameSearch`, pg_trgm + unaccent); never started in MiGallery.
 
+**SCHEDULED 2026-08-18 (the user): in scope, item 7 of the queue in `CLAUDE.md`.** Port whichever of
+the two fits what that repo actually has - Canari's if it reaches Postgres, Sky's client-side
+scoring if it does not.
+
 ---
 
 ## Measurements owed
@@ -171,6 +175,34 @@ is whether these stalls are CORRELATED, which a one-shot probe cannot answer by 
 ---
 
 ## Interface
+
+### P2 - an admin announcement, shown once per account - ASKED FOR 2026-08-18, SCHEDULED
+
+The user asked for a place in `/admin/platform` to publish a message that people see the next time
+they open the app. Every shape below is the user's decision of 2026-08-18, taken before any code was
+written; it is **item 6 of the queue in `CLAUDE.md`**.
+
+- **Once per ACCOUNT, not once per device.** Whichever device opens the app first shows it, and it
+  never appears again anywhere. That makes the "seen" state server-side by construction - which is
+  the point: local state is wiped by a reinstall, and an announcement that reappears after one is
+  worse than none.
+- **A centred modal**, title and body, closed by one button. Chosen over a dismissible banner
+  deliberately: a banner is a line its reader learns to skip, so "seen" would stop meaning seen.
+- **French and English both entered**, shown per the language chosen in Canari. No inline literal,
+  no fallback to one language - it would be the only user-visible string in the app not to follow
+  the user's language.
+- **One active announcement at a time**, with an OPTIONAL client version range so "what changed in
+  0.15" reaches only clients that have it.
+
+Three things the implementation must not get wrong, each from a rule this repo already paid for:
+
+- **The "seen" row answers exactly one question - "has this account seen announcement X".** Not "is
+  the account current", not "has it been notified". Two questions differing only in lifetime are how
+  a durable-state trigger gets silenced.
+- **It lives in `platform_config`'s neighbourhood, not in the code.** Publishing must not need a
+  deploy, exactly as `minClientVersion` does not.
+- **The version range is a filter, never a gate on delivery.** A client outside the range must not
+  be told an announcement exists and refused it; it must simply have none.
 
 ### P2 - a deleted message still offers the emoji picker, and using it throws
 
@@ -244,9 +276,13 @@ the messages and the media stay. That was defensible while a mistake had to be r
 UPDATEs" - it is less so now that the same page has a HARD delete on the neighbouring path (the last
 member leaving), and it becomes a lie after the crypto rework: an archived community's messages will
 be ciphertext whose seeds no client keeps, so "recoverable" would mean recovering rows nobody can
-read. Deliberately not changed in the 2026-08-18 pass - making an irreversible action out of a
-reversible one needs its own confirmation flow, not a quiet swap. Revisit at the clean cut, where
-every old community is deleted anyway.
+read.
+
+**DECIDED 2026-08-18 (the user): it deletes for real, behind an explicit confirmation - typing the
+community name.** The durable-delete code has existed since WP-01 (`hardDeleteWorkspace`, seven
+tables in dependency order); what is new is turning a reversible control irreversible, so the
+confirmation IS the work, not a follow-up to it. **Now item 5 of the queue in `CLAUDE.md`** - this
+entry stays only until it ships.
 
 ### P3 - two communities may carry the same name
 

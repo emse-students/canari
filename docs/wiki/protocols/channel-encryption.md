@@ -257,6 +257,24 @@ leaving the old history in place would contradict the requirement outright.
 `channel_messages` has **no retention at all** - no cron in social-service touches it - so nothing
 would age this history out on its own. The cut is the only thing that removes it.
 
+**The three remaining questions were answered by the user on 2026-08-18. None is to be re-opened.**
+
+- **The cut deletes EVERYTHING**: communities, channels, members, roles, invitations and messages.
+  Not the shells-minus-messages variant. Everyone recreates their community and re-invites.
+- **It runs SILENTLY, at deploy**, with no in-app notice before it - the user has already warned
+  people out of band. So the migration is a plain step of the release that turns Graine on, and
+  there is nothing to build for it beyond the deletion itself.
+- **`channel_messages` gains a ONE-YEAR retention window**, which is new: today it has none. One
+  year covers a full associative cycle, and it bounds what a history bundle can usefully cover -
+  seeds older than the messages they open are dead weight. **Measure the storage cost on
+  [storage-forecast](../infrastructure/storage-forecast.md) BEFORE writing the sweep**, and build
+  the sweep the way the ninety-day one was rebuilt: trimmed by DATE on write, in the same round
+  trip, never a timer pushed back by activity.
+
+**The announcement modal is NOT part of this.** The user asked for one (an admin-published message
+shown once per account at the next opening) in the same breath, but explicitly not as a warning
+before the cut. It is its own item - see [backlog](../backlog.md).
+
 ## 6. The work packages
 
 Every package is one commit with its tests, its logs and its wiki line. Ordered so that each one is
