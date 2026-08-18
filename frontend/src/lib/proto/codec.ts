@@ -129,6 +129,31 @@ export function mkPoll(poll: canari.PollMsg.$Properties): canari.AppMessage.$Pro
   return { poll };
 }
 
+/**
+ * Builds a Graine seed frame - one sender's session for one channel.
+ *
+ * These NEVER travel in a conversation. They are carried by a community's distribution group,
+ * which holds key material and no message body, which is what keeps one distribution O(1) instead
+ * of one sealed copy per member.
+ */
+export function mkGraine(seed: canari.GraineMsg.$Properties): canari.AppMessage.$Properties {
+  return { graine: seed };
+}
+
+/** Asks ONE named member for seeds - never all of them, so N members do not all answer at once. */
+export function mkGraineRequest(
+  request: canari.GraineRequestMsg.$Properties
+): canari.AppMessage.$Properties {
+  return { graineRequest: request };
+}
+
+/** Answers a {@link mkGraineRequest} with seeds, for one channel or for a whole community. */
+export function mkGraineBundle(
+  bundle: canari.GraineBundleMsg.$Properties
+): canari.AppMessage.$Properties {
+  return { graineBundle: bundle };
+}
+
 /** Builds an MLS call invitation (ring) message. */
 export function mkCallInvite(
   callId: string,

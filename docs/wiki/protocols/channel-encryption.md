@@ -1,8 +1,11 @@
 # Graine - channel encryption (WP-GRAINE)
 
-> **Status: DESIGNED AND DECIDED 2026-08-17, NOT ONE LINE WRITTEN.** The shipped behaviour is still
-> the one under "What is there today", and it lets the server read every community message. When
-> Graine ships, that section becomes history and this page becomes the reference.
+> **Status 2026-08-18: THE CLIENT SEALS AND OPENS UNDER GRAINE (Phases 1-4, up to WP-32).** A salon
+> message is sealed under a per-sender seed the server has never held, and the push path derives its
+> key the same way on all three native surfaces. What is NOT done: the repair (WP-33), the history
+> bundle (WP-34/35), reactions (WP-40), and the deletion of the server's own derivation - so
+> `channels.masterSecret` still EXISTS, unused, until WP-50/51. §1 describes what it did while it
+> was live, and stays as the record of why this was worth doing.
 
 **The requirement, from the user:** a community message must not be readable by the server, at the
 level MLS already gives DMs. **The constraints:** the interface barely moves; a member must be able
@@ -502,8 +505,9 @@ acknowledged, so the server redelivers it once the join lands; a dispatched fram
 
 - **WP-30** Outbound session manager: create per (channel, sender), rotate on departure / 100
   messages / 7 days, persist through WP-13. **DONE 2026-08-18** - below.
-- **WP-31** Send path: encrypt under the session, carry `sessionId`.
+- **WP-31** Send path: encrypt under the session, carry `sessionId`. **DONE 2026-08-18** - below.
 - **WP-32** Receive path: decrypt by `sessionId`; unknown session renders as explicitly unreadable.
+  **DONE 2026-08-18** - below.
 - **WP-33** Request and answer a missing seed over the distribution group.
 - **WP-34** The history bundle on join, in one message, gated by `history_visibility`.
 - **WP-35** `history_visibility` per community: column, API, settings UI, i18n.
@@ -549,6 +553,61 @@ The rotation is the only line logged (at `info`): it is rare by construction - o
 messages, per week, or per membership change - and it is the only record that a departure took a
 seed out of circulation.
 
+#### WP-31/32, and the two fields a message cannot be read without
+
+**A row names a SESSION and an INDEX**, `channel_messages."senderSessionId"` and `"messageIndex"`
+(migration `038`). Two columns and not one, because the key is `HKDF(seed, sessionId, index)`: a row
+carrying only the session is a row nobody can open, including its own author. They replace
+`keyVersion`, which named an epoch the server derived and could therefore read.
+
+**`STALE_CHANNEL_KEY_VERSION` is gone, and so is the retry it drove.** That refusal existed because
+the server held the key and could rotate its epoch out from under a connected tab, so one send could
+fail for a reason one refresh repaired. Nothing rotates under a sender now: the session is the
+device's own, and the one thing that invalidates it - the roster moving - is checked BEFORE the seal.
+*Never learn by failing what a fact could have told you.* Two refusals replace it, both
+`BadRequest` and both about the message rather than about the server's state:
+`CHANNEL_SESSION_REQUIRED` and `CHANNEL_MESSAGE_INDEX_REQUIRED`.
+
+**Index 0 is the first message of every session**, so every guard on the wire and in the three
+native readers is written against *absent*, never against *falsy*. A `if (!messageIndex)` would hide
+the one message every reader is guaranteed to want.
+
+**What the client needed that a channel id does not carry.** Sealing needs the community (whose
+distribution group carries the seed), the device key, the local store and the user id. The community
+comes from `registerChannelWorkspace`, called wherever salons are loaded - including the real-time
+`channel.member.joined` path, without which the first message typed into a freshly-joined salon
+would be refused until a relaunch. The other three are injected once at login (`setGraineRuntime`)
+and cleared at logout, with the decrypted-seed cache and the channel map, because they belong to the
+account that left.
+
+**Only an ANSWER is cached.** A seed found in the store is kept in memory so a page of history does
+not decrypt the same row fifty times; a seed NOT found is re-asked for every time, because "missing"
+is exactly the state a repair is expected to change underneath.
+
+**Three unreadabilities, three types, because they need three different responses:**
+
+| Type | What it means | What to do |
+| --- | --- | --- |
+| `GraineSessionUnavailableError` | this device holds no seed for the session named | repairable - WP-33 asks for it |
+| `GraineBelowFirstIndexError` | sent before this member was given the seed | nothing; a request would return the same floor for ever |
+| `GraineDistributionUnavailableError` | the community's group is not in hand | refuse the SEAL, before a row nobody can read exists |
+
+**The push had to move with it, natively, or a salon notification would have stopped saying
+anything.** All three readers already delegated AES-GCM to Rust, so the derivation lives in ONE
+place (`mobile::graine::derive_message_key`, pinned to the TS side by shared vectors) and the change
+is uniform: `channel_keys.json` becomes `graine_seeds.json`, `keyVersion` becomes
+`senderSessionId` + `messageIndex`, and `canari_native_decrypt_channel_message` becomes
+`canari_native_decrypt_graine_message`. The mirror is BOUNDED to the newest sessions per channel, so
+a miss on an old session degrades the banner to "new message in #salon" - which is the outcome an
+oversized ciphertext already produces, and the correct one. `channelPushFields.test.ts` is what
+holds the writer and the three readers together; it caught this migration rather than being updated
+after it.
+
+**Still standing, and deliberately: the epoch-key machinery is now WRITE-ONLY.**
+`ChannelKeyVault`, `channelKeyMirror`, `channel.key.rotated` and the key-distribution handlers still
+run and still import keys nothing reads. They come out with their server halves in WP-50/51, in one
+piece, rather than leaving the client talking to routes that no longer exist.
+
 ### Phase 5 - reactions
 
 - **WP-40** Reactions become silent encrypted channel messages aggregated client-side; the
@@ -560,10 +619,13 @@ seed out of circulation.
   `getChannelHistoryKeysForUser` and their routes. `STALE_CHANNEL_KEY_VERSION` goes with them - the
   server no longer knows which session is current and no longer needs to, which removes a coupling
   instead of moving it.
-- **WP-51** Migration `038` (`037` was taken by WP-21's `distributionGroupId`):
-  `channel_messages.senderSessionId` replaces `keyVersion`; `channels`
-  drops `masterSecret` and `keyVersion`; `channel_members` drops the legacy `keys` jsonb.
-- **WP-52** Push payload carries `sessionId`; everything else about the notification path is
+- **WP-51** Migration `039` (`037` was WP-21's `distributionGroupId`, `038` added
+  `channel_messages."senderSessionId"` and `"messageIndex"` in WP-31): drop
+  `channel_messages.keyVersion`; `channels` drops `masterSecret` and `keyVersion`; `channel_members`
+  drops the legacy `keys` jsonb.
+- **WP-52** ~~Push payload carries `sessionId`~~ **DONE inside WP-31/32**, server and all three
+  native readers, because `channelPushFields.test.ts` refuses a payload whose keys no client reads -
+  which is exactly the drift it was written to catch. Everything else about the notification path is
   unchanged, and that is asserted rather than assumed.
 
 ### Phase 7 - the cut and the record

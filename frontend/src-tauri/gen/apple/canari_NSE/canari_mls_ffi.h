@@ -35,11 +35,14 @@ char *canari_native_decrypt_message_with_commits(const unsigned char *state_ptr,
                                                  const char *commits_json,
                                                  const unsigned char *cipher_ptr, size_t cipher_len);
 
-/// Decrypts a channel/community message (AES-256-GCM, not MLS). All three args are
-/// base64: raw epoch key (32 bytes), nonce (12 bytes), ciphertext (`ciphertext||tag`).
-/// Same JSON contract as canari_native_decrypt_message. Stateless and read-only.
-char *canari_native_decrypt_channel_message(const char *key_b64, const char *nonce_b64,
-                                            const char *ciphertext_b64);
+/// Decrypts a community-channel message sealed under a Graine session (AES-256-GCM, not MLS).
+/// seed_b64 is the session's 32-byte seed from graine_seeds.json; session_id + message_index name
+/// which message key to derive from it. nonce_b64 (12 bytes) and ciphertext_b64
+/// (`ciphertext||tag`) are the push's own fields. Same JSON contract as
+/// canari_native_decrypt_message. Stateless and read-only.
+char *canari_native_decrypt_graine_message(const char *seed_b64, const char *session_id,
+                                           uint32_t message_index, const char *nonce_b64,
+                                           const char *ciphertext_b64);
 
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) into raw plaintext bytes for a
 /// notification thumbnail (WP-XP-3). key_b64/iv_b64 are the base64 CEK (32 bytes) + IV (12 bytes)

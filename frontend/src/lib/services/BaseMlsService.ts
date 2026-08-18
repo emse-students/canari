@@ -625,7 +625,7 @@ export abstract class BaseMlsService implements IMlsService {
      * Measured on prod 2026-08-15: W2 held 2 frames queued since the deadlock earlier that day, and
      * every boot afterwards pulled them, hung inside the startup archive replay before
      * `setupMessageHandler`, and never reached tab leadership - no `[TAB] Leadership acquired`, no
-     * `Connecting to Gateway…`, silence from 1 s onwards. W1, same bundle and same code with an
+     * `Connecting to Gateway...`, silence from 1 s onwards. W1, same bundle and same code with an
      * EMPTY server-side mailbox, booted normally: the backlog alone decided it.
      *
      * The order is fixed at the call site - the inbound pipeline is registered before anything can
@@ -1070,7 +1070,8 @@ export abstract class BaseMlsService implements IMlsService {
 
     const stuck = undeliverable.empty.length + undeliverable.malformed.length;
     if (stuck > 0) {
-      const sample = (ids: string[]) => ids.slice(0, 5).join(', ') + (ids.length > 5 ? ', …' : '');
+      const sample = (ids: string[]) =>
+        ids.slice(0, 5).join(', ') + (ids.length > 5 ? ', ...' : '');
       console.warn(
         `[PENDING] ${stuck}/${rows.length} row(s) of this page cannot be delivered and will NOT be acknowledged - they will be re-fetched on every reconnect until the retention window expires. ` +
           `empty payload: ${undeliverable.empty.length}${undeliverable.empty.length ? ` [${sample(undeliverable.empty)}]` : ''}; ` +
@@ -1594,18 +1595,18 @@ export abstract class BaseMlsService implements IMlsService {
         // not a backlog, and burning the cap will not repair it. Saying so is what separates
         // "repaired" from "gave up at the bound" in the log a later reader will have.
         console.warn(
-          `[MLS] Send ledger for ${groupId.slice(0, 8)}… claims more than ${MAX_BURN_GENERATIONS} unpersisted frames - burning the cap only; the ratchet cannot be repaired past the receivers' forward window`
+          `[MLS] Send ledger for ${groupId.slice(0, 8)}... claims more than ${MAX_BURN_GENERATIONS} unpersisted frames - burning the cap only; the ratchet cannot be repaired past the receivers' forward window`
         );
       }
       try {
         await this.skipSendGenerations(groupId, deficit);
         repaired++;
         console.log(
-          `[MLS] Restored state for ${groupId.slice(0, 8)}… was ${deficit} generation(s) behind this device's own sends - burnt, no frame will re-use a spent generation`
+          `[MLS] Restored state for ${groupId.slice(0, 8)}... was ${deficit} generation(s) behind this device's own sends - burnt, no frame will re-use a spent generation`
         );
       } catch (e) {
         console.warn(
-          `[MLS] Could not burn ${deficit} generation(s) for ${groupId.slice(0, 8)}…:`,
+          `[MLS] Could not burn ${deficit} generation(s) for ${groupId.slice(0, 8)}...:`,
           String(e).slice(0, 160)
         );
       }
@@ -1797,7 +1798,7 @@ export abstract class BaseMlsService implements IMlsService {
     const workspaceId = this.distributionWorkspaceByGroup.get(groupId);
     if (workspaceId === undefined) {
       // Unreachable through the pipeline, which only calls this behind `isDistributionGroup`.
-      console.warn(`[GRAINE] frame for unregistered distribution group ${groupId.slice(0, 8)}…`);
+      console.warn(`[GRAINE] frame for unregistered distribution group ${groupId.slice(0, 8)}...`);
       return false;
     }
 
@@ -1806,7 +1807,7 @@ export abstract class BaseMlsService implements IMlsService {
       plaintext = await this.processIncomingMessage(groupId, ciphertext);
     } catch (e) {
       console.warn(
-        `[GRAINE] undecryptable frame on ${groupId.slice(0, 8)}… - not acknowledged:`,
+        `[GRAINE] undecryptable frame on ${groupId.slice(0, 8)}... - not acknowledged:`,
         String(e).slice(0, 120)
       );
       return false;
@@ -1821,12 +1822,24 @@ export abstract class BaseMlsService implements IMlsService {
       // Not silent, and not acknowledged: the frame is a seed somebody needs, and the ONLY symptom
       // of a handler never wired would otherwise be a community whose history quietly never loads.
       console.error(
-        `[GRAINE] no handler wired - dropping a ${plaintext.length}-byte frame from ${sender.slice(0, 8)}… on community ${workspaceId.slice(0, 8)}…`
+        `[GRAINE] no handler wired - dropping a ${plaintext.length}-byte frame from ${sender.slice(0, 8)}... on community ${workspaceId.slice(0, 8)}...`
       );
       return false;
     }
 
-    await handler({ workspaceId, groupId, sender, plaintext });
+    try {
+      await handler({ workspaceId, groupId, sender, plaintext });
+    } catch (e) {
+      // NOT acknowledged, on purpose: the handler is what STORES a seed, so a throw here means the
+      // seed did not land, and acknowledging would drop key material nobody can ask for again.
+      // Redelivery is exactly the right outcome - including after a logout, where the session this
+      // handler needs is gone by construction.
+      console.error(
+        `[GRAINE] handler refused a frame from ${sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} - not acknowledged:`,
+        e instanceof Error ? e.message : String(e)
+      );
+      return false;
+    }
     return true;
   }
 
@@ -1855,7 +1868,7 @@ export abstract class BaseMlsService implements IMlsService {
     const transport = this.distributionGroupInfo;
     if (!transport) {
       throw new Error(
-        `[MLS] no distribution GroupInfo transport wired - group ${groupId.slice(0, 8)}… belongs to community ${workspaceId.slice(0, 8)}…`
+        `[MLS] no distribution GroupInfo transport wired - group ${groupId.slice(0, 8)}... belongs to community ${workspaceId.slice(0, 8)}...`
       );
     }
     return {
@@ -1871,7 +1884,7 @@ export abstract class BaseMlsService implements IMlsService {
       await this.groupInfoChannel(groupId).publish(toBase64(groupInfo), baseEpoch);
     } catch (e) {
       console.warn(
-        `[MLS] refreshGroupInfo failed for ${groupId.slice(0, 8)}…:`,
+        `[MLS] refreshGroupInfo failed for ${groupId.slice(0, 8)}...:`,
         String(e).slice(0, 120)
       );
     }
@@ -1904,7 +1917,7 @@ export abstract class BaseMlsService implements IMlsService {
       } catch (e) {
         // Build failed (e.g. the group is already held locally) -> fall back.
         console.warn(
-          `[MLS] externalJoin build failed for ${groupId.slice(0, 8)}…:`,
+          `[MLS] externalJoin build failed for ${groupId.slice(0, 8)}...:`,
           String(e).slice(0, 120)
         );
         return false;
@@ -1920,7 +1933,7 @@ export abstract class BaseMlsService implements IMlsService {
         await this.runUnderMlsLock(() => this.mergePendingCommit(joined.groupId));
         void this.refreshGroupInfo(joined.groupId);
         console.log(
-          `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}… (base epoch ${gi.baseEpoch})`
+          `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}... (base epoch ${gi.baseEpoch})`
         );
         return true;
       }
@@ -1929,7 +1942,7 @@ export abstract class BaseMlsService implements IMlsService {
       // cleared, so discard the group and retry with a fresher GroupInfo.
       this.forgetGroup(joined.groupId);
       console.log(
-        `[MLS] externalJoin epoch race for ${joined.groupId.slice(0, 8)}… (base ${gi.baseEpoch}) - retrying`
+        `[MLS] externalJoin epoch race for ${joined.groupId.slice(0, 8)}... (base ${gi.baseEpoch}) - retrying`
       );
     }
     return false;
@@ -1969,7 +1982,7 @@ export abstract class BaseMlsService implements IMlsService {
     }
 
     console.log(
-      `[GRAINE] no base published for community ${workspaceId.slice(0, 8)}… - creating group ${groupId.slice(0, 8)}…`
+      `[GRAINE] no base published for community ${workspaceId.slice(0, 8)}... - creating group ${groupId.slice(0, 8)}...`
     );
     await this.runUnderMlsLock(() => this.createGroup(groupId));
 
@@ -1985,7 +1998,7 @@ export abstract class BaseMlsService implements IMlsService {
       // because the next call would find it in `getLocalGroups` and return early for ever.
       this.forgetGroup(groupId);
       console.warn(
-        `[GRAINE] publishing the base for ${groupId.slice(0, 8)}… failed - group discarded:`,
+        `[GRAINE] publishing the base for ${groupId.slice(0, 8)}... failed - group discarded:`,
         String(e).slice(0, 120)
       );
       return false;
@@ -1997,7 +2010,7 @@ export abstract class BaseMlsService implements IMlsService {
     // from. Ours would fork the community in two.
     this.forgetGroup(groupId);
     console.log(
-      `[GRAINE] lost the first-publish race for ${groupId.slice(0, 8)}… - joining the published base instead`
+      `[GRAINE] lost the first-publish race for ${groupId.slice(0, 8)}... - joining the published base instead`
     );
     return this.externalJoin(groupId);
   }

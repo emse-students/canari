@@ -22,7 +22,7 @@ export interface FrameDelivery {
 }
 
 /**
- * The three kinds of frame this application sends. Every send site picks one of these rather than
+ * The four kinds of frame this application sends. Every send site picks one of these rather than
  * spelling out two booleans, so the classification lives here and only here.
  */
 export const DELIVERY = {
@@ -44,4 +44,14 @@ export const DELIVERY = {
    * log is capped per group.
    */
   transport: { silent: true, durable: false },
+  /**
+   * A Graine seed, on a community's key-distribution group. Silent - it is not a message and there
+   * is nothing to show - and durable, because a member who was offline when a seed went out has no
+   * other way to obtain it than to ask a peer, and asking costs a round trip per absence.
+   *
+   * Shaped like {@link DELIVERY.mutation} and named apart from it on purpose: the eviction argument
+   * differs. The log is capped per group, and a distribution group's log carries seeds and nothing
+   * else, so the whole cap is spent on exactly the thing that needs it.
+   */
+  keyMaterial: { silent: true, durable: true },
 } as const satisfies Record<string, FrameDelivery>;

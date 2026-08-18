@@ -89,12 +89,14 @@ pub(crate) fn android_java_vm() -> Option<&'static jni::JavaVM> {
 
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptChannelMessage<
+pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptGraineMessage<
     'a,
 >(
     mut env: jni::JNIEnv<'a>,
     _service: jni::objects::JObject<'a>,
-    key_b64: jni::objects::JString<'a>,
+    seed_b64: jni::objects::JString<'a>,
+    session_id: jni::objects::JString<'a>,
+    message_index: jni::sys::jint,
     nonce_b64: jni::objects::JString<'a>,
     ciphertext_b64: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
@@ -105,7 +107,17 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             let raw: String = env.get_string(&s).ok()?.into();
             STANDARD.decode(raw.trim()).ok()
         };
-        let key = match decode(key_b64, &mut env) {
+        // A negative index cannot exist: it is a uint32 on the wire and in the derivation. Refusing
+        // it here keeps the cast from wrapping into an index that derives a plausible wrong key.
+        if message_index < 0 {
+            log::error!("[GraineBG] negative message index {message_index}");
+            return serde_json::json!({ "ok": false });
+        }
+        let session: String = match env.get_string(&session_id) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false }),
+        };
+        let seed = match decode(seed_b64, &mut env) {
             Some(v) => v,
             None => return serde_json::json!({ "ok": false }),
         };
@@ -117,8 +129,14 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             Some(v) => v,
             None => return serde_json::json!({ "ok": false }),
         };
-        mobile::background::decrypt_channel_message(&key, &nonce, &ciphertext)
-            .unwrap_or_else(|| serde_json::json!({ "ok": false }))
+        mobile::background::decrypt_graine_message(
+            &seed,
+            &session,
+            message_index as u32,
+            &nonce,
+            &ciphertext,
+        )
+        .unwrap_or_else(|| serde_json::json!({ "ok": false }))
     })();
 
     let json_str = result.to_string();

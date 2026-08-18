@@ -889,11 +889,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         ciphertext: ByteArray
     ): String
 
-    // Decrypts a channel-message push (AES-256-GCM). All args base64: raw 32-byte epoch key,
-    // 12-byte nonce, ciphertext||tag. Returns the same JSON shape as nativeDecryptMessage,
-    // or {"ok":false} on failure. Channel messages are NOT MLS (no state file involved).
-    external fun nativeDecryptChannelMessage(
-        keyB64: String,
+    // Decrypts a community-channel push sealed under a Graine session (AES-256-GCM, not MLS).
+    // `seedB64` is the session's 32-byte seed from graine_seeds.json; `sessionId` + `messageIndex`
+    // name which message key to derive from it (HKDF, in Rust, the one copy shared by all three
+    // platforms). Nonce and ciphertext||tag are base64. Returns the same JSON shape as
+    // nativeDecryptMessage, or {"ok":false} on failure. No state file involved.
+    external fun nativeDecryptGraineMessage(
+        seedB64: String,
+        sessionId: String,
+        messageIndex: Int,
         nonceB64: String,
         ciphertextB64: String
     ): String
@@ -2754,7 +2758,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val channelName = data["channelName"]?.takeIf { it.isNotEmpty() }
             ?: res.getString(R.string.notif_channel_unnamed)
         val workspaceName = data["workspaceName"]?.takeIf { it.isNotEmpty() } ?: ""
-        val keyVersion  = data["keyVersion"] ?: ""
+        val sessionId   = data["senderSessionId"] ?: ""
+        val messageIndex = data["messageIndex"]?.toIntOrNull()
         val ciphertext  = data["ciphertext"]?.takeIf { it.isNotEmpty() }
         val nonce       = data["nonce"]?.takeIf { it.isNotEmpty() }
         val senderId    = data["senderId"] ?: ""
@@ -2766,10 +2771,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // The app addresses channels as `channel_<uuid>`; use it for the deep link + stable notif id.
         val conversationId = "channel_$channelId"
 
-        val keyB64 = if (ciphertext != null && nonce != null) lookupChannelKey(channelId, keyVersion) else null
-        val body: String = if (keyB64 != null && ciphertext != null && nonce != null) {
+        // A message index of 0 is the first message of every session, so the guard is on `null`
+        // (absent or unparsable) and never on falsiness.
+        val seedB64 = if (ciphertext != null && nonce != null && messageIndex != null)
+            lookupGraineSeed(channelId, sessionId) else null
+        val body: String = if (seedB64 != null && ciphertext != null && nonce != null && messageIndex != null) {
             try {
-                val json = JSONObject(nativeDecryptChannelMessage(keyB64, nonce, ciphertext))
+                val json = JSONObject(
+                    nativeDecryptGraineMessage(seedB64, sessionId, messageIndex, nonce, ciphertext)
+                )
                 if (json.optBoolean("ok", false)) {
                     json.optString("text").takeIf { it.isNotEmpty() }?.take(200)
                         ?: buildChannelFallbackText(res, channelName)
@@ -2782,7 +2792,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 buildChannelFallbackText(res, channelName)
             }
         } else {
-            Log.d(TAG, "handleChannelMessage: no key/ciphertext → generic notification channel=$channelId")
+            Log.d(TAG, "handleChannelMessage: no seed/ciphertext -> generic notification channel=$channelId session=$sessionId")
             buildChannelFallbackText(res, channelName)
         }
 
@@ -2803,20 +2813,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         )
     }
 
-    /** Looks up the raw epoch key (base64) for a channel/keyVersion in `channel_keys.json`, or null. */
-    private fun lookupChannelKey(channelId: String, keyVersion: String): String? {
+    /**
+     * Looks up a Graine session's raw seed (base64) in `graine_seeds.json`, or null.
+     *
+     * The mirror is BOUNDED - the newest sessions per channel only - so a miss on an old session is
+     * expected and not a fault: the notification degrades to the generic body, which is the correct
+     * outcome and the same one an oversized ciphertext already produces.
+     */
+    private fun lookupGraineSeed(channelId: String, sessionId: String): String? {
+        if (sessionId.isEmpty()) return null
         return try {
-            val file = File(MlsContextLoader.tauriDataDir(this), "channel_keys.json")
+            val file = File(MlsContextLoader.tauriDataDir(this), "graine_seeds.json")
             if (!file.exists()) {
-                Log.w(TAG, "lookupChannelKey: channel_keys.json absent")
+                Log.w(TAG, "lookupGraineSeed: graine_seeds.json absent")
                 return null
             }
             JSONObject(file.readText())
                 .optJSONObject(channelId)
-                ?.optString(keyVersion)
+                ?.optJSONObject(sessionId)
+                ?.optString("seed")
                 ?.takeIf { it.isNotEmpty() }
         } catch (e: Exception) {
-            Log.e(TAG, "lookupChannelKey: ${e.message}")
+            Log.e(TAG, "lookupGraineSeed: ${e.message}")
             null
         }
     }

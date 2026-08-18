@@ -344,8 +344,7 @@ export function useConversations() {
     force = false
   ) {
     const { channelService } = await import('$lib/services/ChannelService');
-    const { decodeChannelMessageRow, hydrateChannelHistoryKeys } =
-      await import('$lib/utils/chat/channelCrypto');
+    const { decodeChannelMessageRow } = await import('$lib/utils/chat/channelCrypto');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
     const convo = conversations.get(channelConversationId);
@@ -368,14 +367,9 @@ export function useConversations() {
       if (ctx.storage) {
         await ctx.storage.deleteMessagesForConversation(channelConversationId).catch(() => {});
       }
-      // Fresh devices may miss historical channel epochs in memory.
-      // Hydrate all known epochs before decrypting history.
-      await hydrateChannelHistoryKeys(rawId).catch((e) =>
-        ctx.log(
-          `[CHANNEL] Hydratation clés historiques impossible pour ${rawId}: ${e instanceof Error ? e.message : e}`
-        )
-      );
-
+      // Nothing to hydrate: a Graine seed is already in the local store or it is not, and the
+      // server holds none to fetch. A row this device has no seed for is REPORTED unreadable by
+      // `decodeChannelMessageRow` rather than silently skipped, and repaired by WP-33.
       const rows = await channelService.listMessages(rawId, 200);
       const loaded: ChatMessage[] = [];
       const meLower = ctx.userId.toLowerCase();
@@ -439,14 +433,12 @@ export function useConversations() {
     if (q.length < 2) return [];
 
     const { channelService } = await import('$lib/services/ChannelService');
-    const { decodeChannelMessageRow, hydrateChannelHistoryKeys } =
-      await import('$lib/utils/chat/channelCrypto');
+    const { decodeChannelMessageRow } = await import('$lib/utils/chat/channelCrypto');
     const { getPreviewText, parseEnvelope } = await import('$lib/envelope');
 
     const rawId = channelConversationId.replace(/^channel_/, '');
     const meLower = ctx.userId.toLowerCase();
 
-    await hydrateChannelHistoryKeys(rawId).catch(() => {});
     const { rows, capped } = await channelService.fetchAllChannelMessages(channelConversationId, {
       cap: 2000,
     });

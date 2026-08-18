@@ -37,6 +37,8 @@ import { sendHistoryStateKey } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+import { setGraineRuntime } from '$lib/utils/graine/runtime';
+import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
 import {
   unregisterMlsStatePersister,
   flushActiveMlsStateEncrypted,
@@ -681,6 +683,20 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       publish: (workspaceId, groupInfo, baseEpoch) =>
         distributionChannels.publishDistributionGroupInfo(workspaceId, groupInfo, baseEpoch),
     });
+
+    // Sealing a salon message needs the device key, the local store, the MLS client and who this
+    // device is - four things a crypto utility has no business reaching for. They are decided here
+    // and invalid after logout, so they are installed here and cleared in `logout`.
+    setGraineRuntime({
+      storage: ctx.getStorage()!,
+      deviceKeyB64: ctx.getDeviceKey(),
+      userId: ctx.getUserId(),
+      mlsService,
+    });
+    // What a frame arriving on a distribution group MEANS. The MLS layer routes them here and
+    // refuses to acknowledge one with no handler wired, so this is the difference between a seed
+    // stored and a seed redelivered for ever.
+    mlsService.onDistributionFrame(handleDistributionFrame);
 
     const callSystemCtx = {
       userId: ctx.getUserId(),
@@ -1486,6 +1502,8 @@ export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void 
   ctx.setStorage(null);
   ctx.setAuthToken('');
   setCallSystemMessageContext(null);
+  // Decrypted Graine seeds and the channel-to-community map belong to the account that just left.
+  setGraineRuntime(null);
   ctx.getCallService()?.setChatNotifier(null);
   resetSiblingCallWarning();
   clearUserLocally();

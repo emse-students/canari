@@ -14,7 +14,7 @@ use crate::concurrency::mark_foreground_active;
 
 use super::background::{
     background_group_epoch_with_key, cleanup_pending_db, create_welcome_background_with_key,
-    decode_commits_b64_json, decrypt_channel_message, decrypt_push_message_with_commits_with_key,
+    decode_commits_b64_json, decrypt_graine_message, decrypt_push_message_with_commits_with_key,
     decrypt_push_message_with_key, parse_outbox_entries_json, process_welcome_background_with_key,
     send_messages_background_with_key,
 };
@@ -183,23 +183,29 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
     }
 }
 
-/// Decrypts a channel/community message (AES-256-GCM, outside MLS). The three arguments are base64
-/// strings: raw epoch key (32 bytes), nonce (12 bytes), ciphertext (`ciphertext||tag`). Returns the
-/// same JSON as `canari_native_decrypt_message` (`{"ok":true,"text":...}`), or `{"ok":false}`. No
-/// MLS state and no lock: the decryption is stateless and read-only.
-/// FFI mirror of the Android JNI `nativeDecryptChannelMessage`.
+/// Decrypts a community-channel message sealed under a Graine session (AES-256-GCM, outside MLS).
+///
+/// `seed_b64` is the session's 32-byte seed as the mirror holds it, `session_id` and
+/// `message_index` name which message key to derive from it, and `nonce_b64` / `ciphertext_b64` are
+/// the push's own base64 fields. Returns the same JSON as `canari_native_decrypt_message`
+/// (`{"ok":true,"text":...}`), or `{"ok":false}`. No MLS state and no lock: stateless and
+/// read-only. FFI mirror of the Android JNI `nativeDecryptGraineMessage`.
 #[no_mangle]
-pub unsafe extern "C" fn canari_native_decrypt_channel_message(
-    key_b64: *const c_char,
+pub unsafe extern "C" fn canari_native_decrypt_graine_message(
+    seed_b64: *const c_char,
+    session_id: *const c_char,
+    message_index: u32,
     nonce_b64: *const c_char,
     ciphertext_b64: *const c_char,
 ) -> *mut c_char {
-    if key_b64.is_null() || nonce_b64.is_null() || ciphertext_b64.is_null() {
+    if seed_b64.is_null() || session_id.is_null() || nonce_b64.is_null() || ciphertext_b64.is_null()
+    {
         return json_to_c_string(serde_json::json!({ "ok": false }));
     }
 
     let decode = |s: String| STANDARD.decode(s.trim()).ok();
-    let key = match decode(str_from_c_str(key_b64)) {
+    let session = str_from_c_str(session_id);
+    let seed = match decode(str_from_c_str(seed_b64)) {
         Some(v) => v,
         None => return json_to_c_string(serde_json::json!({ "ok": false })),
     };
@@ -212,7 +218,7 @@ pub unsafe extern "C" fn canari_native_decrypt_channel_message(
         None => return json_to_c_string(serde_json::json!({ "ok": false })),
     };
 
-    match decrypt_channel_message(&key, &nonce, &ciphertext) {
+    match decrypt_graine_message(&seed, &session, message_index, &nonce, &ciphertext) {
         Some(v) => json_to_c_string(v),
         None => json_to_c_string(serde_json::json!({ "ok": false })),
     }

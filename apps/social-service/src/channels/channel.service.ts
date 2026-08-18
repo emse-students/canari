@@ -2203,19 +2203,23 @@ export class ChannelService {
     if (!(await this.canWriteToChannel(channel, input.senderId))) {
       throw new ForbiddenException('Not allowed to post in this channel');
     }
-    // Both refusals carry a stable `code`: the client re-bootstraps its channel key and retries
-    // exactly once on STALE_CHANNEL_KEY_VERSION, and it decides that from the code, never from the
-    // sentence. Reword the sentence freely; renaming a code is a protocol change.
-    if (input.keyVersion === undefined || input.keyVersion === null) {
+    // A message names the Graine session that opens it, and which key of that session. The server
+    // holds no seed and can supply neither, so a message missing one is a message NOBODY can ever
+    // read - it is refused here rather than stored as an unreadable row that looks like history.
+    //
+    // There is no "stale" refusal any more, and that is the point: `STALE_CHANNEL_KEY_VERSION`
+    // existed because the server derived the key and knew which epoch was current. It knows
+    // nothing about a Graine session but its name, so a sender can never be behind it.
+    if (typeof input.senderSessionId !== 'string' || input.senderSessionId.length === 0) {
       throw new BadRequestException({
-        code: 'CHANNEL_KEY_VERSION_REQUIRED',
-        message: 'keyVersion is required for channel messages',
+        code: 'CHANNEL_SESSION_REQUIRED',
+        message: 'senderSessionId is required for channel messages',
       });
     }
-    if (input.keyVersion !== channel.keyVersion) {
-      throw new ForbiddenException({
-        code: 'STALE_CHANNEL_KEY_VERSION',
-        message: `Stale or invalid keyVersion (${input.keyVersion}) for channel epoch ${channel.keyVersion}`,
+    if (!Number.isInteger(input.messageIndex) || input.messageIndex < 0) {
+      throw new BadRequestException({
+        code: 'CHANNEL_MESSAGE_INDEX_REQUIRED',
+        message: 'messageIndex must be a non-negative integer',
       });
     }
 
@@ -2233,7 +2237,8 @@ export class ChannelService {
       authorId: input.senderId,
       content: input.ciphertext,
       nonce: input.nonce,
-      keyVersion: input.keyVersion ?? null,
+      senderSessionId: input.senderSessionId,
+      messageIndex: input.messageIndex,
       metadata: pollMeta ? { poll: pollMeta } : {},
       pinned: pollMeta !== null,
     });
@@ -2256,7 +2261,8 @@ export class ChannelService {
             senderId: input.senderId,
             ciphertext: input.ciphertext,
             nonce: input.nonce,
-            keyVersion: input.keyVersion,
+            senderSessionId: input.senderSessionId,
+            messageIndex: input.messageIndex,
             createdAt: savedMsg.createdAt,
             // Poll descriptor (no labels) so peers render the card live without refetch.
             poll: pollMeta,
@@ -2354,7 +2360,11 @@ export class ChannelService {
       channelId: channel.id,
       channelName: channel.name,
       workspaceName,
-      keyVersion: String(message.keyVersion ?? channel.keyVersion),
+      // The session and the index, because they are what derives the key now. `keyVersion` used to
+      // sit here and named an epoch the server derived; nothing on any device can do anything with
+      // it any more, so it is gone rather than left looking like a contract.
+      senderSessionId: input.senderSessionId,
+      messageIndex: String(input.messageIndex),
       ciphertext: inlineCiphertext,
       nonce: input.nonce,
       senderId: input.senderId,
@@ -2891,7 +2901,8 @@ export class ChannelService {
       senderId: m.authorId,
       ciphertext: m.content,
       nonce: m.nonce ?? null,
-      keyVersion: m.keyVersion ?? null,
+      senderSessionId: m.senderSessionId ?? null,
+      messageIndex: m.messageIndex ?? null,
       replyTo: m.replyTo ?? null,
       createdAt: m.createdAt,
       pinned: m.pinned,

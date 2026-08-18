@@ -10,10 +10,10 @@ import {
   channelInviteMessageId,
 } from '$lib/envelope';
 import {
-  hydrateChannelBootstrap,
   isChannelConversationId,
   sendEncryptedChannelMessage,
 } from '$lib/utils/chat/channelCrypto';
+import { registerChannelWorkspace } from '$lib/utils/graine/runtime';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { applyLocalChannelReaction, setChannelReactions } from '$lib/stores/reactionStore.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -160,10 +160,10 @@ export function useChannelWorkspaces() {
       // answered with a welcome_request nobody will ever send. Awaiting closes that window instead
       // of leaving one spurious recovery per community per start.
       //
-      // Never fatal to the load: nothing reads a seed yet (the Graine layer is dark until WP-50),
-      // and a community that fails to prepare must still appear in the sidebar. The failure is
-      // logged with its cause by `ensureCommunityDistributionGroup`, which is all a best-effort
-      // path leaves behind.
+      // Never fatal to the load: a community that fails to prepare must still appear in the
+      // sidebar, and its salons then refuse to SEND with a named cause rather than the whole
+      // community vanishing. The failure is logged with its cause by
+      // `ensureCommunityDistributionGroup`, which is all a best-effort path leaves behind.
       if (ctx.ensureMls) {
         const mls = await ctx.ensureMls();
         await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
@@ -174,13 +174,10 @@ export function useChannelWorkspaces() {
         const actualId = channel.id || channel._id;
         if (!actualId) continue;
 
-        if (channel.keyBootstrap) {
-          await hydrateChannelBootstrap(actualId, channel.keyBootstrap).catch((error) => {
-            ctx.log(
-              `[CHANNEL-KEY] Echec hydratation pour #${channel.name}: ${error instanceof Error ? error.message : String(error)}`
-            );
-          });
-        }
+        // Which community a salon belongs to is the one fact the send path cannot derive: a
+        // channel id alone reaches every send site, and the seal needs the community whose
+        // distribution group carries the seed.
+        registerChannelWorkspace(actualId, workspaceId);
 
         const channelConversationId = `channel_${actualId}`;
         if (!validChannelConversationIds.includes(channelConversationId)) {
@@ -412,28 +409,16 @@ export function useChannelWorkspaces() {
   }
 
   /**
-   * Hydrates the encryption key for a channel the user was just added to in-session.
+   * Records the community of a channel the user was just added to in-session.
    *
-   * The real-time `channel.member.joined` event carries no key material (it is broadcast, so the
-   * joiner's key bootstrap must never travel on it). Without this, a freshly-joined channel is
-   * registered in `conversations` but has no vault key: opening it fails to decrypt every message
-   * until a relaunch runs the full `loadChannelWorkspacesFromBackend` hydration. This fetches the
-   * channel's current epoch bootstrap and imports it into the ChannelKeyVault so the channel is
-   * usable immediately, without waiting for an app restart. Fire-and-forget; safe to call again.
+   * The real-time `channel.member.joined` event registers the channel in `conversations`, and until
+   * this runs the send path knows no community for it - so the first message typed into a
+   * freshly-joined salon would be refused with `GraineUnknownChannelError` until an app relaunch
+   * ran the full `loadChannelWorkspacesFromBackend` pass. Safe to call again.
    */
-  async function hydrateJoinedChannelKey(channelId: string): Promise<void> {
-    if (!channelId) return;
-    try {
-      const hydrated = await hydrateChannelBootstrap(channelId);
-      console.log(
-        `[CHANNEL-KEY] Hydrated key v${hydrated.keyVersion} for freshly-joined channel ${channelId}`
-      );
-    } catch (e) {
-      console.error(
-        `[CHANNEL-KEY] Failed to hydrate key for freshly-joined channel ${channelId}:`,
-        e instanceof Error ? e.message : String(e)
-      );
-    }
+  function registerJoinedChannel(channelId: string, workspaceId: string): void {
+    if (!channelId || !workspaceId) return;
+    registerChannelWorkspace(channelId, workspaceId);
   }
 
   // ---------- API operations ----------
@@ -515,9 +500,7 @@ export function useChannelWorkspaces() {
           const actualId = channel.id || channel._id;
           if (!actualId) continue;
 
-          if (channel.keyBootstrap) {
-            await hydrateChannelBootstrap(actualId, channel.keyBootstrap).catch(() => {});
-          }
+          registerChannelWorkspace(actualId, workspaceId);
 
           const channelConversationId = `channel_${actualId}`;
           addChannelToWorkspace(sidebarWorkspace.id, {
@@ -592,19 +575,7 @@ export function useChannelWorkspaces() {
         createdChannel?.id || createdChannel?._id || `${workspaceId}_${normalizedChannelName}`;
       const channelId = `channel_${actualId}`;
 
-      const bootstrap = createdChannel?.keyBootstrap;
-      if (bootstrap) {
-        try {
-          const hydrated = await hydrateChannelBootstrap(actualId, bootstrap);
-          ctx.log(
-            `[CHANNEL-KEY] Initial key loaded for #${normalizedChannelName} (v${hydrated.keyVersion}).`
-          );
-        } catch (e) {
-          ctx.log(
-            `[CHANNEL-KEY] Echec chargement cle initiale pour #${normalizedChannelName}: ${e instanceof Error ? e.message : String(e)}`
-          );
-        }
-      }
+      registerChannelWorkspace(actualId, workspaceId);
 
       const isPrivate = visibility === 'private';
       const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
@@ -1129,8 +1100,8 @@ export function useChannelWorkspaces() {
     removeChannelFromWorkspaces,
     /** Returns or creates a sidebar workspace entry for an incoming real-time channel event. */
     ensureWorkspaceForChannelEvent,
-    /** Loads the encryption key for a channel the user was just added to in-session (no relaunch needed). */
-    hydrateJoinedChannelKey,
+    /** Records the community of a channel the user was just added to in-session (no relaunch needed). */
+    registerJoinedChannel,
     /** Fetches all workspaces and channels from the backend and prunes stale local entries. */
     loadChannelWorkspacesFromBackend,
     /** Creates a new community (workspace) and logs the outcome. */

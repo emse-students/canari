@@ -170,6 +170,22 @@ describe('reserving a slot', () => {
     expect(slot.index).toBe(3);
   });
 
+  it('never continues a session of its own user minted on ANOTHER device', async () => {
+    const { storage } = fakeStorage([
+      // Arrives through the distribution group: same user, no `sentCount`, because this device
+      // never sealed anything with it. Continuing its indices from a count nobody kept here would
+      // put two messages under one key.
+      session({ sessionId: 'other-device', sentCount: undefined, createdAt: NOW + 5_000 }),
+    ]);
+    const d = deps(storage);
+
+    const slot = await reserveOutboundSlot(d, SCOPE);
+
+    expect(slot.minted).toBe(true);
+    expect(slot.session.sessionId).not.toBe('other-device');
+    expect(d.distribute).toHaveBeenCalledTimes(1);
+  });
+
   it('finds its own session whatever case the caller spells the sender in', async () => {
     const { storage } = fakeStorage([session({ sentCount: 3 })]);
 

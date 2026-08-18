@@ -38,8 +38,10 @@ char *canari_native_decrypt_message_with_commits(
     const unsigned char *cipher_ptr,
     size_t cipher_len);
 
-char *canari_native_decrypt_channel_message(
-    const char *key_b64,
+char *canari_native_decrypt_graine_message(
+    const char *seed_b64,
+    const char *session_id,
+    uint32_t message_index,
     const char *nonce_b64,
     const char *ciphertext_b64);
 

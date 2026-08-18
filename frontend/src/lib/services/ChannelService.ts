@@ -142,7 +142,9 @@ export interface ChannelPollInput {
 export interface SendChannelMessageDto {
   ciphertext: string;
   nonce: string;
-  keyVersion?: number;
+  /** The Graine session this message was sealed under, and which of its message keys. */
+  senderSessionId: string;
+  messageIndex: number;
   messageId?: string;
   /** When set, the message is a poll: auto-pinned server-side and votable. */
   poll?: ChannelPollInput;
@@ -190,8 +192,9 @@ export interface ChannelMemberDto {
 
 /**
  * A channel message row as returned by the messages API (newest-first). The payload stays
- * encrypted: `ciphertext`/`nonce`/`keyVersion` are decrypted client-side with the channel epoch
- * key. `poll` carries the label-free tally so results render without decrypting.
+ * encrypted: `ciphertext`/`nonce` are opened client-side with the Graine seed named by
+ * `senderSessionId` at `messageIndex` - the server holds neither. `poll` carries the label-free
+ * tally so results render without opening anything.
  */
 export interface ChannelMessageRow {
   id: string;
@@ -199,7 +202,9 @@ export interface ChannelMessageRow {
   senderId: string;
   ciphertext: string;
   nonce: string | null;
-  keyVersion: number | null;
+  /** The sender's Graine session, and which of its message keys. Null only on a pre-Graine row. */
+  senderSessionId: string | null;
+  messageIndex: number | null;
   replyTo: string | null;
   createdAt: string;
   pinned: boolean;

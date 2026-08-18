@@ -74,12 +74,12 @@ describe('channel push payload contract (social-service writer vs the three nati
   const kotlinHandler = functionBody(
     kotlinSource,
     /private fun handleChannelMessage\(/,
-    /\n {4}\/\*\* Looks up the raw epoch key/
+    /\n {4}\/\*\*\n {5}\* Looks up a Graine session/
   );
   const swiftHandler = functionBody(
     swiftSource,
     /private func handleChannelMessage\(/,
-    /\n {2}\/\/\/ Looks up the raw base64 epoch key/
+    /\n {2}\/\/\/ Looks up a Graine session/
   );
   const objcHandler = functionBody(
     objcSource,
@@ -105,9 +105,10 @@ describe('channel push payload contract (social-service writer vs the three nati
       'channelId',
       'channelName',
       'ciphertext',
-      'keyVersion',
+      'messageIndex',
       'nonce',
       'senderId',
+      'senderSessionId',
       'type',
       'workspaceName',
     ]);

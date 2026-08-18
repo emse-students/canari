@@ -30,7 +30,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// `CanariMirrorPushStateToAppGroup`).
   private static let mlsBinFile = "mls.bin"
   private static let pushContextFile = "push_context.json"
-  private static let channelKeysFile = "channel_keys.json"
+  private static let graineSeedsFile = "graine_seeds.json"
   private static let pushSecretFile = "push_secret.txt"
 
   /// Cap the decrypted preview length, matching the 200-char clamp the in-app path uses.
@@ -667,7 +667,10 @@ class NotificationService: UNNotificationServiceExtension {
     let channelId = Self.string(userInfo["channelId"]) ?? ""
     let sentChannelName = Self.nonEmpty(Self.string(userInfo["channelName"]))
     let workspaceName = Self.nonEmpty(Self.string(userInfo["workspaceName"])) ?? ""
-    let keyVersion = Self.string(userInfo["keyVersion"]) ?? ""
+    let sessionId = Self.string(userInfo["senderSessionId"]) ?? ""
+    // An index of 0 is the first message of every session, so this stays an Optional and the
+    // guard below is on `nil` - never on a falsy zero.
+    let messageIndex = UInt32(Self.string(userInfo["messageIndex"]) ?? "")
     let ciphertext = Self.string(userInfo["ciphertext"]) ?? ""
     let nonce = Self.string(userInfo["nonce"]) ?? ""
     let senderId = Self.string(userInfo["senderId"]) ?? ""
@@ -685,16 +688,17 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     var body: String?
-    if !ciphertext.isEmpty, !nonce.isEmpty,
-      let keyB64 = lookupChannelKey(channelId: channelId, keyVersion: keyVersion)
+    if !ciphertext.isEmpty, !nonce.isEmpty, let index = messageIndex,
+      let seedB64 = lookupGraineSeed(channelId: channelId, sessionId: sessionId)
     {
-      if let raw = canari_native_decrypt_channel_message(keyB64, nonce, ciphertext) {
+      if let raw = canari_native_decrypt_graine_message(seedB64, sessionId, index, nonce, ciphertext)
+      {
         let json = String(cString: raw)
         canari_free_string(raw)
         body = Self.parseDecryptedText(json)
       }
     } else {
-      NSLog("[CanariNSE] handleChannelMessage: no key/ciphertext - generic channel=\(channelId)")
+      NSLog("[CanariNSE] handleChannelMessage: no seed/ciphertext - generic channel=\(channelId)")
     }
 
     let ctx = loadPushContext()
@@ -733,20 +737,25 @@ class NotificationService: UNNotificationServiceExtension {
     finish()
   }
 
-  /// Looks up the raw base64 epoch key for a channel/keyVersion in the mirrored
-  /// channel_keys.json. Shape: { "<channelId>": { "<keyVersion>": "<keyB64>" } }.
-  private func lookupChannelKey(channelId: String, keyVersion: String) -> String? {
-    guard let dir = Self.appGroupDir() else { return nil }
-    let url = dir.appendingPathComponent(Self.channelKeysFile)
+  /// Looks up a Graine session's raw base64 seed in the mirrored graine_seeds.json.
+  /// Shape: { "<channelId>": { "<sessionId>": { "seed": "<b64>", "createdAt": <ms> } } }.
+  ///
+  /// The mirror is BOUNDED to the newest sessions per channel, so a miss on an old session is
+  /// expected rather than a fault: the banner degrades to the generic body, which is the same
+  /// outcome an oversized ciphertext already produces.
+  private func lookupGraineSeed(channelId: String, sessionId: String) -> String? {
+    guard !sessionId.isEmpty, let dir = Self.appGroupDir() else { return nil }
+    let url = dir.appendingPathComponent(Self.graineSeedsFile)
     guard let data = try? Data(contentsOf: url),
       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let byChannel = json[channelId] as? [String: Any],
-      let key = byChannel[keyVersion] as? String, !key.isEmpty
+      let session = byChannel[sessionId] as? [String: Any],
+      let seed = session["seed"] as? String, !seed.isEmpty
     else {
-      NSLog("[CanariNSE] lookupChannelKey: miss channel=\(channelId) v=\(keyVersion)")
+      NSLog("[CanariNSE] lookupGraineSeed: miss channel=\(channelId) session=\(sessionId)")
       return nil
     }
-    return key
+    return seed
   }
 
   // MARK: - Badge (WP-XP-2) ---------------------------------------------------

@@ -1,15 +1,18 @@
-import { channelKeyManager, ChannelKeyUnavailableError } from '$lib/crypto/ChannelKeyVault';
 import {
-  ChannelApiError,
   ChannelService,
-  type ChannelBootstrapDto,
   type ChannelMessageRow,
   type ChannelPollInput,
 } from '$lib/services/ChannelService';
 import { encodeAppMessage, decodeAppMessage, mkPoll } from '$lib/proto/codec';
 import { appMsgToEnvelope, appMsgToChannelSystemEnvelope } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
+import {
+  GraineBelowFirstIndexError,
+  GraineSessionUnavailableError,
+  openChannelMessage,
+  sealChannelMessage,
+} from '$lib/utils/graine/channelSeal';
+import { rawChannelId } from '$lib/utils/graine/runtime';
 import { SvelteDate } from 'svelte/reactivity';
 
 const channelService = new ChannelService();
@@ -27,55 +30,44 @@ export interface DecodedChannelMessage {
 
 /**
  * Decrypts and decodes a single channel message row into a renderable message, or returns null
- * when the payload is unreadable (missing epoch key) or carries no displayable content. Shared by
- * channel history loading and full-text search so both decode rows identically. Assumes the
- * relevant epoch keys are already hydrated in the {@link channelKeyManager}.
+ * when the payload is unreadable or carries no displayable content. Shared by channel history
+ * loading and full-text search so both decode rows identically.
  */
 export async function decodeChannelMessageRow(
   channelId: string,
   row: ChannelMessageRow,
   userIdLower: string
 ): Promise<DecodedChannelMessage | null> {
-  const rawChannelId = normalizeChannelId(channelId);
+  const channel = rawChannelId(channelId);
   const serverMs = parseServerTimestampMs(row.createdAt);
   let content: string | undefined;
   let timestamp: Date | undefined;
   let isSystem = false;
   try {
-    let bytes: Uint8Array | undefined;
-    if (row.ciphertext && row.nonce && row.keyVersion != null) {
-      bytes = await channelKeyManager.decryptMessage(
-        rawChannelId,
-        row.ciphertext,
-        row.nonce,
-        row.keyVersion
-      );
-    } else if (row.ciphertext) {
-      const binStr = atob(row.ciphertext);
-      bytes = new Uint8Array(binStr.length);
-      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
-    }
-    if (bytes) {
-      const decoded = decodeAppMessage(bytes);
-      if (decoded) {
-        const envelope =
-          appMsgToEnvelope(decoded, serverMs) ?? appMsgToChannelSystemEnvelope(decoded, serverMs);
-        if (envelope) {
-          content = envelope.content;
-          timestamp = envelope.options.timestamp;
-          isSystem = !!decoded.system;
-        }
+    const bytes = await openChannelMessage(channel, row);
+    const decoded = decodeAppMessage(bytes);
+    if (decoded) {
+      const envelope =
+        appMsgToEnvelope(decoded, serverMs) ?? appMsgToChannelSystemEnvelope(decoded, serverMs);
+      if (envelope) {
+        content = envelope.content;
+        timestamp = envelope.options.timestamp;
+        isSystem = !!decoded.system;
       }
     }
   } catch (err) {
     // The row is dropped from the rendered history with nothing else to show for it, so the reason
-    // it was unreadable is all the loss leaves behind.
+    // it was unreadable is all the loss leaves behind - and the three reasons need three different
+    // responses. A MISSING SEED is repairable and is the only one worth asking a peer about; a
+    // message below the handover floor is the protocol working, and asking would loop for ever
+    // since the answer is the same seed; anything else is a real fault.
     console.warn(
-      `[CHANNEL] Message ${String(row.id)} of ${rawChannelId.slice(0, 8)} is unreadable and is not ` +
-        `rendered - ` +
-        (err instanceof ChannelKeyUnavailableError
-          ? `no key for epoch ${err.epochId} (vault holds ${err.availableEpochs.join(', ') || 'none'})`
-          : String(err))
+      `[CHANNEL] Message ${String(row.id)} of ${channel.slice(0, 8)} is unreadable and is not rendered - ` +
+        (err instanceof GraineSessionUnavailableError
+          ? `no seed for session ${err.sessionId} (repairable)`
+          : err instanceof GraineBelowFirstIndexError
+            ? `sent before this device was given the seed (index ${err.index} < ${err.firstIndex})`
+            : String(err))
     );
     return null;
   }
@@ -103,85 +95,20 @@ export interface ChannelPollDraft {
   endsAt: string | null;
 }
 
-/** Strip the `channel_` prefix from a channel ID so the raw UUID is passed to the backend. */
-function normalizeChannelId(channelId: string): string {
-  return String(channelId).replace(/^channel_/, '');
-}
-
 /** True for community channel conversations (`channel_<uuid>`). */
 export function isChannelConversationId(conversationId: string): boolean {
   return String(conversationId).startsWith('channel_');
 }
 
 /**
- * Hydrates every known epoch key for a channel into the in-memory {@link channelKeyManager} so
- * historical messages (encrypted under older epochs) decrypt. Best-effort per key. Shared by
- * channel history loading and full-text search.
- */
-export async function hydrateChannelHistoryKeys(channelId: string): Promise<void> {
-  const rawChannelId = normalizeChannelId(channelId);
-  const historyKeys = await channelService.getChannelHistoryKeys(rawChannelId);
-  for (const keyEntry of historyKeys.epochKeys || []) {
-    if (!Number.isFinite(keyEntry.keyVersion) || keyEntry.keyVersion <= 0) continue;
-    if (!keyEntry.encryptedChannelKey) continue;
-    const rawKeyMat = Uint8Array.from(atob(keyEntry.encryptedChannelKey), (c) => c.charCodeAt(0));
-    await importChannelEpochKey(rawChannelId, keyEntry.keyVersion, rawKeyMat);
-  }
-}
-
-/**
- * True when a send failed because this tab's channel key is behind the server's epoch - the one
- * failure a bootstrap refresh can repair.
+ * Seals `payloadBytes` under this device's Graine session for the channel and POSTs it.
  *
- * Classified by TYPE and by the server's stable code, never by prose: the vault raises
- * {@link ChannelKeyUnavailableError} when it holds no key for the epoch at all, and the server
- * answers `STALE_CHANNEL_KEY_VERSION` when the epoch rotated between encryption and delivery.
- *
- * `CHANNEL_KEY_VERSION_REQUIRED` is deliberately NOT in the set. `encryptMessage` either returns a
- * keyVersion or throws, so this client cannot produce that refusal; retrying it would re-send an
- * identical body and fail identically, hiding a broken caller behind a pointless round trip.
- */
-function shouldRefreshChannelKey(error: unknown): boolean {
-  if (error instanceof ChannelKeyUnavailableError) return true;
-  return error instanceof ChannelApiError && error.code === 'STALE_CHANNEL_KEY_VERSION';
-}
-
-/**
- * Load (or re-load) the channel's current epoch key into the in-memory ChannelKeyVault.
- *
- * If `bootstrap` is provided (e.g. already fetched by the caller), it is used directly;
- * otherwise the latest bootstrap is fetched from the server via ChannelService.
- * The raw key material is decoded from base64 and stored under its keyVersion in the vault
- * so that subsequent encryptMessage / decryptMessage calls can find it.
- */
-export async function hydrateChannelBootstrap(
-  channelId: string,
-  bootstrap?: ChannelBootstrapDto | null
-): Promise<ChannelBootstrapDto> {
-  const rawChannelId = normalizeChannelId(channelId);
-  const resolvedBootstrap =
-    bootstrap ?? (await channelService.getChannelKeyBootstrap(rawChannelId));
-
-  if (resolvedBootstrap.channelId !== rawChannelId) {
-    throw new Error(
-      `Channel bootstrap mismatch: expected ${rawChannelId}, got ${resolvedBootstrap.channelId}`
-    );
-  }
-
-  const rawKeyMat = Uint8Array.from(atob(resolvedBootstrap.newEpochBaseKey), (char) =>
-    char.charCodeAt(0)
-  );
-  await importChannelEpochKey(rawChannelId, resolvedBootstrap.keyVersion, rawKeyMat);
-
-  return resolvedBootstrap;
-}
-
-/**
- * Encrypt `payloadBytes` with the channel's current epoch key and POST the ciphertext to the backend.
- *
- * On first attempt, uses the cached key from the vault.  If that fails with a "stale key" error
- * (e.g. the epoch rotated while this tab was open), the bootstrap is refreshed automatically and
- * the send is retried exactly once.
+ * **There is no retry, and there is nothing left to retry.** The single retry this function used to
+ * carry existed because the SERVER derived the channel key and could rotate its epoch out from
+ * under a connected tab. Nothing rotates under a sender any more: a session is this device's own,
+ * and the only thing that invalidates it - the community's roster moving - is checked before the
+ * seal, not discovered by a refusal afterwards. *Never learn by failing what a fact could have
+ * told you.*
  */
 export async function sendEncryptedChannelMessage(
   channelId: string,
@@ -190,37 +117,17 @@ export async function sendEncryptedChannelMessage(
   poll?: ChannelPollInput,
   mentionedUserIds?: string[]
 ): Promise<void> {
-  const rawChannelId = normalizeChannelId(channelId);
-
-  const attempt = async () => {
-    const encrypted = await channelKeyManager.encryptMessage(rawChannelId, payloadBytes);
-    await channelService.sendMessage(rawChannelId, {
-      ciphertext: encrypted.ciphertext,
-      nonce: encrypted.nonce,
-      keyVersion: encrypted.keyVersion,
-      ...(messageId ? { messageId } : {}),
-      ...(poll ? { poll } : {}),
-      ...(mentionedUserIds && mentionedUserIds.length ? { mentionedUserIds } : {}),
-    });
-  };
-
-  try {
-    await attempt();
-  } catch (error) {
-    if (!shouldRefreshChannelKey(error)) {
-      throw error;
-    }
-
-    // One retry, and it is announced: reaching here means this tab encrypted under an epoch the
-    // server had already rotated away from. Rare and self-healing, but a rising rate means key
-    // rotations are not reaching connected tabs, which is a defect upstream of this catch.
-    console.warn(
-      `[CHANNEL] Key for ${rawChannelId.slice(0, 8)} was behind the server epoch - ` +
-        `re-bootstrapping and retrying the send once: ${String(error)}`
-    );
-    await hydrateChannelBootstrap(rawChannelId);
-    await attempt();
-  }
+  const channel = rawChannelId(channelId);
+  const sealed = await sealChannelMessage(channel, payloadBytes);
+  await channelService.sendMessage(channel, {
+    ciphertext: sealed.ciphertext,
+    nonce: sealed.nonce,
+    senderSessionId: sealed.senderSessionId,
+    messageIndex: sealed.messageIndex,
+    ...(messageId ? { messageId } : {}),
+    ...(poll ? { poll } : {}),
+    ...(mentionedUserIds && mentionedUserIds.length ? { mentionedUserIds } : {}),
+  });
 }
 
 /**

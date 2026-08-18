@@ -138,10 +138,15 @@ async function reserve(
 ): Promise<GraineOutboundSlot> {
   const now = deps.now?.() ?? Date.now();
   const sessions = await deps.storage.getGraineSessions(scope.channelId, deps.deviceKeyB64);
-  // `getGraineSessions` answers newest first, so the first of ours IS the current one. Sessions
-  // from other senders sit in the same channel and are never candidates: this device holds their
-  // seeds to READ, and sealing with one would put a message in somebody else's namespace.
-  const current = sessions.find((s) => s.senderId === scope.senderId) ?? null;
+  // `getGraineSessions` answers newest first, so the first candidate IS the current one. Two
+  // filters, and the second is not redundant with the first:
+  //  - another SENDER's session is held to READ; sealing with it would write into somebody else's
+  //    namespace;
+  //  - a session of this same user MINTED ON ANOTHER DEVICE arrives here through the distribution
+  //    group and carries no `sentCount`, which is exactly what says "not minted here". Continuing
+  //    its indices from a count this device never kept is two messages under one key.
+  const current =
+    sessions.find((s) => s.senderId === scope.senderId && s.sentCount !== undefined) ?? null;
   const reason = graineRotationReason(current, { distributionEpoch: deps.distributionEpoch, now });
 
   if (!reason && current) {

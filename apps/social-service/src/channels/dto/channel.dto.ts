@@ -189,6 +189,19 @@ export interface SendChannelMessageDto {
   senderId: string;
   ciphertext: string;
   nonce: string;
+  /**
+   * The Graine session the sender sealed this message under, and which key of it.
+   *
+   * Both required, and required together: the key is HKDF(seed, sessionId, index), so a message
+   * missing either is one nobody can ever open - including its author. The server holds no seed
+   * and cannot supply a default for either.
+   */
+  senderSessionId: string;
+  messageIndex: number;
+  /**
+   * @deprecated Ignored since WP-31 and dropped by WP-51. The server no longer derives a channel
+   * key, so there is no epoch for a client to be stale against.
+   */
   keyVersion?: number;
   /** Client-generated UUID used as PK so the WS echo can be deduplicated. */
   messageId?: string;

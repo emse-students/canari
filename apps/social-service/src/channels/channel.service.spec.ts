@@ -622,14 +622,16 @@ describe('ChannelService security hardening', () => {
     ]);
   });
 
-  it('rejects sendMessage when keyVersion is missing', async () => {
+  // A message names the Graine session that opens it and which key of that session; the server
+  // holds no seed and can invent neither. Storing one without them would produce a row that looks
+  // like history and that nobody - including its own author - can ever read.
+  it('rejects sendMessage that names no Graine session', async () => {
     const { service, channelRepo, memberRepo } = makeService();
     channelRepo.findOne.mockResolvedValue({
       id: 'ch1',
       workspaceId: 'ws1',
       isPrivate: false,
       allowedRoles: [],
-      keyVersion: 5,
     });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
 
@@ -638,18 +640,19 @@ describe('ChannelService security hardening', () => {
         senderId: 'u1',
         ciphertext: 'abc',
         nonce: 'def',
+        senderSessionId: '',
+        messageIndex: 0,
       })
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('rejects sendMessage when keyVersion is stale', async () => {
+  it('rejects sendMessage whose message index is not a real index', async () => {
     const { service, channelRepo, memberRepo } = makeService();
     channelRepo.findOne.mockResolvedValue({
       id: 'ch1',
       workspaceId: 'ws1',
       isPrivate: false,
       allowedRoles: [],
-      keyVersion: 7,
     });
     memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
 
@@ -658,9 +661,37 @@ describe('ChannelService security hardening', () => {
         senderId: 'u1',
         ciphertext: 'abc',
         nonce: 'def',
-        keyVersion: 6,
+        senderSessionId: 'sess-1',
+        messageIndex: -1,
       })
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('accepts index 0, which is the first message of every session', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    channelRepo.findOne.mockResolvedValue({
+      id: 'ch1',
+      workspaceId: 'ws1',
+      isPrivate: false,
+      allowedRoles: [],
+    });
+    memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+    messageRepo.create.mockImplementation((row: any) => row);
+    messageRepo.save.mockImplementation(async (row: any) => ({ ...row, id: 'm1', createdAt: new Date() }));
+
+    await service.sendMessage('ch1', {
+      senderId: 'u1',
+      ciphertext: 'abc',
+      nonce: 'def',
+      senderSessionId: 'sess-1',
+      messageIndex: 0,
+    });
+
+    // A falsy-index guard would refuse the first message of every session, which is the one
+    // message every reader is guaranteed to want.
+    expect(messageRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ senderSessionId: 'sess-1', messageIndex: 0 })
+    );
   });
 
   it('rejects sendMessage from a plain member when writePolicy is admins', async () => {
@@ -684,7 +715,8 @@ describe('ChannelService security hardening', () => {
         senderId: 'u1',
         ciphertext: 'abc',
         nonce: 'def',
-        keyVersion: 3,
+        senderSessionId: 'sess-1',
+        messageIndex: 0,
       })
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
@@ -831,8 +863,15 @@ describe('ChannelService security hardening', () => {
         }
       ).notifyChannelRecipients(
         channel,
-        { id: 'm1', keyVersion: 1, createdAt: new Date() },
-        { senderId: 'u1', ciphertext: 'c', nonce: 'n', mentionedUserIds: ['u5'] }
+        { id: 'm1', senderSessionId: 'sess-1', messageIndex: 4, createdAt: new Date() },
+        {
+          senderId: 'u1',
+          ciphertext: 'c',
+          nonce: 'n',
+          senderSessionId: 'sess-1',
+          messageIndex: 4,
+          mentionedUserIds: ['u5'],
+        }
       );
 
       const sent = fetchMock.mock.calls
@@ -859,13 +898,20 @@ describe('ChannelService security hardening', () => {
         'channelId',
         'channelName',
         'ciphertext',
-        'keyVersion',
         'mentioned',
+        'messageIndex',
         'nonce',
         'senderId',
+        'senderSessionId',
         'type',
         'workspaceName',
       ]);
+
+      // The session and the index derive the key. `keyVersion` used to sit here and named an
+      // epoch the SERVER derived; no device can do anything with it now, so it is gone rather
+      // than left on the wire looking like a contract.
+      expect(sent[0].data.senderSessionId).toBe('sess-1');
+      expect(sent[0].data.messageIndex).toBe('4');
 
       // The community is named on the wire because no client can turn a workspace uuid into one,
       // and the title this endpoint carries is the APNs alert - what an iPhone shows when the

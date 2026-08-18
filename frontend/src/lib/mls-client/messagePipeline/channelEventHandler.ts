@@ -1,4 +1,4 @@
-import { channelKeyManager } from '$lib/crypto/ChannelKeyVault';
+import { openChannelMessage } from '$lib/utils/graine/channelSeal';
 import { importChannelEpochKey } from '$lib/utils/chat/channelKeyMirror';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
@@ -245,13 +245,17 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       const channelServerMs = parseServerTimestampMs(data.createdAt);
       try {
         if (data.ciphertext) {
-          if (!data.nonce || data.keyVersion === undefined) return;
-          const bytes = await channelKeyManager.decryptMessage(
-            data.channelId,
-            data.ciphertext,
-            data.nonce,
-            data.keyVersion
-          );
+          // Opened here rather than left to the history reload: a live bubble that only appeared
+          // after a refetch is the symptom the epoch-key path used to have.
+          const bytes = await openChannelMessage(data.channelId, {
+            ciphertext: data.ciphertext,
+            nonce: data.nonce ?? null,
+            senderSessionId: data.senderSessionId ?? null,
+            messageIndex:
+              data.messageIndex === undefined || data.messageIndex === null
+                ? null
+                : Number(data.messageIndex),
+          });
           const msg = decodeAppMessage(bytes);
           if (msg) {
             const envelope =

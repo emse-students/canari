@@ -104,6 +104,35 @@ pub fn decrypt_channel_message(
     }
 }
 
+/// Decrypts a community-channel push sealed under a Graine session, and returns the same metadata
+/// JSON [`decrypt_channel_message`] returns.
+///
+/// The difference is one HKDF: the push names a SESSION and an INDEX, the mirror holds the
+/// session's 32-byte seed (`graine_seeds.json`, written by the foreground), and the message key is
+/// derived from the pair. The server holds no seed at all, which is the whole point of the rework -
+/// so unlike the epoch key this replaces, there is nothing anyone could ask it for.
+///
+/// Returns None on any failure, and LOGS which one: a wrong seed, a wrong index and a truncated
+/// ciphertext are three different faults that all end as a generic "new message" banner.
+pub fn decrypt_graine_message(
+    seed: &[u8],
+    session_id: &str,
+    index: u32,
+    nonce: &[u8],
+    ciphertext: &[u8],
+) -> Option<serde_json::Value> {
+    let key = match crate::mobile::graine::derive_message_key(seed, session_id, index) {
+        Ok(k) => k,
+        Err(e) => {
+            log::error!(
+                "[GraineBG] cannot derive key for session {session_id} index {index}: {e:?}"
+            );
+            return None;
+        }
+    };
+    decrypt_channel_message(&key, nonce, ciphertext)
+}
+
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail (WP-XP-3).
 ///
 /// The CEK (`raw_key`, 32 bytes) and IV (`iv`, 12 bytes) come from the MLS-decrypted `MediaMsg`

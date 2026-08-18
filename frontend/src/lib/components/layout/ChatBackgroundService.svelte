@@ -596,10 +596,12 @@
             mlsStateHex: null,
           });
         }
-        // The join event carries no key material, so hydrate the channel's epoch key now.
-        // Without this the channel is registered but undecryptable until an app relaunch runs
-        // the full workspace hydration (fixes: freshly-added channel unusable in-session on mobile).
-        void globalChannels.hydrateJoinedChannelKey(event.channelId);
+        // Without this the channel is registered but belongs to no community as far as the send
+        // path is concerned, so the first message typed into it is refused until an app relaunch
+        // runs the full workspace hydration.
+        if (workspace.workspaceDbId) {
+          globalChannels.registerJoinedChannel(event.channelId, workspace.workspaceDbId);
+        }
         appendLog(`Joined channel #${event.channelName || event.channelId}`);
 
         // Add a system message to the channel so the inviter (and other members) see who joined.

@@ -328,7 +328,7 @@ static NSData *_Nullable CanariLoadMlsState(void) {
 }
 
 static NSString *const kAppGroupId = @"group.fr.emse.canari";
-static NSString *const kChannelKeysFileName = @"channel_keys.json";
+static NSString *const kGraineSeedsFileName = @"graine_seeds.json";
 static NSString *const kAppGroupPushSecretFileName = @"push_secret.txt";
 
 void CanariMirrorPushStateToAppGroup(void) {
@@ -347,7 +347,7 @@ void CanariMirrorPushStateToAppGroup(void) {
   // torn file, and keep the same at-rest protection class as the source.
   NSDataWritingOptions opts =
       NSDataWritingAtomic | NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication;
-  for (NSString *name in @[ kMlsBinFileName, kPushContextFileName, kChannelKeysFileName ]) {
+  for (NSString *name in @[ kMlsBinFileName, kPushContextFileName, kGraineSeedsFileName ]) {
     NSData *data = [NSData dataWithContentsOfFile:[src stringByAppendingPathComponent:name]];
     if (data == nil) {
       continue;
@@ -2680,17 +2680,24 @@ static NSString *CanariBuildChannelFallbackText(NSString *channelName) {
   return [NSString stringWithFormat:CanariLocalized(@"notif.channel.message"), channelName];
 }
 
-// Looks up the raw epoch key (base64) for a channel/keyVersion in the app-private channel_keys.json
-// mirror (written by the foreground), or nil. Shape: { "<channelId>": { "<keyVersion>": "<keyB64>" } }.
-static NSString *_Nullable CanariLookupChannelKey(NSString *channelId, NSString *keyVersion) {
+// Looks up a Graine session's raw base64 seed in graine_seeds.json, written by the foreground.
+// Shape: { "<channelId>": { "<sessionId>": { "seed": "<b64>", "createdAt": <ms> } } }.
+//
+// The mirror is BOUNDED to the newest sessions per channel, so a miss on an old session is
+// expected and not a fault: the banner degrades to the generic body, the same outcome an
+// oversized ciphertext already produces.
+static NSString *_Nullable CanariLookupGraineSeed(NSString *channelId, NSString *sessionId) {
+  if (sessionId.length == 0) {
+    return nil;
+  }
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
     return nil;
   }
   NSData *raw =
-      [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"channel_keys.json"]];
+      [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"graine_seeds.json"]];
   if (raw == nil) {
-    NSLog(@"[CanariPush] lookupChannelKey: channel_keys.json absent");
+    NSLog(@"[CanariPush] lookupGraineSeed: graine_seeds.json absent");
     return nil;
   }
   id json = [NSJSONSerialization JSONObjectWithData:raw options:0 error:nil];
@@ -2701,14 +2708,19 @@ static NSString *_Nullable CanariLookupChannelKey(NSString *channelId, NSString 
   if (![byChannel isKindOfClass:[NSDictionary class]]) {
     return nil;
   }
-  id key = ((NSDictionary *)byChannel)[keyVersion];
-  return ([key isKindOfClass:[NSString class]] && [(NSString *)key length] > 0) ? key : nil;
+  id session = ((NSDictionary *)byChannel)[sessionId];
+  if (![session isKindOfClass:[NSDictionary class]]) {
+    return nil;
+  }
+  id seed = ((NSDictionary *)session)[@"seed"];
+  return ([seed isKindOfClass:[NSString class]] && [(NSString *)seed length] > 0) ? seed : nil;
 }
 
-// Decrypts a channel-message push (AES-256-GCM, not MLS) and shows a notification. The epoch key is
-// read from channel_keys.json; the inline ciphertext is decrypted natively so the plaintext never
-// transits FCM. Falls back to a generic body when the key is missing (channel not yet hydrated) or
-// the ciphertext was omitted server-side. Mirror of Android handleChannelMessage.
+// Decrypts a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) and shows
+// a notification. The seed is read from graine_seeds.json and the message key derived from it in
+// Rust; the inline ciphertext is decrypted natively so the plaintext never transits FCM. Falls back
+// to a generic body when the seed is missing (session older than the bounded mirror, or a salon not
+// yet hydrated) or the ciphertext was omitted server-side. Mirror of Android handleChannelMessage.
 static void CanariHandleChannelMessage(NSDictionary *data) {
   NSString *channelId =
       [data[@"channelId"] isKindOfClass:[NSString class]] ? data[@"channelId"] : @"";
@@ -2722,8 +2734,12 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
                              [(NSString *)data[@"workspaceName"] length] > 0)
                                 ? data[@"workspaceName"]
                                 : @"";
-  NSString *keyVersion =
-      [data[@"keyVersion"] isKindOfClass:[NSString class]] ? data[@"keyVersion"] : @"";
+  NSString *sessionId =
+      [data[@"senderSessionId"] isKindOfClass:[NSString class]] ? data[@"senderSessionId"] : @"";
+  // An index of 0 is the first message of every session, so "absent" is carried by the STRING
+  // being empty and never by the number being zero.
+  NSString *messageIndexStr =
+      [data[@"messageIndex"] isKindOfClass:[NSString class]] ? data[@"messageIndex"] : @"";
   NSString *ciphertext =
       [data[@"ciphertext"] isKindOfClass:[NSString class]] ? data[@"ciphertext"] : @"";
   NSString *nonce = [data[@"nonce"] isKindOfClass:[NSString class]] ? data[@"nonce"] : @"";
@@ -2741,12 +2757,14 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
 
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     NSString *body = nil;
-    NSString *keyB64 = (ciphertext.length > 0 && nonce.length > 0)
-                           ? CanariLookupChannelKey(channelId, keyVersion)
-                           : nil;
-    if (keyB64.length > 0) {
-      char *jsonPtr = canari_native_decrypt_channel_message(keyB64.UTF8String, nonce.UTF8String,
-                                                            ciphertext.UTF8String);
+    NSString *seedB64 =
+        (ciphertext.length > 0 && nonce.length > 0 && messageIndexStr.length > 0)
+            ? CanariLookupGraineSeed(channelId, sessionId)
+            : nil;
+    if (seedB64.length > 0) {
+      char *jsonPtr = canari_native_decrypt_graine_message(
+          seedB64.UTF8String, sessionId.UTF8String, (uint32_t)[messageIndexStr intValue],
+          nonce.UTF8String, ciphertext.UTF8String);
       if (jsonPtr != nil) {
         NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
         canari_free_string(jsonPtr);
@@ -2936,8 +2954,8 @@ static void CanariHandleFcmData(NSDictionary *data) {
     return;
   }
 
-  // Community (channel) encrypted message: AES-256-GCM, key looked up in channel_keys.json.
-  // Not MLS: no mls.bin, no state lock - decryption is stateless and read-only.
+  // Community (channel) encrypted message: AES-256-GCM under a Graine session, seed looked up in
+  // graine_seeds.json. Not MLS: no mls.bin, no state lock - decryption is stateless and read-only.
   if ([msgType isEqualToString:@"channel"]) {
     NSLog(@"[CanariPush] type=channel channelId=%@ - notification channel background",
           data[@"channelId"]);
