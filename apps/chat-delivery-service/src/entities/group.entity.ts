@@ -31,6 +31,18 @@ export class Group {
   @Column({ default: false })
   isGroup: boolean;
 
+  /**
+   * Set when this group is a community's Graine key-distribution group, to the id of that
+   * community. Null - overwhelmingly the common case - means an ordinary conversation.
+   *
+   * Such a group carries SEED material and never a message body, so it must never be presented as
+   * a conversation. The single place that decides this is `GET /mls/users/:userId/groups`
+   * (`members.controller`), which every client surface is fed from; see
+   * `docs/wiki/protocols/channel-encryption.md` for why the exclusion lives there and nowhere else.
+   */
+  @Column({ type: 'uuid', nullable: true, default: null })
+  distributionWorkspaceId?: string | null;
+
   /** Monotonically increasing counter incremented on each manual key rotation,
    *  allowing clients to distinguish key rotation epochs from normal commits. */
   @Column({ default: 1 })

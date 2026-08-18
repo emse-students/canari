@@ -322,11 +322,56 @@ letting "tested on both backends" be read as more than it is.**
 
 - **WP-20** `dm_groups` gains a community-distribution kind, hidden from every conversation surface.
   The risk is the ENUMERATION, not the flag: every path that lists, counts, badges, notifies or
-  syncs a group must be found and audited, not just the sidebar.
+  syncs a group must be found and audited, not just the sidebar. **DONE 2026-08-18** - the audit
+  and its result are below.
 - **WP-21** Server: the group is created with the community, published through `mls_group_info` for
   external join, and its membership tracks `channel_members`.
 - **WP-22** Client: external-join on first use, ignore the group in the conversation pipeline, route
   its messages to the Graine handler.
+
+#### The WP-20 audit, and why it came out short
+
+The marker is `dm_groups.distributionWorkspaceId` - **the community's id, not a boolean**. It answers
+"which community", which every later decision needs anyway, and a partial unique index on it makes
+"exactly one distribution group per community" a fact the DATABASE enforces: a second creation fails
+loudly instead of producing two groups each holding half the members.
+
+**Two invariants make the enumeration tractable, and both must survive WP-21:**
+
+1. **A distribution group holds NO `dm_group_members` rows** - it is joined by external commit, and
+   authorisation comes from community membership. Every path that starts from a user's memberships
+   therefore never reaches it, which is most of them. **WP-21 must build the delivery recipient set
+   from `channel_members` without writing membership rows**, or this audit is void.
+2. **`GET /mls/users/:userId/groups` is the ONE place a client learns which groups exist.**
+   Discovery, lifecycle classification, sync eligibility, the sidebar, badges and
+   `initializeConnection` are all fed from that single answer, so the exclusion lives there and
+   nowhere else. Excluding it at each consumer would be a rule every future consumer has to
+   remember, which is the shape of rule the next call site does not.
+
+Invariant 1 is an assumption, so it is **detected rather than trusted**: `getUserGroups` partitions
+instead of filtering in SQL, and `logger.warn`s if a membership row on a distribution group is ever
+seen. A `WHERE ... IS NULL` would have made the count a subtraction, and a subtraction cannot tell a
+distribution group from a membership pointing at a row that is simply gone - two situations needing
+opposite responses. **The exclusion working is not the same as nothing being wrong.**
+
+Every other reader of `dm_groups`, and why it needs no change:
+
+| Site | What it does | Verdict |
+| --- | --- | --- |
+| `members.controller` `getUserGroups` | the conversation list | **excluded here**, with the warning above |
+| `devices.controller` `registerDevice` | pending `DeviceGroupMembership` per membership row | unreachable by invariant 1 - and correct if it ever were, since a Welcome nobody sends is exactly what external join avoids |
+| `internal.controller` account deletion | partitions the user's groups on `isGroup` | unreachable by invariant 1 |
+| `app.controller` `cleanupSoftDeletedGroups` | purges tombstones past 90 days | correct unchanged - a distribution group is an MLS group and its tombstone ages the same way |
+| `app.controller` `cleanupOrphanedRedisGroups` | id-scoped existence check | correct unchanged |
+| `messaging.service` `purgeOrphanGroups` | id-scoped existence check | correct unchanged |
+| `groups.controller` rename / avatar / delete | acts on an explicit `groupId` | never named - no surface offers one |
+| `invitations.controller`, `utils/group-invite` | acts on `invite.groupId` | never named - no invite targets one |
+| `calls.service` | reads `name`/`isGroup` for a call notification by id | never named - one cannot be called |
+
+**What this audit does NOT cover: the client.** Nothing client-side changed in WP-20, because
+nothing client-side can see the group - it is absent from the only list the client is given. That
+holds only while WP-22 keeps the Graine layer's access deliberate and separate; the moment the
+distribution group enters `getUserGroups`, every row above is back in question.
 
 ### Phase 4 - send, receive, repair
 

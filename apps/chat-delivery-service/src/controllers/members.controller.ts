@@ -123,6 +123,16 @@ export class MembersController {
   /**
    * Lists all groups a user belongs to, ordered by last update (most recent first).
    * The client relies on this order to seed the conversation list before local DB is ready.
+   *
+   * **This is the ONE place a client learns which groups exist**, and therefore the one place a
+   * group can be hidden from every conversation surface at once: discovery, lifecycle
+   * classification, sync eligibility, the sidebar, badges and `initializeConnection` are all fed
+   * from this single answer. A community's Graine key-distribution group is excluded here and
+   * nowhere else - it carries seeds, never a message, and the client reaches it deliberately
+   * through the Graine layer rather than by finding it in a list of conversations.
+   *
+   * Excluding it at each consumer instead would be a rule every future consumer has to remember,
+   * which is the shape of rule the next call site does not (see `docs/wiki/durable-rules.md`).
    */
   async getUserGroups(
     @Param('userId') userId: string,
@@ -145,9 +155,24 @@ export class MembersController {
       return [];
     }
     const groups = await this.groupRepo.find({ where: { id: In(groupIds) } });
+    // Partitioned rather than filtered in SQL so the count below names ONE cause. A `WHERE
+    // distributionWorkspaceId IS NULL` would make the number of hidden rows a subtraction, and a
+    // subtraction cannot tell a distribution group from a membership pointing at a row that is
+    // simply gone - two situations needing opposite responses.
+    const distribution = groups.filter((g) => g.distributionWorkspaceId);
     const activeGroups = groups
-      .filter((g) => !g.deletedAt)
+      .filter((g) => !g.distributionWorkspaceId && !g.deletedAt)
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    if (distribution.length > 0) {
+      // Not expected: the distribution group is joined by external commit and holds no membership
+      // rows, so reaching this line means something wrote one. Logged loudly because the exclusion
+      // above is what keeps it out of the sidebar, and the exclusion working is not the same as
+      // nothing being wrong.
+      this.logger.warn(
+        `[USER_GROUPS] user=${safeUserId} holds ${distribution.length} membership row(s) on a ` +
+          `distribution group, which should have none: ${distribution.map((g) => g.id).join(',')}`
+      );
+    }
     this.logger.log(
       `[USER_GROUPS] user=${safeUserId} groups=${activeGroups.length} ids=${activeGroups.map((g) => g.id).join(',')}`
     );
