@@ -508,7 +508,8 @@ acknowledged, so the server redelivers it once the join lands; a dispatched fram
 - **WP-31** Send path: encrypt under the session, carry `sessionId`. **DONE 2026-08-18** - below.
 - **WP-32** Receive path: decrypt by `sessionId`; unknown session renders as explicitly unreadable.
   **DONE 2026-08-18** - below.
-- **WP-33** Request and answer a missing seed over the distribution group.
+- **WP-33** Request and answer a missing seed over the distribution group. **DONE 2026-08-18** -
+  below.
 - **WP-34** The history bundle on join, in one message, gated by `history_visibility`.
 - **WP-35** `history_visibility` per community: column, API, settings UI, i18n.
 
@@ -607,6 +608,39 @@ after it.
 `ChannelKeyVault`, `channelKeyMirror`, `channel.key.rotated` and the key-distribution handlers still
 run and still import keys nothing reads. They come out with their server halves in WP-50/51, in one
 piece, rather than leaving the client talking to routes that no longer exist.
+
+#### WP-33, and the answerer nobody elects
+
+**A repair asks ONE named member, and every other member ignores the frame.** The request travels on
+the community's distribution group because that is the only channel every holder is already on, so
+three hundred devices receive it; `answererUserId` is what stops three hundred bundles going back for
+one missing seed. The answerer is the session's own SENDER whenever they are still in the community -
+they always hold it - and the lowest user id in the roster when they are not. That is a total order
+every device already has, computed identically everywhere with no clock, no election and nothing for
+a race to decide.
+
+**A member hands over the floor they hold, never a lower one.** `firstIndex` travels as stored, so a
+repair cannot widen access: somebody given the seed from index 40 answers with 40, and the requester
+ends up exactly as entitled as their answerer was.
+
+**Asked once per SESSION, not once per unreadable row.** A page of fifty rows names a handful of
+sessions between them. The set of asked sessions is in MEMORY on purpose: a request is
+`DELIVERY.transport`, so an answerer who was offline never saw it and the next start must be free to
+ask again. A durable "already asked" marker would be *state answering a question it was not written
+for* - it would silence the retry exactly where the retry is the point. A request that could not even
+be SENT never enters the set, so it is re-asked the moment the next row names it.
+
+**The batching window is a network hop, not a timer.** The flush resolves the community's roster
+first and reads the accumulator afterwards, so everything that finishes decoding during that hop
+joins the same request. A timer here would have been *a clock deciding correctness*: the worst case
+of the hop is one extra request, never a silence.
+
+**A bundle tells the UI which salons it repaired.** The rows it fixes were rendered unreadable and
+dropped minutes earlier, and nothing else would go back for them before the user next leaves and
+re-enters the salon. `setGraineRepairListener` is registered by `ChatBackgroundService` - the layer
+holding both the seed layer and the conversations - and a repair landing with nobody listening warns
+rather than passing silently. `truncated` is on the wire for the same reason: *"this is all there
+is"* and *"this is all I could send"* are different facts, and only one of them means ask again.
 
 ### Phase 5 - reactions
 

@@ -47,7 +47,36 @@ export function setGraineRuntime(next: GraineRuntime | null): void {
   if (!next) {
     workspaceByChannel.clear();
     seedCache.clear();
+    repairListener = null;
   }
+}
+
+/**
+ * Told which channels just gained seeds, so their history can be re-read.
+ *
+ * A repair lands minutes after the rows it repairs were rendered as unreadable and dropped, and
+ * nothing else would ever go back for them: the next reload is whenever the user happens to leave
+ * and re-enter the salon. Registered by the layer that owns conversations, so this module still
+ * knows nothing about them.
+ */
+let repairListener: ((channelIds: string[]) => void) | null = null;
+
+export function setGraineRepairListener(listener: ((channelIds: string[]) => void) | null): void {
+  repairListener = listener;
+}
+
+/** Announces repaired channels, if anyone is listening. */
+export function announceGraineRepair(channelIds: string[]): void {
+  if (channelIds.length === 0) return;
+  if (!repairListener) {
+    // Not silent: the seeds DID arrive, and the only remaining symptom would be a salon whose
+    // history stays blank until the user leaves and comes back to it.
+    console.warn(
+      `[GRAINE] ${channelIds.length} channel(s) repaired with no listener wired - their history will not re-render until reopened`
+    );
+    return;
+  }
+  repairListener(channelIds);
 }
 
 /**

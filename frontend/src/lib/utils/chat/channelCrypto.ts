@@ -13,6 +13,7 @@ import {
   sealChannelMessage,
 } from '$lib/utils/graine/channelSeal';
 import { rawChannelId } from '$lib/utils/graine/runtime';
+import { noteMissingSeed } from '$lib/utils/graine/repair';
 import { SvelteDate } from 'svelte/reactivity';
 
 const channelService = new ChannelService();
@@ -69,6 +70,12 @@ export async function decodeChannelMessageRow(
             ? `sent before this device was given the seed (index ${err.index} < ${err.firstIndex})`
             : String(err))
     );
+    // A missing seed is the ONE unreadability a peer can fix, so it is the one that asks. The
+    // request is deduplicated per session, so a page of fifty rows naming three sessions asks
+    // three times and not fifty.
+    if (err instanceof GraineSessionUnavailableError) {
+      noteMissingSeed(channel, err.sessionId, String(row.senderId || ''));
+    }
     return null;
   }
   if (content === undefined) return null;

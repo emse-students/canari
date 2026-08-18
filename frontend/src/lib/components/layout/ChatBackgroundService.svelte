@@ -80,6 +80,7 @@
     openInvitedChannel,
   } from '$lib/utils/chat/notificationRouting';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import { setGraineRepairListener } from '$lib/utils/graine/runtime';
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
@@ -791,6 +792,17 @@
 
   // ── Online / foreground resume: retry a failed workspace load ─────────────
   onMount(() => {
+    // A Graine repair lands minutes after the rows it repairs were rendered unreadable and dropped,
+    // and nothing else would go back for them before the user next leaves and re-enters the salon.
+    // Registered HERE because this is the layer holding both the seed layer and the conversations.
+    setGraineRepairListener((channelIds) => {
+      for (const channelId of channelIds) {
+        const conversationId = `channel_${channelId}`;
+        globalConvs.invalidateChannelHistoryCache(conversationId);
+        void globalConvs.loadHistoryForConversation(conversationId, conversationId, convCtx());
+      }
+    });
+
     function handleOnline() {
       if (!globalSession.isLoggedIn) return;
       if (globalChannels.isLoadingWorkspaces) return;
@@ -817,6 +829,7 @@
       window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisibility);
       setSessionExpiredHandler(null);
+      setGraineRepairListener(null);
     };
   });
 
