@@ -19,7 +19,16 @@
 
   const canConfirm = $derived(!pending?.requireText || typed.trim() === pending.requireText.trim());
 
+  /**
+   * Escape cancels, and nothing typed into the dialog reaches the app's own shortcuts.
+   *
+   * Bound on the dialog AND on the window because the dialog stops propagation: with the handler
+   * only on the window, Escape worked exactly while focus was outside the dialog - which the focus
+   * trap makes never. The typed confirmation made that certain rather than likely, since the input
+   * takes focus on open.
+   */
   function handleKeydown(e: KeyboardEvent) {
+    e.stopPropagation();
     if (e.key === 'Escape') resolveConfirm(false);
   }
 </script>
@@ -42,7 +51,7 @@
         use:focusTrap
         class="w-full max-w-sm rounded-2xl bg-[var(--cn-surface)] border border-cn-border shadow-2xl p-6 space-y-5"
         onclick={(e) => e.stopPropagation()}
-        onkeydown={(e) => e.stopPropagation()}
+        onkeydown={handleKeydown}
         in:fly={{ duration: 200, y: 16 }}
       >
         <p class="text-sm font-medium text-text-main leading-relaxed">{pending.message}</p>
