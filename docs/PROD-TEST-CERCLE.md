@@ -51,6 +51,20 @@ There is also one gap in the ledger that is his call, not ours: `undo` and `cash
 the schema and written by nothing, so a mis-keyed consumption **cannot be corrected**. He declined
 an `adjustment` kind on 2026-07-28, and `bun run db:check` refuses to guess the sign of either.
 
+### One more, found on 2026-08-19
+
+**A second `.env` full of live credentials sits in a directory nothing deploys from.** The pipeline
+writes `/srv/le-cercle/.env` and runs `compose.yml` from there - that directory holds those two
+files and nothing else. `~/le-cercle` is the clone of the pre-pipeline era: its HEAD is `1a78c98`,
+weeks behind `main`, and its `.env` was last written on 2026-08-04, before the systemd service was
+retired. It still carries `MICONNECT_CLIENT_SECRET`, `CANARI_API_KEY`, `CANARI_WEBHOOK_SECRET` and a
+`JWT_SECRET` that has since been rotated.
+
+Nothing reads it, which is exactly the problem: it is a copy of production's secrets that no
+rotation will ever reach, in the place someone editing configuration by hand would look first. **To
+raise with Aurel**, along with the choice of deleting the clone outright or emptying its `.env` -
+his host, and neither is ours to do.
+
 ## The real addresses
 
 | What | Value |
