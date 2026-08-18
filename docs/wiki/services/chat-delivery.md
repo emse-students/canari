@@ -852,7 +852,21 @@ parity row.
 | GET | `/api/mls/link-preview` | Fetch safe external URL preview |
 | GET | `/api/mls/link-preview/image?url=` | Proxy a preview's `og:image` or favicon |
 | GET | `/api/mls/link-safety?url=` | Google Safe Browsing verdict for a URL (WP-SAFELINK-1) |
-| GET | `/api/mls/gallery-cover/:albumId` | Proxy MiGallery album cover image |
+
+#### Who carries the MiGallery key, and who does not
+
+One rule, decided on 2026-08-17: **an image is public and needs no key, a metadata read does.**
+
+`fetchMiGalleryPreview` calls `/api/albums/:id/info` with `MIGALLERY_API_KEY`, because that
+endpoint stays gated for private albums - it is the only credentialed call to MiGallery in this
+service. Cover images are not: MiGallery serves `/cover` (square) and `/og-cover` (wide) publicly
+for every visibility, since an external site embeds one from an `<img>` tag, which carries no key.
+They go through the ordinary `/api/mls/link-preview/image` proxy like any other preview image -
+which is also the only path with the SSRF guard and the content-type check.
+
+A second, key-carrying `/api/mls/gallery-cover/:albumId` proxy existed until then, from when covers
+were gated. Deleting it is what makes the rule true rather than aspirational: with two doors to one
+site, which credential applied depended on which field of the payload the client happened to read.
 
 #### Link preview is a user-controlled server-side fetch (SSRF)
 
@@ -921,11 +935,21 @@ correctness, which is what makes the choice reversible.
 #### Link safety is its own endpoint, deliberately not a field on the preview (WP-SAFELINK-1)
 
 `/api/mls/link-safety?url=` answers `{ unsafe: boolean }` from Google Safe Browsing's Lookup API
-(`utils/safe-browsing.ts`), gating navigation client-side: `AppLink` and `LinkPreviewCard` both
-call `checkLinkSafety`/`confirmUnsafeLinkIfNeeded` (`frontend/src/lib/utils/checkLinkSafety.ts`)
-and only show a confirmation (`showConfirm`, danger-styled) at the point of an actual click on a
-flagged link - never a badge decorating every rendered link, which would be alert fatigue for a
-check that is almost always going to say "fine".
+(`utils/safe-browsing.ts`), gating navigation client-side through `confirmUnsafeLinkIfNeeded`
+(`frontend/src/lib/utils/checkLinkSafety.ts`), which only shows a confirmation (`showConfirm`,
+danger-styled) at the point of an actual click on a flagged link - never a badge decorating every
+rendered link, which would be alert fatigue for a check that is almost always going to say "fine".
+
+**The gate lives in `openExternal()` (`frontend/src/lib/utils/openExternal.ts`), not in the two
+components that render a link.** It shipped there first (`AppLink`/`LinkPreviewCard` each gating
+their own bubble-phase `onclick`), which worked on the web and was silently dead on every Tauri
+build: a document-level CAPTURE-phase listener installed by `hooks.client.ts`, pre-existing since
+April for unrelated in-app-link routing, already intercepts and `stopPropagation()`s the same click
+before it reaches the anchor, and opens the URL through `openExternal` directly. Moving the check
+into `openExternal` itself - the one function every path to an actually-opened URL calls, including
+that interceptor and the conversation's shared-links tab (which had no check on any platform) -
+means no future caller can bypass it by forgetting to call `confirmUnsafeLinkIfNeeded` first. See
+[durable-rules](../durable-rules.md#mobile-and-native---frontendmobile).
 
 - **A separate endpoint from `getLinkPreview` on purpose.** The two checks have unrelated failure
   modes: a page with a broken `<title>` or a redirect loop makes `getLinkPreview` throw and return

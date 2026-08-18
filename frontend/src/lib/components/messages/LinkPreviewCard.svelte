@@ -5,7 +5,7 @@
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
   import { fetchCanariLinkPreview, type CanariLinkPreview } from '$lib/utils/canariLinkPreview';
   import { CANARI_BADGE_LABEL } from '$lib/utils/canariLinkPreviewFormat';
-  import { confirmUnsafeLinkIfNeeded } from '$lib/utils/checkLinkSafety';
+  import { openExternal } from '$lib/utils/openExternal';
   import {
     ecosystemCoverCardFor,
     ecosystemSiteFor,
@@ -145,9 +145,16 @@
    * Every candidate goes through Canari's image proxy, which is what keeps that
    * last sentence true for the conventional paths too - they are derived here,
    * so nothing server-side would otherwise have rewritten them.
+   *
+   * Empty for a cover card: that branch shows the site's name and its cover, and
+   * no favicon anywhere. Probing one is a chain of outbound requests whose answer
+   * nothing reads - and whose failures are the `404` / `415` console lines a
+   * MiGallery album printed on every render.
    */
   const faviconChain = $derived(
-    faviconCandidates(parsed.href, externalPreview?.icon).map(proxiedPreviewImageUrl)
+    coverCard
+      ? []
+      : faviconCandidates(parsed.href, externalPreview?.icon).map(proxiedPreviewImageUrl)
   );
 
   /** The Open Graph image, likewise fetched through the proxy rather than from its host. */
@@ -211,14 +218,11 @@
       return;
     }
 
-    // WP-SAFELINK-1: same gate as AppLink's external branch. Only a plain left-click is
-    // intercepted - a modified click (new tab/window) goes through the browser's own handling.
+    // `openExternal` carries its own Safe Browsing gate (WP-SAFELINK-1). Only a plain left-click
+    // is intercepted - a modified click (new tab/window) goes through the browser's own handling.
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
-    const proceed = await confirmUnsafeLinkIfNeeded(parsed.href);
-    if (proceed) {
-      window.open(parsed.href, '_blank', 'noopener,noreferrer');
-    }
+    await openExternal(parsed.href);
   }
 </script>
 

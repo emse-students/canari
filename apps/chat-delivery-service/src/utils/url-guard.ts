@@ -605,8 +605,16 @@ const GALLERY_ALBUM_RE = /^\/albums\/([0-9a-f-]+)\/?$/i;
  * authenticated `/api/albums/[id]/info` endpoint - works for all visibility
  * levels (unlisted, authenticated, private).
  *
- * The cover image URL points to Canari's own `/api/mls/gallery-cover/:albumId`
- * proxy so the browser never needs the MiGallery API key directly.
+ * ONE RULE, TWO KINDS OF THING: an image is public and needs no key, a metadata
+ * read does. MiGallery serves every album's cover unauthenticated whatever its
+ * visibility - an external site embeds one from an `<img>`, which carries no
+ * key - so the image URL here is MiGallery's own public one, fetched like any
+ * other preview image by the SSRF-guarded proxy. Only this call holds the key,
+ * because `/info` is the one thing that stays gated.
+ *
+ * The URL is built from `targetUrl.origin`, never from `MIGALLERY_API_URL`: that
+ * variable may name an internal address, and this string is handed to a browser
+ * and re-validated as an external URL before anything fetches it.
  *
  * Returns `null` when the URL is not a recognised album link or the API call fails.
  * The returned object has the same shape as `buildLinkPreviewPayload`.
@@ -628,7 +636,6 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
     ''
   );
   const apiKey = process.env.MIGALLERY_API_KEY || '';
-  const frontendUrl = (process.env.FRONTEND_URL || 'https://canari-emse.fr').replace(/\/$/, '');
 
   if (!apiKey) return null;
 
@@ -673,7 +680,7 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
       url: targetUrl.toString(),
       title: album.name.slice(0, 180),
       description: descParts.join(' · '),
-      image: `${frontendUrl}/api/mls/gallery-cover/${albumId}`,
+      image: `${targetUrl.origin}/api/albums/${albumId}/og-cover`,
       siteName: 'MiGallery',
     };
   } catch {
