@@ -6,7 +6,7 @@
 #   ./infrastructure/backup/restore.sh <archive.tar.gz> --yes
 #   ./infrastructure/backup/restore.sh --latest-from-mitv --yes
 #
-# OPERATION DESTRUCTIVE : ecrase les donnees actuelles (postgres, mongo, garage,
+# OPERATION DESTRUCTIVE : ecrase les donnees actuelles (postgres, garage,
 # media, Authentik) par celles de l archive. Exige --yes pour s executer.
 #
 # DEPUIS LE 2026-08-11 UNE RESTAURATION COMPLETE UTILISE DEUX SOURCES : l archive
@@ -109,11 +109,10 @@ if [ -f "$STAGE/postgres_auth_db.sql.gz" ]; then
     | "${DC[@]}" exec -T postgres psql -U "$POSTGRES_USER" -d auth_db -v ON_ERROR_STOP=0
 fi
 
-# ── MongoDB ───────────────────────────────────────────────────────────────────
-if [ -f "$STAGE/mongo_chat_db.archive.gz" ]; then
-  log "Restauration MongoDB chat_db…"
-  "${DC[@]}" exec -T mongo mongorestore --gzip --archive --drop < "$STAGE/mongo_chat_db.archive.gz"
-fi
+# MONGODB : rien a restaurer. Le service a ete supprime le 2026-08-18 et les
+# archives anterieures ne portent qu un dump vide (aucune base applicative n a
+# jamais existe). Une archive d avant cette date contient encore le membre
+# mongo_chat_db.archive.gz ; il est ignore, deliberement.
 
 # ── Garage (volumes objet) ──────────────────────────────────────────────────────
 # L ABSENCE N EST JAMAIS SILENCIEUSE : si le depot restic est illisible, ce script S ARRETE

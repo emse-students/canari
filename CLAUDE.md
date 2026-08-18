@@ -132,27 +132,24 @@ its commit are in. The detail lives where the link says - **do not restate it he
 device ladder cannot be run at all - written up as such on
 [device-verification](docs/wiki/device-verification.md) rather than left looking pending.
 
-1. Remove the dead `mongo` service from `docker-compose.prod.yml`, and the backup manifest naming
-   it as a recovery source it is not. **Approved 2026-08-17** (a prod service change), volume
-   included - the user's instruction is to delete what is stale, not to keep it for a window.
-2. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
+1. Confirm MUT-17's `smileOnDeletedPresent: false` closes the deleted-message picker entry, and
    delete that entry if it does.
-3. **`deleteWorkspace` really deletes** (decided 2026-08-18), behind an explicit confirmation -
+2. **`deleteWorkspace` really deletes** (decided 2026-08-18), behind an explicit confirmation -
    typing the community name. The durable-delete code has existed since WP-01; what is new is
    turning a reversible control irreversible, so the confirmation is part of the work, not a
    follow-up. See [backlog](docs/wiki/backlog.md).
-4. **THE ADMIN ANNOUNCEMENT** (new, the user, 2026-08-18): a place in `/admin/platform` to publish a
+3. **THE ADMIN ANNOUNCEMENT** (new, the user, 2026-08-18): a place in `/admin/platform` to publish a
    message shown ONCE PER ACCOUNT at the next app opening, on whichever device gets there first -
    so the "seen" state is server-side and survives a reinstall. A centred modal closed by a button,
    French and English both entered, one active announcement at a time, with an OPTIONAL client
    version range so "what changed in 0.15" reaches only those who have it. Scoped in
    [backlog](docs/wiki/backlog.md).
-5. **MiGallery's fuzzy search** - the last of the four projects still on plain substring matching,
+4. **MiGallery's fuzzy search** - the last of the four projects still on plain substring matching,
    against the user's standing requirement. In scope, decided 2026-08-18; port Canari's pg_trgm +
    unaccent approach or Sky's `personMatchScore`, whichever fits what that repo has.
-6. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
+5. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
    browsers.
-7. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
+6. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
    must end green, so every phase runs** - and the board says what that really costs: MSG is the
    ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
    **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
@@ -167,26 +164,10 @@ device ladder cannot be run at all - written up as such on
 
 ### CANARI - what is open
 
-**Owed on a LOGGED-IN session: the GIF-comment flow end to end.** The blocked step is proven fixed
-on the deployed header - the exact `fetch` + `File` that `handleGifSelected` builds returns 2.44 MB
-of `image/gif` with zero `securitypolicyviolation` events. What is NOT re-checked is what follows it
-(`encryptAndUpload` -> the comment renders), because that needs an account and the harness profiles
-are where those live. It is the same `stageMediaFile` an image comment uses, so it is a confirmation,
-not a suspicion - fold it into the campaign rather than opening a WP.
-
-**WP-STRANDED-1 - fixed at its cause 2026-08-16, VERIFICATION OWED.** Owed: MUT-19 on the deployed
-bundle, then delete the five residue rows on W1 by id (an allowlist of exactly those five, each
-proven MUT-19's) so `recon.mjs` reads `RECONCILED` again. The mechanism is on
-[chat](docs/wiki/frontend/modules/chat.md), the rule in
-[durable-rules](docs/wiki/durable-rules.md) - do not re-derive either here.
-
-**The device verification ladder.** Everything native is verified by COMPILING, which proves nothing
-about running; the owed list is [device-verification](docs/wiki/device-verification.md). Android
-passed on v0.11.7; **iOS has never run one check on hardware**. Owed on both: H (deep link into the
-conversation), K (quick reply), L (revoked device re-enrolling), N (offline unlock + promotion), O
-(the store/update destination), P (the iOS cookie jar). **Open a WP only when a check FAILS**, with
-its captured log. Same shape: the four human checks left from the SEO work
-([seo](docs/wiki/frontend/seo.md)).
+**Owed on the prod host, once the deploy that removes `mongo` has answered: delete the container
+and `docker volume rm infrastructure_mongo_data`** (479 MB of MongoDB system files - the instance
+never held an application database, checked twice). The compose files no longer declare it, so the
+deploy stops it; the volume outlives a `compose down` and has to be named.
 
 **Owed cleanup: remove the orphaned `minio_data` volume after 2026-08-28** (14-day rollback window
 after the Garage migration - see [docker](docs/wiki/infrastructure/docker.md)). **And delete the
@@ -203,11 +184,6 @@ App Store half was never verified, so the raise locks out any iOS user it has no
 shipping order this violated is written down for next time: publish -> VERIFY the store serves it ->
 only THEN raise ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
 
-**Settled - do not re-open.** **Nothing tells the RECEIVER's user that a message was lost, and it
-stays that way.** The two history gaps and why `history_request` is not durable are argued in
-[history-reconciliation](docs/wiki/protocols/history-reconciliation.md); the 30-day media window in
-[storage-forecast](docs/wiki/infrastructure/storage-forecast.md) §6; the SharedWorker MLS client is
-POST-CAMPAIGN in [backlog](docs/wiki/backlog.md).
 
 ### CANARI - the test campaign
 
@@ -257,35 +233,3 @@ architecturalement regle, pas mettre des pansements avec des timeouts ou autre, 
 deterministe, reproductible, explicable. Et doit marcher avec une conversation de toute les
 tailles"*; *"pense factorisation, proprete, simplicite"*.
 
-### LE CERCLE - MERGED, AND WE PUSH TO `main` NOW
-
-**MR !4 was merged by Aurel on 2026-08-18**, squashed as `369f8ea` + merge `8423b22`. `origin/main`
-came out **byte-identical to our eleven-commit series** - nothing was dropped or amended - and GitLab
-deleted the source branch. `chore/project-conventions` no longer exists; do not recreate it.
-`../MR-CERCLE-2.md` is now a record of what that series contained, not a description to paste.
-
-**The user granted push rights and, on 2026-08-18, authorised committing straight to `main`**
-(*"ne fais pas de branche, va direct push sur main (regle exceptionnelle aujourd'hui)"*). `3836b8f`
-(the cercleux tab) went that way. **Exceptional and dated** - it is still Aurel's repository, and a
-large or opinionated change is still owed a branch and his word.
-
-**VEILLE - on demand, never scheduled.** He works on `main` and so do we now, so it is a plain
-`git pull` and a read of what landed. Re-apply our conventions to HIS new code per
-`../le-cercle/AGENTS.md` - the canonical checklist - expecting `prettier --check` failures on what he
-merged, with formatting-only fixes in their own commit. Resync the wiki (`authentication.md`,
-`ledger.md`, `data-model.md`, `deployment.md`, `frontend.md` rot fastest). **Le Cercle is prettier +
-eslint + husky, NOT Canari's oxfmt/oxlint** - run its own `format` / `lint` scripts.
-
-**What is left is his to decide** (the ledger's unwritable `undo`/`cashout`, the placeholder
-`AUTH_SECRET`; `JWT_OLD_SECRET` was DELETED by the merged series) and it is written up, with the
-fingerprints that establish it, in [PROD-TEST-CERCLE](docs/PROD-TEST-CERCLE.md) - to RAISE, never to
-patch. Three prod tests there need a human and are not WPs: V1 (a real MiConnect round trip), V2 (the
-access gate), V4 (the alcohol gate at a till).
-
-**Ours, not the repo's:** `CANARI_INTEGRATION_ENABLED` sits in the deployed `.env` and is referenced
-NOWHERE since the rewrite - dead, not a switch. Never test the Canari link against the DEV server:
-`$env/dynamic/private` there came from a stale process and read the OLD `.env`, silently disabling it
-- build, then `bun ./build/index.js` with the env explicit on the command line. `TaskStop` does NOT
-free the port; kill by port with `Get-NetTCPConnection ... | Stop-Process`. Prod is `ssh cercle`
-(10.0.0.6, ProxyJump canari); our audit branch is archived
-(`archive/audit/security-and-canari-integration`) and must never be redeployed.

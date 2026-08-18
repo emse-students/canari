@@ -351,8 +351,8 @@ production's MongoDB holds no application database at all (`admin`, `config`, `l
 nothing connects to it - there is no MongoDB connection string anywhere in the code. The MLS history
 is in PostgreSQL and was always backed up correctly. **Only the documentation was wrong, which
 during an incident is worse than the documentation being absent**: it names a recovery source that
-does not exist. The `mongo` service in `docker-compose.prod.yml` is a residue and is a candidate for
-removal.
+does not exist. The `mongo` service, its volume and its dump were deleted on 2026-08-18 - see
+[databases](databases.md#mongodb---removed-2026-08-18).
 
 One consequence that must not be lost: the repository password lives at
 `/home/canari/.config/canari/restic-password`, NOT in `infrastructure/.env`, because the CD rewrites
@@ -565,7 +565,7 @@ on the prose any more (`mediaErrors.test.ts` pins that a look-alike message is N
 ## Related
 
 - [backup](backup.md) - the current scheme, its retention and the offsite copy
-- [databases](databases.md) - what lives in Postgres, Mongo and Redis
+- [databases](databases.md) - what lives in Postgres and Redis
 - [chat-delivery](../services/chat-delivery.md) - the per-device fan-out and `queued_message`
 - [social-service](../services/social-service.md) - channel storage and the symmetric channel key
 - [media-service](../services/media-service.md) - upload, encryption and the retention sweep

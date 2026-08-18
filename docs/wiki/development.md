@@ -241,7 +241,6 @@ All services + infrastructure run in Docker with host port mapping. Dev host por
 | social-service | 3014 | 3114 |
 | Redis | 6379 | 6380 |
 | PostgreSQL | 5432 | 5433 |
-| MongoDB | 27017 | 27018 |
 | Kafka | 9092 | 9093 |
 | Garage S3 API | 3900 | 19100 |
 

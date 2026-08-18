@@ -53,7 +53,7 @@ export interface ChannelSidebarWorkspace {
   id: string;
   /** Human-readable display name. */
   name: string;
-  /** MongoDB _id from the backend - may be absent until the first API sync. */
+  /** Server-side primary key of the workspace - may be absent until the first API sync. */
   workspaceDbId?: string;
   /** Seed for the avatar image fallback (usually the workspace name). */
   avatarUserId: string;

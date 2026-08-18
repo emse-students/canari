@@ -48,7 +48,7 @@ Browser / Tauri (Native App)
     |-> core-service:3012      (NestJS)     OIDC auth (Authentik), users, Stripe
     `-> social-service:3014    (NestJS)     Posts, forms, channels, associations
 
-Infrastructure: PostgreSQL · MongoDB · Redis · Kafka · Garage
+Infrastructure: PostgreSQL · Redis · Kafka · Garage
 ```
 
 > In production, Cloudflare Tunnel terminates TLS and forwards to `localhost:8080` → Nginx.
@@ -161,7 +161,7 @@ French-language user documentation is in [`docs/user-guide/`](docs/user-guide/in
 | **Gateway** | Rust · Axum · Tokio · Redis pub/sub |
 | **SFU** | Rust · webrtc-rs · Axum · Cloudflare TURN |
 | **Backend services** | NestJS 10 · TypeORM · Node.js 24 |
-| **Data stores** | PostgreSQL · MongoDB · Redis · Garage |
+| **Data stores** | PostgreSQL · Redis · Garage |
 | **Auth** | Authentik (OIDC) · JWT HS256 · HttpOnly cookies |
 | **DevOps** | Docker · GitHub Actions · Nginx · Cloudflare Tunnel |
 

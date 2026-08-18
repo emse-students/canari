@@ -81,22 +81,6 @@ services:
       retries: 3
       start_period: 40s
 
-  mongo:
-    image: mongo:latest
-    restart: always
-    expose:
-      - "27017"
-    environment:
-      MONGO_INITDB_DATABASE: chat_db
-    volumes:
-      - mongo_data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
   postgres:
     image: postgres:15-alpine
     restart: always
@@ -228,8 +212,6 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-      mongo:
-        condition: service_started
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3010/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -466,7 +448,6 @@ services:
         condition: service_started
 
 volumes:
-  mongo_data:
   postgres_data:
   # The shared message log. See the redis service above for why this is not optional.
   redis_data:

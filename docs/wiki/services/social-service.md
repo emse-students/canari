@@ -18,9 +18,12 @@ The social-service manages all community features:
 
 | Store | Purpose |
 |---|---|
-| PostgreSQL | Channels, workspaces, memberships, Graine sessions, forms, submissions, associations, products |
-| MongoDB | Posts, comments, reactions (document store) |
+| PostgreSQL | Channels, workspaces, memberships, Graine sessions, forms, submissions, associations, products, **and posts, comments and reactions** |
 | Redis | `chat:channel_events` pub/sub (publishes to chat-gateway) |
+
+This table said "MongoDB - posts, comments, reactions" until 2026-08-18. It was never true: the
+posts module is TypeORM entities in PostgreSQL, and there is no MongoDB client anywhere in this
+service. The `mongo` container it described is deleted.
 
 ## Channel encryption model
 
@@ -520,7 +523,6 @@ since `inviteIsValid` would otherwise hand back a token dead on arrival with not
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | yes | PostgreSQL connection string |
-| `MONGODB_URI` | yes | MongoDB connection string |
 | `REDIS_URL` | yes | Redis connection string |
 | `JWT_SECRET` | yes | HS256 secret (shared with all services) |
 | `STRIPE_SECRET_KEY` | no | Stripe secret key (form/product payments) |

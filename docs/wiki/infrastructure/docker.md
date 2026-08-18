@@ -15,14 +15,13 @@
 frontend (Nginx:80)
   |-- chat-gateway:3000         <- depends on redis, kafka
   |-- call-service:3004          <- depends on Cloudflare TURN (no internal deps)
-  |-- chat-delivery-service:3010 <- depends on postgres, redis, kafka, mongo
+  |-- chat-delivery-service:3010 <- depends on postgres, redis, kafka
   |-- media-service:3011         <- depends on garage
   |-- core-service:3012          <- depends on postgres
   |-- social-service:3014        <- depends on postgres, core-service, media-service
 
 Infrastructure:
   postgres:5432    <- auth_db (core, chat-delivery, social)
-  mongo:27017      <- chat_db (posts, MLS history blobs)
   redis:6379       <- presence, pub/sub, history streams
   kafka:29092      <- async events
   zookeeper:2181   <- Kafka coordinator
@@ -128,7 +127,6 @@ In dev, each service is offset from its canonical port to avoid conflicts with l
 | frontend (Nginx) | 80 | 3080 |
 | Redis | 6379 | 6380 |
 | PostgreSQL | 5432 | 5433 |
-| MongoDB | 27017 | 27018 |
 | Kafka (external) | 9092 | 9093 |
 | Garage S3 API | 3900 | configurable (`GARAGE_API_HOST_PORT`, default 19010 prod / 19100 dev) |
 
@@ -166,7 +164,6 @@ chat-delivery-service, Garage, Redis, and Kafka have health checks. Other servic
 | Volume | Contents |
 |---|---|
 | `postgres_data` | PostgreSQL data directory |
-| `mongo_data` | MongoDB data directory |
 | `garage_meta` | Garage cluster/bucket/key metadata (LMDB) |
 | `garage_data` | Garage object storage (media blobs) |
 | `media_meta` | media-service metadata sidecar |

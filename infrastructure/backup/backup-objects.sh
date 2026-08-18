@@ -5,7 +5,7 @@
 # WHY THIS EXISTS
 # ---------------
 # backup.sh writes ONE full archive per night and keeps 14. For the logical dumps
-# (PostgreSQL, MongoDB) that is the right scheme: they are small and they compress. For
+# (PostgreSQL) that is the right scheme: they are small and they compress. For
 # the media blobs it is not. Those blobs are encrypted client-side, so they are incompressible
 # AND immutable - re-archiving the whole volume nightly makes every live byte cost 15 more on
 # a 125 GB disk. The measured model is in docs/wiki/infrastructure/storage-forecast.md.

@@ -14,11 +14,10 @@ In production, Cloudflare Tunnel exposes `http://localhost:8080`, which forwards
 | **chat-delivery-service** | NestJS | 3010 | PostgreSQL + Redis | MLS API, offline queue, Redis Stream history |
 | **media-service** | NestJS | 3011 | Garage | E2EE encrypted blob storage |
 | **core-service** | NestJS | 3012 | PostgreSQL | OIDC auth (Authentik), users, Stripe payments |
-| **social-service** | NestJS | 3014 | PostgreSQL + MongoDB | Posts, forms, channels/communities, associations |
+| **social-service** | NestJS | 3014 | PostgreSQL | Posts, forms, channels/communities, associations |
 | Redis | - | 6379 | - | Presence, pub/sub, history streams |
 | Kafka | Confluent 7.5 | 9092 / 29092 | - | Async event bus |
 | PostgreSQL | - | 5432 | `auth_db` | Relational data |
-| MongoDB | - | 27017 | `chat_db` | Posts and document data |
 | Garage | - | 3900 / 3903 | - | Media blobs (S3-compatible; formerly MinIO on 9000/9001) |
 | Coturn | - | 3478 / 5349 | - | STUN/TURN WebRTC (local dev only; production uses Cloudflare TURN) |
 

@@ -60,19 +60,18 @@ PostgreSQL is backed up daily via `pg_dump -d auth_db --clean --if-exists` (logi
 
 ---
 
-## MongoDB
+## MongoDB - REMOVED 2026-08-18
 
-**Image**: `mongo:latest`  
-**Port**: 27017 (container), 27018 (dev host)  
-**Database**: `chat_db`
+There was a `mongo:latest` container, `chat_db` was declared as its database, and this page said
+social-service used it for posts, polls, comments and reactions. **None of it was true.** Those
+live in PostgreSQL as TypeORM entities; no service ever held a MongoDB connection string, and the
+database `chat_db` was never even created - the instance carried `admin`, `config` and `local` and
+nothing else, measured on 2026-08-11 and again on 2026-08-18. `chat-delivery-service` waited on it
+to become healthy before booting, which delayed every start for a container it never opened a
+socket to. It was still dumped nightly into a 116-byte archive listed in the backup manifest, where
+a line reads as a backup.
 
-Used by social-service for document-oriented data.
-
-| Collection | Contents |
-|---|---|
-| `posts` | Markdown post documents, polls, comments, reactions |
-
-Backed up daily via `mongodump --db=chat_db --archive --gzip`.
+Service, `mongo_data` volume, `depends_on` and backup step are all gone.
 
 ---
 

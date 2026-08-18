@@ -61,15 +61,6 @@ services:
       timeout: 3s
       retries: 10
 
-  mongo:
-    image: mongo:latest
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_DATABASE: chat_db
-    volumes:
-      - mongo_data:/data/db
-
   postgres:
     image: postgres:15-alpine
     ports:
@@ -162,8 +153,6 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-      mongo:
-        condition: service_started
     healthcheck:
       test:
         [
@@ -315,7 +304,6 @@ services:
         condition: service_started
 
 volumes:
-  mongo_data:
   postgres_data:
   garage_meta:
   garage_data:

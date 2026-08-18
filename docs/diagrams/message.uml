@@ -6,7 +6,7 @@ participant "Redis (Pub/Sub)" as Redis
 participant "Kafka (Topic: chat-messages)" as Kafka
 participant "Client B (MLS)" as ClientB
 participant "Chat History Service" as History
-participant "MongoDB" as MongoDB
+participant "PostgreSQL (auth_db)" as Postgres
 
 UserA -> ClientA: Tape "Bonjour"
 
@@ -29,7 +29,7 @@ par Distribution Temps Réel (Fan-out)
 else Persistance Asynchrone
     Gateway -> Kafka: Produce Record
     Kafka --> History: Consommation Event
-    History -> MongoDB: Sauvegarde Blob MLS (Opaque)
+    History -> Postgres: Sauvegarde Blob MLS (Opaque) dans queued_message
 end
 
 ClientB -> ClientB: MLS Process(Ciphertext)

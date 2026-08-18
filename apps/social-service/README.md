@@ -57,8 +57,7 @@ An association without its own Stripe Connect account can delegate payments to a
 
 | Store | Purpose |
 |---|---|
-| PostgreSQL | Channels, workspaces, memberships, key distributions, forms, submissions, associations, products, user tags |
-| MongoDB | Posts, comments, reactions (document store) |
+| PostgreSQL | Channels, workspaces, memberships, forms, submissions, associations, products, user tags, **and posts, comments and reactions** |
 | Redis | `chat:channel_events` pub/sub |
 
 ## Startup

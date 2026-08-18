@@ -12,19 +12,19 @@ Sauvegarde complete de toutes les donnees persistantes, avec une copie locale
 | Garage (`infrastructure_garage_data`, `infrastructure_garage_meta`) | **depot restic deduplique uniquement** (voir plus bas) | medias chiffres |
 | media-service (`infrastructure_media_meta`) | tar du volume + depot restic | metadonnees media |
 | PostgreSQL Authentik (`miconnect`) | `pg_dump` | identites, config OIDC |
-| MongoDB (`chat_db`) | `mongodump` | **rien** - voir ci-dessous |
 
 Non sauvegarde car transitoire : Kafka, Redis, Zookeeper.
 
 Chaque execution produit une archive unique `canari-backup-AAAAMMJJ-HHMMSS.tar.gz`.
 
-> **Le dump MongoDB pese 116 octets et c est normal.** L instance de production ne
-> contient aucune base applicative (verifie le 2026-08-11 : seules `admin`, `config` et
-> `local` existent) et aucun service ne s y connecte - il n existe aucune chaine de
-> connexion MongoDB dans le code. Ce tableau annoncait auparavant que Mongo portait les
-> "blobs MLS chiffres / historique", ce qui etait faux : cet historique est dans
-> PostgreSQL. Un dump vide n est pas une panne, mais il ne doit pas passer pour une
-> sauvegarde. Le service `mongo` de `docker-compose.prod.yml` est un residu.
+> **MongoDB a ete SUPPRIME de la stack le 2026-08-18**, et son dump avec. L instance ne
+> contenait aucune base applicative (verifie le 2026-08-11 puis le 2026-08-18 : seules
+> `admin`, `config` et `local` existent) et aucun service ne s y connectait - il n a jamais
+> existe de chaine de connexion MongoDB dans le code. Ce tableau annoncait que Mongo portait
+> les "blobs MLS chiffres / historique", ce qui etait faux : cet historique est dans
+> PostgreSQL. Une archive de 116 octets au manifeste n est pas une panne, mais elle se lit
+> comme une sauvegarde, et c est pire. Les archives anterieures au 2026-08-18 portent encore
+> le membre `mongo_chat_db.archive.gz` ; `restore.sh` l ignore deliberement.
 
 ## Une restauration complete utilise DEUX sources
 

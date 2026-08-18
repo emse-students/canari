@@ -25,7 +25,6 @@ Each nightly run produces one timestamped archive (`canari-backup-YYYYMMDD-HHMMS
 | `postgres_auth_db.sql.gz` | PostgreSQL `auth_db` | `pg_dump --clean --if-exists` in the container |
 | `media_meta.tar.gz` | media-service `media_meta` volume | `tar czf` via throwaway Alpine container |
 | `authentik_db.sql.gz` | Authentik PostgreSQL | `pg_dump` in the Authentik container (skipped if absent) |
-| `mongo_chat_db.archive.gz` | MongoDB `chat_db` | `mongodump` - **empty, see below** |
 | `MANIFEST.txt` | - | Timestamp, git commit, content description, and where the media are |
 
 Plus, at 04:00, `backup-objects.sh` (`infrastructure_garage_data` + `infrastructure_garage_meta` +
@@ -34,12 +33,14 @@ The object storage backend migrated from MinIO to Garage on 2026-08-14 (MinIO is
 maintained upstream) - see [docker](docker.md). Snapshots taken before that date are in the old
 `infrastructure_minio_data` format; see the comment at the top of `restore.sh`.
 
-> **`mongo_chat_db.archive.gz` is 116 bytes and that is correct.** Production's MongoDB holds no
-> application database - only `admin`, `config` and `local` - and nothing in the codebase carries a
-> MongoDB connection string. The encrypted MLS history is in **PostgreSQL** (`queued_message`,
-> `mls_*`), inside `postgres_auth_db.sql.gz`. The manifest claimed otherwise until 2026-08-11, which
-> is the kind of error that only matters once, on the day someone is restoring. The `mongo` service
-> is a residue and is a candidate for removal.
+> **MongoDB was REMOVED from the stack on 2026-08-18**, and its dump with it. The instance held no
+> application database - only `admin`, `config` and `local`, measured on 2026-08-11 and again on
+> 2026-08-18 - and nothing in the codebase ever carried a MongoDB connection string. The encrypted
+> MLS history is in **PostgreSQL** (`queued_message`, `mls_*`), inside `postgres_auth_db.sql.gz`.
+> The manifest claimed otherwise until 2026-08-11, which is the kind of error that only matters
+> once, on the day someone is restoring - and a 116-byte member that stays on the list reads as a
+> backup, which is worse than an absent one. Archives taken before 2026-08-18 still carry
+> `mongo_chat_db.archive.gz`; `restore.sh` ignores it deliberately.
 
 ### Why the media are not in the archive
 
