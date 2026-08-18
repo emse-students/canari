@@ -2065,7 +2065,10 @@ export const canari = $root.canari = (() => {
          * @property {canari.SystemMsg.$Properties|null} [system] AppMessage system
          * @property {canari.CallMsg.$Properties|null} [call] AppMessage call
          * @property {canari.PollMsg.$Properties|null} [poll] AppMessage poll
-         * @property {"text"|"reply"|"reaction"|"media"|"system"|"call"|"poll"} [kind] AppMessage kind
+         * @property {canari.GraineMsg.$Properties|null} [graine] AppMessage graine
+         * @property {canari.GraineRequestMsg.$Properties|null} [graineRequest] AppMessage graineRequest
+         * @property {canari.GraineBundleMsg.$Properties|null} [graineBundle] AppMessage graineBundle
+         * @property {"text"|"reply"|"reaction"|"media"|"system"|"call"|"poll"|"graine"|"graineRequest"|"graineBundle"} [kind] AppMessage kind
          * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
          */
 
@@ -2089,9 +2092,12 @@ export const canari = $root.canari = (() => {
          *   system?: canari.SystemMsg.$Shape|null;
          *   call?: canari.CallMsg.$Shape|null;
          *   poll?: canari.PollMsg.$Shape|null;
+         *   graine?: canari.GraineMsg.$Shape|null;
+         *   graineRequest?: canari.GraineRequestMsg.$Shape|null;
+         *   graineBundle?: canari.GraineBundleMsg.$Shape|null;
          *   $unknowns?: Array.<Uint8Array>;
          * } & (
-         *   ({ kind?: undefined; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "text"; text: canari.TextMsg.$Shape; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "reply"; text?: null; reply: canari.ReplyMsg.$Shape; reaction?: null; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "reaction"; text?: null; reply?: null; reaction: canari.ReactionMsg.$Shape; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "media"; text?: null; reply?: null; reaction?: null; media: canari.MediaMsg.$Shape; system?: null; call?: null; poll?: null }|{ kind?: "system"; text?: null; reply?: null; reaction?: null; media?: null; system: canari.SystemMsg.$Shape; call?: null; poll?: null }|{ kind?: "call"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call: canari.CallMsg.$Shape; poll?: null }|{ kind?: "poll"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll: canari.PollMsg.$Shape })
+         *   ({ kind?: undefined; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "text"; text: canari.TextMsg.$Shape; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "reply"; text?: null; reply: canari.ReplyMsg.$Shape; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "reaction"; text?: null; reply?: null; reaction: canari.ReactionMsg.$Shape; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "media"; text?: null; reply?: null; reaction?: null; media: canari.MediaMsg.$Shape; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "system"; text?: null; reply?: null; reaction?: null; media?: null; system: canari.SystemMsg.$Shape; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "call"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call: canari.CallMsg.$Shape; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "poll"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll: canari.PollMsg.$Shape; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "graine"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine: canari.GraineMsg.$Shape; graineRequest?: null; graineBundle?: null }|{ kind?: "graineRequest"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest: canari.GraineRequestMsg.$Shape; graineBundle?: null }|{ kind?: "graineBundle"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle: canari.GraineBundleMsg.$Shape })
          * )} canari.AppMessage.$Shape
          */
 
@@ -2182,17 +2188,41 @@ export const canari = $root.canari = (() => {
          */
         AppMessage.prototype.poll = null;
 
+        /**
+         * AppMessage graine.
+         * @member {canari.GraineMsg.$Properties|null|undefined} graine
+         * @memberof canari.AppMessage
+         * @instance
+         */
+        AppMessage.prototype.graine = null;
+
+        /**
+         * AppMessage graineRequest.
+         * @member {canari.GraineRequestMsg.$Properties|null|undefined} graineRequest
+         * @memberof canari.AppMessage
+         * @instance
+         */
+        AppMessage.prototype.graineRequest = null;
+
+        /**
+         * AppMessage graineBundle.
+         * @member {canari.GraineBundleMsg.$Properties|null|undefined} graineBundle
+         * @memberof canari.AppMessage
+         * @instance
+         */
+        AppMessage.prototype.graineBundle = null;
+
         // OneOf field names bound to virtual getters and setters
         let $oneOfFields;
 
         /**
          * AppMessage kind.
-         * @member {"text"|"reply"|"reaction"|"media"|"system"|"call"|"poll"|undefined} kind
+         * @member {"text"|"reply"|"reaction"|"media"|"system"|"call"|"poll"|"graine"|"graineRequest"|"graineBundle"|undefined} kind
          * @memberof canari.AppMessage
          * @instance
          */
         $Object.defineProperty(AppMessage.prototype, "kind", {
-            get: $util.oneOfGetter($oneOfFields = ["text", "reply", "reaction", "media", "system", "call", "poll"]),
+            get: $util.oneOfGetter($oneOfFields = ["text", "reply", "reaction", "media", "system", "call", "poll", "graine", "graineRequest", "graineBundle"]),
             set: $util.oneOfSetter($oneOfFields)
         });
 
@@ -2246,6 +2276,12 @@ export const canari = $root.canari = (() => {
                 writer.uint32(/* id 8, wireType 0 =*/64).int64(message.sentAt);
             if (message.poll != null && $Object.hasOwnProperty.call(message, "poll"))
                 $root.canari.PollMsg.encode(message.poll, writer.uint32(/* id 9, wireType 2 =*/74).fork(), _depth + 1).ldelim();
+            if (message.graine != null && $Object.hasOwnProperty.call(message, "graine"))
+                $root.canari.GraineMsg.encode(message.graine, writer.uint32(/* id 10, wireType 2 =*/82).fork(), _depth + 1).ldelim();
+            if (message.graineRequest != null && $Object.hasOwnProperty.call(message, "graineRequest"))
+                $root.canari.GraineRequestMsg.encode(message.graineRequest, writer.uint32(/* id 11, wireType 2 =*/90).fork(), _depth + 1).ldelim();
+            if (message.graineBundle != null && $Object.hasOwnProperty.call(message, "graineBundle"))
+                $root.canari.GraineBundleMsg.encode(message.graineBundle, writer.uint32(/* id 12, wireType 2 =*/98).fork(), _depth + 1).ldelim();
             if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
                 for (let i = 0; i < message.$unknowns.length; ++i)
                     writer.raw(message.$unknowns[i]);
@@ -2358,6 +2394,27 @@ export const canari = $root.canari = (() => {
                             break;
                         message.poll = $root.canari.PollMsg.decode(reader, reader.uint32(), $undefined, _depth + 1, message.poll);
                         message.kind = "poll";
+                        continue;
+                    }
+                case 10: {
+                        if (wireType !== 2)
+                            break;
+                        message.graine = $root.canari.GraineMsg.decode(reader, reader.uint32(), $undefined, _depth + 1, message.graine);
+                        message.kind = "graine";
+                        continue;
+                    }
+                case 11: {
+                        if (wireType !== 2)
+                            break;
+                        message.graineRequest = $root.canari.GraineRequestMsg.decode(reader, reader.uint32(), $undefined, _depth + 1, message.graineRequest);
+                        message.kind = "graineRequest";
+                        continue;
+                    }
+                case 12: {
+                        if (wireType !== 2)
+                            break;
+                        message.graineBundle = $root.canari.GraineBundleMsg.decode(reader, reader.uint32(), $undefined, _depth + 1, message.graineBundle);
+                        message.kind = "graineBundle";
                         continue;
                     }
                 }
@@ -2478,6 +2535,36 @@ export const canari = $root.canari = (() => {
                         return "poll." + error;
                 }
             }
+            if (message.graine != null && $Object.hasOwnProperty.call(message, "graine")) {
+                if (properties.kind === 1)
+                    return "kind: multiple values";
+                properties.kind = 1;
+                {
+                    let error = $root.canari.GraineMsg.verify(message.graine, _depth + 1);
+                    if (error)
+                        return "graine." + error;
+                }
+            }
+            if (message.graineRequest != null && $Object.hasOwnProperty.call(message, "graineRequest")) {
+                if (properties.kind === 1)
+                    return "kind: multiple values";
+                properties.kind = 1;
+                {
+                    let error = $root.canari.GraineRequestMsg.verify(message.graineRequest, _depth + 1);
+                    if (error)
+                        return "graineRequest." + error;
+                }
+            }
+            if (message.graineBundle != null && $Object.hasOwnProperty.call(message, "graineBundle")) {
+                if (properties.kind === 1)
+                    return "kind: multiple values";
+                properties.kind = 1;
+                {
+                    let error = $root.canari.GraineBundleMsg.verify(message.graineBundle, _depth + 1);
+                    if (error)
+                        return "graineBundle." + error;
+                }
+            }
             return null;
         };
 
@@ -2546,6 +2633,21 @@ export const canari = $root.canari = (() => {
                 if (!$util.isObject(object.poll))
                     throw $TypeError(".canari.AppMessage.poll: object expected");
                 message.poll = $root.canari.PollMsg.fromObject(object.poll, _depth + 1);
+            }
+            if (object.graine != null) {
+                if (!$util.isObject(object.graine))
+                    throw $TypeError(".canari.AppMessage.graine: object expected");
+                message.graine = $root.canari.GraineMsg.fromObject(object.graine, _depth + 1);
+            }
+            if (object.graineRequest != null) {
+                if (!$util.isObject(object.graineRequest))
+                    throw $TypeError(".canari.AppMessage.graineRequest: object expected");
+                message.graineRequest = $root.canari.GraineRequestMsg.fromObject(object.graineRequest, _depth + 1);
+            }
+            if (object.graineBundle != null) {
+                if (!$util.isObject(object.graineBundle))
+                    throw $TypeError(".canari.AppMessage.graineBundle: object expected");
+                message.graineBundle = $root.canari.GraineBundleMsg.fromObject(object.graineBundle, _depth + 1);
             }
             return message;
         };
@@ -2618,6 +2720,21 @@ export const canari = $root.canari = (() => {
                 object.poll = $root.canari.PollMsg.toObject(message.poll, options, _depth + 1);
                 if (options.oneofs)
                     object.kind = "poll";
+            }
+            if (message.graine != null && $Object.hasOwnProperty.call(message, "graine")) {
+                object.graine = $root.canari.GraineMsg.toObject(message.graine, options, _depth + 1);
+                if (options.oneofs)
+                    object.kind = "graine";
+            }
+            if (message.graineRequest != null && $Object.hasOwnProperty.call(message, "graineRequest")) {
+                object.graineRequest = $root.canari.GraineRequestMsg.toObject(message.graineRequest, options, _depth + 1);
+                if (options.oneofs)
+                    object.kind = "graineRequest";
+            }
+            if (message.graineBundle != null && $Object.hasOwnProperty.call(message, "graineBundle")) {
+                object.graineBundle = $root.canari.GraineBundleMsg.toObject(message.graineBundle, options, _depth + 1);
+                if (options.oneofs)
+                    object.kind = "graineBundle";
             }
             return object;
         };
@@ -5075,6 +5192,1201 @@ export const canari = $root.canari = (() => {
         var C = PollMsg;
 
         return PollMsg;
+    })();
+
+    canari.GraineMsg = (function() {
+
+        /**
+         * Properties of a GraineMsg.
+         * @typedef {Object} canari.GraineMsg.$Properties
+         * @property {string|null} [channelId] GraineMsg channelId
+         * @property {string|null} [sessionId] GraineMsg sessionId
+         * @property {Uint8Array|null} [seed] GraineMsg seed
+         * @property {number|null} [firstIndex] GraineMsg firstIndex
+         * @property {number|null} [createdAt] GraineMsg createdAt
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
+         */
+
+        /**
+         * Properties of a GraineMsg.
+         * @memberof canari
+         * @interface IGraineMsg
+         * @augments canari.GraineMsg.$Properties
+         * @deprecated Use canari.GraineMsg.$Properties instead.
+         */
+
+        /**
+         * Shape of a GraineMsg.
+         * @typedef {canari.GraineMsg.$Properties} canari.GraineMsg.$Shape
+         */
+
+        /**
+         * Constructs a new GraineMsg.
+         * @memberof canari
+         * @classdesc Represents a GraineMsg.
+         * @constructor
+         * @param {canari.GraineMsg.$Properties=} [properties] Properties to set
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
+         */
+        const GraineMsg = function (properties) {
+            if (properties)
+                for (let keys = $Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
+                        this[keys[i]] = properties[keys[i]];
+        };
+
+        /**
+         * GraineMsg channelId.
+         * @member {string} channelId
+         * @memberof canari.GraineMsg
+         * @instance
+         */
+        GraineMsg.prototype.channelId = "";
+
+        /**
+         * GraineMsg sessionId.
+         * @member {string} sessionId
+         * @memberof canari.GraineMsg
+         * @instance
+         */
+        GraineMsg.prototype.sessionId = "";
+
+        /**
+         * GraineMsg seed.
+         * @member {Uint8Array} seed
+         * @memberof canari.GraineMsg
+         * @instance
+         */
+        GraineMsg.prototype.seed = $util.newBuffer([]);
+
+        /**
+         * GraineMsg firstIndex.
+         * @member {number} firstIndex
+         * @memberof canari.GraineMsg
+         * @instance
+         */
+        GraineMsg.prototype.firstIndex = 0;
+
+        /**
+         * GraineMsg createdAt.
+         * @member {number} createdAt
+         * @memberof canari.GraineMsg
+         * @instance
+         */
+        GraineMsg.prototype.createdAt = $util.Long ? $util.Long.fromBits(0,0,false) : 0;
+
+        /**
+         * Creates a new GraineMsg instance using the specified properties.
+         * @function create
+         * @memberof canari.GraineMsg
+         * @static
+         * @param {canari.GraineMsg.$Properties=} [properties] Properties to set
+         * @returns {canari.GraineMsg} GraineMsg instance
+         * @type {{
+         *   (properties: canari.GraineMsg.$Shape): canari.GraineMsg & canari.GraineMsg.$Shape;
+         *   (properties?: canari.GraineMsg.$Properties): canari.GraineMsg;
+         * }}
+         */
+        GraineMsg.create = function(properties) {
+            return new GraineMsg(properties);
+        };
+
+        /**
+         * Encodes the specified GraineMsg message. Does not implicitly {@link canari.GraineMsg.verify|verify} messages.
+         * @function encode
+         * @memberof canari.GraineMsg
+         * @static
+         * @param {canari.GraineMsg.$Properties} message GraineMsg message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        GraineMsg.encode = function (message, writer, _depth) {
+            if (!writer)
+                writer = $Writer.create();
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                throw $Error("max depth exceeded");
+            if (message.channelId != null && $Object.hasOwnProperty.call(message, "channelId") && message.channelId !== "")
+                writer.uint32(/* id 1, wireType 2 =*/10).string(message.channelId);
+            if (message.sessionId != null && $Object.hasOwnProperty.call(message, "sessionId") && message.sessionId !== "")
+                writer.uint32(/* id 2, wireType 2 =*/18).string(message.sessionId);
+            if (message.seed != null && $Object.hasOwnProperty.call(message, "seed") && message.seed.length)
+                writer.uint32(/* id 3, wireType 2 =*/26).bytes(message.seed);
+            if (message.firstIndex != null && $Object.hasOwnProperty.call(message, "firstIndex") && message.firstIndex !== 0)
+                writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.firstIndex);
+            if (message.createdAt != null && $Object.hasOwnProperty.call(message, "createdAt") && (typeof message.createdAt === "object" ? message.createdAt.low || message.createdAt.high : message.createdAt !== 0))
+                writer.uint32(/* id 5, wireType 0 =*/40).int64(message.createdAt);
+            if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
+                for (let i = 0; i < message.$unknowns.length; ++i)
+                    writer.raw(message.$unknowns[i]);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified GraineMsg message, length delimited. Does not implicitly {@link canari.GraineMsg.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof canari.GraineMsg
+         * @static
+         * @param {canari.GraineMsg.$Properties} message GraineMsg message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        GraineMsg.encodeDelimited = function(message, writer) {
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
+        };
+
+        /**
+         * Decodes a GraineMsg message from the specified reader or buffer.
+         * @function decode
+         * @memberof canari.GraineMsg
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {canari.GraineMsg & canari.GraineMsg.$Shape} GraineMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        GraineMsg.decode = function (reader, length, _end, _depth, _target) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $Reader.recursionLimit)
+                throw $Error("max depth exceeded");
+            let end = length === $undefined ? reader.len : reader.pos + length, message = _target || new $root.canari.GraineMsg(), value;
+            while (reader.pos < end) {
+                let start = reader.pos;
+                let tag = reader.tag();
+                if (tag === _end) {
+                    _end = $undefined;
+                    break;
+                }
+                let wireType = tag & 7;
+                switch (tag >>>= 3) {
+                case 1: {
+                        if (wireType !== 2)
+                            break;
+                        if ((value = reader.stringVerify()).length)
+                            message.channelId = value;
+                        else
+                            delete message.channelId;
+                        continue;
+                    }
+                case 2: {
+                        if (wireType !== 2)
+                            break;
+                        if ((value = reader.stringVerify()).length)
+                            message.sessionId = value;
+                        else
+                            delete message.sessionId;
+                        continue;
+                    }
+                case 3: {
+                        if (wireType !== 2)
+                            break;
+                        if ((value = reader.bytes()).length)
+                            message.seed = value;
+                        else
+                            delete message.seed;
+                        continue;
+                    }
+                case 4: {
+                        if (wireType !== 0)
+                            break;
+                        if (value = reader.uint32())
+                            message.firstIndex = value;
+                        else
+                            delete message.firstIndex;
+                        continue;
+                    }
+                case 5: {
+                        if (wireType !== 0)
+                            break;
+                        if (typeof (value = reader.int64()) === "object" ? value.low || value.high : value !== 0)
+                            message.createdAt = value;
+                        else
+                            delete message.createdAt;
+                        continue;
+                    }
+                }
+                reader.skipType(wireType, _depth, tag);
+                if (!reader.discardUnknown) {
+                    $util.makeProp(message, "$unknowns", false);
+                    (message.$unknowns || (message.$unknowns = [])).push(reader.raw(start, reader.pos));
+                }
+            }
+            if (_end !== $undefined)
+                throw $Error("missing end group");
+            return message;
+        };
+
+        /**
+         * Decodes a GraineMsg message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof canari.GraineMsg
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {canari.GraineMsg & canari.GraineMsg.$Shape} GraineMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        GraineMsg.decodeDelimited = function(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a GraineMsg message.
+         * @function verify
+         * @memberof canari.GraineMsg
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        GraineMsg.verify = function (message, _depth) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                return "max depth exceeded";
+            if (message.channelId != null && $Object.hasOwnProperty.call(message, "channelId"))
+                if (!$util.isString(message.channelId))
+                    return "channelId: string expected";
+            if (message.sessionId != null && $Object.hasOwnProperty.call(message, "sessionId"))
+                if (!$util.isString(message.sessionId))
+                    return "sessionId: string expected";
+            if (message.seed != null && $Object.hasOwnProperty.call(message, "seed"))
+                if (!(message.seed && typeof message.seed.length === "number" || $util.isString(message.seed)))
+                    return "seed: buffer expected";
+            if (message.firstIndex != null && $Object.hasOwnProperty.call(message, "firstIndex"))
+                if (!$util.isInteger(message.firstIndex))
+                    return "firstIndex: integer expected";
+            if (message.createdAt != null && $Object.hasOwnProperty.call(message, "createdAt"))
+                if (!$util.isInteger(message.createdAt) && !(message.createdAt && $util.isInteger(message.createdAt.low) && $util.isInteger(message.createdAt.high)))
+                    return "createdAt: integer|Long expected";
+            return null;
+        };
+
+        /**
+         * Creates a GraineMsg message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof canari.GraineMsg
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {canari.GraineMsg} GraineMsg
+         */
+        GraineMsg.fromObject = function (object, _depth) {
+            if (object instanceof $root.canari.GraineMsg)
+                return object;
+            if (!$util.isObject(object))
+                throw $TypeError(".canari.GraineMsg: object expected");
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                throw $Error("max depth exceeded");
+            let message = new $root.canari.GraineMsg();
+            if (object.channelId != null)
+                if (typeof object.channelId !== "string" || object.channelId.length)
+                    message.channelId = $String(object.channelId);
+            if (object.sessionId != null)
+                if (typeof object.sessionId !== "string" || object.sessionId.length)
+                    message.sessionId = $String(object.sessionId);
+            if (object.seed != null)
+                if (object.seed.length)
+                    if (typeof object.seed === "string")
+                        $util.base64.decode(object.seed, message.seed = $util.newBuffer($util.base64.length(object.seed)), 0);
+                    else if (object.seed.length >= 0)
+                        message.seed = object.seed;
+            if (object.firstIndex != null)
+                if ($Number(object.firstIndex) !== 0)
+                    message.firstIndex = object.firstIndex >>> 0;
+            if (object.createdAt != null)
+                if (typeof object.createdAt === "object" ? object.createdAt.low || object.createdAt.high : $Number(object.createdAt) !== 0)
+                    if ($util.Long)
+                        message.createdAt = $util.Long.fromValue(object.createdAt, false);
+                    else if (typeof object.createdAt === "string")
+                        message.createdAt = $parseInt(object.createdAt, 10);
+                    else if (typeof object.createdAt === "number")
+                        message.createdAt = object.createdAt;
+                    else if (typeof object.createdAt === "object")
+                        message.createdAt = new $util.LongBits(object.createdAt.low >>> 0, object.createdAt.high >>> 0).toNumber();
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a GraineMsg message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof canari.GraineMsg
+         * @static
+         * @param {canari.GraineMsg} message GraineMsg
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        GraineMsg.toObject = function (message, options, _depth) {
+            if (!options)
+                options = {};
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                throw $Error("max depth exceeded");
+            let object = {};
+            if (options.defaults) {
+                object.channelId = "";
+                object.sessionId = "";
+                if (options.bytes === $String)
+                    object.seed = "";
+                else {
+                    object.seed = [];
+                    if (options.bytes !== $Array)
+                        object.seed = $util.newBuffer(object.seed);
+                }
+                object.firstIndex = 0;
+                if ($util.Long) {
+                    let long = new $util.Long(0, 0, false);
+                    object.createdAt = options.longs === $String ? long.toString() : options.longs === $Number ? long.toNumber() : typeof $BigInt !== "undefined" && options.longs === $BigInt ? long.toBigInt() : long;
+                } else
+                    object.createdAt = options.longs === $String ? "0" : typeof $BigInt !== "undefined" && options.longs === $BigInt ? $BigInt("0") : 0;
+            }
+            if (message.channelId != null && $Object.hasOwnProperty.call(message, "channelId"))
+                object.channelId = message.channelId;
+            if (message.sessionId != null && $Object.hasOwnProperty.call(message, "sessionId"))
+                object.sessionId = message.sessionId;
+            if (message.seed != null && $Object.hasOwnProperty.call(message, "seed"))
+                object.seed = options.bytes === $String ? $util.base64.encode(message.seed, 0, message.seed.length) : options.bytes === $Array ? $Array.prototype.slice.call(message.seed) : message.seed;
+            if (message.firstIndex != null && $Object.hasOwnProperty.call(message, "firstIndex"))
+                object.firstIndex = message.firstIndex;
+            if (message.createdAt != null && $Object.hasOwnProperty.call(message, "createdAt"))
+                if (typeof $BigInt !== "undefined" && options.longs === $BigInt)
+                    object.createdAt = typeof message.createdAt === "number" ? $BigInt(message.createdAt) : $util.Long.fromBits(message.createdAt.low >>> 0, message.createdAt.high >>> 0, false).toBigInt();
+                else if (typeof message.createdAt === "number")
+                    object.createdAt = options.longs === $String ? $String(message.createdAt) : message.createdAt;
+                else
+                    object.createdAt = options.longs === $String ? $util.Long.prototype.toString.call(message.createdAt) : options.longs === $Number ? new $util.LongBits(message.createdAt.low >>> 0, message.createdAt.high >>> 0).toNumber() : message.createdAt;
+            return object;
+        };
+
+        /**
+         * Converts this GraineMsg to JSON.
+         * @function toJSON
+         * @memberof canari.GraineMsg
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        GraineMsg.prototype.toJSON = function() {
+            return GraineMsg.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the type url for GraineMsg
+         * @function getTypeUrl
+         * @memberof canari.GraineMsg
+         * @static
+         * @param {string} [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
+         * @returns {string} The type url
+         */
+        GraineMsg.getTypeUrl = function(prefix) {
+            if (prefix === $undefined)
+                prefix = "type.googleapis.com";
+            return prefix + "/canari.GraineMsg";
+        };
+
+        var C = GraineMsg;
+
+        return GraineMsg;
+    })();
+
+    /**
+     * GraineRequestKind enum.
+     * @name canari.GraineRequestKind
+     * @enum {number}
+     * @property {number} GRAINE_REQUEST_KIND_UNSPECIFIED=0 GRAINE_REQUEST_KIND_UNSPECIFIED value
+     * @property {number} GRAINE_REQUEST_KIND_SESSIONS=1 GRAINE_REQUEST_KIND_SESSIONS value
+     * @property {number} GRAINE_REQUEST_KIND_HISTORY=2 GRAINE_REQUEST_KIND_HISTORY value
+     */
+    canari.GraineRequestKind = (function() {
+        const valuesById = $Object.create(null), values = $Object.create(valuesById);
+        values[valuesById[0] = "GRAINE_REQUEST_KIND_UNSPECIFIED"] = 0;
+        values[valuesById[1] = "GRAINE_REQUEST_KIND_SESSIONS"] = 1;
+        values[valuesById[2] = "GRAINE_REQUEST_KIND_HISTORY"] = 2;
+        return values;
+    })();
+
+    canari.GraineRequestMsg = (function() {
+
+        /**
+         * Properties of a GraineRequestMsg.
+         * @typedef {Object} canari.GraineRequestMsg.$Properties
+         * @property {string|null} [workspaceId] GraineRequestMsg workspaceId
+         * @property {canari.GraineRequestKind|null} [kind] GraineRequestMsg kind
+         * @property {Array.<string>|null} [sessionIds] GraineRequestMsg sessionIds
+         * @property {string|null} [answererUserId] GraineRequestMsg answererUserId
+         * @property {string|null} [requestId] GraineRequestMsg requestId
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
+         */
+
+        /**
+         * Properties of a GraineRequestMsg.
+         * @memberof canari
+         * @interface IGraineRequestMsg
+         * @augments canari.GraineRequestMsg.$Properties
+         * @deprecated Use canari.GraineRequestMsg.$Properties instead.
+         */
+
+        /**
+         * Shape of a GraineRequestMsg.
+         * @typedef {canari.GraineRequestMsg.$Properties} canari.GraineRequestMsg.$Shape
+         */
+
+        /**
+         * Constructs a new GraineRequestMsg.
+         * @memberof canari
+         * @classdesc Represents a GraineRequestMsg.
+         * @constructor
+         * @param {canari.GraineRequestMsg.$Properties=} [properties] Properties to set
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
+         */
+        const GraineRequestMsg = function (properties) {
+            this.sessionIds = [];
+            if (properties)
+                for (let keys = $Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
+                        this[keys[i]] = properties[keys[i]];
+        };
+
+        /**
+         * GraineRequestMsg workspaceId.
+         * @member {string} workspaceId
+         * @memberof canari.GraineRequestMsg
+         * @instance
+         */
+        GraineRequestMsg.prototype.workspaceId = "";
+
+        /**
+         * GraineRequestMsg kind.
+         * @member {canari.GraineRequestKind} kind
+         * @memberof canari.GraineRequestMsg
+         * @instance
+         */
+        GraineRequestMsg.prototype.kind = 0;
+
+        /**
+         * GraineRequestMsg sessionIds.
+         * @member {Array.<string>} sessionIds
+         * @memberof canari.GraineRequestMsg
+         * @instance
+         */
+        GraineRequestMsg.prototype.sessionIds = $util.emptyArray;
+
+        /**
+         * GraineRequestMsg answererUserId.
+         * @member {string} answererUserId
+         * @memberof canari.GraineRequestMsg
+         * @instance
+         */
+        GraineRequestMsg.prototype.answererUserId = "";
+
+        /**
+         * GraineRequestMsg requestId.
+         * @member {string} requestId
+         * @memberof canari.GraineRequestMsg
+         * @instance
+         */
+        GraineRequestMsg.prototype.requestId = "";
+
+        /**
+         * Creates a new GraineRequestMsg instance using the specified properties.
+         * @function create
+         * @memberof canari.GraineRequestMsg
+         * @static
+         * @param {canari.GraineRequestMsg.$Properties=} [properties] Properties to set
+         * @returns {canari.GraineRequestMsg} GraineRequestMsg instance
+         * @type {{
+         *   (properties: canari.GraineRequestMsg.$Shape): canari.GraineRequestMsg & canari.GraineRequestMsg.$Shape;
+         *   (properties?: canari.GraineRequestMsg.$Properties): canari.GraineRequestMsg;
+         * }}
+         */
+        GraineRequestMsg.create = function(properties) {
+            return new GraineRequestMsg(properties);
+        };
+
+        /**
+         * Encodes the specified GraineRequestMsg message. Does not implicitly {@link canari.GraineRequestMsg.verify|verify} messages.
+         * @function encode
+         * @memberof canari.GraineRequestMsg
+         * @static
+         * @param {canari.GraineRequestMsg.$Properties} message GraineRequestMsg message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        GraineRequestMsg.encode = function (message, writer, _depth) {
+            if (!writer)
+                writer = $Writer.create();
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                throw $Error("max depth exceeded");
+            if (message.workspaceId != null && $Object.hasOwnProperty.call(message, "workspaceId") && message.workspaceId !== "")
+                writer.uint32(/* id 1, wireType 2 =*/10).string(message.workspaceId);
+            if (message.kind != null && $Object.hasOwnProperty.call(message, "kind") && message.kind !== 0)
+                writer.uint32(/* id 2, wireType 0 =*/16).int32(message.kind);
+            if (message.sessionIds != null && message.sessionIds.length)
+                for (let i = 0; i < message.sessionIds.length; ++i)
+                    writer.uint32(/* id 3, wireType 2 =*/26).string(message.sessionIds[i]);
+            if (message.answererUserId != null && $Object.hasOwnProperty.call(message, "answererUserId") && message.answererUserId !== "")
+                writer.uint32(/* id 4, wireType 2 =*/34).string(message.answererUserId);
+            if (message.requestId != null && $Object.hasOwnProperty.call(message, "requestId") && message.requestId !== "")
+                writer.uint32(/* id 5, wireType 2 =*/42).string(message.requestId);
+            if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
+                for (let i = 0; i < message.$unknowns.length; ++i)
+                    writer.raw(message.$unknowns[i]);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified GraineRequestMsg message, length delimited. Does not implicitly {@link canari.GraineRequestMsg.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof canari.GraineRequestMsg
+         * @static
+         * @param {canari.GraineRequestMsg.$Properties} message GraineRequestMsg message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        GraineRequestMsg.encodeDelimited = function(message, writer) {
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
+        };
+
+        /**
+         * Decodes a GraineRequestMsg message from the specified reader or buffer.
+         * @function decode
+         * @memberof canari.GraineRequestMsg
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {canari.GraineRequestMsg & canari.GraineRequestMsg.$Shape} GraineRequestMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        GraineRequestMsg.decode = function (reader, length, _end, _depth, _target) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $Reader.recursionLimit)
+                throw $Error("max depth exceeded");
+            let end = length === $undefined ? reader.len : reader.pos + length, message = _target || new $root.canari.GraineRequestMsg(), value;
+            while (reader.pos < end) {
+                let start = reader.pos;
+                let tag = reader.tag();
+                if (tag === _end) {
+                    _end = $undefined;
+                    break;
+                }
+                let wireType = tag & 7;
+                switch (tag >>>= 3) {
+                case 1: {
+                        if (wireType !== 2)
+                            break;
+                        if ((value = reader.stringVerify()).length)
+                            message.workspaceId = value;
+                        else
+                            delete message.workspaceId;
+                        continue;
+                    }
+                case 2: {
+                        if (wireType !== 0)
+                            break;
+                        if (value = reader.int32())
+                            message.kind = value;
+                        else
+                            delete message.kind;
+                        continue;
+                    }
+                case 3: {
+                        if (wireType !== 2)
+                            break;
+                        if (!(message.sessionIds && message.sessionIds.length))
+                            message.sessionIds = [];
+                        message.sessionIds.push(reader.stringVerify());
+                        continue;
+                    }
+                case 4: {
+                        if (wireType !== 2)
+                            break;
+                        if ((value = reader.stringVerify()).length)
+                            message.answererUserId = value;
+                        else
+                            delete message.answererUserId;
+                        continue;
+                    }
+                case 5: {
+                        if (wireType !== 2)
+                            break;
+                        if ((value = reader.stringVerify()).length)
+                            message.requestId = value;
+                        else
+                            delete message.requestId;
+                        continue;
+                    }
+                }
+                reader.skipType(wireType, _depth, tag);
+                if (!reader.discardUnknown) {
+                    $util.makeProp(message, "$unknowns", false);
+                    (message.$unknowns || (message.$unknowns = [])).push(reader.raw(start, reader.pos));
+                }
+            }
+            if (_end !== $undefined)
+                throw $Error("missing end group");
+            return message;
+        };
+
+        /**
+         * Decodes a GraineRequestMsg message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof canari.GraineRequestMsg
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {canari.GraineRequestMsg & canari.GraineRequestMsg.$Shape} GraineRequestMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        GraineRequestMsg.decodeDelimited = function(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a GraineRequestMsg message.
+         * @function verify
+         * @memberof canari.GraineRequestMsg
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        GraineRequestMsg.verify = function (message, _depth) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                return "max depth exceeded";
+            if (message.workspaceId != null && $Object.hasOwnProperty.call(message, "workspaceId"))
+                if (!$util.isString(message.workspaceId))
+                    return "workspaceId: string expected";
+            if (message.kind != null && $Object.hasOwnProperty.call(message, "kind"))
+                if (typeof message.kind !== "number" || (message.kind | 0) !== message.kind)
+                    return "kind: enum value expected";
+            if (message.sessionIds != null && $Object.hasOwnProperty.call(message, "sessionIds")) {
+                if (!$Array.isArray(message.sessionIds))
+                    return "sessionIds: array expected";
+                for (let i = 0; i < message.sessionIds.length; ++i)
+                    if (!$util.isString(message.sessionIds[i]))
+                        return "sessionIds: string[] expected";
+            }
+            if (message.answererUserId != null && $Object.hasOwnProperty.call(message, "answererUserId"))
+                if (!$util.isString(message.answererUserId))
+                    return "answererUserId: string expected";
+            if (message.requestId != null && $Object.hasOwnProperty.call(message, "requestId"))
+                if (!$util.isString(message.requestId))
+                    return "requestId: string expected";
+            return null;
+        };
+
+        /**
+         * Creates a GraineRequestMsg message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof canari.GraineRequestMsg
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {canari.GraineRequestMsg} GraineRequestMsg
+         */
+        GraineRequestMsg.fromObject = function (object, _depth) {
+            if (object instanceof $root.canari.GraineRequestMsg)
+                return object;
+            if (!$util.isObject(object))
+                throw $TypeError(".canari.GraineRequestMsg: object expected");
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                throw $Error("max depth exceeded");
+            let message = new $root.canari.GraineRequestMsg();
+            if (object.workspaceId != null)
+                if (typeof object.workspaceId !== "string" || object.workspaceId.length)
+                    message.workspaceId = $String(object.workspaceId);
+            if (object.kind !== 0 && (typeof object.kind !== "string" || $root.canari.GraineRequestKind[object.kind] !== 0))
+                switch (object.kind) {
+                case "GRAINE_REQUEST_KIND_UNSPECIFIED":
+                case 0:
+                    message.kind = 0;
+                    break;
+                case "GRAINE_REQUEST_KIND_SESSIONS":
+                case 1:
+                    message.kind = 1;
+                    break;
+                case "GRAINE_REQUEST_KIND_HISTORY":
+                case 2:
+                    message.kind = 2;
+                    break;
+                default:
+                    if (typeof object.kind === "number" && (object.kind | 0) === object.kind)
+                        message.kind = object.kind;
+                }
+            if (object.sessionIds) {
+                if (!$Array.isArray(object.sessionIds))
+                    throw $TypeError(".canari.GraineRequestMsg.sessionIds: array expected");
+                message.sessionIds = $Array(object.sessionIds.length);
+                for (let i = 0; i < object.sessionIds.length; ++i)
+                    message.sessionIds[i] = $String(object.sessionIds[i]);
+            }
+            if (object.answererUserId != null)
+                if (typeof object.answererUserId !== "string" || object.answererUserId.length)
+                    message.answererUserId = $String(object.answererUserId);
+            if (object.requestId != null)
+                if (typeof object.requestId !== "string" || object.requestId.length)
+                    message.requestId = $String(object.requestId);
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a GraineRequestMsg message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof canari.GraineRequestMsg
+         * @static
+         * @param {canari.GraineRequestMsg} message GraineRequestMsg
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        GraineRequestMsg.toObject = function (message, options, _depth) {
+            if (!options)
+                options = {};
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                throw $Error("max depth exceeded");
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.sessionIds = [];
+            if (options.defaults) {
+                object.workspaceId = "";
+                object.kind = options.enums === $String ? "GRAINE_REQUEST_KIND_UNSPECIFIED" : 0;
+                object.answererUserId = "";
+                object.requestId = "";
+            }
+            if (message.workspaceId != null && $Object.hasOwnProperty.call(message, "workspaceId"))
+                object.workspaceId = message.workspaceId;
+            if (message.kind != null && $Object.hasOwnProperty.call(message, "kind"))
+                object.kind = options.enums === $String ? $root.canari.GraineRequestKind[message.kind] === $undefined ? message.kind : $root.canari.GraineRequestKind[message.kind] : message.kind;
+            if (message.sessionIds && message.sessionIds.length) {
+                object.sessionIds = $Array(message.sessionIds.length);
+                for (let j = 0; j < message.sessionIds.length; ++j)
+                    object.sessionIds[j] = message.sessionIds[j];
+            }
+            if (message.answererUserId != null && $Object.hasOwnProperty.call(message, "answererUserId"))
+                object.answererUserId = message.answererUserId;
+            if (message.requestId != null && $Object.hasOwnProperty.call(message, "requestId"))
+                object.requestId = message.requestId;
+            return object;
+        };
+
+        /**
+         * Converts this GraineRequestMsg to JSON.
+         * @function toJSON
+         * @memberof canari.GraineRequestMsg
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        GraineRequestMsg.prototype.toJSON = function() {
+            return GraineRequestMsg.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the type url for GraineRequestMsg
+         * @function getTypeUrl
+         * @memberof canari.GraineRequestMsg
+         * @static
+         * @param {string} [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
+         * @returns {string} The type url
+         */
+        GraineRequestMsg.getTypeUrl = function(prefix) {
+            if (prefix === $undefined)
+                prefix = "type.googleapis.com";
+            return prefix + "/canari.GraineRequestMsg";
+        };
+
+        var C = GraineRequestMsg;
+
+        return GraineRequestMsg;
+    })();
+
+    canari.GraineBundleMsg = (function() {
+
+        /**
+         * Properties of a GraineBundleMsg.
+         * @typedef {Object} canari.GraineBundleMsg.$Properties
+         * @property {string|null} [workspaceId] GraineBundleMsg workspaceId
+         * @property {string|null} [requestId] GraineBundleMsg requestId
+         * @property {Array.<canari.GraineMsg.$Properties>|null} [seeds] GraineBundleMsg seeds
+         * @property {boolean|null} [truncated] GraineBundleMsg truncated
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
+         */
+
+        /**
+         * Properties of a GraineBundleMsg.
+         * @memberof canari
+         * @interface IGraineBundleMsg
+         * @augments canari.GraineBundleMsg.$Properties
+         * @deprecated Use canari.GraineBundleMsg.$Properties instead.
+         */
+
+        /**
+         * Shape of a GraineBundleMsg.
+         * @typedef {canari.GraineBundleMsg.$Properties} canari.GraineBundleMsg.$Shape
+         */
+
+        /**
+         * Constructs a new GraineBundleMsg.
+         * @memberof canari
+         * @classdesc Represents a GraineBundleMsg.
+         * @constructor
+         * @param {canari.GraineBundleMsg.$Properties=} [properties] Properties to set
+         * @property {Array.<Uint8Array>} [$unknowns] Unknown fields preserved while decoding when enabled
+         */
+        const GraineBundleMsg = function (properties) {
+            this.seeds = [];
+            if (properties)
+                for (let keys = $Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null && keys[i] !== "__proto__")
+                        this[keys[i]] = properties[keys[i]];
+        };
+
+        /**
+         * GraineBundleMsg workspaceId.
+         * @member {string} workspaceId
+         * @memberof canari.GraineBundleMsg
+         * @instance
+         */
+        GraineBundleMsg.prototype.workspaceId = "";
+
+        /**
+         * GraineBundleMsg requestId.
+         * @member {string} requestId
+         * @memberof canari.GraineBundleMsg
+         * @instance
+         */
+        GraineBundleMsg.prototype.requestId = "";
+
+        /**
+         * GraineBundleMsg seeds.
+         * @member {Array.<canari.GraineMsg.$Properties>} seeds
+         * @memberof canari.GraineBundleMsg
+         * @instance
+         */
+        GraineBundleMsg.prototype.seeds = $util.emptyArray;
+
+        /**
+         * GraineBundleMsg truncated.
+         * @member {boolean} truncated
+         * @memberof canari.GraineBundleMsg
+         * @instance
+         */
+        GraineBundleMsg.prototype.truncated = false;
+
+        /**
+         * Creates a new GraineBundleMsg instance using the specified properties.
+         * @function create
+         * @memberof canari.GraineBundleMsg
+         * @static
+         * @param {canari.GraineBundleMsg.$Properties=} [properties] Properties to set
+         * @returns {canari.GraineBundleMsg} GraineBundleMsg instance
+         * @type {{
+         *   (properties: canari.GraineBundleMsg.$Shape): canari.GraineBundleMsg & canari.GraineBundleMsg.$Shape;
+         *   (properties?: canari.GraineBundleMsg.$Properties): canari.GraineBundleMsg;
+         * }}
+         */
+        GraineBundleMsg.create = function(properties) {
+            return new GraineBundleMsg(properties);
+        };
+
+        /**
+         * Encodes the specified GraineBundleMsg message. Does not implicitly {@link canari.GraineBundleMsg.verify|verify} messages.
+         * @function encode
+         * @memberof canari.GraineBundleMsg
+         * @static
+         * @param {canari.GraineBundleMsg.$Properties} message GraineBundleMsg message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        GraineBundleMsg.encode = function (message, writer, _depth) {
+            if (!writer)
+                writer = $Writer.create();
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                throw $Error("max depth exceeded");
+            if (message.workspaceId != null && $Object.hasOwnProperty.call(message, "workspaceId") && message.workspaceId !== "")
+                writer.uint32(/* id 1, wireType 2 =*/10).string(message.workspaceId);
+            if (message.requestId != null && $Object.hasOwnProperty.call(message, "requestId") && message.requestId !== "")
+                writer.uint32(/* id 2, wireType 2 =*/18).string(message.requestId);
+            if (message.seeds != null && message.seeds.length)
+                for (let i = 0; i < message.seeds.length; ++i)
+                    $root.canari.GraineMsg.encode(message.seeds[i], writer.uint32(/* id 3, wireType 2 =*/26).fork(), _depth + 1).ldelim();
+            if (message.truncated != null && $Object.hasOwnProperty.call(message, "truncated") && message.truncated !== false)
+                writer.uint32(/* id 4, wireType 0 =*/32).bool(message.truncated);
+            if (message.$unknowns != null && $Object.hasOwnProperty.call(message, "$unknowns"))
+                for (let i = 0; i < message.$unknowns.length; ++i)
+                    writer.raw(message.$unknowns[i]);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified GraineBundleMsg message, length delimited. Does not implicitly {@link canari.GraineBundleMsg.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof canari.GraineBundleMsg
+         * @static
+         * @param {canari.GraineBundleMsg.$Properties} message GraineBundleMsg message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        GraineBundleMsg.encodeDelimited = function(message, writer) {
+            return this.encode(message, (writer || $Writer.create()).fork()).ldelim();
+        };
+
+        /**
+         * Decodes a GraineBundleMsg message from the specified reader or buffer.
+         * @function decode
+         * @memberof canari.GraineBundleMsg
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {canari.GraineBundleMsg & canari.GraineBundleMsg.$Shape} GraineBundleMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        GraineBundleMsg.decode = function (reader, length, _end, _depth, _target) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $Reader.recursionLimit)
+                throw $Error("max depth exceeded");
+            let end = length === $undefined ? reader.len : reader.pos + length, message = _target || new $root.canari.GraineBundleMsg(), value;
+            while (reader.pos < end) {
+                let start = reader.pos;
+                let tag = reader.tag();
+                if (tag === _end) {
+                    _end = $undefined;
+                    break;
+                }
+                let wireType = tag & 7;
+                switch (tag >>>= 3) {
+                case 1: {
+                        if (wireType !== 2)
+                            break;
+                        if ((value = reader.stringVerify()).length)
+                            message.workspaceId = value;
+                        else
+                            delete message.workspaceId;
+                        continue;
+                    }
+                case 2: {
+                        if (wireType !== 2)
+                            break;
+                        if ((value = reader.stringVerify()).length)
+                            message.requestId = value;
+                        else
+                            delete message.requestId;
+                        continue;
+                    }
+                case 3: {
+                        if (wireType !== 2)
+                            break;
+                        if (!(message.seeds && message.seeds.length))
+                            message.seeds = [];
+                        message.seeds.push($root.canari.GraineMsg.decode(reader, reader.uint32(), $undefined, _depth + 1));
+                        continue;
+                    }
+                case 4: {
+                        if (wireType !== 0)
+                            break;
+                        if (value = reader.bool())
+                            message.truncated = value;
+                        else
+                            delete message.truncated;
+                        continue;
+                    }
+                }
+                reader.skipType(wireType, _depth, tag);
+                if (!reader.discardUnknown) {
+                    $util.makeProp(message, "$unknowns", false);
+                    (message.$unknowns || (message.$unknowns = [])).push(reader.raw(start, reader.pos));
+                }
+            }
+            if (_end !== $undefined)
+                throw $Error("missing end group");
+            return message;
+        };
+
+        /**
+         * Decodes a GraineBundleMsg message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof canari.GraineBundleMsg
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {canari.GraineBundleMsg & canari.GraineBundleMsg.$Shape} GraineBundleMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        GraineBundleMsg.decodeDelimited = function(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a GraineBundleMsg message.
+         * @function verify
+         * @memberof canari.GraineBundleMsg
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        GraineBundleMsg.verify = function (message, _depth) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                return "max depth exceeded";
+            if (message.workspaceId != null && $Object.hasOwnProperty.call(message, "workspaceId"))
+                if (!$util.isString(message.workspaceId))
+                    return "workspaceId: string expected";
+            if (message.requestId != null && $Object.hasOwnProperty.call(message, "requestId"))
+                if (!$util.isString(message.requestId))
+                    return "requestId: string expected";
+            if (message.seeds != null && $Object.hasOwnProperty.call(message, "seeds")) {
+                if (!$Array.isArray(message.seeds))
+                    return "seeds: array expected";
+                for (let i = 0; i < message.seeds.length; ++i) {
+                    let error = $root.canari.GraineMsg.verify(message.seeds[i], _depth + 1);
+                    if (error)
+                        return "seeds." + error;
+                }
+            }
+            if (message.truncated != null && $Object.hasOwnProperty.call(message, "truncated"))
+                if (typeof message.truncated !== "boolean")
+                    return "truncated: boolean expected";
+            return null;
+        };
+
+        /**
+         * Creates a GraineBundleMsg message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof canari.GraineBundleMsg
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {canari.GraineBundleMsg} GraineBundleMsg
+         */
+        GraineBundleMsg.fromObject = function (object, _depth) {
+            if (object instanceof $root.canari.GraineBundleMsg)
+                return object;
+            if (!$util.isObject(object))
+                throw $TypeError(".canari.GraineBundleMsg: object expected");
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                throw $Error("max depth exceeded");
+            let message = new $root.canari.GraineBundleMsg();
+            if (object.workspaceId != null)
+                if (typeof object.workspaceId !== "string" || object.workspaceId.length)
+                    message.workspaceId = $String(object.workspaceId);
+            if (object.requestId != null)
+                if (typeof object.requestId !== "string" || object.requestId.length)
+                    message.requestId = $String(object.requestId);
+            if (object.seeds) {
+                if (!$Array.isArray(object.seeds))
+                    throw $TypeError(".canari.GraineBundleMsg.seeds: array expected");
+                message.seeds = $Array(object.seeds.length);
+                for (let i = 0; i < object.seeds.length; ++i) {
+                    if (!$util.isObject(object.seeds[i]))
+                        throw $TypeError(".canari.GraineBundleMsg.seeds: object expected");
+                    message.seeds[i] = $root.canari.GraineMsg.fromObject(object.seeds[i], _depth + 1);
+                }
+            }
+            if (object.truncated != null)
+                if (object.truncated)
+                    message.truncated = $Boolean(object.truncated);
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a GraineBundleMsg message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof canari.GraineBundleMsg
+         * @static
+         * @param {canari.GraineBundleMsg} message GraineBundleMsg
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        GraineBundleMsg.toObject = function (message, options, _depth) {
+            if (!options)
+                options = {};
+            if (_depth === $undefined)
+                _depth = 0;
+            if (_depth > $util.recursionLimit)
+                throw $Error("max depth exceeded");
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.seeds = [];
+            if (options.defaults) {
+                object.workspaceId = "";
+                object.requestId = "";
+                object.truncated = false;
+            }
+            if (message.workspaceId != null && $Object.hasOwnProperty.call(message, "workspaceId"))
+                object.workspaceId = message.workspaceId;
+            if (message.requestId != null && $Object.hasOwnProperty.call(message, "requestId"))
+                object.requestId = message.requestId;
+            if (message.seeds && message.seeds.length) {
+                object.seeds = $Array(message.seeds.length);
+                for (let j = 0; j < message.seeds.length; ++j)
+                    object.seeds[j] = $root.canari.GraineMsg.toObject(message.seeds[j], options, _depth + 1);
+            }
+            if (message.truncated != null && $Object.hasOwnProperty.call(message, "truncated"))
+                object.truncated = message.truncated;
+            return object;
+        };
+
+        /**
+         * Converts this GraineBundleMsg to JSON.
+         * @function toJSON
+         * @memberof canari.GraineBundleMsg
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        GraineBundleMsg.prototype.toJSON = function() {
+            return GraineBundleMsg.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the type url for GraineBundleMsg
+         * @function getTypeUrl
+         * @memberof canari.GraineBundleMsg
+         * @static
+         * @param {string} [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
+         * @returns {string} The type url
+         */
+        GraineBundleMsg.getTypeUrl = function(prefix) {
+            if (prefix === $undefined)
+                prefix = "type.googleapis.com";
+            return prefix + "/canari.GraineBundleMsg";
+        };
+
+        var C = GraineBundleMsg;
+
+        return GraineBundleMsg;
     })();
 
     /**

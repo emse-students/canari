@@ -9,9 +9,11 @@ import {
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import type {
   ConversationMeta,
+  EncryptedGraineRow,
   EncryptedMessageRow,
   IStorage,
   OutboxEntry,
+  StoredGraineSession,
   StoredMessage,
   StoredMessagePatch,
 } from './types';
@@ -21,6 +23,14 @@ import {
   mergeOutboxEntry,
   outboxClearColumns,
 } from './outboxCodec';
+import type { GraineClearColumns } from './graineCodec';
+import {
+  byNewestSession,
+  decodeGraineSession,
+  encodeGraineSensitive,
+  graineClearColumns,
+  toEncryptedGraineRow,
+} from './graineCodec';
 import { SCHEMA_VERSION, isFreshDatabase, legacyBlobPurgeStatement } from './sqliteMigrations';
 import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
 import { MESSAGE_ROWS_PER_STATEMENT, chunk, messageInsertSql } from './sqliteBatch';
@@ -172,6 +182,28 @@ export class SqliteStorage implements IStorage {
         `);
     await this.db.execute('CREATE INDEX IF NOT EXISTS idx_outbox_conv ON outbox(conversation_id)');
 
+    // Graine sessions: one row per (sender, session), holding the seed every message key of that
+    // session derives from. The seed alone is encrypted; the rest stays clear so a community can be
+    // listed, ordered and PURGED without the device key - a purge that needed it could not run at
+    // logout, which is exactly when leaving a community has to erase what it left behind.
+    await this.db.execute(`
+            CREATE TABLE IF NOT EXISTS graine (
+                session_id   TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                channel_id   TEXT NOT NULL,
+                sender_id    TEXT NOT NULL,
+                first_index  INTEGER DEFAULT 0,
+                created_at   INTEGER,
+                sent_count   INTEGER,
+                iv           TEXT,
+                cipher_text  TEXT
+            )
+        `);
+    await this.db.execute('CREATE INDEX IF NOT EXISTS idx_graine_channel ON graine(channel_id)');
+    await this.db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_graine_workspace ON graine(workspace_id)'
+    );
+
     // A database created by the statements above has no history to migrate. Stamp it at the
     // current version and skip every branch below: they are written against schemas this file
     // never had, and running them is how "no such column: salt" broke every fresh install.
@@ -250,6 +282,17 @@ export class SqliteStorage implements IStorage {
       if (!cols.some((c) => c.name === 'history_floor')) {
         await this.db.execute('ALTER TABLE conversations ADD COLUMN history_floor INTEGER');
       }
+      // Stamped at 7, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch: this
+      // branch stamping the CURRENT version would claim v8 for databases it never migrated.
+      await this.db.execute('PRAGMA user_version = 7');
+    }
+
+    if (currentVersion < 8) {
+      // v7->v8: the `graine` table, created unconditionally by the statement above (it runs for
+      // every database, fresh or not), so this branch has only to record that it happened. Purely
+      // additive: nothing is dropped, because a Graine seed is the first key material the server
+      // cannot re-serve, and a migration that cleared them would throw away history no peer is
+      // guaranteed to still hold.
       await this.db.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     }
   }
@@ -649,13 +692,140 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM outbox WHERE id = $1', [id]);
   }
 
+  // -- Graine sessions -----------------------------------------------------
+
+  /** The clear columns of a `graine` row, named as callers know them. */
+  private graineRowColumns(row: any): GraineClearColumns {
+    return {
+      sessionId: String(row.session_id),
+      workspaceId: String(row.workspace_id),
+      channelId: String(row.channel_id),
+      senderId: String(row.sender_id),
+      firstIndex: Number(row.first_index) || 0,
+      createdAt: rowTimestampMs(row.created_at),
+      sentCount: row.sent_count ?? undefined,
+    };
+  }
+
+  /**
+   * Decrypt a batch of Graine rows, skipping and REPORTING any that fail.
+   *
+   * One unreadable seed must not cost the other nineteen, and it must not pass unmentioned either:
+   * after Graine the server holds nothing to re-serve, so a seed that cannot be decrypted is
+   * history this device has to ask a peer for.
+   */
+  private async decodeGraineRows(
+    rows: any[],
+    deviceKeyB64: string
+  ): Promise<StoredGraineSession[]> {
+    const out: StoredGraineSession[] = [];
+    for (const row of rows) {
+      try {
+        const payload = await decryptData(
+          base64ToUint8(row.cipher_text),
+          base64ToUint8(row.iv),
+          deviceKeyB64
+        );
+        out.push(decodeGraineSession(this.graineRowColumns(row), payload));
+      } catch {
+        console.warn('[GRAINE] failed to decrypt session seed', row.session_id);
+      }
+    }
+    return out.sort(byNewestSession);
+  }
+
+  /** Encrypt the seed and upsert the session. See {@link IStorage.saveGraineSession}. */
+  async saveGraineSession(session: StoredGraineSession, deviceKeyB64: string): Promise<void> {
+    const encrypted = await encryptData(encodeGraineSensitive(session), deviceKeyB64);
+    const c = graineClearColumns(session);
+    await this.db.execute(
+      `INSERT OR REPLACE INTO graine
+         (session_id, workspace_id, channel_id, sender_id, first_index, created_at, sent_count, iv, cipher_text)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        c.sessionId,
+        c.workspaceId,
+        c.channelId,
+        c.senderId,
+        c.firstIndex,
+        c.createdAt,
+        c.sentCount ?? null,
+        uint8ToBase64(encrypted.iv),
+        uint8ToBase64(encrypted.cipherText),
+      ]
+    );
+  }
+
+  /** Every session known for a channel, newest first. See {@link IStorage.getGraineSessions}. */
+  async getGraineSessions(channelId: string, deviceKeyB64: string): Promise<StoredGraineSession[]> {
+    const rows: any[] = await this.db.select('SELECT * FROM graine WHERE channel_id = $1', [
+      channelId,
+    ]);
+    return this.decodeGraineRows(rows, deviceKeyB64);
+  }
+
+  /** One session by id, or null. See {@link IStorage.getGraineSession}. */
+  async getGraineSession(
+    sessionId: string,
+    deviceKeyB64: string
+  ): Promise<StoredGraineSession | null> {
+    const rows: any[] = await this.db.select('SELECT * FROM graine WHERE session_id = $1', [
+      sessionId,
+    ]);
+    if (rows.length === 0) return null;
+    const decoded = await this.decodeGraineRows(rows, deviceKeyB64);
+    return decoded[0] ?? null;
+  }
+
+  /** Erase a community's seeds and report how many. See {@link IStorage.deleteGraineSessionsForWorkspace}. */
+  async deleteGraineSessionsForWorkspace(workspaceId: string): Promise<number> {
+    const rows: any[] = await this.db.select(
+      'SELECT session_id FROM graine WHERE workspace_id = $1',
+      [workspaceId]
+    );
+    await this.db.execute('DELETE FROM graine WHERE workspace_id = $1', [workspaceId]);
+    return rows.length;
+  }
+
+  /** Every row, seeds still sealed, for a backup. See {@link IStorage.getAllEncryptedGraineRows}. */
+  async getAllEncryptedGraineRows(): Promise<EncryptedGraineRow[]> {
+    const rows: any[] = await this.db.select('SELECT * FROM graine');
+    return rows.map((row) =>
+      toEncryptedGraineRow(this.graineRowColumns(row), {
+        iv: base64ToUint8(row.iv),
+        cipherText: base64ToUint8(row.cipher_text),
+      })
+    );
+  }
+
+  /** Non-destructive restore of one row. See {@link IStorage.importEncryptedGraineRow}. */
+  async importEncryptedGraineRow(row: EncryptedGraineRow): Promise<void> {
+    await this.db.execute(
+      `INSERT OR IGNORE INTO graine
+         (session_id, workspace_id, channel_id, sender_id, first_index, created_at, sent_count, iv, cipher_text)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        row.sessionId,
+        row.workspaceId,
+        row.channelId,
+        row.senderId,
+        row.firstIndex,
+        row.createdAt,
+        row.sentCount ?? null,
+        uint8ToBase64(row.iv),
+        uint8ToBase64(row.cipherText),
+      ]
+    );
+  }
+
   // -- Misc ----------------------------------------------------------------
 
-  /** Delete all rows from the messages, conversations, and outbox tables (account reset / testing). */
+  /** Delete every row from the messages, conversations, outbox and graine tables (account reset / testing). */
   async clear(): Promise<void> {
     invalidateAllHistoryStateKeys();
     await this.db.execute('DELETE FROM messages');
     await this.db.execute('DELETE FROM conversations');
     await this.db.execute('DELETE FROM outbox');
+    await this.db.execute('DELETE FROM graine');
   }
 }

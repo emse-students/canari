@@ -253,6 +253,89 @@ pub(crate) fn store_channel_key(
     Ok(())
 }
 
+/// How many Graine sessions per channel the mirror keeps. Mirrors
+/// `GRAINE_NATIVE_MIRROR_SESSIONS_PER_CHANNEL` in `graineConstants.ts`.
+const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
+
+/// Merges one Graine seed into {app_data_dir}/graine_seeds.json so the background push service can
+/// derive a message key with the app killed. The file is a JSON map
+/// `channelId -> { sessionId -> { seed: base64, createdAt: epochMs } }`.
+///
+/// **Bounded, unlike the epoch mirror it will replace.** Epoch keys were few and a whole channel's
+/// worth could be kept; seeds accumulate for ever, in a file rewritten on every rotation, which is
+/// unbounded growth waiting for a year to pass. Only the newest
+/// [`GRAINE_MIRROR_SESSIONS_PER_CHANNEL`] are kept, because this file has exactly one job -
+/// decrypting an INCOMING push - while the durable set lives in the local store. A seed too old to
+/// be mirrored is not a failure: the notification degrades to a generic "new message", which is the
+/// existing behaviour and the correct one.
+///
+/// App-private plaintext storage, consistent with push_context.json / mls.bin / channel_keys.json.
+#[tauri::command]
+pub(crate) fn store_graine_seed(
+    app: tauri::AppHandle,
+    channel_id: String,
+    session_id: String,
+    seed_b64: String,
+    created_at: i64,
+) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    let path = data_dir.join("graine_seeds.json");
+
+    let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(c) => serde_json::from_str(&c).unwrap_or_else(|_| serde_json::json!({})),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => return Err(format!("read graine_seeds.json: {e}")),
+    };
+
+    let map = root
+        .as_object_mut()
+        .ok_or("graine_seeds.json is not an object")?;
+    let channel_entry = map
+        .entry(channel_id)
+        .or_insert_with(|| serde_json::json!({}));
+    let sessions = channel_entry
+        .as_object_mut()
+        .ok_or("channel entry is not an object")?;
+    sessions.insert(
+        session_id,
+        serde_json::json!({ "seed": seed_b64, "createdAt": created_at }),
+    );
+
+    let dropped = prune_graine_sessions(sessions);
+
+    std::fs::write(&path, root.to_string()).map_err(|e| e.to_string())?;
+    log::debug!("[GRAINE_MIRROR] stored seed, dropped {dropped} older session(s)");
+    Ok(())
+}
+
+/// Keeps the newest [`GRAINE_MIRROR_SESSIONS_PER_CHANNEL`] sessions, returning how many were
+/// dropped. Ordered by `createdAt`, and a session missing one sorts oldest: a malformed entry is
+/// the first thing to go, never something that survives a bound it cannot be measured against.
+fn prune_graine_sessions(sessions: &mut serde_json::Map<String, serde_json::Value>) -> usize {
+    if sessions.len() <= GRAINE_MIRROR_SESSIONS_PER_CHANNEL {
+        return 0;
+    }
+    let mut by_age: Vec<(String, i64)> = sessions
+        .iter()
+        .map(|(id, entry)| {
+            let created = entry.get("createdAt").and_then(|v| v.as_i64()).unwrap_or(0);
+            (id.clone(), created)
+        })
+        .collect();
+    // Newest first, ties broken by id so the outcome is the same on every device.
+    by_age.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let doomed: Vec<String> = by_age
+        .split_off(GRAINE_MIRROR_SESSIONS_PER_CHANNEL)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    for id in &doomed {
+        sessions.remove(id);
+    }
+    doomed.len()
+}
+
 /// Reads {app_data_dir}/outbox_sent.ndjson (one messageId per line, written by the Android service
 /// after a successful background send), clears the file and returns the ids. Called at login to
 /// drop from the outbox the messages already delivered in the background.

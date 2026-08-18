@@ -42,6 +42,11 @@ base64 = "0.22"
 # Channel-message push decryption (AES-256-GCM): channel messages use the same AEAD as WebCrypto
 # (ciphertext||tag, 12-byte nonce); the native push service decrypts inline ciphertext locally.
 aes-gcm = "0.10"
+# Graine message-key derivation, re-implemented here because a push is decrypted before any WebView
+# runs. It must agree with `frontend/src/lib/crypto/graine.ts` byte for byte; the shared test
+# vectors live in both test suites (see `mobile/graine.rs`).
+hkdf = "0.12"
+sha2 = "0.10"
 log = "0.4"
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread"] }
 

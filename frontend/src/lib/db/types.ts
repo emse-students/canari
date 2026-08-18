@@ -163,6 +163,61 @@ export interface OutboxEntry {
 }
 
 /**
+ * One Graine session as this device holds it.
+ *
+ * A session belongs to one SENDER in one CHANNEL. `sessionId` is unique across every sender and is
+ * the primary key, because no two senders ever write the same session namespace - which is what
+ * lets a session be minted with no coordination at all.
+ *
+ * **These have to be durable, unlike the epoch keys they replace.** An epoch key could live in
+ * memory because the server re-served it on every load; after Graine the server has nothing to
+ * re-serve, so a lost seed is history a member can only get back by asking a peer.
+ */
+export interface StoredGraineSession {
+  /** Community the channel belongs to - the scope a history bundle and a purge both work at. */
+  workspaceId: string;
+  channelId: string;
+  /** Unique across senders; the primary key. */
+  sessionId: string;
+  /** Who minted it, and therefore who a repair request is addressed to - they always hold it. */
+  senderId: string;
+  /** The 32-byte seed, base64. THE secret, and the only field encrypted at rest. */
+  seedB64: string;
+  /**
+   * Lowest index this device may derive. Non-zero when the seed was handed over mid-session, so a
+   * member who joined late cannot open messages sent before they were allowed to.
+   */
+  firstIndex: number;
+  createdAt: number;
+  /**
+   * Messages this device has SEALED with the session, which is what the 100-message rotation
+   * counts. Absent on a received session: this device never seals with someone else's.
+   */
+  sentCount?: number;
+}
+
+/**
+ * A Graine row exactly as stored, for backup export and import.
+ *
+ * The seed travels still encrypted under the device key, like message rows: a backup is restored
+ * onto a device holding the same key, so re-encrypting would buy nothing and would mean decrypting
+ * every seed to write a file.
+ */
+export interface EncryptedGraineRow {
+  sessionId: string;
+  workspaceId: string;
+  channelId: string;
+  senderId: string;
+  firstIndex: number;
+  createdAt: number;
+  sentCount?: number;
+  /** 12-byte AES-GCM initialization vector, as for a message row. */
+  iv: Uint8Array;
+  /** AES-256-GCM ciphertext of the seed payload. */
+  cipherText: Uint8Array;
+}
+
+/**
  * Storage backend abstraction for Canari's local message store.
  *
  * Two implementations exist: IndexedDbStorage (browser / PWA) and SqliteStorage (Tauri desktop/mobile).
@@ -288,6 +343,34 @@ export interface IStorage {
   /** Remove a queued entry (after a confirmed send or a permanent failure). */
   deleteOutboxEntry(id: string): Promise<void>;
 
-  /** Wipe all conversations, messages, and outbox entries from the local store (tests / account reset). */
+  // Graine sessions (seed encrypted with the device key; everything else clear so a session can be
+  // listed, ordered and pruned without it)
+
+  /** Encrypt the seed and upsert one session. Re-saving the same `sessionId` overwrites it. */
+  saveGraineSession(session: StoredGraineSession, deviceKeyB64: string): Promise<void>;
+  /**
+   * Every session held for one channel, newest first. Undecryptable rows are skipped and reported
+   * rather than dropping the whole read - one unreadable seed must not cost the other nineteen.
+   */
+  getGraineSessions(channelId: string, deviceKeyB64: string): Promise<StoredGraineSession[]>;
+  /** One session by id, or null. The lookup a received message makes before it can be opened. */
+  getGraineSession(sessionId: string, deviceKeyB64: string): Promise<StoredGraineSession | null>;
+  /**
+   * Drop every session of a community, returning how many went.
+   *
+   * The scope is deliberately the COMMUNITY and not the channel: leaving takes away every salon at
+   * once, and a per-channel purge would leave seeds for salons the device can no longer even list.
+   */
+  deleteGraineSessionsForWorkspace(workspaceId: string): Promise<number>;
+
+  /** Return all Graine rows as-is (seed still encrypted) for backup export. */
+  getAllEncryptedGraineRows(): Promise<EncryptedGraineRow[]>;
+  /**
+   * Non-destructive insert of a backed-up Graine row: writes only when the device holds no session
+   * with that id, so a device live since the backup keeps what it has learned since.
+   */
+  importEncryptedGraineRow(row: EncryptedGraineRow): Promise<void>;
+
+  /** Wipe all conversations, messages, outbox entries and Graine sessions (tests / account reset). */
   clear(): Promise<void>;
 }

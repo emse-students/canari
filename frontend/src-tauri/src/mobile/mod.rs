@@ -16,6 +16,9 @@
 pub mod background;
 
 #[cfg(any(target_os = "android", target_os = "ios", test))]
+pub mod graine;
+
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 pub mod proto_fields;
 
 #[cfg(target_os = "ios")]

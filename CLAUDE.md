@@ -130,11 +130,18 @@ its commit are in. The detail lives where the link says - **do not restate it he
 
 1. **THE COMMUNITY REWORK** - the biggest item in the queue and the reason the rest waits.
    `channels.masterSecret` is a plain Postgres column, so **the server reads every salon message
-   and opens every attachment**; five governance invariants are missing besides. The plan of record
-   is [community-rework](docs/wiki/services/community-rework.md) (six axes) and
+   and opens every attachment**. The plan of record is
+   [community-rework](docs/wiki/services/community-rework.md) (six axes) and
    [channel-encryption](docs/wiki/protocols/channel-encryption.md) (the Graine protocol, its
-   measurements and its rejected alternatives). **Thirty-three work packages, in the order those two
-   pages give - do not restate them here.** Migration is a CLEAN CUT, decided 2026-08-17.
+   measurements and its rejected alternatives). **The work packages live on those two pages, in
+   order - do not restate them here.** Migration is a CLEAN CUT, decided 2026-08-17.
+   **Governance and invites (axes 2 and 3) SHIPPED 2026-08-18**, prod re-measured clean, and so did
+   **Phase 2, the Graine foundations (WP-10..14)** - constants, proto, the derivation with vectors
+   shared by TS and Rust, the durable session store on both backends with backup and PIN-change
+   re-keying, and the bounded native mirror. All of it is dark: nothing calls it yet. **Next is
+   Phase 3, the distribution group (WP-20..22).** Two open decisions belong to the user and block
+   nothing: what the cut keeps (whole communities, or the shells minus messages), and whether
+   `channel_messages` gets a retention window at all.
 2. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
    secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
    has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says

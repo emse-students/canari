@@ -37,8 +37,13 @@
  *     exporterDeviceId: string,      // MLS device ID of the exporting device
  *     conversations: ConversationMeta[],
  *     messages: SerializedRow[],   // iv/cipherText as number[] (no salt)
+ *     graine?: SerializedGraineRow[], // channel session seeds, still sealed
  *     mlsState?: string            // hex-encoded MLS state
  *   }
+ *
+ * `graine` is additive and OPTIONAL, and the version stays at 2 on purpose: nothing branches on
+ * the version beyond rejecting 0, an older client ignores a field it does not know, and a backup
+ * written before Graine simply has no seeds to restore.
  */
 
 import type { IStorage, ConversationMeta } from './db';
@@ -55,6 +60,27 @@ interface SerializedRow {
   cipherText: number[];
 }
 
+/**
+ * A Graine session row on the wire: the clear columns verbatim, and the sealed seed as `number[]`
+ * like every other ciphertext in this file.
+ *
+ * The seed travels STILL ENCRYPTED under the device key. That key is PIN-derived, so it is the same
+ * on the user's second device - which is what makes these rows worth carrying: after Graine the
+ * server holds no channel key material, so a seed lost here is channel history that has to be
+ * begged off a peer, or is gone.
+ */
+interface SerializedGraineRow {
+  sessionId: string;
+  workspaceId: string;
+  channelId: string;
+  senderId: string;
+  firstIndex: number;
+  createdAt: number;
+  sentCount?: number;
+  iv: number[];
+  cipherText: number[];
+}
+
 export interface BackupData {
   version: number;
   userId: string;
@@ -63,6 +89,8 @@ export interface BackupData {
   exporterDeviceId: string;
   conversations: ConversationMeta[];
   messages: SerializedRow[];
+  /** Channel session seeds, sealed. Absent in backups written before Graine. */
+  graine?: SerializedGraineRow[];
   /** Hex-encoded, device-key-encrypted MLS state (from localStorage). */
   mlsState?: string;
 }
@@ -104,6 +132,19 @@ export async function exportBackup(
     cipherText: Array.from(r.cipherText),
   }));
 
+  const rawGraine = await storage.getAllEncryptedGraineRows();
+  const graine: SerializedGraineRow[] = rawGraine.map((r) => ({
+    sessionId: r.sessionId,
+    workspaceId: r.workspaceId,
+    channelId: r.channelId,
+    senderId: r.senderId,
+    firstIndex: r.firstIndex,
+    createdAt: r.createdAt,
+    ...(r.sentCount === undefined ? {} : { sentCount: r.sentCount }),
+    iv: Array.from(r.iv),
+    cipherText: Array.from(r.cipherText),
+  }));
+
   const backup: BackupData = {
     version: 2,
     userId,
@@ -111,6 +152,7 @@ export async function exportBackup(
     exporterDeviceId: deviceId,
     conversations,
     messages,
+    graine,
     mlsState: mlsStateHex,
   };
 
@@ -241,6 +283,24 @@ export async function importBackup(
     }
   }
 
+  // Same treatment for the seeds: validated in full BEFORE anything is written, so a malformed
+  // row cannot leave half a community restored.
+  const graineRows = Array.isArray(backup.graine) ? backup.graine : [];
+  if (graineRows.length > 100_000) {
+    throw new Error('Backup too large: too many channel sessions.');
+  }
+  for (const row of graineRows) {
+    if (typeof row.sessionId !== 'string' || !row.sessionId.trim()) {
+      throw new Error('Invalid channel session id in the backup.');
+    }
+    if (typeof row.channelId !== 'string' || typeof row.workspaceId !== 'string') {
+      throw new Error(`Channel session without a channel or community: ${row.sessionId}`);
+    }
+    if (!Array.isArray(row.iv) || !Array.isArray(row.cipherText)) {
+      throw new Error(`Channel session with invalid ciphertext fields: ${row.sessionId}`);
+    }
+  }
+
   // Merge conversation metadata: INSERT OR IGNORE so a device that already
   // has the conversation keeps its live (newer) state.
   // On a different device, force lifecycle = 'pending': the device is not yet a
@@ -265,6 +325,24 @@ export async function importBackup(
       timestamp: msg.timestamp,
       iv: new Uint8Array(msg.iv),
       cipherText: new Uint8Array(msg.cipherText),
+    });
+  }
+
+  // Seeds are restored on BOTH device paths, unlike conversations. A conversation is forced to
+  // `pending` on a second device because that device is not yet an MLS member and must wait for a
+  // Welcome; a Graine seed carries no such membership - it is a symmetric key sealed under the
+  // PIN-derived device key, and it opens exactly the messages it always opened.
+  for (const row of graineRows) {
+    await storage.importEncryptedGraineRow({
+      sessionId: row.sessionId,
+      workspaceId: row.workspaceId,
+      channelId: row.channelId,
+      senderId: typeof row.senderId === 'string' ? row.senderId : '',
+      firstIndex: Number(row.firstIndex) || 0,
+      createdAt: Number(row.createdAt) || 0,
+      sentCount: row.sentCount,
+      iv: new Uint8Array(row.iv),
+      cipherText: new Uint8Array(row.cipherText),
     });
   }
 

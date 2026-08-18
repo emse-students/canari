@@ -16,6 +16,7 @@
 import { decryptData } from '$lib/encryption';
 import { getStorage, type IStorage, type StoredMessage } from '$lib/db';
 import { fromMessagePayload } from '$lib/db/messagePayload';
+import { decodeGraineSession } from '$lib/db/graineCodec';
 import { clearDeviceKeyAndWrapKey, saveDeviceKey } from '$lib/utils/deviceKeyVault';
 import { BiometricService } from '$lib/services/biometric';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -147,6 +148,48 @@ export async function reencryptLocalMessages(
 }
 
 /**
+ * Re-encrypts every stored Graine session seed from `oldDeviceKeyB64` to `newDeviceKeyB64`.
+ *
+ * Seeds sit under the device key exactly as messages do, so a PIN change that skipped them would
+ * leave every channel seed sealed under a key this device no longer has - and unlike a message,
+ * a seed cannot be re-fetched: after Graine the server holds no channel key material at all. The
+ * loss would be silent and permanent, which is why this runs inside the same change.
+ *
+ * A seed that fails to decrypt is logged and skipped rather than fatal: the message pass has
+ * already established whether `oldDeviceKeyB64` is the right key, so a failure HERE means one
+ * corrupt row, and aborting would strand the seeds already re-encrypted under the new key.
+ *
+ * @returns The number of seeds successfully re-encrypted.
+ */
+export async function reencryptGraineSessions(
+  storage: IStorage,
+  oldDeviceKeyB64: string,
+  newDeviceKeyB64: string,
+  log: (msg: string) => void = () => {}
+): Promise<number> {
+  if (oldDeviceKeyB64 === newDeviceKeyB64) return 0;
+
+  const rows = await storage.getAllEncryptedGraineRows();
+  if (rows.length === 0) return 0;
+
+  log(`[DEVICEKEY_CHANGE] Re-encrypting ${rows.length} channel session seed(s)...`);
+
+  let done = 0;
+  for (const row of rows) {
+    try {
+      const payload = await decryptData(row.cipherText, row.iv, oldDeviceKeyB64);
+      await storage.saveGraineSession(decodeGraineSession(row, payload), newDeviceKeyB64);
+      done++;
+    } catch {
+      log(`[DEVICEKEY_CHANGE] Warning: channel session ${row.sessionId} skipped (decrypt failed).`);
+    }
+  }
+
+  log(`[DEVICEKEY_CHANGE] ${done} channel session seed(s) re-encrypted with the new device key.`);
+  return done;
+}
+
+/**
  * Points this device's local unlock path at the new device key after the account PIN changed.
  * Shared by both the change and recovery flows.
  *
@@ -211,6 +254,9 @@ export async function performPinChange(
     start: 10,
     end: 85,
   });
+  // After the messages, and before the new key is adopted: a seed left under the old key is
+  // channel history nothing can serve again.
+  await reencryptGraineSessions(storage, currentDeviceKeyB64, newDeviceKeyB64, log);
 
   reportProgress(onProgress, { percent: 92, stage: 'finalize' });
   setDeviceKey(newDeviceKeyB64);

@@ -8,11 +8,13 @@
 
 export type {
   ConversationMeta,
+  EncryptedGraineRow,
   EncryptedMessageRow,
   IStorage,
   OutboxEntry,
   OutboxMediaPayload,
   OutboxMediaUploadedRef,
+  StoredGraineSession,
   StoredMessage,
 } from './db/types';
 export { IndexedDbStorage } from './db/indexeddb';

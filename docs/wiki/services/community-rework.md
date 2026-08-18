@@ -96,6 +96,24 @@ sidebar leave, the admin modal's remove, the invite landing page - map that code
 sentence through one shared `describeCommunityRefusal`. A distinction carried in prose is one that
 exactly one call site will make.
 
+### Prod after the fix (2026-08-18)
+
+Re-measured the day it shipped, on 19 active communities:
+
+| | |
+|---|---|
+| communities with no members | **0** |
+| communities with members and no admin | **0** |
+| communities with exactly one admin | 15 - unchanged, and no longer a hazard: that admin can no longer disappear |
+| live invites | 10, over 7 communities |
+| live invites with no expiry / no cap | 10 / 10 - every one of them predates the form |
+
+**Two communities still carry surplus live tokens** ("Le Glory's de la Bdthèque" holds 3, "QA
+Invitation" 2). They are revoked lazily, on the first call to the invite endpoint for that community,
+which is what makes the singular true again without a migration. Deliberately not revoked by hand:
+the exposure is months old and the mechanism is now correct, so a destructive prod write for it is
+the user's call rather than a cleanup to slip in.
+
 ## Axis 4 - message growth is bounded, or it is not a system
 
 **No cron in social-service touches `channel_messages`.** A salon message lives for ever. The app

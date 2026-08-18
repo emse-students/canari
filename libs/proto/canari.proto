@@ -80,6 +80,11 @@ message AppMessage {
     SystemMsg   system   = 5;
     CallMsg     call     = 7;
     PollMsg     poll     = 9;
+    // Graine key material. These NEVER travel in a conversation: they are carried by the
+    // community's distribution group, which holds key material and never a message body.
+    GraineMsg        graine         = 10;
+    GraineRequestMsg graine_request = 11;
+    GraineBundleMsg  graine_bundle  = 12;
   }
 }
 
@@ -153,11 +158,74 @@ message PollMsg {
   int64               ends_at         = 4; // epoch ms; 0 = no deadline
 }
 
+// ── Graine: key material for community channels ──────────────────────────
+//
+// A community channel is NOT an MLS group. Its messages are sealed under a per-sender session
+// seed, and only the seeds travel over MLS - through one distribution group per community, which
+// carries key material and never a message body. That is what keeps a seed distribution O(1)
+// instead of one sealed copy per member, at several hundred members per community.
+//
+// Full design, measurements and rejected alternatives: docs/wiki/protocols/channel-encryption.md.
+
+// One sender's session for one channel: the seed every message key in it is derived from.
+//
+// Rotation does NOT delete anything. Rotating means the sender stops using this seed for NEW
+// messages; it keeps opening the ones already sent, for ever, for everyone holding it - which is
+// what makes reading the past possible at all.
+message GraineMsg {
+  string channel_id  = 1;
+  // Opaque, sender-chosen, unique. No two senders ever write the same session namespace, so a
+  // session id needs no coordination and no election to be safe.
+  string session_id  = 2;
+  bytes  seed        = 3; // 32 raw bytes; every message key is HKDF(seed, "canari-graine-v1", i)
+  // Index the recipient may start deriving from. Non-zero when a seed is handed over mid-session,
+  // so a member who joined late cannot derive keys for messages sent before they were allowed to.
+  uint32 first_index = 4;
+  int64  created_at  = 5; // epoch ms, for the 7-day rotation and for ordering a bundle
+}
+
+// What a request is FOR, stated rather than inferred from an empty list.
+//
+// "Repair these sessions" and "send me everything" would otherwise be the same message with an
+// empty field, and a malformed request would be indistinguishable from a legitimate one - the exact
+// shape that had to be removed from history_request once the minimum client version made it
+// unnecessary. UNSPECIFIED is declined and logged, never guessed at.
+enum GraineRequestKind {
+  GRAINE_REQUEST_KIND_UNSPECIFIED = 0;
+  GRAINE_REQUEST_KIND_SESSIONS    = 1; // exactly the session ids listed
+  GRAINE_REQUEST_KIND_HISTORY     = 2; // a joiner's catch-up, bounded by history_visibility
+}
+
+// Asks ONE named member for seeds, so N members do not all answer at once.
+//
+// The answerer is named by the requester and is deterministic: the session's own sender always
+// holds its seed, so a repair is addressed to them; if they have left the community, it goes to the
+// remaining member with the lowest user id. No clock, no election, nothing for a race to decide.
+message GraineRequestMsg {
+  string            workspace_id     = 1;
+  GraineRequestKind kind             = 2;
+  repeated string   session_ids      = 3; // meaningful only for KIND_SESSIONS
+  string            answerer_user_id = 4; // every other member ignores the request
+  string            request_id       = 5; // echoed by the bundle that answers it
+}
+
+// The answer: seeds in one message, for one channel or for a whole community.
+message GraineBundleMsg {
+  string             workspace_id = 1;
+  string             request_id   = 2; // the request this answers, echoed verbatim
+  repeated GraineMsg seeds        = 3;
+  // True when the sender held more seeds than the bundle may carry. The receiver must SAY so rather
+  // than render a short history as a complete one - "this is all there is" and "this is all I could
+  // send" are different facts.
+  bool               truncated    = 4;
+}
+
 // ── Encrypted media attachment ───────────────────────────────────────────
 //
 // Security model: the media service stores only opaque AES-GCM ciphertext.
 // The CEK and IV live inside this proto message, which is itself end-to-end
-// encrypted by MLS. Only group members can decrypt both the key and the blob.
+// encrypted by MLS (a conversation) or derived from a Graine session (a community channel).
+// Either way the server stores an opaque blob and holds no key to it.
 
 enum MediaKind {
   MEDIA_KIND_UNSPECIFIED  = 0; // generic binary
@@ -169,7 +237,9 @@ enum MediaKind {
 message MediaMsg {
   MediaKind kind      = 1;
   string    media_id  = 2; // opaque server-side identifier
-  bytes     key       = 3; // 32-byte AES-256-GCM CEK  (raw bytes, NOT hex)
+  // 32-byte AES-256-GCM CEK (raw bytes, NOT hex). Readable by whoever can read the message that
+  // carries it - group members for a conversation, seed holders for a community channel.
+  bytes     key       = 3;
   bytes     iv        = 4; // 12-byte GCM nonce         (raw bytes, NOT hex)
   string    mime_type = 5;
   uint32    size      = 6; // plaintext file size in bytes

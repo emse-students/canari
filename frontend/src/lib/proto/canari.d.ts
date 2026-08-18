@@ -837,8 +837,17 @@ export namespace canari {
         /** AppMessage poll. */
         poll?: (canari.PollMsg.$Properties|null);
 
+        /** AppMessage graine. */
+        graine?: (canari.GraineMsg.$Properties|null);
+
+        /** AppMessage graineRequest. */
+        graineRequest?: (canari.GraineRequestMsg.$Properties|null);
+
+        /** AppMessage graineBundle. */
+        graineBundle?: (canari.GraineBundleMsg.$Properties|null);
+
         /** AppMessage kind. */
-        kind?: ("text"|"reply"|"reaction"|"media"|"system"|"call"|"poll");
+        kind?: ("text"|"reply"|"reaction"|"media"|"system"|"call"|"poll"|"graine"|"graineRequest"|"graineBundle");
 
         /**
          * Creates a new AppMessage instance using the specified properties.
@@ -951,8 +960,17 @@ export namespace canari {
             /** AppMessage poll */
             poll?: (canari.PollMsg.$Properties|null);
 
+            /** AppMessage graine */
+            graine?: (canari.GraineMsg.$Properties|null);
+
+            /** AppMessage graineRequest */
+            graineRequest?: (canari.GraineRequestMsg.$Properties|null);
+
+            /** AppMessage graineBundle */
+            graineBundle?: (canari.GraineBundleMsg.$Properties|null);
+
             /** AppMessage kind */
-            kind?: ("text"|"reply"|"reaction"|"media"|"system"|"call"|"poll");
+            kind?: ("text"|"reply"|"reaction"|"media"|"system"|"call"|"poll"|"graine"|"graineRequest"|"graineBundle");
 
             /** Unknown fields preserved while decoding when enabled */
             $unknowns?: Uint8Array[];
@@ -969,9 +987,12 @@ export namespace canari {
           system?: canari.SystemMsg.$Shape|null;
           call?: canari.CallMsg.$Shape|null;
           poll?: canari.PollMsg.$Shape|null;
+          graine?: canari.GraineMsg.$Shape|null;
+          graineRequest?: canari.GraineRequestMsg.$Shape|null;
+          graineBundle?: canari.GraineBundleMsg.$Shape|null;
           $unknowns?: Uint8Array[];
         } & (
-          ({ kind?: undefined; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "text"; text: canari.TextMsg.$Shape; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "reply"; text?: null; reply: canari.ReplyMsg.$Shape; reaction?: null; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "reaction"; text?: null; reply?: null; reaction: canari.ReactionMsg.$Shape; media?: null; system?: null; call?: null; poll?: null }|{ kind?: "media"; text?: null; reply?: null; reaction?: null; media: canari.MediaMsg.$Shape; system?: null; call?: null; poll?: null }|{ kind?: "system"; text?: null; reply?: null; reaction?: null; media?: null; system: canari.SystemMsg.$Shape; call?: null; poll?: null }|{ kind?: "call"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call: canari.CallMsg.$Shape; poll?: null }|{ kind?: "poll"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll: canari.PollMsg.$Shape })
+          ({ kind?: undefined; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "text"; text: canari.TextMsg.$Shape; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "reply"; text?: null; reply: canari.ReplyMsg.$Shape; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "reaction"; text?: null; reply?: null; reaction: canari.ReactionMsg.$Shape; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "media"; text?: null; reply?: null; reaction?: null; media: canari.MediaMsg.$Shape; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "system"; text?: null; reply?: null; reaction?: null; media?: null; system: canari.SystemMsg.$Shape; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "call"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call: canari.CallMsg.$Shape; poll?: null; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "poll"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll: canari.PollMsg.$Shape; graine?: null; graineRequest?: null; graineBundle?: null }|{ kind?: "graine"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine: canari.GraineMsg.$Shape; graineRequest?: null; graineBundle?: null }|{ kind?: "graineRequest"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest: canari.GraineRequestMsg.$Shape; graineBundle?: null }|{ kind?: "graineBundle"; text?: null; reply?: null; reaction?: null; media?: null; system?: null; call?: null; poll?: null; graine?: null; graineRequest?: null; graineBundle: canari.GraineBundleMsg.$Shape })
         );
     }
 
@@ -1912,6 +1933,436 @@ export namespace canari {
 
         /** Shape of a PollMsg. */
         type $Shape = canari.PollMsg.$Properties;
+    }
+
+    /**
+     * Properties of a GraineMsg.
+     * @deprecated Use canari.GraineMsg.$Properties instead.
+     */
+    interface IGraineMsg extends canari.GraineMsg.$Properties {
+    }
+
+    /** Represents a GraineMsg. */
+    class GraineMsg {
+
+        /**
+         * Constructs a new GraineMsg.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: canari.GraineMsg.$Properties);
+
+        /** Unknown fields preserved while decoding when enabled */
+        $unknowns?: Uint8Array[];
+
+        /** GraineMsg channelId. */
+        channelId: string;
+
+        /** GraineMsg sessionId. */
+        sessionId: string;
+
+        /** GraineMsg seed. */
+        seed: Uint8Array;
+
+        /** GraineMsg firstIndex. */
+        firstIndex: number;
+
+        /** GraineMsg createdAt. */
+        createdAt: number;
+
+        /**
+         * Creates a new GraineMsg instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns GraineMsg instance
+         */
+        static create(properties: canari.GraineMsg.$Shape): canari.GraineMsg & canari.GraineMsg.$Shape;
+        static create(properties?: canari.GraineMsg.$Properties): canari.GraineMsg;
+
+        /**
+         * Encodes the specified GraineMsg message. Does not implicitly {@link canari.GraineMsg.verify|verify} messages.
+         * @param message GraineMsg message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        static encode(message: canari.GraineMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified GraineMsg message, length delimited. Does not implicitly {@link canari.GraineMsg.verify|verify} messages.
+         * @param message GraineMsg message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        static encodeDelimited(message: canari.GraineMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a GraineMsg message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns {canari.GraineMsg & canari.GraineMsg.$Shape} GraineMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.GraineMsg & canari.GraineMsg.$Shape;
+
+        /**
+         * Decodes a GraineMsg message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns {canari.GraineMsg & canari.GraineMsg.$Shape} GraineMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.GraineMsg & canari.GraineMsg.$Shape;
+
+        /**
+         * Verifies a GraineMsg message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a GraineMsg message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns GraineMsg
+         */
+        static fromObject(object: { [k: string]: any }): canari.GraineMsg;
+
+        /**
+         * Creates a plain object from a GraineMsg message. Also converts values to other types if specified.
+         * @param message GraineMsg
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        static toObject(message: canari.GraineMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this GraineMsg to JSON.
+         * @returns JSON object
+         */
+        toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the type url for GraineMsg
+         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
+         * @returns The type url
+         */
+        static getTypeUrl(prefix?: string): string;
+    }
+
+    namespace GraineMsg {
+
+        /** Properties of a GraineMsg. */
+        interface $Properties {
+
+            /** GraineMsg channelId */
+            channelId?: (string|null);
+
+            /** GraineMsg sessionId */
+            sessionId?: (string|null);
+
+            /** GraineMsg seed */
+            seed?: (Uint8Array|null);
+
+            /** GraineMsg firstIndex */
+            firstIndex?: (number|null);
+
+            /** GraineMsg createdAt */
+            createdAt?: (number|null);
+
+            /** Unknown fields preserved while decoding when enabled */
+            $unknowns?: Uint8Array[];
+        }
+
+        /** Shape of a GraineMsg. */
+        type $Shape = canari.GraineMsg.$Properties;
+    }
+
+    /** GraineRequestKind enum. */
+    enum GraineRequestKind {
+
+        /** GRAINE_REQUEST_KIND_UNSPECIFIED value */
+        GRAINE_REQUEST_KIND_UNSPECIFIED = 0,
+
+        /** GRAINE_REQUEST_KIND_SESSIONS value */
+        GRAINE_REQUEST_KIND_SESSIONS = 1,
+
+        /** GRAINE_REQUEST_KIND_HISTORY value */
+        GRAINE_REQUEST_KIND_HISTORY = 2
+    }
+
+    /**
+     * Properties of a GraineRequestMsg.
+     * @deprecated Use canari.GraineRequestMsg.$Properties instead.
+     */
+    interface IGraineRequestMsg extends canari.GraineRequestMsg.$Properties {
+    }
+
+    /** Represents a GraineRequestMsg. */
+    class GraineRequestMsg {
+
+        /**
+         * Constructs a new GraineRequestMsg.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: canari.GraineRequestMsg.$Properties);
+
+        /** Unknown fields preserved while decoding when enabled */
+        $unknowns?: Uint8Array[];
+
+        /** GraineRequestMsg workspaceId. */
+        workspaceId: string;
+
+        /** GraineRequestMsg kind. */
+        kind: canari.GraineRequestKind;
+
+        /** GraineRequestMsg sessionIds. */
+        sessionIds: string[];
+
+        /** GraineRequestMsg answererUserId. */
+        answererUserId: string;
+
+        /** GraineRequestMsg requestId. */
+        requestId: string;
+
+        /**
+         * Creates a new GraineRequestMsg instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns GraineRequestMsg instance
+         */
+        static create(properties: canari.GraineRequestMsg.$Shape): canari.GraineRequestMsg & canari.GraineRequestMsg.$Shape;
+        static create(properties?: canari.GraineRequestMsg.$Properties): canari.GraineRequestMsg;
+
+        /**
+         * Encodes the specified GraineRequestMsg message. Does not implicitly {@link canari.GraineRequestMsg.verify|verify} messages.
+         * @param message GraineRequestMsg message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        static encode(message: canari.GraineRequestMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified GraineRequestMsg message, length delimited. Does not implicitly {@link canari.GraineRequestMsg.verify|verify} messages.
+         * @param message GraineRequestMsg message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        static encodeDelimited(message: canari.GraineRequestMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a GraineRequestMsg message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns {canari.GraineRequestMsg & canari.GraineRequestMsg.$Shape} GraineRequestMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.GraineRequestMsg & canari.GraineRequestMsg.$Shape;
+
+        /**
+         * Decodes a GraineRequestMsg message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns {canari.GraineRequestMsg & canari.GraineRequestMsg.$Shape} GraineRequestMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.GraineRequestMsg & canari.GraineRequestMsg.$Shape;
+
+        /**
+         * Verifies a GraineRequestMsg message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a GraineRequestMsg message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns GraineRequestMsg
+         */
+        static fromObject(object: { [k: string]: any }): canari.GraineRequestMsg;
+
+        /**
+         * Creates a plain object from a GraineRequestMsg message. Also converts values to other types if specified.
+         * @param message GraineRequestMsg
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        static toObject(message: canari.GraineRequestMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this GraineRequestMsg to JSON.
+         * @returns JSON object
+         */
+        toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the type url for GraineRequestMsg
+         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
+         * @returns The type url
+         */
+        static getTypeUrl(prefix?: string): string;
+    }
+
+    namespace GraineRequestMsg {
+
+        /** Properties of a GraineRequestMsg. */
+        interface $Properties {
+
+            /** GraineRequestMsg workspaceId */
+            workspaceId?: (string|null);
+
+            /** GraineRequestMsg kind */
+            kind?: (canari.GraineRequestKind|null);
+
+            /** GraineRequestMsg sessionIds */
+            sessionIds?: (string[]|null);
+
+            /** GraineRequestMsg answererUserId */
+            answererUserId?: (string|null);
+
+            /** GraineRequestMsg requestId */
+            requestId?: (string|null);
+
+            /** Unknown fields preserved while decoding when enabled */
+            $unknowns?: Uint8Array[];
+        }
+
+        /** Shape of a GraineRequestMsg. */
+        type $Shape = canari.GraineRequestMsg.$Properties;
+    }
+
+    /**
+     * Properties of a GraineBundleMsg.
+     * @deprecated Use canari.GraineBundleMsg.$Properties instead.
+     */
+    interface IGraineBundleMsg extends canari.GraineBundleMsg.$Properties {
+    }
+
+    /** Represents a GraineBundleMsg. */
+    class GraineBundleMsg {
+
+        /**
+         * Constructs a new GraineBundleMsg.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: canari.GraineBundleMsg.$Properties);
+
+        /** Unknown fields preserved while decoding when enabled */
+        $unknowns?: Uint8Array[];
+
+        /** GraineBundleMsg workspaceId. */
+        workspaceId: string;
+
+        /** GraineBundleMsg requestId. */
+        requestId: string;
+
+        /** GraineBundleMsg seeds. */
+        seeds: canari.GraineMsg.$Properties[];
+
+        /** GraineBundleMsg truncated. */
+        truncated: boolean;
+
+        /**
+         * Creates a new GraineBundleMsg instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns GraineBundleMsg instance
+         */
+        static create(properties: canari.GraineBundleMsg.$Shape): canari.GraineBundleMsg & canari.GraineBundleMsg.$Shape;
+        static create(properties?: canari.GraineBundleMsg.$Properties): canari.GraineBundleMsg;
+
+        /**
+         * Encodes the specified GraineBundleMsg message. Does not implicitly {@link canari.GraineBundleMsg.verify|verify} messages.
+         * @param message GraineBundleMsg message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        static encode(message: canari.GraineBundleMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified GraineBundleMsg message, length delimited. Does not implicitly {@link canari.GraineBundleMsg.verify|verify} messages.
+         * @param message GraineBundleMsg message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        static encodeDelimited(message: canari.GraineBundleMsg.$Properties, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a GraineBundleMsg message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns {canari.GraineBundleMsg & canari.GraineBundleMsg.$Shape} GraineBundleMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): canari.GraineBundleMsg & canari.GraineBundleMsg.$Shape;
+
+        /**
+         * Decodes a GraineBundleMsg message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns {canari.GraineBundleMsg & canari.GraineBundleMsg.$Shape} GraineBundleMsg
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): canari.GraineBundleMsg & canari.GraineBundleMsg.$Shape;
+
+        /**
+         * Verifies a GraineBundleMsg message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a GraineBundleMsg message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns GraineBundleMsg
+         */
+        static fromObject(object: { [k: string]: any }): canari.GraineBundleMsg;
+
+        /**
+         * Creates a plain object from a GraineBundleMsg message. Also converts values to other types if specified.
+         * @param message GraineBundleMsg
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        static toObject(message: canari.GraineBundleMsg, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this GraineBundleMsg to JSON.
+         * @returns JSON object
+         */
+        toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the type url for GraineBundleMsg
+         * @param [prefix] Custom type url prefix, defaults to `"type.googleapis.com"`
+         * @returns The type url
+         */
+        static getTypeUrl(prefix?: string): string;
+    }
+
+    namespace GraineBundleMsg {
+
+        /** Properties of a GraineBundleMsg. */
+        interface $Properties {
+
+            /** GraineBundleMsg workspaceId */
+            workspaceId?: (string|null);
+
+            /** GraineBundleMsg requestId */
+            requestId?: (string|null);
+
+            /** GraineBundleMsg seeds */
+            seeds?: (canari.GraineMsg.$Properties[]|null);
+
+            /** GraineBundleMsg truncated */
+            truncated?: (boolean|null);
+
+            /** Unknown fields preserved while decoding when enabled */
+            $unknowns?: Uint8Array[];
+        }
+
+        /** Shape of a GraineBundleMsg. */
+        type $Shape = canari.GraineBundleMsg.$Properties;
     }
 
     /** MediaKind enum. */

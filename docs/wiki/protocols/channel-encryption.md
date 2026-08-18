@@ -234,6 +234,18 @@ key like messages and outbox entries, and into the backup export/import path bes
 MESSAGES stay unpersisted - `useMessaging` deliberately skips the DB for a `channel_` conversation
 because channels are server-authoritative - so this adds a store, it does not change that decision.
 
+Three consequences of "like a message" that are NOT optional, and are each implemented (WP-13):
+
+- **Every place that re-keys message rows must re-key seeds**, or a PIN change destroys them - see
+  the Phase 2 findings in §6.
+- **The clear columns must be enough to PURGE without the device key.** `workspaceId` and
+  `channelId` stay in the clear precisely so leaving a community can erase its seeds at logout, when
+  the key is gone. A purge that needed the key could not run when it most has to.
+- **The backup carries seeds still sealed**, and restores them on a second device as well as on the
+  same one. The device key is PIN-derived, so it is the same key there; and unlike a conversation -
+  forced to `pending` on a second device because that device is not yet an MLS member - a seed
+  carries no membership, it is a symmetric key that opens exactly what it always opened.
+
 ## 5. Migration: a clean cut
 
 Existing ciphertext is under server-derivable keys, so it cannot be carried over without carrying
@@ -270,7 +282,7 @@ independently reviewable and nothing is half-migrated between two of them.
 - **WP-07** Re-run the audit queries on prod and record that no 0-member and no 0-admin community
   remains.
 
-### Phase 2 - Graine foundations (pure additions, nothing switched on)
+### Phase 2 - Graine foundations (pure additions, nothing switched on) - **SHIPPED 2026-08-18**
 
 - **WP-10** Shared constants: `canari-graine-v1`, rotation thresholds, bundle limits, in one module
   per side so no second copy can drift.
@@ -283,6 +295,28 @@ independently reviewable and nothing is half-migrated between two of them.
   backends, plus backup export and import rows. Tests on each backend.
 - **WP-14** Native mirror keyed by `sessionId` with a **bound** on retained seeds per channel: Rust
   command, Kotlin reader, Swift reader.
+
+**What Phase 2 turned up, and where it landed.** Two things were found by writing the store rather
+than by reading the design:
+
+1. **A PIN change would have silently destroyed every seed.** `performPinChange` re-encrypts messages
+   and the MLS state under the new device key; a seed sits under the same key and was in neither
+   list. For a message the loss is invisible - the server re-serves it - so the omission had never
+   cost anything. For a seed there is nothing to re-serve, so it would have been permanent, and the
+   user would have seen it as "my channel history stopped loading" long after the PIN change.
+   `reencryptGraineSessions` closes it, next to the message pass and before the new key is adopted.
+   The rule generalises beyond Graine and is in [durable-rules](../durable-rules.md).
+2. **The SQLite v7 branch stamped `SCHEMA_VERSION` rather than `7`** - the exact mistake the comment
+   in the v6 branch above it warns against. Harmless only while 7 WAS the latest; the bump to 8 is
+   what would have fired it, silently skipping the new migration on every database that had ever run
+   v7. Fixed in the same change.
+
+**What "tests on each backend" actually means here.** IndexedDB is tested for real
+(`graineStore.test.ts`, on `fake-indexeddb`, since happy-dom ships no IndexedDB): real cursors, real
+indexes, real version migration. SQLite cannot be opened without a live Tauri SQL plugin, so what
+holds the two implementations together is the shared codec both go through (`graineCodec.ts`), tested
+on its own - the same split `sqliteBatch` and `sqliteMigrations` already use. **Say this rather than
+letting "tested on both backends" be read as more than it is.**
 
 ### Phase 3 - the distribution group
 

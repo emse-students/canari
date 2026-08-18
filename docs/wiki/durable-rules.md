@@ -36,6 +36,19 @@ The four traps worth seeing without opening one:
   guard for a month while the native resume had only the first - and the comment saying "keep the
   two in sync" was itself only about the first. See
   [mls-desync-prevention](protocols/mls-desync-prevention.md).
+- **WHAT THE DEVICE KEY SEALS, THE DEVICE KEY CHANGE MUST RE-SEAL - AND WHETHER FORGETTING IS
+  SURVIVABLE DEPENDS ENTIRELY ON WHETHER SOMETHING ELSE STILL HOLDS IT.** `performPinChange`
+  enumerates what it re-encrypts, and adding a device-key-sealed store without adding it to that
+  list is silent: nothing fails at change time, and the rows simply stop opening later. It had never
+  cost anything because every such row so far was a MESSAGE, which the server re-serves - so the
+  omission repaired itself. A Graine seed is the first row nothing can re-serve, so the same
+  omission would be permanent, and would surface as "my channel history stopped loading" weeks after
+  the PIN change that caused it. Before adding an encrypted store, answer the question the design
+  owes: **who else holds this, and what happens if this copy dies.**
+- **A MIGRATION BRANCH STAMPS ITS OWN VERSION, NEVER `SCHEMA_VERSION`** - stamping the current
+  version claims every migration written after it, so the next one never runs on the databases that
+  branch touched. `sqlite.ts` carries the comment in the v6 branch and the v7 branch did it anyway;
+  it was invisible until the bump to 8. When bumping the version, READ the previous branch's stamp.
 - **A RULE THAT EACH CALL SITE MUST REMEMBER IS A RULE THE NEXT CALL SITE WILL NOT.** The outbound
   checkpoint lived at 2 of the 18 call sites that reach a send; the other 16 advanced the ratchet and
   persisted nothing. It is now in `BaseMlsService.sendMessage`, which is concrete for exactly this

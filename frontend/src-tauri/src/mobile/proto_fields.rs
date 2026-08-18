@@ -299,6 +299,18 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
         }
     }
 
+    // Graine key material (fields 10-12): the community distribution group's traffic. It is never a
+    // message and must never ring anybody. Stated here rather than left to the fall-through at the
+    // end, because "unrecognised" and "deliberately silent" would otherwise be the same outcome to
+    // read - and the next `kind` added to the proto would inherit silence by accident instead of by
+    // decision.
+    if find_length_delimited_field(bytes, 10).is_some()
+        || find_length_delimited_field(bytes, 11).is_some()
+        || find_length_delimited_field(bytes, 12).is_some()
+    {
+        return serde_json::json!({ "ok": false });
+    }
+
     // CallMsg (field 7, WP-XP-5): WebRTC signaling rides the same AppMessage channel.
     // An invite (offer_sdp present) becomes a typed "call_invite" so natives can show a
     // ringing notification (or dedupe against an already-ringing call_ring push); every
@@ -498,6 +510,36 @@ mod tests {
         write_bytes_field(&mut msg, 3, &reaction);
 
         assert_eq!(extract_full_message_info(&msg)["ok"], false);
+    }
+
+    #[test]
+    fn graine_key_material_never_rings_anybody() {
+        // GraineMsg { channel_id=1, session_id=2, seed=3 } as AppMessage field 10. A seed
+        // distribution reaching a phone must be as silent as a read receipt - it is key material,
+        // not something anybody said.
+        let mut graine = Vec::new();
+        write_string_field(&mut graine, 1, "ch-1");
+        write_string_field(&mut graine, 2, "sess-1");
+        write_bytes_field(&mut graine, 3, &[0u8; 32]);
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 10, &graine);
+
+        assert_eq!(extract_full_message_info(&msg)["ok"], false);
+    }
+
+    #[test]
+    fn graine_requests_and_bundles_are_silent_too() {
+        for field in [11u32, 12u32] {
+            let mut body = Vec::new();
+            write_string_field(&mut body, 1, "ws-1");
+            let mut msg = Vec::new();
+            write_bytes_field(&mut msg, field, &body);
+            assert_eq!(
+                extract_full_message_info(&msg)["ok"],
+                false,
+                "AppMessage field {field} must be silent"
+            );
+        }
     }
 
     #[test]

@@ -1,12 +1,28 @@
-import type { EncryptedMessageRow, IStorage, StoredMessage } from '$lib/db';
-import { encryptData } from '$lib/encryption';
-import { reencryptLocalMessages } from './pinChange';
+import type {
+  EncryptedGraineRow,
+  EncryptedMessageRow,
+  IStorage,
+  StoredGraineSession,
+  StoredMessage,
+} from '$lib/db';
+import { encryptData, decryptData } from '$lib/encryption';
+import {
+  graineClearColumns,
+  encodeGraineSensitive,
+  decodeGraineSession,
+} from '$lib/db/graineCodec';
+import { reencryptGraineSessions, reencryptLocalMessages } from './pinChange';
 
 /** In-memory IStorage stub that persists real encrypted rows (no IndexedDB). */
-function makeEncryptedStorage(): IStorage & { rows: EncryptedMessageRow[] } {
+function makeEncryptedStorage(): IStorage & {
+  rows: EncryptedMessageRow[];
+  graineRows: EncryptedGraineRow[];
+} {
   const rows: EncryptedMessageRow[] = [];
+  const graineRows: EncryptedGraineRow[] = [];
   return {
     rows,
+    graineRows,
     init: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     saveConversation: vi.fn().mockResolvedValue(undefined),
@@ -47,7 +63,35 @@ function makeEncryptedStorage(): IStorage & { rows: EncryptedMessageRow[] } {
     getOutboxEntriesForConversation: vi.fn().mockResolvedValue([]),
     updateOutboxEntry: vi.fn().mockResolvedValue(undefined),
     deleteOutboxEntry: vi.fn().mockResolvedValue(undefined),
+    // Graine: really encrypted, like the messages above, so a re-encryption can be OBSERVED
+    // rather than asserted on a spy call.
+    saveGraineSession: vi.fn(async (session: StoredGraineSession, deviceKeyB64: string) => {
+      const encrypted = await encryptData(encodeGraineSensitive(session), deviceKeyB64);
+      const row: EncryptedGraineRow = { ...graineClearColumns(session), ...encrypted };
+      const idx = graineRows.findIndex((r) => r.sessionId === row.sessionId);
+      if (idx >= 0) graineRows[idx] = row;
+      else graineRows.push(row);
+    }),
+    getGraineSessions: vi.fn().mockResolvedValue([]),
+    getGraineSession: vi.fn().mockResolvedValue(null),
+    deleteGraineSessionsForWorkspace: vi.fn().mockResolvedValue(0),
+    getAllEncryptedGraineRows: vi.fn(async () => graineRows.slice()),
+    importEncryptedGraineRow: vi.fn().mockResolvedValue(undefined),
     clear: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+/** A session whose only interesting field is the seed the re-encryption has to preserve. */
+function makeSession(sessionId: string, seedB64: string): StoredGraineSession {
+  return {
+    workspaceId: 'w1',
+    channelId: 'c1',
+    sessionId,
+    senderId: 'u1',
+    seedB64,
+    firstIndex: 0,
+    createdAt: 1_700_000_000_000,
+    sentCount: 3,
   };
 }
 
@@ -120,5 +164,59 @@ describe('reencryptLocalMessages', () => {
     const count = await reencryptLocalMessages(storage, oldKey, oldKey);
     expect(count).toBe(0);
     expect(storage.rows[0]!.cipherText).toEqual(before);
+  });
+});
+
+describe('reencryptGraineSessions', () => {
+  const oldKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+  const newKey = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
+  const seedB64 = 'c2VlZC1vbmUtdGhpcnR5LXR3by1ieXRlcy0wMDAwMDA=';
+
+  it('re-seals every seed under the new key, seed and clear columns intact', async () => {
+    const storage = makeEncryptedStorage();
+    await storage.saveGraineSession(makeSession('sess-1', seedB64), oldKey);
+
+    const count = await reencryptGraineSessions(storage, oldKey, newKey);
+
+    expect(count).toBe(1);
+    const row = storage.graineRows[0]!;
+    const payload = await decryptData(row.cipherText, row.iv, newKey);
+    expect(decodeGraineSession(row, payload)).toEqual(makeSession('sess-1', seedB64));
+  });
+
+  it('leaves nothing readable under the old key', async () => {
+    const storage = makeEncryptedStorage();
+    await storage.saveGraineSession(makeSession('sess-1', seedB64), oldKey);
+
+    await reencryptGraineSessions(storage, oldKey, newKey);
+
+    const row = storage.graineRows[0]!;
+    await expect(decryptData(row.cipherText, row.iv, oldKey)).rejects.toThrow();
+  });
+
+  it('skips a corrupt seed and keeps going, rather than stranding the rest', async () => {
+    const storage = makeEncryptedStorage();
+    await storage.saveGraineSession(makeSession('sess-good', seedB64), oldKey);
+    await storage.saveGraineSession(makeSession('sess-bad', seedB64), oldKey);
+    // Corrupt one row's ciphertext in place: it can no longer authenticate under any key.
+    storage.graineRows[1]!.cipherText[0] ^= 0xff;
+
+    const count = await reencryptGraineSessions(storage, oldKey, newKey);
+
+    expect(count).toBe(1);
+    const good = storage.graineRows.find((r) => r.sessionId === 'sess-good')!;
+    const payload = await decryptData(good.cipherText, good.iv, newKey);
+    expect((payload as { seedB64: string }).seedB64).toBe(seedB64);
+  });
+
+  it('is a no-op when old and new device key are identical', async () => {
+    const storage = makeEncryptedStorage();
+    await storage.saveGraineSession(makeSession('sess-1', seedB64), oldKey);
+    const before = storage.graineRows[0]!.cipherText.slice();
+
+    const count = await reencryptGraineSessions(storage, oldKey, oldKey);
+
+    expect(count).toBe(0);
+    expect(storage.graineRows[0]!.cipherText).toEqual(before);
   });
 });

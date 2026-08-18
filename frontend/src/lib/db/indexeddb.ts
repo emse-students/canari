@@ -8,9 +8,11 @@ import {
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import type {
   ConversationMeta,
+  EncryptedGraineRow,
   EncryptedMessageRow,
   IStorage,
   OutboxEntry,
+  StoredGraineSession,
   StoredMessage,
   StoredMessagePatch,
 } from './types';
@@ -20,6 +22,14 @@ import {
   mergeOutboxEntry,
   outboxClearColumns,
 } from './outboxCodec';
+import {
+  byNewestSession,
+  decodeGraineSession,
+  encodeGraineSensitive,
+  graineClearColumns,
+  toEncryptedGraineRow,
+  type GraineClearColumns,
+} from './graineCodec';
 import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
 
 // ---------------------------------------------------------------------------
@@ -61,7 +71,8 @@ export class IndexedDbStorage implements IStorage {
       // Version 5: adds the `outbox` store (queued outbound messages).
       // Version 6: PBKDF2+salt → deviceKeyB64 (direct AES-256-GCM). Drops all encrypted
       //            messages/outbox rows — they will be re-fetched from the server.
-      const request = indexedDB.open(this.dbName, 6);
+      // Version 7: adds the `graine` store (community-channel session seeds).
+      const request = indexedDB.open(this.dbName, 7);
 
       request.onerror = () => reject('IndexedDB open error');
       request.onsuccess = () => {
@@ -124,6 +135,17 @@ export class IndexedDbStorage implements IStorage {
           const freshOutboxStore = db.createObjectStore('outbox', { keyPath: 'id' });
           freshOutboxStore.createIndex('byConversation', 'conversationId', { unique: false });
           freshOutboxStore.createIndex('bySentAt', 'sentAt', { unique: false });
+        }
+
+        if (oldVersion < 7) {
+          // Graine session seeds. Purely additive: nothing existing is dropped, because the seeds
+          // this store will hold are the first key material the server cannot re-serve, and a
+          // migration that cleared them would be throwing away history no peer may still have.
+          if (!db.objectStoreNames.contains('graine')) {
+            const graineStore = db.createObjectStore('graine', { keyPath: 'sessionId' });
+            graineStore.createIndex('byChannel', 'channelId', { unique: false });
+            graineStore.createIndex('byWorkspace', 'workspaceId', { unique: false });
+          }
         }
 
         if (oldVersion < 3 && oldVersion >= 2) {
@@ -651,17 +673,129 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
+  // -- Graine sessions -----------------------------------------------------
+
+  /**
+   * Decrypt a batch of Graine rows, skipping and REPORTING any that fail.
+   *
+   * One unreadable seed must not cost the other nineteen, and it must not pass unmentioned either:
+   * after Graine the server holds nothing to re-serve, so a seed that cannot be decrypted is
+   * history this device has to ask a peer for.
+   */
+  private async decodeGraineRows(
+    rows: any[],
+    deviceKeyB64: string
+  ): Promise<StoredGraineSession[]> {
+    const out: StoredGraineSession[] = [];
+    for (const row of rows) {
+      try {
+        const payload = await decryptData(row.cipherText, row.iv, deviceKeyB64);
+        out.push(decodeGraineSession(row as GraineClearColumns, payload));
+      } catch {
+        console.warn('[GRAINE] failed to decrypt session seed', row.sessionId);
+      }
+    }
+    return out.sort(byNewestSession);
+  }
+
+  async saveGraineSession(session: StoredGraineSession, deviceKeyB64: string): Promise<void> {
+    const db = this.ensureDb();
+    const encrypted = await encryptData(encodeGraineSensitive(session), deviceKeyB64);
+    const row = { ...graineClearColumns(session), ...encrypted };
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('graine', 'readwrite');
+      tx.objectStore('graine').put(row);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async getGraineSessions(channelId: string, deviceKeyB64: string): Promise<StoredGraineSession[]> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction('graine', 'readonly');
+      const req = tx.objectStore('graine').index('byChannel').getAll(channelId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return this.decodeGraineRows(rows, deviceKeyB64);
+  }
+
+  async getGraineSession(
+    sessionId: string,
+    deviceKeyB64: string
+  ): Promise<StoredGraineSession | null> {
+    const db = this.ensureDb();
+    const row: any = await new Promise((resolve, reject) => {
+      const tx = db.transaction('graine', 'readonly');
+      const req = tx.objectStore('graine').get(sessionId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (!row) return null;
+    const decoded = await this.decodeGraineRows([row], deviceKeyB64);
+    return decoded[0] ?? null;
+  }
+
+  async deleteGraineSessionsForWorkspace(workspaceId: string): Promise<number> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      let deleted = 0;
+      const tx = db.transaction('graine', 'readwrite');
+      const store = tx.objectStore('graine');
+      const req = store.index('byWorkspace').openCursor(IDBKeyRange.only(workspaceId));
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) return;
+        cursor.delete();
+        deleted++;
+        cursor.continue();
+      };
+      tx.oncomplete = () => resolve(deleted);
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async getAllEncryptedGraineRows(): Promise<EncryptedGraineRow[]> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const tx = db.transaction('graine', 'readonly');
+      const req = tx.objectStore('graine').getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return rows.map((row) =>
+      toEncryptedGraineRow(row as GraineClearColumns, { iv: row.iv, cipherText: row.cipherText })
+    );
+  }
+
+  async importEncryptedGraineRow(row: EncryptedGraineRow): Promise<void> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('graine', 'readwrite');
+      const store = tx.objectStore('graine');
+      const existing = store.get(row.sessionId);
+      existing.onsuccess = () => {
+        // Non-destructive: a device live since the backup was taken keeps what it has learned.
+        if (!existing.result) store.put(row);
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
   // -- Misc ----------------------------------------------------------------
 
-  /** Erase all rows from the conversations, messages, and outbox stores in a single transaction. */
+  /** Erase every store in a single transaction. */
   async clear(): Promise<void> {
     invalidateAllHistoryStateKeys();
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(['conversations', 'messages', 'outbox'], 'readwrite');
+      const tx = db.transaction(['conversations', 'messages', 'outbox', 'graine'], 'readwrite');
       tx.objectStore('conversations').clear();
       tx.objectStore('messages').clear();
       tx.objectStore('outbox').clear();
+      tx.objectStore('graine').clear();
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
