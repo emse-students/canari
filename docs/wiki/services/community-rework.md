@@ -1,0 +1,133 @@
+# The community rework - master plan (2026-08-17)
+
+> **Status: PLANNED, nothing shipped.** This page is the plan of record for the whole community
+> subsystem. The protocol half has its own page - [channel-encryption](../protocols/channel-encryption.md) -
+> and is not repeated here. The FRONTEND is explicitly out of scope: it is good, and only its
+> unreadable-message state (axis 1) and its invite form (axis 3) are touched.
+
+## What triggered it
+
+A user question - "could someone with server access invite themselves into a community?" - turned
+into a one-day audit on 2026-08-17. Every figure below is a `GROUP BY` over prod that day. The audit
+found one design decision that has to change and five missing invariants that share a single shape:
+
+> **Every community operation checks what the ACTOR may do, and never what the community would be
+> LEFT AS.**
+
+Nothing counts admins on the way down, nothing counts members on the way down, nothing bounds an
+invite, nothing bounds message growth, and there is no platform-level recourse - the `/admin`
+"Communauté" group is associations, document reviewers and the carte, with no route touching a
+workspace. So these are not five bugs in five operations; they are one absent postcondition seen
+from five sides, and fixing one without the others leaves the hole open.
+
+## Axis 1 - the server stops being able to read (the reason for the rework)
+
+Full design, measurements and the rejected alternatives: [channel-encryption](../protocols/channel-encryption.md).
+
+In one paragraph: `channels.masterSecret` is a plain Postgres column, every epoch key is
+`HKDF(masterSecret, ...)`, and the media CEK travels inside the body - so the database reads every
+message and opens every attachment of every salon. It is replaced by megolm's shape: a per-sender
+session, generated client-side, sealed to each member over a pairwise MLS system group, rotated
+lazily on the first send after a departure. **Not Olm** - MLS already fills Olm's role, and adding a
+second ratchet would be the opposite of this rework's purpose.
+
+The measurement that made it cheap: **nothing on the server reads a channel body today** - push
+inlines the ciphertext, search is client-side, moderation acts on ids. Server readability funds no
+feature, so this costs writing and migration only.
+
+Migration is a **clean cut**: at cutover every community and all its content are deleted. Decided
+2026-08-17 by the user, which removes the legacy read path, the dual-version window and the
+re-encryption pass in one stroke.
+
+## Axis 2 - a community can never be left ungoverned
+
+Today `leaveWorkspace` deletes the row and broadcasts, counting neither admins nor members.
+`kickFromWorkspace` checks the actor and never looks at the target's roles, so `KICK_MEMBERS` alone
+removes the sole Administrateur. `updateWorkspaceMemberRole` replaces roles outright with no admin
+count and no self-check, so `MANAGE_ROLES` alone demotes the last admin - including oneself.
+**15 of the 29 communities on prod had exactly one admin**; that is the median, not the tail.
+
+The invariant to enforce at every exit, server-side, as a refusal rather than a repair:
+
+- **A community always has at least one admin, or it has no members.** Leaving, being kicked and
+  being demoted all check it. The last admin is refused until they hand the role over.
+- **A community with no members does not exist.** The last member leaving deletes it, in the same
+  transaction. Five such communities existed on prod and were removed by hand on 2026-08-17; the fix
+  is the postcondition, not the cleanup.
+- **No repair route is added, deliberately.** A destructive control needs an allowlist and a reason
+  to exist; making the broken state unreachable is strictly better than shipping a button that
+  restores it.
+
+## Axis 3 - an invite is one link, bounded
+
+`createWorkspaceInvite` documents itself as "creates (or returns)" and only ever creates; the UI
+calls it on every click. **One member minted 3 tokens for the same community in 59 seconds**, all
+three still valid, one ever used - so revoking the link you shared revokes nothing. And all 10 live
+invites carry `expiresAt = NULL` and `maxUses = NULL`, because the form offers neither field.
+
+- One live invite per community: the call returns the existing valid token, and minting a new one
+  revokes the previous, so "the link" is a single object a human can reason about.
+- Expiry and a use cap surfaced in the UI. Both columns exist and `inviteIsValid` already honours
+  them; only the form is missing.
+- Accepting an invite requires the community to still have a member - see axis 2. Today it checks
+  `archived: false` and nothing else, so one forwarded link resurrects an empty community into a
+  populated one with **zero** admins, which is the one state nothing can repair from inside.
+- After axis 1, a leaked link stops granting the past: the joiner receives current sessions only.
+
+## Axis 4 - message growth is bounded, or it is not a system
+
+**No cron in social-service touches `channel_messages`.** A salon message lives for ever. The app
+promises ninety days for MLS conversations and enforces it; channels promise nothing and enforce
+nothing, which is why the storage panel could not answer "why is this growing".
+
+**OPEN DECISION, and it is the user's:** channels get a retention window (ninety days, matching
+conversations, is the obvious candidate), or an explicit statement that they are permanent and the
+growth is accepted and measured. Either answer is fine; the current state - no policy, no
+measurement, no statement - is not. Nothing else on this page is blocked by it.
+
+## Axis 5 - the data model the audit walked into
+
+Not blocking, but every one of these cost time during the audit and will cost it again:
+
+- **There is not one foreign key** on `channel_workspaces` or `channels` (checked against
+  `information_schema`). Deleting a community by hand means naming seven tables in dependency order
+  or creating orphans; that is what the 2026-08-17 purge had to do.
+- `channel_members.roleIds` and `channel_roles.permissions` are `simple-array` **text**, so
+  "does this member hold an admin role" is a `string_to_array` join with a `LIKE` over a
+  comma-joined column, and cannot be indexed. Legacy permission names still live alongside the
+  unified ones, normalised only in an `@AfterLoad`, so SQL has to match both spellings.
+- `channel_members.keys` is a jsonb of per-channel keys - a leftover of the distribution model axis
+  1 replaces. It goes with it.
+- Two communities may share a name; only `slug` is unique. **Accepted by the user 2026-08-17**, kept
+  here so nobody re-opens it: prod holds two "MiTV" and two "Test".
+
+## Axis 6 - the documentation, which was wrong where it mattered most
+
+The audit found the wiki asserting the opposite of the code on the one question a reader would care
+about. Corrected 2026-08-17, listed so the pattern is visible rather than the individual lines:
+
+- [social-service](social-service.md) claimed each member receives the channel key "encrypted with
+  their MLS group key". Nothing ever wrapped it - `buildChannelBootstrap` returns raw base64.
+- [cross-client-campaign](../cross-client-campaign.md) claimed the server sees everything "except
+  message bodies". The exception did not exist.
+- `libs/proto/canari.proto` still says of `MediaMsg.key` that "Only group members can decrypt both
+  the key and the blob" - true of MLS, false of channels. **Not yet fixed**; it goes with axis 1.
+- `soft-crypto.ts` had no call site anywhere in `apps/`, `frontend/src` or `libs/` and was deleted.
+  It shared the `canari-channel-e2ee-v1` info string with the live derivation, which is exactly the
+  shape that gets mistaken for the real mechanism while reading.
+
+The rewrite owed at the end of axis 1: the channel encryption section of
+[social-service](social-service.md), the transport table in
+[cross-client-campaign](../cross-client-campaign.md), the schema row in
+[architecture](../architecture.md), the channel routes in [api-surface](../protocols/api-surface.md),
+and the `.proto` comment.
+
+## Order of work
+
+1. **WP-0** - finish and commit the storage panel already in the working tree.
+2. **WP-1** - axes 2 and 3, server-side, with tests. Hours, and it keeps the crypto diff readable.
+3. **WP-2..WP-8** - axis 1, as broken down in
+   [channel-encryption](../protocols/channel-encryption.md#the-work-packages-in-order).
+4. **Axis 4** once the user has answered it; **axis 5** opportunistically, inside whichever package
+   already touches the table.
+5. The campaign restarts only after all of it, on one rebuilt Android APK.

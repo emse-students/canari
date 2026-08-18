@@ -128,9 +128,13 @@ its commit are in. The detail lives where the link says - **do not restate it he
 **THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** Item 6 needs it; keep
 `adb devices` answering before starting it.
 
-1. Storage: live occupancy **on `/admin/storage`, with its slope and the two causes told apart**.
-   **Decided: NO alert**, the panel is the whole of it ([backlog](docs/wiki/backlog.md),
-   [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)).
+1. **THE COMMUNITY REWORK** - the biggest item in the queue and the reason the rest waits.
+   `channels.masterSecret` is a plain Postgres column, so **the server reads every salon message
+   and opens every attachment**; five governance invariants are missing besides. The plan of record
+   is [community-rework](docs/wiki/services/community-rework.md) (six axes) and
+   [channel-encryption](docs/wiki/protocols/channel-encryption.md) (the Graine protocol, its
+   measurements and its rejected alternatives). **Thirty-three work packages, in the order those two
+   pages give - do not restate them here.** Migration is a CLEAN CUT, decided 2026-08-17.
 2. Replace every MinIO mention by Garage - env vars, volumes, compose, scripts, docs - **and the
    secrets**: read them off prod, set them as GitHub secrets, drop the old names only once a deploy
    has ANSWERED. A measurement predating the 2026-08-14 migration keeps its MinIO wording, and says

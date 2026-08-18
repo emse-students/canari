@@ -28,9 +28,22 @@ Channels use server-assisted symmetric encryption (not MLS):
 
 1. On workspace creation, `masterSecret` is generated and stored server-side.
 2. A per-channel key is derived: `HKDF(masterSecret, channelId, keyVersion)`.
-3. Each member receives the derived key encrypted with their MLS group key.
+3. A member receives that derived key **in the clear**, over an authenticated REST call -
+   `buildChannelBootstrap` returns `newEpochBaseKey` as raw base64.
 4. Key rotation increments `keyVersion`; old ciphertexts remain decryptable.
 5. `channel_key_distributions` tracks which devices have received each key version.
+
+**THE SERVER CAN READ EVERY CHANNEL MESSAGE, AND THAT IS THE DESIGN.** `channels.masterSecret` sits
+in Postgres in the clear and every epoch key is a pure function of it, so anyone holding the database
+decrypts the whole history of every salon without touching a membership row. Say it plainly wherever
+the question comes up: this is the property that distinguishes a channel from a DM or a group, which
+really are MLS and really do leave the server with ciphertext only. Step 3 read "encrypted with their
+MLS group key" until 2026-08-17 and was simply false - no code ever wrapped that key.
+
+A related note for anyone auditing this file: `soft-crypto.ts` (`encryptSoft` / `decryptSoft`) had no
+call site anywhere in `apps/`, `frontend/src` or `libs/` and was deleted 2026-08-17. It was a second,
+unused derivation sharing the `canari-channel-e2ee-v1` info string with the live one above, which is
+exactly the shape that gets mistaken for the real mechanism while reading.
 
 ### An epoch that rotates under an open tab, and the codes that name it
 

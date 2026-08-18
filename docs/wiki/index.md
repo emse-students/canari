@@ -20,6 +20,7 @@
 - [MLS protocol](protocols/mls-protocol.md) — RFC 9420 integration, epochs, forward secrecy, device sync
 - [MLS desync prevention](protocols/mls-desync-prevention.md) — Server + client tactics to avoid state drift
 - [MLS recovery ladder](protocols/mls-recovery-ladder.md) — Step-by-step recovery (commit replay → external join → welcome_request)
+- [Channel encryption](protocols/channel-encryption.md) — **DESIGNED, NOT SHIPPED.** Why a salon is not an MLS group, and the sealed epoch key that replaces the server-held secret
 - [WebSocket binary protocol](protocols/websocket-protocol.md) — protobuf wire format, AppMessage, MlsFrame
 - [API surface](protocols/api-surface.md) — Full endpoint list across all services
 
