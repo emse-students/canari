@@ -36,6 +36,17 @@ Updated after every run.
 
 **Run order is the numbered ladder above, top to bottom.** It is the only copy of that order.
 
+**What the ladder actually costs, read off the table above:** MSG is the ONLY phase standing on a
+current build; TYPE, READ, MUT and FWD all owe re-runs on an older one; and **twelve of the eighteen
+have never run at all**. CALL is 20 checks with **zero scripts written**, and `call-service` gets its
+server-side logging BEFORE any of them (decided 2026-08-18 - invite, answer, ICE, hangup, duration):
+a call failure that two clients each see half of cannot be attributed without it, which is exactly
+what caught the silent channel-push 404s.
+
+**The whole community rework is verified by COMPILING and by unit tests only.** Nothing has run
+against prod: no client has joined a distribution group on a real deploy, and no notification has
+been decrypted from a Graine seed on hardware. Those are WP-62's rows and they run here.
+
 | State | Meaning |
 | --- | --- |
 | `PASS` / `passed` | ran, assertions held, run was clean - and the row names the build |

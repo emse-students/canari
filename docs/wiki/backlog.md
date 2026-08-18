@@ -1,8 +1,14 @@
 # Backlog
 
-Work that is **not** an open Work Package: nothing here is scheduled, and nothing here blocks the
-current campaign. A Work Package is opened from an item here only when someone decides to do it, or
-when a check fails and produces a captured log.
+**Everything below is SCHEDULED** - the user's decision of 2026-08-18: the backlog and `CLAUDE.md`
+are both emptied before the campaign restarts. This file is no longer a parking area; it is the
+DETAIL for the queue in `CLAUDE.md`, which carries the order and one line per item. Read the order
+there, the substance here, and delete an entry from BOTH when it ships.
+
+The exception is the handful that genuinely cannot be pulled forward - blocked upstream, blocked on
+an iPhone that does not exist, blocked on credentials somebody else owes, or post-campaign by the
+user's own decision. Each says which it is, and `CLAUDE.md` lists them together at the end of the
+queue so that "not scheduled" never has to be inferred.
 
 Severity uses the repo scale: **P1** security, or a user-facing path that is broken - **P2**
 correctness, nothing at risk - **P3** hygiene. An item with no severity is a QUESTION, not a defect,
@@ -138,7 +144,7 @@ The user's standing requirement is that every search box across the ecosystem to
 inversion and ranks by edit distance. Done in Sky (`personMatchScore`) and in Canari
 (`applyFuzzyNameSearch`, pg_trgm + unaccent); never started in MiGallery.
 
-**SCHEDULED 2026-08-18 (the user): in scope, item 7 of the queue in `CLAUDE.md`.** Port whichever of
+**SCHEDULED 2026-08-18 (the user): item 6 of the queue in `CLAUDE.md`.** Port whichever of
 the two fits what that repo actually has - Canari's if it reaches Postgres, Sky's client-side
 scoring if it does not.
 
@@ -169,7 +175,7 @@ is whether these stalls are CORRELATED, which a one-shot probe cannot answer by 
 
 The user asked for a place in `/admin/platform` to publish a message that people see the next time
 they open the app. Every shape below is the user's decision of 2026-08-18, taken before any code was
-written; it is **item 6 of the queue in `CLAUDE.md`**.
+written; it is **item 1 of the queue in `CLAUDE.md`**.
 
 - **Once per ACCOUNT, not once per device.** Whichever device opens the app first shows it, and it
   never appears again anywhere. That makes the "seen" state server-side by construction - which is

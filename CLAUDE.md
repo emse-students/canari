@@ -21,7 +21,7 @@
 | What is open, and what rule holds everywhere | this file |
 | The constraint for the area I am about to touch | [docs/wiki/durable-rules.md](docs/wiki/durable-rules.md) |
 | How something works, in depth | `docs/wiki/` - **search it before reading source** ([index](docs/wiki/index.md)) |
-| Wanted but not scheduled | [docs/wiki/backlog.md](docs/wiki/backlog.md) |
+| The substance behind a queue item | [docs/wiki/backlog.md](docs/wiki/backlog.md) |
 | The story of a defect that shipped | `CHANGELOG.md` |
 | Campaign board: every check, its verdict, its build | [docs/wiki/cross-client-testing.md](docs/wiki/cross-client-testing.md) |
 | Campaign design: the ladder, the scope, the preflight | [docs/wiki/cross-client-campaign.md](docs/wiki/cross-client-campaign.md) |
@@ -118,55 +118,90 @@ escapes.
 | **Le Cercle** | `../le-cercle`, `gitlab.emse.fr:aurel.dautry/le-cercle` | Aurel's repo, but the rewrite is MERGED and we hold push rights now. See below. |
 
 Work is tracked as Work Packages by severity: **P1** (security, or a broken user-facing path), **P2**
-(correctness), **P3** (hygiene). Delete a WP outright once it ships. Everything wanted but NOT
-scheduled is [backlog](docs/wiki/backlog.md) - file it there, never here.
+(correctness), **P3** (hygiene). Delete a WP outright once it ships - from HERE and from
+[backlog](docs/wiki/backlog.md) both. Since 2026-08-18 nothing is parked: anything new goes into the
+queue below in its place, and its substance into `backlog`.
 
 ### CANARI - THE QUEUE, IN ORDER
 
-The user's decision of 2026-08-16 is that **every one of these lands before the campaign restarts**.
-Work them top-down; each is one item, and an item is not done until its code, its tests, its doc and
-its commit are in. The detail lives where the link says - **do not restate it here.**
+The user's decision of 2026-08-16, restated 2026-08-18: **the backlog and this file are emptied
+before the campaign restarts.** Everything actionable is HERE, in order, one line each; the detail
+lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
+and its commit are in, and it is then deleted from BOTH files.
 
-**THE PHONE IS BACK (2026-08-17, the user) - nothing is on hold.** The campaign needs it; keep
-`adb devices` answering. **There is NO iPhone (the user, 2026-08-18)**, so the iOS half of the
-device ladder cannot be run at all - written up as such on
-[device-verification](docs/wiki/device-verification.md) rather than left looking pending.
+**Build first, then measure, then the campaign.** 1-6 are code, 7-11 measurements and questions that
+need a deploy to have happened, 12 a panel, 13 the campaign. **The phone is back (2026-08-17) -
+nothing is on hold; keep `adb devices` answering. There is NO iPhone (2026-08-18)**, so the iOS half
+of the device ladder cannot be run at all
+([device-verification](docs/wiki/device-verification.md)).
 
-1. **THE ADMIN ANNOUNCEMENT** (new, the user, 2026-08-18): a place in `/admin/platform` to publish a
-   message shown ONCE PER ACCOUNT at the next app opening, on whichever device gets there first -
-   so the "seen" state is server-side and survives a reinstall. A centred modal closed by a button,
-   French and English both entered, one active announcement at a time, with an OPTIONAL client
-   version range so "what changed in 0.15" reaches only those who have it. Scoped in
-   [backlog](docs/wiki/backlog.md).
-2. **MiGallery's fuzzy search** - the last of the four projects still on plain substring matching,
-   against the user's standing requirement. In scope, decided 2026-08-18; port Canari's pg_trgm +
-   unaccent approach or Sky's `personMatchScore`, whichever fits what that repo has.
-3. Campaign leftovers: the five attributed residue rows on W1, then `openDM`'s full reload for the
-   browsers.
-4. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign. **Everything
-   must end green, so every phase runs** - and the board says what that really costs: MSG is the
-   ONLY phase standing on a current build, TYPE/READ/MUT/FWD owe re-runs on an older one, and
-   **twelve of the eighteen have never run at all**. CALL is 20 checks with **zero scripts
-   written**, and **`call-service` gets its server-side logging FIRST** (decided 2026-08-18:
-   invite, answer, ICE, hangup, duration) - a call failure two clients each see half of cannot be
-   attributed without it, which is exactly what caught the silent channel-push 404s. Sequence and
-   per-check state live on [cross-client-testing](docs/wiki/cross-client-testing.md) - the only
-   copy of the ladder's order. **The whole community rework is verified by COMPILING and by unit
-   tests only** - nothing has run against prod, no client has joined a distribution group on a real
-   deploy, no notification has been decrypted from a Graine seed on hardware. Those are WP-62's
-   rows, and this is where they run.
+1. **THE ADMIN ANNOUNCEMENT** (the user, 2026-08-18) - a message published from `/admin/platform`,
+   shown ONCE PER ACCOUNT, server-side "seen" so a reinstall does not replay it.
+   [backlog](docs/wiki/backlog.md#p2---an-admin-announcement-shown-once-per-account---asked-for-2026-08-18-scheduled)
+2. **A SERVER-COMPOSED NOTIFICATION BODY IS FRENCH FOR EVERYONE** - the client half shipped; what is
+   left is to MOVE the composition off the services, never to store a `locale` column.
+   [backlog](docs/wiki/backlog.md#p2---a-server-composed-notification-body-is-french-for-everyone-and-cannot-be-otherwise)
+3. **`channel_messages` GETS A ONE-YEAR WINDOW, AND THE GRAINE SEEDS THE SAME ONE** - one item, not
+   two, and the storage cost is measured on
+   [storage-forecast](docs/wiki/infrastructure/storage-forecast.md) BEFORE the sweep is written.
+4. **A BACKUP THAT FAILS TELLS THE USER NOTHING** - seven refusals in `importBackup` reach only
+   `console.log`. Whoever picks it up decides the surface; the sentences become Paraglide messages in
+   the SAME change.
+5. **TWO COMMUNITIES MAY CARRY THE SAME NAME** - the user decided in the 2026-08-17 audit that this
+   is not a defect, so the scope is making a list DISTINGUISHABLE (the slug beside a duplicated
+   name), not making names unique. **Confirm that reading before writing anything.**
+6. **MiGallery's FUZZY SEARCH** - the last of the four projects on plain substring, against the
+   user's standing requirement. Port Canari's pg_trgm + unaccent or Sky's `personMatchScore`.
+7. **SEO FOR Sky, MiGallery AND Portail-etu** - one method ([seo](docs/wiki/frontend/seo.md)), three
+   separate repos and three deploys.
+8. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - and it starts with an INVENTORY, not a
+   refactor. A shared package is probably the wrong shape; one written contract, four aligned
+   implementations. Do NOT enumerate the inventory from memory.
+9. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
+   is whether the two stalls were CORRELATED, which a one-shot probe cannot answer.
+10. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how
+    often it fires and against what population, then decide whether the two-minute backoff has a case.
+11. **THE TWO STORAGE-BOUND QUESTIONS, ANSWERED BY EXPERIMENT** - what a phone out of space actually
+    does, and what the web client does when the browser evicts its store. Both are TIME bounds today
+    with no SIZE bound; the question is the failure shape, not whether it can be prevented.
+12. **THE MLS HALF OF `/admin/storage`** - the media half shipped 2026-08-18; Postgres and Redis are
+    still bare totals with no breakdown and no slope, and the WP-GHOST-1 shapes (a device holding
+    memberships with no `key_package`, a queue past a few hundred rows) are measured nowhere. **A
+    panel, no alert** - the user's call, 2026-08-17; the slope is what makes that survivable.
+    [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)
+13. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
+    **Everything must end green, so every phase runs.** What that costs, the ladder's order, and the
+    two decisions it turns on - `call-service` logging BEFORE the CALL phase, and the community
+    rework never having run against prod - are all on
+    [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy of any of it.
+
+**THE SIX THAT CANNOT BE PULLED FORWARD**, each for a reason that is not scheduling - none is
+waiting on us, and each is marked as such in [backlog](docs/wiki/backlog.md):
+
+- **The `libcrux-chacha20poly1305` panic** - closing it means shipping `openmls_rust_crypto 0.6.0`,
+  which exists only as a release candidate. Re-check when it goes stable; that is the whole condition.
+- **Does an iOS attachment consume the avatar cache file** - settled by ONE device observation, and
+  there is no iPhone.
+- **The Lydia flip (WP-LYDIA-1)** - the code is written and tested; what is missing is credentials
+  and answers Lydia owes. Stripe runs today and nothing about it is broken.
+- **One MLS client in a SharedWorker** - doing it before the campaign invalidates every verdict
+  already taken, since the boot path is what half of them measure. The user's decision, 2026-08-17.
+- **`dev.canari-emse.fr` as a real second environment, and the SECOND campaign** - both are
+  post-campaign by the user's own decision; the second campaign cannot precede the first.
+
+**One question is owed to the user, not to the code:** is a MiGallery application worth building? The
+Canari formula transfers, so the cost is knowable - what an app adds over a gallery a browser already
+renders well is the part only the user can answer.
 
 ### CANARI - what is open
 
-**Release status:** v0.14.0 cut 2026-08-17 (tag + `gh release create`, which drives the version bump,
-the mobile builds and the deploy - `cicd.md`); both CD runs and the AppImage build green. Prod
-VERIFIED answering `{"version":"0.14.0","minClientVersion":"0.14.0"}`. **The user raised
-`minClientVersion` to 0.14.0 by hand at 10:49**, from `/admin/platform` - it lives in
-`platform_config`, never in the code, so no deploy touches it. The Play Store serves 0.14.0; **the
-App Store half was never verified, so the raise locks out any iOS user it has not reached.** The
-shipping order this violated is written down for next time: publish -> VERIFY the store serves it ->
-only THEN raise ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
-
+**Release status:** v0.14.0 cut 2026-08-17; prod VERIFIED answering
+`{"version":"0.14.0","minClientVersion":"0.14.0"}`, both CD runs and the AppImage green.
+`minClientVersion` was raised to 0.14.0 by hand from `/admin/platform` - it lives in
+`platform_config`, never in the code, so no deploy touches it. **The App Store half was never
+verified, so that raise locks out any iOS user it has not reached**; the shipping order it violated
+(publish -> VERIFY the store serves it -> only THEN raise) is on
+[legacy-compatibility](docs/wiki/legacy-compatibility.md).
 
 ### CANARI - the test campaign
 
