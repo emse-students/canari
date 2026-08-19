@@ -178,14 +178,15 @@ of the device ladder cannot be run at all
     CD is green; nothing has been measured against it. The starting state, what to read, and why the
     server half needs a NEW departure are on
     [cross-client-testing](docs/wiki/cross-client-testing.md) §9 - do not re-derive them.
-6. **ONE PRODUCT QUESTION BLOCKS A P2, and it is not the code's to answer.** The live leak is
-    closed - a private salon's ciphertext, typing, pins and tallies no longer go to the whole
-    community - but the GUARANTEE is still server-side: one distribution group per community means
-    every member holds a private salon's seed. The structural fix is a group per private channel,
-    and its roster turns entirely on whether an admin keeps AMBIENT access to every private salon.
-    Forward secrecy is a separate axis, already decided against in §4.4, and is a per-salon policy
-    rather than a defect. All of it, including the three alternatives, is on
-    [backlog](docs/wiki/backlog.md) and [graine](docs/wiki/protocols/channel-encryption.md) §11.
+6. **A PRIVATE SALON IS STILL SERVER-ENFORCED, NOT END-TO-END - designed, decided, NOT written.**
+    The live leak is closed (a private salon's ciphertext, typing, pins and tallies no longer reach
+    the whole community), but one distribution group per COMMUNITY means every member still holds a
+    private salon's seed. The fix is a group per private channel, and **the user decided 2026-08-19
+    that an admin JOINS a private salon explicitly** - the ambient `workspace.manage` access goes,
+    which is what makes the roster finite. **Forward secrecy was decided AGAINST the same day**: it
+    would cost a member their own scrollback, and retention already bounds the exposure. Do not
+    re-open either. The design is on [backlog](docs/wiki/backlog.md), the incident on
+    [graine](docs/wiki/protocols/channel-encryption.md) §11.
 7. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
     **Everything must end green, so every phase runs.** What that costs, the ladder's order, and the
     two decisions it turns on - `call-service` logging BEFORE the CALL phase, and the community

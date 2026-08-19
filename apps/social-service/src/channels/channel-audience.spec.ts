@@ -60,7 +60,16 @@ describe('channel audience', () => {
   function makeService(channel: Partial<Channel>) {
     const workspaceRepo = { findOne: jest.fn(() => Promise.resolve({ id: 'ws1', slug: 'ws' })) };
     const channelRepo = { findOne: jest.fn(() => Promise.resolve(channel)), save: jest.fn() };
-    const roleRepo = { find: jest.fn(() => Promise.resolve(roles)), findOne: jest.fn() };
+    // Honours `In([...])`: several guards resolve one member's permissions with it, and a mock that
+    // ignores the filter hands every role to every user - which silently turns an outsider into an
+    // admin and makes a refusal test pass for the wrong reason.
+    const roleRepo = {
+      find: jest.fn((q?: { where?: { id?: { _value?: string[] } } }) => {
+        const wanted = q?.where?.id?._value;
+        return Promise.resolve(wanted ? roles.filter((r) => wanted.includes(r.id)) : roles);
+      }),
+      findOne: jest.fn(),
+    };
     const memberRepo = {
       find: jest.fn(() => Promise.resolve(roster)),
       findOne: jest.fn((q: { where: { userId: string } }) =>
@@ -181,6 +190,22 @@ describe('channel audience', () => {
       const { service, redis } = makeService({ ...privateChannel, allowedUsers: [INSIDER] });
       await service.renameChannel('ch-staff', ADMIN, 'backstage');
       expect(audienceOf(redis, 'channel.updated')).not.toContain(OUTSIDER);
+    });
+  });
+
+  describe('the roster of a private salon is part of the salon', () => {
+    it('refuses its access settings to a member who cannot read it', async () => {
+      const { service } = makeService(privateChannel);
+      await expect(service.getChannelAccess('ch-staff', OUTSIDER)).rejects.toThrow(
+        'Not allowed to access this channel'
+      );
+    });
+
+    it('serves them to someone who can', async () => {
+      const { service } = makeService(privateChannel);
+      await expect(service.getChannelAccess('ch-staff', INSIDER)).resolves.toMatchObject({
+        allowedUsers: [INSIDER],
+      });
     });
   });
 

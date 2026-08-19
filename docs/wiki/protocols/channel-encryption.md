@@ -1150,6 +1150,17 @@ inverts what "notify" means at the two moments access CHANGES:
 Covered by `channel-audience.spec.ts`, whose six behavioural cases were each run against the old
 audience and each failed.
 
+### The same question, one method away
+
+`getChannelAccess` returns a private salon's `allowedUsers` - which IS its roster - and checked only
+that the caller belonged to the COMMUNITY. `listChannelMembers`, a few hundred lines up, asks
+`canAccessChannel` for the same fact. Found while writing this section down rather than by a
+failure, and fixed with the guard it should always have had.
+
+Worth stating because it is the third form of one mistake: **the actor check and the data's owner
+were different scopes.** Wherever a route returns something ABOUT a channel, ask whether its guard
+names the channel or merely the community around it.
+
 ### What this does NOT fix, and it is the interesting half
 
 The guarantee for a private salon is still **server-enforced, not cryptographic**. Every member of

@@ -370,7 +370,7 @@ export class ChannelsController {
     );
   }
 
-  /** Returns the channel's access settings (isPrivate, allowedRoles, usePermissionOverrides) and the workspace role list. */
+  /** Returns the channel's access settings (isPrivate, allowedUsers, writePolicy). Readers only. */
   @UseGuards(NginxAuthGuard)
   @Get(':channelId/access')
   getChannelAccess(@Headers('x-user-id') xUserId: string, @Param('channelId') channelId: string) {

@@ -1390,6 +1390,12 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId: actorUserId },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
+    // `allowedUsers` IS the private salon's roster. Being in the community was enough to read it,
+    // which handed its membership to people who cannot open the salon - the same question
+    // `listChannelMembers` already asks one method away.
+    if (!(await this.canAccessChannel(channel, member, actorUserId))) {
+      throw new ForbiddenException('Not allowed to access this channel');
+    }
 
     return {
       channelId,

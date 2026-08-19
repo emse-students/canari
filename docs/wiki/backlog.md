@@ -179,7 +179,7 @@ the audit and its prod figures on [community-rework](services/community-rework.m
 [durable-rules](durable-rules.md), and the story in `CHANGELOG.md`. One remains, and it remains
 because the user decided it is not a defect.
 
-### QUESTION then P2 - a private salon is server-enforced, not end-to-end - raised 2026-08-19
+### P2 - a private salon is server-enforced, not end-to-end - DECIDED 2026-08-19, not written
 
 **The live leak is CLOSED** (`channel-audience.spec.ts`,
 [graine](protocols/channel-encryption.md#11-a-private-salons-ciphertext-was-addressed-to-the-whole-community---fixed-2026-08-19)):
@@ -188,28 +188,28 @@ guarantee underneath it. §4.3 gives a community exactly ONE distribution group,
 Graine seed is sealed to every member of the community. The server no longer hands those members the
 ciphertext; nothing stops them reading it if they get it another way.
 
-**The structural fix is a distribution group per private channel** - the same machinery, the same
-external join, gated on `canAccessChannel` instead of workspace membership, with `channelAudience`
-as its roster and the §10 roster diff pruning it. The cost is one MLS group per private salon, each
-small, with a commit rate far below a community's.
+**The design: a distribution group per private channel** - the same machinery, the same external
+join, gated on `canAccessChannel` instead of workspace membership, with `channelAudience` as its
+roster and the §10 roster diff pruning it. One MLS group per private salon, each small, with a
+commit rate far below a community's. `distributionGroupFor(workspaceId)` becomes scope-keyed, and
+`distributeGraineSeed` picks the channel's group when the channel is private.
 
-**It is blocked on a question only the user can answer, and it is a product question:** an admin
-today reaches every private salon WITHOUT being added to it (`canAccessChannel` falls back to
-`workspace.manage`). Ambient access is free while the guarantee is server-side. Under a per-channel
-group it stops being free - every promotion to admin becomes a commit on every private salon's
-group, and every demotion another - and it also means the salon's members cannot tell who can read
-it. The alternatives are: keep ambient access and pay the commits; make an admin JOIN a private
-salon explicitly, which is visible to its members and costs one commit when it happens; or drop
-admin access to private salons entirely. **Nothing should be written before this is decided** - it
-determines the group's roster, which is the whole design.
+**THE USER'S DECISION, 2026-08-19: an admin JOINS a private salon explicitly.** The ambient access
+`canAccessChannel` grants today (falling back to `workspace.manage`) goes. It costs one commit at
+the moment an admin adds themselves and nothing the rest of the time, where keeping it ambient would
+make every promotion a commit on EVERY private salon's group - and it means a private salon's
+members can finally see who reads it, which ambient access made impossible. Two consequences to
+carry: `canAccessChannel`'s admin fallback must go with it (the pure rule's third argument becomes
+dead, not the rule), and the UI needs the act of joining.
 
-**Forward secrecy is a SEPARATE axis and mostly already decided.** Graine deliberately retains
-seeds so a joiner can read the past (§4.4, the user's decision of 2026-08-17). Real forward secrecy
-means deleting them, which means giving that up - per channel, not globally. Channel messages are
-not persisted locally either, so a forgotten seed also costs the member their own scrollback. The
-lever that already exists and bounds the exposure is the one-year retention window of §8 plus
-`history_visibility: joined`. Do not treat this as a defect to fix; treat it as a per-salon policy
-to offer, if the user wants one.
+**Forward secrecy: the user decided AGAINST it, 2026-08-19, and the reasoning is not to be
+re-opened.** Graine deliberately retains seeds so a joiner can read the past (§4.4, 2026-08-17).
+Real forward secrecy means deleting them - and because channel messages are NOT persisted locally
+(the server is authoritative, `useMessaging` skips the DB for a `channel_` conversation), a
+forgotten seed costs a member their OWN scrollback, not just an arrival's history. Storing the
+plaintext locally instead buys nothing: same secret, same PIN-derived key. The exposure is bounded
+by RETENTION rather than by cryptography - the one-year window of §8, plus `history_visibility:
+joined` for a sensitive salon. Nothing to write.
 
 ---
 
