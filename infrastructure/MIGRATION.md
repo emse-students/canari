@@ -149,9 +149,17 @@ sudo -u canari crontab -e
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 30 3 * * * cd /home/canari/canari && ./infrastructure/backup/backup.sh >> /home/canari/backups/backup.log 2>&1
 0 4 * * * cd /home/canari/canari && ./infrastructure/backup/backup-objects.sh >> /home/canari/backups/backup-objects.log 2>&1
+# Egress ledger, one sample a minute - see egress-probe/README.md
+* * * * * cd /home/canari/canari && ./infrastructure/egress-probe/probe.sh >> /home/canari/egress/probe.err 2>&1
 ```
 
 (Alternative via root: systemd timer, see [backup/README.md](backup/README.md).)
+
+The egress probe is a MEASUREMENT, not a backup: it answers whether outbound stalls arrive together
+or independently, which no one-shot probe can. It writes timings only - the repository is public -
+and caps its own ledger at 30 days. `/home/canari/egress/probe.err` must stay empty; anything in it
+is the probe failing, which is not the same as an upstream failing.
+See [egress-probe/README.md](egress-probe/README.md).
 
 ### The restic repository password is a bootstrap step, and it is NOT a GitHub secret
 
@@ -203,5 +211,6 @@ from the same build; the CD rebuilds them together for exactly that reason.
 - [ ] CD passed green (Canari + Authentik)
 - [ ] Data restored from mitv
 - [ ] Backup cron installed
+- [ ] Egress probe cron installed (`/home/canari/egress/samples.ndjson` growing by one line a minute)
 - [ ] Reverse proxy / DNS / TLS in place
 - [ ] `frontend-ssr` running and `INTERNAL_SECRET` set (otherwise link previews stay generic)
