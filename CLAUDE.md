@@ -138,17 +138,17 @@ of the device ladder cannot be run at all
 1. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - **the inventory is DONE and it is
    [ecosystem-convergence](docs/wiki/ecosystem-convergence.md)**: seven axes, measured in all five
    repos on 2026-08-19, every row read out of a named file. Do NOT restate it here and do NOT
-   re-derive it from memory. What it leaves is three findings, in this order. **MiGallery has no
-   outbound deadline at all** while the other four independently chose 4 s - and it is the one whose
-   server proxies the most (every page goes to Immich). **Le Cercle's `searchUsers` is
-   substring-only**, ordered by promo: the sixth search box, the furthest from the standing
-   requirement, and the one an operator uses at a counter with a queue behind them. **`preferredLanguage`
-   is still in the SSR strategy list of Sky, MiGallery and le-cercle** - the mismatch Portail-etu
-   dropped it for; MEASURE the hydration behaviour with one English `Accept-Language` request before
-   touching three repos, because whether that is a defect or only an inconsistency is the one thing
-   the page could not settle from the code. The head is the shape to copy for whatever does get
-   aligned: one method, four repos, written down four times, nothing shared, four deploys, and it
-   works.
+   re-derive it from memory. Two of its three findings SHIPPED the same day: MiGallery's thirty-odd
+   outbound calls now state the ecosystem's 4 s, and Portail-etu had lost automatic language
+   detection to a misreading of Paraglide's `!isServer` guard (the middleware is the load-bearing
+   half, not the strategy list) - both verified, the second against prod in three sites side by
+   side. Le Cercle's substring-only search closed itself: the user's own `87b8d30` replaced it with
+   a full matcher on three surfaces while the page was being written. **What is left is smaller and
+   of one kind**: Portail-etu's association filter is still `includes()`, Le Cercle still has no
+   running CI (`.gitlab-ci.yml` is inert until `CERCLE_CI_ENABLED` is set), and the three TypeScript
+   matchers disagree on how many edits a short token may be wrong by - Sky and MiGallery allow 1 up
+   to 4 characters, Le Cercle 0 up to 3 and 1 up to 6. Nobody can say which the ecosystem promises,
+   which is exactly what a written contract settles and a shared package would not.
 2. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
    is whether the two stalls were CORRELATED, which a one-shot probe cannot answer.
 3. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how

@@ -42,20 +42,29 @@ word inversion and ranks by closeness**. Six boxes were found; two do none of it
 | **Sky** | `src/lib/utils/format.ts:150` `personMatchScore` | in-memory, token-to-token, **plain Levenshtein**, tolerance 1 (<=4 chars) / 2 | yes | yes | yes |
 | **MiGallery** | `src/lib/fuzzy.ts` `fuzzyScore` | in-memory, token-to-token, **Damerau-Levenshtein (OSA)**, same tolerance ladder | yes | yes | yes |
 | **Portail-etu** | `src/routes/associations/+page.svelte:18` | `name.toLowerCase().includes(query)` | **no** | **no** | **no** |
-| **Le Cercle** | `src/lib/server/db/users/index.ts:42` `searchUsers` | SQL `WHERE (first_name \|\| ' ' \|\| last_name) LIKE '%q%'`, `ORDER BY promo DESC`, `LIMIT 10` | **no** | **no** | **no** - ordered by promo |
+| **Le Cercle** | `src/lib/search/fuzzy.ts` `fuzzyScore` | in-memory, token-to-token, **Damerau-Levenshtein (OSA)**, four tiers (exact / prefix / contains / fuzzy) weighted 0.85 quality + 0.15 coverage; HIGHER is better | yes | yes | yes |
 
-Three findings, in order of how much they cost:
+**Le Cercle's row was rewritten on 2026-08-19 and is the most interesting fact on this page.**
+It was measured that morning as a SQL `LIKE '%q%'` ordered by promotion - no typos, no inversion, no
+ranking, in front of an operator with a queue behind them. By that afternoon it was not: commit
+`87b8d30` had replaced it with a full matcher, applied to three surfaces rather than one (the till,
+the roster, and the bartenders dialog, which had no search at all). **A third independent
+implementation of the same contract, written by somebody who had not read this page.** That is the
+strongest argument here for writing the CONTRACT down and letting each repo implement it - it is
+what keeps happening on its own.
 
-- **Le Cercle's is the worst and the most exposed.** It is the till's user picker: an operator types
-  a name at a counter with a queue behind them. It cannot match "Dupond Jean" against "Jean Dupont",
-  a single typo returns nothing, and the ten rows it does return are the ten most recent promos
-  rather than the ten closest - so a correct query can push the right person off the end.
-- **Portail-etu's association filter** is plain substring over name and description. Lower stakes
-  (an association list is short and visible) but it is the same gap.
+The rest:
+
+- **Portail-etu's association filter** is plain substring over name and description, and is now the
+  only one left. Lower stakes - an association list is short and visible - but it is the same gap.
 - **Sky and MiGallery are the same algorithm one metric apart.** Both do token-to-token matching with
   a tolerance of 1 for tokens of 4 characters or fewer and 2 above; MiGallery counts a transposition
-  as ONE edit and Sky as two, so `jaen` finds `Jean` in the gallery and nowhere else. This is the
-  divergence already recorded in `CLAUDE.md`; it is now located precisely.
+  as ONE edit and Sky as two, so `jaen` finds `Jean` in the gallery and nowhere else.
+- **Three TypeScript implementations, two tolerance ladders.** Sky and MiGallery allow 1 edit up to
+  4 characters and 2 above; Le Cercle allows 0 up to 3, 1 up to 6, and 2 above, taken from the
+  SHORTER of the two tokens. Neither is wrong, and nobody can say which the ecosystem promises -
+  which is exactly what a written contract would settle and a shared package would not (they would
+  still each have picked their own numbers).
 
 **Canari's is a different kind of thing, not a better or worse one.** Trigram similarity in the
 database scales to a table nobody wants to load into memory, and it is the only one of the five that
@@ -64,8 +73,9 @@ without changing what it is; what CAN be aligned is the promise - typos, inversi
 Canari keeps it.
 
 **The convergence unit here is the CONTRACT, not the code**: a documented tolerance ladder, a
-documented "every query token must match something" rule, and a documented ordering. Three of the
-six already implement it; one implements it in a different medium; two implement nothing.
+documented "every query token must match something" rule, and a documented ordering. Four of the six
+already implement it, one implements it in a different medium, and one - Portail-etu's association
+filter - implements nothing.
 
 ## 2. The deadline on an outbound call - FOUR values, ONE repo with none
 
@@ -181,12 +191,15 @@ Portail-etu's would, the moment anyone ran `format:check` there on this machine.
 ## What the inventory says, in one paragraph
 
 The values are already unanimous wherever anyone bothered to state one - 4 seconds for an outbound
-call, the same tolerance ladder for a typo, the same head. **What differs is whether a repository
-states it at all**, and the gaps cluster in the two repositories nobody has been through recently:
-MiGallery (no outbound deadline, no formatting gate in CI, no `.gitattributes`) and Le Cercle (no
-tolerant search, no running CI). Neither gap is a disagreement about the right answer. That is the
-argument against a shared package and for a written contract: there is nothing to reconcile, only
-things to finish.
+call, the same head, the same promise about a typo. **What differs is whether a repository states it
+at all**, and the two clearest gaps were both closed the same day this was written: MiGallery had no
+outbound deadline anywhere and now states the ecosystem's 4 s, and Le Cercle's search went from a
+substring `LIKE` to a full matcher in somebody else's commit while this page was being written.
+What is left is smaller and of one kind: Portail-etu's association filter still uses `includes()`,
+Le Cercle still has no running CI, and the three TypeScript matchers disagree about how many edits a
+short token may be wrong by. None of that is a disagreement about the right answer. That is the
+argument against a shared package and for a written contract - there is nothing to reconcile, only
+things to finish, and a package would not have settled the tolerance ladder either.
 
 ## Related
 
