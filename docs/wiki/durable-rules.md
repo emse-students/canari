@@ -329,6 +329,7 @@ What must not be forgotten between the pages:
 - **A connection pool makes `BEGIN` and `COMMIT` two different conversations** - a statement is the largest unit of atomicity available. [mob](frontend/mobile.md)
 - **Two frontend builds writing `build/` at once ship an app that cannot boot, and every gate is green** - `beforeBuildCommand` IS `bun run build`. [dev](development.md#scripts)
 - **A route's REACHABILITY is decided by registration order, and registration order is the module import list** - so `users/announcement` in a module imported after `UsersModule` is captured by `users/:id` and answers 404 for a user of that name. Reordering the list is not the fix: it makes correctness depend on a list nobody reads. A THIRD segment cannot collide whatever the order, which is a property of the path. The evidence is the callee's own `RouterExplorer` lines, never the caller's status. [core-service](services/core-service.md#the-route-was-unreachable-from-the-day-it-shipped---found-2026-08-19-on-prod)
+- **Returning `null` from a Nest handler sends an EMPTY BODY, so the caller's `res.json()` throws on the ORDINARY case** - and a parse error is not the same fact as "nothing to show". Wrap the answer, so the absence is a value the wire can carry. [core-service](services/core-service.md#the-route-was-unreachable-from-the-day-it-shipped---found-2026-08-19-on-prod)
 
 **Classify at the throw**
 

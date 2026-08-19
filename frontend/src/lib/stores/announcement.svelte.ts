@@ -87,7 +87,9 @@ export async function refreshAnnouncement(): Promise<void> {
       );
       return;
     }
-    pending = parseAnnouncement(await res.json());
+    // The envelope is what makes "no announcement" parseable at all - see the controller.
+    const body = (await res.json()) as { announcement?: unknown } | null;
+    pending = parseAnnouncement(body?.announcement ?? null);
     if (pending) console.debug(`[announcement] showing ${pending.id}`);
   } catch (e) {
     console.debug('[announcement] fetch failed, will ask again next opening:', e);

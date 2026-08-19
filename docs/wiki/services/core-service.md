@@ -304,6 +304,13 @@ routes and their order, and settles it in one command. `core-service` had writte
 during the whole window, which is the other half of the tell: the request never reached the handler
 that would have logged.
 
+**The route being reachable was not enough, and the third fault was behind the first two.** With the
+200 restored, the ordinary case still failed: the handler returned `null`, Nest sends an EMPTY BODY
+for that, and `res.json()` threw `Unexpected end of JSON input` on every opening with nothing to
+show. Both member and admin GETs now answer `{ announcement: ... | null }` - an envelope always
+parses, and `null` inside it is a STATEMENT where an empty body is an absence indistinguishable from
+a truncated response.
+
 **It went unseen for a second reason, and that one is the transferable half.** The client reported a
 non-200 at `console.debug`, in the same shape as the ordinary "nothing to show" case - so a route
 that had NEVER worked was indistinguishable from a quiet week, on every app opening, for as long as

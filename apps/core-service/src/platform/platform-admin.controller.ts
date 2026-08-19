@@ -30,9 +30,13 @@ export class PlatformAdminController {
 
   /** The announcement being shown right now and how many accounts have seen it, or `null`. */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  /**
+   * Wrapped for the same reason the member route is: a bare `null` is an EMPTY body, and the panel
+   * cannot tell "nothing published" from a response it failed to read.
+   */
   @Get('announcement')
-  getAnnouncement(): Promise<AnnouncementForAdmin | null> {
-    return this.announcements.getActiveForAdmin();
+  async getAnnouncement(): Promise<{ announcement: AnnouncementForAdmin | null }> {
+    return { announcement: await this.announcements.getActiveForAdmin() };
   }
 
   /**

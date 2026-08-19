@@ -59,6 +59,32 @@ been decrypted from a Graine seed on hardware. Those are WP-62's rows and they r
 | `SKIPPED` | cannot be armed with two accounts, or needs `--destructive` |
 | `BLOCKED` | cannot run until something outside the campaign happens |
 
+## The reconciled fleet this campaign starts from - established 2026-08-19
+
+`recon.mjs` answers `LOSS` on the W1/W2 pair and **that verdict is expected until the number
+changes**. Five message ids exist on W1 and on neither W2 nor A1, all created 2026-08-16 between
+09:45 and 16:27 UTC.
+
+They were never received by anyone because **they never left the sender**, which two independent
+witnesses settle: W1 holds 6272 in the shared conversation, W2 holds 6267, A1 holds 6267 - the two
+receivers agree at the message id, so nothing was dropped in reception. The server holds nothing for
+them either (zero `queued_message` rows created that day) and W2's device has not been rotated since
+2026-08-06, so this is not a fresh device without history. W1's `outbox` is EMPTY, so no retry will
+ever be attempted: the optimistic row is the only trace, which is WP-ECHO-1's shape - the sender's
+own render is its own message's only writer, since the fanout excludes the sender's devices and
+OpenMLS refuses to decrypt its own frame.
+
+**A failed send is also invisible after the fact**, and that is a live property of the current
+build: the status indicator renders only for `isLastOwn` (`MessageMetadata.svelte`), so any message
+sent after a failed one hides it for good.
+
+**The send path itself is healthy on the current build** - MSG-10 exercised exactly this: queued
+while offline, `Flush skipped - offline`, then `Flushing 2 queued entries` and both sent on
+reconnect.
+
+So the baseline is: **five, and only five.** A run whose recon reports a sixth has found something
+new; a run reporting five has found nothing. Do not clear them - the divergence is the evidence.
+
 ## 0 - SETUP
 
 | Id | Step | Needs | State |

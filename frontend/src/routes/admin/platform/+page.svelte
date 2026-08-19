@@ -60,7 +60,8 @@
     try {
       const res = await apiFetch(`${coreUrl()}/api/users/admin/platform/announcement`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as ActiveAnnouncement | null;
+      // Wrapped server-side so that "nothing published" is a body rather than no body at all.
+      const data = ((await res.json()) as { announcement: ActiveAnnouncement | null }).announcement;
       announcement = data;
       titleFr = data?.titleFr ?? '';
       titleEn = data?.titleEn ?? '';

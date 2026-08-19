@@ -32,17 +32,24 @@ export class AnnouncementController {
    * `clientVersion` is the caller's own build. It is a query parameter rather than something the
    * server infers because nothing in the request carries it, and an unreadable or missing value
    * yields `null` rather than an error - the contract is "you have an announcement or you do not".
+   *
+   * THE ANSWER IS WRAPPED BECAUSE "you do not" HAS TO BE SAYABLE. Returning `null` from a handler
+   * makes Nest send an EMPTY BODY with a 200, so `res.json()` throws `Unexpected end of JSON input`
+   * on the ORDINARY case - the client then reports a parse failure and shows nothing, which is the
+   * right screen reached by the wrong road, and indistinguishable from a truncated response. The
+   * envelope always parses, and `announcement: null` is a statement rather than an absence.
    */
   @UseGuards(NginxAuthGuard)
   @Get()
-  get(
+  async get(
     @Headers('x-user-id') xUserId: string,
     @Query('clientVersion') clientVersion?: string
-  ): Promise<AnnouncementForClient | null> {
-    return this.announcements.getForUser(
+  ): Promise<{ announcement: AnnouncementForClient | null }> {
+    const announcement = await this.announcements.getForUser(
       xUserId.trim().toLowerCase(),
       (clientVersion ?? '').trim()
     );
+    return { announcement };
   }
 
   /**

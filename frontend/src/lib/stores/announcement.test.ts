@@ -82,7 +82,9 @@ describe('refreshAnnouncement', () => {
   });
 
   it('asks on a path that a two-segment :id route cannot capture', async () => {
-    const apiFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => null });
+    const apiFetch = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ announcement: null }) });
     vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch }));
 
     const mod = await load();
@@ -110,7 +112,9 @@ describe('refreshAnnouncement', () => {
   });
 
   it('stays quiet when the server simply has nothing to show', async () => {
-    const apiFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => null });
+    const apiFetch = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ announcement: null }) });
     vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch }));
     const accused = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -120,5 +124,25 @@ describe('refreshAnnouncement', () => {
     // 200 + null is the ordinary case and must never look like a failure.
     expect(accused).not.toHaveBeenCalled();
     expect(mod.getPendingAnnouncement()).toBeNull();
+  });
+
+  it('reads the announcement out of the envelope', async () => {
+    // The envelope exists so that "none" can be SAID. A bare `null` return makes Nest send an empty
+    // body, and `res.json()` then throws on the ordinary case - which is how a repaired route still
+    // showed nothing, and reported a parse error while doing it.
+    const announcement = {
+      id: 'a1',
+      titleFr: 'Titre',
+      titleEn: 'Title',
+      bodyFr: 'Corps',
+      bodyEn: 'Body',
+    };
+    const apiFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ announcement }) });
+    vi.doMock('$lib/utils/apiFetch', () => ({ apiFetch }));
+
+    const mod = await load();
+    await mod.refreshAnnouncement();
+
+    expect(mod.getPendingAnnouncement()).toEqual({ id: 'a1', title: 'Titre', body: 'Corps' });
   });
 });
