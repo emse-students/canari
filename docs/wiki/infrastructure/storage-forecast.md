@@ -525,13 +525,28 @@ any device holding memberships with **no** `key_package` row, and the deepest si
 
 **Production, 2026-08-19** - the baseline the bars are read against:
 
-| | Measured |
+| Table | Size | Rows |
+|---|---|---|
+| `queued_message` | 73 MB | 820 |
+| `one_time_key_package` | 12 MB | 11 779 |
+| `mls_commit_log` | 1112 kB | 159 |
+| `mls_group_info` | 608 kB | 48 |
+| `key_package` | 480 kB | 261 |
+| `dm_device_group_memberships` | 216 kB | 92 |
+| `revoked_device` | 176 kB | 129 |
+| `pin_verifier` | 152 kB | 197 |
+
+| Shape | Measured |
 |---|---|
-| `queued_message` | 76 MB, 820 rows, 42 devices, deepest queue **189** |
-| `one_time_key_package` | 12 MB, 11 732 rows |
-| `key_package` | 260 rows |
-| `dm_device_group_memberships` | 92 rows |
+| Queue | 820 rows across **42 devices**, oldest **21.8 days**, deepest single queue **189** |
+| Queue by week (0 = current) | 241 / 401 / 166 / 12 |
 | Devices with memberships and no `key_package` | **0 of 52** |
+| Redis | 24 keys, 8 with a TTL - so the prefix breakdown is a census in practice, well under the 5000 sample cap |
+
+**Postgres returns the weekly buckets unordered and with gaps** - this measurement came back as weeks
+3, 1, 2, 0 - so the panel places them BY INDEX rather than by arrival. Reading them in order would
+have drawn a slope that is not there, which is the one thing these bars exist to show; it is pinned
+in `admin-storage.controller.mls.spec.ts`.
 
 The zero is displayed rather than hidden, and that is deliberate: a counter that only appears when it
 is non-zero is a counter nobody believes the first time it does appear. The deepest queue at 189 is
