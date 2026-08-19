@@ -164,10 +164,23 @@ one message.**
 
 ### 4.5 A missing seed is requested, and said out loud
 
-A receiver meeting an unknown `sessionId` requests it over the distribution group. While it is
-missing the message renders as **explicitly unreadable with a key on the way** - never as absent.
-An empty channel and an unreadable channel are different facts, and showing the second as the first
-is the silence this repository keeps banning.
+A receiver meeting an unknown `sessionId` requests it over the distribution group.
+
+**IT IS NOT RENDERED WHILE IT IS MISSING, AND THAT IS THE DECISION - corrected here 2026-08-19.**
+This section used to require the opposite: a bubble reading "unreadable, key on the way", on the
+argument that an empty salon and an unreadable salon are different facts. That argument is sound in
+general and loses to a stronger one here: **a DM does exactly the same thing.** An MLS frame this
+device can never open is logged as `LOST frame`, reconciled by asking the peer for what it holds,
+and never shown (`setupMessageHandler.ts`). Two messaging systems in one product, failing two
+different ways at the same moment, teach the user that a placeholder means something particular
+about communities - which is false, and is a worse lie than the silence.
+
+So the loss is reported where a loss belongs: `reportUnreadableChannelMessage` names the row, the
+salon and WHICH of the three causes it was, classified from the error TYPE - a missing seed
+(repairable, and the only one that asks a peer), a message sent before this device was given the
+seed (the protocol working; asking would loop for ever on the same answer), or a real fault. The
+row appears the moment its seed lands. **Do not add a placeholder to one of the two systems
+without adding it to both**, and that is a product decision, not a protocol one.
 
 A request names WHO must answer, so that N members do not all answer at once and no election is
 needed: **the session's own sender always holds its seed**, so the request is addressed to them. If

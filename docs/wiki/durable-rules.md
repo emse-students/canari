@@ -80,6 +80,10 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 - **THE TREE IS THE AUTHORITY ON WHO CAN READ; A ROUTING TABLE ANSWERS WHO GETS SENT TO.** They are different questions, they disagree (a fresh-started device empties its rows while its leaf stands), and a removal decision that reads the second locks out members it should keep. [graine](protocols/channel-encryption.md#10-a-departure-moved-nothing-and-rotation-waited-on-it---fixed-2026-08-19)
 - **AN IDENTIFIER THAT IS A PREFIX OF ANOTHER NEEDS THE SEPARATOR IN THE COMPARISON.** `remove_members_for_users` compared a bare user id with a `userId:deviceId` credential and matched nothing at all - a whole removal path inert, with no test, for as long as it existed. Compare against the shape the value actually has. [graine](protocols/channel-encryption.md#10-a-departure-moved-nothing-and-rotation-waited-on-it---fixed-2026-08-19)
 
+**Two messaging systems, one product**
+
+- **A CHANNEL AND A DM MUST FAIL THE SAME WAY, or the difference teaches the user something false.** Graine's §4.5 required a "unreadable, key on the way" placeholder that MLS DMs deliberately do not have: an unopenable frame is logged, reconciled and never shown. The doc was corrected to the code, not the reverse - and a placeholder added to one of the two now has to be added to both. When a rule about presentation is written for ONE of them, go and read what the other does before writing it. [graine](protocols/channel-encryption.md#45-a-missing-seed-is-requested-and-said-out-loud)
+
 **Who an event is ADDRESSED to**
 
 - **AN AUDIENCE IS DERIVED FROM ACCESS, OR IT IS NOT AN ACCESS CONTROL.** Every channel event was published to `getWorkspaceMemberIds` - a question about the CONTAINER - while `canAccessChannel` only ever ran on the ACTOR. A private salon's ciphertext, typing, pins and tallies went to members the same server refuses over REST, who already held the seed. Ask of every fan-out which question its recipient list answers. [graine](protocols/channel-encryption.md#11-a-private-salons-ciphertext-was-addressed-to-the-whole-community---fixed-2026-08-19)
