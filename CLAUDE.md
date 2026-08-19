@@ -178,28 +178,28 @@ of the device ladder cannot be run at all
     CD is green; nothing has been measured against it. The starting state, what to read, and why the
     server half needs a NEW departure are on
     [cross-client-testing](docs/wiki/cross-client-testing.md) §9 - do not re-derive them.
-6. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
+6. **ONE PRODUCT QUESTION BLOCKS A P2, and it is not the code's to answer.** The live leak is
+    closed - a private salon's ciphertext, typing, pins and tallies no longer go to the whole
+    community - but the GUARANTEE is still server-side: one distribution group per community means
+    every member holds a private salon's seed. The structural fix is a group per private channel,
+    and its roster turns entirely on whether an admin keeps AMBIENT access to every private salon.
+    Forward secrecy is a separate axis, already decided against in §4.4, and is a per-salon policy
+    rather than a defect. All of it, including the three alternatives, is on
+    [backlog](docs/wiki/backlog.md) and [graine](docs/wiki/protocols/channel-encryption.md) §11.
+7. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
     **Everything must end green, so every phase runs.** What that costs, the ladder's order, and the
     two decisions it turns on - `call-service` logging BEFORE the CALL phase, and the community
     rework never having run against prod - are all on
     [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy of any of it.
 
-**THE SIX THAT CANNOT BE PULLED FORWARD**, each for a reason that is not scheduling - none is
-waiting on us, and each is marked as such in [backlog](docs/wiki/backlog.md):
-
-- **The `libcrux-chacha20poly1305` panic** - closing it means shipping `openmls_rust_crypto 0.6.0`,
-  which exists only as a release candidate. Re-check when it goes stable; that is the whole condition.
-- **Does an iOS attachment consume the avatar cache file** - settled by ONE device observation, and
-  there is no iPhone.
-- **The Lydia flip (WP-LYDIA-1)** - the code is written and tested; what is missing is credentials
-  and answers Lydia owes. Stripe runs today and nothing about it is broken.
-- **One MLS client in a SharedWorker** - doing it before the campaign invalidates every verdict
-  already taken, since the boot path is what half of them measure. The user's decision, 2026-08-17.
-- **`dev.canari-emse.fr` as a real second environment, and the SECOND campaign** - both are
-  post-campaign by the user's own decision; the second campaign cannot precede the first.
-**One question is owed to the user, not to the code:** is a MiGallery application worth building? The
-Canari formula transfers, so the cost is knowable - what an app adds over a gallery a browser already
-renders well is the part only the user can answer.
+**THE SIX THAT CANNOT BE PULLED FORWARD** - none is waiting on us, and each carries its blocking
+condition in [backlog](docs/wiki/backlog.md), which is the only copy: the
+`libcrux-chacha20poly1305` panic (needs a stable `openmls_rust_crypto 0.6.0`), the iOS avatar-cache
+question (needs an iPhone), the Lydia flip WP-LYDIA-1 (needs credentials Lydia owes), one MLS client
+in a SharedWorker, and `dev.canari-emse.fr` plus the SECOND campaign (both post-campaign by the
+user's decision). **The sixth is owed to the user, not to the code:** is a MiGallery application
+worth building? The Canari formula transfers, so the cost is knowable - what an app adds over a
+gallery a browser already renders well is the part only the user can answer.
 
 ### CANARI - what is open
 

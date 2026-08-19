@@ -57,6 +57,36 @@ import {
  */
 export const MAX_LIVE_SESSION_QUERY = 500;
 
+/**
+ * THE one rule for who may READ a channel, with no database in it.
+ *
+ *  - a public channel is readable by every community member;
+ *  - a private one by the users listed in `allowedUsers`, plus anyone holding `workspace.manage`.
+ *
+ * It is pure because the same rule has to be evaluated two ways and must not be able to answer
+ * differently: once for ONE actor on a guarded route ({@link ChannelService.canAccessChannel}, one
+ * permission lookup), and once for EVERY member when an audience is being built
+ * ({@link ChannelService.channelAudience}, roles loaded in bulk).
+ *
+ * The rule had three separate implementations and the audience was not one of them: every channel
+ * event was addressed to the whole community, so a private salon's ciphertext was pushed live to
+ * members who could not open the channel. Sharing this function is what makes that unrepeatable -
+ * `docs/wiki/protocols/channel-encryption.md` §11.
+ *
+ * @param holdsManageWorkspace whether `userId` carries `workspace.manage`, resolved by the caller
+ *   from whichever source it already has
+ */
+export function channelIsReadableBy(
+  channel: Pick<Channel, 'isPrivate' | 'allowedUsers'>,
+  userId: string,
+  holdsManageWorkspace: boolean
+): boolean {
+  if (!channel.isPrivate) return true;
+  // Admins reach every channel, even private ones they were never explicitly added to.
+  if (holdsManageWorkspace) return true;
+  return (channel.allowedUsers || []).includes(userId.trim().toLowerCase());
+}
+
 @Injectable()
 export class ChannelService {
   private readonly logger = new Logger(ChannelService.name);
@@ -126,9 +156,8 @@ export class ChannelService {
   }
 
   /**
-   * Simple channel access model:
-   *  - public channel → every workspace member can access;
-   *  - private channel → admins (workspace.manage) always, plus users explicitly in `allowedUsers`.
+   * Whether ONE actor may read `channel` - {@link channelIsReadableBy} with the admin lookup done.
+   *
    * Reading/joining is independent of who may write (see canWriteToChannel).
    */
   private async canAccessChannel(
@@ -139,13 +168,49 @@ export class ChannelService {
     if (!channel.isPrivate) return true;
     if (!userId) return false;
     const normalized = userId.trim().toLowerCase();
-    if ((channel.allowedUsers || []).includes(normalized)) return true;
-    // Admins reach every channel, even private ones they were never explicitly added to.
+    // Short-circuited so the permission query is spent only when the cheap half says nothing.
+    if (channelIsReadableBy(channel, normalized, false)) return true;
     return this.memberHasWorkspacePermission(
       channel.workspaceId,
       normalized,
       CHANNEL_PERMISSIONS.MANAGE_WORKSPACE
     );
+  }
+
+  /**
+   * WHO A CHANNEL EVENT MAY BE ADDRESSED TO - the accessible subset of the community, never the
+   * community.
+   *
+   * Every event a channel emits used to go to `getWorkspaceMemberIds`, which answers a question
+   * about the CONTAINER. For a private salon that handed its ciphertext, its typing, its pins and
+   * its poll tallies to members the server would refuse to serve it over REST - and since the
+   * Graine seed travels on the community's distribution group, those members held the key as well.
+   * An audience is derived from ACCESS or it is not an access control.
+   *
+   * One `find` for the roles and one for the members, whatever the size of the roster, so this is
+   * usable on the send path. A public channel skips the role load entirely.
+   *
+   * @returns the user ids that may read `channel`. Never includes a non-member.
+   */
+  private async channelAudience(channel: Channel): Promise<string[]> {
+    const members = await this.memberRepo.find({ where: { workspaceId: channel.workspaceId } });
+    if (!channel.isPrivate) return members.map((m) => m.userId);
+
+    const roles = await this.roleRepo.find({ where: { workspaceId: channel.workspaceId } });
+    const adminRoleIds = new Set(
+      roles
+        .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
+        .map((r) => r.id)
+    );
+    return members
+      .filter((m) =>
+        channelIsReadableBy(
+          channel,
+          m.userId,
+          (m.roleIds || []).some((id) => adminRoleIds.has(id))
+        )
+      )
+      .map((m) => m.userId);
   }
 
   /**
@@ -1305,11 +1370,12 @@ export class ChannelService {
     channel.name = trimmedName;
     await this.channelRepo.save(channel);
 
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    // The new NAME of a private salon is not the community's business.
+    const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
       'channel.updated',
       { channelId, name: channel.name, workspaceId: channel.workspaceId },
-      workspaceMemberIds
+      audience
     );
 
     return { success: true, channelId, name: channel.name };
@@ -1400,11 +1466,13 @@ export class ChannelService {
     channel.archived = true;
     await this.channelRepo.save(channel);
 
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    // Read BEFORE the archive flag is saved would make no difference here - `channelAudience`
+    // reads membership and access, neither of which archiving touches.
+    const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
       'channel.deleted',
       { channelId, workspaceId: channel.workspaceId },
-      workspaceMemberIds
+      audience
     );
 
     return { success: true };
@@ -1454,9 +1522,11 @@ export class ChannelService {
       await this.memberRepo.save(member);
     }
 
-    // Publish event to notify connected clients
+    // Publish event to notify connected clients. The payload names the salon, so it goes to the
+    // people who may see that salon - plus the joiner, who is told about their own arrival whether
+    // or not this channel turns out to be one they can read.
     if (isNewMember) {
-      const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+      const audience = await this.channelAudience(channel);
       await this.redis.publishChannelEvent(
         'channel.member.joined',
         {
@@ -1469,7 +1539,7 @@ export class ChannelService {
           roleName: input.roleName || 'Member',
           joinedBy: input.userId,
         },
-        workspaceMemberIds
+        [...new Set([...audience, input.userId])]
       );
     }
 
@@ -1558,9 +1628,22 @@ export class ChannelService {
       await this.memberRepo.save(targetMember);
     }
 
-    // Publish event to notify the invited user and connected clients
     if (isNewMember) {
-      const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+      // ACCESS IS GRANTED BEFORE IT IS ANNOUNCED, and the order is the whole point: the audience of
+      // the announcement is derived from `allowedUsers`, so granting afterwards would address the
+      // invitation to everyone EXCEPT the person invited. For private channels with user-based
+      // access this is the only row change left, so the save belongs to this branch alone.
+      if (channel.isPrivate) {
+        const existing = channel.allowedUsers || [];
+        const normalized = input.targetUserId.trim().toLowerCase();
+        if (!existing.includes(normalized)) {
+          channel.allowedUsers = [...existing, normalized];
+          await this.channelRepo.save(channel);
+        }
+      }
+
+      // Publish event to notify the invited user and connected clients
+      const audience = await this.channelAudience(channel);
       await this.redis.publishChannelEvent(
         'channel.member.joined',
         {
@@ -1574,19 +1657,8 @@ export class ChannelService {
           joinedBy: input.targetUserId,
           invitedBy: input.actorUserId,
         },
-        workspaceMemberIds
+        audience
       );
-
-      // For private channels with user-based access, add the new member to allowedUsers. Nothing
-      // else on the row changes any more, so the save belongs to this branch alone.
-      if (channel.isPrivate) {
-        const existing = channel.allowedUsers || [];
-        const normalized = input.targetUserId.trim().toLowerCase();
-        if (!existing.includes(normalized)) {
-          channel.allowedUsers = [...existing, normalized];
-          await this.channelRepo.save(channel);
-        }
-      }
     }
 
     return {
@@ -1817,9 +1889,11 @@ export class ChannelService {
       await this.channelRepo.save(channel);
     }
 
-    // Notify the removed user and workspace members
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
-    const notifyIds = [...new Set([...workspaceMemberIds, targetUserId])];
+    // Notify the removed user and everyone who can still see the salon. `allowedUsers` was
+    // stripped just above, so the target is no longer in the audience and is added back by name -
+    // losing access is the one event its subject must receive.
+    const audience = await this.channelAudience(channel);
+    const notifyIds = [...new Set([...audience, targetUserId])];
     await this.redis.publishChannelEvent(
       'channel.member.removed',
       {
@@ -2021,9 +2095,11 @@ export class ChannelService {
       );
     }
 
-    // Publish event fire-and-forget - do not block the HTTP response
-    this.getWorkspaceMemberIds(channel.workspaceId)
-      .then((workspaceMemberIds) =>
+    // Publish event fire-and-forget - do not block the HTTP response. Addressed to the people who
+    // may READ the salon: this frame carries the ciphertext inline, and a private channel's
+    // audience is not its community's.
+    this.channelAudience(channel)
+      .then((audience) =>
         this.redis.publishChannelEvent(
           'channel.message.created',
           {
@@ -2040,7 +2116,7 @@ export class ChannelService {
             poll: pollMeta,
             pinned: savedMsg.pinned,
           },
-          workspaceMemberIds
+          audience
         )
       )
       .catch((err) => this.logger.error(`Failed to publish channel message event: ${err}`));
@@ -2094,10 +2170,15 @@ export class ChannelService {
     // app opens and fetches the channel over HTTP. nonce stays inline (small).
     const inlineCiphertext = input.ciphertext.length <= 3000 ? input.ciphertext : '';
 
+    // Same audience as the live event, from the same function - a push that reached somebody the
+    // WebSocket frame did not would be the leak this scoping exists to close, arriving by another
+    // door. It also replaces one permission query PER MEMBER with the two `channelAudience` does.
+    const audience = new Set(await this.channelAudience(channel));
+
     const recipients: ChannelMember[] = [];
     for (const member of members) {
       if (member.userId === input.senderId) continue;
-      if (!(await this.canAccessChannel(channel, member, member.userId))) continue;
+      if (!audience.has(member.userId)) continue;
       const level: ChannelNotificationLevel = member.notifLevels?.[channel.id] ?? 'all';
       if (level === 'none') continue;
       if (level === 'mentions' && !mentioned.has(member.userId.trim().toLowerCase())) continue;
@@ -2289,11 +2370,11 @@ export class ChannelService {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
       'channel.typing',
       { channelId, userId, state: isTyping ? 'start' : 'stop' },
-      workspaceMemberIds
+      audience
     );
   }
 
@@ -2328,12 +2409,8 @@ export class ChannelService {
       await this.messageRepo.save(msg);
     }
 
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
-    await this.redis.publishChannelEvent(
-      'channel.pin',
-      { channelId, messageId, pinned },
-      workspaceMemberIds
-    );
+    const audience = await this.channelAudience(channel);
+    await this.redis.publishChannelEvent('channel.pin', { channelId, messageId, pinned }, audience);
   }
 
   /**
@@ -2407,11 +2484,11 @@ export class ChannelService {
     );
 
     // Broadcast the updated tally so every member's card refreshes live.
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
       'channel.poll.vote',
       { channelId, messageId, poll },
-      workspaceMemberIds
+      audience
     );
 
     return poll;
@@ -2464,16 +2541,16 @@ export class ChannelService {
     this.logger.log(`[POLL] closed channel=${channelId} message=${messageId} by=${userId}`);
 
     // Refresh every member's card (now shows as closed) and clear the pinned banner.
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
       'channel.poll.vote',
       { channelId, messageId, poll },
-      workspaceMemberIds
+      audience
     );
     await this.redis.publishChannelEvent(
       'channel.pin',
       { channelId, messageId, pinned: false },
-      workspaceMemberIds
+      audience
     );
 
     return poll;
@@ -2508,11 +2585,11 @@ export class ChannelService {
 
     await this.messageRepo.delete({ id: messageId, channelId });
 
-    const workspaceMemberIds = await this.getWorkspaceMemberIds(channel.workspaceId);
+    const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
       'channel.message.deleted',
       { channelId, messageId, deletedBy: userId },
-      workspaceMemberIds
+      audience
     );
 
     this.logger.log(

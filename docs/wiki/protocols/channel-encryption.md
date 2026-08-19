@@ -1089,6 +1089,81 @@ leaf is no longer in. Their routing is already cut. The stale leaves from the WP
 storm are removed by the same pass whenever their user is off the roster; the ones belonging to
 current members are inert and stay.
 
-## 11. Open, and not blocking
+## 11. A private salon's ciphertext was addressed to the whole community - FIXED 2026-08-19
+
+Found while answering a question about §4.3, and it is the second half of it. §4.3 settles how a
+SEED reaches a community. Nothing had ever asked how the CIPHERTEXT does.
+
+### The two halves, and why only together they are a defect
+
+A private salon is `channels.isPrivate` with an `allowedUsers` list, and every REST route that
+touches it is guarded by `canAccessChannel`. That guard runs on the ACTOR - the person making the
+request. It had never run on the AUDIENCE.
+
+Every channel event was published with `getWorkspaceMemberIds(channel.workspaceId)`: a question
+about the CONTAINER. The gateway does exactly as it is told and delivers to those user ids, so a
+member excluded from a private salon received, on their own authenticated socket:
+
+| Event | What it carries |
+|---|---|
+| `channel.message.created` | `ciphertext`, `nonce`, `senderSessionId`, `messageIndex` - inline |
+| `channel.typing` | who is writing there, live |
+| `channel.pin`, `channel.message.deleted` | what is pinned, what was removed |
+| `channel.poll.vote` | the tally |
+| `channel.updated`, `channel.member.joined` | the salon's NAME, and who was added to it |
+
+On its own that is a metadata leak. What makes it a confidentiality defect is §4.3: the Graine seed
+that opens those ciphertexts is distributed on the COMMUNITY's distribution group, so every member
+already holds the key. **Both halves were on the excluded member's device.** The only thing
+between them was `channelEventHandler` declining to render a channel it does not have in
+`conversations` - client-side restraint, in a client the reader controls.
+
+The push path was the one that filtered, because `notifyChannelRecipients` was written per
+recipient and reached for `canAccessChannel` naturally. That is what kept the gap invisible: the
+mechanism that looked like the risky one was correct, and the one nobody looked at was not.
+
+### The fix
+
+`channelIsReadableBy(channel, userId, holdsManageWorkspace)` is now the ONE rule, pure and
+database-free, and everything that needs it supplies the admin bit from whatever it already has:
+
+- `canAccessChannel` - one actor, one permission lookup;
+- `channelAudience(channel)` - every member, two bulk `find`s, and a public channel skips the role
+  load entirely so the send path costs nothing extra;
+- `listChannelMembers`, which had a third hand-rolled copy of the same rule.
+
+Every content and channel-lifecycle event is now addressed to `channelAudience`, and
+`notifyChannelRecipients` reads the same list - a push that reached somebody the socket frame did
+not would be this leak arriving by another door. Community-scoped events (`workspace.updated`,
+`workspace.deleted`, the community-level `channel.member.kicked`) still go to the community, which
+is what they are about.
+
+**Two ordering rules fell out of it, and both are load-bearing.** An audience derived from access
+inverts what "notify" means at the two moments access CHANGES:
+
+- `inviteToChannel` now writes `allowedUsers` BEFORE publishing. It published first and granted
+  after, which under the old community-wide audience was invisible and under this one would address
+  the invitation to everyone except the person invited.
+- `removeMemberFromChannel` strips `allowedUsers` first, so the audience no longer holds the
+  target - who is added back by name. Losing access is the one event its subject must receive.
+
+Covered by `channel-audience.spec.ts`, whose six behavioural cases were each run against the old
+audience and each failed.
+
+### What this does NOT fix, and it is the interesting half
+
+The guarantee for a private salon is still **server-enforced, not cryptographic**. Every member of
+the community holds the seed, because §4.3 gives the community exactly one distribution group. This
+change means the server no longer hands them the ciphertext; it does not mean they could not read
+it if they obtained it another way.
+
+The structural answer is a distribution group PER PRIVATE CHANNEL - the same machinery, gated on
+`canAccessChannel` instead of workspace membership, with `channelAudience` as its roster and the
+lazy roster diff of §10 pruning it. It is not written, and it turns on one product question that is
+not the code's to answer: **admins currently reach every private salon without being added to it.**
+Ambient access costs nothing today; under a per-channel group it means every promotion to admin is
+a commit on every private channel's group. See [backlog](../backlog.md).
+
+## 12. Open, and not blocking
 
 Nothing here blocks anything above.
