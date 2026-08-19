@@ -136,10 +136,18 @@ describe('reconcileDistributionGroupRoster', () => {
     expect(persisted).toBe(1);
   });
 
-  it('commits nothing when the tree already agrees with the roster', async () => {
-    await expect(reconcileDistributionGroupRoster(channelService, 'ws-1')).resolves.toEqual([]);
+  it('commits nothing when the tree already agrees with the roster, and SAYS it ran', async () => {
+    const lines: string[] = [];
+
+    await expect(
+      reconcileDistributionGroupRoster(channelService, 'ws-1', (m) => lines.push(m))
+    ).resolves.toEqual([]);
+
     expect(removeMember).not.toHaveBeenCalled();
     expect(persisted).toBe(0);
+    // A pass whose success is indistinguishable from its absence can only be verified against the
+    // database - which is how this mechanism had to be checked on prod the first time.
+    expect(lines.some((l) => /agrees with its roster/.test(l))).toBe(true);
   });
 
   it('REMOVES NOBODY when the roster could not be read', async () => {

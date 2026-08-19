@@ -127,7 +127,16 @@ export async function reconcileDistributionGroupRoster(
   }
 
   const diff = diffRosterAgainstTree({ leafIdentities, rosterUserIds, selfUserId: userId });
-  if (diff.strayUserIds.length === 0) return [];
+  if (diff.strayUserIds.length === 0) {
+    // A CONVERGED PASS SAYS SO. The branch above claims to distinguish "this device does not hold
+    // the group" from "a pass ran and found nothing" - and it could not, because this one was
+    // silent. A mechanism whose success is indistinguishable from its absence can only be verified
+    // by reading the database, which is how this very fix had to be checked on prod.
+    log(
+      `[GRAINE] community ${workspaceId.slice(0, 8)} distribution group agrees with its roster - ${diff.keptLeafCount} leaf/leaves, nobody to remove`
+    );
+    return [];
+  }
 
   log(
     `[GRAINE] community ${workspaceId.slice(0, 8)}: ${diff.strayUserIds.length} member(s) left but still hold a leaf - removing (${diff.keptLeafCount} leaves stay)`
