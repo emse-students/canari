@@ -97,7 +97,7 @@ new; a run reporting five has found nothing. Do not clear them - the divergence 
 | SETUP-6 | A1: log in as owner, decline biometrics | `+A1` `+user` | `passed` 2026-08-14 |
 | SETUP-7 | Discovery pass over the real at-rest artefacts | `+A1` | `pending` - owed before CORRUPT and PIN |
 | SETUP-8 | Baseline snapshot of intact Android app data | `+A1` | `pending` - owed before CORRUPT and PIN |
-| SETUP-9 | The dedicated venue for channel traffic | `W1 W2` | `passed` 2026-08-13 |
+| SETUP-9 | The dedicated venue for channel traffic | `W1 W2` | `passed` 2026-08-19 - **recreated**: `channel_workspaces` was EMPTY on prod, the venue included, after the delete-community rework and the 2026-08-17 purge. Creating it is the first exercise of that path against a real deploy: create -> distribution group row -> invite link -> join all worked through the UI |
 
 ## 1 - MSG - the plain path
 
@@ -112,7 +112,7 @@ window. Earlier x5 series on `8a3edbdd`, `e62c21f1` and `25376b86` all read 13/1
 | MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `PASS` - 274 ms |
 | MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `PASS` - 196 ms |
 | MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `PASS` |
-| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | `PASS` |
+| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | **`FAIL` 2026-08-19 on `231cee62`** - nobody can send in a community at all. `[GRAINE] community <id> has no distribution group on this device - nothing can be sealed for it until the join lands`, on the CREATOR and on the member who joined by link alike, still true nine minutes after creation. `channel_workspaces.distributionGroupId` is set server-side; no device ever joins it. 0 copies on all three, no `masterSecret` leaked (the one assertion that held) |
 | MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `PASS` |
 | MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `PASS` - 1 944 ms |
 | MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `PASS` |
