@@ -90,6 +90,11 @@ export class CallsService {
    * Verifies group membership, generates a UUID room ID, and returns a signed
    * room access token (TTL 5 min). The token must be sent to call-service in the
    * `Join` message to prove the user is authorized for this room.
+   *
+   * The returned `roomId` is ALSO the `callId` the client uses for the ring fan-out and for
+   * every `CallMsg` it sends. That identity is what lets this service's `[call] invite` line
+   * and call-service's `[call] session ...` records be read as one story - nothing else joins
+   * them, so it must not become two values.
    */
   async initiateCall(userId: string, groupId: string): Promise<InitiateCallResponse> {
     this.logger.debug(`[calls] initiateCall user=${userId} group=${groupId}`);
@@ -114,7 +119,9 @@ export class CallsService {
       algorithm: 'HS256',
     });
 
-    this.logger.debug(`[calls] Issued room token for user=${userId} room=${roomId}`);
+    // At `log` rather than `debug`: this is the invite half of the call record, and a record
+    // that survives only while debug logging is on is a record that is not there when needed.
+    this.logger.log(`[call] invite room=${roomId} user=${userId} group=${groupId}`);
     return { roomId, roomToken };
   }
 
@@ -139,6 +146,7 @@ export class CallsService {
 
     const roomSecret = process.env.CALL_ROOM_SECRET?.trim();
     if (!roomSecret) {
+      this.logger.error('[calls] CALL_ROOM_SECRET is not set - cannot issue room tokens');
       throw new ServiceUnavailableException('Call room tokens are not configured on this server');
     }
 
@@ -147,7 +155,9 @@ export class CallsService {
       algorithm: 'HS256',
     });
 
-    this.logger.debug(`[calls] Issued join token for user=${userId} room=${roomId}`);
+    // The answer half: a callee asking for a token is a callee about to join the SFU. Paired
+    // with the SFU's own record it separates "never answered" from "answered and never arrived".
+    this.logger.log(`[call] join-token room=${roomId} user=${userId} group=${groupId}`);
     return { roomToken };
   }
 
@@ -379,11 +389,18 @@ export class CallsService {
       select: { userId: true },
     });
     const calleeIds = [...new Set(members.map((m) => m.userId))].filter((id) => id !== callerId);
-    if (calleeIds.length === 0) return { rang: 0 };
+    if (calleeIds.length === 0) {
+      this.logger.warn(`[ring] call=${callId} group=${groupId} has no other member to ring`);
+      return { rang: 0 };
+    }
 
     const callerName = await resolveUserDisplayName(this.groupMemberRepo.manager, callerId);
     const groupName = await this.resolveGroupName(groupId);
     const tokens = await this.pushTokenRepo.find({ where: { userId: In(calleeIds) } });
+    // Checked once per fan-out rather than once per device: without Firebase every FCM ring is
+    // skipped, and `rang=0/N` on its own reads as "nobody was reachable" when the truth is that
+    // this server never asked anyone. iOS VoIP goes straight to APNs and is unaffected.
+    const fcmReady = this.firebaseReady('ring');
 
     const dataFields: Record<string, string> = {
       type: 'call_ring',
@@ -403,7 +420,7 @@ export class CallsService {
       const delivered =
         pt.platform === 'ios' && pt.voipToken
           ? await this.ringIosVoip(pt, dataFields)
-          : await this.ringViaFcm(pt, dataFields, callerName, groupName);
+          : fcmReady && (await this.ringViaFcm(pt, dataFields, callerName, groupName));
       if (delivered) rang++;
     }
     this.logger.log(`[ring] call=${callId} group=${groupId} rang=${rang}/${tokens.length} devices`);
@@ -432,6 +449,9 @@ export class CallsService {
     });
     const memberIds = [...new Set(members.map((m) => m.userId))];
     if (memberIds.length === 0) return { notified: 0 };
+    // Before the loop, not inside it: the guard used to `break` mid-fan-out, which stopped the
+    // remaining devices AND reported a count that looked like a partial delivery.
+    if (!this.firebaseReady('ring-end')) return { notified: 0 };
     const tokens = await this.pushTokenRepo.find({ where: { userId: In(memberIds) } });
 
     const dataFields: Record<string, string> = {
@@ -447,7 +467,6 @@ export class CallsService {
       // device ringing via CallKit was just launched by the VoIP push, so its running
       // process receives this and reports the call ended; a missed delivery is covered
       // by the local 60s ring timeout on every platform.
-      if (getApps().length === 0) break;
       try {
         await getMessaging().send({
           token: pt.token,
@@ -465,6 +484,17 @@ export class CallsService {
     }
     this.logger.log(`[ring] ring-end call=${callId} notified=${notified}/${tokens.length}`);
     return { notified };
+  }
+
+  /**
+   * Whether Firebase Admin is initialised, named when it is not. Every FCM ring depends on it,
+   * so its absence is the single cause that reaches nobody at all - and it is invisible in the
+   * `rang=N/M` summary, which counts devices rather than reasons.
+   */
+  private firebaseReady(scope: string): boolean {
+    if (getApps().length > 0) return true;
+    this.logger.error(`[${scope}] Firebase Admin is not initialised - no device can be reached`);
+    return false;
   }
 
   /** Membership guard shared by the ring endpoints. */
@@ -485,7 +515,8 @@ export class CallsService {
           [groupId]
         );
       return rows[0]?.isGroup ? (rows[0]?.name ?? '') : '';
-    } catch {
+    } catch (e) {
+      this.logger.warn(`[ring] group name lookup failed group=${groupId}: ${String(e)}`);
       return '';
     }
   }
@@ -511,7 +542,6 @@ export class CallsService {
     callerName: string,
     groupName: string
   ): Promise<boolean> {
-    if (getApps().length === 0) return false;
     try {
       await getMessaging().send({
         token: pt.token,

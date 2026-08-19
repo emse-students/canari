@@ -38,10 +38,14 @@ Updated after every run.
 
 **What the ladder actually costs, read off the table above:** MSG is the ONLY phase standing on a
 current build; TYPE, READ, MUT and FWD all owe re-runs on an older one; and **twelve of the eighteen
-have never run at all**. CALL is 20 checks with **zero scripts written**, and `call-service` gets its
-server-side logging BEFORE any of them (decided 2026-08-18 - invite, answer, ICE, hangup, duration):
-a call failure that two clients each see half of cannot be attributed without it, which is exactly
-what caught the silent channel-push 404s.
+have never run at all**. CALL is 20 checks with **zero scripts written**. Its
+prerequisite is **IN as of 2026-08-19**: `call-service` writes one `[call] session end` line per
+socket carrying the disposition, the duration, whether media ever flowed, and the per-direction
+frame counts, and `chat-delivery-service` names the invite and the join token on the same room id
+- the record and how to read it are on
+[`call-service`](services/call-service.md#the-call-record), which is the only copy. **Every CALL row
+must quote that line**: a call failure two clients each see half of is attributed from it or not at
+all, which is exactly what caught the silent channel-push 404s.
 
 **The whole community rework is verified by COMPILING and by unit tests only.** Nothing has run
 against prod: no client has joined a distribution group on a real deploy, and no notification has

@@ -1140,6 +1140,11 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 | POST | `/api/calls/ring` | Fan out an incoming-call ring to all group members (WP-XP-5) |
 | POST | `/api/calls/ring-end` | Stop the ring everywhere (reason: answered/cancelled/ended) |
 
+The room id returned by `/api/calls/initiate` **is** the `callId` used by every other call route and
+by the SFU, so this service's `[call] invite` / `[ring] call=` lines and call-service's
+`[call] session ...` records join on that one value. The whole record, its disposition tokens and
+how to read it are on [`call-service`](call-service.md#the-call-record) - keep no second copy here.
+
 ### Internal / health
 
 | Method | Path | Auth | Description |

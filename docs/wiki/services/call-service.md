@@ -85,6 +85,12 @@ All frames are JSON-encoded `SignalMessage`:
 
 - Rooms are created on first `Join` and evicted when the last peer leaves.
 - Stale rooms (no signal activity > 30 minutes) are cleaned up by a background tokio task (every 5 minutes).
+- **Every path that drops a peer calls `RTCPeerConnection::close()` first** — the ordinary hangup,
+  sibling eviction and the stale-room reaper alike. webrtc-rs holds the ICE agent and its TURN
+  allocation until told to let go, and a relay allocation left running is billed against the same
+  monthly budget [`getIceServers`](chat-delivery.md#calls) refuses credentials to protect. It is
+  also what makes the session record below true: a `session end` line emitted while the allocation
+  is still live states an end that has not happened.
 
 ## ICE / TURN configuration
 
@@ -119,6 +125,97 @@ When a new track arrives, all existing peers must be renegotiated. `schedule_ren
 ## Rate limiting
 
 Max 50 signal frames per second per peer. Exceeded peers are disconnected.
+
+## The call record
+
+A call failure is seen in halves. The caller's client knows it sent an offer; the callee's client
+knows it never rang. Neither log can say which of the two halves failed, because neither side sees
+the other. **The SFU is the only witness that sees both**, so it keeps a per-socket ledger
+(`CallLedger`) and emits it as one line when the socket ends. The record exists for attribution,
+not for observability: its job is to separate causes that otherwise look identical.
+
+### The join key
+
+`chat-delivery-service` mints the room id in `POST /api/calls/initiate`, and the client assigns it
+to `currentCallId` unchanged (`frontend/src/lib/services/CallService.ts`). **`callId` and `roomId`
+are the same value**, which is the only thing joining the ring fan-out's `[ring] call=<uuid>` lines
+to the SFU's `room=<uuid>` lines. Nothing else links the two services' halves of a call, so that
+identity must not become two values.
+
+### The lines
+
+| Line | When | Reads |
+|---|---|---|
+| `[call] invite room= user= group=` | `/api/calls/initiate` (chat-delivery) | the caller asked for a room |
+| `[ring] call= group= rang=N/M devices` | ring fan-out (chat-delivery) | how many devices were actually pushed |
+| `[call] join-token room= user= group=` | `/api/calls/room-token` (chat-delivery) | a callee is about to join the SFU |
+| `[call] socket open peer=` | WS upgrade accepted | authenticated, not yet in a room |
+| `[call] session start room= peer=` | `Join` accepted | the ledger begins here |
+| `[call] track published room= peer= kind=` | `on_track` | this peer's media reached the SFU |
+| `[call] ice connected room= peer= after_ms= …` | first `Connected`/`Completed` | media path formed, and how long it took |
+| `[call] ice Failed\|Disconnected room= peer= connected_ms= …` | terminal ICE state | negotiation gave up; carries the counts |
+| `[call] session end room= peer= disposition= …` | socket closed | **the record** |
+
+`peer` is `{user_id}:{uuid}` — one socket, not one user, so a user's two devices are two records.
+
+### Disposition — why the session ended
+
+Set **once, first cause wins**. An evicted device sends a `Close` frame moments later and a reaped
+room's socket errors out afterwards; recording the last event would report the consequence and hide
+the cause. The tokens are a contract the campaign greps on, pinned by
+`disposition_tokens_are_stable`:
+
+| Token | Meaning | Level |
+|---|---|---|
+| `client-close` | the client sent a `Close` frame — a hangup | info |
+| `sibling-evicted` | the same user joined from another device; this one was replaced | info |
+| `transport-error` | the socket errored mid-call — the network went away | warn |
+| `stream-ended` | the stream ended with no `Close` frame — a client that died | warn |
+| `rate-limited` | > 50 frames/s; the SFU disconnected it | warn |
+| `send-failed` | the SFU could not write to this peer | warn |
+| `room-reaped` | the room was still held when the 30-minute reaper ran | warn |
+| `unknown` | no branch classified the ending — a hole in `main.rs`, not in the call | warn |
+
+Only the first two are endings the design intends; everything else accuses.
+
+### The fields that separate the causes
+
+```
+[call] session end room=<uuid> peer=<user>:<dev> disposition=transport-error duration_ms=41230 \
+  connected_ms=38104 ice_state=Failed offer_in=1 answer_out=1 offer_out=2 answer_in=2 \
+  ice_in=14 ice_buffered=3 ice_in_failed=0 ice_out=11 ice_out_failed=0 tracks_pub=2 tracks_sub=2
+```
+
+- **`duration_ms` next to `connected_ms`** is the pair that answers "was the call short, or did it
+  never happen". `connected_ms=-` means media never flowed at all — it is rendered as a dash rather
+  than a zero precisely so it cannot be read as a very short call.
+- **`offer_in` / `answer_out` / `offer_out` / `answer_in`** say *which side sent* and *which side
+  never arrived*. A peer with `offer_in=1 answer_out=0` was answered by nobody; `offer_out=3
+  answer_in=0` is a client that ignored renegotiation.
+- **`ice_in` vs `ice_out`** separate a TURN fault from a client that never trickled: candidates
+  gathered on both sides with no pair formed is the former, `ice_in=0` is the latter. They look
+  identical without the counts, which is why the terminal ICE line carries them too — built out of
+  the same helper as the record so the two cannot disagree.
+- **`ice_buffered`** counts candidates that arrived before the offer was applied (normal trickle
+  ordering); `ice_in_failed` counts ones that were rejected.
+
+### What is deliberately not logged
+
+**No line per ICE candidate.** A call gathers dozens, on every socket, and a per-candidate line at
+info level would bury the eight lines that answer a question. The count at the end of negotiation is
+the figure; the trickle is not. Likewise, no log line carries an SDP blob or a candidate string —
+`SignalMessage::kind()` exists so a line can name the frame without its payload.
+
+`resolve_peer` also stays **silent when the disposition is already set**: an evicted device keeps
+trickling ICE for a second or two, and warning about a peer whose absence is already recorded is
+noise about a cause already named.
+
+### Pinned by
+
+`apps/call-service/src/main.rs` `#[cfg(test)] mod tests` (10 tests) for the ledger and the token
+contract, and `apps/chat-delivery-service/src/services/calls.service.spec.ts`
+(`the server-side call record`) for the invite half. Neither asserts a wall clock — only whether a
+duration is present or absent.
 
 ## Environment variables
 

@@ -1434,6 +1434,35 @@ drift. One thing it cannot say from inside: a duplicate migration NUMBER is loud
 (`exit(1)` before applying anything) - but only once both branches have merged, so check the highest
 number on `main` before naming a file.
 
+## Calls, and their record -> [call-service](services/call-service.md#the-call-record)
+
+Written 2026-08-19 while giving `call-service` the logging the CALL phase stands on.
+
+- **A failure seen in halves is attributed by the one witness that sees both, or not at all.** Two
+  clients each hold half of a call and neither can see the other, so no amount of client logging
+  settles which half broke. The SFU is that witness; its record must therefore carry what separates
+  the causes it cannot itself distinguish - WHICH side sent, which side never arrived, and the
+  duration - and one line per socket, not a level to turn up afterwards.
+- **`duration_ms` alone cannot say whether a call happened.** It is read next to `connected_ms`, and
+  `connected_ms=-` is a statement, not a missing value: render it as a dash, never as a zero, or a
+  call that never connected reads as a very short one.
+- **A disposition is set ONCE and the first cause wins.** An evicted device sends its `Close` frame
+  moments later and a reaped room's socket errors out afterwards - recording the last event reports
+  the consequence and hides the cause.
+- **Counts at the end of negotiation, never a line per candidate.** A call gathers dozens; the count
+  is the figure that answers a question and the trickle is what buries the lines that do. Build the
+  terminal ICE line out of the same helper as the record so the two cannot drift.
+- **A per-device guard on a fan-out reports a fleet fault when the fault is ours.** Check the one
+  thing every device depends on ONCE, before the loop - inside it, `rang=0/N` reads as "nobody was
+  reachable" when the truth is that this server never asked, and a `break` there also truncates the
+  fan-out while returning a count that looks like a partial delivery.
+- **Dropping an `RTCPeerConnection` is not closing it.** webrtc-rs holds the ICE agent and its TURN
+  allocation until told to let go, and a relay allocation left running is billed against the very
+  budget the ICE endpoint refuses credentials to protect. Every path that removes a peer closes it -
+  and a "session end" line emitted while the allocation is live states an end that has not happened.
+
+---
+
 ## Presence, in the gateway -> [chat-gateway](services/chat-gateway.md#presence)
 
 - **The presence key is per DEVICE and every event that removes it is per CONNECTION.** Two tabs are

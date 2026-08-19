@@ -8,9 +8,11 @@ use axum::{
     routing::get,
     Router,
 };
+use dashmap::mapref::one::Ref;
 use dashmap::DashMap;
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
@@ -20,6 +22,7 @@ use webrtc::api::setting_engine::SettingEngine;
 use webrtc::api::APIBuilder;
 use webrtc::ice::mdns::MulticastDnsMode;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
+use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::ice_transport::ice_credential_type::RTCIceCredentialType;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
@@ -86,6 +89,267 @@ struct PeerContext {
     notify_tx: mpsc::Sender<SignalMessage>,
     /// Trickle ICE from the browser may arrive before the Offer is applied.
     pending_ice_candidates: Mutex<Vec<RTCIceCandidateInit>>,
+    /// The server's record of this peer's call. Shared with the socket loop, which outlives
+    /// the entry in `Room.peers` and is what finally emits it.
+    ledger: Arc<CallLedger>,
+}
+
+/// The per-socket state `handle_signal` may set: which room this peer joined, and the ledger
+/// recording it. Both live on the socket loop's stack rather than only in the room, because
+/// the loop must still be able to close the record after the peer has been removed from the
+/// room - which is exactly what happens when another device evicts it.
+struct PeerSession {
+    room_id: Option<RoomId>,
+    ledger: Option<Arc<CallLedger>>,
+}
+
+/// Why a peer's SFU session ended.
+///
+/// These tokens are read by the cross-client campaign, so they are a contract and must not
+/// drift - see `docs/wiki/services/call-service.md`. The distinctions are the point: before
+/// this existed, a user hanging up and a socket dying mid-call left the SAME empty log, and no
+/// client's own log can tell them apart either.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Disposition {
+    /// The client sent a WebSocket Close frame: a deliberate hangup.
+    ClientClose,
+    /// The socket failed without a Close frame - the network went away mid-call.
+    TransportError,
+    /// The stream ended with neither a Close frame nor an error (a hard-killed client).
+    StreamEnded,
+    /// The peer exceeded the signal rate limit and we disconnected it.
+    RateLimited,
+    /// We could not write to the socket: the client is no longer reading.
+    SendFailed,
+    /// Another device of the same user joined this room and replaced this peer.
+    SiblingEvicted,
+    /// The room was reclaimed after 30 min of signal silence with this peer still in it.
+    RoomReaped,
+}
+
+impl Disposition {
+    /// Stable grep token. Changing one invalidates every campaign row that read it.
+    fn as_str(self) -> &'static str {
+        match self {
+            Disposition::ClientClose => "client-close",
+            Disposition::TransportError => "transport-error",
+            Disposition::StreamEnded => "stream-ended",
+            Disposition::RateLimited => "rate-limited",
+            Disposition::SendFailed => "send-failed",
+            Disposition::SiblingEvicted => "sibling-evicted",
+            Disposition::RoomReaped => "room-reaped",
+        }
+    }
+
+    /// True when the design intends this ending. Everything else is a defect until shown
+    /// otherwise, so the summary is emitted at a level that accuses: a record nobody's eye is
+    /// drawn to is a record read a day late.
+    fn is_expected(self) -> bool {
+        matches!(self, Disposition::ClientClose | Disposition::SiblingEvicted)
+    }
+}
+
+/// Increments a ledger counter. `Relaxed` is correct: nothing branches on these, and they are
+/// read once at session end, after every callback that touched them is gone.
+fn bump(counter: &AtomicU32) {
+    counter.fetch_add(1, Ordering::Relaxed);
+}
+
+fn count(counter: &AtomicU32) -> u32 {
+    counter.load(Ordering::Relaxed)
+}
+
+/// The server's record of one peer's time in a room, from `Join` to the socket closing.
+///
+/// A call failure is seen half by each client, and neither half is evidence: the caller says
+/// "it never rang", the callee says "I answered and nothing happened", and no client log can
+/// say which frame failed to arrive. This is the third witness, and the only one that sees
+/// both sides. It counts what crossed the SFU in each direction so ONE line separates causes
+/// indistinguishable from either end - a client that never offered, an offer whose answer
+/// could not be sent back, ICE gathered on one side only, and a session that connected from
+/// one that merely lasted.
+///
+/// The counters are atomics because the ICE, track and RTCP callbacks each run on their own
+/// task; the three `Mutex` fields are written at most a handful of times per session.
+struct CallLedger {
+    /// The room, which is also the `callId` used by chat-delivery-service's ring fan-out - the
+    /// two services' logs join on this value and on nothing else.
+    room_id: RoomId,
+    peer_id: PeerId,
+    /// When `Join` was accepted.
+    joined: std::time::Instant,
+    /// First moment ICE reported a usable pair. `None` means media never flowed, which is the
+    /// one fact a duration alone can never carry.
+    connected: std::sync::Mutex<Option<std::time::Instant>>,
+    /// Last ICE connection state seen, so the record says how negotiation ended.
+    ice_state: std::sync::Mutex<Option<String>>,
+    /// Set once - see [`CallLedger::end`].
+    disposition: std::sync::Mutex<Option<Disposition>>,
+    /// Offers received from this client. The client always offers first, so `offer_in=0` on a
+    /// session that lasted is a client that joined and then never negotiated.
+    offers_in: AtomicU32,
+    /// Answers handed back, counted when the frame reaches the socket writer.
+    answers_out: AtomicU32,
+    /// Renegotiation offers pushed to this client after someone else published a track.
+    offers_out: AtomicU32,
+    /// Answers to those renegotiation offers. `offer_out > answer_in` is a client that stopped
+    /// answering - a failure neither client can see from its own side.
+    answers_in: AtomicU32,
+    /// Trickle candidates received from this client.
+    ice_in: AtomicU32,
+    /// Of those, the ones held back because the SDP had not been applied yet.
+    ice_in_buffered: AtomicU32,
+    /// Of those, the ones the ICE agent refused, plus any dropped to the buffer cap.
+    ice_in_failed: AtomicU32,
+    /// Candidates the SFU gathered and handed to this client.
+    ice_out: AtomicU32,
+    /// Of those, the ones that never reached the socket writer.
+    ice_out_failed: AtomicU32,
+    /// Tracks this peer published into the room.
+    tracks_published: AtomicU32,
+    /// Tracks of other peers this peer was subscribed to.
+    tracks_subscribed: AtomicU32,
+}
+
+impl CallLedger {
+    fn new(room_id: RoomId, peer_id: PeerId) -> Self {
+        Self {
+            room_id,
+            peer_id,
+            joined: std::time::Instant::now(),
+            connected: std::sync::Mutex::new(None),
+            ice_state: std::sync::Mutex::new(None),
+            disposition: std::sync::Mutex::new(None),
+            offers_in: AtomicU32::new(0),
+            answers_out: AtomicU32::new(0),
+            offers_out: AtomicU32::new(0),
+            answers_in: AtomicU32::new(0),
+            ice_in: AtomicU32::new(0),
+            ice_in_buffered: AtomicU32::new(0),
+            ice_in_failed: AtomicU32::new(0),
+            ice_out: AtomicU32::new(0),
+            ice_out_failed: AtomicU32::new(0),
+            tracks_published: AtomicU32::new(0),
+            tracks_subscribed: AtomicU32::new(0),
+        }
+    }
+
+    /// Records the first ICE connection and returns how long it took - ONCE. Later calls
+    /// return `None`, so a connection that flaps and recovers cannot re-log a first connect.
+    fn mark_connected(&self) -> Option<std::time::Duration> {
+        let mut guard = self.connected.lock().ok()?;
+        if guard.is_some() {
+            return None;
+        }
+        let now = std::time::Instant::now();
+        *guard = Some(now);
+        Some(now.duration_since(self.joined))
+    }
+
+    fn set_ice_state(&self, state: &str) {
+        if let Ok(mut guard) = self.ice_state.lock() {
+            *guard = Some(state.to_string());
+        }
+    }
+
+    /// Records why the session ended, keeping the FIRST cause. An evicted peer still sends a
+    /// Close frame a moment later, and a reaped room's socket still errors out afterwards;
+    /// recording the last event would report the consequence and hide the cause. Returns
+    /// whether this call is the one that set it.
+    fn end(&self, disposition: Disposition) -> bool {
+        match self.disposition.lock() {
+            Ok(mut guard) if guard.is_none() => {
+                *guard = Some(disposition);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn disposition(&self) -> Option<Disposition> {
+        self.disposition.lock().ok().and_then(|g| *g)
+    }
+
+    /// How long the peer held the room, in milliseconds.
+    fn session_ms(&self) -> u128 {
+        self.joined.elapsed().as_millis()
+    }
+
+    /// Milliseconds since ICE connected, or `None` when it never did. Read together with
+    /// `session_ms`, this is the pair that separates "the call was short" from "the call never
+    /// happened" - a session can last a minute with nothing here, and only these two figures
+    /// side by side say which one the user actually saw.
+    fn connected_ms(&self) -> Option<u128> {
+        self.connected
+            .lock()
+            .ok()
+            .and_then(|g| *g)
+            .map(|at| at.elapsed().as_millis())
+    }
+
+    /// The ICE counts alone, for the line emitted when negotiation reaches a terminal state -
+    /// which is where they answer a question. Candidates gathered on both sides with no pair
+    /// formed is a TURN fault; `ice_in=0` is a client that never trickled; and those two are
+    /// indistinguishable from either client's own log.
+    fn ice_counters(&self) -> String {
+        format!(
+            "ice_in={} ice_buffered={} ice_in_failed={} ice_out={} ice_out_failed={}",
+            count(&self.ice_in),
+            count(&self.ice_in_buffered),
+            count(&self.ice_in_failed),
+            count(&self.ice_out),
+            count(&self.ice_out_failed),
+        )
+    }
+
+    /// Every counter, with no clock in it, so a test can pin it exactly.
+    fn counters(&self) -> String {
+        format!(
+            "offer_in={} answer_out={} offer_out={} answer_in={} {} tracks_pub={} tracks_sub={}",
+            count(&self.offers_in),
+            count(&self.answers_out),
+            count(&self.offers_out),
+            count(&self.answers_in),
+            self.ice_counters(),
+            count(&self.tracks_published),
+            count(&self.tracks_subscribed),
+        )
+    }
+
+    /// The one line the campaign greps for. `connected_ms=-` is not a missing value: it is the
+    /// statement that media never flowed, and it is the field to read first.
+    fn summary(&self) -> String {
+        format!(
+            "[call] session end room={} peer={} disposition={} duration_ms={} connected_ms={} ice_state={} {}",
+            self.room_id,
+            self.peer_id,
+            self.disposition().map(Disposition::as_str).unwrap_or("unknown"),
+            self.session_ms(),
+            self.connected_ms()
+                .map(|ms| ms.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            self.ice_state
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .unwrap_or_else(|| "none".to_string()),
+            self.counters(),
+        )
+    }
+
+    /// Emits the record at a level matching what it says. An unexpected ending accuses, and an
+    /// unclassified one (`disposition=unknown`) is a hole in this file, not in the call.
+    fn emit(&self) {
+        if self
+            .disposition()
+            .map(Disposition::is_expected)
+            .unwrap_or(false)
+        {
+            info!("{}", self.summary());
+        } else {
+            warn!("{}", self.summary());
+        }
+    }
 }
 
 /// A track being forwarded by the SFU, kept with a handle to its publisher so we can
@@ -252,6 +516,86 @@ enum SignalMessage {
     },
 }
 
+impl SignalMessage {
+    /// Frame name for logs. The payloads are whole SDP blobs and candidate strings, neither of
+    /// which any log line should carry - what a reader needs is which frame it was.
+    fn kind(&self) -> &'static str {
+        match self {
+            SignalMessage::Join { .. } => "join",
+            SignalMessage::Joined { .. } => "joined",
+            SignalMessage::Offer { .. } => "offer",
+            SignalMessage::Answer { .. } => "answer",
+            SignalMessage::IceCandidate { .. } => "ice",
+        }
+    }
+}
+
+/// Resolves the room a signal belongs to and refreshes that room's activity clock. Both misses
+/// are named: a frame arriving before `Join` completed, or for a room that no longer exists, is
+/// dropped - and a dropped frame with no line is exactly the half of a failure neither client
+/// can see.
+fn resolve_room(
+    state: &Arc<AppState>,
+    session: &PeerSession,
+    peer_id: &str,
+    frame: &str,
+) -> Option<(RoomId, Arc<Room>)> {
+    let Some(room_id) = session.room_id.clone() else {
+        warn!(
+            "[call] {} sent {} before Join completed - dropped",
+            peer_id, frame
+        );
+        return None;
+    };
+    let Some(room) = state.rooms.get(&room_id).map(|r| r.value().clone()) else {
+        warn!(
+            "[call] {} sent {} for room {}, which no longer exists - dropped",
+            peer_id, frame, room_id
+        );
+        return None;
+    };
+    if let Ok(mut ts) = room.last_activity.lock() {
+        *ts = std::time::Instant::now();
+    }
+    Some((room_id, room))
+}
+
+/// Resolves this peer's own context inside its room. A signal for a peer the room no longer
+/// holds is dropped; the drop is loud when nothing has yet said why the peer is gone, and quiet
+/// when something has - an evicted device goes on trickling ICE for several seconds, and
+/// repeating a cause the log already carries is noise rather than evidence.
+fn resolve_peer<'a>(
+    room: &'a Arc<Room>,
+    session: &PeerSession,
+    peer_id: &str,
+    room_id: &str,
+    frame: &str,
+) -> Option<Ref<'a, PeerId, PeerContext>> {
+    if let Some(ctx) = room.peers.get(peer_id) {
+        return Some(ctx);
+    }
+    let already_explained = session
+        .ledger
+        .as_ref()
+        .map(|l| l.disposition().is_some())
+        .unwrap_or(false);
+    if !already_explained {
+        warn!(
+            "[call] {} sent {} in room {} but is not registered in it - dropped",
+            peer_id, frame, room_id
+        );
+    }
+    None
+}
+
+/// Records why a session ended on its ledger, when it has one. A socket that never completed a
+/// `Join` has no ledger and no call to account for.
+fn end_session(session: &PeerSession, disposition: Disposition) {
+    if let Some(ledger) = &session.ledger {
+        ledger.end(disposition);
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -350,11 +694,14 @@ async fn ws_handler(
 
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String) {
     let peer_id = format!("{}:{}", user_id, Uuid::new_v4());
-    let mut current_room_id: Option<String> = None;
+    let mut session = PeerSession {
+        room_id: None,
+        ledger: None,
+    };
 
     let (tx, mut rx) = mpsc::channel::<SignalMessage>(100);
 
-    info!("New WebSocket connection: {}", peer_id);
+    info!("[call] socket open peer={}", peer_id);
 
     // Rate limiter: max 50 signal frames per second per peer.
     let mut rate_count: u32 = 0;
@@ -376,45 +723,100 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                         rate_count += 1;
                         if rate_count > 50 {
                             warn!("[rate-limit] Peer {} exceeded 50 msg/s - disconnecting", peer_id);
+                            end_session(&session, Disposition::RateLimited);
                             break;
                         }
 
                         match serde_json::from_str::<SignalMessage>(&text) {
                             Ok(signal) => {
-                                handle_signal(&state, &user_id, &peer_id, &mut current_room_id, signal, tx.clone()).await;
+                                handle_signal(&state, &user_id, &peer_id, &mut session, signal, tx.clone()).await;
                             }
-                            Err(e) => error!("JSON error: {}", e),
+                            Err(e) => error!("[call] {} unparseable signal frame: {}", peer_id, e),
                         }
                     }
-                    Some(Ok(Message::Close(_))) => break,
-                    Some(Err(_)) => break,
-                    None => break,
+                    // The four ways a socket ends were one silent `break` each. They are not the
+                    // same event: a Close frame is a user hanging up, an error is the network
+                    // going away mid-call, and no client's own log can tell those two apart.
+                    Some(Ok(Message::Close(frame))) => {
+                        info!(
+                            "[call] {} sent Close ({})",
+                            peer_id,
+                            frame
+                                .as_ref()
+                                .map(|f| format!("code={} reason={}", f.code, f.reason))
+                                .unwrap_or_else(|| "no payload".to_string())
+                        );
+                        end_session(&session, Disposition::ClientClose);
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        warn!("[call] {} socket error: {}", peer_id, e);
+                        end_session(&session, Disposition::TransportError);
+                        break;
+                    }
+                    None => {
+                        warn!("[call] {} stream ended without a Close frame", peer_id);
+                        end_session(&session, Disposition::StreamEnded);
+                        break;
+                    }
                     _ => {}
                 }
             }
             Some(msg) = rx.recv() => {
-                let text = serde_json::to_string(&msg).unwrap();
+                // A frame we cannot serialise is dropped and named, never panicked on: this is
+                // the writer for every outbound signal and it must not take the call down.
+                let text = match serde_json::to_string(&msg) {
+                    Ok(text) => text,
+                    Err(e) => {
+                        error!("[call] {} could not serialise outbound {}: {}", peer_id, msg.kind(), e);
+                        continue;
+                    }
+                };
                 if let Err(e) = writer_socket.send(Message::Text(text)).await {
-                    error!("WS send error: {}", e);
+                    error!("[call] {} socket write failed on {}: {}", peer_id, msg.kind(), e);
+                    end_session(&session, Disposition::SendFailed);
                     break;
                 }
             }
         }
     }
 
-    if let Some(room_id) = current_room_id {
+    if let Some(room_id) = session.room_id.clone() {
         let remove_room = if let Some(room) = state.rooms.get(&room_id) {
-            room.peers.remove(&peer_id);
+            // Close the PeerConnection rather than only dropping it: webrtc-rs holds the ICE
+            // agent and its TURN allocation until told to let go, and a relay allocation left
+            // running is billed against the same monthly budget the ICE endpoint guards.
+            // `evict_sibling_peers` already did this; the ordinary hangup path did not, so the
+            // record below would have said "session end" while the allocation was still live.
+            if let Some((_, ctx)) = room.peers.remove(&peer_id) {
+                if let Err(e) = ctx.pc.close().await {
+                    warn!("[call] {} failed to close peer connection: {}", peer_id, e);
+                }
+            }
             room.peers.is_empty()
         } else {
+            warn!(
+                "[call] {} left room {} but the room was already gone",
+                peer_id, room_id
+            );
             false
         };
         if remove_room {
             state.rooms.remove(&room_id);
-            info!("Room {} removed - no peers remaining", room_id);
-        } else {
-            info!("Peer {} removed from room {}", peer_id, room_id);
+            info!("[call] room {} removed - no peers remaining", room_id);
         }
+    }
+
+    match &session.ledger {
+        // The record: one line carrying which frames crossed the SFU in each direction, how
+        // long the peer held the room, and whether media ever flowed at all.
+        Some(ledger) => ledger.emit(),
+        // No ledger means the socket authenticated and never joined a room. It still gets a
+        // line, because "socket open" without a closing line is a pair a reader has to guess at.
+        None => info!(
+            "[call] socket closed peer={} without joining a room",
+            peer_id
+        ),
     }
 }
 
@@ -422,7 +824,7 @@ async fn handle_signal(
     state: &Arc<AppState>,
     user_id: &str,
     peer_id: &String,
-    current_room_id: &mut Option<String>,
+    session: &mut PeerSession,
     signal: SignalMessage,
     notify_tx: mpsc::Sender<SignalMessage>,
 ) {
@@ -470,7 +872,7 @@ async fn handle_signal(
             }
 
             // Reject if peer is already in a room - prevents multi-room joins.
-            if let Some(existing) = current_room_id {
+            if let Some(existing) = &session.room_id {
                 warn!(
                     "[busy] Peer {} tried to join room {} but is already in room {}",
                     peer_id, room_id, existing
@@ -478,8 +880,12 @@ async fn handle_signal(
                 return;
             }
 
-            info!("Peer {} joining room {}", peer_id, room_id);
-            *current_room_id = Some(room_id.clone());
+            info!("[call] session start room={} peer={}", room_id, peer_id);
+            session.room_id = Some(room_id.clone());
+            // The room id is also chat-delivery-service's `callId`, so this ledger and the ring
+            // fan-out's `[ring] call=...` lines join on it. Nothing else links the two services.
+            let ledger = Arc::new(CallLedger::new(room_id.clone(), peer_id.clone()));
+            session.ledger = Some(ledger.clone());
 
             let room = state
                 .rooms
@@ -519,6 +925,7 @@ async fn handle_signal(
                     pc: pc.clone(),
                     notify_tx: notify_tx.clone(),
                     pending_ice_candidates: Mutex::new(Vec::new()),
+                    ledger: ledger.clone(),
                 },
             );
 
@@ -528,8 +935,12 @@ async fn handle_signal(
                     .add_track(Arc::clone(&track.local) as Arc<dyn TrackLocal + Send + Sync>)
                     .await
                 {
-                    Err(e) => error!("Failed to add existing track: {}", e),
+                    Err(e) => error!(
+                        "[call] room={} peer={} failed to subscribe to an existing track: {}",
+                        room_id, peer_id, e
+                    ),
                     Ok(sender) if track.is_video => {
+                        bump(&ledger.tracks_subscribed);
                         // This peer subscribes to a video track published before it joined,
                         // so it missed the last keyframe: ask the publisher for a fresh IDR now
                         // (otherwise it only gets undecodable delta frames = black video)…
@@ -546,22 +957,25 @@ async fn handle_signal(
                             track.last_pli.clone(),
                         );
                     }
-                    Ok(_) => {}
+                    Ok(_) => bump(&ledger.tracks_subscribed),
                 }
             }
             drop(tracks);
 
             let notify_tx_clone = notify_tx.clone();
-            let peer_id_ice = peer_id.clone();
+            let ledger_ice = ledger.clone();
             pc.on_ice_candidate(Box::new(move |c| {
                 let notify_tx_clone = notify_tx_clone.clone();
-                let peer_id_ice = peer_id_ice.clone();
+                let ledger = ledger_ice.clone();
                 Box::pin(async move {
+                    // No line per candidate: a call gathers dozens, and the figure that answers
+                    // a question is the count at the end of negotiation, not the trickle.
                     let json = match c {
                         Some(c) => match c.to_json() {
                             Ok(j) => j,
                             Err(e) => {
-                                warn!("[ICE] to_json failed for {}: {}", peer_id_ice, e);
+                                bump(&ledger.ice_out_failed);
+                                warn!("[ICE] to_json failed for {}: {}", ledger.peer_id, e);
                                 return;
                             }
                         },
@@ -572,28 +986,82 @@ async fn handle_signal(
                             username_fragment: None,
                         },
                     };
-                    let msg = SignalMessage::IceCandidate {
-                        candidate: serde_json::to_string(&json).unwrap(),
+                    let candidate = match serde_json::to_string(&json) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            bump(&ledger.ice_out_failed);
+                            warn!(
+                                "[ICE] could not serialise candidate for {}: {}",
+                                ledger.peer_id, e
+                            );
+                            return;
+                        }
                     };
-                    if let Err(e) = notify_tx_clone.send(msg).await {
-                        warn!("[ICE] failed to send candidate for {}: {}", peer_id_ice, e);
+                    match notify_tx_clone
+                        .send(SignalMessage::IceCandidate { candidate })
+                        .await
+                    {
+                        Ok(()) => bump(&ledger.ice_out),
+                        Err(e) => {
+                            bump(&ledger.ice_out_failed);
+                            warn!(
+                                "[ICE] failed to send candidate for {}: {}",
+                                ledger.peer_id, e
+                            );
+                        }
                     }
                 })
             }));
 
-            let peer_id_ice_state = peer_id.clone();
+            let ledger_ice_state = ledger.clone();
             pc.on_ice_connection_state_change(Box::new(move |state| {
-                let peer_id_ice_state = peer_id_ice_state.clone();
+                let ledger = ledger_ice_state.clone();
                 Box::pin(async move {
-                    info!(
-                        "[ICE] {} ice_connection_state={:?}",
-                        peer_id_ice_state, state
-                    );
+                    let name = format!("{:?}", state);
+                    ledger.set_ice_state(&name);
+                    match state {
+                        RTCIceConnectionState::Connected | RTCIceConnectionState::Completed => {
+                            match ledger.mark_connected() {
+                                Some(took) => info!(
+                                    "[call] ice connected room={} peer={} after_ms={} {}",
+                                    ledger.room_id,
+                                    ledger.peer_id,
+                                    took.as_millis(),
+                                    ledger.ice_counters()
+                                ),
+                                None => info!(
+                                    "[call] ice {} room={} peer={}",
+                                    name, ledger.room_id, ledger.peer_id
+                                ),
+                            }
+                        }
+                        RTCIceConnectionState::Failed | RTCIceConnectionState::Disconnected => {
+                            // The counts are the whole point of this line: candidates gathered
+                            // on both sides with no pair formed is a TURN fault, ice_in=0 is a
+                            // client that never trickled, and the two look identical without it.
+                            warn!(
+                                "[call] ice {} room={} peer={} connected_ms={} {}",
+                                name,
+                                ledger.room_id,
+                                ledger.peer_id,
+                                ledger
+                                    .connected_ms()
+                                    .map(|ms| ms.to_string())
+                                    .unwrap_or_else(|| "-".to_string()),
+                                ledger.ice_counters()
+                            );
+                        }
+                        _ => info!(
+                            "[call] ice {} room={} peer={}",
+                            name, ledger.room_id, ledger.peer_id
+                        ),
+                    }
                 })
             }));
 
             let room_clone = room.clone();
             let peer_id_clone = peer_id.clone();
+            let ledger_track = ledger.clone();
             // Weak ref (not a clone) so the PLI task below doesn't keep the publisher's
             // PeerConnection alive in a reference cycle (pc owns the on_track callback).
             let pc_weak = Arc::downgrade(&pc);
@@ -602,11 +1070,14 @@ async fn handle_signal(
                     let room_clone = room_clone.clone();
                     let peer_id_clone = peer_id_clone.clone();
                     let pc_weak = pc_weak.clone();
+                    let ledger = ledger_track.clone();
 
                     Box::pin(async move {
                         let remote_track = track;
+                        bump(&ledger.tracks_published);
                         info!(
-                            "Track received from {}: kind={}",
+                            "[call] track published room={} peer={} kind={}",
+                            ledger.room_id,
                             peer_id_clone,
                             remote_track.kind()
                         );
@@ -671,10 +1142,14 @@ async fn handle_signal(
                                 .await
                             {
                                 Err(e) => {
-                                    error!("Failed to add track to peer {}: {}", other_pid, e);
+                                    error!(
+                                        "[call] room={} peer={} could not be subscribed to the new track: {}",
+                                        ledger.room_id, other_pid, e
+                                    );
                                     continue;
                                 }
                                 Ok(sender) if is_video => {
+                                    bump(&other_ctx.ledger.tracks_subscribed);
                                     // Existing subscriber gets this freshly-published video track:
                                     // nudge a keyframe now and relay its later requests on demand.
                                     request_keyframe_burst(
@@ -689,7 +1164,7 @@ async fn handle_signal(
                                         last_pli.clone(),
                                     );
                                 }
-                                Ok(_) => {}
+                                Ok(_) => bump(&other_ctx.ledger.tracks_subscribed),
                             }
 
                             schedule_renegotiate(room_clone.clone(), other_pid.clone());
@@ -704,88 +1179,133 @@ async fn handle_signal(
                 })
                 .await
             {
-                error!("Failed to send Joined ack to {}: {}", peer_id, e);
-            } else {
-                info!("Peer {} joined room {} (ready for offer)", peer_id, room_id);
+                error!(
+                    "[call] joined ack NOT sent room={} peer={}: {} - this peer will never offer",
+                    room_id, peer_id, e
+                );
             }
         }
         SignalMessage::Offer { sdp } => {
-            if let Some(room_id) = current_room_id {
-                if let Some(room) = state.rooms.get(room_id) {
-                    if let Ok(mut ts) = room.last_activity.lock() {
-                        *ts = std::time::Instant::now();
-                    }
-                    if let Some(ctx) = room.peers.get(peer_id) {
-                        if let Ok(sdp_obj) = serde_json::from_str::<RTCSessionDescription>(&sdp) {
-                            if let Err(e) = ctx.pc.set_remote_description(sdp_obj).await {
-                                error!("Set remote desc error for {}: {}", peer_id, e);
-                                return;
-                            }
+            let Some((room_id, room)) = resolve_room(state, session, peer_id, "offer") else {
+                return;
+            };
+            let Some(ctx) = resolve_peer(&room, session, peer_id, &room_id, "offer") else {
+                return;
+            };
+            bump(&ctx.ledger.offers_in);
 
-                            flush_pending_ice_candidates(ctx.value()).await;
-
-                            match ctx.pc.create_answer(None).await {
-                                Ok(answer) => {
-                                    if ctx.pc.set_local_description(answer.clone()).await.is_ok() {
-                                        info!("Sending Answer to {}", peer_id);
-                                        let _ = ctx
-                                            .notify_tx
-                                            .send(SignalMessage::Answer {
-                                                sdp: serde_json::to_string(&answer).unwrap(),
-                                            })
-                                            .await;
-                                    } else {
-                                        error!("Set local answer failed for {}", peer_id);
-                                    }
-                                }
-                                Err(e) => error!("Create answer error for {}: {}", peer_id, e),
-                            }
-                        } else {
-                            error!("Offer SDP JSON parse failed for {}", peer_id);
-                        }
-                    } else {
-                        warn!(
-                            "Offer from {} in room {} but peer not registered yet",
-                            peer_id, room_id
-                        );
-                    }
+            let sdp_obj = match serde_json::from_str::<RTCSessionDescription>(&sdp) {
+                Ok(obj) => obj,
+                Err(e) => {
+                    error!(
+                        "[call] offer room={} peer={} is not valid SDP JSON: {}",
+                        room_id, peer_id, e
+                    );
+                    return;
                 }
-            } else {
-                warn!("Offer from {} before Join completed", peer_id);
+            };
+            if let Err(e) = ctx.pc.set_remote_description(sdp_obj).await {
+                error!(
+                    "[call] set_remote_description(offer) failed room={} peer={}: {}",
+                    room_id, peer_id, e
+                );
+                return;
+            }
+
+            flush_pending_ice_candidates(ctx.value()).await;
+
+            let answer = match ctx.pc.create_answer(None).await {
+                Ok(answer) => answer,
+                Err(e) => {
+                    error!(
+                        "[call] create_answer failed room={} peer={}: {}",
+                        room_id, peer_id, e
+                    );
+                    return;
+                }
+            };
+            if let Err(e) = ctx.pc.set_local_description(answer.clone()).await {
+                error!(
+                    "[call] set_local_description(answer) failed room={} peer={}: {}",
+                    room_id, peer_id, e
+                );
+                return;
+            }
+            let sdp = match serde_json::to_string(&answer) {
+                Ok(sdp) => sdp,
+                Err(e) => {
+                    error!(
+                        "[call] could not serialise answer room={} peer={}: {}",
+                        room_id, peer_id, e
+                    );
+                    return;
+                }
+            };
+            // Counted when the frame reaches the socket writer, not the wire. A write that fails
+            // ends the session as `send-failed`, which is the other half of the same question:
+            // the peer offered, and either the answer left or the record says it did not.
+            match ctx.notify_tx.send(SignalMessage::Answer { sdp }).await {
+                Ok(()) => {
+                    bump(&ctx.ledger.answers_out);
+                    info!("[call] answer sent room={} peer={}", room_id, peer_id);
+                }
+                Err(e) => error!(
+                    "[call] answer NOT sent room={} peer={}: {} - this peer offered and got nothing back",
+                    room_id, peer_id, e
+                ),
             }
         }
         SignalMessage::Answer { sdp } => {
-            if let Some(room_id) = current_room_id {
-                if let Some(room) = state.rooms.get(room_id) {
-                    if let Ok(mut ts) = room.last_activity.lock() {
-                        *ts = std::time::Instant::now();
-                    }
-                    if let Some(ctx) = room.peers.get(peer_id) {
-                        if let Ok(sdp_obj) = serde_json::from_str::<RTCSessionDescription>(&sdp) {
-                            if let Err(e) = ctx.pc.set_remote_description(sdp_obj).await {
-                                error!("Set remote answer error for {}: {}", peer_id, e);
-                            } else {
-                                flush_pending_ice_candidates(ctx.value()).await;
-                                info!("Renegotiation answer applied for {}", peer_id);
-                            }
-                        }
-                    }
+            let Some((room_id, room)) = resolve_room(state, session, peer_id, "answer") else {
+                return;
+            };
+            let Some(ctx) = resolve_peer(&room, session, peer_id, &room_id, "answer") else {
+                return;
+            };
+            bump(&ctx.ledger.answers_in);
+
+            let sdp_obj = match serde_json::from_str::<RTCSessionDescription>(&sdp) {
+                Ok(obj) => obj,
+                Err(e) => {
+                    // Silent before this: a renegotiation answer that would not parse left the
+                    // SFU offering into a void, with nothing anywhere saying the answer arrived.
+                    error!(
+                        "[call] answer room={} peer={} is not valid SDP JSON: {}",
+                        room_id, peer_id, e
+                    );
+                    return;
                 }
+            };
+            if let Err(e) = ctx.pc.set_remote_description(sdp_obj).await {
+                error!(
+                    "[call] set_remote_description(answer) failed room={} peer={}: {}",
+                    room_id, peer_id, e
+                );
+                return;
             }
+            flush_pending_ice_candidates(ctx.value()).await;
+            info!(
+                "[call] renegotiation answer applied room={} peer={}",
+                room_id, peer_id
+            );
         }
         SignalMessage::IceCandidate { candidate } => {
-            if let Some(room_id) = current_room_id {
-                if let Some(room) = state.rooms.get(room_id) {
-                    if let Ok(mut ts) = room.last_activity.lock() {
-                        *ts = std::time::Instant::now();
-                    }
-                    if let Some(ctx) = room.peers.get(peer_id) {
-                        if let Ok(cand) = serde_json::from_str::<RTCIceCandidateInit>(&candidate) {
-                            apply_remote_ice_candidate(peer_id, ctx.value(), cand).await;
-                        } else {
-                            warn!("[ICE] candidate JSON parse failed for {}", peer_id);
-                        }
-                    }
+            let Some((room_id, room)) = resolve_room(state, session, peer_id, "ice") else {
+                return;
+            };
+            let Some(ctx) = resolve_peer(&room, session, peer_id, &room_id, "ice") else {
+                return;
+            };
+            bump(&ctx.ledger.ice_in);
+
+            match serde_json::from_str::<RTCIceCandidateInit>(&candidate) {
+                Ok(cand) => apply_remote_ice_candidate(peer_id, ctx.value(), cand).await,
+                Err(e) => {
+                    bump(&ctx.ledger.ice_in_failed);
+                    warn!(
+                        "[call] ice room={} peer={} is not valid candidate JSON: {}",
+                        room_id, peer_id, e
+                    );
                 }
             }
         }
@@ -878,32 +1398,54 @@ fn schedule_renegotiate(room: Arc<Room>, target_peer_id: PeerId) {
         }
 
         let Some(ctx) = room.peers.get(&target_peer_id) else {
+            info!(
+                "[call] renegotiation dropped: peer {} left before the debounce fired",
+                target_peer_id
+            );
             return;
         };
 
-        match ctx.pc.create_offer(None).await {
-            Ok(offer) => {
-                if ctx.pc.set_local_description(offer.clone()).await.is_ok() {
-                    info!(
-                        "Renegotiation offer → {} (signaling={:?})",
-                        target_peer_id,
-                        ctx.pc.signaling_state()
-                    );
-                    let _ = ctx
-                        .notify_tx
-                        .send(SignalMessage::Offer {
-                            sdp: serde_json::to_string(&offer).unwrap(),
-                        })
-                        .await;
-                } else {
-                    error!(
-                        "Renegotiation set_local_description failed for {}",
-                        target_peer_id
-                    );
-                }
+        let offer = match ctx.pc.create_offer(None).await {
+            Ok(offer) => offer,
+            Err(e) => {
+                error!(
+                    "[call] renegotiation create_offer failed peer={}: {}",
+                    target_peer_id, e
+                );
+                return;
             }
+        };
+        if let Err(e) = ctx.pc.set_local_description(offer.clone()).await {
+            error!(
+                "[call] renegotiation set_local_description failed peer={}: {}",
+                target_peer_id, e
+            );
+            return;
+        }
+        let sdp = match serde_json::to_string(&offer) {
+            Ok(sdp) => sdp,
+            Err(e) => {
+                error!(
+                    "[call] could not serialise renegotiation offer peer={}: {}",
+                    target_peer_id, e
+                );
+                return;
+            }
+        };
+        match ctx.notify_tx.send(SignalMessage::Offer { sdp }).await {
+            Ok(()) => {
+                bump(&ctx.ledger.offers_out);
+                info!(
+                    "[call] renegotiation offer sent room={} peer={} (signaling={:?})",
+                    ctx.ledger.room_id,
+                    target_peer_id,
+                    ctx.pc.signaling_state()
+                );
+            }
+            // The subscriber never learns the room gained a track: its video simply never
+            // appears, and nothing on either client says why.
             Err(e) => error!(
-                "Renegotiation create_offer failed for {}: {}",
+                "[call] renegotiation offer NOT sent peer={}: {}",
                 target_peer_id, e
             ),
         }
@@ -1042,16 +1584,21 @@ async fn apply_remote_ice_candidate(peer_id: &str, ctx: &PeerContext, cand: RTCI
             // Hard cap: drop candidates if the buffer overflows (prevents memory leak when
             // Offer never arrives - e.g. abandoned connections).
             if pending.len() >= 200 {
+                let dropped = pending.len() as u32;
                 warn!(
                     "[ICE] {} candidate buffer overflow (>=200) - clearing buffer",
                     peer_id
                 );
                 pending.clear();
+                ctx.ledger
+                    .ice_in_failed
+                    .fetch_add(dropped, Ordering::Relaxed);
                 return;
             }
             pending.push(cand);
             pending.len()
         };
+        bump(&ctx.ledger.ice_in_buffered);
         if n <= 3 || n % 50 == 0 {
             info!("[ICE] {} buffered remote candidate (#{})", peer_id, n);
         }
@@ -1059,6 +1606,7 @@ async fn apply_remote_ice_candidate(peer_id: &str, ctx: &PeerContext, cand: RTCI
     }
 
     if let Err(e) = ctx.pc.add_ice_candidate(cand).await {
+        bump(&ctx.ledger.ice_in_failed);
         warn!("[ICE] {} add_ice_candidate failed: {}", peer_id, e);
     } else if is_end {
         info!("[ICE] {} remote end-of-candidates", peer_id);
@@ -1074,10 +1622,18 @@ async fn flush_pending_ice_candidates(ctx: &PeerContext) {
     if pending.is_empty() {
         return;
     }
-    info!("[ICE] flushing {} buffered candidate(s)", pending.len());
+    info!(
+        "[ICE] {} flushing {} buffered candidate(s)",
+        ctx.ledger.peer_id,
+        pending.len()
+    );
     for cand in pending {
         if let Err(e) = ctx.pc.add_ice_candidate(cand).await {
-            warn!("[ICE] flush add_ice_candidate failed: {}", e);
+            bump(&ctx.ledger.ice_in_failed);
+            warn!(
+                "[ICE] {} flush add_ice_candidate failed: {}",
+                ctx.ledger.peer_id, e
+            );
         }
     }
 }
@@ -1094,31 +1650,60 @@ async fn cleanup_stale_rooms(state: Arc<AppState>) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
     loop {
         interval.tick().await;
-        let before = state.rooms.len();
-        state.rooms.retain(|room_id, room| {
+        // Two phases, because closing a PeerConnection is async and `retain` is not - and a room
+        // reaped without closing its peers leaves their TURN allocations running against the
+        // very budget the ICE endpoint refuses credentials to protect.
+        let stale: Vec<RoomId> = state
+            .rooms
+            .iter()
+            .filter(|entry| {
+                entry
+                    .value()
+                    .last_activity
+                    .lock()
+                    .map(|ts| ts.elapsed() > std::time::Duration::from_secs(1800))
+                    .unwrap_or(false)
+            })
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        for room_id in stale {
+            let Some((_, room)) = state.rooms.remove(&room_id) else {
+                continue;
+            };
             let idle = room
                 .last_activity
                 .lock()
                 .map(|ts| ts.elapsed())
                 .unwrap_or(std::time::Duration::ZERO);
-            if idle > std::time::Duration::from_secs(1800) {
+            let peers: Vec<PeerId> = room.peers.iter().map(|e| e.key().clone()).collect();
+            for peer_id in &peers {
+                if let Some((_, ctx)) = room.peers.remove(peer_id) {
+                    ctx.ledger.end(Disposition::RoomReaped);
+                    if let Err(e) = ctx.pc.close().await {
+                        warn!(
+                            "[cleanup] failed to close {} in reaped room {}: {}",
+                            peer_id, room_id, e
+                        );
+                    }
+                }
+            }
+            if peers.is_empty() {
                 info!(
-                    "[cleanup] Evicting stale room {} (idle {:.0}s)",
+                    "[cleanup] evicted stale empty room {} (idle {:.0}s)",
                     room_id,
                     idle.as_secs_f32()
                 );
-                false
             } else {
-                true
+                // Not an empty room being tidied away: these sockets still believe they are in a
+                // call, and each one's record will now say so rather than blaming its client.
+                warn!(
+                    "[cleanup] evicted stale room {} (idle {:.0}s) with {} peer(s) still in it",
+                    room_id,
+                    idle.as_secs_f32(),
+                    peers.len()
+                );
             }
-        });
-        let removed = before.saturating_sub(state.rooms.len());
-        if removed > 0 {
-            info!(
-                "[cleanup] Removed {} stale room(s), {} remaining",
-                removed,
-                state.rooms.len()
-            );
         }
     }
 }
@@ -1139,6 +1724,9 @@ async fn evict_sibling_peers(room: &Arc<Room>, user_id: &str) {
 
     for sibling in siblings {
         if let Some((_, ctx)) = room.peers.remove(&sibling) {
+            // The FIRST cause wins: this peer's socket will send a Close frame moments from now
+            // and recording that would report the consequence and hide the eviction.
+            ctx.ledger.end(Disposition::SiblingEvicted);
             if let Err(e) = ctx.pc.close().await {
                 warn!(
                     "[multi-device] failed to close sibling peer {}: {}",
@@ -1188,4 +1776,143 @@ async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
     };
 
     Ok(api.new_peer_connection(config).await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ledger() -> CallLedger {
+        CallLedger::new("room-1".to_string(), "user-1:dev-a".to_string())
+    }
+
+    /// The campaign greps these tokens out of the service log; they are a contract, not a
+    /// wording choice, and changing one silently invalidates every row that read it.
+    #[test]
+    fn disposition_tokens_are_stable() {
+        assert_eq!(Disposition::ClientClose.as_str(), "client-close");
+        assert_eq!(Disposition::TransportError.as_str(), "transport-error");
+        assert_eq!(Disposition::StreamEnded.as_str(), "stream-ended");
+        assert_eq!(Disposition::RateLimited.as_str(), "rate-limited");
+        assert_eq!(Disposition::SendFailed.as_str(), "send-failed");
+        assert_eq!(Disposition::SiblingEvicted.as_str(), "sibling-evicted");
+        assert_eq!(Disposition::RoomReaped.as_str(), "room-reaped");
+    }
+
+    /// Only a hangup and a deliberate multi-device replacement are endings the design intends.
+    /// Everything else is a defect until shown otherwise, and is emitted at a level that says so.
+    #[test]
+    fn every_ending_the_design_did_not_intend_accuses() {
+        assert!(Disposition::ClientClose.is_expected());
+        assert!(Disposition::SiblingEvicted.is_expected());
+        for d in [
+            Disposition::TransportError,
+            Disposition::StreamEnded,
+            Disposition::RateLimited,
+            Disposition::SendFailed,
+            Disposition::RoomReaped,
+        ] {
+            assert!(!d.is_expected(), "{} must accuse", d.as_str());
+        }
+    }
+
+    /// An evicted peer sends a Close frame moments later, and a reaped room's socket errors out
+    /// afterwards. Keeping the last event would report the consequence and hide the cause.
+    #[test]
+    fn the_disposition_keeps_the_first_cause() {
+        let l = ledger();
+        assert!(l.end(Disposition::SiblingEvicted));
+        assert!(!l.end(Disposition::ClientClose));
+        assert_eq!(l.disposition(), Some(Disposition::SiblingEvicted));
+    }
+
+    #[test]
+    fn a_connection_is_marked_once_so_a_flap_is_not_a_second_call() {
+        let l = ledger();
+        assert!(l.connected_ms().is_none());
+        assert!(l.mark_connected().is_some());
+        assert!(l.mark_connected().is_none());
+        assert!(l.connected_ms().is_some());
+    }
+
+    /// `connected_ms=-` is not a missing value: it is the statement that media never flowed,
+    /// and it is the field read first. Rendering it as a zero would make it unreadable.
+    #[test]
+    fn a_session_that_never_connected_says_so() {
+        let l = ledger();
+        l.end(Disposition::TransportError);
+        let s = l.summary();
+        assert!(s.contains("connected_ms=-"), "{}", s);
+        assert!(s.contains("disposition=transport-error"), "{}", s);
+        assert!(s.contains("ice_state=none"), "{}", s);
+    }
+
+    /// An unclassified ending is a hole in this file, not in the call, and must read as one
+    /// rather than being silently defaulted to something plausible.
+    #[test]
+    fn an_unclassified_ending_reads_as_unknown() {
+        assert!(ledger().summary().contains("disposition=unknown"));
+    }
+
+    /// The room id is also chat-delivery-service's `callId`: it is what joins the ring fan-out's
+    /// half of the record to the SFU's half, and nothing else does.
+    #[test]
+    fn the_record_names_its_room_and_peer() {
+        let s = ledger().summary();
+        assert!(s.contains("room=room-1"), "{}", s);
+        assert!(s.contains("peer=user-1:dev-a"), "{}", s);
+    }
+
+    #[test]
+    fn the_counters_render_every_direction() {
+        let l = ledger();
+        bump(&l.offers_in);
+        bump(&l.answers_out);
+        bump(&l.offers_out);
+        bump(&l.offers_out);
+        bump(&l.answers_in);
+        for _ in 0..4 {
+            bump(&l.ice_in);
+        }
+        for _ in 0..3 {
+            bump(&l.ice_in_buffered);
+        }
+        bump(&l.ice_in_failed);
+        bump(&l.ice_in_failed);
+        for _ in 0..5 {
+            bump(&l.ice_out);
+        }
+        bump(&l.ice_out_failed);
+        bump(&l.tracks_published);
+        bump(&l.tracks_published);
+        for _ in 0..3 {
+            bump(&l.tracks_subscribed);
+        }
+        assert_eq!(
+            l.counters(),
+            concat!(
+                "offer_in=1 answer_out=1 offer_out=2 answer_in=1 ",
+                "ice_in=4 ice_buffered=3 ice_in_failed=2 ice_out=5 ice_out_failed=1 ",
+                "tracks_pub=2 tracks_sub=3"
+            )
+        );
+    }
+
+    /// The line emitted when negotiation ends and the session record must never disagree about
+    /// the ICE counts - one is built out of the other precisely so they cannot drift.
+    #[test]
+    fn the_terminal_ice_line_carries_the_same_figures_as_the_record() {
+        let l = ledger();
+        bump(&l.ice_in);
+        bump(&l.ice_out);
+        assert!(l.counters().contains(&l.ice_counters()));
+    }
+
+    #[test]
+    fn the_record_reports_the_last_ice_state_seen() {
+        let l = ledger();
+        l.set_ice_state("Checking");
+        l.set_ice_state("Failed");
+        assert!(l.summary().contains("ice_state=Failed"));
+    }
 }

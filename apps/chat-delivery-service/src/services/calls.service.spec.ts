@@ -2,7 +2,8 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
+import { ForbiddenException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { getApps } from 'firebase-admin/app';
 import { CallsService } from './calls.service';
 import { ApnsVoipService } from './apns-voip.service';
 import { GroupMember } from '../entities/group-member.entity';
@@ -86,6 +87,10 @@ describe('CallsService', () => {
 
     service = module.get(CallsService);
   });
+
+  /** Everything a given level emitted during one call, joined for substring assertions. */
+  const captured = (spy: jest.SpyInstance): string =>
+    spy.mock.calls.map((c) => String(c[0])).join('\n');
 
   it('rejects non-members', async () => {
     groupMemberRepo.findOne.mockResolvedValue(null);
@@ -273,6 +278,134 @@ describe('CallsService', () => {
       expect(fcmSend.mock.calls[0][0].data).toEqual(
         expect.objectContaining({ type: 'call_ring_end', callId: 'call-1', reason: 'answered' })
       );
+    });
+  });
+
+  describe('the server-side call record (WP-CALL-LOG)', () => {
+    beforeEach(() => {
+      process.env.CALL_ROOM_SECRET = 'test-secret';
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+    });
+    afterEach(() => {
+      delete process.env.CALL_ROOM_SECRET;
+      jest.restoreAllMocks();
+    });
+
+    /**
+     * The roomId this endpoint mints IS the callId every other line is keyed on - the ring
+     * fan-out's and call-service's alike. If the invite line ever carried a different value the
+     * two halves of a call could no longer be joined at all, which is the whole point of it.
+     */
+    it('names the invite with the very room id it hands back', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+
+      expect(captured(log)).toContain(`[call] invite room=${roomId} user=caller group=group-1`);
+    });
+
+    /** The callee's half: asking for a token is the last thing seen before it joins the SFU. */
+    it('names the join token, so a callee that never arrives is distinguishable', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      await service.requestRoomToken('callee', 'group-1', 'room-9');
+
+      expect(captured(log)).toContain('[call] join-token room=room-9 user=callee group=group-1');
+    });
+
+    /** Both halves fail for one reason, and only the caller's half used to say so. */
+    it('accuses the missing room secret on the answer path too', async () => {
+      delete process.env.CALL_ROOM_SECRET;
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      await expect(service.requestRoomToken('callee', 'group-1', 'room-9')).rejects.toThrow(
+        ServiceUnavailableException
+      );
+      expect(captured(error)).toContain('CALL_ROOM_SECRET is not set');
+    });
+
+    /**
+     * `rang=0/3` on its own reads as "three devices, none reachable". Without Firebase the truth
+     * is that this server never asked any of them, and that is a server fault, not a fleet one.
+     */
+    it('names Firebase once when it is the reason no FCM device was asked', async () => {
+      groupMemberRepo.find.mockResolvedValue([{ userId: 'caller' }, { userId: 'callee-android' }]);
+      pushTokenRepo.find.mockResolvedValue([
+        {
+          id: '1',
+          userId: 'callee-android',
+          deviceId: 'd1',
+          token: 'fcm-a',
+          platform: 'android',
+          voipToken: null,
+        },
+        {
+          id: '2',
+          userId: 'callee-ios-voip',
+          deviceId: 'd2',
+          token: 'fcm-b',
+          platform: 'ios',
+          voipToken: 'voip-b',
+        },
+      ]);
+      apnsVoip.sendVoipPush.mockResolvedValue(true);
+      (getApps as jest.Mock).mockReturnValueOnce([]);
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      const result = await service.ringGroup('caller', 'group-1', 'call-1', false);
+
+      // Once for the fan-out, not once per device: two Android handsets are not two faults.
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(captured(error)).toContain('[ring] Firebase Admin is not initialised');
+      expect(fcmSend).not.toHaveBeenCalled();
+      // APNs VoIP does not go through Firebase, so that device is still rung.
+      expect(result.rang).toBe(1);
+    });
+
+    /**
+     * The guard used to sit INSIDE the loop and `break`. That stopped the remaining devices and
+     * returned a count that read like a partial delivery rather than a server that never tried.
+     */
+    it('reports ring-end as nothing sent rather than as a partial delivery', async () => {
+      groupMemberRepo.find.mockResolvedValue([{ userId: 'caller' }, { userId: 'callee-android' }]);
+      pushTokenRepo.find.mockResolvedValue([
+        {
+          id: '1',
+          userId: 'caller',
+          deviceId: 'd0',
+          token: 'fcm-0',
+          platform: 'android',
+          voipToken: null,
+        },
+        {
+          id: '2',
+          userId: 'callee-android',
+          deviceId: 'd1',
+          token: 'fcm-a',
+          platform: 'android',
+          voipToken: null,
+        },
+      ]);
+      (getApps as jest.Mock).mockReturnValueOnce([]);
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+
+      const result = await service.endRing('caller', 'group-1', 'call-1', 'ended');
+
+      expect(result.notified).toBe(0);
+      expect(fcmSend).not.toHaveBeenCalled();
+      expect(captured(error)).toContain('[ring-end] Firebase Admin is not initialised');
+    });
+
+    /** A ring nobody could receive is not the same event as a ring nobody answered. */
+    it('names a group with no one else in it', async () => {
+      groupMemberRepo.find.mockResolvedValue([{ userId: 'caller' }]);
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+
+      const result = await service.ringGroup('caller', 'group-1', 'call-1', false);
+
+      expect(result.rang).toBe(0);
+      expect(pushTokenRepo.find).not.toHaveBeenCalled();
+      expect(captured(warn)).toContain('[ring] call=call-1 group=group-1 has no other member');
     });
   });
 });
