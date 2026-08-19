@@ -135,18 +135,20 @@ happened, 5 a panel, 6 the campaign. **The phone is back (2026-08-17) - nothing 
 of the device ladder cannot be run at all
 ([device-verification](docs/wiki/device-verification.md)).
 
-1. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - and it starts with an INVENTORY, not a
-   refactor. A shared package is probably the wrong shape; one written contract, four aligned
-   implementations. Do NOT enumerate the inventory from memory. **One divergence is already
-   measured and belongs to this item:** MiGallery's `editDistance` counts a TRANSPOSITION as one
-   edit (Damerau-Levenshtein); Sky's `personMatchScore` and this repo's `applyFuzzyNameSearch` do
-   not, so "jaen" finds Jean in the gallery and nowhere else
-   ([MiGallery `docs/wiki/search.md`](../MiGallery/docs/wiki/search.md)). **A second is now
-   measured and is the shape to copy:** the head is one method in four repos, written down four
-   times - [seo](docs/wiki/frontend/seo.md) here, and `docs/wiki/seo.md` in Portail-etu, Sky and
-   MiGallery - with `serializeJsonLd`, `canonicalUrl` and the origin-from-the-request rule
-   duplicated verbatim in each. Nothing shared, four deploys, and it works: use it to decide what a
-   "written contract, four implementations" costs before proposing a package.
+1. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - **the inventory is DONE and it is
+   [ecosystem-convergence](docs/wiki/ecosystem-convergence.md)**: seven axes, measured in all five
+   repos on 2026-08-19, every row read out of a named file. Do NOT restate it here and do NOT
+   re-derive it from memory. What it leaves is three findings, in this order. **MiGallery has no
+   outbound deadline at all** while the other four independently chose 4 s - and it is the one whose
+   server proxies the most (every page goes to Immich). **Le Cercle's `searchUsers` is
+   substring-only**, ordered by promo: the sixth search box, the furthest from the standing
+   requirement, and the one an operator uses at a counter with a queue behind them. **`preferredLanguage`
+   is still in the SSR strategy list of Sky, MiGallery and le-cercle** - the mismatch Portail-etu
+   dropped it for; MEASURE the hydration behaviour with one English `Accept-Language` request before
+   touching three repos, because whether that is a defect or only an inconsistency is the one thing
+   the page could not settle from the code. The head is the shape to copy for whatever does get
+   aligned: one method, four repos, written down four times, nothing shared, four deploys, and it
+   works.
 2. **MEASURE EGRESS OVER TIME** - the component probes already answer "fine right now"; what is owed
    is whether the two stalls were CORRELATED, which a one-shot probe cannot answer.
 3. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES** - the accusing log line exists now; measure how

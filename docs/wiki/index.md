@@ -68,6 +68,7 @@
 ### Development & operations
 
 - [Durable rules](durable-rules.md) — the constraints, grouped by area, each linked to the page carrying its reasoning
+- [Ecosystem convergence](ecosystem-convergence.md) — The five projects measured side by side: tolerant search, outbound deadlines, the locale under SSR, the head, typed errors, the gates
 - [Development workflow](development.md) — Local setup, Makefile, Docker Compose, pre-commit hooks
 - [CI/CD pipeline](cicd.md) — GitHub Actions, mobile builds, releases, self-hosted runner
 - [Device verification runbook](device-verification.md) — The ordered Android + iOS pass: what compiling never proves, and the log line that is the verdict for each check
