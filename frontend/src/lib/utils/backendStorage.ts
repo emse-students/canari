@@ -34,12 +34,66 @@ export interface MediaBucketUsage {
   sweepIntervalMs: number;
 }
 
+/** One MLS table: `pg_total_relation_size` (indexes and TOAST included) and the planner's row estimate. */
+export interface MlsTableUsage {
+  table: string;
+  bytes: number;
+  rows: number;
+}
+
+/**
+ * The undelivered queue, as four numbers rather than one.
+ *
+ * A queue is SUPPOSED to have rows in it - an offline device has messages waiting. What is not
+ * supposed to happen is one device accumulating without end, which is what a dead or revoked device
+ * looks like: the fleet total stays unremarkable while a single queue grows forever. `deepest` is
+ * what separates forty devices with twenty messages from one device with eight hundred.
+ */
+export interface MlsQueueUsage {
+  rows: number;
+  devices: number;
+  deepest: number;
+  oldestMs: number | null;
+  /** Rows created in each of the last four 7-day windows, index 0 being the current week. */
+  rowsByWeek: number[];
+}
+
+/**
+ * The WP-GHOST-1 shape: a device holding group memberships that has published no key package, so it
+ * can be added to nothing and can receive no Welcome. Found by hand once and measured nowhere since.
+ */
+export interface MlsGhostUsage {
+  devicesWithMemberships: number;
+  devicesWithoutKeyPackage: number;
+  orphanMemberships: number;
+}
+
+/** Redis by key prefix. `keys` is exact; the breakdown is a bounded SCAN sample of `sampled` keys. */
+export interface RedisKeyspaceUsage {
+  keys: number;
+  sampled: number;
+  byPrefix: { prefix: string; keys: number }[];
+}
+
+export interface MlsUsage {
+  tables: MlsTableUsage[];
+  queue: MlsQueueUsage | null;
+  ghosts: MlsGhostUsage | null;
+  redisKeyspace: RedisKeyspaceUsage | null;
+}
+
 export interface BackendStorageUsage {
   diskTotalBytes: number | null;
   diskUsedBytes: number | null;
   postgresBytes: number | null;
   redisBytes: number | null;
   media: MediaBucketUsage | null;
+  /**
+   * The MLS half. Postgres and Redis are bare totals above; this is what they are made of, and it
+   * is DISPLAY ONLY - the user's call of 2026-08-17 was a panel and no alert, so nothing here
+   * classifies, warns or acts. A number a reader can see beats a threshold nobody measured.
+   */
+  mls: MlsUsage | null;
 }
 
 /**

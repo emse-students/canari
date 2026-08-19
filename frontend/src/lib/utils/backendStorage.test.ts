@@ -44,6 +44,9 @@ describe('getBackendStorageUsage', () => {
       postgresBytes: 20,
       redisBytes: 5,
       media: media(),
+      // The MLS half is measured independently of the four totals and fails on its own, so `null`
+      // here is a real response shape rather than a gap in the fixture.
+      mls: null,
     };
     fetchMock.mockResolvedValue({ ok: true, json: async () => body });
 

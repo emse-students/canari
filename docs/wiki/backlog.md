@@ -239,17 +239,20 @@ separately the objects no sweep can EVER reach. That last one was not hypothetic
 `purgeExpiredMedia` iterates the metadata index, so an object with no entry is invisible to it for
 ever, and 7 such objects (~11 MB) were already measured.
 
-**What is still open is the MLS half.** §5.7's WP-GHOST-1 shape belongs on the same panel: a device
-holding memberships with no `key_package`, or more than a few hundred `queued_message` rows. Neither
-is measured anywhere today, and neither is a byte count - they are the shapes that precede a byte
-count going wrong. Postgres and Redis are still reported as bare totals, with no breakdown by table
-or stream and no slope.
+**The MLS half shipped 2026-08-19**, and this entry is closed. Postgres and Redis are no longer bare
+totals: the panel lists the eight MLS tables by size with their row counts, reports the queue as four
+figures (total, devices, oldest, and the DEEPEST single device queue - the one a total cannot show),
+counts §5.7's WP-GHOST-1 shape continuously, and breaks Redis down by key prefix from a bounded
+sample that says how much it sampled. The production baseline and the reasoning are on
+[storage-forecast](infrastructure/storage-forecast.md); do not restate them here.
 
 **Decided 2026-08-17: the panel is the whole of it, there is NO alert.** The user's call. Worth
 stating what that costs rather than pretending it costs nothing - the standing rule is that a correct
 mechanism with no report is found by hand a day late, and a panel is a report only for whoever opens
 it. The slope is what makes it survivable: a number read once a month against a trend is enough to see
-a wall coming, where a bare total is not.
+a wall coming, where a bare total is not. **§5.7's own "more than a few hundred rows" predicate is
+deliberately left unarmed**: the deepest real queue is 189, so a threshold set from the last incident
+would be a threshold nobody has measured against the population it would run on.
 
 > **Already shipped, do not re-open:** _"ne garder que les messages les plus recents (dernier mois),
 > et le reste recuperable en demandant l'historique a un appareil mobile"_ is exactly the device

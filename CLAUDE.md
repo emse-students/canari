@@ -129,8 +129,8 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The code items are all in.** 1-4 are measurements and questions that need a deploy to have
-happened, 5 a panel, 6 the campaign. **The phone is back (2026-08-17) - nothing is on hold; keep
+**The code items are all in, the panel included (2026-08-19).** 1-4 are measurements and questions
+that need a deploy to have happened; 5 is the campaign, and it is the only item left. **The phone is back (2026-08-17) - nothing is on hold; keep
 `adb devices` answering. There is NO iPhone (2026-08-18)**, so the iOS half
 of the device ladder cannot be run at all
 ([device-verification](docs/wiki/device-verification.md)).
@@ -173,12 +173,7 @@ of the device ladder cannot be run at all
     is proposed.** Shapes on
     [frontend/architecture](docs/wiki/frontend/architecture.md#when-the-local-store-fails), pinned
     by `storageFaults.test.ts`.
-5. **THE MLS HALF OF `/admin/storage`** - the media half shipped 2026-08-18; Postgres and Redis are
-    still bare totals with no breakdown and no slope, and the WP-GHOST-1 shapes (a device holding
-    memberships with no `key_package`, a queue past a few hundred rows) are measured nowhere. **A
-    panel, no alert** - the user's call, 2026-08-17; the slope is what makes that survivable.
-    [storage-forecast](docs/wiki/infrastructure/storage-forecast.md)
-6. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
+5. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
     **Everything must end green, so every phase runs.** What that costs, the ladder's order, and the
     two decisions it turns on - `call-service` logging BEFORE the CALL phase, and the community
     rework never having run against prod - are all on

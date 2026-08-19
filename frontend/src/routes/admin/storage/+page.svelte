@@ -60,6 +60,31 @@
    * is the current week. Heights are relative to the tallest bar: the panel answers "is the slope
    * rising", never "how many bytes is this pixel", which the label already says exactly.
    */
+  const mls = $derived(usage?.mls ?? null);
+
+  /** Table bars, largest first, sized against the largest - the question is which table dominates. */
+  const tableBars = $derived.by(() => {
+    if (!mls || mls.tables.length === 0) return [];
+    const largest = Math.max(1, ...mls.tables.map((t) => t.bytes));
+    return mls.tables.map((t) => ({
+      ...t,
+      percent: Math.max(t.bytes > 0 ? 2 : 0, Math.round((t.bytes / largest) * 100)),
+    }));
+  });
+
+  /** The queue's weekly bars, reversed like the media ones so time reads left to right. */
+  const queueBars = $derived.by(() => {
+    if (!mls?.queue) return [];
+    const tallest = Math.max(1, ...mls.queue.rowsByWeek);
+    return mls.queue.rowsByWeek
+      .map((rows, index) => ({
+        index,
+        rows,
+        percent: Math.max(rows > 0 ? 2 : 0, Math.round((rows / tallest) * 100)),
+      }))
+      .reverse();
+  });
+
   const weekBars = $derived.by(() => {
     if (!media) return [];
     const tallest = Math.max(1, ...media.recentBytesByWeek);
@@ -297,6 +322,154 @@
               })}
             </p>
           {/if}
+        {:else}
+          <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+        {/if}
+      </div>
+
+      <!-- The MLS half. Postgres and Redis are bare totals above; this says what they are MADE of,
+           and it is display only - the user's call of 2026-08-17 was a panel and no alert. Nothing
+           here classifies: a threshold nobody has measured against the population would be a line
+           its reader learns to skip. -->
+      <div
+        class="sm:col-span-2 rounded-2xl border border-cn-border bg-[var(--cn-surface)] p-5 space-y-5"
+      >
+        <div class="flex items-center gap-2.5">
+          <span
+            class="flex h-9 w-9 items-center justify-center rounded-xl bg-cn-yellow/10 text-cn-dark"
+          >
+            <Database size={18} />
+          </span>
+          <h2 class="font-bold text-text-main">{m.admin_storage_mls_title()}</h2>
+        </div>
+        <p class="text-sm text-text-muted">{m.admin_storage_mls_desc()}</p>
+
+        {#if mls}
+          {#if mls.tables.length > 0}
+            <div class="space-y-2">
+              <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+                {m.admin_storage_mls_tables_title()}
+              </h3>
+              {#each tableBars as row (row.table)}
+                <div class="space-y-1">
+                  <div class="flex items-baseline justify-between gap-3">
+                    <span class="text-sm font-semibold text-text-main">{row.table}</span>
+                    <span class="text-sm text-text-muted">
+                      {formatStorageBytes(row.bytes)} &middot;
+                      {m.admin_storage_mls_table_rows({ rows: row.rows })}
+                    </span>
+                  </div>
+                  <div class="h-1.5 w-full rounded-full bg-cn-border/40">
+                    <div
+                      class="h-1.5 rounded-full bg-cn-yellow/70"
+                      style="width: {row.percent}%"
+                    ></div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <div class="space-y-2">
+            <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+              {m.admin_storage_mls_queue_title()}
+            </h3>
+            {#if !mls.queue}
+              <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+            {:else if mls.queue.rows === 0}
+              <p class="text-sm text-text-muted">{m.admin_storage_mls_queue_empty()}</p>
+            {:else}
+              <p class="text-sm text-text-main">
+                {m.admin_storage_mls_queue_summary({
+                  rows: mls.queue.rows,
+                  devices: mls.queue.devices,
+                })}
+              </p>
+              <!-- The number a total cannot show: forty devices with twenty messages and one device
+                   with eight hundred read the same until this line. -->
+              <p class="text-sm text-text-muted">
+                {m.admin_storage_mls_queue_deepest({ count: mls.queue.deepest })}
+              </p>
+              {#if mls.queue.oldestMs !== null}
+                <p class="text-sm text-text-muted">
+                  {m.admin_storage_mls_queue_oldest({
+                    days: Math.round(mls.queue.oldestMs / DAY_MS),
+                  })}
+                </p>
+              {/if}
+              <h4 class="pt-2 text-xs font-bold uppercase tracking-wide text-text-muted">
+                {m.admin_storage_mls_queue_growth()}
+              </h4>
+              <div class="flex items-end gap-2 h-20">
+                {#each queueBars as bar (bar.index)}
+                  <div class="flex-1 flex flex-col items-center justify-end gap-1.5 h-full">
+                    <span class="text-[0.65rem] font-bold text-text-main">{bar.rows}</span>
+                    <div
+                      class="w-full rounded-t-lg bg-cn-yellow/70"
+                      style="height: {bar.percent}%"
+                    ></div>
+                    <span class="text-[0.65rem] text-text-muted text-center">
+                      {bar.index === 0
+                        ? m.admin_storage_media_week_current()
+                        : m.admin_storage_media_week_range({
+                            from: bar.index * 7,
+                            to: (bar.index + 1) * 7,
+                          })}
+                    </span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+
+          <div class="space-y-1">
+            <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+              {m.admin_storage_mls_ghosts_title()}
+            </h3>
+            {#if !mls.ghosts}
+              <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+            {:else if mls.ghosts.devicesWithoutKeyPackage === 0}
+              <!-- The zero is shown on purpose: a counter that only appears when it is non-zero is
+                   a counter nobody believes the first time it does. -->
+              <p class="text-sm text-text-muted">
+                {m.admin_storage_mls_ghosts_none({ devices: mls.ghosts.devicesWithMemberships })}
+              </p>
+            {:else}
+              <p class="text-sm font-semibold text-text-main">
+                {m.admin_storage_mls_ghosts_some({
+                  count: mls.ghosts.devicesWithoutKeyPackage,
+                  devices: mls.ghosts.devicesWithMemberships,
+                  memberships: mls.ghosts.orphanMemberships,
+                })}
+              </p>
+            {/if}
+          </div>
+
+          <div class="space-y-1">
+            <h3 class="text-xs font-bold uppercase tracking-wide text-text-muted">
+              {m.admin_storage_mls_redis_title()}
+            </h3>
+            {#if !mls.redisKeyspace}
+              <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
+            {:else}
+              <p class="text-sm text-text-main">
+                {m.admin_storage_mls_redis_summary({
+                  keys: mls.redisKeyspace.keys,
+                  sampled: mls.redisKeyspace.sampled,
+                })}
+              </p>
+              <ul class="flex flex-wrap gap-x-4 gap-y-1">
+                {#each mls.redisKeyspace.byPrefix as entry (entry.prefix)}
+                  <li class="text-sm text-text-muted">
+                    {m.admin_storage_mls_redis_prefix({
+                      prefix: entry.prefix,
+                      keys: entry.keys,
+                    })}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </div>
         {:else}
           <p class="text-sm text-text-muted">{m.admin_storage_unavailable()}</p>
         {/if}

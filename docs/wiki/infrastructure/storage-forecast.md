@@ -36,6 +36,30 @@ The overdue predicate is deliberately the SAME expression `purgeExpiredMedia` us
 makes the number a verdict on the sweep rather than an estimate of it - and is only true while the
 two stay identical.
 
+**And the MLS half is more than a total, since 2026-08-19.** Postgres and Redis were single numbers,
+which is the same defect the media bucket had: `auth_db` growing says nothing about WHICH table grew,
+and every disposition below is per-table. The panel now carries four measurements, each failing on
+its own so one bad dependency never blanks the others
+(`admin-storage.controller.ts`, `measureMls`):
+
+| What it shows | What it distinguishes |
+| --- | --- |
+| The eight MLS tables by `pg_total_relation_size`, with `n_live_tup` next to each | Which table is the cost, and whether it grew by more rows or by bigger rows. |
+| The queue's total, its device count, and **the deepest single device queue** | Forty devices with twenty messages from ONE device with eight hundred. Only the second is a defect, and the total cannot tell them apart - which is exactly how the WP-GHOST-1 cohort stayed invisible. |
+| The age of the oldest queued row, and rows created per 7-day window | A queue that is deep *and* old is not a queue, it is a leak. The weekly bars are the slope, read the same way the media ones are. |
+| Devices holding memberships with **no** `key_package`, and the orphan membership count | The WP-GHOST-1 shape itself, section 5.7's monitor, asked continuously instead of by hand after an incident. |
+| Redis keys by prefix | Which prefix dominates. The total is exact (`INFO keyspace`); the breakdown is a **bounded SCAN sample of 5000** and reports `sampled` next to it, so it never implies a census. |
+
+`n_live_tup` is the planner's estimate rather than a `COUNT(*)`: an exact count would be a sequential
+scan of the largest table in the database on every render, to move a number nobody reads to the unit.
+The table list is written out explicitly rather than discovered from `pg_class`, because `auth_db` is
+shared - a discovered list would hand back the social, auth and poster tables too, and an MLS section
+that lists every table in the database is a search problem, not a panel.
+
+**It is a panel and there is no alert** - the user's call of 2026-08-17. That is survivable only
+because the slope is there: a single number needs a threshold to mean anything, and a threshold
+nobody has measured against the population it will run on is the line its reader learns to skip.
+
 **The object storage backend migrated from MinIO to Garage on 2026-08-14** (MinIO is no longer
 maintained upstream) - see [docker](docker.md). Every measurement below predates that migration
 and describes MinIO; the byte counts, the retention model (§2.4) and the backup reasoning (§5.1)
@@ -492,12 +516,27 @@ at the cost of a pull). Beyond that, 125 GB is small for this workload: with 5.1
 **500 GB** volume covers the high scenario for years, and `mitv` already has 376 GB free for the
 offsite copy.
 
-### 5.7 Alert on the WP-GHOST-1 shape
+### 5.7 Alert on the WP-GHOST-1 shape - **MEASURED CONTINUOUSLY SINCE 2026-08-19**
 
 At this scale a cohort of ghost devices costs **~26 GB over the retention window** - the defect alone
-would have filled the disk. The fix is in (`5335a71f`), but the cheap monitor is worth having:
-any device holding memberships with **no** `key_package` row, and any device holding more than a few
-hundred `queued_message` rows.
+would have filled the disk. The fix is in (`5335a71f`), and both shapes are now on `/admin/storage`:
+any device holding memberships with **no** `key_package` row, and the deepest single
+`queued_message` queue.
+
+**Production, 2026-08-19** - the baseline the bars are read against:
+
+| | Measured |
+|---|---|
+| `queued_message` | 76 MB, 820 rows, 42 devices, deepest queue **189** |
+| `one_time_key_package` | 12 MB, 11 732 rows |
+| `key_package` | 260 rows |
+| `dm_device_group_memberships` | 92 rows |
+| Devices with memberships and no `key_package` | **0 of 52** |
+
+The zero is displayed rather than hidden, and that is deliberate: a counter that only appears when it
+is non-zero is a counter nobody believes the first time it does appear. The deepest queue at 189 is
+the figure to watch - 5.7's own "more than a few hundred" predicate names the last incident, not the
+next one, so it is left unarmed until a `GROUP BY` over the real population says what normal is.
 
 ### 5.8 Two MLS tables are never purged for a deleted group - measured 2026-08-11, NOT worth acting on yet
 
