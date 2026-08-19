@@ -217,8 +217,8 @@ Both `unaccent` and `pg_trgm` are enabled on boot in `UsersService.onModuleInit`
 | GET | `/api/users/admin/platform/announcement` | global admin | The live announcement + how many accounts have seen it |
 | PUT | `/api/users/admin/platform/announcement` | global admin | Publish one, retiring whatever was live |
 | DELETE | `/api/users/admin/platform/announcement` | global admin | Retire the live one (keeps the row and its readership) |
-| GET | `/api/users/announcement?clientVersion=` | session | The announcement this account has not seen, or `null` |
-| POST | `/api/users/announcement/:id/seen` | session | Record that this account has read it |
+| GET | `/api/users/me/announcement?clientVersion=` | session | The announcement this account has not seen, or `null` |
+| POST | `/api/users/me/announcement/:id/seen` | session | Record that this account has read it |
 | GET | `/api/version` | none | Latest app version + platform gates |
 
 ### Payments (Stripe)
@@ -288,6 +288,29 @@ published" and "already seen". The three reasons are deliberately the same answe
 shortcut: every client already deployed sends no `clientVersion`, so a range-free announcement has
 to reach them or the feature ships addressed at nobody. A unit test pins it, because the first
 implementation got it wrong in exactly that direction.
+
+#### The route was unreachable from the day it shipped - found 2026-08-19, on prod
+
+`@Controller('users/announcement')` mapped a route Express never reached. Registration order is the
+module import list, `UsersModule` comes first in `AppModule`, so `{/api/users/:id, GET}` was mapped
+ahead of it and matched `/api/users/announcement` with `id = "announcement"`; the users service then
+answered 404 for an account that does not exist. `/api/users/admin/platform` was never affected -
+three segments cannot collide with a two-segment `:id` - which is exactly why the admin half worked
+and made the feature look alive.
+
+**The evidence is the callee's own routing table, not the caller's status.** A 404 at the caller is
+compatible with a dozen causes; `docker logs infrastructure-core-service-1 | grep Mapped` shows both
+routes and their order, and settles it in one command. `core-service` had written **zero** lines
+during the whole window, which is the other half of the tell: the request never reached the handler
+that would have logged.
+
+**It went unseen for a second reason, and that one is the transferable half.** The client reported a
+non-200 at `console.debug`, in the same shape as the ordinary "nothing to show" case - so a route
+that had NEVER worked was indistinguishable from a quiet week, on every app opening, for as long as
+it had existed. "No announcement" is a 200 carrying `null`; anything else means the ASK failed, and
+it is now accused at `console.error`. Pinned by `announcement.test.ts` and by
+`announcement.controller.spec.ts`, which asserts the path has more than two segments rather than
+asserting its spelling.
 
 **One active row at a time, held by a partial unique index** (`WHERE active`) rather than by the
 service that happens to write next; publish retires and inserts in ONE transaction so the index has

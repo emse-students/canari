@@ -65,18 +65,26 @@ export function getPendingAnnouncement(): LocalizedAnnouncement | null {
  * and the server owns the range comparison: a client outside an announcement's range must never
  * learn that one exists and was withheld, which it would if this filtered locally.
  *
- * A failure is left silent and NOT retried. An announcement is a decoration; the standing rule is
- * that an optional decoration which cannot be fetched degrades rather than errors, and the state
- * that matters is server-side, so the next app opening asks again and loses nothing.
+ * A failure is not retried. An announcement is a decoration; the standing rule is that an optional
+ * decoration which cannot be fetched degrades rather than errors, and the state that matters is
+ * server-side, so the next app opening asks again and loses nothing.
+ *
+ * IT IS NOT SILENT, THOUGH, AND THAT COST A FEATURE. "No announcement" is a 200 carrying `null`.
+ * Any other status means the ASK failed, which is a different fact and the only one a reader can
+ * act on - yet both were reported the same way, at `debug`. `/api/users/announcement` was being
+ * captured by `/api/users/:id` and answered 404 on every opening, for weeks, and the line saying so
+ * was indistinguishable from the ordinary quiet case. A status that is not 200 is now ACCUSED.
  */
 export async function refreshAnnouncement(): Promise<void> {
   if (checked) return;
   checked = true;
   try {
-    const url = `${coreUrl()}/api/users/announcement?clientVersion=${encodeURIComponent(getClientAppVersion())}`;
+    const url = `${coreUrl()}/api/users/me/announcement?clientVersion=${encodeURIComponent(getClientAppVersion())}`;
     const res = await apiFetch(url);
     if (!res.ok) {
-      console.debug(`[announcement] no announcement fetched (HTTP ${res.status})`);
+      console.error(
+        `[announcement] the announcement endpoint refused: HTTP ${res.status} on ${url}`
+      );
       return;
     }
     pending = parseAnnouncement(await res.json());
@@ -99,7 +107,7 @@ export async function dismissAnnouncement(): Promise<void> {
   if (!announcement) return;
   try {
     const res = await apiFetch(
-      `${coreUrl()}/api/users/announcement/${encodeURIComponent(announcement.id)}/seen`,
+      `${coreUrl()}/api/users/me/announcement/${encodeURIComponent(announcement.id)}/seen`,
       { method: 'POST' }
     );
     if (!res.ok) {
