@@ -34,9 +34,14 @@ makes each of them a choice rather than a consequence of the stack.
 ## 1. Tolerant name search - SIX boxes, FOUR implementations, TWO with no tolerance at all
 
 The user's standing requirement is that **every search box across the ecosystem tolerates typos and
-word inversion and ranks by closeness**. Six boxes were found; two do none of it.
+word inversion and ranks by closeness**. Six boxes were found; two did none of it.
 
-| Repo | Where | Method | Typos | Inversion | Ranked |
+**Closed 2026-08-19.** The promise, the tolerance ladder and the roster measurement that chose its
+numbers are written down once, in [search-contract](search-contract.md), and all four TypeScript
+implementations now meet it with a test that pins it. **What follows is the MEASUREMENT that
+produced the contract, not current state** - read the contract page for what each repo does today.
+
+| Repo | Where | Method, as FOUND on 2026-08-19 | Typos | Inversion | Ranked |
 | --- | --- | --- | --- | --- | --- |
 | **Canari** | `apps/core-service/src/users/userSearch.ts:50` | Postgres `word_similarity` (pg_trgm) + `unaccent`, per term, `search_score` column | trigram overlap | yes (per-term `AND`) | yes |
 | **Sky** | `src/lib/utils/format.ts:150` `personMatchScore` | in-memory, token-to-token, **plain Levenshtein**, tolerance 1 (<=4 chars) / 2 | yes | yes | yes |
@@ -53,18 +58,23 @@ implementation of the same contract, written by somebody who had not read this p
 strongest argument here for writing the CONTRACT down and letting each repo implement it - it is
 what keeps happening on its own.
 
-The rest:
+The rest, as found, and what each one turned into:
 
-- **Portail-etu's association filter** is plain substring over name and description, and is now the
-  only one left. Lower stakes - an association list is short and visible - but it is the same gap.
-- **Sky and MiGallery are the same algorithm one metric apart.** Both do token-to-token matching with
-  a tolerance of 1 for tokens of 4 characters or fewer and 2 above; MiGallery counts a transposition
-  as ONE edit and Sky as two, so `jaen` finds `Jean` in the gallery and nowhere else.
-- **Three TypeScript implementations, two tolerance ladders.** Sky and MiGallery allow 1 edit up to
-  4 characters and 2 above; Le Cercle allows 0 up to 3, 1 up to 6, and 2 above, taken from the
-  SHORTER of the two tokens. Neither is wrong, and nobody can say which the ecosystem promises -
-  which is exactly what a written contract would settle and a shared package would not (they would
-  still each have picked their own numbers).
+- **Portail-etu's association filter** was plain substring over name and description, the only box
+  left with no tolerance at all. It is now `src/lib/search/fuzzy.ts`, ranked rather than filtered,
+  with the description matched by substring ONLY - a paragraph long enough contains a word within
+  one edit of almost any query, so a tolerance over prose is a match on everything.
+- **Sky and MiGallery were the same algorithm one metric apart.** Both did token-to-token matching
+  with a tolerance of 1 for tokens of 4 characters or fewer and 2 above; MiGallery counted a
+  transposition as ONE edit and Sky as two, so `jaen` found `Jean` in the gallery and nowhere else.
+  Sky is on OSA now - except in `nameDistance`, which answers "is this the same person, for a merge
+  that cannot be undone" rather than "did they mistype", and deliberately stays strict.
+- **Three TypeScript implementations, two tolerance ladders.** Sky and MiGallery allowed 1 edit up
+  to 4 characters and 2 above; Le Cercle allowed 0 up to 3, 1 up to 6, and 2 above, taken from the
+  SHORTER of the two tokens. Nobody could say which the ecosystem promised. **That was settled by
+  measuring, not by choosing** - the loose ladder put a wrong person in the list on half of all
+  queries and recovered no typo the tight one did not, which is the whole of
+  [search-contract](search-contract.md#why-those-numbers).
 
 **Canari's is a different kind of thing, not a better or worse one.** Trigram similarity in the
 database scales to a table nobody wants to load into memory, and it is the only one of the five that
@@ -72,10 +82,10 @@ does not require the candidate set to be in the client. It cannot be "aligned" w
 without changing what it is; what CAN be aligned is the promise - typos, inversion, ranking - and
 Canari keeps it.
 
-**The convergence unit here is the CONTRACT, not the code**: a documented tolerance ladder, a
-documented "every query token must match something" rule, and a documented ordering. Four of the six
-already implement it, one implements it in a different medium, and one - Portail-etu's association
-filter - implements nothing.
+**The convergence unit here is the CONTRACT, not the code** - and it is now written: a tolerance
+ladder chosen by measurement, the "every query token must match something" rule, and a total
+ordering. Four implementations, one shared page, no shared package, and a fifth medium (Canari's
+trigram search) held to the promise rather than to the number.
 
 ## 2. The deadline on an outbound call - FOUR values, ONE repo with none
 
@@ -164,27 +174,34 @@ exists) was invisible until the type existed to make the distinction.
 | **Canari** | oxfmt + oxlint | yes (`.github/workflows/ci.yml`) | yes | yes |
 | **Sky** | prettier | **yes, since 2026-08-19** | yes | yes |
 | **Portail-etu** | prettier | yes (`test.yml`, `deploy.yml`) + pre-push hook | yes | yes |
-| **MiGallery** | prettier | **no** - husky pre-commit and `npm run validate` only | yes | yes |
-| **Le Cercle** | prettier (inside `lint`) | via `lint`, **if the pipeline runs** | via the pipeline | **inert** - `.gitlab-ci.yml` creates no pipeline until `CERCLE_CI_ENABLED` is set |
+| **MiGallery** | prettier | **yes, since 2026-08-19** (`ci.yml`) | yes | yes |
+| **Le Cercle** | prettier (inside `lint`) | via `lint` | via the pipeline | yes - `.gitlab-ci.yml` runs on the default branch, merge requests and tags |
 
-Two findings:
+Both findings this section carried have closed, one of them before it was written:
 
-- **Le Cercle has no running CI.** Its `.gitlab-ci.yml` is deliberately inert - it arrived as a
-  proposal and switching it on needs variables somebody has to set. Until then its only gate is the
-  husky pre-commit, which a `--no-verify` skips and which never runs on a merge request.
-- **MiGallery's formatting is enforced only by a hook.** Sky was in exactly this state and three
-  files had drifted out of shape with no red run to show for it.
+- **Le Cercle's CI was measured as inert and was not.** `.gitlab-ci.yml` was gated on a
+  `CERCLE_CI_ENABLED` variable somebody had to set; `db2a530`, on 2026-08-18, deleted that kill
+  switch and left the pipeline running on the default branch, merge requests and tags. Two documents
+  in that repository still said otherwise until 2026-08-19 and were the source of this row - **a
+  claim about a gate, read out of prose rather than out of the file that defines it.** What is still
+  unverified is whether a runner has actually picked a pipeline up: the GitLab project is private and
+  there is no token on this machine, so `/api/v4/projects/.../pipelines` answers 404.
+- **MiGallery's formatting was enforced only by a hook.** Sky had been in exactly that state and
+  three files had drifted out of shape with no red run to show for it. `ci.yml` runs `format:check`
+  there now.
 
 ## 7. Line endings
 
-`.gitattributes` pinning the working tree to LF: **Canari yes, Sky yes (added 2026-08-19), Le Cercle
-yes, MiGallery no, Portail-etu no.**
+`.gitattributes` pinning the working tree to LF: **all five, as of 2026-08-19** (Canari and Le Cercle
+already had one; Sky, MiGallery and Portail-etu were given one that day).
 
 Without it, a checkout on Windows (`core.autocrlf=true`) materialises CRLF while prettier - which
 has no `endOfLine` override in any of these repos, so it defaults to `lf` - insists on LF. The
 result is a repository whose own `format:check` cannot pass on Windows and passes on Linux: **a gate
-that reports the operating system rather than the code.** Sky's did exactly that; MiGallery's and
-Portail-etu's would, the moment anyone ran `format:check` there on this machine.
+that reports the operating system rather than the code.** Sky's did exactly that, and Portail-etu's
+did it the moment its pre-push hook was reached: 82 files failed, none of them touched by anyone.
+The blobs were already LF in every case, so the fix changes no committed content - it changes what a
+checkout writes to disk.
 
 ---
 
@@ -195,14 +212,20 @@ call, the same head, the same promise about a typo. **What differs is whether a 
 at all**, and the two clearest gaps were both closed the same day this was written: MiGallery had no
 outbound deadline anywhere and now states the ecosystem's 4 s, and Le Cercle's search went from a
 substring `LIKE` to a full matcher in somebody else's commit while this page was being written.
-What is left is smaller and of one kind: Portail-etu's association filter still uses `includes()`,
-Le Cercle still has no running CI, and the three TypeScript matchers disagree about how many edits a
-short token may be wrong by. None of that is a disagreement about the right answer. That is the
-argument against a shared package and for a written contract - there is nothing to reconcile, only
-things to finish, and a package would not have settled the tolerance ladder either.
+The three that were left closed on 2026-08-19 as well, and how they closed is the argument. Le
+Cercle's CI turned out never to have been off - `db2a530` had removed the kill switch the day
+before, and this page had read the claim out of a `CONTRIBUTING.md` instead of the file that defines
+it. Portail-etu's association filter became a real matcher. And the tolerance ladder, the one thing
+here that WAS a genuine disagreement, was settled by measuring the three ladders against the
+production roster rather than by picking one: the loose ladder offered a wrong person on half of all
+queries and recovered no typo the tight one did not. That is the whole argument against a shared
+package and for a written contract - a package would have coupled five deploys and still left each
+author to choose their own numbers, whereas
+[search-contract](search-contract.md) is one page, four implementations, four tests that pin it.
 
 ## Related
 
 - [frontend/seo.md](frontend/seo.md) - the worked example of one method in four repositories
 - [durable-rules.md](durable-rules.md) - the rules these divergences were measured against
+- [search-contract.md](search-contract.md) - the contract this page's first finding turned into
 - [backlog.md](backlog.md) - where anything this page turns into work is scheduled

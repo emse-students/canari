@@ -129,27 +129,14 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The code items are all in, the panel included (2026-08-19).** 1-4 are measurements and questions
-that need a deploy to have happened; 5 is the campaign, and it is the only item left. **The phone is back (2026-08-17) - nothing is on hold; keep
+**The code items are all in, the panel and the search contract included (2026-08-19).** 1-3 are
+measurements and questions that need a deploy or a run to have happened; 4 is the campaign, and it is
+the only item that is work. **The phone is back (2026-08-17) - nothing is on hold; keep
 `adb devices` answering. There is NO iPhone (2026-08-18)**, so the iOS half
 of the device ladder cannot be run at all
 ([device-verification](docs/wiki/device-verification.md)).
 
-1. **CONVERGE THE FIVE PROJECTS ON EACH SHARED SOLUTION** - **the inventory is DONE and it is
-   [ecosystem-convergence](docs/wiki/ecosystem-convergence.md)**: seven axes, measured in all five
-   repos on 2026-08-19, every row read out of a named file. Do NOT restate it here and do NOT
-   re-derive it from memory. Two of its three findings SHIPPED the same day: MiGallery's thirty-odd
-   outbound calls now state the ecosystem's 4 s, and Portail-etu had lost automatic language
-   detection to a misreading of Paraglide's `!isServer` guard (the middleware is the load-bearing
-   half, not the strategy list) - both verified, the second against prod in three sites side by
-   side. Le Cercle's substring-only search closed itself: the user's own `87b8d30` replaced it with
-   a full matcher on three surfaces while the page was being written. **What is left is smaller and
-   of one kind**: Portail-etu's association filter is still `includes()`, Le Cercle still has no
-   running CI (`.gitlab-ci.yml` is inert until `CERCLE_CI_ENABLED` is set), and the three TypeScript
-   matchers disagree on how many edits a short token may be wrong by - Sky and MiGallery allow 1 up
-   to 4 characters, Le Cercle 0 up to 3 and 1 up to 6. Nobody can say which the ecosystem promises,
-   which is exactly what a written contract settles and a shared package would not.
-2. **MEASURE EGRESS OVER TIME - ARMED 2026-08-19, and the verdict is not something work produces.**
+1. **MEASURE EGRESS OVER TIME - ARMED 2026-08-19, and the verdict is not something work produces.**
    [egress-probe](infrastructure/egress-probe/README.md) samples both stalled upstreams, the tunnel
    back to ourselves, a control, and the same target from INSIDE `chat-delivery-service`, once a
    minute, with DNS/connect/TLS kept apart from the total; `report.py` prints every conditional rate
@@ -157,14 +144,14 @@ of the device ladder cannot be run at all
    growing. **It says nothing until the window contains an incident** - a report over a quiet week
    says the week was quiet - so read it the next time a stall shows up in a service log, and do NOT
    re-derive the question here.
-3. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES - the counter shipped 2026-08-19; the number
+2. **THE DENOMINATOR ON THE PROFILE-FETCH FAILURES - the counter shipped 2026-08-19; the number
     comes from the campaign.** `displayName.ts` counts only the lookups that reached the network and
     every accusation now ends `(failed/attempted this session, X%)`, so one line answers both "did a
     name get lost" and "how often". There is no client telemetry and none was added, so the rate is
     read from a run log on each platform - which is where the symptom was seen. **The decision about
     `FAILURE_BACKOFF_MS` is what the number is FOR** and it stays open until a run produces one
     ([backlog](docs/wiki/backlog.md)).
-4. **THE TWO STORAGE-BOUND QUESTIONS - ANSWERED 2026-08-19, by injection, off the campaign phone.**
+3. **THE TWO STORAGE-BOUND QUESTIONS - ANSWERED 2026-08-19, by injection, off the campaign phone.**
     Two defects fell out of asking and both are fixed: Tauri caught a failed SQLite open and
     answered with IndexedDB in the same webview, which would have left the group state on disk and
     the messages in the webview - and a blocked IndexedDB upgrade never settled its promise at all.
@@ -173,7 +160,7 @@ of the device ladder cannot be run at all
     is proposed.** Shapes on
     [frontend/architecture](docs/wiki/frontend/architecture.md#when-the-local-store-fails), pinned
     by `storageFaults.test.ts`.
-5. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
+4. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
     **Everything must end green, so every phase runs.** What that costs, the ladder's order, and the
     two decisions it turns on - `call-service` logging BEFORE the CALL phase, and the community
     rework never having run against prod - are all on

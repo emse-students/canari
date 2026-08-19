@@ -139,50 +139,6 @@ is what an app would add that the web version cannot do. Answer that before esti
 
 ---
 
-## Owed to somebody else
-
-### P2 - converge the five projects on the best version of each shared solution
-
-**The avatar proxy is the sample, not the subject.** Four projects wrote four different failure
-behaviours for one endpoint, each in isolation - one had no deadline at all, one dressed a refused key
-as "this member has no face", one narrated every request, and only one cached. **Nobody chose that
-spread**, and the best version never travelled. All four are aligned since 2026-08-18, which settles
-the contract but not the process: alignment took one person reading four repositories in one sitting,
-and nothing makes the next shared solution converge the same way.
-
-**What this asks for is an inventory first, not a refactor.** What is actually established today:
-
-- **verified** - the avatar proxy, four implementations, all four aligned;
-- **known partial** - tolerant search (done in Sky and Canari, owed in MiGallery), and the i18n /
-  wiki / English-comments normalisation (done in Canari, partial elsewhere);
-- **to inventory** - outbound HTTP handling in general (timeout, retry, what a failure degrades to),
-  logging conventions, and whatever else turns up. Do NOT enumerate these from memory - a guessed
-  inventory is how the refuted IPv6 diagnosis got written down.
-
-**A shared package is probably the wrong shape, and that is worth deciding before any code.** Three
-of the four are SvelteKit and Canari's is NestJS; there is no monorepo spanning them; and Le Cercle is
-Aurel's repo. The realistic form is *one written contract, four aligned implementations*, with the
-contract living where it can be read from all five - and its first clause is the one the avatar case
-already proves: **an optional decoration that cannot be fetched degrades, it does not error.**
-
-### P3 - SEO for Sky, MiGallery and Portail-etu
-
-Canari's is done and the method is written up in [seo](frontend/seo.md), including the four checks no
-test can make. The three other repos have had none of it. Each is a separate repo and a separate
-deploy, so this is three small pieces of work sharing one method, not one piece of work.
-
-### P2 - MiGallery's search is still plain substring
-
-The user's standing requirement is that every search box across the ecosystem tolerates typos and word
-inversion and ranks by edit distance. Done in Sky (`personMatchScore`) and in Canari
-(`applyFuzzyNameSearch`, pg_trgm + unaccent); never started in MiGallery.
-
-**SCHEDULED 2026-08-18 (the user): item 6 of the queue in `CLAUDE.md`.** Port whichever of
-the two fits what that repo actually has - Canari's if it reaches Postgres, Sky's client-side
-scoring if it does not.
-
----
-
 ## Measurements owed
 
 ### P2 - measure EGRESS over time, because two unrelated upstreams stalled in one window
