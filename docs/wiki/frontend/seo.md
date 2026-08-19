@@ -164,3 +164,20 @@ cost every head, so `X-Canari-Degraded: ssr-unavailable` in the access log is th
 - [../infrastructure/nginx.md](../infrastructure/nginx.md) — the locations and the fallback
 - [../services/chat-delivery.md](../services/chat-delivery.md) — outbound link previews (the other
   direction: how Canari renders *someone else's* page)
+
+### The same method, in the three sibling repos (all shipped and verified on prod 2026-08-19)
+
+Each carries its own `docs/wiki/seo.md`. They share `serializeJsonLd`'s escaping, the
+absolute-URL-from-the-request-origin rule, and the position that a head is only worth writing if the
+SERVER writes it — duplicated on purpose, four times, with nothing shared between the repos.
+
+| Repo | What its head is FOR | What was wrong |
+|---|---|---|
+| **Portail-etu** | The only genuinely public site in the ecosystem: search AND unfurl | `ssr = false`, so every page shipped an empty head; `robots.txt` advertised a `/sitemap.xml` that 404ed, and the detail pages were linked only from markup that did not exist until hydration — uncrawlable by construction |
+| **Sky** | One public landing page; the rest is behind an ICM session | `<title>` and nothing else, so every share was a bare URL. Now `noindex` on `/unauthorized`, and no sitemap — one indexable page is not a link graph |
+| **MiGallery** | Unfurlers ONLY (`robots.txt` is `Disallow: /`, permanently) | The album card was Open Graph with no `twitter:card`, no `og:url`, no canonical; the gallery root had no card at all |
+
+Two rules came out of doing all three that are not obvious from any one of them. **An unfurler is
+not a crawler** — it fetches the URL it was given and never reads `robots.txt`, which is why a site
+that refuses every crawler still needs a complete head. And **a `Sitemap:` line pointing at a path
+that does not answer is worse than none**: a crawler following it does not fall back to guessing.
