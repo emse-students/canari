@@ -183,19 +183,24 @@ export class PaymentController {
       legalProfile,
     });
 
-    // Persist the Stripe account ID on the association (social-service)
+    // Persist the connected account ID on the association (social-service), in whichever
+    // provider's own column matches who actually issued it - Stripe and Lydia coexist in
+    // independent columns, so this must never write the account created by one into the other's.
     if (result.accountId && assocId && UUID_RE.test(assocId)) {
+      const providerId = await this.paymentService.getActiveProviderId();
+      const path = providerId === 'lydia' ? 'lydia-account' : 'stripe-account';
+      const bodyKey = providerId === 'lydia' ? 'lydiaAccountId' : 'stripeAccountId';
       try {
         const socialBase = this.socialBase;
         await axios.post(
-          `${socialBase.replace(/\/$/, '')}/api/associations/${assocId}/stripe-account`,
-          { stripeAccountId: result.accountId },
+          `${socialBase.replace(/\/$/, '')}/api/associations/${assocId}/${path}`,
+          { [bodyKey]: result.accountId },
           internalSocialRequestConfig()
         );
       } catch (err: unknown) {
         const error = err as Error & { response?: { data?: unknown } };
         this.logger.error(
-          'Failed to save stripeAccountId on association',
+          `Failed to save ${bodyKey} on association`,
           error?.response?.data || error?.message
         );
       }
@@ -293,6 +298,73 @@ export class PaymentController {
       dbOnboardingComplete,
       balance,
     };
+  }
+
+  /**
+   * Unlinks an association's Stripe Connect account from Canari (MANAGE_STRIPE_CONNECT).
+   * Local unlink only - the Stripe account itself is untouched; the treasurer can restart
+   * onboarding afterwards, reusing or replacing the same Connect account.
+   */
+  @Post('disconnect-connect-account/:associationId')
+  @HttpCode(200)
+  async disconnectConnectAccount(
+    @Param('associationId') associationId: string,
+    @Req() req: Request
+  ) {
+    if (!UUID_RE.test(associationId)) {
+      throw new BadRequestException('Invalid associationId');
+    }
+    await this.assertCanManageAssociation(req, associationId);
+
+    const socialBase = this.socialBase;
+    try {
+      await axios.post(
+        `${socialBase}/api/associations/${encodeURIComponent(associationId)}/stripe-disconnect`,
+        undefined,
+        internalSocialRequestConfig()
+      );
+    } catch (err: unknown) {
+      const error = err as Error & { response?: { data?: unknown } };
+      this.logger.error(
+        'Failed to disconnect Stripe account',
+        error?.response?.data || error?.message
+      );
+      throw new BadRequestException('Could not disconnect the Stripe account');
+    }
+
+    return { ok: true };
+  }
+
+  /**
+   * Unlinks an association's Lydia Business from Canari (MANAGE_STRIPE_CONNECT).
+   * Local unlink only - the Lydia Business itself is untouched; independent from the Stripe
+   * disconnect above, since the two providers now keep their own account id and completion flag.
+   */
+  @Post('disconnect-lydia-account/:associationId')
+  @HttpCode(200)
+  async disconnectLydiaAccount(@Param('associationId') associationId: string, @Req() req: Request) {
+    if (!UUID_RE.test(associationId)) {
+      throw new BadRequestException('Invalid associationId');
+    }
+    await this.assertCanManageAssociation(req, associationId);
+
+    const socialBase = this.socialBase;
+    try {
+      await axios.post(
+        `${socialBase}/api/associations/${encodeURIComponent(associationId)}/lydia-disconnect`,
+        undefined,
+        internalSocialRequestConfig()
+      );
+    } catch (err: unknown) {
+      const error = err as Error & { response?: { data?: unknown } };
+      this.logger.error(
+        'Failed to disconnect Lydia account',
+        error?.response?.data || error?.message
+      );
+      throw new BadRequestException('Could not disconnect the Lydia account');
+    }
+
+    return { ok: true };
   }
 
   /**

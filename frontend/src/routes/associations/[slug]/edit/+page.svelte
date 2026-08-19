@@ -8,6 +8,7 @@
     startStripeOnboarding,
     fetchStripeConnectStatus,
     openStripeConnectDashboard,
+    disconnectStripeConnect,
     formatStripeConnectAmount,
     isStripeConnectReady,
     fetchActivePaymentProvider,
@@ -20,6 +21,7 @@
     type AssociationMember,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import {
     Users,
@@ -63,6 +65,7 @@
 
   let stripeLoading = $state(false);
   let stripeDashboardLoading = $state(false);
+  let stripeDisconnecting = $state(false);
   let stripeConnectStatus = $state<StripeConnectStatusResult | null>(null);
   let stripeStatusLoading = $state(false);
   /** Which payment provider core-service is configured to use (WP-LYDIA-1) - defaults to 'stripe' until fetched. */
@@ -228,6 +231,30 @@
       error = err instanceof Error ? err.message : 'Failed to open Stripe';
     } finally {
       stripeDashboardLoading = false;
+    }
+  }
+
+  /** Unlinks the Stripe Connect account from this association so onboarding can be restarted. */
+  async function handleDisconnectStripe() {
+    if (!asso) return;
+    if (
+      !(await showConfirm(m.asso_stripe_disconnect_confirm(), {
+        danger: true,
+        confirmLabel: m.asso_stripe_disconnect_button(),
+      }))
+    )
+      return;
+    stripeDisconnecting = true;
+    try {
+      await disconnectStripeConnect(asso.id);
+      console.log(`[Stripe] Disconnected Connect account for association ${asso.id}`);
+      asso = { ...asso, stripeAccountId: null, stripeOnboardingComplete: false };
+      stripeConnectStatus = null;
+    } catch (err) {
+      console.error('[Stripe] Failed to disconnect Connect account:', err);
+      error = err instanceof Error ? err.message : m.asso_stripe_disconnect_error();
+    } finally {
+      stripeDisconnecting = false;
     }
   }
 
@@ -464,7 +491,10 @@
           <LydiaBusinessOnboardingForm
             {asso}
             onAccountCreated={(accountId) => {
-              if (asso) asso = { ...asso, stripeAccountId: accountId };
+              if (asso) asso = { ...asso, lydiaAccountId: accountId };
+            }}
+            onDisconnected={() => {
+              if (asso) asso = { ...asso, lydiaAccountId: null, lydiaOnboardingComplete: false };
             }}
           />
         {:else if canManageStripeConnect}
@@ -476,15 +506,29 @@
                 <CreditCard size={20} />
                 Stripe Connect
               </h2>
-              <button
-                type="button"
-                onclick={() => void refreshStripeConnectStatus()}
-                disabled={stripeStatusLoading}
-                class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg disabled:opacity-50"
-              >
-                <RefreshCw size={14} class={stripeStatusLoading ? 'animate-spin' : ''} />
-                {m.common_refresh_button()}
-              </button>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  onclick={() => void refreshStripeConnectStatus()}
+                  disabled={stripeStatusLoading}
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-cn-border px-3 py-1.5 text-xs font-semibold text-text-muted hover:text-text-main hover:bg-cn-bg disabled:opacity-50"
+                >
+                  <RefreshCw size={14} class={stripeStatusLoading ? 'animate-spin' : ''} />
+                  {m.common_refresh_button()}
+                </button>
+                {#if asso.stripeAccountId}
+                  <button
+                    type="button"
+                    onclick={() => void handleDisconnectStripe()}
+                    disabled={stripeDisconnecting}
+                    class="inline-flex items-center gap-1.5 rounded-lg border border-red-err/30 px-3 py-1.5 text-xs font-semibold text-red-err hover:bg-red-err/10 disabled:opacity-50"
+                  >
+                    {stripeDisconnecting
+                      ? m.asso_stripe_disconnect_loading()
+                      : m.asso_stripe_disconnect_button()}
+                  </button>
+                {/if}
+              </div>
             </div>
 
             {#if stripeStatusLoading && !stripeConnectStatus}

@@ -1,17 +1,45 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { startLydiaOnboarding, type Association } from '$lib/associations/api';
+  import {
+    startLydiaOnboarding,
+    disconnectLydiaConnect,
+    type Association,
+  } from '$lib/associations/api';
   import { Building2, ExternalLink } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import Input from '$lib/components/ui/Input.svelte';
 
   interface Props {
     asso: Association;
     /** Called with the vendor token Lydia returned, so the parent can persist it locally. */
     onAccountCreated: (accountId: string) => void;
+    /** Called once the Lydia Business has been unlinked, so the parent can clear it locally. */
+    onDisconnected: () => void;
   }
 
-  let { asso, onAccountCreated }: Props = $props();
+  let { asso, onAccountCreated, onDisconnected }: Props = $props();
+
+  let disconnecting = $state(false);
+
+  async function handleDisconnect() {
+    if (
+      !(await showConfirm(m.asso_lydia_disconnect_confirm(), {
+        danger: true,
+        confirmLabel: m.asso_lydia_disconnect_button(),
+      }))
+    )
+      return;
+    disconnecting = true;
+    try {
+      await disconnectLydiaConnect(asso.id);
+      onDisconnected();
+    } catch (err) {
+      error = err instanceof Error ? err.message : m.asso_lydia_disconnect_error();
+    } finally {
+      disconnecting = false;
+    }
+  }
 
   // Editable copies seeded once from the association passed at mount.
   const initial = untrack(() => asso);
@@ -72,12 +100,20 @@
     {m.asso_lydia_title()}
   </h2>
 
-  {#if asso.stripeAccountId}
+  {#if asso.lydiaAccountId}
     <p class="text-sm font-semibold text-green-ok">{m.asso_lydia_created_title()}</p>
     <p class="text-sm text-text-muted leading-relaxed">{m.asso_lydia_created_desc()}</p>
     <p class="text-xs text-text-muted">
-      {m.asso_lydia_vendor_token_label()}: <span class="font-mono">{asso.stripeAccountId}</span>
+      {m.asso_lydia_vendor_token_label()}: <span class="font-mono">{asso.lydiaAccountId}</span>
     </p>
+    <button
+      type="button"
+      onclick={() => void handleDisconnect()}
+      disabled={disconnecting}
+      class="inline-flex items-center gap-1.5 rounded-lg border border-red-err/30 px-3 py-1.5 text-xs font-semibold text-red-err hover:bg-red-err/10 disabled:opacity-50"
+    >
+      {disconnecting ? m.asso_lydia_disconnect_loading() : m.asso_lydia_disconnect_button()}
+    </button>
   {:else if createdDashboardUrl}
     <p class="text-sm font-semibold text-green-ok">{m.asso_lydia_created_title()}</p>
     <p class="text-sm text-text-muted leading-relaxed">{m.asso_lydia_created_desc()}</p>
@@ -130,10 +166,6 @@
       disabled={submitting}
     />
 
-    {#if error}
-      <div class="text-sm text-red-err">{error}</div>
-    {/if}
-
     <button
       type="button"
       onclick={() => void handleSubmit()}
@@ -142,5 +174,9 @@
     >
       {submitting ? m.asso_lydia_submitting_label() : m.asso_lydia_submit_button()}
     </button>
+  {/if}
+
+  {#if error}
+    <div class="text-sm text-red-err">{error}</div>
   {/if}
 </div>

@@ -1941,6 +1941,43 @@ export class AssociationsService {
   }
 
   /**
+   * Unlinks the association's Stripe Connect account from Canari, letting the treasurer restart
+   * onboarding from scratch. Local unlink only - the Stripe account itself (its dashboard, bank
+   * details, any balance) is left untouched.
+   */
+  async clearStripeAccount(id: string) {
+    await this.assoRepo.update(id, { stripeAccountId: null, stripeOnboardingComplete: false });
+    await this.invalidatePostListCaches();
+  }
+
+  // ── Lydia helpers ────────────────────────────────────────────────────────
+  // Own columns, independent from the Stripe ones above - an association keeps both links
+  // regardless of which provider is currently active platform-wide (WP-LYDIA coexistence).
+
+  /** Stores the Lydia Business vendor_token for an association and invalidates post-list caches. */
+  async setLydiaAccountId(id: string, lydiaAccountId: string) {
+    const asso = await this.findById(id);
+    await this.assoRepo.update(id, { lydiaAccountId });
+    await this.invalidatePostListCaches();
+    return { ...asso, lydiaAccountId };
+  }
+
+  /** Flips lydiaOnboardingComplete to true once the Lydia Business is confirmed ready. */
+  async markLydiaOnboardingComplete(id: string) {
+    await this.assoRepo.update(id, { lydiaOnboardingComplete: true });
+    await this.invalidatePostListCaches();
+  }
+
+  /**
+   * Unlinks the association's Lydia Business from Canari, letting the treasurer restart
+   * onboarding from scratch. Local unlink only - the Lydia Business itself is left untouched.
+   */
+  async clearLydiaAccount(id: string) {
+    await this.assoRepo.update(id, { lydiaAccountId: null, lydiaOnboardingComplete: false });
+    await this.invalidatePostListCaches();
+  }
+
+  /**
    * Resolves where an association's payments route, honoring an approved parent delegation.
    * Loads the parent only when the association delegates (approved). Central resolver used by
    * every payment path so delegation is applied uniformly.

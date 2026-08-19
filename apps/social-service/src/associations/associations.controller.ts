@@ -1233,6 +1233,44 @@ export class AssociationsController {
     return this.service.markStripeOnboardingComplete(id);
   }
 
+  /** Unlinks the association's Stripe Connect account; called internally by core-service. */
+  @Post(':id/stripe-disconnect')
+  disconnectStripeAccount(
+    @Param('id') id: string,
+    @Headers('x-internal-secret') internalSecret: string
+  ) {
+    assertInternalSecret(internalSecret);
+    return this.service.clearStripeAccount(id);
+  }
+
+  /** Sets the Lydia Business vendor_token for an association; called internally by core-service. */
+  @Post(':id/lydia-account')
+  setLydiaAccount(
+    @Param('id') id: string,
+    @Body() body: { lydiaAccountId: string },
+    @Headers('x-internal-secret') internalSecret: string
+  ) {
+    assertInternalSecret(internalSecret);
+    return this.service.setLydiaAccountId(id, body.lydiaAccountId);
+  }
+
+  /** Marks Lydia onboarding as complete for an association; called internally by core-service. */
+  @Post(':id/lydia-complete')
+  markLydiaComplete(@Param('id') id: string, @Headers('x-internal-secret') internalSecret: string) {
+    assertInternalSecret(internalSecret);
+    return this.service.markLydiaOnboardingComplete(id);
+  }
+
+  /** Unlinks the association's Lydia Business; called internally by core-service. */
+  @Post(':id/lydia-disconnect')
+  disconnectLydiaAccount(
+    @Param('id') id: string,
+    @Headers('x-internal-secret') internalSecret: string
+  ) {
+    assertInternalSecret(internalSecret);
+    return this.service.clearLydiaAccount(id);
+  }
+
   /** Called by core-service Stripe webhook when a product purchase completes. */
   @Post('products/:productId/purchase-completed')
   purchaseCompleted(

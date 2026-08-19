@@ -221,13 +221,30 @@ Both `unaccent` and `pg_trgm` are enabled on boot in `UsersService.onModuleInit`
 | POST | `/api/users/me/announcement/:id/seen` | session | Record that this account has read it |
 | GET | `/api/version` | none | Latest app version + platform gates |
 
-### Payments (Stripe)
+### Payments (Stripe + Lydia)
+
+Stripe and Lydia now each own their own pair of columns on `associations`
+(`stripeAccountId`/`stripeOnboardingComplete` vs `lydiaAccountId`/`lydiaOnboardingComplete`,
+migration 037) - onboarding with one provider never overwrites or clears the other's link.
+`/api/payments/onboarding` writes to whichever pair matches the platform's currently active
+provider (`PaymentService.getActiveProviderId()`), read at persist time right after the same call
+created the account, so the two always agree on which provider actually issued the id.
+**Known gap, not yet fixed:** checkout routing for boutique/form purchases
+(`products.service.ts`, `forms.service.ts`, `payment-delegation.util.ts` in social-service) still
+reads only `stripeAccountId`/`stripeOnboardingComplete` - it has no notion of the active provider
+at all. This is currently harmless because Lydia is not live in prod (`payment_provider` defaults
+to `stripe`, see [backlog](../backlog.md#flipping-payment_provider-from-stripe-to-lydia-wp-lydia-1)),
+but flipping the switch before that read side is made provider-aware would make every purchase
+route through the wrong (or a stale) account.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/payments/onboarding` | JWT | Start/resume Stripe Connect onboarding for an association |
-| GET | `/api/payments/connect-status/:associationId` | JWT | Live Connect status, syncs DB on success |
+| GET | `/api/payments/provider` | none | Active provider (`stripe` or `lydia`), for the frontend to render the matching onboarding UI |
+| POST | `/api/payments/onboarding` | JWT | Start/resume Connect-style onboarding for an association, with the active provider |
+| GET | `/api/payments/connect-status/:associationId` | JWT | Live Stripe Connect status, syncs DB on success (Stripe-only - Lydia has no live-status poll) |
 | POST | `/api/payments/connect-dashboard-link/:associationId` | JWT | Single-use Stripe Dashboard login link |
+| POST | `/api/payments/disconnect-connect-account/:associationId` | JWT | Unlink the association's Stripe Connect account (local unlink only - the Stripe account itself is untouched) |
+| POST | `/api/payments/disconnect-lydia-account/:associationId` | JWT | Unlink the association's Lydia Business (local unlink only - the Lydia account itself is untouched) |
 | POST | `/api/payments/create-checkout-session` | JWT | Create Stripe Checkout session |
 | POST | `/api/payments/verify-session` | JWT | Verify completed checkout, mark form submission paid |
 | POST | `/api/payments/cancel-session` | JWT | Cancel unpaid checkout |

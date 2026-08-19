@@ -68,6 +68,9 @@ export interface Association {
   logoUrl: string | null;
   stripeAccountId: string | null;
   stripeOnboardingComplete: boolean;
+  /** Lydia Business vendor_token - own column, independent from the Stripe pair above. */
+  lydiaAccountId: string | null;
+  lydiaOnboardingComplete: boolean;
   /** True if this is the BDE association (unlocks BDE-only permission flags). */
   isBDE: boolean;
   /** Hex-encoded 32-byte master key for the document vault (MANAGE_DOCUMENTS only). */
@@ -1601,6 +1604,42 @@ export async function openStripeConnectDashboard(associationId: string): Promise
   const data = (await res.json()) as { url: string };
   if (!data.url) throw new Error('Stripe did not return a dashboard URL');
   return data.url;
+}
+
+/**
+ * Unlinks the association's Stripe Connect account from Canari (MANAGE_STRIPE_CONNECT).
+ * Local unlink only - the Stripe account itself is untouched and onboarding can be restarted.
+ */
+export async function disconnectStripeConnect(associationId: string): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/disconnect-connect-account/${encodeURIComponent(associationId)}`,
+    { method: 'POST' }
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      (body as { message?: string })?.message || `Stripe disconnect failed (${res.status})`
+    );
+  }
+}
+
+/**
+ * Unlinks the association's Lydia Business from Canari (MANAGE_STRIPE_CONNECT).
+ * Local unlink only - the Lydia Business itself is untouched and onboarding can be restarted.
+ */
+export async function disconnectLydiaConnect(associationId: string): Promise<void> {
+  const base = coreUrl();
+  const res = await apiFetch(
+    `${base}/api/payments/disconnect-lydia-account/${encodeURIComponent(associationId)}`,
+    { method: 'POST' }
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      (body as { message?: string })?.message || `Lydia disconnect failed (${res.status})`
+    );
+  }
 }
 
 // ── Stripe onboarding ───────────────────────────────────────────────────────

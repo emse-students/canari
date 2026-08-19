@@ -244,6 +244,22 @@ The full provider mapping, the remaining open questions and the credentials stil
 [`plans/stripe-to-lydia-migration.md`](../../plans/stripe-to-lydia-migration.md), which the wiki page
 [payments](frontend/modules/payments.md) already points at.
 
+**2026-08-19: onboarding storage now coexists, checkout routing does not yet.** `stripeAccountId`/
+`stripeOnboardingComplete` used to be the only pair of columns, shared by both providers - switching
+the active provider back and forth silently overwrote whichever one had onboarded first. Migration
+037 gives Lydia its own `lydiaAccountId`/`lydiaOnboardingComplete`, and the association edit page now
+manages both onboarding links (and their disconnect) independently of which provider is active - see
+[core-service#payments](services/core-service.md#payments-stripe--lydia). **Still owed before the
+switch can actually flip**: `resolvePaymentTarget` (`associations.service.ts`), `payment-delegation.util.ts`,
+`products.service.ts` and `forms.service.ts` all read only the Stripe pair when deciding whether an
+association can receive money and which account a checkout session should target - they have no
+notion of an active provider at all. Flipping `payment_provider` to `lydia` today would route
+checkout at whatever the Stripe pair happens to hold (usually nothing, since Lydia now writes
+elsewhere), not at the Lydia account. Fix belongs in core-service, where the active provider is
+already known (`PaymentService.getActiveProviderId()`): have `create-checkout-session` (and the two
+saved-method charge routes) pick `stripeAccountId` or `lydiaAccountId` itself from both ids handed up
+by social-service, rather than teaching social-service about the active provider too.
+
 ---
 
 ## Post-campaign projects - decided, not scheduled
