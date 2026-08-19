@@ -131,7 +131,8 @@ and its commit are in, and it is then deleted from BOTH files.
 
 **The campaign started 2026-08-19, produced a P1 within the hour, and that P1 is CLOSED.** 1-3 are
 measurements and questions that need a deploy or a run to have happened; 4 is the community phase,
-which has never run and is where the rework's whole remaining risk sits; 5 is the campaign itself.
+which has never run and is where the rework's whole remaining risk sits; 5 and 6 are the
+verification owed on the last fix, then the campaign itself.
 MSG-5 now converges on all three clients. Preflight, MSG and SETUP-9 are done - read
 [cross-client-testing](docs/wiki/cross-client-testing.md) rather than re-deriving them. **The phone is back (2026-08-17) - nothing is on hold; keep
 `adb devices` answering. There is NO iPhone (2026-08-18)**, so the iOS half
@@ -173,7 +174,11 @@ of the device ladder cannot be run at all
     matched nothing at all. **COMM-1 to COMM-22 remain `pending` with NO runner written** -
     `checks.mjs` carries the phase and an empty `scripts: []`. That is the work, and the rework's
     remaining risk is concentrated there: everything about it is verified by compiling.
-5. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
+5. **VERIFY WP-GRAINE-2 ON PROD - THE FIX IS DEPLOYED AND NOT YET PROVEN.** `040983c4` is live and
+    CD is green; nothing has been measured against it. The starting state, what to read, and why the
+    server half needs a NEW departure are on
+    [cross-client-testing](docs/wiki/cross-client-testing.md) §9 - do not re-derive them.
+6. **THEN, and only then:** rebuild the Android APK once, then run the clean campaign.
     **Everything must end green, so every phase runs.** What that costs, the ladder's order, and the
     two decisions it turns on - `call-service` logging BEFORE the CALL phase, and the community
     rework never having run against prod - are all on

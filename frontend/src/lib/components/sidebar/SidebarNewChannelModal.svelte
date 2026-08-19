@@ -58,7 +58,9 @@
 
     <!-- Visibility toggle -->
     <div>
-      <span class="block text-sm font-medium text-text-main mb-2">Visibilité</span>
+      <span class="block text-sm font-medium text-text-main mb-2"
+        >{m.chat_channel_visibility_label()}</span
+      >
       <div class="flex gap-2">
         <button
           type="button"
@@ -69,7 +71,7 @@
             : 'bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 text-text-muted hover:text-text-main'}"
         >
           <Globe size={16} />
-          Public
+          {m.chat_channel_visibility_public()}
         </button>
         <button
           type="button"
@@ -80,13 +82,13 @@
             : 'bg-white/65 dark:bg-black/30 border border-white/60 dark:border-white/10 text-text-muted hover:text-text-main'}"
         >
           <Lock size={16} />
-          Privé
+          {m.chat_channel_visibility_private()}
         </button>
       </div>
       <p class="text-xs text-text-muted mt-1.5">
         {visibility === 'public'
-          ? 'Tous les membres peuvent voir et rejoindre ce canal.'
-          : 'Seuls les membres invités peuvent accéder à ce canal.'}
+          ? m.chat_channel_visibility_public_note()
+          : m.chat_channel_visibility_private_note()}
       </p>
     </div>
 

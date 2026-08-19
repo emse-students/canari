@@ -236,6 +236,33 @@ The first rung that moves an MLS epoch.
 A community is a `Workspace`, and **its membership is not MLS membership**. Every row is read against
 MSG-5's standing assertion: no `masterSecret` in any payload, ever.
 
+**OWED BEFORE ANY ROW BELOW: prove WP-GRAINE-2 on production.** `040983c4` is deployed and CD is
+green, and nothing has been measured against it. The starting state was read before the deploy and
+is what the proof is against:
+
+| Fact | Value, before the fix ran anywhere |
+| --- | --- |
+| distribution group | `d70e8952-bc23-4ee8-bf63-fb829e278273` (community `b9d52032`) |
+| `mls_group_info.baseEpoch` | **25**, `updatedAt` `2026-08-19 14:00:02.53775` |
+| `dm_device_group_memberships` | 3 rows - `d82cd226` web + tauri, and `b78568a3` |
+| `b78568a3` | **left the community before the fix**, so the tree disagrees with the roster |
+
+Reload W1 (which carries the new bundle) and read three things: the reconciliation logs the removal;
+`baseEpoch` passes 25 with a fresh `updatedAt`; W1's next send logs `[GRAINE] new outbound session
+... (roster)`. The SERVER half - the eviction that drops the leaver's routing rows and queued frames
+the instant they stop being a member - cannot be seen on this departure, which predates it: it is
+measured when W2 rejoins and leaves the clean venue, and its evidence is those three rows going to
+two. Mechanism and reasoning: [graine](protocols/channel-encryption.md#10-a-departure-moved-nothing-and-rotation-waited-on-it---fixed-2026-08-19).
+
+**The runners for the rows below are STARTED, not written.** `tools/cross-client-harness/comm.mjs`
+carries the vocabulary all 22 share - create and open a community, create a channel, read a channel
+row, the settings modal, the invite link - with every caption READ from
+`frontend/messages/<locale>.json` rather than spelt, so a renamed string fails in the harness instead
+of turning runners red a week later. Two of its selectors are deliberately structural: the rail is
+anchored on the "add a community" button, and a channel is asked for BY NAME because the only anchor
+in its container is a button a non-manager never sees - which is exactly the case COMM-8 measures.
+Nothing in it has been run against a client yet, and `checks.mjs` still carries `scripts: []`.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | COMM-1 | Create a community, create a channel, post, both peers converge | `W1 W2` | `pending` |
