@@ -246,7 +246,7 @@ deploy, and every column below moved the way the fix says it must. Distribution 
 | the tree | 3 leaves - `b78568a3` had **left before the fix**, so it disagreed with the roster | **2 leaves**, both `d82cd226` |
 | who committed it | - | W1's **web** device, `[SEND][send-ba0dd330] ... hasProto=true isCommit=true group=d70e8952` at `15:54:08` |
 | a second pass | - | `[GRAINE] community b9d52032 distribution group agrees with its roster - 2 leaf/leaves, nobody to remove`, `baseEpoch` **still 26** |
-| `dm_device_group_memberships` | 3 rows | **still 3** - see below, this is the server half and it is expected |
+| `dm_device_group_memberships` | 3 rows | **still 3** - the server half, carried by the run below |
 
 Three separate witnesses agree on one event: the service log names the sending device and the group,
 `mls_group_info` carries the same timestamp to the second, and the client's own reconciliation now
@@ -256,12 +256,34 @@ not hold the group" printed identically and the epoch had to be read from the da
 apart. Fixed in `dc9e2ff9`; a mechanism whose success is indistinguishable from its absence is not
 verifiable, only believable.
 
-**The SERVER half is still owed, and this departure cannot carry it.** W2 is out of the *tree* and
-still has an `active` routing row, so the server would fan a commit out to a device that can no
-longer apply one - which is what the eviction exists to clean, and which fires only on a departure
-that happens AFTER the fix. It is measured when W2 rejoins and leaves the clean venue; its evidence
-is those three rows going to two. Mechanism and reasoning:
+**WP-GRAINE-2, SERVER HALF: PROVEN ON PRODUCTION 2026-08-19, and the work package is closed.** The
+departure above could not carry it - the eviction fires only on a departure that happens AFTER the
+fix - so one was produced: W2 was invited back through the real join link, its device external-joined
+the distribution group, and it then left through its own "Quitter la communaute" control. One run,
+both halves, every figure read from the database rather than from a client's account of itself.
+
+| Step | What was read | Value |
+| --- | --- | --- |
+| W2 rejoins | roster / `mls_group_info.baseEpoch` | 1 -> **2** members, epoch 27 at `19:30:48` |
+| the tree agrees again | W1's reconciliation | `distribution group agrees with its roster - 3 leaf/leaves, nobody to remove` |
+| W2 leaves | social-service | `[WORKSPACE] key distribution cut workspace=b9d52032 user=b78568a3 reason=left` |
+| the server cut it | chat-delivery | `[DISTRIBUTION_GROUP] evict ... memberships=1 queued=0 routes=1` at `19:34:30` |
+| `dm_device_group_memberships` | rows on the group | 3 -> **2**, both `d82cd226` |
+| the client followed | W1's reconciliation | `1 member(s) left but still hold a leaf - removing (2 leaves stay)`, `remove_members from group` |
+| `mls_group_info.baseEpoch` | the server | 27 -> **28** at `19:35:26` |
+
+The delivery half is immediate and needs nobody online; the MLS half is a commit and lands when a
+remaining member next loads the community. Four minutes separated them here, and during those four
+minutes W2 was already unrouted - which is the ordering the design asks for, revocation first and
+cryptography behind it. Mechanism and reasoning:
 [graine](protocols/channel-encryption.md#10-a-departure-moved-nothing-and-rotation-waited-on-it---fixed-2026-08-19).
+
+**What the run found on the way.** `cutOffKeyDistribution` printed `routes=` and passed the
+membership count: the endpoint returns three counts and the client between them carried two, so the
+caller had no `routes` to print and reached for the neighbour. On a one-device leaver the two agree,
+which is why it read as correct for as long as it could not be wrong - this very run logged
+`memberships=1 ... routes=1`. Dropping `evicted` at the same seam collapsed "this community has no
+distribution group" into "there was nothing to cut". Both fixed with the counts carried whole.
 
 **The runners for the rows below are STARTED, not written.** `tools/cross-client-harness/comm.mjs`
 carries the vocabulary all 22 share - create and open a community, create a channel, read a channel

@@ -80,6 +80,14 @@ it is keeping up, and frequency is not the lever. Reclaiming the 70 MB needs `VA
 so this is cosmetic until the disk is short. What DOES matter as volume grows is that the file tracks
 the **peak**, not the total - which is the queue-depth report's job, not vacuum's.
 
+**Reclaimed 2026-08-19, on the user's decision.** `VACUUM (FULL, ANALYZE)` under
+`PGOPTIONS='-c lock_timeout=20s'` - on a delivery queue, failing to get the lock is a better outcome
+than queueing behind it and blocking every writer. It took 0.01 s of CPU: `queued_message` went
+**73 MB -> 1 448 kB** (heap 848 kB, the rest 600 kB) on the same 817 rows, and `auth_db` as a whole
+**102 MB -> 30 MB**. The rewrite carried the parent's `reloptions` across, and 017 then set the
+TOAST's - both verified afterwards in `pg_class`. The high-water mark is reset, not defeated: the
+next abandoned device rebuilds it, which is why the queue-depth report and not this is the mechanism.
+
 Migration
 [`017_queued_message_toast_autovacuum.sql`](../../../apps/chat-delivery-service/src/migrations/017_queued_message_toast_autovacuum.sql)
 closes the gap that measurement exposed: 013's tightened scale factor was set on `queued_message` and

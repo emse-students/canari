@@ -168,22 +168,31 @@ export async function publishDistributionGroupInfo(
  *
  * Idempotent, so a departure that is retried costs nothing.
  *
- * @returns how many routing rows and queued frames were dropped, for the caller's log line.
+ * THE THREE COUNTS AND THE FLAG ARE ALL CARRIED, because the caller cannot recover any of them.
+ * This used to return `memberships` and `queued` alone, so the log line downstream had no `routes`
+ * to print and printed `memberships` under that name - a lie for as long as the two agreed, which
+ * on a one-device leaver is always. And dropping `evicted` collapsed "a community that has no
+ * distribution group" into "a cut that found nothing": the discriminator is KNOWN here and the
+ * decision is made there, so it travels rather than being guessed from three zeros.
+ *
+ * @returns whether there was a group at all, and how many rows, Redis routes and queued frames went
  */
 export async function evictFromDistributionGroup(
   secret: string,
   workspaceId: string,
   userId: string
-): Promise<{ memberships: number; queued: number }> {
+): Promise<{ evicted: boolean; memberships: number; queued: number; routes: number }> {
   const payload = (await callDelivery(
     secret,
     `internal/mls/distribution-groups/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userId)}`,
     { method: 'DELETE' }
-  )) as { memberships?: unknown; queued?: unknown } | null;
+  )) as { evicted?: unknown; memberships?: unknown; queued?: unknown; routes?: unknown } | null;
 
   return {
+    evicted: payload?.evicted === true,
     memberships: typeof payload?.memberships === 'number' ? payload.memberships : 0,
     queued: typeof payload?.queued === 'number' ? payload.queued : 0,
+    routes: typeof payload?.routes === 'number' ? payload.routes : 0,
   };
 }
 

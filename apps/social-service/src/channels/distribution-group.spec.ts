@@ -400,6 +400,45 @@ describe('ChannelService - the community distribution group', () => {
       expect(memberRepo.delete).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: USER });
     });
 
+    it('names each of the three stores it cut, rather than one of them twice', async () => {
+      // The line used to print `routes=` and pass `memberships`. On a one-device leaver the two
+      // agree, so it read as correct for as long as it could not be wrong - which is why the
+      // counts here are deliberately all different. Three stores are cut and none stands in for
+      // the others.
+      const { service, memberRepo, workspaceRepo } = makeService();
+      communityWith(memberRepo, workspaceRepo);
+      global.fetch = answerWith({ evicted: true, memberships: 3, queued: 5, routes: 2 }) as never;
+
+      await service.leaveWorkspace(WORKSPACE, USER);
+
+      const line = (service['logger'].log as jest.Mock).mock.calls
+        .map((c) => String(c[0]))
+        .find((l) => l.includes('key distribution cut'));
+      expect(line).toContain('memberships=3');
+      expect(line).toContain('routes=2');
+      expect(line).toContain('queued=5');
+    });
+
+    it('says a community has no distribution group instead of reporting three zeros', async () => {
+      // `evicted: false` is the only thing separating "there was nothing to cut off" from "it was
+      // cut off clean", and both answer with zeros. The flag is known on the delivery side and the
+      // decision is made here, so it travels rather than being inferred.
+      const { service, memberRepo, workspaceRepo } = makeService();
+      communityWith(memberRepo, workspaceRepo);
+      global.fetch = answerWith({ evicted: false, memberships: 0, queued: 0, routes: 0 }) as never;
+
+      await expect(service.leaveWorkspace(WORKSPACE, USER)).resolves.toEqual({ success: true });
+
+      expect(
+        (service['logger'].warn as jest.Mock).mock.calls.map((c) => String(c[0]))
+      ).toContainEqual(expect.stringContaining('no distribution group to cut'));
+      expect(
+        (service['logger'].log as jest.Mock).mock.calls
+          .map((c) => String(c[0]))
+          .filter((l) => l.includes('key distribution cut'))
+      ).toEqual([]);
+    });
+
     it('does not remove the member when the eviction could not be completed', async () => {
       // The two halves of a departure are not symmetric: the MLS commit lands whenever a remaining
       // member next loads the community, but nothing ever comes back for a routing row left behind.

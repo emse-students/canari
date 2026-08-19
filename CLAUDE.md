@@ -129,12 +129,13 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced SEVEN defects, all fixed.** 1-2 are numbers a
+**The campaign started 2026-08-19 and has produced NINE defects, all fixed.** 1-2 are numbers a
 run has to produce; 3-5 are the work the user decided on 2026-08-19; 6 is the community phase, stale
-AND never run, where the rework's remaining risk sits; 7 is the campaign. **WP-GRAINE-2's client half
-is PROVEN on prod (2026-08-19)** - epoch 25->26, tree down to 2 leaves, a second pass idempotent, all
-three witnesses on [cross-client-testing](docs/wiki/cross-client-testing.md) §9; its SERVER half
-needs a departure that happens after the fix and is therefore a campaign row, not a work package.
+AND never run, where the rework's remaining risk sits; 7 is the campaign. **WP-GRAINE-2 is CLOSED,
+both halves proven on prod (2026-08-19)** - client: epoch 25->26 and the tree down to 2 leaves;
+server: W2 rejoined and left, `evict memberships=1 routes=1`, routing rows 3->2, then the client
+followed to epoch 28. Every figure and the two defects the run itself found are on
+[cross-client-testing](docs/wiki/cross-client-testing.md) §9.
 Preflight, MSG and SETUP-9 are done and MSG-5 converges on all three clients -
 read [cross-client-testing](docs/wiki/cross-client-testing.md) rather than re-deriving them. **The
 phone is back (2026-08-17)**; keep `adb devices` answering. **There is NO iPhone and no iOS client

@@ -342,9 +342,25 @@ export class ChannelService {
     reason: 'left' | 'kicked'
   ): Promise<void> {
     const cut = await evictFromDistributionGroup(this.internalSecret, workspaceId, userId);
+    if (!cut.evicted) {
+      // NOT the same line as a cut that found nothing, and the difference is the whole report: a
+      // community with no distribution group has no key distribution to stop, while three zeros
+      // under the sentence below would read as one that was cut clean. Warn, because on a
+      // post-Graine community it means the group is missing and every seed frame is unrouted.
+      this.logger.warn(
+        `[WORKSPACE] no distribution group to cut workspace=${workspaceId} ` +
+          `user=${userId.slice(0, 8)} reason=${reason} - pre-Graine community, or its group is gone`
+      );
+      return;
+    }
+    // ALL THREE COUNTS, EACH UNDER ITS OWN NAME. This line used to print `routes=` and pass
+    // `memberships`, which read as consistent for as long as the two happened to agree - and the
+    // day they did not, it would have named the store it had not measured. Three stores are cut
+    // and none stands in for the others: rows are what a reconnect reads, the Redis set is what a
+    // live fanout reads, and the queue is what an offline device collects on its next connection.
     this.logger.log(
       `[WORKSPACE] key distribution cut workspace=${workspaceId} user=${userId.slice(0, 8)} ` +
-        `reason=${reason} routes=${cut.memberships} queued=${cut.queued}`
+        `reason=${reason} memberships=${cut.memberships} routes=${cut.routes} queued=${cut.queued}`
     );
   }
 
