@@ -5,6 +5,7 @@ import {
   userIdOfLeaf,
 } from './rosterReconcile';
 import { setGraineRuntime } from './runtime';
+import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
 
 /**
  * A departure must move the distribution group's epoch (WP-GRAINE-2).
@@ -21,9 +22,11 @@ let getLocalGroups: ReturnType<typeof vi.fn>;
 let distributionGroupFor: ReturnType<typeof vi.fn>;
 let persisted: number;
 const listWorkspaceMembers = vi.fn();
+const listMembers = vi.fn();
 
 const channelService = {
   listWorkspaceMembers: (workspaceId: string) => listWorkspaceMembers(workspaceId),
+  listMembers: (channelId: string, scope: string) => listMembers(channelId, scope),
 } as unknown as ChannelService;
 
 beforeEach(() => {
@@ -33,6 +36,8 @@ beforeEach(() => {
   distributionGroupFor = vi.fn().mockReturnValue('dist-group');
   listWorkspaceMembers.mockReset();
   listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
+  listMembers.mockReset();
+  listMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
   persisted = 0;
 
   setGraineRuntime({
@@ -124,10 +129,9 @@ describe('reconcileDistributionGroupRoster', () => {
     ]);
     listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
 
-    await expect(reconcileDistributionGroupRoster(channelService, 'ws-1')).resolves.toEqual([
-      'bob',
-      'carol',
-    ]);
+    await expect(
+      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'))
+    ).resolves.toEqual(['bob', 'carol']);
 
     // One commit, one epoch, whatever the fleet behind the departures.
     expect(removeMember).toHaveBeenCalledTimes(1);
@@ -140,7 +144,7 @@ describe('reconcileDistributionGroupRoster', () => {
     const lines: string[] = [];
 
     await expect(
-      reconcileDistributionGroupRoster(channelService, 'ws-1', (m) => lines.push(m))
+      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) => lines.push(m))
     ).resolves.toEqual([]);
 
     expect(removeMember).not.toHaveBeenCalled();
@@ -155,21 +159,27 @@ describe('reconcileDistributionGroupRoster', () => {
     // reading it as one would empty the tree of everyone but this device.
     listWorkspaceMembers.mockRejectedValue(new Error('offline'));
 
-    await expect(reconcileDistributionGroupRoster(channelService, 'ws-1')).resolves.toEqual([]);
+    await expect(
+      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'))
+    ).resolves.toEqual([]);
     expect(removeMember).not.toHaveBeenCalled();
   });
 
   it('removes nobody when the tree could not be read', async () => {
     getGroupMemberIdentities.mockRejectedValue(new Error('group not found'));
 
-    await expect(reconcileDistributionGroupRoster(channelService, 'ws-1')).resolves.toEqual([]);
+    await expect(
+      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'))
+    ).resolves.toEqual([]);
     expect(removeMember).not.toHaveBeenCalled();
   });
 
   it('does not even look when this device has not joined the group', async () => {
     getLocalGroups.mockReturnValue([]);
 
-    await expect(reconcileDistributionGroupRoster(channelService, 'ws-1')).resolves.toEqual([]);
+    await expect(
+      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'))
+    ).resolves.toEqual([]);
     expect(getGroupMemberIdentities).not.toHaveBeenCalled();
     expect(listWorkspaceMembers).not.toHaveBeenCalled();
   });
@@ -180,7 +190,7 @@ describe('reconcileDistributionGroupRoster', () => {
     const lines: string[] = [];
 
     await expect(
-      reconcileDistributionGroupRoster(channelService, 'ws-1', (m) => lines.push(m))
+      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'), (m) => lines.push(m))
     ).resolves.toEqual([]);
 
     expect(persisted).toBe(0);
@@ -191,7 +201,50 @@ describe('reconcileDistributionGroupRoster', () => {
   it('is silent and harmless before a session has wired the Graine runtime', async () => {
     setGraineRuntime(null);
 
-    await expect(reconcileDistributionGroupRoster(channelService, 'ws-1')).resolves.toEqual([]);
+    await expect(
+      reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'))
+    ).resolves.toEqual([]);
+    expect(removeMember).not.toHaveBeenCalled();
+  });
+});
+
+describe('a private salon reconciles against ITS OWN roster', () => {
+  it('asks the salon who may open it, never the community', async () => {
+    getGroupMemberIdentities.mockResolvedValue(['alice:web-1', 'bob:web-1', 'carol:web-1']);
+    // The community has everybody; the salon has two of them. Reading the community's roster here
+    // is what would re-authorise, at every pass, exactly the leaves the salon had just removed.
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'alice' },
+      { userId: 'bob' },
+      { userId: 'carol' },
+    ]);
+    listMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
+
+    await expect(
+      reconcileDistributionGroupRoster(channelService, channelScope('ws-1', 'chan-1'))
+    ).resolves.toEqual(['carol']);
+
+    expect(listMembers).toHaveBeenCalledWith('chan-1', 'channel');
+    expect(listWorkspaceMembers).not.toHaveBeenCalled();
+    expect(removeMember).toHaveBeenCalledWith('dist-group', ['carol']);
+  });
+
+  it('looks the group up under the salon scope, not the community one', async () => {
+    listMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
+
+    await reconcileDistributionGroupRoster(channelService, channelScope('ws-1', 'chan-1'));
+
+    expect(distributionGroupFor).toHaveBeenCalledWith(channelScope('ws-1', 'chan-1'));
+  });
+
+  it('removes nobody when the salon roster could not be read', async () => {
+    listMembers.mockRejectedValue(new Error('502'));
+
+    await expect(
+      reconcileDistributionGroupRoster(channelService, channelScope('ws-1', 'chan-1'))
+    ).resolves.toEqual([]);
+
+    // Absence is a reason to ask again later, never to empty the tree of everybody but this device.
     expect(removeMember).not.toHaveBeenCalled();
   });
 });

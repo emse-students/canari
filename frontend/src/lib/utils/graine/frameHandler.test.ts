@@ -1,5 +1,6 @@
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';
+import { workspaceScope } from '$lib/mls-client/distributionScope';
 import {
   decodeAppMessage,
   encodeAppMessage,
@@ -46,6 +47,7 @@ function fakeStorage(seed: StoredGraineSession[] = []) {
 
 function frame(overrides: Record<string, unknown> = {}) {
   return {
+    scope: workspaceScope('ws-1'),
     workspaceId: 'ws-1',
     groupId: 'g-1',
     sender: 'Bob',
@@ -190,6 +192,7 @@ describe('a seed arriving on the distribution group', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
       workspaceId: 'ws-1',
       groupId: 'g-1',
       sender: 'bob',
@@ -207,6 +210,7 @@ describe('a seed arriving on the distribution group', () => {
 describe('a seed request arriving on the distribution group (WP-33)', () => {
   function requestFrame(request: Parameters<typeof mkGraineRequest>[0]) {
     return {
+      scope: workspaceScope('ws-1'),
       workspaceId: 'ws-1',
       groupId: 'g-1',
       sender: 'bob',
@@ -337,6 +341,7 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
 describe('a history request from a joiner (WP-34)', () => {
   function historyFrame() {
     return {
+      scope: workspaceScope('ws-1'),
       workspaceId: 'ws-1',
       groupId: 'g-1',
       sender: 'newcomer',
@@ -436,6 +441,7 @@ describe('a bundle answering our own request (WP-33)', () => {
     setGraineRepairListener((ids) => repaired.push(ids));
 
     await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
       workspaceId: 'ws-1',
       groupId: 'g-1',
       sender: 'Bob',
@@ -462,6 +468,7 @@ describe('a bundle answering our own request (WP-33)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
       workspaceId: 'ws-1',
       groupId: 'g-1',
       sender: 'bob',

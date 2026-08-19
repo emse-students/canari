@@ -9,6 +9,7 @@
  * it. A retry here would now re-send an identical body and fail identically.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { workspaceScope } from '$lib/mls-client/distributionScope';
 
 const sendMessage = vi.fn();
 const sealChannelMessage = vi.fn();
@@ -94,7 +95,7 @@ describe('sendEncryptedChannelMessage', () => {
   });
 
   it('never reaches the server when the seal itself refused', async () => {
-    const refusal = new GraineDistributionUnavailableError('ws-1');
+    const refusal = new GraineDistributionUnavailableError(workspaceScope('ws-1'));
     sealChannelMessage.mockRejectedValue(refusal);
 
     await expect(sendEncryptedChannelMessage(CHANNEL, PAYLOAD)).rejects.toBe(refusal);

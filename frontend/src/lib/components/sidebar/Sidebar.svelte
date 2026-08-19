@@ -24,6 +24,8 @@
     name: string;
     unreadCount?: number;
     isPrivate?: boolean;
+    /** False only on a private salon an admin can SEE but has not joined - see the row below. */
+    hasAccess?: boolean;
   }
 
   interface ChannelWorkspace {
@@ -88,6 +90,8 @@
     onSelectConversation: (name: string) => void;
     /** Callback fired when the user selects a channel conversation. */
     onSelectChannelConversation?: (channelId: string) => void;
+    /** Enters a private salon this admin can see but has not joined. See `joinPrivateChannel`. */
+    onJoinPrivateChannel?: (channelId: string, channelName: string) => void;
     /** Callback fired when the user switches to a different community (deselects the open channel). */
     onSelectCommunity?: (workspaceId: string) => void;
     /** ID of the currently active channel. */
@@ -126,6 +130,7 @@
     onReorderCommunities,
     onSelectConversation,
     onSelectChannelConversation,
+    onJoinPrivateChannel,
     onSelectCommunity,
     selectedChannelId = '',
     isHidden = false,
@@ -219,6 +224,8 @@
     name: string;
     unreadCount?: number;
     isPrivate?: boolean;
+    /** False only on a private salon an admin can SEE but has not joined - see the row below. */
+    hasAccess?: boolean;
   }
 
   interface ChannelWorkspace {
@@ -514,6 +521,7 @@
         {#if currentWorkspace}
           <div class="px-2 py-2">
             {#each currentWorkspace.channels as channel (channel.id)}
+              {@const unjoined = channel.hasAccess === false}
               <!-- THE WHOLE ROW IN ONE NAME. Sighted users read three signals here - a lock, a
                    name, a badge - and only the middle one was ever exposed: the icon is decorative
                    markup and the badge announced a bare number, so "general 3" was all a screen
@@ -521,13 +529,22 @@
                    says it to everyone else. -->
               <button
                 type="button"
-                onclick={() => onSelectChannelConversation?.(channel.id)}
+                onclick={() =>
+                  unjoined
+                    ? onJoinPrivateChannel?.(channel.id, channel.name)
+                    : onSelectChannelConversation?.(channel.id)}
                 aria-current={selectedChannelId === channel.id ? 'true' : undefined}
-                aria-label="{channel.isPrivate
-                  ? `${m.chat_channel_private_label()} ${channel.name}`
-                  : channel.name}{channel.unreadCount
-                  ? `, ${m.chat_unread_messages_label({ count: channel.unreadCount })}`
-                  : ''}"
+                aria-label={unjoined
+                  ? m.chat_channel_join_as_admin_aria({ name: channel.name })
+                  : `${
+                      channel.isPrivate
+                        ? `${m.chat_channel_private_label()} ${channel.name}`
+                        : channel.name
+                    }${
+                      channel.unreadCount
+                        ? `, ${m.chat_unread_messages_label({ count: channel.unreadCount })}`
+                        : ''
+                    }`}
                 class="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-colors {selectedChannelId ===
                 channel.id
                   ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)] text-text-main'
@@ -540,7 +557,20 @@
                     <Hash size={16} />
                   {/if}
                 </span>
-                <span class="flex-1 truncate font-medium">{channel.name}</span>
+                <span class="flex-1 truncate font-medium {unjoined ? 'opacity-60' : ''}"
+                  >{channel.name}</span
+                >
+                <!-- The admin sees the salon EXISTS and can enter it in one click. Nothing else is
+                     served until they do: no message, no roster, no seed - all three go through
+                     `canAccessChannel`, which says no while this row is showing. -->
+                {#if unjoined}
+                  <span
+                    aria-hidden="true"
+                    class="px-2 py-0.5 rounded-full border border-text-muted/30 text-[0.65rem] font-semibold uppercase tracking-wide"
+                  >
+                    {m.chat_channel_join_as_admin_label()}
+                  </span>
+                {/if}
                 {#if channel.unreadCount}
                   <span
                     aria-hidden="true"

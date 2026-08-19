@@ -28,7 +28,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
         groupInfoChannel: (groupId: string) => unknown;
       }
     ).groupInfoChannel,
-    distributionWorkspaceByGroup: new Map<string, string>(),
+    distributionScopeByGroup: new Map<string, string>(),
     distributionGroupInfo: null,
     joinByExternalCommit: vi.fn().mockResolvedValue({ groupId: 'g', commit: new Uint8Array([9]) }),
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),

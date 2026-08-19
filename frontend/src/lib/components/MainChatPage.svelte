@@ -333,6 +333,11 @@
         }
       },
       onSelectConversation: handleSelectConversation,
+      onJoinPrivateChannel: (channelId: string, channelName: string) => {
+        // An admin entering a private salon they could only see. Awaited nowhere: the reload it
+        // triggers is what re-renders the row, and the toast is what reports either outcome.
+        void channels.joinPrivateChannelAsAdmin(channelId, channelName, channelsCtx());
+      },
       onSelectChannelConversation: (channelId: string) => {
         // Capture unread BEFORE selectConversation resets it: only signal a cross-device read
         // when there was actually something unread, to avoid a self-push on every channel open.

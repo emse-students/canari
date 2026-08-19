@@ -4,9 +4,14 @@ vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
 import { BaseMlsService } from './BaseMlsService';
+import {
+  channelScope,
+  workspaceScope,
+  type DistributionScope,
+} from '$lib/mls-client/distributionScope';
 
 /**
- * A community's Graine key-distribution group, on the client (WP-22).
+ * A Graine key-distribution group on the client (WP-22) - a community's, or a private salon's.
  *
  * Two things are being pinned down. First, that this group's external-join base is read from and
  * written to SOCIAL-SERVICE and never chat-delivery: the base is the capability to read every seed
@@ -23,19 +28,23 @@ type Ctx = ReturnType<typeof makeCtx>;
 
 /** Prototype methods invoked through `.call`, so the real implementations are the ones under test. */
 const proto = BaseMlsService.prototype as unknown as {
-  registerDistributionGroup(workspaceId: string, groupId: string): void;
+  registerDistributionGroup(scope: DistributionScope, groupId: string): void;
   isDistributionGroup(groupId: string): boolean;
-  distributionGroupFor(workspaceId: string): string | null;
+  distributionGroupFor(scope: DistributionScope): string | null;
+  distributionScopes(): DistributionScope[];
   groupInfoChannel(groupId: string): {
     fetch(): Promise<{ groupInfo: string; baseEpoch: number } | null>;
     publish(groupInfo: string, baseEpoch: number): Promise<{ stored: boolean }>;
   };
   ensureDistributionGroup(
-    workspaceId: string,
+    scope: DistributionScope,
     ref: { groupId: string; groupInfo: string | null; baseEpoch: number | null }
   ): Promise<boolean>;
   routeDistributionFrame(groupId: string, sender: string, ciphertext: Uint8Array): Promise<boolean>;
 };
+
+const WS = workspaceScope('ws-1');
+const SALON = channelScope('ws-1', 'chan-1');
 
 function makeCtx(overrides: Record<string, unknown> = {}) {
   return {
@@ -46,7 +55,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       storeGroupInfo: vi.fn().mockResolvedValue({ stored: true }),
       submitCommit: vi.fn(),
     },
-    distributionWorkspaceByGroup: new Map<string, string>(),
+    distributionScopeByGroup: new Map<string, DistributionScope>(),
     distributionGroupInfo: {
       fetch: vi.fn().mockResolvedValue({ groupInfo: 'c29j', baseEpoch: 7 }),
       publish: vi.fn().mockResolvedValue({ stored: true }),
@@ -68,9 +77,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
 
 const ensure = (
   ctx: Ctx,
-  workspaceId: string,
+  scope: DistributionScope,
   ref: Parameters<typeof proto.ensureDistributionGroup>[1]
-) => proto.ensureDistributionGroup.call(ctx, workspaceId, ref);
+) => proto.ensureDistributionGroup.call(ctx, scope, ref);
 
 const route = (ctx: Ctx, groupId: string, sender: string, bytes: Uint8Array) =>
   proto.routeDistributionFrame.call(ctx, groupId, sender, bytes);
@@ -78,12 +87,32 @@ const route = (ctx: Ctx, groupId: string, sender: string, bytes: Uint8Array) =>
 describe('the registry', () => {
   it('answers both directions from one map, so the two cannot disagree', () => {
     const ctx = makeCtx();
-    proto.registerDistributionGroup.call(ctx, 'ws-1', 'g-1');
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
 
     expect(proto.isDistributionGroup.call(ctx, 'g-1')).toBe(true);
     expect(proto.isDistributionGroup.call(ctx, 'g-other')).toBe(false);
-    expect(proto.distributionGroupFor.call(ctx, 'ws-1')).toBe('g-1');
-    expect(proto.distributionGroupFor.call(ctx, 'ws-other')).toBeNull();
+    expect(proto.distributionGroupFor.call(ctx, WS)).toBe('g-1');
+    expect(proto.distributionGroupFor.call(ctx, workspaceScope('ws-other'))).toBeNull();
+  });
+
+  it('keeps a salon apart from its own community, though both ids are uuids', () => {
+    const ctx = makeCtx();
+    proto.registerDistributionGroup.call(ctx, WS, 'g-community');
+    proto.registerDistributionGroup.call(ctx, SALON, 'g-salon');
+
+    // The prefix in the key is what makes this true. Without it a lookup by raw id would match
+    // whichever entry came first, and a private salon's seed would go out on the community's group.
+    expect(proto.distributionGroupFor.call(ctx, WS)).toBe('g-community');
+    expect(proto.distributionGroupFor.call(ctx, SALON)).toBe('g-salon');
+    expect(proto.distributionGroupFor.call(ctx, channelScope('ws-1', 'chan-2'))).toBeNull();
+  });
+
+  it('enumerates every scope it holds, which is what a purge sweeps', () => {
+    const ctx = makeCtx();
+    proto.registerDistributionGroup.call(ctx, WS, 'g-community');
+    proto.registerDistributionGroup.call(ctx, SALON, 'g-salon');
+
+    expect(proto.distributionScopes.call(ctx)).toEqual([WS, SALON]);
   });
 });
 
@@ -102,7 +131,7 @@ describe('where a group-info base is read and written', () => {
 
   it('sends a distribution group to social-service, keyed by its community', async () => {
     const ctx = makeCtx();
-    proto.registerDistributionGroup.call(ctx, 'ws-1', 'g-1');
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
 
     const channel = proto.groupInfoChannel.call(ctx, 'g-1');
     expect(await channel.fetch()).toEqual({ groupInfo: 'c29j', baseEpoch: 7 });
@@ -111,12 +140,23 @@ describe('where a group-info base is read and written', () => {
     // Never chat-delivery: it gates on a `dm_group_members` row this group has none of.
     expect(ctx.delivery.fetchGroupInfo).not.toHaveBeenCalled();
     expect(ctx.delivery.storeGroupInfo).not.toHaveBeenCalled();
-    expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith('ws-1', 'QUFB', 9);
+    expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith(WS, 'QUFB', 9);
+  });
+
+  it('sends a private salon to the SALON route, not its community one', async () => {
+    const ctx = makeCtx();
+    proto.registerDistributionGroup.call(ctx, SALON, 'g-salon');
+
+    await proto.groupInfoChannel.call(ctx, 'g-salon').publish('QUFB', 2);
+
+    // The scope travels to social-service, which turns it into the route authorized by
+    // `canAccessChannel` rather than by community membership.
+    expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith(SALON, 'QUFB', 2);
   });
 
   it('throws rather than falling back to chat-delivery when no transport is wired', () => {
     const ctx = makeCtx({ distributionGroupInfo: null });
-    proto.registerDistributionGroup.call(ctx, 'ws-1', 'g-1');
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
 
     // Routing it to chat-delivery would produce a 403 that reads like a permission problem and
     // send the next reader to entirely the wrong place. A wiring bug must look like one.
@@ -131,7 +171,7 @@ describe('joining on first use', () => {
   it('registers the group even when it is already held locally', async () => {
     const ctx = makeCtx({ getLocalGroups: vi.fn().mockReturnValue(['g-1']) });
 
-    expect(await ensure(ctx, 'ws-1', REF_PUBLISHED)).toBe(true);
+    expect(await ensure(ctx, WS, REF_PUBLISHED)).toBe(true);
     // Registration is not a side effect of joining: the frame router needs it on every start,
     // including the one where there was nothing to join.
     expect(proto.isDistributionGroup.call(ctx, 'g-1')).toBe(true);
@@ -142,7 +182,7 @@ describe('joining on first use', () => {
   it('external-joins a published base rather than creating anything', async () => {
     const ctx = makeCtx();
 
-    expect(await ensure(ctx, 'ws-1', REF_PUBLISHED)).toBe(true);
+    expect(await ensure(ctx, WS, REF_PUBLISHED)).toBe(true);
     expect(ctx.externalJoin).toHaveBeenCalledWith('g-1');
     expect(ctx.createGroup).not.toHaveBeenCalled();
   });
@@ -150,9 +190,9 @@ describe('joining on first use', () => {
   it('creates the group and publishes the base when this device is the first one in', async () => {
     const ctx = makeCtx();
 
-    expect(await ensure(ctx, 'ws-1', REF_FRESH)).toBe(true);
+    expect(await ensure(ctx, WS, REF_FRESH)).toBe(true);
     expect(ctx.createGroup).toHaveBeenCalledWith('g-1');
-    expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith('ws-1', expect.any(String), 0);
+    expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith(WS, expect.any(String), 0);
     expect(ctx.externalJoin).not.toHaveBeenCalled();
     expect(ctx.forgetGroup).not.toHaveBeenCalled();
   });
@@ -161,7 +201,7 @@ describe('joining on first use', () => {
     const ctx = makeCtx();
     ctx.distributionGroupInfo.publish.mockResolvedValue({ stored: false });
 
-    expect(await ensure(ctx, 'ws-1', REF_FRESH)).toBe(true);
+    expect(await ensure(ctx, WS, REF_FRESH)).toBe(true);
     // Keeping it would fork the community: two MLS groups under one id, each holding half the
     // seeds, with nothing on either side ever reporting it.
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1');
@@ -172,7 +212,7 @@ describe('joining on first use', () => {
     const ctx = makeCtx();
     ctx.distributionGroupInfo.publish.mockRejectedValue(new Error('offline'));
 
-    expect(await ensure(ctx, 'ws-1', REF_FRESH)).toBe(false);
+    expect(await ensure(ctx, WS, REF_FRESH)).toBe(false);
     // A group held locally that nobody can join is worse than no group: the next call would find
     // it in `getLocalGroups` and return early, for ever.
     expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1');
@@ -182,7 +222,7 @@ describe('joining on first use', () => {
 describe('routing a frame that arrived on the group', () => {
   function registered(overrides: Record<string, unknown> = {}) {
     const ctx = makeCtx(overrides);
-    proto.registerDistributionGroup.call(ctx, 'ws-1', 'g-1');
+    proto.registerDistributionGroup.call(ctx, WS, 'g-1');
     return ctx;
   }
 
@@ -191,6 +231,7 @@ describe('routing a frame that arrived on the group', () => {
 
     expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(true);
     expect(ctx.distributionFrameHandler).toHaveBeenCalledWith({
+      scope: WS,
       workspaceId: 'ws-1',
       groupId: 'g-1',
       sender: 'peer',

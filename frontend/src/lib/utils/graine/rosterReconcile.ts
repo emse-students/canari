@@ -1,4 +1,5 @@
 import type { ChannelService } from '$lib/services/ChannelService';
+import { scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 
@@ -76,7 +77,7 @@ export function diffRosterAgainstTree(input: {
 }
 
 /**
- * Removes from `workspaceId`'s distribution group every leaf the community's roster no longer names.
+ * Removes from `scope`'s distribution group every leaf its roster no longer names.
  *
  * IDEMPOTENT AND CHEAP TO REPEAT, like the join it follows: a group already agreeing with its
  * roster produces no commit and no epoch change, so the next sender's session is not rotated for
@@ -92,7 +93,7 @@ export function diffRosterAgainstTree(input: {
  */
 export async function reconcileDistributionGroupRoster(
   channelService: ChannelService,
-  workspaceId: string,
+  scope: DistributionScope,
   log: (message: string) => void = () => {}
 ): Promise<string[]> {
   if (!isGraineReady()) return [];
@@ -100,14 +101,12 @@ export async function reconcileDistributionGroupRoster(
     'reconcileDistributionGroupRoster'
   );
 
-  const groupId = mlsService.distributionGroupFor(workspaceId);
+  const groupId = mlsService.distributionGroupFor(scope);
   if (!groupId || !mlsService.getLocalGroups().includes(groupId)) {
     // Not an error and not silent: only a member may commit, so a device that has not joined yet
     // simply is not the one that reconciles - and saying so is what distinguishes this from a pass
     // that ran and found nothing.
-    log(
-      `[GRAINE] no distribution group held for community ${workspaceId.slice(0, 8)} - roster not reconciled`
-    );
+    log(`[GRAINE] no distribution group held for ${scopeLabel(scope)} - roster not reconciled`);
     return [];
   }
 
@@ -118,10 +117,19 @@ export async function reconcileDistributionGroupRoster(
     // leaf's user as absent. Ordered this way, the worst case is a stray surviving until the next
     // pass, which is the direction this whole mechanism already fails in.
     leafIdentities = await mlsService.getGroupMemberIdentities(groupId);
-    rosterUserIds = (await channelService.listWorkspaceMembers(workspaceId)).map((m) => m.userId);
+    // THE ROSTER IS THE SCOPE'S OWN, and that is the whole difference between the two groups. A
+    // community's is its membership; a private salon's is the people who may open it - which is a
+    // strictly smaller set, and reading the community's for a salon would re-authorise, at every
+    // pass, every leaf the salon had just removed.
+    rosterUserIds =
+      scope.kind === 'workspace'
+        ? (await channelService.listWorkspaceMembers(scope.workspaceId)).map((m) => m.userId)
+        : (await channelService.listMembers(scope.channelId, 'channel')).map((m) =>
+            String(m.userId)
+          );
   } catch (e) {
     log(
-      `[GRAINE] could not compare community ${workspaceId.slice(0, 8)} with its distribution group: ${e instanceof Error ? e.message : String(e)} - nobody removed`
+      `[GRAINE] could not compare ${scopeLabel(scope)} with its distribution group: ${e instanceof Error ? e.message : String(e)} - nobody removed`
     );
     return [];
   }
@@ -133,13 +141,13 @@ export async function reconcileDistributionGroupRoster(
     // silent. A mechanism whose success is indistinguishable from its absence can only be verified
     // by reading the database, which is how this very fix had to be checked on prod.
     log(
-      `[GRAINE] community ${workspaceId.slice(0, 8)} distribution group agrees with its roster - ${diff.keptLeafCount} leaf/leaves, nobody to remove`
+      `[GRAINE] ${scopeLabel(scope)} distribution group agrees with its roster - ${diff.keptLeafCount} leaf/leaves, nobody to remove`
     );
     return [];
   }
 
   log(
-    `[GRAINE] community ${workspaceId.slice(0, 8)}: ${diff.strayUserIds.length} member(s) left but still hold a leaf - removing (${diff.keptLeafCount} leaves stay)`
+    `[GRAINE] ${scopeLabel(scope)}: ${diff.strayUserIds.length} member(s) left but still hold a leaf - removing (${diff.keptLeafCount} leaves stay)`
   );
 
   try {
@@ -150,7 +158,7 @@ export async function reconcileDistributionGroupRoster(
     // epoch) is the benign case and the next pass carries it; anything else is a real failure and
     // this line is the only place it is visible.
     log(
-      `[GRAINE] could not remove ${diff.strayUserIds.length} departed member(s) from community ${workspaceId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)} - they can still read it`
+      `[GRAINE] could not remove ${diff.strayUserIds.length} departed member(s) from ${scopeLabel(scope)}: ${e instanceof Error ? e.message : String(e)} - they can still read it`
     );
     return [];
   }
@@ -160,7 +168,7 @@ export async function reconcileDistributionGroupRoster(
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 
   log(
-    `[GRAINE] community ${workspaceId.slice(0, 8)} distribution group is now at epoch ${mlsService.getEpoch(groupId)} - the next send mints a session they cannot open`
+    `[GRAINE] ${scopeLabel(scope)} distribution group is now at epoch ${mlsService.getEpoch(groupId)} - the next send mints a session they cannot open`
   );
   return diff.strayUserIds;
 }

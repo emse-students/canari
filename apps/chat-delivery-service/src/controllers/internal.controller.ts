@@ -141,17 +141,23 @@ export class InternalController {
   }
 
   /**
-   * Creates - or returns, unchanged - the Graine key-distribution group of a community.
+   * Creates - or returns, unchanged - a Graine key-distribution group for one scope.
    *
-   * WHY THE COMMUNITY'S ID AND NOT A NAME: `dm_groups."distributionWorkspaceId"` carries a partial
-   * unique index, so "exactly one distribution group per community" is a fact the DATABASE holds.
-   * A second concurrent creation loses the insert instead of producing two groups each owning half
+   * TWO SCOPES, ONE PATH. A community's group and a private salon's group are the same object with
+   * a different roster: seeds only, never a conversation, entered by external commit, no
+   * `dm_group_members` row and no `DeviceGroupMembership`. Those absences are load-bearing - see the
+   * WP-20 audit in `docs/wiki/protocols/channel-encryption.md`, whose whole enumeration rests on
+   * them - and duplicating this family per scope would double a surface that has been audited once.
+   *
+   * WHY THE ID AND NOT A NAME: each scope column carries a partial unique index, so "exactly one
+   * distribution group per community" and "per private salon" are facts the DATABASE holds. A
+   * second concurrent creation loses the insert instead of producing two groups each owning half
    * the seeds - which is why the conflict is re-read rather than reported.
    *
-   * WHAT IT DELIBERATELY DOES NOT WRITE: no `dm_group_members` row and no `DeviceGroupMembership`.
-   * The group is entered by external commit, and its roster is the community's, held by
-   * social-service. Both absences are load-bearing - see the WP-20 audit in
-   * `docs/wiki/protocols/channel-encryption.md`, whose whole enumeration rests on them.
+   * A PUBLIC SALON GETS NONE, and asking for one is a caller bug rather than a no-op: its audience
+   * IS the community, so the community's group is already the right roster and a second group would
+   * be the same set of people at a higher commit rate. Social-service is the only caller and it
+   * gates on `isPrivate`; this route cannot check that itself, because it does not own `channels`.
    *
    * The MLS group itself is NOT created here and cannot be: the server holds no MLS state and can
    * derive none. This is the row; a client initialises the group and publishes its GroupInfo
@@ -160,68 +166,64 @@ export class InternalController {
   @Post('mls/distribution-groups')
   async createDistributionGroup(
     @Headers('x-internal-secret') headerSecret: string,
-    @Body() body: { workspaceId?: string }
+    @Body() body: { scope?: string; scopeId?: string }
   ): Promise<{ groupId: string; created: boolean }> {
     this.assertInternalSecret(headerSecret);
-    const workspaceId = (body?.workspaceId ?? '').trim();
-    if (!workspaceId) {
-      throw new BadRequestException('workspaceId is required');
-    }
+    const scope = this.assertDistributionScope(body?.scope);
+    const scopeId = (body?.scopeId ?? '').trim();
+    if (!scopeId) throw new BadRequestException('scopeId is required');
+    const where = this.distributionWhere(scope, scopeId);
+    const label = `${scope}:${scopeId}`;
 
-    const existing = await this.groupRepo.findOne({
-      where: { distributionWorkspaceId: workspaceId },
-    });
+    const existing = await this.groupRepo.findOne({ where });
     if (existing) {
-      this.logger.log(`[DISTRIBUTION_GROUP] reuse workspace=${workspaceId} group=${existing.id}`);
+      this.logger.log(`[DISTRIBUTION_GROUP] reuse scope=${label} group=${existing.id}`);
       return { groupId: existing.id, created: false };
     }
 
     try {
-      const created = await this.groupRepo.save(
-        this.groupRepo.create({ isGroup: true, distributionWorkspaceId: workspaceId })
-      );
-      this.logger.log(`[DISTRIBUTION_GROUP] created workspace=${workspaceId} group=${created.id}`);
+      const created = await this.groupRepo.save(this.groupRepo.create({ isGroup: true, ...where }));
+      this.logger.log(`[DISTRIBUTION_GROUP] created scope=${label} group=${created.id}`);
       return { groupId: created.id, created: true };
     } catch (e) {
       // The unique index fired: another request created it between the SELECT and the INSERT. The
       // winner's row is the answer, so re-read rather than surfacing a conflict the caller cannot
       // act on. Anything else is a real failure and must propagate.
-      const raced = await this.groupRepo.findOne({
-        where: { distributionWorkspaceId: workspaceId },
-      });
+      const raced = await this.groupRepo.findOne({ where });
       if (!raced) throw e;
       this.logger.warn(
-        `[DISTRIBUTION_GROUP] concurrent creation workspace=${workspaceId} group=${raced.id} - the index held`
+        `[DISTRIBUTION_GROUP] concurrent creation scope=${label} group=${raced.id} - the index held`
       );
       return { groupId: raced.id, created: false };
     }
   }
 
   /**
-   * The community's distribution group and the latest GroupInfo published on it, so a caller that
-   * has already established community membership can hand a client what it needs to external-join.
+   * The scope's distribution group and the latest GroupInfo published on it, so a caller that has
+   * already established the reader's right to it can hand a client what it needs to external-join.
    *
    * `groupInfo` is null until the first client has initialised the MLS group - a real state, not an
-   * error: the community exists and nobody has opened it yet.
+   * error: the community or salon exists and nobody has opened it yet.
    */
-  @Get('mls/distribution-groups/:workspaceId')
+  @Get('mls/distribution-groups/:scope/:scopeId')
   async getDistributionGroup(
-    @Param('workspaceId') workspaceId: string,
+    @Param('scope') scope: string,
+    @Param('scopeId') scopeId: string,
     @Headers('x-internal-secret') headerSecret: string
   ): Promise<{ groupId: string; groupInfo: string | null; baseEpoch: number | null } | null> {
     this.assertInternalSecret(headerSecret);
+    const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
+    const label = `${scope}:${scopeId}`;
 
-    const group = await this.groupRepo.findOne({
-      where: { distributionWorkspaceId: workspaceId },
-    });
+    const group = await this.groupRepo.findOne({ where });
     if (!group) {
-      this.logger.warn(`[DISTRIBUTION_GROUP] absent workspace=${workspaceId}`);
+      this.logger.warn(`[DISTRIBUTION_GROUP] absent scope=${label}`);
       return null;
     }
 
     const info = await this.messagingService.readGroupInfo(group.id);
     this.logger.log(
-      `[DISTRIBUTION_GROUP] read workspace=${workspaceId} group=${group.id} published=${!!info}`
+      `[DISTRIBUTION_GROUP] read scope=${label} group=${group.id} published=${!!info}`
     );
     return {
       groupId: group.id,
@@ -231,16 +233,17 @@ export class InternalController {
   }
 
   /**
-   * Publishes the GroupInfo of a community's distribution group, after its committer's own service
-   * has established that they belong to the community.
+   * Publishes the GroupInfo of a distribution group, after its committer's own service has
+   * established that they belong to the scope's roster.
    *
    * The public route (`POST /mls/group-info/:groupId`) cannot serve this: it gates on a
    * `dm_group_members` row, and a distribution group has none by construction. The monotonic rule
    * is not duplicated here - both routes land on the same `putGroupInfo`.
    */
-  @Post('mls/distribution-groups/:workspaceId/group-info')
+  @Post('mls/distribution-groups/:scope/:scopeId/group-info')
   async publishDistributionGroupInfo(
-    @Param('workspaceId') workspaceId: string,
+    @Param('scope') scope: string,
+    @Param('scopeId') scopeId: string,
     @Headers('x-internal-secret') headerSecret: string,
     @Body() body: { groupInfo?: string; baseEpoch?: number }
   ): Promise<{ stored: boolean }> {
@@ -248,12 +251,12 @@ export class InternalController {
     if (typeof body?.groupInfo !== 'string' || !Number.isFinite(body?.baseEpoch)) {
       throw new BadRequestException('groupInfo (base64) and baseEpoch are required');
     }
+    const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
+    const label = `${scope}:${scopeId}`;
 
-    const group = await this.groupRepo.findOne({
-      where: { distributionWorkspaceId: workspaceId },
-    });
+    const group = await this.groupRepo.findOne({ where });
     if (!group) {
-      throw new BadRequestException(`No distribution group for community ${workspaceId}`);
+      throw new BadRequestException(`No distribution group for ${label}`);
     }
 
     const result = await this.messagingService.putGroupInfo(
@@ -262,20 +265,20 @@ export class InternalController {
       body.baseEpoch as number
     );
     this.logger.log(
-      `[DISTRIBUTION_GROUP] group-info workspace=${workspaceId} group=${group.id} epoch=${body.baseEpoch} stored=${result.stored}`
+      `[DISTRIBUTION_GROUP] group-info scope=${label} group=${group.id} epoch=${body.baseEpoch} stored=${result.stored}`
     );
     return result;
   }
 
   /**
-   * Cuts one user off a community's key-distribution group, the moment they stop being a member.
+   * Cuts one user off a distribution group, the moment they stop belonging to its roster.
    *
    * THE HALF OF A DEPARTURE THAT NEEDS NOBODY ONLINE. Removing their leaf from the MLS tree is a
    * commit, and only a member's device can produce one - so it happens whenever a remaining member
-   * next loads the community. Until then, nothing in the tree stops the delivery service handing
-   * the leaver every seed frame sent on the group, because routing reads these rows and not the
-   * tree. This is what makes the revocation immediate and server-enforced; the commit that follows
-   * is what makes it cryptographic.
+   * next loads the community or salon. Until then, nothing in the tree stops the delivery service
+   * handing the leaver every seed frame sent on the group, because routing reads these rows and not
+   * the tree. This is what makes the revocation immediate and server-enforced; the commit that
+   * follows is what makes it cryptographic.
    *
    * Three stores, all keyed by the group, and none of them can stand in for the others: the
    * membership rows are what a reconnect reads, the Redis set is what a live fanout reads, and the
@@ -283,25 +286,26 @@ export class InternalController {
    * handing the past over on the leaver's next connection.
    *
    * Idempotent by construction - every step is a delete keyed on the pair - so the caller may
-   * repeat it, and a community with no distribution group answers `{ evicted: false }` rather than
+   * repeat it, and a scope with no distribution group answers `{ evicted: false }` rather than
    * failing a departure that has otherwise completed.
    */
-  @Delete('mls/distribution-groups/:workspaceId/members/:userId')
+  @Delete('mls/distribution-groups/:scope/:scopeId/members/:userId')
   async evictFromDistributionGroup(
-    @Param('workspaceId') workspaceId: string,
+    @Param('scope') scope: string,
+    @Param('scopeId') scopeId: string,
     @Param('userId') userId: string,
     @Headers('x-internal-secret') headerSecret: string
   ): Promise<{ evicted: boolean; memberships: number; queued: number; routes: number }> {
     this.assertInternalSecret(headerSecret);
+    const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
+    const label = `${scope}:${scopeId}`;
 
-    const group = await this.groupRepo.findOne({
-      where: { distributionWorkspaceId: workspaceId },
-    });
+    const group = await this.groupRepo.findOne({ where });
     if (!group) {
-      // A community created before Graine, or one whose group was already reaped. Not an error:
+      // A community created before Graine, a public salon, or a group already reaped. Not an error:
       // there is no key distribution to be cut off from.
       this.logger.log(
-        `[DISTRIBUTION_GROUP] evict workspace=${workspaceId} user=${userId.slice(0, 8)} - no group`
+        `[DISTRIBUTION_GROUP] evict scope=${label} user=${userId.slice(0, 8)} - no group`
       );
       return { evicted: false, memberships: 0, queued: 0, routes: 0 };
     }
@@ -316,7 +320,7 @@ export class InternalController {
     }
 
     this.logger.log(
-      `[DISTRIBUTION_GROUP] evict workspace=${workspaceId} group=${group.id} user=${userId.slice(0, 8)} ` +
+      `[DISTRIBUTION_GROUP] evict scope=${label} group=${group.id} user=${userId.slice(0, 8)} ` +
         `memberships=${memberships.affected ?? 0} queued=${queued.affected ?? 0} routes=${toRemove.length}`
     );
     return {
@@ -328,29 +332,59 @@ export class InternalController {
   }
 
   /**
-   * Tombstones the distribution group of a community that is going away. Deliberately the same
-   * soft delete every other group dies of, so `cleanupSoftDeletedGroups` reaps it on the same
-   * schedule and no second lifecycle exists.
+   * Tombstones the distribution group of a scope that is going away - a community being deleted, or
+   * a private salon deleted or turned public. Deliberately the same soft delete every other group
+   * dies of, so `cleanupSoftDeletedGroups` reaps it on the same schedule and no second lifecycle
+   * exists.
    */
-  @Delete('mls/distribution-groups/:workspaceId')
+  @Delete('mls/distribution-groups/:scope/:scopeId')
   async deleteDistributionGroup(
-    @Param('workspaceId') workspaceId: string,
+    @Param('scope') scope: string,
+    @Param('scopeId') scopeId: string,
     @Headers('x-internal-secret') headerSecret: string
   ): Promise<{ deleted: boolean }> {
     this.assertInternalSecret(headerSecret);
+    const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
+    const label = `${scope}:${scopeId}`;
 
-    const group = await this.groupRepo.findOne({
-      where: { distributionWorkspaceId: workspaceId },
-    });
+    const group = await this.groupRepo.findOne({ where });
     if (!group) {
-      // Not an error: a community created before Graine, or one whose group was already reaped.
-      this.logger.log(`[DISTRIBUTION_GROUP] delete workspace=${workspaceId} - nothing to delete`);
+      // Not an error: a community created before Graine, a public salon, or a group already reaped.
+      this.logger.log(`[DISTRIBUTION_GROUP] delete scope=${label} - nothing to delete`);
       return { deleted: false };
     }
 
     await this.groupRepo.update({ id: group.id }, { deletedAt: new Date() });
-    this.logger.log(`[DISTRIBUTION_GROUP] deleted workspace=${workspaceId} group=${group.id}`);
+    this.logger.log(`[DISTRIBUTION_GROUP] deleted scope=${label} group=${group.id}`);
     return { deleted: true };
+  }
+
+  /**
+   * The `where` clause selecting one scope's distribution group.
+   *
+   * Written once because five routes need it and because the two columns are mutually exclusive by
+   * a database CHECK (migration 018) - a clause built per call site is a clause that will one day
+   * name both.
+   */
+  private distributionWhere(
+    scope: 'workspace' | 'channel',
+    scopeId: string
+  ): { distributionWorkspaceId: string } | { distributionChannelId: string } {
+    return scope === 'workspace'
+      ? { distributionWorkspaceId: scopeId }
+      : { distributionChannelId: scopeId };
+  }
+
+  /**
+   * Rejects a scope this service has no column for, rather than silently selecting the community
+   * one - which would serve a private salon's caller the community's group, i.e. exactly the
+   * sharing this scope was added to end.
+   */
+  private assertDistributionScope(scope: string | undefined): 'workspace' | 'channel' {
+    if (scope !== 'workspace' && scope !== 'channel') {
+      throw new BadRequestException(`scope must be 'workspace' or 'channel', got '${scope ?? ''}'`);
+    }
+    return scope;
   }
 
   /**

@@ -1,8 +1,9 @@
 import { canari } from '$lib/proto/canari';
 import { encodeAppMessage, mkGraineRequest } from '$lib/proto/codec';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { workspaceScope } from '$lib/mls-client/distributionScope';
 import { ChannelService } from '$lib/services/ChannelService';
-import { requireGraineRuntime, workspaceForChannel } from './runtime';
+import { requireGraineRuntime, scopeForChannel } from './runtime';
 import { GraineDistributionUnavailableError } from './seedDistribution';
 
 /**
@@ -137,15 +138,20 @@ interface RepairTargets {
   roster: Set<string>;
 }
 
-/** Resolves the community, its distribution group and its roster for `channelId`. */
+/** Resolves the community, the group carrying the salon's seeds, and the roster to ask. */
 async function resolveRepairTargets(channelId: string): Promise<RepairTargets> {
   const { mlsService } = requireGraineRuntime('cannot ask for a missing seed');
-  const workspaceId = workspaceForChannel(channelId);
-  if (!workspaceId) throw new Error(`channel ${channelId} belongs to no loaded community`);
-  const groupId = mlsService.distributionGroupFor(workspaceId);
-  if (!groupId) throw new GraineDistributionUnavailableError(workspaceId);
+  const scope = scopeForChannel(channelId);
+  if (!scope) throw new Error(`channel ${channelId} belongs to no loaded community`);
+  const workspaceId = scope.workspaceId;
+  const groupId = mlsService.distributionGroupFor(scope);
+  if (!groupId) throw new GraineDistributionUnavailableError(scope);
 
-  const members = (await channels().listMembers(channelId, 'workspace')).map((m) =>
+  // THE ROSTER TO ASK IS THE ROSTER THAT HOLDS THE SEED. On a private salon that is the salon's own
+  // members, and asking the community's would name an answerer who cannot even see the request -
+  // it travels on the salon's group, which they are not in.
+  const memberScope = scope.kind === 'channel' ? 'channel' : 'workspace';
+  const members = (await channels().listMembers(channelId, memberScope)).map((m) =>
     String(m.userId).toLowerCase()
   );
   return { workspaceId, groupId, roster: new Set(members) };
@@ -270,8 +276,9 @@ export async function requestCommunityHistory(workspaceId: string): Promise<void
   const held = await storage.getGraineSessionsForWorkspace(workspaceId, deviceKeyB64);
   if (held.length > 0) return;
 
-  const groupId = mlsService.distributionGroupFor(workspaceId);
-  if (!groupId) throw new GraineDistributionUnavailableError(workspaceId);
+  const scope = workspaceScope(workspaceId);
+  const groupId = mlsService.distributionGroupFor(scope);
+  if (!groupId) throw new GraineDistributionUnavailableError(scope);
 
   const roster = new Set(
     (await channels().listWorkspaceMembers(workspaceId)).map((m) => String(m.userId).toLowerCase())

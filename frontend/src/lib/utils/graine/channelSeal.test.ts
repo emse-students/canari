@@ -11,6 +11,7 @@ import {
 } from './channelSeal';
 import { GraineDistributionUnavailableError } from './seedDistribution';
 import { registerChannelWorkspace, setGraineRuntime } from './runtime';
+import type { DistributionScope } from '$lib/mls-client/distributionScope';
 
 /**
  * The seam that replaced the server-derived epoch key (WP-31/32).
@@ -42,14 +43,23 @@ function fakeStorage(seed: StoredGraineSession[] = []) {
   };
 }
 
-/** An MLS service that holds the community's distribution group at `epoch`, or does not hold it. */
+/**
+ * An MLS service holding the distribution groups at `epoch`, or holding none.
+ *
+ * BOTH SCOPES, because the salon's group is the whole point: a stub that only answered for the
+ * community would let a seal meant for a private salon fall back to the community's group and the
+ * test would still pass, which is exactly the defect.
+ */
 function fakeMls(epoch: number | null) {
   const sent: { groupId: string; bytes: Uint8Array }[] = [];
   return {
     sent,
     mls: {
-      distributionGroupFor: (ws: string) => (ws === WS ? 'g-1' : null),
-      getLocalGroups: () => (epoch === null ? [] : ['g-1']),
+      distributionGroupFor: (scope: DistributionScope) => {
+        if (scope.kind === 'workspace') return scope.workspaceId === WS ? 'g-1' : null;
+        return scope.channelId === CHANNEL ? 'g-salon' : null;
+      },
+      getLocalGroups: () => (epoch === null ? [] : ['g-1', 'g-salon']),
       getEpoch: () => epoch ?? 0,
       sendMessage: async (groupId: string, bytes: Uint8Array) => {
         sent.push({ groupId, bytes });
@@ -59,9 +69,9 @@ function fakeMls(epoch: number | null) {
   };
 }
 
-function wire(storage: IStorage, mls: ReturnType<typeof fakeMls>['mls']) {
+function wire(storage: IStorage, mls: ReturnType<typeof fakeMls>['mls'], isPrivate = false): void {
   setGraineRuntime({ storage, deviceKeyB64: 'device-key', userId: 'alice', mlsService: mls });
-  registerChannelWorkspace(CHANNEL, WS);
+  registerChannelWorkspace(CHANNEL, WS, isPrivate);
 }
 
 afterEach(() => setGraineRuntime(null));
@@ -201,5 +211,36 @@ describe('opening', () => {
 
     // An off-by-one here hides the FIRST message of every handed-over session.
     expect([...opened]).toEqual([5]);
+  });
+});
+
+describe('a private salon seals on its OWN group', () => {
+  it('sends the seed to the salon group, never the community one', async () => {
+    const { storage } = fakeStorage();
+    const { mls, sent } = fakeMls(4);
+    wire(storage, mls, true);
+
+    await sealChannelMessage(CHANNEL, new Uint8Array([1, 2, 3]));
+
+    // The one line that makes a private salon's guarantee cryptographic rather than the server
+    // declining to serve its ciphertext: the seed is never even sent to the community's roster.
+    expect(sent).toHaveLength(1);
+    expect(sent[0].groupId).toBe('g-salon');
+  });
+
+  it('refuses to seal when the salon group is not in hand, rather than using the community one', async () => {
+    const { storage } = fakeStorage();
+    const { mls, sent } = fakeMls(4);
+    // Community group held, salon group not.
+    const mlsWithoutSalon = {
+      ...(mls as unknown as Record<string, unknown>),
+      getLocalGroups: () => ['g-1'],
+    } as never;
+    wire(storage, mlsWithoutSalon, true);
+
+    await expect(sealChannelMessage(CHANNEL, new Uint8Array([1]))).rejects.toBeInstanceOf(
+      GraineDistributionUnavailableError
+    );
+    expect(sent).toHaveLength(0);
   });
 });

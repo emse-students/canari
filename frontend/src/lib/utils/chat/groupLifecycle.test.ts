@@ -8,6 +8,7 @@ import {
   type GroupServerStatus,
 } from './groupLifecycle';
 import type { GroupMeta } from '$lib/mls-client/IMlsService';
+import { workspaceScope } from '$lib/mls-client/distributionScope';
 
 describe('classifyServerStatus', () => {
   it("'absent' -> kind absent", () => {
@@ -211,7 +212,7 @@ describe('reconcileAbsentLocalGroup', () => {
   it('registers the community it just learnt about, so no later sweep asks again', async () => {
     const mls = makeMls({ groupId: 'd-1', distributionWorkspaceId: 'ws-1' });
     expect((await reconcileAbsentLocalGroup(mls, 'd-1')).action).toBe('keep');
-    expect(mls.registerDistributionGroup).toHaveBeenCalledWith('ws-1', 'd-1');
+    expect(mls.registerDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'), 'd-1');
   });
 
   it('registers nothing for a plain conversation, and lets it be forgotten', async () => {

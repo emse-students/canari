@@ -178,7 +178,7 @@ export class InternalController {
       this.reportRepo.update({ reporterId: userId }, { reporterId: '[deleted]' }),
     ]);
 
-    await this.channelService.repairWorkspacesAfterAccountDeletion(affectedWorkspaceIds);
+    await this.channelService.repairWorkspacesAfterAccountDeletion(affectedWorkspaceIds, userId);
 
     this.logger.log(
       `[INTERNAL_DELETE] done social data for user=${userId} workspaces=${affectedWorkspaceIds.length}`

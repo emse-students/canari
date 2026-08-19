@@ -18,11 +18,13 @@ import { RedisService } from '../common/redis';
 import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
 import { fetchUserDeviceCount } from '../internal/delivery.client';
 import {
+  channelScope,
   createDistributionGroup,
   deleteDistributionGroup,
   evictFromDistributionGroup,
   publishDistributionGroupInfo,
   readDistributionGroup,
+  workspaceScope,
   type DistributionGroupRef,
 } from './distribution-group.client';
 
@@ -63,29 +65,31 @@ export const MAX_LIVE_SESSION_QUERY = 500;
  * THE one rule for who may READ a channel, with no database in it.
  *
  *  - a public channel is readable by every community member;
- *  - a private one by the users listed in `allowedUsers`, plus anyone holding `workspace.manage`.
+ *  - a private one by the users listed in `allowedUsers`. That is the whole rule.
  *
  * It is pure because the same rule has to be evaluated two ways and must not be able to answer
- * differently: once for ONE actor on a guarded route ({@link ChannelService.canAccessChannel}, one
- * permission lookup), and once for EVERY member when an audience is being built
- * ({@link ChannelService.channelAudience}, roles loaded in bulk).
+ * differently: once for ONE actor on a guarded route ({@link ChannelService.canAccessChannel}) and
+ * once for EVERY member when an audience is being built
+ * ({@link ChannelService.channelAudience}).
  *
  * The rule had three separate implementations and the audience was not one of them: every channel
  * event was addressed to the whole community, so a private salon's ciphertext was pushed live to
  * members who could not open the channel. Sharing this function is what makes that unrepeatable -
  * `docs/wiki/protocols/channel-encryption.md` §11.
  *
- * @param holdsManageWorkspace whether `userId` carries `workspace.manage`, resolved by the caller
- *   from whichever source it already has
+ * **AN ADMIN NO LONGER READS A PRIVATE SALON THEY HAVE NOT JOINED** - the user's decision of
+ * 2026-08-19, and the third argument this function used to take is gone with it. Ambient access
+ * cost nothing while the seed was the community's; under a group per private salon it would make
+ * every promotion to admin a commit on EVERY private salon. An admin still SEES that such a salon
+ * exists and may add themselves to it in one act, which costs one commit at that moment and
+ * nothing afterwards - and it means a private salon's members can finally see who reads it, which
+ * ambient access made impossible.
  */
 export function channelIsReadableBy(
   channel: Pick<Channel, 'isPrivate' | 'allowedUsers'>,
-  userId: string,
-  holdsManageWorkspace: boolean
+  userId: string
 ): boolean {
   if (!channel.isPrivate) return true;
-  // Admins reach every channel, even private ones they were never explicitly added to.
-  if (holdsManageWorkspace) return true;
   return (channel.allowedUsers || []).includes(userId.trim().toLowerCase());
 }
 
@@ -158,25 +162,18 @@ export class ChannelService {
   }
 
   /**
-   * Whether ONE actor may read `channel` - {@link channelIsReadableBy} with the admin lookup done.
+   * Whether ONE actor may read `channel`. {@link channelIsReadableBy}, and nothing else.
+   *
+   * It used to spend a permission query so an admin could fall through to every private salon.
+   * That fallback went with the per-salon distribution group (see the rule's own header), which
+   * makes this both stricter and cheaper: no database at all.
    *
    * Reading/joining is independent of who may write (see canWriteToChannel).
    */
-  private async canAccessChannel(
-    channel: Channel,
-    _member: ChannelMember,
-    userId?: string
-  ): Promise<boolean> {
+  private canAccessChannel(channel: Channel, _member: ChannelMember, userId?: string): boolean {
     if (!channel.isPrivate) return true;
     if (!userId) return false;
-    const normalized = userId.trim().toLowerCase();
-    // Short-circuited so the permission query is spent only when the cheap half says nothing.
-    if (channelIsReadableBy(channel, normalized, false)) return true;
-    return this.memberHasWorkspacePermission(
-      channel.workspaceId,
-      normalized,
-      CHANNEL_PERMISSIONS.MANAGE_WORKSPACE
-    );
+    return channelIsReadableBy(channel, userId.trim().toLowerCase());
   }
 
   /**
@@ -197,22 +194,10 @@ export class ChannelService {
   private async channelAudience(channel: Channel): Promise<string[]> {
     const members = await this.memberRepo.find({ where: { workspaceId: channel.workspaceId } });
     if (!channel.isPrivate) return members.map((m) => m.userId);
-
-    const roles = await this.roleRepo.find({ where: { workspaceId: channel.workspaceId } });
-    const adminRoleIds = new Set(
-      roles
-        .filter((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))
-        .map((r) => r.id)
-    );
-    return members
-      .filter((m) =>
-        channelIsReadableBy(
-          channel,
-          m.userId,
-          (m.roleIds || []).some((id) => adminRoleIds.has(id))
-        )
-      )
-      .map((m) => m.userId);
+    // ONE query now, not two: the role load existed only to find the admins who read every private
+    // salon ambiently, and there are none. `allowedUsers` is the roster, and it is also exactly the
+    // roster of this salon's distribution group - which is what makes the two impossible to drift.
+    return members.filter((m) => channelIsReadableBy(channel, m.userId)).map((m) => m.userId);
   }
 
   /**
@@ -343,7 +328,11 @@ export class ChannelService {
     userId: string,
     reason: 'left' | 'kicked'
   ): Promise<void> {
-    const cut = await evictFromDistributionGroup(this.internalSecret, workspaceId, userId);
+    const cut = await evictFromDistributionGroup(
+      this.internalSecret,
+      workspaceScope(workspaceId),
+      userId
+    );
     if (!cut.evicted) {
       // NOT the same line as a cut that found nothing, and the difference is the whole report: a
       // community with no distribution group has no key distribution to stop, while three zeros
@@ -367,6 +356,119 @@ export class ChannelService {
   }
 
   /**
+   * Gives a PRIVATE salon its own distribution group, or returns the one it already has.
+   *
+   * BEFORE THE ROW IS CALLED PRIVATE, AND ALLOWED TO ABORT THAT. A salon marked private whose group
+   * could not be created is a salon whose seeds have nowhere to go: the client would fall back to
+   * nothing, or worse, to the community's group - which is the sharing this whole scope exists to
+   * end. Failing here leaves the salon as it was, which is the only state that stays reconcilable
+   * (the same rule `createWorkspace` and `hardDeleteWorkspace` already follow).
+   *
+   * Idempotent on the delivery side through a partial unique index, so a retry costs nothing.
+   */
+  private async ensureChannelDistributionGroup(channel: Channel): Promise<string> {
+    if (!channel.isPrivate) {
+      throw new Error(`ensureChannelDistributionGroup called for public channel ${channel.id}`);
+    }
+    const groupId = await createDistributionGroup(this.internalSecret, channelScope(channel.id));
+    if (channel.distributionGroupId !== groupId) {
+      channel.distributionGroupId = groupId;
+      await this.channelRepo.save(channel);
+    }
+    this.logger.log(`[CHANNEL_GRAINE] group ready channel=${channel.id} group=${groupId}`);
+    return groupId;
+  }
+
+  /**
+   * Tombstones a salon's own distribution group, when it stops being private or stops existing.
+   *
+   * Best-effort ON PURPOSE, unlike every other call in this file, and the asymmetry is the point: a
+   * group left behind distributes seeds to a roster nobody consults any more, which is inert, while
+   * refusing the archive over it would leave a salon nobody can delete. The line below is what
+   * makes the leftover findable - the standing rule is that a swallowed branch logs.
+   */
+  private async retireChannelDistributionGroup(channel: Channel, reason: string): Promise<void> {
+    if (!channel.distributionGroupId) return;
+    const groupId = channel.distributionGroupId;
+    try {
+      await deleteDistributionGroup(this.internalSecret, channelScope(channel.id));
+      channel.distributionGroupId = null;
+      await this.channelRepo.save(channel);
+      this.logger.log(
+        `[CHANNEL_GRAINE] group retired channel=${channel.id} group=${groupId} reason=${reason}`
+      );
+    } catch (e) {
+      this.logger.error(
+        `[CHANNEL_GRAINE] could NOT retire channel=${channel.id} group=${groupId} reason=${reason}: ` +
+          `${e instanceof Error ? e.message : String(e)} - the group outlives its salon and must be reaped by hand`
+      );
+    }
+  }
+
+  /**
+   * Stops a private salon's seeds reaching someone who may no longer open it.
+   *
+   * The salon-scoped twin of {@link cutOffKeyDistribution}, and it fails the same way: allowed to
+   * abort the removal, because a routing row left behind has nothing that would ever come back for
+   * it. A public salon has no group of its own and this is a no-op by construction.
+   */
+  private async cutOffChannelKeyDistribution(
+    channel: Channel,
+    userId: string,
+    reason: string
+  ): Promise<void> {
+    if (!channel.isPrivate || !channel.distributionGroupId) return;
+    const cut = await evictFromDistributionGroup(
+      this.internalSecret,
+      channelScope(channel.id),
+      userId
+    );
+    this.logger.log(
+      `[CHANNEL_GRAINE] key distribution cut channel=${channel.id} user=${userId.slice(0, 8)} ` +
+        `reason=${reason} evicted=${cut.evicted} memberships=${cut.memberships} routes=${cut.routes} queued=${cut.queued}`
+    );
+  }
+
+  /**
+   * Takes one user out of EVERY private salon of a community they are leaving - roster and routing
+   * both.
+   *
+   * The community's own cut says nothing about these: each private salon has its own group and its
+   * own routing rows, so a departure that only cut the community's would leave the leaver routed
+   * every seed of every private salon they were in. Run for the same reasons and at the same
+   * moment, before the membership row goes.
+   *
+   * THE ROSTER GOES TOO, and that is not tidiness. `allowedUsers` is the authorization, so a leaver
+   * still named there would have private access restored the moment they rejoined the community -
+   * and, worse, `reconcileDistributionGroupRoster` diffs the MLS tree against exactly this list, so
+   * their leaf would be re-authorised at every reconciliation and never removed. A departure that
+   * leaves the roster untouched is a departure the tree undoes.
+   *
+   * PER SALON AND SEQUENTIAL, so one failure aborts the departure rather than half of them. The
+   * count is logged even at zero - a sweep that reports nothing is a sweep nobody can tell ran.
+   */
+  private async cutOffEveryPrivateChannel(
+    workspaceId: string,
+    userId: string,
+    reason: string
+  ): Promise<void> {
+    const normalised = userId.trim().toLowerCase();
+    const privateChannels = await this.channelRepo.find({
+      where: { workspaceId, isPrivate: true },
+    });
+    const held = privateChannels.filter((c) => (c.allowedUsers || []).includes(normalised));
+    for (const channel of held) {
+      await this.cutOffChannelKeyDistribution(channel, userId, reason);
+      channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalised);
+      await this.channelRepo.save(channel);
+    }
+    this.logger.log(
+      `[CHANNEL_GRAINE] private salons cut workspace=${workspaceId} user=${userId.slice(0, 8)} ` +
+        `reason=${reason} salons=${held.length}/${privateChannels.length}`
+    );
+  }
+
+  /**
    * Deletes a community and everything under it, for real, in one transaction.
    *
    * There is not ONE foreign key on `channel_workspaces` or `channels`, so nothing cascades and
@@ -380,7 +482,10 @@ export class ChannelService {
    * nothing accesses them again.
    */
   private async hardDeleteWorkspace(workspaceId: string, reason: string): Promise<void> {
-    const channels = await this.channelRepo.find({ where: { workspaceId }, select: { id: true } });
+    const channels = await this.channelRepo.find({
+      where: { workspaceId },
+      select: { id: true, isPrivate: true, distributionGroupId: true },
+    });
     const channelIds = channels.map((c) => c.id);
 
     // BEFORE the transaction, and allowed to abort it. The distribution group lives in another
@@ -388,7 +493,15 @@ export class ChannelService {
     // failed call into an orphan group nothing names any more - the very shape of row the
     // 2026-08-17 purge had to find by hand. Failing here leaves the community intact and the whole
     // deletion retryable, which is the only outcome that stays reconcilable.
-    await deleteDistributionGroup(this.internalSecret, workspaceId);
+    await deleteDistributionGroup(this.internalSecret, workspaceScope(workspaceId));
+
+    // EVERY PRIVATE SALON HAS ITS OWN, and the community's deletion says nothing about them. The
+    // enumeration is here rather than a cascade because there is not one foreign key on `channels`
+    // either - the same reason the transaction below names every table by hand.
+    const privateGroups = channels.filter((c) => c.isPrivate && c.distributionGroupId);
+    for (const channel of privateGroups) {
+      await deleteDistributionGroup(this.internalSecret, channelScope(channel.id));
+    }
 
     await this.workspaceRepo.manager.transaction(async (mgr) => {
       await mgr.delete(ChannelMessage, { workspaceId });
@@ -400,7 +513,8 @@ export class ChannelService {
     });
 
     this.logger.log(
-      `[WORKSPACE] hard delete workspace=${workspaceId} channels=${channelIds.length} reason=${reason}`
+      `[WORKSPACE] hard delete workspace=${workspaceId} channels=${channelIds.length} ` +
+        `privateGroups=${privateGroups.length} reason=${reason}`
     );
   }
 
@@ -419,10 +533,20 @@ export class ChannelService {
    *
    * Per workspace isolation: one community failing to repair must not strand the others, and a
    * swallowed branch that logs nothing would leave no trace at all of what was skipped.
+   *
+   * `deletedUserId` is carried because the private salons still name them. Their `channel_members`
+   * row is already gone when this runs, but `allowedUsers` is a separate list and nothing above has
+   * touched it - and `reconcileDistributionGroupRoster` reads exactly that list, so a deleted
+   * account left in it keeps an MLS leaf authorised forever, on a group whose seeds nobody can now
+   * be routed. The repair is the only place left that knows who it was.
    */
-  async repairWorkspacesAfterAccountDeletion(workspaceIds: string[]): Promise<void> {
+  async repairWorkspacesAfterAccountDeletion(
+    workspaceIds: string[],
+    deletedUserId: string
+  ): Promise<void> {
     for (const workspaceId of workspaceIds) {
       try {
+        await this.cutOffEveryPrivateChannel(workspaceId, deletedUserId, 'account_deleted');
         await this.repairOneWorkspaceAfterAccountDeletion(workspaceId);
       } catch (err) {
         this.logger.error(
@@ -812,7 +936,10 @@ export class ChannelService {
     // half-created community would hold its slug hostage while being unusable, and the migration
     // to Graine is a clean cut - there is no population of older communities to be gentle with.
     try {
-      savedWs.distributionGroupId = await createDistributionGroup(this.internalSecret, savedWs.id);
+      savedWs.distributionGroupId = await createDistributionGroup(
+        this.internalSecret,
+        workspaceScope(savedWs.id)
+      );
       await this.workspaceRepo.save(savedWs);
     } catch (e) {
       await this.workspaceRepo.delete({ id: savedWs.id });
@@ -905,7 +1032,7 @@ export class ChannelService {
   ): Promise<DistributionGroupRef> {
     await this.assertWorkspaceMember(workspaceId, userId);
 
-    const ref = await readDistributionGroup(this.internalSecret, workspaceId);
+    const ref = await readDistributionGroup(this.internalSecret, workspaceScope(workspaceId));
     if (!ref) {
       // Every community created since WP-21 has one, and the clean cut leaves no older population.
       // So this is not a state to repair silently: it is a community that cannot carry seeds, and
@@ -939,7 +1066,7 @@ export class ChannelService {
 
     const result = await publishDistributionGroupInfo(
       this.internalSecret,
-      workspaceId,
+      workspaceScope(workspaceId),
       groupInfo,
       baseEpoch
     );
@@ -947,6 +1074,168 @@ export class ChannelService {
       `[DISTRIBUTION_GROUP] published workspace=${workspaceId} user=${userId.slice(0, 8)} epoch=${baseEpoch} stored=${result.stored}`
     );
     return result;
+  }
+
+  /**
+   * The channel a caller may read, or a refusal - the gate in front of every salon-scoped seed
+   * route.
+   *
+   * PRIVATE ONLY, and asking about a public salon is refused rather than answered with the
+   * community's group. A public salon's audience IS the community, so it carries no group of its
+   * own; answering with the community's would let a client believe a per-salon roster exists where
+   * none does, which is precisely the confusion this scope was added to end. The refusal is a 400,
+   * not a 403: nothing about the caller is wrong.
+   */
+  private async assertPrivateChannelReader(channelId: string, userId: string): Promise<Channel> {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId, archived: false } });
+    if (!channel) throw new NotFoundException('Channel not found');
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId },
+    });
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
+      this.logger.warn(
+        `[CHANNEL_GRAINE] refused channel=${channelId} user=${userId.slice(0, 8)} - no access`
+      );
+      throw new ForbiddenException('No access to this channel');
+    }
+
+    if (!channel.isPrivate) {
+      throw new BadRequestException({
+        code: 'CHANNEL_HAS_NO_DISTRIBUTION_GROUP',
+        message: 'A public salon uses the community distribution group.',
+      });
+    }
+    return channel;
+  }
+
+  /**
+   * Hands a private salon's reader its OWN distribution group and the latest GroupInfo on it.
+   *
+   * The salon-scoped twin of {@link getDistributionGroupForMember}, and the reason the roster is
+   * finite: only the people in `allowedUsers` - plus the admins who have explicitly joined - ever
+   * see this GroupInfo, and the GroupInfo IS the capability to external-join. An admin who has not
+   * joined is refused here exactly like anyone else, which is what stops `workspace.manage` from
+   * being a standing key to every private salon.
+   */
+  async getChannelDistributionGroupForMember(
+    channelId: string,
+    userId: string
+  ): Promise<DistributionGroupRef> {
+    await this.assertPrivateChannelReader(channelId, userId);
+
+    const ref = await readDistributionGroup(this.internalSecret, channelScope(channelId));
+    if (!ref) {
+      // Every private salon is given one at birth and cannot be created without it, so this is not
+      // a state to repair silently: it is a salon that cannot carry seeds.
+      this.logger.error(
+        `[CHANNEL_GRAINE] channel=${channelId} is private with NO distribution group - it cannot be encrypted`
+      );
+      throw new NotFoundException({
+        code: 'CHANNEL_HAS_NO_DISTRIBUTION_GROUP',
+        message: 'This salon has no key distribution group.',
+      });
+    }
+
+    this.logger.log(
+      `[CHANNEL_GRAINE] served channel=${channelId} user=${userId.slice(0, 8)} group=${ref.groupId} published=${ref.groupInfo !== null}`
+    );
+    return ref;
+  }
+
+  /** Publishes a reader's freshly committed GroupInfo for a private salon's distribution group. */
+  async publishChannelDistributionGroupInfoForMember(
+    channelId: string,
+    userId: string,
+    groupInfo: string,
+    baseEpoch: number
+  ): Promise<{ stored: boolean }> {
+    await this.assertPrivateChannelReader(channelId, userId);
+
+    const result = await publishDistributionGroupInfo(
+      this.internalSecret,
+      channelScope(channelId),
+      groupInfo,
+      baseEpoch
+    );
+    this.logger.log(
+      `[CHANNEL_GRAINE] published channel=${channelId} user=${userId.slice(0, 8)} epoch=${baseEpoch} stored=${result.stored}`
+    );
+    return result;
+  }
+
+  /**
+   * Puts an administrator into a private salon they can see but cannot read, ON PURPOSE and BY
+   * NAME.
+   *
+   * WHY THIS EXISTS AT ALL. `workspace.manage` used to be a silent bypass: an admin could read
+   * every private salon and appeared in none of their rosters. That made the roster infinite - it
+   * was `allowedUsers` plus whoever happened to hold an admin role at the time - and an infinite
+   * roster cannot be an MLS group, because every seed would have to be sealed to a set that
+   * changes without anyone touching the salon. Making the join EXPLICIT is what makes the set
+   * finite and the guarantee cryptographic rather than server-enforced.
+   *
+   * NO SYSTEM MESSAGE, on the user's decision of 2026-08-19: the admin shows up in the member list
+   * and that is the whole disclosure. A message in the transcript would be a permanent record of a
+   * moderation act in a conversation the moderator is there to read, which is a different product
+   * decision from the one being made here.
+   *
+   * Idempotent: an admin already in the roster gets the same answer and no second event.
+   */
+  async joinPrivateChannelAsAdmin(channelId: string, actorUserId: string) {
+    const channel = await this.channelRepo.findOne({ where: { id: channelId, archived: false } });
+    if (!channel) throw new NotFoundException('Channel not found');
+    if (!channel.isPrivate) {
+      throw new BadRequestException({
+        code: 'CHANNEL_IS_PUBLIC',
+        message: 'A public salon is already readable by every member.',
+      });
+    }
+
+    const member = await this.memberRepo.findOne({
+      where: { workspaceId: channel.workspaceId, userId: actorUserId },
+    });
+    if (!member) throw new ForbiddenException('Not a member of this workspace');
+
+    const roles = member.roleIds?.length
+      ? await this.roleRepo.find({ where: { id: In(member.roleIds) } })
+      : [];
+    if (!roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE))) {
+      this.logger.warn(
+        `[CHANNEL_GRAINE] refused admin join channel=${channelId} user=${actorUserId.slice(0, 8)} - no MANAGE_WORKSPACE`
+      );
+      throw new ForbiddenException('Missing MANAGE_WORKSPACE permission');
+    }
+
+    const normalized = actorUserId.trim().toLowerCase();
+    if ((channel.allowedUsers || []).includes(normalized)) {
+      return { success: true, alreadyMember: true };
+    }
+
+    // GRANTED BEFORE ANNOUNCED, like every other grant here: the audience is derived from
+    // `allowedUsers`, so the joiner would otherwise be the one person the event misses.
+    channel.allowedUsers = [...(channel.allowedUsers || []), normalized];
+    await this.channelRepo.save(channel);
+
+    const audience = await this.channelAudience(channel);
+    await this.redis.publishChannelEvent(
+      'channel.member.joined',
+      {
+        channelId,
+        channelName: channel.name,
+        workspaceId: channel.workspaceId,
+        visibility: 'private',
+        roleName: 'Administrateur',
+        joinedBy: actorUserId,
+        invitedBy: actorUserId,
+      },
+      audience
+    );
+
+    this.logger.log(
+      `[CHANNEL_GRAINE] admin joined channel=${channelId} user=${actorUserId.slice(0, 8)} roster=${channel.allowedUsers.length}`
+    );
+    return { success: true, alreadyMember: false };
   }
 
   /**
@@ -973,26 +1262,9 @@ export class ChannelService {
     const allChannels = await this.channelRepo.find({
       where: { workspaceId: ws.id, archived: false },
     });
-    const channels: Array<{
-      id: string;
-      workspaceId: string;
-      name: string;
-      visibility: 'public' | 'private';
-      writePolicy: ChannelWritePolicy;
-    }> = [];
-    for (const ch of allChannels) {
-      if (!(await this.canAccessChannel(ch, viewerMember, normalizedUserId))) continue;
-      // Projected field by field, never the entity: a channel row carries columns no caller needs,
-      // and serializing the entity handed every one of them to the client.
-      channels.push({
-        id: ch.id,
-        workspaceId: ch.workspaceId,
-        name: ch.name,
-        visibility: ch.isPrivate ? 'private' : 'public',
-        writePolicy: ch.writePolicy ?? 'everyone',
-      });
-    }
-
+    // RESOLVED BEFORE THE CHANNEL LOOP, because it now decides what goes IN it. An admin has no
+    // access to a private salon they have not joined, so without this they would not see it exists
+    // and could never join it - a capability nobody can reach is not a capability.
     let viewerCanManage = false;
     let viewerCanModerate = false;
     if (viewerMember.roleIds?.length) {
@@ -1006,6 +1278,34 @@ export class ChannelService {
       );
       viewerCanManage = viewerMember.roleIds.some((id) => manageRoleIds.has(id));
       viewerCanModerate = viewerMember.roleIds.some((id) => moderateRoleIds.has(id));
+    }
+
+    const channels: Array<{
+      id: string;
+      workspaceId: string;
+      name: string;
+      visibility: 'public' | 'private';
+      writePolicy: ChannelWritePolicy;
+      viewerHasAccess: boolean;
+    }> = [];
+    for (const ch of allChannels) {
+      const hasAccess = this.canAccessChannel(ch, viewerMember, normalizedUserId);
+      // An admin is shown a private salon they have not joined - its NAME and nothing else. No
+      // message, no roster, no seed: every one of those goes through `canAccessChannel`, which
+      // still says no. This row exists so the join is reachable, and it is the only thing that
+      // leaks - a salon's existence, to someone who could add themselves to it in one click
+      // anyway.
+      if (!hasAccess && !viewerCanManage) continue;
+      // Projected field by field, never the entity: a channel row carries columns no caller needs,
+      // and serializing the entity handed every one of them to the client.
+      channels.push({
+        id: ch.id,
+        workspaceId: ch.workspaceId,
+        name: ch.name,
+        visibility: ch.isPrivate ? 'private' : 'public',
+        writePolicy: ch.writePolicy ?? 'everyone',
+        viewerHasAccess: hasAccess,
+      });
     }
 
     return { workspace: { ...ws, viewerCanManage, viewerCanModerate }, channels, members, roles };
@@ -1158,6 +1458,22 @@ export class ChannelService {
     });
     const savedChannel = await this.channelRepo.save(channel);
 
+    if (isPrivate) {
+      // UNWOUND ON FAILURE, exactly as `createWorkspace` unwinds a community whose distribution
+      // group could not be minted. A salon marked private with no group of its own is a salon whose
+      // seeds have nowhere to go, and the row would sit there looking usable.
+      try {
+        await this.ensureChannelDistributionGroup(savedChannel);
+      } catch (e) {
+        await this.channelRepo.delete({ id: savedChannel.id });
+        this.logger.error(
+          `[CHANNEL_GRAINE] private salon unwound channel=${savedChannel.id} - no distribution group: ` +
+            `${e instanceof Error ? e.message : String(e)}`
+        );
+        throw e;
+      }
+    }
+
     return {
       id: savedChannel.id,
       workspaceId: savedChannel.workspaceId,
@@ -1268,6 +1584,7 @@ export class ChannelService {
     await this.assertRemovalKeepsAnAdmin(workspaceId, userId);
 
     await this.cutOffKeyDistribution(workspaceId, userId, 'left');
+    await this.cutOffEveryPrivateChannel(workspaceId, userId, 'left_workspace');
 
     await this.memberRepo.delete({ workspaceId, userId });
 
@@ -1410,7 +1727,7 @@ export class ChannelService {
     // `allowedUsers` IS the private salon's roster. Being in the community was enough to read it,
     // which handed its membership to people who cannot open the salon - the same question
     // `listChannelMembers` already asks one method away.
-    if (!(await this.canAccessChannel(channel, member, actorUserId))) {
+    if (!this.canAccessChannel(channel, member, actorUserId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -1449,12 +1766,37 @@ export class ChannelService {
     }
     if (!hasPerm) throw new ForbiddenException('Missing MANAGE_CHANNEL permission');
 
+    // WHO LOSES ACCESS, COMPUTED BEFORE THE ROW CHANGES. After the save the old roster is gone, and
+    // a member dropped from a private salon would keep being routed its seeds with nothing left
+    // anywhere to say they should not be.
+    const wasPrivate = channel.isPrivate;
+    const previousAllowed = new Set(channel.allowedUsers || []);
+    const nextAllowed = isPrivate ? allowedUserIds.map((u) => u.trim().toLowerCase()) : [];
+    // ONLY WHILE IT STAYS PRIVATE. A salon going public loses its group entirely a few lines below,
+    // and that retirement supersedes every per-user cut - evicting people who are about to regain
+    // access as ordinary community members would be work with no reader.
+    const dropped =
+      wasPrivate && isPrivate ? [...previousAllowed].filter((u) => !nextAllowed.includes(u)) : [];
+
+    // BEFORE THE SAVE, and allowed to abort it - the same asymmetry as a community departure. Going
+    // private without a group would leave the salon's seeds nowhere to go; cutting someone off
+    // after the row already says they are out is a routing row nothing comes back for.
+    if (isPrivate && !wasPrivate) await this.ensureChannelDistributionGroup(channel);
+    for (const userId of dropped) {
+      await this.cutOffChannelKeyDistribution(channel, userId, 'access_updated');
+    }
+
     channel.isPrivate = isPrivate;
-    channel.allowedUsers = isPrivate ? allowedUserIds.map((u) => u.trim().toLowerCase()) : [];
+    channel.allowedUsers = nextAllowed;
     if (writePolicy) {
       channel.writePolicy = writePolicy;
     }
     await this.channelRepo.save(channel);
+
+    // AFTER the save, and best-effort: the salon is public now, so its own group distributes to a
+    // roster nothing consults - inert if it survives, and refusing the change over it would be
+    // worse. The community's group takes over from here.
+    if (!isPrivate && wasPrivate) await this.retireChannelDistributionGroup(channel, 'made_public');
 
     return {
       ok: true,
@@ -1492,6 +1834,12 @@ export class ChannelService {
     // Read BEFORE the archive flag is saved would make no difference here - `channelAudience`
     // reads membership and access, neither of which archiving touches.
     const audience = await this.channelAudience(channel);
+
+    // ARCHIVING IS HOW A SALON ENDS - there is no route back, so this is the last moment anything
+    // names its group. Best-effort like the public switch: a group that outlives its salon
+    // distributes to a roster nothing consults, while refusing the archive over it would leave a
+    // salon nobody can remove.
+    await this.retireChannelDistributionGroup(channel, 'archived');
     await this.redis.publishChannelEvent(
       'channel.deleted',
       { channelId, workspaceId: channel.workspaceId },
@@ -1501,24 +1849,54 @@ export class ChannelService {
     return { success: true };
   }
 
-  /** Lists all non-archived channels the user can access in a workspace. */
+  /**
+   * Lists the non-archived channels a user may see in a workspace.
+   *
+   * MAY SEE, not may read, and the two stopped being the same thing on 2026-08-19: an
+   * administrator is shown a private salon they have not joined - its name, its `viewerHasAccess:
+   * false`, and nothing else. Every other route still refuses them its messages, its roster and its
+   * seeds, because all of those go through `canAccessChannel`, which says no until they join.
+   *
+   * The row exists so the join is REACHABLE. Without it, making the admin bypass explicit would
+   * have made private salons invisible to the only people who can moderate them - and what leaks
+   * is a salon's existence, to someone who can add themselves to it in one click anyway.
+   *
+   * The same projection as `getWorkspaceBySlug` and deliberately so: two lists of the same channels
+   * differing in one field is a client that renders a salon one way through the sidebar and another
+   * through the community page.
+   */
   async listChannelsForUser(workspaceId: string, userId: string) {
     const member = await this.memberRepo.findOne({ where: { workspaceId, userId } });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
 
+    const viewerCanManage = await this.memberHasWorkspaceManage(member);
     const channels = await this.channelRepo.find({ where: { workspaceId, archived: false } });
-    const accessible: typeof channels = [];
-    for (const ch of channels) {
-      if (await this.canAccessChannel(ch, member, userId)) {
-        accessible.push(ch);
-      }
+    const visible: Array<{
+      id: string;
+      workspaceId: string;
+      name: string;
+      visibility: 'public' | 'private';
+      viewerHasAccess: boolean;
+    }> = [];
+    for (const channel of channels) {
+      const hasAccess = this.canAccessChannel(channel, member, userId);
+      if (!hasAccess && !viewerCanManage) continue;
+      visible.push({
+        id: channel.id,
+        workspaceId: channel.workspaceId,
+        name: channel.name,
+        visibility: channel.isPrivate ? 'private' : 'public',
+        viewerHasAccess: hasAccess,
+      });
     }
-    return accessible.map((channel) => ({
-      id: channel.id,
-      workspaceId: channel.workspaceId,
-      name: channel.name,
-      visibility: channel.isPrivate ? 'private' : 'public',
-    }));
+    return visible;
+  }
+
+  /** True when the member holds a role carrying MANAGE_WORKSPACE. */
+  private async memberHasWorkspaceManage(member: ChannelMember): Promise<boolean> {
+    if (!member.roleIds?.length) return false;
+    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
+    return roles.some((r) => r.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE));
   }
 
   /** Adds a user to a workspace channel. Creates the workspace membership with the default Member role if this is their first channel in the workspace. */
@@ -1723,6 +2101,11 @@ export class ChannelService {
       );
     }
 
+    // BEFORE the roster is written, and allowed to abort the departure - the same asymmetry as a
+    // community's. Once `allowedUsers` no longer names them, nothing left anywhere would ever go
+    // looking for their routing rows again.
+    await this.cutOffChannelKeyDistribution(channel, input.userId, 'left_channel');
+
     // Access is the only thing this revokes. Nothing here rotates a key: a channel message is
     // sealed under a Graine session, and what shuts the leaver out is the senders minting a fresh
     // session on the next send - which they do because a departure is what rotates a Graine.
@@ -1766,6 +2149,7 @@ export class ChannelService {
     await this.assertRemovalKeepsAnAdmin(workspaceId, targetUserId);
 
     await this.cutOffKeyDistribution(workspaceId, targetUserId, 'kicked');
+    await this.cutOffEveryPrivateChannel(workspaceId, targetUserId, 'kicked_from_workspace');
 
     await this.memberRepo.delete({ workspaceId, userId: targetUserId });
 
@@ -1909,6 +2293,9 @@ export class ChannelService {
 
     // Remove from private channel's allowedUsers list
     if (channel.isPrivate) {
+      // The cut goes first and may abort the removal: after the save there is no row left naming
+      // this person for the salon, so a routing row surviving the failure would be unfindable.
+      await this.cutOffChannelKeyDistribution(channel, targetUserId, 'removed_from_channel');
       const normalized = targetUserId.trim().toLowerCase();
       channel.allowedUsers = (channel.allowedUsers || []).filter((u) => u !== normalized);
       await this.channelRepo.save(channel);
@@ -1961,7 +2348,7 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId: actorUserId },
     });
     if (!actorMember) throw new ForbiddenException('Not a member of this workspace');
-    if (scope === 'channel' && !(await this.canAccessChannel(channel, actorMember, actorUserId))) {
+    if (scope === 'channel' && !this.canAccessChannel(channel, actorMember, actorUserId)) {
       throw new ForbiddenException('Not allowed to read this channel');
     }
 
@@ -2064,7 +2451,7 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId: input.senderId },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
-    if (!(await this.canAccessChannel(channel, member, input.senderId))) {
+    if (!this.canAccessChannel(channel, member, input.senderId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
     // Read access is not enough: the channel's writePolicy may restrict posting
@@ -2277,7 +2664,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
     if (!this.internalSecret) return;
@@ -2350,7 +2737,7 @@ export class ChannelService {
       where: { workspaceId: channel.workspaceId, userId },
     });
     if (!member) throw new ForbiddenException('Not a member of this workspace');
-    if (!(await this.canAccessChannel(channel, member, userId))) {
+    if (!this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -2391,7 +2778,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -2416,7 +2803,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -2456,7 +2843,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -2531,7 +2918,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -2597,7 +2984,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -2633,7 +3020,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
@@ -2659,7 +3046,7 @@ export class ChannelService {
     const member = await this.memberRepo.findOne({
       where: { workspaceId: channel.workspaceId, userId },
     });
-    if (!member || !(await this.canAccessChannel(channel, member, userId))) {
+    if (!member || !this.canAccessChannel(channel, member, userId)) {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 

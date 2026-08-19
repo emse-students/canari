@@ -1,4 +1,5 @@
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
+import type { DistributionScope } from '$lib/mls-client/distributionScope';
 
 export interface CreateWorkspaceDto {
   slug: string;
@@ -78,6 +79,14 @@ export interface ChannelDto {
   workspaceId: string;
   name: string;
   visibility?: 'public' | 'private';
+  /**
+   * Whether the viewer may actually READ this salon, as opposed to merely seeing that it exists.
+   *
+   * False only ever appears on a private salon an administrator has not joined - the row that makes
+   * the join reachable. Optional because the routes that create a channel answer with the row they
+   * just wrote, where the question does not arise: absent means "yes", never "unknown".
+   */
+  viewerHasAccess?: boolean;
 }
 
 export type CreateChannelResultDto = ChannelDto;
@@ -300,47 +309,76 @@ export class ChannelService {
   }
 
   /**
-   * The community's Graine key-distribution group, and the latest GroupInfo published on it.
+   * The base URL of one scope's distribution-group routes.
+   *
+   * TWO ROUTES, ONE SPELLING. A community's group hangs off the community and a private salon's off
+   * the salon, and the two are authorized by different facts - community membership on one side,
+   * `canAccessChannel` on the other. Built here so a caller cannot pick the wrong one by
+   * concatenating a path, which is the mistake that would hand a salon's caller the community's
+   * group and undo the whole point of the salon scope.
+   */
+  private distributionGroupUrl(scope: DistributionScope): string {
+    return scope.kind === 'workspace'
+      ? `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(scope.workspaceId)}/distribution-group`
+      : `${this.baseUrl}/api/channels/${encodeURIComponent(scope.channelId)}/distribution-group`;
+  }
+
+  /**
+   * A scope's Graine key-distribution group, and the latest GroupInfo published on it.
    *
    * Served by social-service rather than chat-delivery, and that is not an arbitrary placement: the
    * GroupInfo IS the capability to enter this group and read every seed on it, so the answer is
-   * authorized by COMMUNITY membership - a fact only social-service holds. See
+   * authorized by membership of the scope - a fact only social-service holds. See
    * `docs/wiki/protocols/channel-encryption.md`.
    *
    * `groupInfo: null` means the MLS group has not been initialised yet. The caller seeing it is the
-   * first member in and is the one that creates it - a state to act on, never an error. A community
-   * with no group at all is a `ChannelApiError` carrying `WORKSPACE_HAS_NO_DISTRIBUTION_GROUP`,
-   * because those two need opposite responses.
+   * first member in and is the one that creates it - a state to act on, never an error. A scope
+   * with no group at all is a `ChannelApiError` carrying `WORKSPACE_HAS_NO_DISTRIBUTION_GROUP` or
+   * `CHANNEL_HAS_NO_DISTRIBUTION_GROUP`, because those need a different response again.
    */
-  async getDistributionGroup(workspaceId: string): Promise<DistributionGroupDto> {
-    const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/distribution-group`
-    );
+  async getDistributionGroup(scope: DistributionScope): Promise<DistributionGroupDto> {
+    const res = await this.fetchWithAuth(this.distributionGroupUrl(scope));
     await this.handleError(res);
     return res.json() as Promise<DistributionGroupDto>;
   }
 
   /**
-   * Publishes a GroupInfo this device just committed on the community's distribution group.
+   * Publishes a GroupInfo this device just committed on a scope's distribution group.
    *
    * Monotonic server-side: `{ stored: false }` means a newer base epoch is already published and
    * this one was declined, which is the mechanism working, not a failure.
    */
   async publishDistributionGroupInfo(
-    workspaceId: string,
+    scope: DistributionScope,
     groupInfoBase64: string,
     baseEpoch: number
   ): Promise<{ stored: boolean }> {
-    const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/workspaces/${encodeURIComponent(workspaceId)}/distribution-group/group-info`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupInfo: groupInfoBase64, baseEpoch }),
-      }
-    );
+    const res = await this.fetchWithAuth(`${this.distributionGroupUrl(scope)}/group-info`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupInfo: groupInfoBase64, baseEpoch }),
+    });
     await this.handleError(res);
     return res.json() as Promise<{ stored: boolean }>;
+  }
+
+  /**
+   * Puts the calling administrator into a private salon they can see but cannot read.
+   *
+   * The capability an admin has instead of a bypass: `workspace.manage` shows them the salon
+   * EXISTS, and this is how they enter it - visibly, in its member list, and with no system message
+   * in the transcript. Until they call it, no route hands them the salon's GroupInfo, which is what
+   * keeps the salon's MLS roster finite.
+   */
+  async joinPrivateChannelAsAdmin(
+    channelId: string
+  ): Promise<{ success: boolean; alreadyMember: boolean }> {
+    const cid = this.normalizeChannelId(channelId);
+    const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/join-as-admin`, {
+      method: 'POST',
+    });
+    await this.handleError(res);
+    return res.json() as Promise<{ success: boolean; alreadyMember: boolean }>;
   }
 
   async listUserWorkspaces() {

@@ -54,7 +54,7 @@ beforeEach(() => {
       distributionGroupFor: () => 'dist-group',
     } as never,
   });
-  registerChannelWorkspace('chan-1', 'ws-1');
+  registerChannelWorkspace('chan-1', 'ws-1', false);
 });
 
 afterEach(() => {

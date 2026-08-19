@@ -1,4 +1,5 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import type { StoredGraineSession } from '$lib/db/types';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { encodeAppMessage, mkGraine } from '$lib/proto/codec';
@@ -13,11 +14,11 @@ import { fromBase64 } from '$lib/utils/hex';
  * (`docs/wiki/protocols/channel-encryption.md`).
  */
 
-/** Thrown when a seed cannot be distributed because the community's group is not in hand. */
+/** Thrown when a seed cannot be distributed because the scope's group is not in hand. */
 export class GraineDistributionUnavailableError extends Error {
-  constructor(readonly workspaceId: string) {
+  constructor(readonly scope: DistributionScope) {
     super(
-      `[GRAINE] community ${workspaceId.slice(0, 8)} has no distribution group on this device - ` +
+      `[GRAINE] ${scopeLabel(scope)} has no distribution group on this device - ` +
         `nothing can be sealed for it until the join lands`
     );
     this.name = 'GraineDistributionUnavailableError';
@@ -25,19 +26,23 @@ export class GraineDistributionUnavailableError extends Error {
 }
 
 /**
- * The MLS epoch of a community's distribution group, or null when this device has not joined it.
+ * The MLS epoch of a scope's distribution group, or null when this device has not joined it.
  *
  * Null is a real answer and never a zero: epoch 0 is a group that exists and has committed
  * nothing, which is a very different thing from a group this device cannot see.
  */
-export function distributionEpochFor(mlsService: IMlsService, workspaceId: string): number | null {
-  const groupId = mlsService.distributionGroupFor(workspaceId);
+export function distributionEpochFor(
+  mlsService: IMlsService,
+  scope: DistributionScope
+): number | null {
+  const groupId = mlsService.distributionGroupFor(scope);
   if (!groupId || !mlsService.getLocalGroups().includes(groupId)) return null;
   return mlsService.getEpoch(groupId);
 }
 
 /**
- * Sends `session`'s seed to every member of `workspaceId`.
+ * Sends `session`'s seed to everyone on `scope`'s roster - a whole community, or the people who may
+ * open one private salon.
  *
  * **Silent and durable** ({@link DELIVERY.keyMaterial}). Silent because it is key material and
  * there is nothing to show; durable because a member offline when it went out has no other way to
@@ -50,11 +55,11 @@ export function distributionEpochFor(mlsService: IMlsService, workspaceId: strin
  */
 export async function distributeGraineSeed(
   mlsService: IMlsService,
-  workspaceId: string,
+  scope: DistributionScope,
   session: StoredGraineSession
 ): Promise<void> {
-  const groupId = mlsService.distributionGroupFor(workspaceId);
-  if (!groupId) throw new GraineDistributionUnavailableError(workspaceId);
+  const groupId = mlsService.distributionGroupFor(scope);
+  if (!groupId) throw new GraineDistributionUnavailableError(scope);
 
   const frame = encodeAppMessage({
     ...mkGraine({

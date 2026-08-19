@@ -1,6 +1,11 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
+import {
+  channelScope,
+  workspaceScope,
+  type DistributionScope,
+} from '$lib/mls-client/distributionScope';
 
 /**
  * What the Graine layer needs from the session, injected once rather than imported.
@@ -32,8 +37,16 @@ export interface GraineRuntime {
 
 let runtime: GraineRuntime | null = null;
 
-/** Which community each channel belongs to - the one fact the send path cannot derive locally. */
-const workspaceByChannel = new Map<string, string>();
+/**
+ * Which distribution group each channel's seeds travel on - the one fact the send path cannot
+ * derive locally.
+ *
+ * The value is a SCOPE and not a community id, because since 2026-08-19 the answer differs per
+ * salon: a public one rides the community's group, a private one has its own. Both facts are
+ * learned at the same moment, from the same DTO, so storing one and re-deriving the other at the
+ * send site would mean the send site asking a question the loader had already answered.
+ */
+const scopeByChannel = new Map<string, DistributionScope>();
 
 /**
  * Installs (or, with null, tears down) the session's Graine wiring.
@@ -46,7 +59,7 @@ const workspaceByChannel = new Map<string, string>();
 export function setGraineRuntime(next: GraineRuntime | null): void {
   runtime = next ? { ...next, userId: next.userId.toLowerCase() } : null;
   if (!next) {
-    workspaceByChannel.clear();
+    scopeByChannel.clear();
     historyVisibilityByWorkspace.clear();
     seedCache.clear();
     repairListener = null;
@@ -164,19 +177,44 @@ export function isGraineReady(): boolean {
 }
 
 /**
- * Records that `channelId` belongs to `workspaceId`.
+ * Records that `channelId` belongs to `workspaceId`, and which group its seeds travel on.
  *
  * Called wherever a community's channels are loaded. The membership is a fact of the data model
  * and not context the caller should re-derive: a channel id alone reaches every send site here,
  * and the alternative was threading a workspace id through every one of them.
+ *
+ * `isPrivate` comes from the same DTO and decides the scope. It is REQUIRED rather than defaulted,
+ * deliberately: a default would be a guess about which roster a seed is sealed to, and the wrong
+ * guess in the safe-looking direction (public) is the one that hands a private salon's seed to the
+ * whole community.
  */
-export function registerChannelWorkspace(channelId: string, workspaceId: string): void {
-  workspaceByChannel.set(rawChannelId(channelId), workspaceId);
+export function registerChannelWorkspace(
+  channelId: string,
+  workspaceId: string,
+  isPrivate: boolean
+): void {
+  const channel = rawChannelId(channelId);
+  scopeByChannel.set(
+    channel,
+    isPrivate ? channelScope(workspaceId, channel) : workspaceScope(workspaceId)
+  );
 }
 
 /** The community a channel belongs to, or null when this session has never loaded it. */
 export function workspaceForChannel(channelId: string): string | null {
-  return workspaceByChannel.get(rawChannelId(channelId)) ?? null;
+  return scopeByChannel.get(rawChannelId(channelId))?.workspaceId ?? null;
+}
+
+/**
+ * The distribution group a channel's seeds travel on, or null when this session has never loaded
+ * it.
+ *
+ * The whole reason a private salon's guarantee is cryptographic: the seed goes out on a group whose
+ * roster is the salon's, so nobody outside it is even sent the material, rather than being sent it
+ * and refused the ciphertext.
+ */
+export function scopeForChannel(channelId: string): DistributionScope | null {
+  return scopeByChannel.get(rawChannelId(channelId)) ?? null;
 }
 
 /**
@@ -196,7 +234,7 @@ export function forgetWorkspaceGraineState(
   channelIds: readonly string[]
 ): void {
   for (const sessionId of sessionIds) seedCache.delete(sessionId);
-  for (const channelId of channelIds) workspaceByChannel.delete(rawChannelId(channelId));
+  for (const channelId of channelIds) scopeByChannel.delete(rawChannelId(channelId));
   historyVisibilityByWorkspace.delete(workspaceId);
 }
 

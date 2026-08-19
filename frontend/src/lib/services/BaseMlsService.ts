@@ -38,6 +38,7 @@ import {
 } from '$lib/mls-client/catchupBenchmark';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
+import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import {
   reportUnackedFrames,
   takeGroupsAwaiting,
@@ -117,15 +118,20 @@ export abstract class BaseMlsService implements IMlsService {
 
   // ── Graine key-distribution groups ────────────────────────────────────────
   /**
-   * Group id -> community id, for the ONE group per community that carries channel seeds.
+   * Group id -> the roster it carries: a community, or ONE private salon of it.
    *
    * It exists because a distribution group's external-join base does not live where every other
    * group's does. Chat-delivery gates `group-info` on a `dm_group_members` row, and this group has
-   * none by construction - it is entered by external commit and authorized by COMMUNITY membership,
-   * a fact only social-service holds. So the base is fetched and published through social-service,
-   * and this map is how the MLS layer knows which of the two it is looking at without asking.
+   * none by construction - it is entered by external commit and authorized by membership of the
+   * scope, a fact only social-service holds. So the base is fetched and published through
+   * social-service, and this map is how the MLS layer knows which of the two it is looking at
+   * without asking.
+   *
+   * The value is the whole scope and not a workspace id: since 2026-08-19 a private salon has its
+   * own group, and a map that could only name a community would have had to guess which of the two
+   * a group was - the guess being exactly the sharing the salon scope removes.
    */
-  private readonly distributionWorkspaceByGroup = new Map<string, string>();
+  private readonly distributionScopeByGroup = new Map<string, DistributionScope>();
 
   /** Set once at wiring time; see {@link setDistributionGroupInfoTransport}. */
   private distributionGroupInfo: DistributionGroupInfoTransport | null = null;
@@ -1740,23 +1746,23 @@ export abstract class BaseMlsService implements IMlsService {
    * may momentarily get a one-epoch-stale base and retry).
    */
   /**
-   * Declares `groupId` to be the Graine key-distribution group of community `workspaceId`.
+   * Declares `groupId` to be the Graine key-distribution group of `scope`.
    *
    * Called once the client has learned the pair from social-service. From here on, every decision
    * that differs for this group - where its external-join base lives, and that its frames are seeds
    * rather than a conversation - is taken from THIS fact rather than rediscovered.
    */
-  registerDistributionGroup(workspaceId: string, groupId: string): void {
-    this.distributionWorkspaceByGroup.set(groupId, workspaceId);
+  registerDistributionGroup(scope: DistributionScope, groupId: string): void {
+    this.distributionScopeByGroup.set(groupId, scope);
   }
 
   /** True when `groupId` carries channel seeds and must never reach the conversation pipeline. */
   isDistributionGroup(groupId: string): boolean {
-    return this.distributionWorkspaceByGroup.has(groupId);
+    return this.distributionScopeByGroup.has(groupId);
   }
 
   /**
-   * Leaves `workspaceId`'s key-distribution group: the MLS tree AND the registration, together.
+   * Leaves a scope's key-distribution group: the MLS tree AND the registration, together.
    *
    * THE COUNTERPART OF {@link ensureDistributionGroup}, and it did not exist. Nothing removed this
    * group when a community left the device, because the reconciliation sweep destroyed it on the
@@ -1771,26 +1777,38 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * @returns the group that was left, or null when this device held none for that community.
    */
-  forgetDistributionGroup(workspaceId: string): string | null {
-    const groupId = this.distributionGroupFor(workspaceId);
+  forgetDistributionGroup(scope: DistributionScope): string | null {
+    const groupId = this.distributionGroupFor(scope);
     if (!groupId) return null;
     this.forgetGroup(groupId);
-    this.distributionWorkspaceByGroup.delete(groupId);
+    this.distributionScopeByGroup.delete(groupId);
     return groupId;
   }
 
   /**
-   * The distribution group registered for `workspaceId`, or null.
+   * The distribution group registered for `scope`, or null.
    *
    * Scanned rather than kept in a second map on purpose: a reverse index is a second copy of the
    * same fact, and two copies of a fact drift. The population is one entry per community a user
-   * belongs to - a handful - so the scan is not worth a consistency risk.
+   * belongs to plus one per private salon they may open - dozens at most - so the scan is not worth
+   * a consistency risk.
    */
-  distributionGroupFor(workspaceId: string): string | null {
-    for (const [groupId, ws] of this.distributionWorkspaceByGroup) {
-      if (ws === workspaceId) return groupId;
+  distributionGroupFor(scope: DistributionScope): string | null {
+    const key = scopeKey(scope);
+    for (const [groupId, registered] of this.distributionScopeByGroup) {
+      if (scopeKey(registered) === key) return groupId;
     }
     return null;
+  }
+
+  /**
+   * Every scope this device holds a distribution group for.
+   *
+   * The enumeration a sweep needs: a reconciliation or a forget that could only ask about scopes it
+   * already knew would never find the one it had stopped knowing about.
+   */
+  distributionScopes(): DistributionScope[] {
+    return [...this.distributionScopeByGroup.values()];
   }
 
   /** Wires the social-service transport for distribution-group GroupInfo. Set once, at startup. */
@@ -1820,12 +1838,13 @@ export abstract class BaseMlsService implements IMlsService {
     sender: string,
     ciphertext: Uint8Array
   ): Promise<boolean> {
-    const workspaceId = this.distributionWorkspaceByGroup.get(groupId);
-    if (workspaceId === undefined) {
+    const scope = this.distributionScopeByGroup.get(groupId);
+    if (scope === undefined) {
       // Unreachable through the pipeline, which only calls this behind `isDistributionGroup`.
       console.warn(`[GRAINE] frame for unregistered distribution group ${groupId.slice(0, 8)}...`);
       return false;
     }
+    const { workspaceId } = scope;
 
     let plaintext: Uint8Array | null;
     try {
@@ -1878,7 +1897,7 @@ export abstract class BaseMlsService implements IMlsService {
     }
 
     try {
-      await handler({ workspaceId, groupId, sender, plaintext });
+      await handler({ scope, workspaceId, groupId, sender, plaintext });
     } catch (e) {
       // NOT acknowledged, on purpose: the handler is what STORES a seed, so a throw here means the
       // seed did not land, and acknowledging would drop key material nobody can ask for again.
@@ -1908,8 +1927,8 @@ export abstract class BaseMlsService implements IMlsService {
     fetch(): Promise<{ groupInfo: string; baseEpoch: number } | null>;
     publish(groupInfoBase64: string, baseEpoch: number): Promise<{ stored: boolean }>;
   } {
-    const workspaceId = this.distributionWorkspaceByGroup.get(groupId);
-    if (workspaceId === undefined) {
+    const scope = this.distributionScopeByGroup.get(groupId);
+    if (scope === undefined) {
       return {
         fetch: () => this.delivery.fetchGroupInfo(groupId),
         publish: (gi, epoch) => this.delivery.storeGroupInfo(groupId, gi, epoch),
@@ -1918,12 +1937,12 @@ export abstract class BaseMlsService implements IMlsService {
     const transport = this.distributionGroupInfo;
     if (!transport) {
       throw new Error(
-        `[MLS] no distribution GroupInfo transport wired - group ${groupId.slice(0, 8)}... belongs to community ${workspaceId.slice(0, 8)}...`
+        `[MLS] no distribution GroupInfo transport wired - group ${groupId.slice(0, 8)}... belongs to ${scopeLabel(scope)}`
       );
     }
     return {
-      fetch: () => transport.fetch(workspaceId),
-      publish: (gi, epoch) => transport.publish(workspaceId, gi, epoch),
+      fetch: () => transport.fetch(scope),
+      publish: (gi, epoch) => transport.publish(scope, gi, epoch),
     };
   }
 
@@ -2019,11 +2038,11 @@ export abstract class BaseMlsService implements IMlsService {
    * @returns true when this device holds the group afterwards
    */
   async ensureDistributionGroup(
-    workspaceId: string,
+    scope: DistributionScope,
     ref: { groupId: string; groupInfo: string | null; baseEpoch: number | null }
   ): Promise<boolean> {
     const { groupId } = ref;
-    this.registerDistributionGroup(workspaceId, groupId);
+    this.registerDistributionGroup(scope, groupId);
 
     if (this.getLocalGroups().includes(groupId)) return true;
 
@@ -2032,7 +2051,7 @@ export abstract class BaseMlsService implements IMlsService {
     }
 
     console.log(
-      `[GRAINE] no base published for community ${workspaceId.slice(0, 8)}... - creating group ${groupId.slice(0, 8)}...`
+      `[GRAINE] no base published for ${scopeLabel(scope)} - creating group ${groupId.slice(0, 8)}...`
     );
     await this.runUnderMlsLock(() => this.createGroup(groupId));
 

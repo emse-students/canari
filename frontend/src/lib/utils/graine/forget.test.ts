@@ -9,6 +9,11 @@ import {
   workspaceForChannel,
 } from './runtime';
 import { requestCommunityHistory, resetGraineRepairState } from './repair';
+import {
+  channelScope,
+  workspaceScope,
+  type DistributionScope,
+} from '$lib/mls-client/distributionScope';
 
 /**
  * A community leaving the device takes its seeds with it (WP-60).
@@ -49,6 +54,12 @@ let held: StoredGraineSession[];
 let deleted: string[];
 let sendMessage: ReturnType<typeof vi.fn>;
 let forgetDistributionGroup: ReturnType<typeof vi.fn>;
+/**
+ * What this device holds a distribution group for. Two scopes by default - the community and one
+ * private salon of it - because a purge that only left the community's group is exactly the defect
+ * the salon scope introduced, and a single-scope fixture could not see it.
+ */
+let scopes: DistributionScope[];
 
 beforeEach(() => {
   resetGraineRepairState();
@@ -58,6 +69,7 @@ beforeEach(() => {
   deleted = [];
   sendMessage = vi.fn().mockResolvedValue(undefined);
   forgetDistributionGroup = vi.fn().mockReturnValue('dist-group');
+  scopes = [workspaceScope('ws-1'), channelScope('ws-1', 'chan-1'), workspaceScope('ws-other')];
   setGraineRuntime({
     storage: {
       getGraineSessionsForWorkspace: async () => held,
@@ -73,6 +85,7 @@ beforeEach(() => {
     mlsService: {
       sendMessage,
       distributionGroupFor: () => 'dist-group',
+      distributionScopes: () => scopes,
       forgetDistributionGroup,
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       persistCheckpoint: vi.fn().mockResolvedValue(undefined),
@@ -87,7 +100,7 @@ afterEach(() => {
 describe('forgetCommunityGraine', () => {
   it('drops the durable seeds, the decrypted cache and the channel map together', async () => {
     cacheGraineSession(mkSession());
-    registerChannelWorkspace('chan-1', 'ws-1');
+    registerChannelWorkspace('chan-1', 'ws-1', false);
 
     await expect(forgetCommunityGraine('ws-1')).resolves.toBe(2);
 
@@ -141,6 +154,7 @@ describe('forgetCommunityGraine', () => {
       mlsService: {
         sendMessage,
         distributionGroupFor: () => 'dist-group',
+        distributionScopes: () => scopes,
         forgetDistributionGroup,
         saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
         persistCheckpoint: vi.fn().mockResolvedValue(undefined),
@@ -171,7 +185,14 @@ describe('the distribution group', () => {
     // used to destroy the group on the next connection for an unrelated - and wrong - reason, which
     // is the only thing that ever ended it.
     await forgetCommunityGraine('ws-1');
-    expect(forgetDistributionGroup).toHaveBeenCalledWith('ws-1');
+
+    // BOTH scopes of this community, and NEITHER of another's. A private salon has its own group,
+    // so a purge that left only the community's would leave this device in every private salon it
+    // could read - still fed, still committing, in a community it has left.
+    expect(forgetDistributionGroup.mock.calls.map(([scope]) => scope)).toEqual([
+      workspaceScope('ws-1'),
+      channelScope('ws-1', 'chan-1'),
+    ]);
   });
 
   it('is not claimed to have been left when this device held none', async () => {
@@ -180,7 +201,7 @@ describe('the distribution group', () => {
 
     await forgetCommunityGraine('ws-1');
 
-    expect(info.mock.calls.flat().join(' ')).not.toContain('left the distribution group');
+    expect(info.mock.calls.flat().join(' ')).not.toContain('distribution group(s) of community');
     info.mockRestore();
   });
 });

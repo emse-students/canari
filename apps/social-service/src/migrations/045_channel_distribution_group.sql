@@ -1,0 +1,17 @@
+-- A private salon gets its own Graine key-distribution group, and this column points at it.
+--
+-- WHY. Until now a community had exactly one distribution group, so a private salon's seed was
+-- sealed to EVERY member of the community. Since 2026-08-19 the server no longer hands those
+-- members the ciphertext (channel-encryption.md §11), but that is server enforcement: nothing stops
+-- them reading it if they obtain it another way. A group whose roster is the salon's own
+-- `allowedUsers` is the structural answer, and `dm_groups."distributionChannelId"` (chat-delivery
+-- migration 018) is the other half of the link.
+--
+-- NULL ON A PUBLIC SALON, and that is the ordinary state rather than something to repair: a public
+-- salon's audience IS the community, so the community's group is already the right roster.
+--
+-- NO BACKFILL, and the reason is a measurement rather than an omission: on 2026-08-19 production
+-- held ZERO private salons. Every private salon that will ever exist is therefore created after
+-- this migration and gets its group at birth, so there is no history sealed under the community's
+-- group to migrate - and no destructive migration written for a population of none.
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS "distributionGroupId" UUID;

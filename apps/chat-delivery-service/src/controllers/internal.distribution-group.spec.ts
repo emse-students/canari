@@ -100,7 +100,10 @@ describe('InternalController - the community distribution group', () => {
 
   describe('creation', () => {
     it('creates the group and writes NEITHER a membership row NOR a device membership', async () => {
-      const got = await controller.createDistributionGroup(SECRET, { workspaceId: WORKSPACE });
+      const got = await controller.createDistributionGroup(SECRET, {
+        scope: 'workspace',
+        scopeId: WORKSPACE,
+      });
 
       expect(got).toEqual({ groupId: 'g-new', created: true });
       expect(groupRepo.create).toHaveBeenCalledWith({
@@ -117,7 +120,10 @@ describe('InternalController - the community distribution group', () => {
     it('returns the existing group rather than a second one', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g-existing' });
 
-      const got = await controller.createDistributionGroup(SECRET, { workspaceId: WORKSPACE });
+      const got = await controller.createDistributionGroup(SECRET, {
+        scope: 'workspace',
+        scopeId: WORKSPACE,
+      });
 
       expect(got).toEqual({ groupId: 'g-existing', created: false });
       expect(groupRepo.save).not.toHaveBeenCalled();
@@ -127,7 +133,10 @@ describe('InternalController - the community distribution group', () => {
       groupRepo.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'g-winner' });
       groupRepo.save.mockRejectedValue(new Error('duplicate key value violates unique constraint'));
 
-      const got = await controller.createDistributionGroup(SECRET, { workspaceId: WORKSPACE });
+      const got = await controller.createDistributionGroup(SECRET, {
+        scope: 'workspace',
+        scopeId: WORKSPACE,
+      });
 
       // The caller asked for "the distribution group of this community" and there is exactly one:
       // a conflict it cannot act on would be a worse answer than the winner's id.
@@ -138,20 +147,20 @@ describe('InternalController - the community distribution group', () => {
       groupRepo.save.mockRejectedValue(new Error('connection terminated'));
 
       await expect(
-        controller.createDistributionGroup(SECRET, { workspaceId: WORKSPACE })
+        controller.createDistributionGroup(SECRET, { scope: 'workspace', scopeId: WORKSPACE })
       ).rejects.toThrow('connection terminated');
     });
 
     it('refuses a call without the internal secret', async () => {
       await expect(
-        controller.createDistributionGroup('wrong', { workspaceId: WORKSPACE })
+        controller.createDistributionGroup('wrong', { scope: 'workspace', scopeId: WORKSPACE })
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(groupRepo.save).not.toHaveBeenCalled();
     });
 
     it('refuses a call with no community', async () => {
       await expect(
-        controller.createDistributionGroup(SECRET, { workspaceId: '  ' })
+        controller.createDistributionGroup(SECRET, { scope: 'workspace', scopeId: '  ' })
       ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
@@ -160,7 +169,7 @@ describe('InternalController - the community distribution group', () => {
     it('reports a group with nothing published as a group, not as an absence', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
 
-      const got = await controller.getDistributionGroup(WORKSPACE, SECRET);
+      const got = await controller.getDistributionGroup('workspace', WORKSPACE, SECRET);
 
       // The distinction the caller acts on: this community has a group and is waiting for its
       // first member to initialise the MLS state, which is not the same as having no group at all.
@@ -171,7 +180,7 @@ describe('InternalController - the community distribution group', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
       messagingService.readGroupInfo.mockResolvedValue({ groupInfo: 'Z2k=', baseEpoch: 4 });
 
-      expect(await controller.getDistributionGroup(WORKSPACE, SECRET)).toEqual({
+      expect(await controller.getDistributionGroup('workspace', WORKSPACE, SECRET)).toEqual({
         groupId: 'g-1',
         groupInfo: 'Z2k=',
         baseEpoch: 4,
@@ -179,13 +188,13 @@ describe('InternalController - the community distribution group', () => {
     });
 
     it('answers null for a community that has no group', async () => {
-      expect(await controller.getDistributionGroup(WORKSPACE, SECRET)).toBeNull();
+      expect(await controller.getDistributionGroup('workspace', WORKSPACE, SECRET)).toBeNull();
     });
 
     it('refuses a call without the internal secret', async () => {
-      await expect(controller.getDistributionGroup(WORKSPACE, 'wrong')).rejects.toBeInstanceOf(
-        ForbiddenException
-      );
+      await expect(
+        controller.getDistributionGroup('workspace', WORKSPACE, 'wrong')
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 
@@ -193,7 +202,7 @@ describe('InternalController - the community distribution group', () => {
     it('routes to the same monotonic upsert the public route uses', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
 
-      const got = await controller.publishDistributionGroupInfo(WORKSPACE, SECRET, {
+      const got = await controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
         groupInfo: 'Z2k=',
         baseEpoch: 7,
       });
@@ -206,17 +215,19 @@ describe('InternalController - the community distribution group', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
 
       await expect(
-        controller.publishDistributionGroupInfo(WORKSPACE, SECRET, { groupInfo: 'Z2k=' })
+        controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
+          groupInfo: 'Z2k=',
+        })
       ).rejects.toBeInstanceOf(BadRequestException);
       await expect(
-        controller.publishDistributionGroupInfo(WORKSPACE, SECRET, { baseEpoch: 1 })
+        controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, { baseEpoch: 1 })
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(messagingService.putGroupInfo).not.toHaveBeenCalled();
     });
 
     it('refuses to publish for a community with no group', async () => {
       await expect(
-        controller.publishDistributionGroupInfo(WORKSPACE, SECRET, {
+        controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
           groupInfo: 'Z2k=',
           baseEpoch: 1,
         })
@@ -228,23 +239,23 @@ describe('InternalController - the community distribution group', () => {
     it('tombstones the group the same way every other group dies', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
 
-      expect(await controller.deleteDistributionGroup(WORKSPACE, SECRET)).toEqual({
+      expect(await controller.deleteDistributionGroup('workspace', WORKSPACE, SECRET)).toEqual({
         deleted: true,
       });
       expect(groupRepo.update).toHaveBeenCalledWith({ id: 'g-1' }, { deletedAt: expect.any(Date) });
     });
 
     it('reports nothing to delete rather than failing', async () => {
-      expect(await controller.deleteDistributionGroup(WORKSPACE, SECRET)).toEqual({
+      expect(await controller.deleteDistributionGroup('workspace', WORKSPACE, SECRET)).toEqual({
         deleted: false,
       });
       expect(groupRepo.update).not.toHaveBeenCalled();
     });
 
     it('refuses a call without the internal secret', async () => {
-      await expect(controller.deleteDistributionGroup(WORKSPACE, 'wrong')).rejects.toBeInstanceOf(
-        ForbiddenException
-      );
+      await expect(
+        controller.deleteDistributionGroup('workspace', WORKSPACE, 'wrong')
+      ).rejects.toBeInstanceOf(ForbiddenException);
       expect(groupRepo.update).not.toHaveBeenCalled();
     });
   });
@@ -259,7 +270,12 @@ describe('InternalController - the community distribution group', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
       redis.smembers.mockResolvedValue([`${USER}:web-1`, `${USER}:tauri-1`, 'u-stays:web-1']);
 
-      const result = await controller.evictFromDistributionGroup(WORKSPACE, USER, SECRET);
+      const result = await controller.evictFromDistributionGroup(
+        'workspace',
+        WORKSPACE,
+        USER,
+        SECRET
+      );
 
       expect(result).toEqual({ evicted: true, memberships: 2, queued: 5, routes: 2 });
       expect(deviceGroupRepo.delete).toHaveBeenCalledWith({ groupId: 'g-1', userId: USER });
@@ -278,7 +294,12 @@ describe('InternalController - the community distribution group', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
       redis.smembers.mockResolvedValue(['u-stays:web-1']);
 
-      const result = await controller.evictFromDistributionGroup(WORKSPACE, USER, SECRET);
+      const result = await controller.evictFromDistributionGroup(
+        'workspace',
+        WORKSPACE,
+        USER,
+        SECRET
+      );
 
       expect(result.routes).toBe(0);
       expect(redis.srem).not.toHaveBeenCalled();
@@ -289,9 +310,9 @@ describe('InternalController - the community distribution group', () => {
       // failing here would fail a departure that has otherwise completed.
       groupRepo.findOne.mockResolvedValue(null);
 
-      await expect(controller.evictFromDistributionGroup(WORKSPACE, USER, SECRET)).resolves.toEqual(
-        { evicted: false, memberships: 0, queued: 0, routes: 0 }
-      );
+      await expect(
+        controller.evictFromDistributionGroup('workspace', WORKSPACE, USER, SECRET)
+      ).resolves.toEqual({ evicted: false, memberships: 0, queued: 0, routes: 0 });
       expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
     });
 
@@ -299,9 +320,59 @@ describe('InternalController - the community distribution group', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'g-1', distributionWorkspaceId: WORKSPACE });
 
       await expect(
-        controller.evictFromDistributionGroup(WORKSPACE, USER, 'not-the-secret')
+        controller.evictFromDistributionGroup('workspace', WORKSPACE, USER, 'not-the-secret')
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(deviceGroupRepo.delete).not.toHaveBeenCalled();
     });
+  });
+  describe('the scope, which decides which roster is served', () => {
+    const CHANNEL = 'c-private';
+
+    it('selects a private salon by its OWN column, never the community one', async () => {
+      await controller.createDistributionGroup(SECRET, { scope: 'channel', scopeId: CHANNEL });
+
+      // The whole point of the scope: a salon's group must be findable by nothing but the salon.
+      // Creating it under `distributionWorkspaceId` would make it the community's group under a
+      // different name, i.e. exactly the sharing this column was added to end.
+      expect(groupRepo.create).toHaveBeenCalledWith({
+        isGroup: true,
+        distributionChannelId: CHANNEL,
+      });
+    });
+
+    it.each([
+      ['read', () => controller.getDistributionGroup('channel', CHANNEL, SECRET)],
+      ['evict', () => controller.evictFromDistributionGroup('channel', CHANNEL, 'u-out', SECRET)],
+      ['delete', () => controller.deleteDistributionGroup('channel', CHANNEL, SECRET)],
+    ])('looks a salon up by its own column on %s', async (_name, call) => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-chan', distributionChannelId: CHANNEL });
+
+      await call();
+
+      expect(groupRepo.findOne).toHaveBeenCalledWith({
+        where: { distributionChannelId: CHANNEL },
+      });
+    });
+
+    it.each([
+      [
+        'create',
+        (scope: string) => controller.createDistributionGroup(SECRET, { scope, scopeId: 'x' }),
+      ],
+      ['read', (scope: string) => controller.getDistributionGroup(scope, 'x', SECRET)],
+      ['evict', (scope: string) => controller.evictFromDistributionGroup(scope, 'x', 'u', SECRET)],
+      ['delete', (scope: string) => controller.deleteDistributionGroup(scope, 'x', SECRET)],
+    ])(
+      'refuses an unknown scope on %s rather than defaulting to the community',
+      async (_n, call) => {
+        // A default would serve a private salon's caller the community's group - a silent
+        // downgrade to the exact sharing this scope removes. Refusing is the only safe answer.
+        for (const bad of ['', 'workspaces', 'user', undefined as unknown as string]) {
+          await expect(call(bad)).rejects.toBeInstanceOf(BadRequestException);
+        }
+        expect(groupRepo.save).not.toHaveBeenCalled();
+        expect(groupRepo.update).not.toHaveBeenCalled();
+      }
+    );
   });
 });

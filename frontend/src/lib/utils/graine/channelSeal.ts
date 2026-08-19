@@ -4,7 +4,7 @@ import {
   cachedGraineSession,
   rawChannelId,
   requireGraineRuntime,
-  workspaceForChannel,
+  scopeForChannel,
 } from './runtime';
 import {
   distributeGraineSeed,
@@ -105,21 +105,25 @@ export async function sealChannelMessage(
     `cannot seal a message for channel ${channel.slice(0, 8)}`
   );
 
-  const workspaceId = workspaceForChannel(channel);
-  if (!workspaceId) throw new GraineUnknownChannelError(channel);
+  // THE SCOPE, not the community: a private salon's seed travels on the salon's own group, whose
+  // roster is the people who may open it. Reading the community here is what used to seal every
+  // private salon's seed to every member of the community.
+  const scope = scopeForChannel(channel);
+  if (!scope) throw new GraineUnknownChannelError(channel);
+  const workspaceId = scope.workspaceId;
 
-  // Null, not zero: a community whose distribution group is not in hand cannot receive a seed, so
+  // Null, not zero: a scope whose distribution group is not in hand cannot receive a seed, so
   // sealing under a session nobody will ever be able to read is refused here rather than
   // discovered by every reader separately.
-  const distributionEpoch = distributionEpochFor(mlsService, workspaceId);
-  if (distributionEpoch === null) throw new GraineDistributionUnavailableError(workspaceId);
+  const distributionEpoch = distributionEpochFor(mlsService, scope);
+  if (distributionEpoch === null) throw new GraineDistributionUnavailableError(scope);
 
   const slot = await reserveOutboundSlot(
     {
       storage,
       deviceKeyB64,
       distributionEpoch,
-      distribute: (session) => distributeGraineSeed(mlsService, workspaceId, session),
+      distribute: (session) => distributeGraineSeed(mlsService, scope, session),
     },
     { workspaceId, channelId: channel, senderId: userId }
   );

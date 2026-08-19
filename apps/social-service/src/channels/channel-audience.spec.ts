@@ -111,23 +111,27 @@ describe('channel audience', () => {
 
   describe('the rule itself', () => {
     it('lets every member into a public channel, listed or not', () => {
-      expect(channelIsReadableBy(publicChannel, OUTSIDER, false)).toBe(true);
+      expect(channelIsReadableBy(publicChannel, OUTSIDER)).toBe(true);
     });
 
     it('lets a listed user into a private channel', () => {
-      expect(channelIsReadableBy(privateChannel, INSIDER, false)).toBe(true);
+      expect(channelIsReadableBy(privateChannel, INSIDER)).toBe(true);
     });
 
-    it('lets an admin into a private channel they were never added to', () => {
-      expect(channelIsReadableBy(privateChannel, OUTSIDER, true)).toBe(true);
+    it('keeps an admin OUT of a private channel they have not joined', () => {
+      // The user's decision of 2026-08-19, and the reason this rule lost its third argument:
+      // ambient admin access cost nothing while the seed was the community's, but under a group
+      // per private salon it would make every promotion a commit on EVERY private salon. An admin
+      // joins explicitly instead, which also lets a salon's members see who reads it.
+      expect(channelIsReadableBy(privateChannel, OUTSIDER)).toBe(false);
     });
 
-    it('keeps an unlisted non-admin out of a private channel', () => {
-      expect(channelIsReadableBy(privateChannel, OUTSIDER, false)).toBe(false);
+    it('keeps an unlisted user out of a private channel', () => {
+      expect(channelIsReadableBy(privateChannel, OUTSIDER)).toBe(false);
     });
 
     it('compares user ids case-insensitively, as the grant stored them', () => {
-      expect(channelIsReadableBy(privateChannel, ' INSIDER ', false)).toBe(true);
+      expect(channelIsReadableBy(privateChannel, ' INSIDER ')).toBe(true);
     });
   });
 
@@ -145,9 +149,13 @@ describe('channel audience', () => {
       } as never);
       await flush();
 
+      // ADMIN is not in `allowedUsers` and is therefore NOT an addressee - the same rule as
+      // OUTSIDER, since 2026-08-19. An admin who wants this salon joins it, which puts them in
+      // `allowedUsers` and in this list at the same moment.
       const audience = audienceOf(redis, 'channel.message.created');
       expect(audience).not.toContain(OUTSIDER);
-      expect(audience).toEqual(expect.arrayContaining([INSIDER, ADMIN]));
+      expect(audience).not.toContain(ADMIN);
+      expect(audience).toEqual([INSIDER]);
     });
 
     it('still reaches every member when the channel is public', async () => {

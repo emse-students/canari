@@ -129,9 +129,13 @@ before the campaign restarts.** Everything actionable is HERE, in order, one lin
 lives where the link says and **is not restated**. An item is done when its code, its tests, its doc
 and its commit are in, and it is then deleted from BOTH files.
 
-**The campaign started 2026-08-19 and has produced NINE defects, all fixed.** 1-2 are numbers a
-run has to produce; 3 is the work the user decided on 2026-08-19; 4 is the community phase, stale
-AND never run, where the rework's remaining risk sits; 5 is the campaign. **WP-GRAINE-2 is CLOSED,
+**The campaign started 2026-08-19 and has produced TEN defects, all fixed** - the tenth found while
+writing up the per-salon distribution groups (`mlsDeliveryApi` dropped the very discriminator that
+keeps a distribution group out of the orphan sweep). 1-2 are numbers a run has to produce; 3 is the
+community phase, stale AND never run, where the rework's remaining risk sits; 4 is the campaign.
+**ONE DISTRIBUTION GROUP PER PRIVATE SALON SHIPPED 2026-08-20** - the guarantee is cryptographic
+now, not the server's, and the admin joins explicitly
+([graine](docs/wiki/protocols/channel-encryption.md) §13, the only copy). **WP-GRAINE-2 is CLOSED,
 both halves proven on prod (2026-08-19)** - client: epoch 25->26 and the tree down to 2 leaves;
 server: W2 rejoined and left, `evict memberships=1 routes=1`, routing rows 3->2, then the client
 followed to epoch 28. Every figure and the two defects the run itself found are on
@@ -151,22 +155,13 @@ in the field (user, 2026-08-19)**, so the iOS ladder cannot run and parity is ke
     comes from a run.** Every accusation in `displayName.ts` now ends `(failed/attempted, X%)`.
     There is no client telemetry, so the rate is read from a run log on each platform. **The
     `FAILURE_BACKOFF_MS` decision is what the number is FOR** ([backlog](docs/wiki/backlog.md)).
-3. **ONE DISTRIBUTION GROUP PER PRIVATE SALON - the design, and the whole remaining crypto risk.**
-    §4.3 gives a community ONE group, so every member holds a private salon's seed; the fan-out is
-    scoped but the guarantee is still the server's. Same machinery, gated on `canAccessChannel`,
-    `channelAudience` as its roster, the §10 diff pruning it. **The user's decisions of 2026-08-19,
-    both load-bearing:** an admin JOINS explicitly rather than reaching every private salon through
-    `workspace.manage` - which is what makes the roster finite - and that join shows up **in the
-    member list ONLY, with no system message**. The admin must SEE an unjoined private salon or the
-    capability is unusable. Forward secrecy is decided AGAINST. Detail on
-    [backlog](docs/wiki/backlog.md) and [graine](docs/wiki/protocols/channel-encryption.md) §11.
-4. **REWRITE THE COMM PHASE - it is not incomplete, it is STALE.** Written before Graine and still
+3. **REWRITE THE COMM PHASE - it is not incomplete, it is STALE.** Written before Graine and still
     speaking the old vocabulary: COMM-9 "the key rotates", COMM-13 "manual key rotation" (neither
     exists), COMM-22 times `hydrateChannelHistoryKeys`, **a function that is gone**. Nothing in it
-    covers the seven defects found this week. Rewrite the twenty-two rows against Graine, add what
-    3-6 change, then write the runners - `checks.mjs` carries the phase and an empty `scripts: []`.
+    covers the eight defects found this week. Rewrite the twenty-two rows against Graine, add what the
+    per-salon distribution groups change, then write the runners - `checks.mjs` carries the phase and an empty `scripts: []`.
     This is where the rework's remaining risk sits: everything about it is verified by COMPILING.
-5. **THEN, and only then:** recreate the venue clean, rebuild the Android APK once, run the
+4. **THEN, and only then:** recreate the venue clean, rebuild the Android APK once, run the
     campaign. **Everything must end green, so every phase runs.** What it costs, the ladder's order
     and the two decisions it turns on are on
     [cross-client-testing](docs/wiki/cross-client-testing.md), the only copy of any of it.

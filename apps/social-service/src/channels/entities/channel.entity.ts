@@ -43,6 +43,20 @@ export class Channel {
   @Column({ type: 'varchar', default: 'everyone' })
   writePolicy: 'everyone' | 'admins_moderators' | 'admins';
 
+  /**
+   * `dm_groups.id` of this salon's OWN Graine key-distribution group, set only when it is private.
+   *
+   * A private salon's seeds are sealed to the people who may open it, and nobody else - which is
+   * what makes the guarantee cryptographic rather than merely server-enforced. A public salon has
+   * none and must not: its audience IS the community, so the community's group is already the right
+   * roster and a second one would be the same people at a higher commit rate.
+   *
+   * It follows `isPrivate` in both directions: minted when a salon becomes private, tombstoned when
+   * it becomes public or goes away. Null on a public salon is the ordinary state, not a repair.
+   */
+  @Column({ type: 'uuid', nullable: true, default: null })
+  distributionGroupId: string | null;
+
   @Column({ default: false })
   archived: boolean;
 

@@ -669,20 +669,21 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
     beginStartupCatchupPhase('setup_handler');
 
-    // A community's key-distribution group has its external-join base on social-service, not on
-    // chat-delivery: the base IS the capability to read every seed in the community, so it is
-    // gated on community membership, which only social-service holds. Wired as a transport rather
-    // than imported, so the MLS layer never learns to speak to the communities API.
+    // A key-distribution group has its external-join base on social-service, not on chat-delivery:
+    // the base IS the capability to read every seed on it, so it is gated on membership of the
+    // scope it belongs to - a community, or one private salon - which only social-service holds.
+    // Wired as a transport rather than imported, so the MLS layer never learns to speak to the
+    // communities API.
     const distributionChannels = new ChannelService();
     mlsService.setDistributionGroupInfoTransport({
-      fetch: async (workspaceId) => {
-        const ref = await distributionChannels.getDistributionGroup(workspaceId);
+      fetch: async (scope) => {
+        const ref = await distributionChannels.getDistributionGroup(scope);
         return ref.groupInfo !== null && ref.baseEpoch !== null
           ? { groupInfo: ref.groupInfo, baseEpoch: ref.baseEpoch }
           : null;
       },
-      publish: (workspaceId, groupInfo, baseEpoch) =>
-        distributionChannels.publishDistributionGroupInfo(workspaceId, groupInfo, baseEpoch),
+      publish: (scope, groupInfo, baseEpoch) =>
+        distributionChannels.publishDistributionGroupInfo(scope, groupInfo, baseEpoch),
     });
 
     // Sealing a salon message needs the device key, the local store, the MLS client and who this

@@ -1,5 +1,6 @@
 import { ensureCommunityDistributionGroup } from './distributionGroup';
 import { ChannelApiError } from '$lib/services/ChannelService';
+import { workspaceScope } from '$lib/mls-client/distributionScope';
 
 const reconcile = vi.fn().mockResolvedValue([]);
 vi.mock('./rosterReconcile', () => ({
@@ -57,8 +58,8 @@ describe('ensureCommunityDistributionGroup', () => {
     const channels = makeChannels();
 
     expect(await run(mls, channels)).toBe(true);
-    expect(channels.getDistributionGroup).toHaveBeenCalledWith('ws-1');
-    expect(mls.ensureDistributionGroup).toHaveBeenCalledWith('ws-1', {
+    expect(channels.getDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'));
+    expect(mls.ensureDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'), {
       groupId: 'g-1',
       groupInfo: 'c29j',
       baseEpoch: 7,

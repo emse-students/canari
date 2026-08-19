@@ -599,9 +599,21 @@
         }
         // Without this the channel is registered but belongs to no community as far as the send
         // path is concerned, so the first message typed into it is refused until an app relaunch
-        // runs the full workspace hydration.
+        // runs the full workspace hydration. A private salon also enters its own distribution
+        // group here, for the same reason and in the same window.
         if (workspace.workspaceDbId) {
-          globalChannels.registerJoinedChannel(event.channelId, workspace.workspaceDbId);
+          void globalChannels
+            .registerJoinedChannel(
+              event.channelId,
+              workspace.workspaceDbId,
+              isPrivate,
+              globalSession.ensureMls
+            )
+            .catch((e) =>
+              appendLog(
+                `[GRAINE] could not prepare joined channel ${event.channelId}: ${e instanceof Error ? e.message : String(e)}`
+              )
+            );
         }
         appendLog(`Joined channel #${event.channelName || event.channelId}`);
 

@@ -1138,7 +1138,8 @@ mechanism that looked like the risky one was correct, and the one nobody looked 
 ### The fix
 
 `channelIsReadableBy(channel, userId, holdsManageWorkspace)` is now the ONE rule, pure and
-database-free, and everything that needs it supplies the admin bit from whatever it already has:
+database-free, and everything that needs it supplies the admin bit from whatever it already has
+(the third argument went away with the admin bypass on 2026-08-20 - see §13):
 
 - `canAccessChannel` - one actor, one permission lookup;
 - `channelAudience(channel)` - every member, two bulk `find`s, and a public channel skips the role
@@ -1174,20 +1175,129 @@ Worth stating because it is the third form of one mistake: **the actor check and
 were different scopes.** Wherever a route returns something ABOUT a channel, ask whether its guard
 names the channel or merely the community around it.
 
-### What this does NOT fix, and it is the interesting half
+### What this did NOT fix - closed by §13
 
-The guarantee for a private salon is still **server-enforced, not cryptographic**. Every member of
-the community holds the seed, because §4.3 gives the community exactly one distribution group. This
-change means the server no longer hands them the ciphertext; it does not mean they could not read
-it if they obtained it another way.
+The guarantee for a private salon was still **server-enforced, not cryptographic**: every member of
+the community held the seed, because §4.3 gives the community exactly one distribution group. This
+change meant the server no longer handed them the ciphertext; it did not mean they could not read it
+if they obtained it another way.
 
-The structural answer is a distribution group PER PRIVATE CHANNEL - the same machinery, gated on
-`canAccessChannel` instead of workspace membership, with `channelAudience` as its roster and the
-lazy roster diff of §10 pruning it. It is not written, and it turns on one product question that is
-not the code's to answer: **admins currently reach every private salon without being added to it.**
-Ambient access costs nothing today; under a per-channel group it means every promotion to admin is
-a commit on every private channel's group. See [backlog](../backlog.md).
+The structural answer - a distribution group PER PRIVATE SALON - **shipped 2026-08-20 and is §13**. The product question it turned on (admins reaching every private salon without being in it)
+was answered by the user on 2026-08-19: the admin joins explicitly.
 
 ## 12. Open, and not blocking
 
 Nothing here blocks anything above.
+
+## 13. One distribution group per private salon - SHIPPED 2026-08-20
+
+The structural answer §11 named and did not write. A private salon's guarantee stops being "the
+server declines to serve you the ciphertext" and becomes "the seed was never sealed to you".
+
+### What changed, in one sentence
+
+A private salon has its OWN key-distribution group, whose roster is `allowedUsers`; a public salon
+has none and rides the community's, because its audience IS the community.
+
+### The scope, and why it is one object
+
+`dm_groups` gains `distributionChannelId` beside `distributionWorkspaceId`, with a database CHECK
+that **at most one of the two is set** (migration 018). A row reachable from two scopes would be
+served to two rosters, which is the defect the scope exists to remove.
+
+Everything else is the same machinery, deliberately: seeds only, never a conversation, entered by
+external commit, no `dm_group_members` row and no `DeviceGroupMembership`. Those absences are what
+the WP-20 audit in §7 is built on, and duplicating the family per scope would have doubled a surface
+audited once. The five internal routes take `:scope/:scopeId` and refuse an unknown scope rather
+than defaulting to `workspace` - a default would serve a salon's caller the community's group, i.e.
+exactly the sharing being removed.
+
+On the client the same rule holds: `DistributionScope` is one type, `scopeKey` is the one place a
+map key is spelled, and the prefix (`w:` / `c:`) is what keeps a salon's entry from colliding with a
+community's - both ids are uuids drawn from the same space.
+
+### The admin problem, and the decision that settles it
+
+§11 ended on the product question: an admin reached every private salon without being in it, so the
+roster was `allowedUsers` **plus whoever happened to hold an admin role at that moment**. That set
+changes without anyone touching the salon, and a set like that cannot be an MLS group - every seed
+would have to be sealed to a membership nobody committed.
+
+The user's decision of 2026-08-19, and it is what makes the design possible:
+
+- **An admin JOINS explicitly.** `POST /channels/:id/join-as-admin` requires `MANAGE_WORKSPACE`,
+  adds them to `allowedUsers`, and from then on they are an ordinary member of that roster.
+- **The join shows in the MEMBER LIST only - no system message.** A line in the transcript would be
+  a permanent record of a moderation act inside the conversation being moderated, which is a
+  different decision from the one being made here.
+- **An unjoined private salon is still VISIBLE to an admin** - its name, `viewerHasAccess: false`,
+  and nothing else. Without that the capability is unusable: making the bypass explicit would have
+  made private salons invisible to the only people who can moderate them. What leaks is a salon's
+  existence, to someone who can add themselves to it in one click anyway.
+- **Forward secrecy is decided AGAINST.** An admin who joins reads the salon's past, exactly like
+  any invited member; the Graine history rules of §8 already govern that and are not re-litigated
+  per scope.
+
+So `channelIsReadableBy(channel, userId)` lost its `holdsManageWorkspace` parameter and is now
+`allowedUsers` and nothing else. That is the whole of the access rule, in one pure function.
+
+### The lifecycle, and where each half may fail
+
+| Moment | What happens | May it abort the operation? |
+|---|---|---|
+| A salon is created private | group minted, id stored on `channels.distributionGroupId` | **Yes** - the salon row is deleted if it fails |
+| Public -> private | group minted before the row changes | **Yes** |
+| Private -> public | group tombstoned after the row changes | No - best-effort, logged at ERROR |
+| Archived | group tombstoned | No - there is no route back, so this is its end |
+| One member loses access | evicted before `allowedUsers` is written | **Yes** |
+| A member leaves/is kicked from the COMMUNITY | evicted from every private salon they held, AND removed from each `allowedUsers` | **Yes** |
+| An account is deleted | same sweep, driven by the repair route, which is the only thing left that knows who it was | No - per workspace, isolated and logged |
+| The community is hard-deleted | every private group tombstoned before the transaction | **Yes** |
+
+The asymmetry is the same one §10 states: what may abort is what would otherwise leave a routing row
+nothing will ever come back for; what may not is what would otherwise leave a salon nobody can
+archive. A leftover group distributes to a roster nothing consults and is inert - but it is logged
+at a level that ACCUSES, because inert is not the same as intended.
+
+**The roster removal is not tidiness.** `reconcileDistributionGroupRoster` diffs the MLS tree against
+`allowedUsers`, so a leaver still named there would have their leaf re-authorised at every
+reconciliation pass, for ever - a departure the tree undoes.
+
+### What the client had to learn
+
+- `registerChannelWorkspace(channelId, workspaceId, isPrivate)` - the third argument is REQUIRED
+  rather than defaulted, because a default is a guess about which roster a seed is sealed to, and
+  the wrong guess in the safe-looking direction (public) is the one that hands a private salon's
+  seed to the whole community.
+- `sealChannelMessage` asks `scopeForChannel`, never `workspaceForChannel`.
+- Reconciliation reads the SALON's roster (`listMembers(channelId, 'channel')`) for a salon scope,
+  and the repair asks a salon member for a missing seed - asking a community member would name an
+  answerer who cannot even see the request, since it travels on the salon's group.
+- `forgetCommunityGraine` leaves EVERY scope of the community, enumerated from
+  `mlsService.distributionScopes()` rather than from the channel list, which the purge is about to
+  empty.
+- The join path is `ensureDistributionGroupFor(scope)`, one function for both scopes - a second copy
+  would be a second place for the join, the reconciliation and the history request to drift apart.
+
+### The history request stays community-scoped, deliberately
+
+`requestCommunityHistory` means "this device holds nothing at all for this community". A member
+joining a private salon already holds the community's seeds, so the ask would short-circuit and they
+would still be missing the salon's past. What recovers that is the per-message repair of §4, which
+asks a NAMED holder for the exact sessions a message needs - and that path is salon-aware.
+
+### Found while writing this: a discriminator dropped in transit
+
+`GroupMeta.distributionWorkspaceId` has been documented since WP-22 as "the discriminator a
+destructive sweep needs", and `decideAbsentLocalGroupFate` reads it. `mlsDeliveryApi` never mapped
+it out of the response body. So the only thing that ever kept a distribution group alive through the
+orphan sweep was having been registered earlier in the same session - a sweep that ran first forgot
+it, and the seeds stopped arriving until the next boot re-registered it. Both fields are carried
+now, and the sweep keeps a group named by either.
+
+### Migration: there was nothing to migrate
+
+Measured on production 2026-08-19 before writing any of it: **zero private salons existed.** So no
+backfill is written, no history is re-encrypted, and every private salon that will ever exist is born
+after the switch with its own group. The user's decision, taken before that measurement, was that
+private history could be erased if a migration were needed; the measurement made the question moot.

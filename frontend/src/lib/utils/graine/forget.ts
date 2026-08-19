@@ -42,15 +42,25 @@ export async function forgetCommunityGraine(workspaceId: string): Promise<number
   // - a community left with the group still joined goes on receiving every seed sent in it. It was
   // invisible while a reconciliation sweep destroyed the group on the next connection for an
   // unrelated (and wrong) reason; that sweep now correctly keeps it, so this is what has to end it.
-  const leftGroup = mlsService.forgetDistributionGroup(workspaceId);
-  if (leftGroup) {
+  // EVERY SCOPE OF THIS COMMUNITY, not just the community's own group. A private salon has its
+  // own since 2026-08-19, and a purge that only left the community's would leave this device in
+  // every private salon it could read - still fed, still committing, in a community it has left.
+  // Enumerated from the MLS service rather than from the channel list, because the channel list is
+  // read out of a store this purge is about to empty.
+  const leftGroups = mlsService
+    .distributionScopes()
+    .filter((scope) => scope.workspaceId === workspaceId)
+    .map((scope) => mlsService.forgetDistributionGroup(scope))
+    .filter((groupId): groupId is string => groupId !== null);
+  if (leftGroups.length > 0) {
     // Not persisted here and forgotten: the next load would restore the group from the checkpoint
     // and this device would be back in a community it left.
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, (message) =>
       console.info(message)
     );
     console.info(
-      `[GRAINE] left the distribution group ${leftGroup.slice(0, 8)} of community ${workspaceId.slice(0, 8)}`
+      `[GRAINE] left ${leftGroups.length} distribution group(s) of community ${workspaceId.slice(0, 8)}: ` +
+        leftGroups.map((id) => id.slice(0, 8)).join(', ')
     );
   }
 

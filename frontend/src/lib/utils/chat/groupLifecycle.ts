@@ -1,4 +1,6 @@
 import type { GroupMeta, IMlsService } from '$lib/mls-client/IMlsService';
+import { workspaceScope, type DistributionScope } from '$lib/mls-client/distributionScope';
+import { scopeForChannel } from '$lib/utils/graine/runtime';
 import type { ConversationLifecycle } from '$lib/types';
 
 export type { ConversationLifecycle };
@@ -176,8 +178,13 @@ export function decideAbsentLocalGroupFate(input: AbsentLocalGroupInput): LocalG
 
     case 'active':
     case 'tombstone':
-      if (input.serverStatus.meta.distributionWorkspaceId) {
-        return { action: 'keep', reason: 'community key-distribution group, not a conversation' };
+      if (
+        input.serverStatus.meta.distributionWorkspaceId ||
+        input.serverStatus.meta.distributionChannelId
+      ) {
+        // Either scope. A private salon's group is no more a conversation than a community's, and
+        // a sweep reading only the community field would destroy every one of them.
+        return { action: 'keep', reason: 'key-distribution group, not a conversation' };
       }
       // A live-or-tombstoned conversation row we hold no membership in: the exclusion or the
       // deletion is real, and the local tree is what has to go. This is the behaviour the sweeps
@@ -217,8 +224,31 @@ export async function reconcileAbsentLocalGroup(
   const fate = decideAbsentLocalGroupFate({ isKnownDistributionGroup: false, serverStatus });
 
   if (serverStatus.kind === 'active' || serverStatus.kind === 'tombstone') {
-    const workspaceId = serverStatus.meta.distributionWorkspaceId;
-    if (workspaceId) mlsService.registerDistributionGroup(workspaceId, groupId);
+    const scope = distributionScopeFromMeta(serverStatus.meta);
+    if (scope) mlsService.registerDistributionGroup(scope, groupId);
   }
   return fate;
+}
+
+/**
+ * The scope a group's server metadata names, or null when it names none.
+ *
+ * A COMMUNITY IS SELF-CONTAINED, A SALON IS NOT. The `dm_groups` row of a salon's group carries the
+ * salon's id and cannot carry the community's - chat-delivery does not own `channels` and has no
+ * way to know it - so the community comes from the channel map this session already built while
+ * loading the sidebar. When it has not (a salon this session never loaded), the group is still
+ * KEPT by the decision above; it is only the registration that waits, and the next community load
+ * makes it.
+ */
+function distributionScopeFromMeta(meta: GroupMeta): DistributionScope | null {
+  if (meta.distributionWorkspaceId) return workspaceScope(meta.distributionWorkspaceId);
+  if (!meta.distributionChannelId) return null;
+
+  const known = scopeForChannel(meta.distributionChannelId);
+  if (known?.kind === 'channel') return known;
+  console.info(
+    `[GRAINE] group of salon ${meta.distributionChannelId.slice(0, 8)} kept but not registered - ` +
+      `its community is not loaded in this session yet`
+  );
+  return null;
 }

@@ -23,14 +23,43 @@ import { callDelivery } from '../internal/delivery.client';
 
 const logger = new Logger('DistributionGroup');
 
-/** The distribution group of a community, and what has been published on it so far. */
+/**
+ * Which roster a distribution group belongs to.
+ *
+ * `workspace` is a community: every member holds its seeds. `channel` is a PRIVATE salon: only the
+ * people who may open it do. A public salon has no scope of its own - its audience IS the
+ * community, so a second group would be the same set of people at a higher commit rate.
+ */
+export type DistributionScope = { kind: 'workspace' | 'channel'; id: string };
+
+/** The scope's two path segments, and the one place they are spelled. */
+function seg(scope: DistributionScope): string {
+  return `${scope.kind}/${encodeURIComponent(scope.id)}`;
+}
+
+/** The scope as a log line names it. */
+function label(scope: DistributionScope): string {
+  return `${scope.kind}=${scope.id}`;
+}
+
+/** The community `workspaceId` belongs to, as a scope. */
+export function workspaceScope(workspaceId: string): DistributionScope {
+  return { kind: 'workspace', id: workspaceId };
+}
+
+/** The PRIVATE salon `channelId`, as a scope. Never call this for a public one - see the routes. */
+export function channelScope(channelId: string): DistributionScope {
+  return { kind: 'channel', id: channelId };
+}
+
+/** The distribution group of a scope, and what has been published on it so far. */
 export interface DistributionGroupRef {
-  /** `dm_groups.id` of the community's key-distribution group. */
+  /** `dm_groups.id` of the scope's key-distribution group. */
   groupId: string;
   /**
    * Latest published GroupInfo (base64), or null when no client has initialised the MLS group yet.
-   * Null is a real state - the community exists and nobody has opened a salon in it - never an
-   * error, and the caller must be able to tell the two apart.
+   * Null is a real state - the scope exists and nobody has opened it yet - never an error, and the
+   * caller must be able to tell the two apart.
    */
   groupInfo: string | null;
   /** Epoch the GroupInfo above was published at; null exactly when `groupInfo` is. */
@@ -45,51 +74,48 @@ interface DeliveryGroupPayload {
 }
 
 /**
- * Creates the community's distribution group, or returns the one it already has.
+ * Creates a scope's distribution group, or returns the one it already has.
  *
  * Idempotent on the delivery side through a partial unique index, so calling it twice for the same
- * community is safe and returns the same id - which is what makes it usable both when a community
- * is created and as a repair for one predating Graine.
+ * scope is safe and returns the same id - which is what makes it usable both when a community or a
+ * private salon is created, and as a repair for one that predates its scope.
  *
- * @param workspaceId the community the group belongs to
+ * @param scope the community, or the PRIVATE salon, the group belongs to
  * @returns `dm_groups.id` of the distribution group
  */
 export async function createDistributionGroup(
   secret: string,
-  workspaceId: string
+  scope: DistributionScope
 ): Promise<string> {
   const payload = (await callDelivery(
     secret,
     'DISTRIBUTION_GROUP',
     'internal/mls/distribution-groups',
-    {
-      method: 'POST',
-      body: { workspaceId },
-    }
+    { method: 'POST', body: { scope: scope.kind, scopeId: scope.id } }
   )) as DeliveryGroupPayload | null;
 
   const groupId = typeof payload?.groupId === 'string' ? payload.groupId : '';
   if (!groupId) {
-    logger.error(`[DISTRIBUTION_GROUP] create workspace=${workspaceId} answered no groupId`);
+    logger.error(`[DISTRIBUTION_GROUP] create ${label(scope)} answered no groupId`);
     throw new ServiceUnavailableException('Key distribution is unavailable.');
   }
   return groupId;
 }
 
 /**
- * Reads the community's distribution group and its latest GroupInfo.
+ * Reads a scope's distribution group and its latest GroupInfo.
  *
- * @returns null when the community has no distribution group at all - distinct from a group with
+ * @returns null when the scope has no distribution group at all - distinct from a group with
  *   nothing published on it yet, which comes back with `groupInfo: null`.
  */
 export async function readDistributionGroup(
   secret: string,
-  workspaceId: string
+  scope: DistributionScope
 ): Promise<DistributionGroupRef | null> {
   const payload = (await callDelivery(
     secret,
     'DISTRIBUTION_GROUP',
-    `internal/mls/distribution-groups/${encodeURIComponent(workspaceId)}`,
+    `internal/mls/distribution-groups/${seg(scope)}`,
     { method: 'GET' }
   )) as DeliveryGroupPayload | null;
 
@@ -103,17 +129,17 @@ export async function readDistributionGroup(
   };
 }
 
-/** Publishes a new GroupInfo for the community's distribution group. Monotonic on the far side. */
+/** Publishes a new GroupInfo for a scope's distribution group. Monotonic on the far side. */
 export async function publishDistributionGroupInfo(
   secret: string,
-  workspaceId: string,
+  scope: DistributionScope,
   groupInfo: string,
   baseEpoch: number
 ): Promise<{ stored: boolean }> {
   const payload = (await callDelivery(
     secret,
     'DISTRIBUTION_GROUP',
-    `internal/mls/distribution-groups/${encodeURIComponent(workspaceId)}/group-info`,
+    `internal/mls/distribution-groups/${seg(scope)}/group-info`,
     { method: 'POST', body: { groupInfo, baseEpoch } }
   )) as { stored?: unknown } | null;
 
@@ -121,19 +147,20 @@ export async function publishDistributionGroupInfo(
 }
 
 /**
- * Cuts one user off the community's key-distribution group, immediately and server-side.
+ * Cuts one user off a scope's key-distribution group, immediately and server-side.
  *
- * Called the moment they stop being a member, whichever way that happened. It revokes DELIVERY:
- * their devices stop being routed the seed frames, and anything already queued for them is
- * dropped. The MLS half - removing their leaf so future seeds are not even sealed to it - is a
- * commit, which only a member's device can produce, and lands when one next loads the community.
+ * Called the moment they stop belonging to that roster, whichever way that happened - leaving or
+ * being kicked from a community, or losing access to a private salon. It revokes DELIVERY: their
+ * devices stop being routed the seed frames, and anything already queued for them is dropped. The
+ * MLS half - removing their leaf so future seeds are not even sealed to it - is a commit, which
+ * only a member's device can produce, and lands when one next loads the community or salon.
  *
  * Idempotent, so a departure that is retried costs nothing.
  *
  * THE THREE COUNTS AND THE FLAG ARE ALL CARRIED, because the caller cannot recover any of them.
  * This used to return `memberships` and `queued` alone, so the log line downstream had no `routes`
  * to print and printed `memberships` under that name - a lie for as long as the two agreed, which
- * on a one-device leaver is always. And dropping `evicted` collapsed "a community that has no
+ * on a one-device leaver is always. And dropping `evicted` collapsed "a scope that has no
  * distribution group" into "a cut that found nothing": the discriminator is KNOWN here and the
  * decision is made there, so it travels rather than being guessed from three zeros.
  *
@@ -141,13 +168,13 @@ export async function publishDistributionGroupInfo(
  */
 export async function evictFromDistributionGroup(
   secret: string,
-  workspaceId: string,
+  scope: DistributionScope,
   userId: string
 ): Promise<{ evicted: boolean; memberships: number; queued: number; routes: number }> {
   const payload = (await callDelivery(
     secret,
     'DISTRIBUTION_GROUP',
-    `internal/mls/distribution-groups/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(userId)}`,
+    `internal/mls/distribution-groups/${seg(scope)}/members/${encodeURIComponent(userId)}`,
     { method: 'DELETE' }
   )) as { evicted?: unknown; memberships?: unknown; queued?: unknown; routes?: unknown } | null;
 
@@ -159,15 +186,15 @@ export async function evictFromDistributionGroup(
   };
 }
 
-/** Tombstones the community's distribution group. Returns false when there was none to delete. */
+/** Tombstones a scope's distribution group. Returns false when there was none to delete. */
 export async function deleteDistributionGroup(
   secret: string,
-  workspaceId: string
+  scope: DistributionScope
 ): Promise<boolean> {
   const payload = (await callDelivery(
     secret,
     'DISTRIBUTION_GROUP',
-    `internal/mls/distribution-groups/${encodeURIComponent(workspaceId)}`,
+    `internal/mls/distribution-groups/${seg(scope)}`,
     { method: 'DELETE' }
   )) as { deleted?: unknown } | null;
 

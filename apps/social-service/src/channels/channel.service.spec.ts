@@ -50,7 +50,10 @@ describe('ChannelService security hardening', () => {
     };
     const channelRepo = {
       findOne: jest.fn(),
-      find: jest.fn(),
+      // Empty by default rather than undefined: `find` is now on the departure path (every private
+      // salon a leaver must be cut from), and a bare `jest.fn()` there fails as a TypeError deep
+      // inside the service instead of as the assertion the test is about.
+      find: jest.fn().mockResolvedValue([]),
       save: jest.fn(),
     };
     const roleRepo = {
@@ -592,13 +595,38 @@ describe('ChannelService security hardening', () => {
     await expect(service.listMessages('ch1', 'u1')).rejects.toBeInstanceOf(ForbiddenException);
   });
 
-  it('grants an admin access to a private channel they were never added to', async () => {
+  it('refuses an admin a private channel they have not joined', async () => {
+    // Inverted on 2026-08-19 by the user's decision. `workspace.manage` used to be a bypass into
+    // every private salon; under a distribution group per salon that would make every promotion a
+    // commit on every one of them, and it made the salon's own roster unreadable to its members.
+    // An admin joins, which is one act and one commit, and then appears in `allowedUsers`.
     const { service, channelRepo, memberRepo, roleRepo, messageRepo } = makeService();
     channelRepo.findOne.mockResolvedValue({
       id: 'ch1',
       workspaceId: 'ws1',
       isPrivate: true,
       allowedUsers: ['someone-else'],
+      keyVersion: 1,
+      masterSecret: Buffer.alloc(32).toString('base64'),
+    });
+    memberRepo.findOne.mockResolvedValue({
+      workspaceId: 'ws1',
+      userId: 'admin',
+      roleIds: ['r-admin'],
+    });
+    roleRepo.find.mockResolvedValue([{ permissions: ['workspace.manage'] }]);
+    messageRepo.find.mockResolvedValue([]);
+
+    await expect(service.listMessages('ch1', 'admin')).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('grants an admin the same private channel once they have joined it', async () => {
+    const { service, channelRepo, memberRepo, roleRepo, messageRepo } = makeService();
+    channelRepo.findOne.mockResolvedValue({
+      id: 'ch1',
+      workspaceId: 'ws1',
+      isPrivate: true,
+      allowedUsers: ['someone-else', 'admin'],
       keyVersion: 1,
       masterSecret: Buffer.alloc(32).toString('base64'),
     });
@@ -634,6 +662,10 @@ describe('ChannelService security hardening', () => {
         workspaceId: 'ws1',
         name: 'general',
         visibility: 'public',
+        // The sidebar list now carries the same distinction the community page does: a private
+        // salon an admin can SEE but has not joined comes back with `false`, which is what makes
+        // the join reachable without giving them any of its content.
+        viewerHasAccess: true,
       },
     ]);
   });
@@ -1035,6 +1067,9 @@ describe('ChannelService security hardening', () => {
         name: 'general',
         visibility: 'public',
         writePolicy: 'everyone',
+        // Carried since 2026-08-19, because the list now includes private salons an admin can SEE
+        // but has not joined - and the client must be able to tell "open it" from "join it first".
+        viewerHasAccess: true,
       },
     ]);
   });
@@ -1125,7 +1160,9 @@ describe('ChannelService security hardening', () => {
       id: 'ch1',
       workspaceId: 'ws1',
       isPrivate: true,
-      allowedUsers: ['guest'],
+      // `boss` is listed because they JOINED, not because they are an admin - since 2026-08-19
+      // being an admin grants no access to a private salon at all.
+      allowedUsers: ['guest', 'boss'],
     });
     repos.memberRepo.findOne.mockImplementation(({ where }: { where: { userId: string } }) =>
       Promise.resolve({ workspaceId: 'ws1', userId: where.userId, roleIds: ['r-admin'] })
@@ -1141,7 +1178,7 @@ describe('ChannelService security hardening', () => {
     ]);
   }
 
-  it('listChannelMembers scopes a private channel to admins + its allowed users', async () => {
+  it('listChannelMembers scopes a private channel to exactly its allowed users', async () => {
     const { service, channelRepo, memberRepo, roleRepo } = makeService();
     arrangePrivateChannelRoster({ channelRepo, memberRepo, roleRepo });
 
@@ -1504,7 +1541,7 @@ describe('ChannelService security hardening', () => {
       { userId: 'amy', roleIds: ['r-member'] },
     ]);
 
-    await repos.service.repairWorkspacesAfterAccountDeletion(['ws1']);
+    await repos.service.repairWorkspacesAfterAccountDeletion(['ws1'], 'boss');
 
     // Highest-priority survivor, deterministically - no clock and no tie left to chance.
     expect(rows.find((r) => r.userId === 'mod')?.roleIds).toEqual(['r-admin']);
@@ -1515,7 +1552,7 @@ describe('ChannelService security hardening', () => {
     const repos = makeService();
     arrangeGovernedCommunity(repos, []);
 
-    await repos.service.repairWorkspacesAfterAccountDeletion(['ws1']);
+    await repos.service.repairWorkspacesAfterAccountDeletion(['ws1'], 'boss');
 
     expect(repos.hardDeletes).toHaveBeenCalledTimes(6);
   });

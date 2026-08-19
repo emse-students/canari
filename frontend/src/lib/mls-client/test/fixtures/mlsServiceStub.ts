@@ -57,6 +57,7 @@ export function createMlsServiceStub(
     registerDistributionGroup: vi.fn(),
     isDistributionGroup: vi.fn().mockReturnValue(false),
     distributionGroupFor: vi.fn().mockReturnValue(null),
+    distributionScopes: vi.fn().mockReturnValue([]),
     ensureDistributionGroup: vi.fn().mockResolvedValue(false),
     routeDistributionFrame: vi.fn().mockResolvedValue(true),
     setDistributionGroupInfoTransport: vi.fn(),

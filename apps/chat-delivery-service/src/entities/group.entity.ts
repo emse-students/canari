@@ -43,6 +43,21 @@ export class Group {
   @Column({ type: 'uuid', nullable: true, default: null })
   distributionWorkspaceId?: string | null;
 
+  /**
+   * Set when this group is a PRIVATE SALON's Graine key-distribution group, to that salon's id.
+   *
+   * The sibling of {@link distributionWorkspaceId}, and **exactly one of the two may be set** - a
+   * database CHECK says so (migration 018), because a row reachable from two scopes would be served
+   * to two different rosters, which is the defect this scope exists to remove. Everything said
+   * above about a community's group holds for this one: seeds only, never a conversation, entered
+   * by external commit, no `dm_group_members` row.
+   *
+   * A public salon has none. Its audience is the community, so the community's group already is the
+   * right roster and a second group would be the same set of people at a higher commit rate.
+   */
+  @Column({ type: 'uuid', nullable: true, default: null })
+  distributionChannelId?: string | null;
+
   /** Monotonically increasing counter incremented on each manual key rotation,
    *  allowing clients to distinguish key rotation epochs from normal commits. */
   @Column({ default: 1 })

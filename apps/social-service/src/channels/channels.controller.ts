@@ -124,6 +124,68 @@ export class ChannelsController {
   }
 
   /**
+   * A PRIVATE salon's own Graine key-distribution group, with the latest GroupInfo published on it.
+   *
+   * The salon-scoped twin of the workspace route above, and the reason a private salon's seeds stop
+   * being sealed to the whole community. Authorized by `canAccessChannel`, which since 2026-08-19
+   * is `allowedUsers` and nothing else - an administrator must have joined the salon explicitly to
+   * be served this, because the GroupInfo IS the capability to external-join.
+   *
+   * A public salon is refused here rather than answered with the community's group: it has none of
+   * its own, on purpose, and pretending otherwise would hide the distinction from the client.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('channels/:channelId/distribution-group')
+  getChannelDistributionGroup(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string
+  ) {
+    return this.service.getChannelDistributionGroupForMember(
+      channelId,
+      xUserId.trim().toLowerCase()
+    );
+  }
+
+  /** Publishes the GroupInfo a reader just committed on a private salon's distribution group. */
+  @UseGuards(NginxAuthGuard)
+  @Post('channels/:channelId/distribution-group/group-info')
+  publishChannelDistributionGroupInfo(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string,
+    @Body() body: PublishDistributionGroupInfoDto
+  ) {
+    if (typeof body?.groupInfo !== 'string' || body.groupInfo.length === 0) {
+      throw new HttpException('groupInfo (base64) is required', HttpStatus.BAD_REQUEST);
+    }
+    if (!Number.isInteger(body?.baseEpoch) || body.baseEpoch < 0) {
+      throw new HttpException('baseEpoch must be a non-negative integer', HttpStatus.BAD_REQUEST);
+    }
+    return this.service.publishChannelDistributionGroupInfoForMember(
+      channelId,
+      xUserId.trim().toLowerCase(),
+      body.groupInfo,
+      body.baseEpoch
+    );
+  }
+
+  /**
+   * Puts an administrator into a private salon explicitly, so they appear in its roster and are
+   * served its seeds.
+   *
+   * There is no silent bypass any more: `workspace.manage` shows an admin that the salon EXISTS,
+   * and this route is how they enter it. Deliberately visible in the member list and deliberately
+   * silent in the transcript - see the service method for why.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('channels/:channelId/join-as-admin')
+  joinPrivateChannelAsAdmin(
+    @Headers('x-user-id') xUserId: string,
+    @Param('channelId') channelId: string
+  ) {
+    return this.service.joinPrivateChannelAsAdmin(channelId, xUserId.trim().toLowerCase());
+  }
+
+  /**
    * Returns the community's one live invite link, minting it if there is none (requires
    * INVITE_USERS / MANAGE_WORKSPACE). `rotate: true` revokes the live token and mints its
    * replacement - it is the only way to get a new one, so opening the panel cannot invalidate a

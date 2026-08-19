@@ -896,6 +896,15 @@ export class MlsDeliveryApi {
           ? (g as { isGroup: boolean }).isGroup
           : undefined,
       deletedAt: (g as { deletedAt?: string | null }).deletedAt ?? null,
+      // CARRIED, and they were not. `GroupMeta` has documented these as "the discriminator a
+      // destructive sweep needs" since WP-22, `decideAbsentLocalGroupFate` reads them, and this
+      // mapper dropped them on the floor - so the only thing that ever kept a distribution group
+      // alive was having been registered earlier in the same session. A sweep that ran first
+      // forgot it, and the seeds stopped arriving until the next boot re-registered it.
+      distributionWorkspaceId:
+        (g as { distributionWorkspaceId?: string | null }).distributionWorkspaceId ?? null,
+      distributionChannelId:
+        (g as { distributionChannelId?: string | null }).distributionChannelId ?? null,
     };
   }
 

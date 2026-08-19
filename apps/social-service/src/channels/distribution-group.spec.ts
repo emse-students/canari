@@ -71,6 +71,7 @@ describe('ChannelService - the community distribution group', () => {
       create: jest.fn((x: Record<string, unknown>) => x),
       save: jest.fn((x: Record<string, unknown>) => Promise.resolve({ id: 'c-1', ...x })),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
+      delete: jest.fn().mockResolvedValue({ affected: 1 }),
     };
     const roleRepo = {
       find: jest.fn().mockResolvedValue([]),
@@ -286,7 +287,7 @@ describe('ChannelService - the community distribution group', () => {
         await service.publishDistributionGroupInfoForMember(WORKSPACE, USER, 'Z2k=', 2)
       ).toEqual({ stored: false });
       expect(String(fetchSpy.mock.calls[0][0])).toContain(
-        `/api/internal/mls/distribution-groups/${WORKSPACE}/group-info`
+        `/api/internal/mls/distribution-groups/workspace/${WORKSPACE}/group-info`
       );
     });
   });
@@ -396,7 +397,7 @@ describe('ChannelService - the community distribution group', () => {
 
       const [url, init] = (global.fetch as unknown as jest.Mock).mock.calls[0];
       expect(String(url)).toContain(
-        `internal/mls/distribution-groups/${WORKSPACE}/members/${USER}`
+        `internal/mls/distribution-groups/workspace/${WORKSPACE}/members/${USER}`
       );
       expect(init.method).toBe('DELETE');
       expect(memberRepo.delete).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: USER });
@@ -477,7 +478,9 @@ describe('ChannelService - the community distribution group', () => {
       });
 
       const [url] = (global.fetch as unknown as jest.Mock).mock.calls[0];
-      expect(String(url)).toContain(`internal/mls/distribution-groups/${WORKSPACE}/members/u2`);
+      expect(String(url)).toContain(
+        `internal/mls/distribution-groups/workspace/${WORKSPACE}/members/u2`
+      );
       expect(memberRepo.delete).toHaveBeenCalledWith({ workspaceId: WORKSPACE, userId: 'u2' });
     });
 
@@ -502,6 +505,217 @@ describe('ChannelService - the community distribution group', () => {
       await expect(service.leaveWorkspace(WORKSPACE, USER)).rejects.toBeDefined();
       expect(global.fetch).not.toHaveBeenCalled();
       expect(memberRepo.delete).not.toHaveBeenCalled();
+    });
+  });
+  /**
+   * A PRIVATE SALON HAS ITS OWN GROUP, and that is the whole point of the scope.
+   *
+   * Before this, section 4.3 gave a community exactly one distribution group, so every member held
+   * every private salon's seeds and the only thing keeping them out was the server refusing to
+   * serve the ciphertext. These tests pin the two halves that make the guarantee cryptographic
+   * instead: the seeds go to a group whose roster is the salon's, and no path reaches that group's
+   * GroupInfo without `canAccessChannel` having said yes first.
+   */
+  describe('a private salon and its own distribution group', () => {
+    const CHANNEL = 'c-secret';
+
+    /** A private salon `allowedUsers` names, in a community `USER` belongs to. */
+    function arrangePrivateSalon(
+      repos: ReturnType<typeof makeService>,
+      overrides: Record<string, unknown> = {}
+    ) {
+      const channel = {
+        id: CHANNEL,
+        workspaceId: WORKSPACE,
+        name: 'direction',
+        isPrivate: true,
+        archived: false,
+        allowedUsers: [USER],
+        distributionGroupId: 'g-chan',
+        writePolicy: 'everyone',
+        ...overrides,
+      };
+      repos.channelRepo.findOne.mockResolvedValue(channel);
+      repos.memberRepo.findOne.mockResolvedValue({
+        workspaceId: WORKSPACE,
+        userId: USER,
+        roleIds: [],
+      });
+      return channel;
+    }
+
+    /** An actor holding exactly `permissions` in the community. */
+    function arrangeActorRole(repos: ReturnType<typeof makeService>, permissions: string[]) {
+      repos.memberRepo.findOne.mockResolvedValue({
+        workspaceId: WORKSPACE,
+        userId: USER,
+        roleIds: ['r-admin'],
+      });
+      repos.roleRepo.find.mockResolvedValue([{ id: 'r-admin', permissions, priority: 10 }]);
+    }
+
+    it('mints the salon its own group, under the CHANNEL scope', async () => {
+      const repos = makeService();
+      repos.workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, name: WORKSPACE_NAME });
+      arrangeActorRole(repos, [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]);
+
+      await repos.service.createChannel({
+        workspaceId: WORKSPACE,
+        name: 'direction',
+        actorUserId: USER,
+        visibility: 'private',
+      });
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(String(url)).toContain('internal/mls/distribution-groups');
+      // The scope IS the roster. Creating it under the community's scope would be the same group
+      // under another name - the exact sharing this column exists to end.
+      expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+        scope: 'channel',
+        scopeId: 'c-1',
+      });
+    });
+
+    it('unwinds the salon when its group cannot be minted', async () => {
+      const repos = makeService();
+      repos.workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE, name: WORKSPACE_NAME });
+      arrangeActorRole(repos, [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]);
+      global.fetch = jest.fn(() => Promise.reject(new Error('ECONNREFUSED'))) as unknown as never;
+
+      await expect(
+        repos.service.createChannel({
+          workspaceId: WORKSPACE,
+          name: 'direction',
+          actorUserId: USER,
+          visibility: 'private',
+        })
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+
+      // A salon marked private with no group of its own is a salon whose seeds have nowhere to go,
+      // and the row would sit there looking usable.
+      expect(repos.channelRepo.delete).toHaveBeenCalledWith({ id: 'c-1' });
+    });
+
+    it('serves the GroupInfo to someone the roster names', async () => {
+      const repos = makeService();
+      arrangePrivateSalon(repos);
+      global.fetch = answerWith({
+        groupId: 'g-chan',
+        groupInfo: 'Z2k=',
+        baseEpoch: 3,
+      }) as unknown as typeof fetch;
+
+      await expect(
+        repos.service.getChannelDistributionGroupForMember(CHANNEL, USER)
+      ).resolves.toEqual({ groupId: 'g-chan', groupInfo: 'Z2k=', baseEpoch: 3 });
+      expect(String((global.fetch as jest.Mock).mock.calls[0][0])).toContain(
+        'distribution-groups/channel/' + CHANNEL
+      );
+    });
+
+    it('refuses an ADMIN who has not joined - which is what makes the roster finite', async () => {
+      const repos = makeService();
+      arrangePrivateSalon(repos, { allowedUsers: ['someone-else'] });
+      arrangeActorRole(repos, [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE]);
+
+      // MANAGE_WORKSPACE used to be a silent bypass, which made the roster "allowedUsers plus
+      // whoever holds an admin role right now" - a set that changes without anyone touching the
+      // salon, and therefore a set no MLS group can be sealed to.
+      await expect(
+        repos.service.getChannelDistributionGroupForMember(CHANNEL, USER)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('serves that same admin once they have joined explicitly', async () => {
+      const repos = makeService();
+      const channel = arrangePrivateSalon(repos, { allowedUsers: [] });
+      arrangeActorRole(repos, [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE]);
+
+      await expect(repos.service.joinPrivateChannelAsAdmin(CHANNEL, USER)).resolves.toEqual({
+        success: true,
+        alreadyMember: false,
+      });
+
+      // In the member list, and nowhere else: no system message is written, on the user's decision
+      // of 2026-08-19.
+      expect(channel.allowedUsers).toEqual([USER]);
+      expect(repos.redis.publishChannelEvent).toHaveBeenCalledWith(
+        'channel.member.joined',
+        expect.objectContaining({ channelId: CHANNEL, joinedBy: USER }),
+        expect.any(Array)
+      );
+    });
+
+    it('refuses to join a public salon as an admin, rather than granting nothing', async () => {
+      const repos = makeService();
+      arrangePrivateSalon(repos, { isPrivate: false, distributionGroupId: null });
+      arrangeActorRole(repos, [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE]);
+
+      await expect(repos.service.joinPrivateChannelAsAdmin(CHANNEL, USER)).rejects.toMatchObject({
+        response: { code: 'CHANNEL_IS_PUBLIC' },
+      });
+    });
+
+    it('refuses a PUBLIC salon its own group instead of answering with the community one', async () => {
+      const repos = makeService();
+      arrangePrivateSalon(repos, { isPrivate: false, distributionGroupId: null });
+
+      // Answering with the community's group would let a client believe a per-salon roster exists
+      // where none does - the confusion this scope was added to end.
+      await expect(
+        repos.service.getChannelDistributionGroupForMember(CHANNEL, USER)
+      ).rejects.toMatchObject({ response: { code: 'CHANNEL_HAS_NO_DISTRIBUTION_GROUP' } });
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('cuts a community leaver off EVERY private salon, roster included', async () => {
+      const repos = makeService();
+      const salon = {
+        id: CHANNEL,
+        workspaceId: WORKSPACE,
+        isPrivate: true,
+        allowedUsers: [USER, 'u2'],
+        distributionGroupId: 'g-chan',
+      };
+      repos.channelRepo.find.mockResolvedValue([salon]);
+      repos.workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
+      repos.memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER });
+      repos.memberRepo.find.mockResolvedValue([
+        { workspaceId: WORKSPACE, userId: USER, roleIds: ['r-admin'] },
+        { workspaceId: WORKSPACE, userId: 'u2', roleIds: ['r-admin'] },
+      ]);
+      repos.roleRepo.find.mockResolvedValue([
+        { id: 'r-admin', permissions: [CHANNEL_PERMISSIONS.MANAGE_WORKSPACE], priority: 10 },
+      ]);
+
+      await repos.service.leaveWorkspace(WORKSPACE, USER);
+
+      const evictions = (global.fetch as jest.Mock).mock.calls
+        .map(([url]: [unknown]) => String(url))
+        .filter((u: string) => u.includes('/members/'));
+      expect(evictions.some((u: string) => u.includes('channel/' + CHANNEL + '/members/'))).toBe(
+        true
+      );
+      // The roster goes too: `reconcileDistributionGroupRoster` diffs the MLS tree against exactly
+      // this list, so a leaver still named here keeps a leaf authorised at every reconciliation.
+      expect(salon.allowedUsers).toEqual(['u2']);
+    });
+
+    it('retires the salon group when the salon becomes public', async () => {
+      const repos = makeService();
+      const channel = arrangePrivateSalon(repos);
+      arrangeActorRole(repos, [CHANNEL_PERMISSIONS.MANAGE_CHANNEL]);
+      global.fetch = answerWith({ deleted: true }) as unknown as typeof fetch;
+
+      await repos.service.updateChannelAccess(CHANNEL, USER, false, []);
+
+      const deletes = (global.fetch as jest.Mock).mock.calls.filter(
+        ([, init]: [unknown, RequestInit]) => init?.method === 'DELETE'
+      );
+      expect(deletes.length).toBe(1);
+      expect(String(deletes[0][0])).toContain('distribution-groups/channel/' + CHANNEL);
+      expect(channel.distributionGroupId).toBeNull();
     });
   });
 });

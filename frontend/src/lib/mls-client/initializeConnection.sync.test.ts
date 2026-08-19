@@ -3,6 +3,7 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
 }));
 
 import { syncConnectionAfterWsOpen } from './initializeConnection';
+import { workspaceScope } from '$lib/mls-client/distributionScope';
 
 describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
   // No fake timers here any more: the 500 ms sleep this used to advance past is gone, replaced by
@@ -132,7 +133,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
 
     expect(mls.forgetGroup).not.toHaveBeenCalled();
     // The sweep is also how a cold boot learns the mapping, before any community has loaded.
-    expect(mls.registerDistributionGroup).toHaveBeenCalledWith('ws-1', 'd-dist');
+    expect(mls.registerDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'), 'd-dist');
   });
 
   it('still forgets a conversation whose dm_groups row is confirmed gone', async () => {

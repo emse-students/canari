@@ -20,6 +20,7 @@ import {
   registerCommunityHistoryVisibility,
 } from '$lib/utils/graine/runtime';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
+import { channelScope } from '$lib/mls-client/distributionScope';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { applyChannelReactionFrame, getChannelReactions } from '$lib/stores/reactionStore.svelte';
 import {
@@ -32,7 +33,10 @@ import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
-import { ensureCommunityDistributionGroup } from '$lib/utils/graine/distributionGroup';
+import {
+  ensureCommunityDistributionGroup,
+  ensureDistributionGroupFor,
+} from '$lib/utils/graine/distributionGroup';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 
 /** One channel entry shown in the sidebar under its workspace. */
@@ -45,6 +49,14 @@ export interface ChannelSidebarItem {
   unreadCount?: number;
   /** True for private channels that require an explicit invitation. */
   isPrivate?: boolean;
+  /**
+   * Whether the viewer may READ this channel, as opposed to merely knowing it exists.
+   *
+   * False only on a private salon an administrator has not joined - the row that makes the join
+   * reachable. Absent means yes: every other row in this list is one the viewer can open, and a
+   * tri-state would make every consumer handle a case that cannot happen.
+   */
+  hasAccess?: boolean;
 }
 
 /** One workspace (community) shown in the sidebar, containing its channels. */
@@ -188,10 +200,25 @@ export function useChannelWorkspaces() {
         const actualId = channel.id || channel._id;
         if (!actualId) continue;
 
-        // Which community a salon belongs to is the one fact the send path cannot derive: a
-        // channel id alone reaches every send site, and the seal needs the community whose
-        // distribution group carries the seed.
-        registerChannelWorkspace(actualId, workspaceId);
+        const isPrivate = channel.visibility === 'private';
+
+        // Which group a salon's seeds travel on is the one fact the send path cannot derive: a
+        // channel id alone reaches every send site, and the seal needs the roster the seed is
+        // sealed to - the community for a public salon, the salon itself for a private one.
+        registerChannelWorkspace(actualId, workspaceId, isPrivate);
+
+        // A PRIVATE SALON HAS ITS OWN GROUP, and this is where this device enters it. Skipped when
+        // the viewer only SEES the salon (an admin who has not joined): the route would refuse
+        // them its GroupInfo, which is exactly what makes that roster finite.
+        if (isPrivate && channel.viewerHasAccess !== false && ctx.ensureMls) {
+          const mls = await ctx.ensureMls();
+          await ensureDistributionGroupFor(
+            mls,
+            service,
+            channelScope(workspaceId, actualId),
+            ctx.log
+          );
+        }
 
         const channelConversationId = `channel_${actualId}`;
         if (!validChannelConversationIds.includes(channelConversationId)) {
@@ -200,8 +227,14 @@ export function useChannelWorkspaces() {
         addChannelToWorkspace(sidebarWorkspace.id, {
           id: channelConversationId,
           name: channel.name,
-          isPrivate: channel.visibility === 'private',
+          isPrivate,
+          hasAccess: channel.viewerHasAccess !== false,
         });
+
+        // AN UNJOINED SALON GETS NO CONVERSATION, and that is the point: a conversation row is what
+        // every read path keys off, and this viewer may not read it. The sidebar row exists so the
+        // join is reachable, and the join is what turns it into a conversation.
+        if (channel.viewerHasAccess === false) continue;
 
         const existing = ctx.conversations.get(channelConversationId);
         ctx.conversations.set(channelConversationId, {
@@ -448,16 +481,59 @@ export function useChannelWorkspaces() {
   }
 
   /**
-   * Records the community of a channel the user was just added to in-session.
+   * Records where a channel the user was just added to in-session belongs, and enters its group.
    *
    * The real-time `channel.member.joined` event registers the channel in `conversations`, and until
    * this runs the send path knows no community for it - so the first message typed into a
    * freshly-joined salon would be refused with `GraineUnknownChannelError` until an app relaunch
    * ran the full `loadChannelWorkspacesFromBackend` pass. Safe to call again.
    */
-  function registerJoinedChannel(channelId: string, workspaceId: string): void {
+  /**
+   * Enters a private salon this administrator can SEE but has not joined.
+   *
+   * The capability that replaced the silent bypass. `workspace.manage` used to make every private
+   * salon readable while putting the admin in none of their rosters, which made those rosters
+   * infinite - `allowedUsers` plus whoever happened to hold an admin role - and an infinite roster
+   * cannot be an MLS group. So the join is explicit, visible in the member list, and silent in the
+   * transcript (the user's decision of 2026-08-19).
+   *
+   * The reload afterwards is deliberate rather than a local flag flip: joining changes what four
+   * different routes will answer for this salon, and re-reading is the only way the sidebar,
+   * the conversation entry and the seed group all come from the same server state.
+   */
+  async function joinPrivateChannelAsAdmin(
+    channelConversationId: string,
+    channelName: string,
+    ctx: ChannelWorkspaceContext
+  ): Promise<void> {
+    try {
+      await service.joinPrivateChannelAsAdmin(channelConversationId);
+    } catch (e) {
+      ctx.log?.(toUiActionError(m.chat_channel_join_as_admin_failed({ name: channelName }), e));
+      return;
+    }
+
+    showToast(m.chat_channel_join_as_admin_done({ name: channelName }), 'info');
+    await loadChannelWorkspacesFromBackend(ctx);
+  }
+
+  async function registerJoinedChannel(
+    channelId: string,
+    workspaceId: string,
+    isPrivate: boolean,
+    ensureMls?: () => IMlsService | Promise<IMlsService>
+  ): Promise<void> {
     if (!channelId || !workspaceId) return;
-    registerChannelWorkspace(channelId, workspaceId);
+    registerChannelWorkspace(channelId, workspaceId, isPrivate);
+
+    // A PRIVATE SALON JOINED IN-SESSION NEEDS ITS GROUP BEFORE THE FIRST SEND, exactly as one
+    // loaded at startup does, and nothing else would fetch it until the next full reload - the
+    // same window this function was written to close for the channel-to-community map.
+    if (!isPrivate || !ensureMls) return;
+    const mls = await ensureMls();
+    await ensureDistributionGroupFor(mls, service, channelScope(workspaceId, channelId), (m) =>
+      console.info(m)
+    );
   }
 
   // ---------- API operations ----------
@@ -539,7 +615,7 @@ export function useChannelWorkspaces() {
           const actualId = channel.id || channel._id;
           if (!actualId) continue;
 
-          registerChannelWorkspace(actualId, workspaceId);
+          registerChannelWorkspace(actualId, workspaceId, channel.visibility === 'private');
 
           const channelConversationId = `channel_${actualId}`;
           addChannelToWorkspace(sidebarWorkspace.id, {
@@ -614,9 +690,21 @@ export function useChannelWorkspaces() {
         createdChannel?.id || createdChannel?._id || `${workspaceId}_${normalizedChannelName}`;
       const channelId = `channel_${actualId}`;
 
-      registerChannelWorkspace(actualId, workspaceId);
-
       const isPrivate = visibility === 'private';
+      registerChannelWorkspace(actualId, workspaceId, isPrivate);
+
+      // The salon was created private, so social-service has already minted its group; this device
+      // is the one that initialises the MLS state on it, and it must do so before the first send.
+      if (isPrivate && ctx.ensureMls) {
+        const mls = await ctx.ensureMls();
+        await ensureDistributionGroupFor(
+          mls,
+          service,
+          channelScope(workspaceId, actualId),
+          ctx.log
+        );
+      }
+
       const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
       if (sidebarWorkspace) {
         addChannelToWorkspace(sidebarWorkspace.id, {
@@ -1171,6 +1259,8 @@ export function useChannelWorkspaces() {
     ensureWorkspaceForChannelEvent,
     /** Records the community of a channel the user was just added to in-session (no relaunch needed). */
     registerJoinedChannel,
+    /** Enters a private salon an admin can see but has not joined, then re-reads the community. */
+    joinPrivateChannelAsAdmin,
     /** Fetches all workspaces and channels from the backend and prunes stale local entries. */
     loadChannelWorkspacesFromBackend,
     /** Creates a new community (workspace) and logs the outcome. */

@@ -1,35 +1,43 @@
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
+import type { DistributionScope } from './distributionScope';
 
 export type { FrameDelivery };
+export type { DistributionScope };
 
 export type { IncomingDeliveryMeta };
 
 /**
- * Where a community's distribution-group GroupInfo is fetched from and published to.
+ * Where a distribution-group GroupInfo is fetched from and published to.
  *
  * INJECTED RATHER THAN IMPORTED, for one reason: this transport is social-service, and the MLS
  * layer must not learn to speak to the communities API. Everything it needs is the pair of calls,
- * keyed by community id.
+ * keyed by the scope whose roster the group carries - a community, or ONE private salon.
  */
 export interface DistributionGroupInfoTransport {
   /** The published base, or null when no client has initialised the MLS group yet. */
-  fetch(workspaceId: string): Promise<{ groupInfo: string; baseEpoch: number } | null>;
+  fetch(scope: DistributionScope): Promise<{ groupInfo: string; baseEpoch: number } | null>;
   /**
    * Publishes a committed base. Monotonic on the far side: `stored: false` is a base that was not
    * newer, or a first publish lost to a concurrent one - legitimate outcomes, not errors.
    */
   publish(
-    workspaceId: string,
+    scope: DistributionScope,
     groupInfoBase64: string,
     baseEpoch: number
   ): Promise<{ stored: boolean }>;
 }
 
-/** A decrypted frame that arrived on a community's key-distribution group. */
+/** A decrypted frame that arrived on a key-distribution group. */
 export interface DistributionFrame {
-  /** The community the group belongs to. */
+  /** The roster the group carries - a community, or one private salon of it. */
+  scope: DistributionScope;
+  /**
+   * The community the group belongs to. Carried beside the scope because seeds are stored and
+   * mirrored per community whichever group they arrived on, so every consumer needs it and none
+   * should have to unpack the union to get it.
+   */
   workspaceId: string;
   /** The MLS group it arrived on. */
   groupId: string;
@@ -132,6 +140,15 @@ export type GroupMeta = {
    * kinds apart, and it says so here rather than leaving every reconciler to infer it.
    */
   distributionWorkspaceId?: string | null;
+  /**
+   * Set when the group carries a PRIVATE SALON's seeds. The sibling of the field above, and exactly
+   * one of the two is ever set - a database CHECK says so.
+   *
+   * Both are carried because the sweep's question is "is this a conversation", and a salon's group
+   * is no more a conversation than a community's. Reading only the first would destroy every
+   * private salon's seed carrier on the first sweep that ran before the Graine layer registered it.
+   */
+  distributionChannelId?: string | null;
 };
 
 /**
@@ -423,21 +440,23 @@ export interface IMlsService {
    */
   externalJoin(groupId: string): Promise<boolean>;
   /**
-   * Declares `groupId` to be the Graine key-distribution group of community `workspaceId`, so every
-   * later decision that differs for it is taken from a registered fact rather than rediscovered.
+   * Declares `groupId` to be the Graine key-distribution group of `scope`, so every later decision
+   * that differs for it is taken from a registered fact rather than rediscovered.
    */
-  registerDistributionGroup(workspaceId: string, groupId: string): void;
+  registerDistributionGroup(scope: DistributionScope, groupId: string): void;
   /** True when `groupId` carries channel seeds and must never reach the conversation pipeline. */
   isDistributionGroup(groupId: string): boolean;
   /**
-   * Leaves a community's key-distribution group - the MLS tree and the registration together - and
+   * Leaves a scope's key-distribution group - the MLS tree and the registration together - and
    * returns the group left, or null when this device held none. The counterpart of
-   * {@link ensureDistributionGroup}: without it, a community that leaves this device keeps
+   * {@link ensureDistributionGroup}: without it, a community or salon that leaves this device keeps
    * delivering seeds to it.
    */
-  forgetDistributionGroup(workspaceId: string): string | null;
-  /** The distribution group registered for `workspaceId`, or null when none is. */
-  distributionGroupFor(workspaceId: string): string | null;
+  forgetDistributionGroup(scope: DistributionScope): string | null;
+  /** The distribution group registered for `scope`, or null when none is. */
+  distributionGroupFor(scope: DistributionScope): string | null;
+  /** Every scope this device currently holds a distribution group for. */
+  distributionScopes(): DistributionScope[];
   /**
    * Wires where distribution-group GroupInfo is fetched from and published to (social-service).
    * Injected rather than imported so the MLS layer never learns to speak to the communities API.
@@ -446,12 +465,12 @@ export interface IMlsService {
   /** Wires what decrypted key-distribution frames are handed to. Set once, at startup. */
   onDistributionFrame(handler: DistributionFrameHandler | null): void;
   /**
-   * Joins the community's key-distribution group whatever state it is in - held already, published
-   * and joinable, or not yet initialised (this device then creates it). Returns true when the group
-   * is held afterwards.
+   * Joins the scope's key-distribution group whatever state it is in - held already, published and
+   * joinable, or not yet initialised (this device then creates it). Returns true when the group is
+   * held afterwards.
    */
   ensureDistributionGroup(
-    workspaceId: string,
+    scope: DistributionScope,
     ref: { groupId: string; groupInfo: string | null; baseEpoch: number | null }
   ): Promise<boolean>;
   /**
